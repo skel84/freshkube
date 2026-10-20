@@ -46,14 +46,24 @@ impl Link {
         let Some(link) = &entry.coroot else {
             return Err(Outcome::NotLinked);
         };
-        let project = link.project.as_deref().or(connection_project);
-        match project.map(str::trim) {
-            Some(project) if !project.is_empty() && !link.cluster.trim().is_empty() => Ok(Self {
+        let cluster = link.cluster.trim();
+        if cluster.is_empty() {
+            return Err(Outcome::NotLinked);
+        }
+        // An explicit blank project is no project, as none at all is: the
+        // cluster is named, so the entry is linked and lacks its project.
+        let project = link
+            .project
+            .as_deref()
+            .or(connection_project)
+            .map(str::trim)
+            .filter(|project| !project.is_empty());
+        match project {
+            Some(project) => Ok(Self {
                 entry: entry.id.clone(),
                 project: project.to_owned(),
-                cluster: link.cluster.trim().to_owned(),
+                cluster: cluster.to_owned(),
             }),
-            Some(_) => Err(Outcome::NotLinked),
             None => Err(Outcome::NoProjectForEntry),
         }
     }
@@ -139,18 +149,46 @@ pub enum Outcome {
     NotLooked,
 }
 
+/// The applications of a link's project, with the link they were read for.
+/// A list from another link, or another connection, is never trusted.
+#[derive(Clone, Debug)]
+pub struct Listed {
+    provider: ProviderId,
+    link: Link,
+    apps: Vec<Application>,
+}
+
+impl Listed {
+    pub fn new(provider: ProviderId, link: Link, apps: Vec<Application>) -> Self {
+        Self {
+            provider,
+            link,
+            apps,
+        }
+    }
+
+    fn holds_for(&self, provider: ProviderId, link: &Link) -> bool {
+        self.provider == provider && self.link == *link
+    }
+}
+
 /// An outcome with the question it answers.
 #[derive(Clone, Debug)]
 pub struct Answer {
     pub query: Query,
+    pub window: RevisionWindow,
+    /// The connection it was read over; a reconnected server has another.
+    pub provider: ProviderId,
     pub outcome: Outcome,
 }
 
 impl Answer {
-    /// Whether this answers `query`: the same entry, link, workload and
-    /// hash. Editing an entry's link makes every earlier answer foreign.
-    pub fn is_for(&self, query: &Query) -> bool {
-        self.query == *query
+    /// Whether this answers `query` over `window` on `provider`'s connection:
+    /// the same entry, link, workload, hash, window and connection. Editing
+    /// an entry's link, asking another window or reconnecting makes every
+    /// earlier answer foreign.
+    pub fn is_for(&self, query: &Query, window: RevisionWindow, provider: ProviderId) -> bool {
+        self.query == *query && self.window == window && self.provider == provider
     }
 }
 
@@ -163,17 +201,32 @@ impl Provider {
     pub async fn outcome(
         &self,
         query: &Query,
-        listed: Option<&[Application]>,
+        listed: Option<&Listed>,
         window: RevisionWindow,
         now: DateTime<Utc>,
     ) -> Answer {
-        let outcome = match tokio::time::timeout(LOOK, self.look(query, listed, window, now)).await
+        self.outcome_within(LOOK, query, listed, window, now).await
+    }
+
+    /// [`outcome`](Self::outcome) with the whole look's limit given, so a
+    /// test can end one on the paused clock.
+    pub(super) async fn outcome_within(
+        &self,
+        limit: Duration,
+        query: &Query,
+        listed: Option<&Listed>,
+        window: RevisionWindow,
+        now: DateTime<Utc>,
+    ) -> Answer {
+        let outcome = match tokio::time::timeout(limit, self.look(query, listed, window, now)).await
         {
             Ok(outcome) => outcome,
             Err(_) => Outcome::Failed(ReadError::Timeout),
         };
         Answer {
             query: query.clone(),
+            window,
+            provider: self.id(),
             outcome,
         }
     }
@@ -181,7 +234,7 @@ impl Provider {
     async fn look(
         &self,
         query: &Query,
-        listed: Option<&[Application]>,
+        listed: Option<&Listed>,
         window: RevisionWindow,
         now: DateTime<Utc>,
     ) -> Outcome {
@@ -198,8 +251,8 @@ impl Provider {
         );
         let app = query.app();
         let applications;
-        let listed = match listed {
-            Some(listed) => listed,
+        let listed = match listed.filter(|l| l.holds_for(self.id(), &query.link)) {
+            Some(listed) => listed.apps.as_slice(),
             None => {
                 applications = match self.applications(&source, survey).await {
                     Ok(applications) => applications,

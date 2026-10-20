@@ -235,16 +235,22 @@ Part A (typed APIs) is not designed here. Its only effect on this design is that
 | Found | Coroot's status, its findings, the window and the samples on each side |
 | No such revision | "Coroot keeps no revision ⟨hash⟩ of ⟨namespace/name⟩", with that it keeps a Deployment's last 100 |
 | No such application | "Coroot lists no application ⟨namespace/name⟩ in ⟨cluster⟩" |
-| No such project | "Coroot lists no project ⟨project⟩", naming the key that names it |
+| No such project | "Coroot answered not found for project ⟨project⟩", naming the key that names it. It is Coroot's 404 on the project's applications list, read without a projects request, and it does not claim the project is missing: a wrong proxy path or an old Coroot answers the same |
 | No Coroot connection | "Coroot isn't connected · Open Settings" |
 | No Coroot cluster linked to the entry | "No Coroot cluster is linked to ⟨entry⟩", with where to link one |
 | No project for the entry | "⟨entry⟩ names no Coroot project, and the connection names none" |
 | Refused | "Not permitted to read this application" (the application's page) or "…its window" (the window), as Deployments says them |
-| No data for the window | "Coroot has no data for this window", as Deployments says it; never a missing application |
+| No data for the window | "Coroot has no data for this window", as Deployments says it; never a missing application. It covers Coroot's own 404 for the window and a window page that carries no chart history at all |
 | Data that stops early | The window's last sample, as Deployments says it ("Coroot's data stops at ⟨time⟩") |
 | Failed | The read's message and Retry; a last answer for the same identity stays under it, marked stale |
 | Not a Deployment | An Argo Rollout's Stage: "Coroot keeps revisions of Deployments only" ([Argo Rollouts](#argo-rollouts)) |
 | Not looked for | The hop's current ReplicaSet isn't known or its pods aren't confirmed to run the Freight, with delivery's reason; its revision may be another change's, so nothing is read |
+
+Three rules of the look, kept in `coroot/outcome.rs`:
+
+- **The newest revision of a hash wins.** Rolling back to an older ReplicaSet re-uses its pod-template hash, so Coroot can keep several revisions with one hash. It sends them newest first, and the running ReplicaSet is the latest rollout, so the first match is the one.
+- **An entry with a blank `project` is a named cluster without a project**, not an unlinked entry: "No project for the entry".
+- **An answer is for its entry, link, window and connection.** `Answer::is_for(query, window, provider)` compares all of them, and an applications list (`Listed`) carries the link and connection it was read for; one from another link is read again rather than trusted.
 
 **A Coroot answer for another entry's application never draws as this one's.** Three guards, each proved by a test:
 

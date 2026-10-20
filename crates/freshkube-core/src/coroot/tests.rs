@@ -1457,6 +1457,10 @@ fn revision_text_is_bounded() {
 
 // What Coroot found after a deploy (`outcome.rs`).
 
+async fn server_with_apps() -> Server {
+    server(vec![(200, shop_apps())]).await
+}
+
 fn shop_apps() -> serde_json::Value {
     serde_json::json!({"applications":[
         {"id":"c:shop:Deployment:auth","status":"ok","category":"application"}]})
@@ -1513,7 +1517,7 @@ async fn look(responses: Vec<(u16, serde_json::Value)>, query: &Query) -> (Outco
     let server = server(responses).await;
     let provider = Provider::new(&server.url, Credentials::None).unwrap();
     let answer = provider.outcome(query, None, window(), now()).await;
-    assert!(answer.is_for(query));
+    assert!(answer.is_for(query, window(), provider.id()));
     let requests = server.requests.lock().unwrap().clone();
     (answer.outcome, requests)
 }
@@ -1564,14 +1568,60 @@ async fn listed_applications_save_a_request() {
     .await;
     let provider = Provider::new(&server.url, Credentials::None).unwrap();
     let source = provider.linked_source("shop-api");
-    let listed = provider.applications(&source, range()).await.unwrap();
+    let apps = provider.applications(&source, range()).await.unwrap();
+    let listed = Listed::new(provider.id(), q.link.clone(), apps);
     server.requests.lock().unwrap().clear();
     let answer = provider.outcome(&q, Some(&listed), window(), now()).await;
     assert!(matches!(answer.outcome, Outcome::Found(_)));
     assert_eq!(server.requests.lock().unwrap().len(), 2);
-    // Listed, but not the application asked for.
-    let answer = provider.outcome(&q, Some(&[]), window(), now()).await;
+    // A list that holds no such application is an answer.
+    let empty = Listed::new(provider.id(), q.link.clone(), vec![]);
+    let answer = provider.outcome(&q, Some(&empty), window(), now()).await;
     assert!(matches!(answer.outcome, Outcome::NoApplication));
+}
+
+#[tokio::test]
+async fn a_list_from_another_link_or_connection_is_read_again() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let none = serde_json::json!({"applications":[]});
+    let server = server(vec![(200, none.clone()), (200, none.clone()), (200, none)]).await;
+    let provider = Provider::new(&server.url, Credentials::None).unwrap();
+    let other = Provider::new(&server.url, Credentials::None).unwrap();
+    let app = {
+        let lister = server_with_apps().await;
+        let lister_provider = Provider::new(&lister.url, Credentials::None).unwrap();
+        let source = lister_provider.linked_source("shop-api");
+        lister_provider
+            .applications(&source, range())
+            .await
+            .unwrap()
+            .remove(0)
+    };
+    // Each list holds the application, so trusting it would find it; the
+    // fake's own lists hold none, so a re-read says there is none.
+    let foreign = [
+        Listed::new(
+            provider.id(),
+            link_of("cluster-c", "shop-api", "c"),
+            vec![app.clone()],
+        ),
+        Listed::new(
+            provider.id(),
+            link_of("cluster-a", "shop-web", "c"),
+            vec![app.clone()],
+        ),
+        Listed::new(other.id(), q.link.clone(), vec![app]),
+    ];
+    for listed in &foreign {
+        let answer = provider.outcome(&q, Some(listed), window(), now()).await;
+        assert!(
+            matches!(answer.outcome, Outcome::NoApplication),
+            "{:?}",
+            answer.outcome
+        );
+    }
+    // Each read the list afresh.
+    assert_eq!(server.requests.lock().unwrap().len(), 3);
 }
 
 #[tokio::test]
@@ -1709,26 +1759,146 @@ fn a_link_is_the_entry_s_own_and_matching_names_link_nothing() {
     assert!(matches!(unlinked, Err(Outcome::NotLinked)));
     let no_project = Link::of(&entry("cluster-a", Some((None, "c"))), None);
     assert!(matches!(no_project, Err(Outcome::NoProjectForEntry)));
+    // An explicit blank project leaves a named cluster without its project,
+    // even when the connection names one; a blank cluster is no link.
+    for connection in [None, Some("shop-api")] {
+        assert!(matches!(
+            Link::of(&entry("cluster-a", Some((Some(" "), "c"))), connection),
+            Err(Outcome::NoProjectForEntry)
+        ));
+    }
     assert!(matches!(
-        Link::of(&entry("cluster-a", Some((Some(" "), "c"))), None),
+        Link::of(&entry("cluster-a", Some((None, " "))), Some("shop-api")),
         Err(Outcome::NotLinked)
     ));
 }
 
 #[test]
-fn an_answer_is_for_its_entry_and_its_link_only() {
+fn an_answer_is_for_its_entry_link_window_and_connection_only() {
+    let server_url = "http://127.0.0.1:1";
+    let provider = Provider::new(server_url, Credentials::None).unwrap();
+    let reconnected = Provider::new(server_url, Credentials::None).unwrap();
     let a = query(link_of("cluster-a", "shop-api", "c"));
     let answer = Answer {
         query: a.clone(),
+        window: window(),
+        provider: provider.id(),
         outcome: Outcome::NoRevision,
     };
-    assert!(answer.is_for(&a));
+    assert!(answer.is_for(&a, window(), provider.id()));
     // The same Coroot application asked for by another entry.
-    assert!(!answer.is_for(&query(link_of("cluster-c", "shop-api", "c"))));
+    let c = query(link_of("cluster-c", "shop-api", "c"));
+    assert!(!answer.is_for(&c, window(), provider.id()));
     // The link edited: another cluster, another project, another hash.
-    assert!(!answer.is_for(&query(link_of("cluster-a", "shop-api", "d"))));
-    assert!(!answer.is_for(&query(link_of("cluster-a", "shop-web", "c"))));
+    for edited in [
+        query(link_of("cluster-a", "shop-api", "d")),
+        query(link_of("cluster-a", "shop-web", "c")),
+    ] {
+        assert!(!answer.is_for(&edited, window(), provider.id()));
+    }
     let mut rehashed = a.clone();
     rehashed.hash = Some("ffffff".into());
-    assert!(!answer.is_for(&rehashed));
+    assert!(!answer.is_for(&rehashed, window(), provider.id()));
+    // Another window, and a reconnected server with the same project.
+    let wider = RevisionWindow::both(Duration::from_secs(3600));
+    assert!(!answer.is_for(&a, wider, provider.id()));
+    assert!(!answer.is_for(&a, window(), reconnected.id()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_look_that_hears_nothing_ends_in_a_timeout_on_the_test_clock() {
+    // A server that accepts and never answers.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let held = tokio::spawn(async move {
+        let mut sockets = vec![];
+        loop {
+            sockets.push(listener.accept().await.unwrap());
+        }
+    });
+    let provider = Provider::new(&url, Credentials::None).unwrap();
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let started = tokio::time::Instant::now();
+    let limit = Duration::from_secs(7);
+    let answer = provider
+        .outcome_within(limit, &q, None, window(), now())
+        .await;
+    assert!(
+        matches!(answer.outcome, Outcome::Failed(ReadError::Timeout)),
+        "{:?}",
+        answer.outcome
+    );
+    assert_eq!(started.elapsed(), limit);
+    // With the whole look's limit, a server that says nothing ends the look
+    // at the provider's read deadline, as a failure either way.
+    let answer = provider.outcome(&q, None, window(), now()).await;
+    assert!(matches!(answer.outcome, Outcome::Failed(_)));
+    assert!(started.elapsed() <= limit + Duration::from_secs(50));
+    held.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_the_future_cancels_the_look() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // A server that notes when the connection it holds is closed.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let closed = Arc::new(AtomicBool::new(false));
+    let flag = closed.clone();
+    let held = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = vec![0; 16384];
+        // The request, then nothing until the client goes away.
+        while socket.read(&mut bytes).await.is_ok_and(|n| n > 0) {}
+        flag.store(true, Ordering::SeqCst);
+    });
+    let provider = Provider::new(&url, Credentials::None).unwrap();
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    {
+        let look = provider.outcome(&q, None, window(), now());
+        tokio::select! {
+            _ = look => panic!("the server never answers"),
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+        }
+    }
+    for _ in 0..400 {
+        if closed.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::task::yield_now().await;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        closed.load(Ordering::SeqCst),
+        "the look kept its connection"
+    );
+    held.abort();
+}
+
+#[tokio::test]
+async fn after_a_rollback_the_newest_revision_of_the_hash_is_the_one() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    // Rolling back to an old ReplicaSet re-uses its hash: Coroot keeps a
+    // revision per rollout, newest first, and the running ReplicaSet is the
+    // latest of them.
+    let finding =
+        || serde_json::json!([{"report":"SLO","ok":true,"message":"No change","time":null}]);
+    let mut page = auth_page();
+    let rows = serde_json::json!([
+        deployment_row("9c41e7:1789998000", "9c41e7: auth:1.3.9", finding()),
+        deployment_row("2b70aa:1789994000", "2b70aa: auth:1.4.0", finding()),
+        deployment_row("9c41e7:1789990000", "9c41e7: auth:1.3.9", finding()),
+    ]);
+    let reports = page["data"]["reports"].as_array_mut().unwrap();
+    reports.retain(|r| r["name"] != "Deployments");
+    reports.push(deployments_report(rows));
+    let (outcome, _) = look(
+        vec![(200, shop_apps()), (200, page.clone()), (200, page)],
+        &q,
+    )
+    .await;
+    let Outcome::Found(view) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(view.revision.id, "9c41e7:1789998000");
 }
