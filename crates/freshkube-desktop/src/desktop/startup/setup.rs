@@ -36,8 +36,8 @@ impl Pilot {
                         .update(cx, |page, cx| page.sync_setup(file, defer, cx));
                     if *setup_changed {
                         this.rebuild_switcher(cx);
-                        this.sync_setup_connection(window, cx);
                     }
+                    this.sync_setup_connection(window, cx);
                     cx.notify();
                 }
             },
@@ -53,8 +53,9 @@ impl Pilot {
         };
         let connection = setup.coroot.clone();
         let setup = setup.clone();
+        let revision = self.setup_file.read(cx).read_revision();
         let reconnect = self.setup_file.read(cx).coroot_reconnect;
-        self.pages.set_setup(setup, cx);
+        self.pages.set_setup(setup, revision, cx);
         self.pages.observability.update(cx, |page, cx| {
             page.set_setup_connection(&connection, reconnect, window, cx)
         });

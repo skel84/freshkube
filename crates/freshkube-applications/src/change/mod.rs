@@ -20,6 +20,8 @@ mod detail;
 mod outcome;
 pub(crate) mod read;
 pub(crate) mod table;
+#[cfg(test)]
+mod unread_tests;
 mod view;
 
 use std::collections::BTreeSet;
