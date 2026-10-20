@@ -9,7 +9,7 @@ use std::rc::Rc;
 use freshkube_core::coroot as api;
 use freshkube_observability::After;
 use freshkube_ui::palette::palette;
-use freshkube_ui::platform::OpenSettings;
+use freshkube_ui::platform::{OpenClustersSettings, OpenCorootSettings};
 use freshkube_ui::ui::Tone;
 use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::*;
@@ -22,7 +22,10 @@ use crate::ui::{self, dp};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::change) enum Act {
     Retry,
-    Settings,
+    /// Settings' Coroot section: the connection and its project.
+    CorootSettings,
+    /// Settings' Clusters section: the entry's Coroot link.
+    ClustersSettings,
 }
 
 /// The section, as it is drawn.
@@ -71,6 +74,17 @@ impl Section {
                 None => after.revision_line().to_owned(),
             },
             State::Banner { lead, body, .. } => format!("{lead} {body}"),
+        }
+    }
+}
+
+impl Section {
+    /// The banner's tone and the button it carries, for tests.
+    #[cfg(any(test, feature = "testing"))]
+    pub(in crate::change) fn banner_look(&self) -> Option<(Tone, Option<Act>)> {
+        match &self.state {
+            State::Banner { tone, act, .. } => Some((*tone, *act)),
+            _ => None,
         }
     }
 }
@@ -172,19 +186,19 @@ fn banner(outcome: &api::Outcome, words: &Words, why: Option<&str>) -> Section {
                  A wrong proxy path or an old Coroot answers the same.",
                 words.entry
             ),
-            Some(Act::Settings),
+            Some(Act::CorootSettings),
         ),
         api::Outcome::NoConnection => (
             Tone::Warn,
             "Coroot isn't connected.".into(),
             "Connect it in Settings to read what Coroot found after this deploy.".into(),
-            Some(Act::Settings),
+            Some(Act::CorootSettings),
         ),
         api::Outcome::NotLinked => (
             Tone::Warn,
             format!("No Coroot cluster is linked to {}.", words.entry),
             "Name its Coroot cluster in the entry's coroot key.".into(),
-            Some(Act::Settings),
+            Some(Act::ClustersSettings),
         ),
         api::Outcome::NoProjectForEntry => (
             Tone::Warn,
@@ -193,7 +207,7 @@ fn banner(outcome: &api::Outcome, words: &Words, why: Option<&str>) -> Section {
                 words.entry
             ),
             "Name a project in the entry's coroot key or in the connection's.".into(),
-            Some(Act::Settings),
+            Some(Act::ClustersSettings),
         ),
         api::Outcome::Refused(read) => (
             Tone::Crit,
@@ -271,7 +285,7 @@ impl Section {
                     .id("change-after-stale")
                     .test_support()
                 }))
-                .child(after.render("change-after", cx))
+                .child(after.render(cx))
                 .child(
                     muted(
                         "Another window, or the other reports: Compare in Observability.",
@@ -319,7 +333,7 @@ impl Section {
 fn act_button(act: Act, cx: &mut Context<ChangePage>) -> AnyElement {
     let (id, label) = match act {
         Act::Retry => ("change-after-retry", "Retry"),
-        Act::Settings => ("change-after-settings", "Open Settings"),
+        Act::CorootSettings | Act::ClustersSettings => ("change-after-settings", "Open Settings"),
     };
     h_flex()
         .child(
@@ -329,7 +343,10 @@ fn act_button(act: Act, cx: &mut Context<ChangePage>) -> AnyElement {
                 .label(label)
                 .on_click(cx.listener(move |this, _, window, cx| match act {
                     Act::Retry => this.retry_outcome(cx),
-                    Act::Settings => window.dispatch_action(Box::new(OpenSettings), cx),
+                    Act::CorootSettings => window.dispatch_action(Box::new(OpenCorootSettings), cx),
+                    Act::ClustersSettings => {
+                        window.dispatch_action(Box::new(OpenClustersSettings), cx)
+                    }
                 })),
         )
         .into_any_element()

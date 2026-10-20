@@ -81,22 +81,26 @@ impl OutcomeReader {
             .flatten()
     }
 
-    /// Says whether a change page is shown and wants Coroot connected. It
-    /// is the change page's visibility: while it is true, a hidden
-    /// Observability makes the provider the setup's connection names (and
-    /// nothing else), when the person's choice is to reconnect. Saying it
-    /// is no longer wanted drops no provider.
-    pub fn want(&self, wanted: bool, cx: &mut App) {
+    /// Says whether the change page `by` is shown and wants Coroot
+    /// connected. It is that page's visibility, kept per page: while any
+    /// wants it, a hidden Observability makes the provider the setup's
+    /// connection names (and nothing else), when the person's choice is to
+    /// reconnect. No longer wanting it drops no provider.
+    pub fn want(&self, by: EntityId, wanted: bool, cx: &mut App) {
         #[cfg(any(test, feature = "testing"))]
         if let Some(script) = &self.script {
+            let mut script = script.0.borrow_mut();
             if wanted {
-                script.0.borrow_mut().connects += 1;
+                script.connects += 1;
+                script.wanting.insert(by);
+            } else {
+                script.wanting.remove(&by);
             }
             return;
         }
         _ = self
             .page
-            .update(cx, |page, cx| page.want_connection(wanted, cx));
+            .update(cx, |page, cx| page.want_connection(by, wanted, cx));
     }
 
     /// Calls `then` when the connection starts, finishes, fails or drops.
@@ -165,12 +169,16 @@ impl ObservabilityPage {
         }))
     }
 
-    /// A change page is shown, or hidden: the shell's flag. Wanted, and
+    /// A change page is shown, or hidden, by its entity: wanted by any, and
     /// when this page is hidden and not connected, it connects as the first
     /// show would. Idempotent: it does nothing while connected, connecting
     /// or shown, or when the reconnect choice is off.
-    pub(crate) fn want_connection(&mut self, wanted: bool, cx: &mut Context<Self>) {
-        self.wants_change = wanted;
+    pub(crate) fn want_connection(&mut self, by: EntityId, wanted: bool, cx: &mut Context<Self>) {
+        if wanted {
+            self.wanting.insert(by);
+        } else {
+            self.wanting.remove(&by);
+        }
         if !wanted
             || self.fixture
             || self.live.visible
@@ -194,11 +202,15 @@ struct Scripted {
     connected: bool,
     asked: Vec<Asked>,
     connects: usize,
+    /// The change pages that want the connection.
+    wanting: std::collections::BTreeSet<EntityId>,
 }
 
 /// A look asked of the script.
 #[cfg(any(test, feature = "testing"))]
 pub struct Asked {
+    /// The connection the look was asked over.
+    pub id: api::ProviderId,
     pub query: api::Query,
     pub listed: Option<api::Listed>,
     pub window: api::RevisionWindow,
@@ -231,6 +243,7 @@ impl Script {
             connected: true,
             asked: Vec::new(),
             connects: 0,
+            wanting: Default::default(),
         })))
     }
 
@@ -255,9 +268,19 @@ impl Script {
         self.0.borrow_mut().id = provider.id();
     }
 
-    /// How many times the page asked Observability to connect.
+    /// How many times a page said it wants Coroot connected.
     pub fn connects(&self) -> usize {
         self.0.borrow().connects
+    }
+
+    /// How many change pages want Coroot connected now.
+    pub fn wanting(&self) -> usize {
+        self.0.borrow().wanting.len()
+    }
+
+    /// The connection the look at `index` was asked over.
+    pub fn id_of(&self, index: usize) -> api::ProviderId {
+        self.0.borrow().asked[index].id
     }
 
     /// The looks asked and not yet answered, oldest first.
@@ -286,16 +309,13 @@ impl Script {
     }
 
     /// Answers the look at `index` with `outcome`, as for the query it was
-    /// asked, in the window it was asked, over the connection now. Returns
-    /// whether anyone still waited for it.
+    /// asked, in the window it was asked, over the connection it was asked
+    /// over. Returns whether anyone still waited for it.
     pub fn answer(&self, index: usize, outcome: api::Outcome) -> bool {
-        let id = self.id();
-        let (query, window) = {
+        let (id, query, window) = {
             let script = self.0.borrow();
-            (
-                script.asked[index].query.clone(),
-                script.asked[index].window,
-            )
+            let asked = &script.asked[index];
+            (asked.id, asked.query.clone(), asked.window)
         };
         self.answer_as(
             index,
@@ -322,7 +342,9 @@ impl Script {
         window: api::RevisionWindow,
     ) -> oneshot::Receiver<Result<api::Answer, String>> {
         let (sender, receiver) = oneshot::channel();
+        let id = self.id();
         self.0.borrow_mut().asked.push(Asked {
+            id,
             query,
             listed,
             window,

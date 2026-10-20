@@ -3,6 +3,7 @@ use super::*;
 use crate::{backend, state::Snapshot};
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 use freshkube_core::coroot as api;
+use freshkube_core::job::OwnedJob;
 use freshkube_reads::Loader;
 use std::{cell::RefCell, future::Future, time::Duration};
 use tokio::runtime::Handle;
@@ -59,6 +60,8 @@ pub(super) struct Live {
     /// it is nothing but the provider, and showing the page lists the
     /// projects and chooses the remembered one.
     pub provider_only: bool,
+    /// Building the provider for a change page, on the I/O worker.
+    pub provider_job: Option<(OwnedJob, Task<()>)>,
     pub access: Option<String>,
     pub provider: Option<api::Provider>,
     pub source: Option<api::Source>,
@@ -111,6 +114,7 @@ impl Live {
             runtime,
             visible: false,
             provider_only: false,
+            provider_job: None,
             access: None,
             provider: None,
             source: None,
@@ -403,6 +407,7 @@ impl ObservabilityPage {
     pub(super) fn invalidate_connection(&mut self) {
         self.live.provider = None;
         self.live.provider_only = false;
+        self.live.provider_job = None;
         self.live.source = None;
         self.live.projects.clear();
         self.live.project_labels.clear();
@@ -430,6 +435,10 @@ impl ObservabilityPage {
     pub fn connection_state(&self) -> ConnectionState {
         if self.live.connecting {
             ConnectionState::Connecting
+        } else if self.live.provider.is_some() && self.live.provider_only {
+            // Made for a change page and never asked anything: a wrong key
+            // would read as connected, so it says nothing of the sort.
+            ConnectionState::Disconnected
         } else if self.live.provider.is_some() {
             ConnectionState::Connected
         } else if let Some(error) = &self.live.error {
@@ -544,25 +553,45 @@ impl ObservabilityPage {
     }
     /// The provider for a change page while this page is hidden, and
     /// nothing else: no request is made, no project listed, no read
-    /// started. Showing the page finishes the connection
+    /// started. It is built on the I/O worker, as `connect` builds it.
+    /// Showing the page finishes the connection
     /// ([`Self::finish_provider_only`]).
     fn connect_provider_only(&mut self, cx: &mut Context<Self>) {
         let (url, credentials, auth, _) = self.credentials(cx);
         self.invalidate_connection();
-        match api::Provider::new(&url, credentials) {
-            Ok(provider) => {
-                self.live.provider = Some(provider);
-                self.live.provider_only = true;
-            }
-            Err(error) => self.live.error = Some(connect_error(error, auth)),
-        }
-        cx.emit(ObservabilityEvent::Connection);
-        cx.notify();
+        let (job, receiver) = backend::spawn_job(
+            &self.live.runtime,
+            Duration::from_secs(5),
+            api::ReadError::Timeout,
+            async move { api::Provider::new(&url, credentials) },
+        );
+        let task = cx.spawn(async move |this, cx| {
+            let result = receiver.await.unwrap_or(Err(api::ReadError::Failed));
+            _ = this.update(cx, |this, cx| {
+                // Replaced, shown, or connected another way meanwhile: this
+                // provider is no longer the one asked for.
+                if this.live.provider_job.take().is_none() || this.live.provider.is_some() {
+                    return;
+                }
+                match result {
+                    Ok(provider) => {
+                        this.live.provider = Some(provider);
+                        this.live.provider_only = true;
+                    }
+                    Err(error) => this.live.error = Some(connect_error(error, auth)),
+                }
+                cx.emit(ObservabilityEvent::Connection);
+                cx.notify();
+            });
+        });
+        self.live.provider_job = Some((job, task));
     }
     /// Shown, a provider made for a change page lists the projects as
-    /// the first connection does, over the same provider.
+    /// the first connection does, over the same provider. The page counts
+    /// as connected only when the list lands: hiding it mid-listing leaves
+    /// the provider as it was, to list again on the next show.
     fn finish_provider_only(&mut self, cx: &mut Context<Self>) {
-        if !std::mem::take(&mut self.live.provider_only) {
+        if !self.live.provider_only || self.live.connecting {
             return;
         }
         let Some(provider) = self.live.provider.clone() else {
@@ -580,6 +609,7 @@ impl ObservabilityPage {
             },
             move |this, result, cx| {
                 this.live.connecting = false;
+                this.live.provider_only = false;
                 match result {
                     Ok((provider, projects)) => {
                         this.live.provider = Some(provider);

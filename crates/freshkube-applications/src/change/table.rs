@@ -178,7 +178,10 @@ impl TableSource for ChangePage {
             )
             .text_color(p.ink_2)
             // Coroot's verdict, once read, sits after the words: it is
-            // drawn beside the hop's own glyph and link, never in them.
+            // drawn beside the hop's own glyph and link, never in them. The
+            // cell is a row, so the mark stays on the words' line.
+            .flex()
+            .items_center()
             .children(
                 row.coroot
                     .as_ref()

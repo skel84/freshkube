@@ -136,6 +136,7 @@ impl ChangePage {
             Memo {
                 query: None,
                 window: self.outcomes.window,
+                provider: None,
                 outcome,
                 after,
                 read: Utc::now(),

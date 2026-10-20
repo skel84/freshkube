@@ -34,7 +34,7 @@ use gpui_kit::*;
 use super::{ChangePage, Fetch};
 
 pub use example::Kind;
-pub(super) use section::Section;
+pub(super) use section::{Act, Section};
 
 /// An outcome read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
@@ -113,6 +113,8 @@ struct Memo {
     /// What was asked; none for example data's, which asks nothing.
     query: Option<api::Query>,
     window: api::RevisionWindow,
+    /// The connection it was read over.
+    provider: Option<api::ProviderId>,
     outcome: api::Outcome,
     after: Option<Rc<After>>,
     read: DateTime<Utc>,
@@ -125,12 +127,18 @@ struct Memo {
 pub(super) struct Outcomes {
     pub(super) coroot: Coroot,
     window: api::RevisionWindow,
-    read: Loader<api::Answer, Key>,
+    /// The read in flight, which owns its job, its delivery and its
+    /// generation; what it read is kept in `memo`.
+    read: Loader<(), Key>,
     /// The question in flight, with the hop it is for.
     in_flight: Option<Key>,
     memo: BTreeMap<String, Memo>,
-    /// The project's applications, for the next look of the same link.
-    listed: Option<api::Listed>,
+    /// The project's applications, for the next look of the same link while
+    /// the page shows and for [`FRESH_FOR`].
+    listed: Option<(api::Listed, Instant)>,
+    /// The connection the last read or look for one found (`Some(None)`:
+    /// none), so a `Connection` event that changes nothing reads nothing.
+    seen: Option<Option<api::ProviderId>>,
     /// A look found no connection; read again when it changes.
     no_connection: bool,
     _connection: Option<Subscription>,
@@ -147,6 +155,7 @@ impl Default for Outcomes {
             in_flight: None,
             memo: BTreeMap::new(),
             listed: None,
+            seen: None,
             no_connection: false,
             _connection: None,
             _release: None,
@@ -196,18 +205,19 @@ impl ChangePage {
         if old != new {
             // The old reader's connection isn't wanted by this page any more.
             if let Some(old) = old {
-                old.want(false, cx);
+                old.want(cx.entity_id(), false, cx);
             }
             self.outcomes._connection = new.as_ref().and_then(|reader| {
                 reader.on_connection(cx, |page, cx| page.connection_changed(cx))
             });
+            let id = cx.entity_id();
             self.outcomes._release = new
                 .clone()
-                .map(|reader| cx.on_release(move |_, cx| reader.want(false, cx)));
+                .map(|reader| cx.on_release(move |_, cx| reader.want(id, false, cx)));
         }
         // Shown, the page wants Coroot connected; hidden, it doesn't.
         if let Some(reader) = &new {
-            reader.want(self.visible, cx);
+            reader.want(cx.entity_id(), self.visible, cx);
         }
         self.detail = self.derive_detail();
         self.sync_marks();
@@ -218,6 +228,15 @@ impl ChangePage {
     /// The connection started, finished, failed or dropped: what was read
     /// over the old one is foreign, and a look that found none is asked again.
     fn connection_changed(&mut self, cx: &mut Context<Self>) {
+        // Only a different connection (or none) makes what was read foreign.
+        if let Coroot::Live(Live {
+            reader: Some(reader),
+            ..
+        }) = &self.outcomes.coroot
+            && self.outcomes.seen == Some(reader.connection(cx).map(|c| c.id()))
+        {
+            return;
+        }
         self.outcomes.forget();
         self.detail = self.derive_detail();
         self.sync_marks();
@@ -317,6 +336,7 @@ impl ChangePage {
             .reader
             .as_ref()
             .and_then(|reader| reader.connection(cx));
+        self.outcomes.seen = Some(connection.as_ref().map(|c| c.id()));
         let Some(connection) = connection else {
             self.outcomes.no_connection = true;
             self.outcomes.read.reset();
@@ -336,6 +356,7 @@ impl ChangePage {
         let fresh = kept.is_some_and(|memo| {
             memo.query.as_ref() == Some(&key.query)
                 && memo.window == key.window
+                && memo.provider == key.provider
                 && memo.stale.is_none()
                 && cx.background_executor().now().duration_since(memo.at) < FRESH_FOR
         });
@@ -344,7 +365,13 @@ impl ChangePage {
         }
         let request = self.outcomes.read.start(key.clone());
         self.outcomes.in_flight = Some(key.clone());
-        let listed = self.outcomes.listed.clone();
+        let now = cx.background_executor().now();
+        let listed = self
+            .outcomes
+            .listed
+            .as_ref()
+            .filter(|(_, at)| now.duration_since(*at) < FRESH_FOR)
+            .map(|(listed, _)| listed.clone());
         let (job, receiver) = connection.look(query, listed, key.window, Utc::now());
         let task = cx.spawn(async move |this, cx| {
             let result = receiver
@@ -366,18 +393,31 @@ impl ChangePage {
         result: Result<api::Answer, String>,
         cx: &mut Context<Self>,
     ) {
-        if !self.outcomes.read.land(request, result.clone(), cx) {
+        if !self.outcomes.read.land(request, Ok(()), cx) {
             return;
         }
         self.outcomes.in_flight = None;
+        // An answer over a connection that is not this reader's now is
+        // foreign, whatever it says: read again over the current one.
+        let current = match &self.outcomes.coroot {
+            Coroot::Live(Live {
+                reader: Some(reader),
+                ..
+            }) => reader.connection(cx).map(|c| c.id()),
+            _ => None,
+        };
+        if current != key.provider {
+            self.connection_changed(cx);
+            return;
+        }
         let outcome = match result {
             Ok(answer)
                 if key
                     .provider
                     .is_some_and(|provider| answer.is_for(&key.query, key.window, provider)) =>
             {
-                if answer.listed.is_some() {
-                    self.outcomes.listed = answer.listed.clone();
+                if let Some(listed) = answer.listed.clone() {
+                    self.outcomes.listed = Some((listed, cx.background_executor().now()));
                 }
                 answer.outcome
             }
@@ -400,6 +440,7 @@ impl ChangePage {
             && let Some(memo) = self.outcomes.memo.get_mut(&key.hop)
             && memo.query.as_ref() == Some(&key.query)
             && memo.window == key.window
+            && memo.provider == key.provider
             && !matches!(memo.outcome, api::Outcome::Failed(_))
         {
             memo.stale = Some(error.to_string());
@@ -416,6 +457,7 @@ impl ChangePage {
             Memo {
                 query: Some(key.query.clone()),
                 window: key.window,
+                provider: key.provider,
                 outcome,
                 after,
                 read: Utc::now(),
@@ -476,7 +518,7 @@ impl ChangePage {
             ..
         }) = &self.outcomes.coroot
         {
-            reader.want(wanted, cx);
+            reader.want(cx.entity_id(), wanted, cx);
         }
     }
 
@@ -485,6 +527,8 @@ impl ChangePage {
     pub(super) fn hide_outcomes(&mut self) {
         self.outcomes.read.reset();
         self.outcomes.in_flight = None;
+        // The applications list lasts for the page's shown life.
+        self.outcomes.listed = None;
     }
 }
 
@@ -496,6 +540,7 @@ impl Outcomes {
         self.in_flight = None;
         self.memo.clear();
         self.listed = None;
+        self.seen = None;
         self.no_connection = false;
     }
 }
@@ -532,6 +577,12 @@ impl ChangePage {
     /// Reads the selected hop's outcome again, as Retry does.
     pub fn read_outcome_again(&mut self, cx: &mut Context<Self>) {
         self.retry_outcome(cx);
+    }
+
+    /// The outcome banner's tone and which button it carries (`retry`,
+    /// `coroot` or `clusters`), when the section is a banner.
+    pub fn outcome_banner(&self) -> Option<(Tone, Option<&'static str>)> {
+        self.detail.as_ref()?.after_banner()
     }
 
     /// Whether an outcome read is in flight.

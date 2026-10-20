@@ -38,6 +38,21 @@ pub(super) struct Detail {
 }
 
 impl Detail {
+    /// The outcome banner's tone and which Settings section its button
+    /// opens, for the page's tests.
+    #[cfg(any(test, feature = "testing"))]
+    pub(super) fn after_banner(&self) -> Option<(Tone, Option<&'static str>)> {
+        let (tone, act) = self.after.as_ref()?.banner_look()?;
+        Some((
+            tone,
+            act.map(|act| match act {
+                super::outcome::Act::Retry => "retry",
+                super::outcome::Act::CorootSettings => "coroot",
+                super::outcome::Act::ClustersSettings => "clusters",
+            }),
+        ))
+    }
+
     /// The outcome section in words, for the page's tests.
     #[cfg(any(test, feature = "testing"))]
     pub(super) fn after_words(&self) -> Option<String> {

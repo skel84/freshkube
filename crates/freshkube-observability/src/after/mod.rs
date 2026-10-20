@@ -23,6 +23,9 @@ use freshkube_core::coroot as api;
 /// rest.
 const MAX_CHARTS: usize = 4;
 
+/// The ids of the section's elements start with this.
+const ID: &str = "change-after";
+
 /// The report Coroot's findings fall back to when it sent none.
 const FALLBACK_REPORT: &str = "SLO";
 
@@ -38,12 +41,43 @@ pub struct After {
     /// The report whose charts show.
     report: SharedString,
     shown: Vec<Shown>,
-    /// How many of the report's charts are left to Compare.
-    more: usize,
+    /// What says how many of the report's charts are left to Compare.
+    more: Option<SharedString>,
+    ids: Ids,
     /// Where Coroot's data stops, when it stops before the window's end.
     ends_early: Option<SharedString>,
     /// Why some charts show no points.
     history_note: Option<SharedString>,
+}
+
+/// The element ids of the section, prepared with it.
+struct Ids {
+    findings: Vec<SharedString>,
+    note: SharedString,
+    ends_early: SharedString,
+    history: SharedString,
+    status: SharedString,
+    revision: SharedString,
+    no_charts: SharedString,
+    more: SharedString,
+}
+
+impl Ids {
+    fn new(findings: usize) -> Self {
+        let id = |what: &str| SharedString::from(format!("{ID}-{what}"));
+        Self {
+            findings: (0..findings)
+                .map(|ix| id(&format!("finding-{ix}")))
+                .collect(),
+            note: id("note"),
+            ends_early: id("ends-early"),
+            history: id("history"),
+            status: id("status"),
+            revision: id("revision"),
+            no_charts: id("no-charts"),
+            more: id("more"),
+        }
+    }
 }
 
 struct Finding {
@@ -141,6 +175,7 @@ impl After {
                 })
             });
         }
+        let ids = Ids::new(findings.len());
         Self {
             hash: revision.hash.clone().into(),
             revision: format!(
@@ -150,23 +185,30 @@ impl After {
             )
             .into(),
             status: Status::from(revision.status),
-            findings,
             note: revision
                 .note
                 .clone()
                 .unwrap_or_else(|| "Coroot sent no findings.".into())
                 .into(),
+            more: (more > 0).then(|| {
+                format!(
+                    "{more} more chart{} of the {report} report: Compare in Observability.",
+                    if more == 1 { "" } else { "s" },
+                )
+                .into()
+            }),
             report: report.into(),
             shown,
-            more,
+            ids,
             ends_early: ends_at.map(|end| {
                 format!(
-                    "Coroot's data ends at {}, before the window's end.",
+                    "Coroot's data stops at {}, before the window's end.",
                     format::local_time(end)
                 )
                 .into()
             }),
             history_note,
+            findings,
         }
     }
 
@@ -219,11 +261,12 @@ impl After {
         self.ends_early.as_deref()
     }
 
-    /// The section's body for a found revision, ids under `id`.
-    pub fn render(&self, id: &str, cx: &App) -> Div {
-        let findings = self.findings.iter().enumerate().map(|(ix, f)| {
+    /// The section's body for a found revision.
+    pub fn render(&self, cx: &App) -> Div {
+        let ids = &self.ids;
+        let findings = self.findings.iter().zip(&ids.findings).map(|(f, id)| {
             line()
-                .id(SharedString::from(format!("{id}-finding-{ix}")))
+                .id(id.clone())
                 .test_support()
                 .items_start()
                 .child(h_flex().h(dp(20.)).flex_none().child(view::status(
@@ -235,7 +278,7 @@ impl After {
         });
         let note = self.findings.is_empty().then(|| {
             text(self.note.clone())
-                .id(SharedString::from(format!("{id}-note")))
+                .id(ids.note.clone())
                 .test_support()
                 .whitespace_normal()
         });
@@ -243,14 +286,14 @@ impl After {
             charts::chart_element(&shown.charts, shown.shown, shown.view.as_ref(), cx)
         });
         let notes = [
-            self.ends_early.as_ref().map(|n| (n, "ends-early")),
-            self.history_note.as_ref().map(|n| (n, "history")),
+            self.ends_early.as_ref().map(|n| (n, &ids.ends_early)),
+            self.history_note.as_ref().map(|n| (n, &ids.history)),
         ]
         .into_iter()
         .flatten()
-        .map(|(note, which)| {
+        .map(|(note, id)| {
             muted(note.clone(), cx)
-                .id(SharedString::from(format!("{id}-{which}")))
+                .id(id.clone())
                 .test_support()
                 .role(Role::Status)
                 .whitespace_normal()
@@ -263,13 +306,13 @@ impl After {
                     .items_start()
                     .child(
                         div()
-                            .id(SharedString::from(format!("{id}-status")))
+                            .id(ids.status.clone())
                             .test_support()
                             .child(ui::tag(self.status.tone(), None, self.status.label(), cx)),
                     )
                     .child(
                         muted(self.revision.clone(), cx)
-                            .id(SharedString::from(format!("{id}-revision")))
+                            .id(ids.revision.clone())
                             .test_support()
                             .flex_1()
                             .whitespace_normal(),
@@ -287,28 +330,18 @@ impl After {
             .when(self.shown.is_empty(), |this| {
                 this.child(
                     muted("Coroot sent no charts for this window.", cx)
-                        .id(SharedString::from(format!("{id}-no-charts")))
+                        .id(ids.no_charts.clone())
                         .test_support()
                         .whitespace_normal(),
                 )
             })
             .children(charts)
-            .when(self.more > 0, |this| {
-                this.child(
-                    muted(
-                        format!(
-                            "{} more chart{} of the {} report: Compare in Observability.",
-                            self.more,
-                            if self.more == 1 { "" } else { "s" },
-                            self.report
-                        ),
-                        cx,
-                    )
-                    .id(SharedString::from(format!("{id}-more")))
+            .children(self.more.as_ref().map(|more| {
+                muted(more.clone(), cx)
+                    .id(ids.more.clone())
                     .test_support()
-                    .whitespace_normal(),
-                )
-            })
+                    .whitespace_normal()
+            }))
     }
 }
 

@@ -462,6 +462,11 @@ impl ApplicationsPage {
             && self.entry == entry;
         self.source = source.clone();
         self.entry = entry;
+        // Example data and a live read take Coroot from different places:
+        // the list, and the changes it opens, follow the source.
+        let coroot = self.coroot();
+        self.changes
+            .update(cx, |changes, cx| changes.set_coroot(coroot, cx));
         if same {
             return;
         }

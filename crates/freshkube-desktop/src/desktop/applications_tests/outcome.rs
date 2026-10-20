@@ -8,6 +8,7 @@ use crate::observability::{OutcomeReader, Script, after_example};
 
 use freshkube_core::coroot as api;
 use freshkube_core::workspace::{Entry, Role};
+use freshkube_ui::ui::Tone;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, test::TestWindowExt};
 
 /// The change followed from prod-ams, as the other change tests open it.
@@ -136,6 +137,11 @@ fn a_deployment_hop_says_what_coroot_found_after_the_deploy(cx: &mut TestAppCont
         assert!(window.try_find("change-after-banner").is_none());
     })
     .unwrap();
+    // The mark is drawn on the hop's row, not only held as data.
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.find("change-hop-dev-deployment-coroot").visible());
+    })
+    .unwrap();
     // Read, the hop carries Coroot's verdict beside its own glyph.
     let (_, tooltip) = cx
         .read(|cx| page.read(cx).coroot_mark("dev-deployment"))
@@ -209,6 +215,21 @@ fn every_outcome_is_its_own_state_with_its_why(cx: &mut TestAppContext) {
         ),
         (OutcomeKind::NotLooked, "Not looked for.", None),
     ];
+    // Each outcome's tone and the Settings section its button opens.
+    let looks = [
+        (OutcomeKind::NoRevision, Tone::Warn, None),
+        (OutcomeKind::NoApplication, Tone::Warn, None),
+        (OutcomeKind::NoProject, Tone::Warn, Some("coroot")),
+        (OutcomeKind::NoConnection, Tone::Warn, Some("coroot")),
+        (OutcomeKind::NotLinked, Tone::Warn, Some("clusters")),
+        (OutcomeKind::NoProjectForEntry, Tone::Warn, Some("clusters")),
+        (OutcomeKind::Refused, Tone::Crit, Some("retry")),
+        (OutcomeKind::RefusedWindow, Tone::Crit, Some("retry")),
+        (OutcomeKind::NoData, Tone::Info, None),
+        (OutcomeKind::Failed, Tone::Crit, Some("retry")),
+        (OutcomeKind::NotDeployment, Tone::Info, None),
+        (OutcomeKind::NotLooked, Tone::Warn, None),
+    ];
     for (kind, said, button) in banners {
         cx.update(|cx| {
             page.update(cx, |page, cx| {
@@ -220,6 +241,12 @@ fn every_outcome_is_its_own_state_with_its_why(cx: &mut TestAppContext) {
             .unwrap();
         let got = words(cx, &page).expect("a section");
         assert!(got.starts_with(said), "{kind:?}: {got}");
+        let (_, tone, opens) = looks.into_iter().find(|(k, ..)| *k == kind).unwrap();
+        assert_eq!(
+            cx.read(|cx| page.read(cx).outcome_banner()),
+            Some((tone, opens)),
+            "{kind:?}"
+        );
         cx.update_window(handle, |_, window, _| {
             assert!(window.find("change-after-banner").visible(), "{kind:?}");
             assert!(
@@ -629,7 +656,9 @@ fn an_entry_without_a_link_or_a_project_reads_nothing(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_section_shows_at_the_narrow_window(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    // Narrow enough for the Inspector to stack under the trail, tall enough
+    // for the section to be in reach; 760 × 560 is the lead's to smoke.
+    let (_runtime, handle, view) = fixture(cx, 760., 880.);
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-applications", cx);
         window.render_frame(cx);
@@ -653,9 +682,207 @@ fn the_section_shows_at_the_narrow_window(cx: &mut TestAppContext) {
             .expect("the change shows")
     });
     select(cx, handle, &page, "dev-deployment");
-    cx.update_window(handle, |_, window, _| {
-        assert!(window.try_find("change-after").is_some());
-        assert!(window.try_find("change-after-revision").is_some());
+    // Stacked, the Inspector scrolls: the section follows the fields and the
+    // link, so it is brought into view by scrolling the Inspector.
+    cx.update_window(handle, |_, window, cx| {
+        window.scroll(
+            "change-detail",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-350.))),
+            cx,
+        );
+        window.render_frame(cx);
     })
     .unwrap();
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.find("change-after").visible());
+        // The revision line is in the Inspector's view once scrolled to.
+        let inspector = window.find("change-detail").bounds();
+        let revision = window.find("change-after-revision").bounds();
+        assert!(
+            revision.top() >= inspector.top() && revision.bottom() <= inspector.bottom(),
+            "{revision:?} in {inspector:?}"
+        );
+        // Inside the Inspector's width, never cut sideways.
+        let section = window.find("change-after").bounds();
+        assert!(
+            section.left() >= inspector.left() && section.right() <= inspector.right(),
+            "{section:?} in {inspector:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// A change opened from the Changes list reads Coroot as the one opened
+/// from an application's page does.
+#[gpui_kit::test]
+fn a_change_opened_from_the_changes_list_gets_the_section_too(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        window.click("nav-changes", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        view.read(cx)
+            .applications()
+            .0
+            .read(cx)
+            .changes_page()
+            .clone()
+            .update(cx, |page, cx| {
+                page.select("checkout/wonky-otter", window, cx)
+            });
+        window.render_frame(cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let page = cx.read(|cx| {
+        view.read(cx)
+            .applications()
+            .0
+            .read(cx)
+            .changes_page()
+            .read(cx)
+            .change_page()
+            .cloned()
+            .expect("the change shows")
+    });
+    select(cx, handle, &page, "dev-deployment");
+    let said = words(cx, &page).expect("the Deployment hop has the section");
+    assert!(said.starts_with("Revision 5d8f7c9b6"), "{said}");
+    assert!(
+        cx.read(|cx| page.read(cx).coroot_mark("dev-deployment"))
+            .is_some()
+    );
+}
+
+/// A reconnect changes the connection's id inside Observability and says so:
+/// a look in flight over the old one never lands, and the next carries the
+/// new id.
+#[gpui_kit::test]
+fn a_reconnect_drops_the_look_in_flight_and_the_next_carries_the_new_id(cx: &mut TestAppContext) {
+    let (_runtime, handle, view, page) = open(cx);
+    let script = Script::new();
+    go_live(cx, &view, &page, &script, links());
+    select(cx, handle, &page, "dev-deployment");
+    let old = script.id_of(0);
+    assert_eq!(script.pending().len(), 1);
+    // The reconnect: a new connection id, then the event Observability emits.
+    script.reconnect();
+    let observability = cx.read(|cx| view.read(cx).observability());
+    cx.update(|cx| {
+        observability.update(cx, |_, cx| {
+            cx.emit(crate::observability::ObservabilityEvent::Connection)
+        })
+    });
+    cx.run_until_parked();
+    assert!(script.dropped(0));
+    assert!(!script.answer(0, found("5d8f7c9b6")));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| page.read(cx).coroot_mark("dev-deployment")),
+        None
+    );
+    // The next look is over the new connection.
+    assert_eq!(script.asked(), 2);
+    assert_ne!(script.id_of(1), old);
+    assert_eq!(script.id_of(1), script.id());
+    assert!(script.answer(1, found("5d8f7c9b6")));
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| page.read(cx).coroot_mark("dev-deployment"))
+            .is_some()
+    );
+    // An event that changes nothing reads nothing and keeps what was read.
+    cx.update(|cx| {
+        observability.update(cx, |_, cx| {
+            cx.emit(crate::observability::ObservabilityEvent::Connection)
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(script.asked(), 2);
+    assert!(
+        cx.read(|cx| page.read(cx).coroot_mark("dev-deployment"))
+            .is_some()
+    );
+}
+
+/// A page wants Coroot connected only while it shows, by its own entity:
+/// hiding and closing it release only its own claim.
+#[gpui_kit::test]
+fn a_change_page_wants_the_connection_while_it_shows_and_releases_it_when_closed(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view, page) = open(cx);
+    let script = Script::new();
+    go_live(cx, &view, &page, &script, links());
+    assert_eq!(script.wanting(), 1);
+    cx.update(|cx| page.update(cx, |page, cx| page.set_shown(false, cx)));
+    assert_eq!(script.wanting(), 0);
+    cx.update(|cx| page.update(cx, |page, cx| page.set_shown(true, cx)));
+    assert_eq!(script.wanting(), 1);
+    // Closing the page releases its claim though it never hid.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("change-back", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(|cx| {
+        view.read(cx)
+            .applications()
+            .0
+            .read(cx)
+            .change_page()
+            .is_none()
+    }));
+    drop(page);
+    // A dropped entity is released when GPUI next flushes its effects.
+    cx.update(|_| {});
+    cx.run_until_parked();
+    assert_eq!(script.wanting(), 0);
+}
+
+/// The applications list is kept for the page's shown life: the next look of
+/// the link carries it, and hiding the page drops it.
+#[gpui_kit::test]
+fn the_applications_list_is_reused_while_shown_and_dropped_on_hide(cx: &mut TestAppContext) {
+    let (_runtime, handle, view, page) = open(cx);
+    let script = Script::new();
+    go_live(cx, &view, &page, &script, links());
+    select(cx, handle, &page, "dev-deployment");
+    // A look that read the list hands it back.
+    let (query, _) = script.pending().remove(0);
+    let listed = api::Listed::new(script.id(), query.link.clone(), vec![]);
+    let answer = api::Answer {
+        query: query.clone(),
+        window: api::RevisionWindow::default(),
+        provider: script.id(),
+        outcome: found("5d8f7c9b6"),
+        listed: Some(listed),
+    };
+    assert!(script.answer_as(0, answer));
+    cx.run_until_parked();
+    cx.update(|cx| page.update(cx, |page, cx| page.read_outcome_again(cx)));
+    cx.run_until_parked();
+    assert!(
+        script.pending().remove(0).1.is_some(),
+        "the list was handed on"
+    );
+    // Hidden, the list is dropped: showing again reads it afresh.
+    cx.update(|cx| page.update(cx, |page, cx| page.set_shown(false, cx)));
+    cx.update(|cx| page.update(cx, |page, cx| page.set_shown(true, cx)));
+    cx.run_until_parked();
+    cx.update(|cx| page.update(cx, |page, cx| page.read_outcome_again(cx)));
+    cx.run_until_parked();
+    let last = script.asked() - 1;
+    assert!(!script.dropped(last));
+    let pending = script.pending();
+    assert!(pending.last().unwrap().1.is_none(), "{pending:?}");
 }
