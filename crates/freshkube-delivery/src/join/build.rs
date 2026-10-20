@@ -3,7 +3,7 @@ use crate::digest::{Digest, tag, written_repository};
 use crate::github::PullRequest;
 use crate::kargo::Freight;
 use crate::observation::ObjectRef;
-use crate::rekor::{EntryKey, Standing as LogStanding};
+use crate::rekor::{Standing as LogStanding, entry_key};
 use crate::source::{Source, cap_note};
 use crate::tekton::{Build, CommitNames, EvidenceResult, WitnessSource};
 use crate::verify::{NotRead, Trust, Verification, Verified, verify};
@@ -484,15 +484,6 @@ fn judge(build: &Build, trust: &Trust, digest: &Digest) -> Vec<Judged> {
             object,
         })
         .collect()
-}
-
-/// Which lookup in the transparency log an attestation's is.
-fn entry_key(object: &ObjectRef, attestation: &Attestation) -> EntryKey {
-    (
-        object.namespace.clone(),
-        object.name.clone(),
-        attestation.key.clone(),
-    )
 }
 
 /// The attestations of `build` that verify with the person's key for one of

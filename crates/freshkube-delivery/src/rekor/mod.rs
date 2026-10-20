@@ -14,16 +14,18 @@
 //! signature over its checkpoint and the inclusion proof need the Sigstore
 //! trust root and are not checked; the words say so.
 //!
-//! The entry shapes read are `hashedrekord` and `intoto` (0.0.2), from
-//! Rekor's documentation. Any other shape is `Differs`, never a match.
+//! The entry shapes read are `hashedrekord` 0.0.1 and `intoto` 0.0.2, from
+//! Rekor's documentation; they are not confirmed against a live log. A
+//! known shape that holds another signature or key `Differs`; any other
+//! kind is `Unread`, which is not a difference and never a match.
 
-#![cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the lookup is called from `collect` in the next step"
-    )
-)]
+mod client;
+mod read;
+#[cfg(test)]
+mod fake;
+
+pub(crate) use client::Client;
+pub(crate) use read::read_log;
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -33,6 +35,8 @@ use base64::engine::general_purpose::STANDARD;
 use freshkube_core::resources::{Failure, FailureKind};
 use serde_json::Value;
 
+use crate::chains::Attestation;
+use crate::observation::ObjectRef;
 use crate::verify::{TrustedKey, Verified};
 
 /// The most an entry's response may be read to: an entry is a few KiB.
@@ -60,9 +64,12 @@ pub(crate) enum Outcome {
     NoIndex,
     /// The log has no entry at that index.
     NotInLog { index: u64 },
-    /// The entry is there and is not this signature's, or is a shape this
-    /// build does not read.
+    /// The entry is there, in a shape this build reads, and is not this
+    /// signature's.
     Differs { index: u64, why: &'static str },
+    /// The entry is of a kind this build does not read. That says nothing of
+    /// tampering, and it keeps the link from standing all the same.
+    Unread { index: u64, kind: String },
     /// The log did not answer.
     Unreachable(String),
     /// The log answered, and refused.
@@ -91,6 +98,10 @@ impl std::fmt::Display for Outcome {
             Self::Differs { index, why } => {
                 write!(f, "the transparency log's entry {index} differs: {why}")
             }
+            Self::Unread { index, kind } => write!(
+                f,
+                "the transparency log's entry {index} is a {kind} entry, which this version doesn't read"
+            ),
             Self::Unreachable(why) => write!(f, "the transparency log didn't answer: {why}"),
             Self::Refused(why) => write!(f, "the transparency log refused: {why}"),
         }
@@ -100,6 +111,15 @@ impl std::fmt::Display for Outcome {
 /// Which attestation a lookup is of: the namespace and name of the run or
 /// task that carries it, and the attestation's annotation key.
 pub(crate) type EntryKey = (Option<String>, String, String);
+
+/// Which lookup in the transparency log an attestation's is.
+pub(crate) fn entry_key(object: &ObjectRef, attestation: &Attestation) -> EntryKey {
+    (
+        object.namespace.clone(),
+        object.name.clone(),
+        attestation.key.clone(),
+    )
+}
 
 /// What was read of the transparency log for one change.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -213,39 +233,73 @@ fn entry_outcome(body: &[u8], index: u64, verified: &Verified) -> Outcome {
         return differs("its body can't be read");
     };
     match holds(&decoded, verified) {
-        Some(true) => Outcome::Matches { index },
-        Some(false) => differs("it holds another signature or key"),
-        None => differs("it is a kind of entry this build does not read"),
+        Held::Yes => Outcome::Matches { index },
+        Held::No => differs("it holds another signature or key"),
+        Held::Unread(kind) => Outcome::Unread { index, kind },
     }
 }
 
-/// Whether the entry body holds the verified signature and the key; `None`
-/// for a shape that is not read.
-fn holds(body: &Value, verified: &Verified) -> Option<bool> {
-    let spec = body.get("spec")?;
-    let pairs: Vec<(&str, &str)> = match body.get("kind").and_then(Value::as_str)? {
-        "hashedrekord" => vec![(
-            spec.pointer("/signature/content")?.as_str()?,
-            spec.pointer("/signature/publicKey/content")?.as_str()?,
-        )],
-        "intoto" => spec
-            .pointer("/content/envelope/signatures")?
-            .as_array()?
-            .iter()
-            .filter_map(|signature| {
-                Some((
-                    signature.get("sig")?.as_str()?,
-                    signature.get("publicKey")?.as_str()?,
-                ))
-            })
-            .collect(),
-        _ => return None,
+/// What an entry body holds of the verified signature.
+enum Held {
+    Yes,
+    No,
+    /// A kind, or a version of a kind, that is not read: named for the words.
+    Unread(String),
+}
+
+/// How a kind is named in the words: the log's text is not trusted, so only
+/// a short run of plain characters is repeated.
+fn kind_named(kind: Option<&str>, version: Option<&str>) -> String {
+    let plain = |text: &str| {
+        let text: String = text
+            .chars()
+            .take(24)
+            .map(|c| if c.is_ascii_alphanumeric() || c == '.' { c } else { '?' })
+            .collect();
+        (!text.is_empty()).then_some(text)
     };
-    Some(
-        pairs
-            .into_iter()
-            .any(|(sig, key)| same_signature(sig, &verified.signature) && same_key(key, verified)),
-    )
+    match (kind.and_then(plain), version.and_then(plain)) {
+        (Some(kind), Some(version)) => format!("{kind} {version}"),
+        (Some(kind), None) => kind,
+        _ => "unnamed".to_owned(),
+    }
+}
+
+/// Whether the entry body holds the verified signature and the key. A body
+/// of a read kind that lacks its fields holds nothing, which is `No`.
+fn holds(body: &Value, verified: &Verified) -> Held {
+    let kind = body.get("kind").and_then(Value::as_str);
+    let version = body.get("apiVersion").and_then(Value::as_str);
+    let spec = body.get("spec");
+    let pairs: Vec<(&str, &str)> = match (kind, version) {
+        (Some("hashedrekord"), Some("0.0.1")) => spec
+            .and_then(|spec| {
+                Some(vec![(
+                    spec.pointer("/signature/content")?.as_str()?,
+                    spec.pointer("/signature/publicKey/content")?.as_str()?,
+                )])
+            })
+            .unwrap_or_default(),
+        (Some("intoto"), Some("0.0.2")) => spec
+            .and_then(|spec| spec.pointer("/content/envelope/signatures")?.as_array())
+            .map(|signatures| {
+                signatures
+                    .iter()
+                    .filter_map(|signature| {
+                        Some((
+                            signature.get("sig")?.as_str()?,
+                            signature.get("publicKey")?.as_str()?,
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => return Held::Unread(kind_named(kind, version)),
+    };
+    let found = pairs
+        .into_iter()
+        .any(|(sig, key)| same_signature(sig, &verified.signature) && same_key(key, verified));
+    if found { Held::Yes } else { Held::No }
 }
 
 /// The entry's signature is the one that verified. Rekor's `intoto` entries
