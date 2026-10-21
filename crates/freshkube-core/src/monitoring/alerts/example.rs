@@ -131,7 +131,7 @@ fn alert(
 /// Every example alert: firing, pending, silenced and inhibited.
 pub fn alerts(now: DateTime<Utc>) -> Vec<Alert> {
     use AlertState::*;
-    vec![
+    let mut alerts = vec![
         alert(
             now,
             "KubePodCrashLooping",
@@ -206,7 +206,10 @@ pub fn alerts(now: DateTime<Utc>) -> Vec<Alert> {
             "Inhibits info alerts while a warning fires",
             false,
         ),
-    ]
+    ];
+    // As a read gives them: most urgent first, each name's together.
+    super::read::sort(&mut alerts);
+    alerts
 }
 
 /// The active ones, as the session reads them.

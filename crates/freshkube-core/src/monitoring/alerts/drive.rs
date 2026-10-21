@@ -2,7 +2,7 @@
 //! read the active alerts every [`POLL`](super::state::POLL).
 use std::time::Duration;
 
-use super::super::{cluster_client, forget_after};
+use super::super::{ErrorKind, cluster_client, forget_after};
 use super::discover::{Found, LOOKED_FOR, Remembered, find};
 use super::read::{Scope, active, unknown};
 use super::rules;
@@ -35,6 +35,15 @@ pub async fn connect(
     if !found.sources.is_empty() {
         return Ok(found);
     }
+    // A Service that looks right and doesn't answer is a source that can't
+    // be read, not one that isn't there.
+    if let Some((label, error)) = found
+        .tried
+        .iter()
+        .find(|(_, error)| matches!(error.kind, ErrorKind::Unavailable | ErrorKind::TimedOut))
+    {
+        return Err(Unknown::Unread(format!("{label}: {}", error.message)));
+    }
     let own = cluster_client(access).await.map_err(unknown)?;
     let objects = rules::any_objects(&own).await.unwrap_or(false);
     Err(if objects && scope == &Scope::Cluster {
@@ -47,11 +56,16 @@ pub async fn connect(
     })
 }
 
+/// Failed reads in a row after which the sources are looked for again.
+const REDISCOVER_AFTER: u32 = 3;
+
 /// The session's read, run on Tokio until dropped: connect, then read every
 /// minute and hand each state to `publish`. It starts polling only once a
 /// source was found; when none is, it publishes that and ends, and a refusal
-/// ends it too, since the same ask would be refused again. A source that
-/// stops answering is found again on the next tick.
+/// ends it too, since the same ask would be refused again. Once a source was
+/// found, nothing ends it: a source that stops answering leaves the last read
+/// as stale evidence, is found again after a few failed reads, and a read
+/// that works again is current.
 pub async fn drive(
     access: ClusterAccess,
     host: Option<ClusterAccess>,
@@ -61,12 +75,23 @@ pub async fn drive(
 ) {
     let mut state = State::Reading;
     let mut found: Option<Found> = None;
+    let mut ever_found = false;
+    let mut failures = 0;
     loop {
         if found.is_none() {
             match connect(&access, host.as_ref(), &scope, &remembered).await {
-                Ok(connected) => found = Some(connected),
-                Err(unknown @ Unknown::Unread(_)) => {
-                    state = state.after(Err(unknown));
+                Ok(connected) => {
+                    found = Some(connected);
+                    ever_found = true;
+                }
+                Err(unknown) if ever_found || matches!(unknown, Unknown::Unread(_)) => {
+                    // Not there now, or not answering: what was known stays
+                    // as stale evidence, and the next tick looks again.
+                    let why = match unknown {
+                        Unknown::Unread(why) => why,
+                        other => other.words(),
+                    };
+                    state = state.after(Err(Unknown::Unread(why)));
                     publish(state.clone());
                     tokio::time::sleep(POLL).await;
                     continue;
@@ -84,13 +109,20 @@ pub async fn drive(
         )
         .await
         .unwrap_or_else(|_| Err(Unknown::Unread("the read timed out".into())));
-        if matches!(read, Err(Unknown::Unread(_))) {
-            access.forget();
-            found = None;
-        }
-        if matches!(read, Err(Unknown::Refused(_))) {
-            publish(state.after(read));
-            return;
+        match &read {
+            Err(Unknown::Unread(_)) => {
+                failures += 1;
+                if failures >= REDISCOVER_AFTER {
+                    access.forget();
+                    found = None;
+                    failures = 0;
+                }
+            }
+            Err(Unknown::Refused(_)) => {
+                publish(state.after(read));
+                return;
+            }
+            _ => failures = 0,
         }
         state = state.after(read);
         publish(state.clone());

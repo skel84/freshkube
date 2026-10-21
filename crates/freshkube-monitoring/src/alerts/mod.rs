@@ -436,7 +436,10 @@ impl AlertsPage {
         match result {
             Ok(answer) => {
                 self.answer = Some(answer);
-                self.failure = None;
+                // The example that shows a stale read: its refresh failed.
+                self.failure = (self.shape == Shape::Stale
+                    && self.source.as_ref().is_some_and(|s| s.access.is_example()))
+                .then(|| "Alertmanager didn't answer within 20 s".to_owned());
             }
             Err(error) => self.failure = Some(error.message),
         }

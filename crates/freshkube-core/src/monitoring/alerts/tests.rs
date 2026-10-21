@@ -773,3 +773,100 @@ fn the_example_shapes_parse_by_name_and_each_says_what_it_should() {
     );
     let _ = BTreeMap::<String, String>::new();
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_source_that_stops_answering_never_ends_the_session_and_a_recovery_is_current() {
+    let down = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let switch = down.clone();
+    let (client, _) = fake(move |_, path, _| {
+        if path == "/api/v1/services" {
+            return (
+                200,
+                services_list(vec![service(
+                    "monitoring",
+                    "alertmanager-operated",
+                    json!({}),
+                    json!([{"name": "web", "port": 9093}]),
+                )]),
+            );
+        }
+        if switch.load(std::sync::atomic::Ordering::SeqCst) {
+            return (502, status(502, "down"));
+        }
+        if path.ends_with("api/v2/status") {
+            return (
+                200,
+                json!({"versionInfo": {"version": "0.27.0"}}).to_string(),
+            );
+        }
+        if path.ends_with("api/v2/alerts") {
+            return (200, alertmanager_body().to_string());
+        }
+        (500, status(500, "unknown route"))
+    });
+    let access = ClusterAccess::Live(std::sync::Arc::new(OneClient(client)));
+    let states = std::sync::Arc::new(std::sync::Mutex::new(Vec::<State>::new()));
+    let sink = states.clone();
+    let job = tokio::spawn(drive(
+        access,
+        None,
+        Scope::Cluster,
+        Remembered::default(),
+        move |state| sink.lock().unwrap().push(state),
+    ));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(matches!(
+        states.lock().unwrap()[0].health(),
+        Health::Alerting(_)
+    ));
+
+    // It goes down for five minutes, long enough to look for it again.
+    down.store(true, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(POLL * 5).await;
+    {
+        let seen = states.lock().unwrap();
+        assert!(seen.len() >= 5, "it kept reading: {}", seen.len());
+        for state in &seen[1..] {
+            assert!(
+                matches!(state, State::Stale { .. }),
+                "never quiet, never ended as not found: {state:?}"
+            );
+            assert!(matches!(state.health(), Health::Unknown(_)));
+        }
+    }
+    assert!(!job.is_finished(), "an outage after a read doesn't end it");
+
+    down.store(false, std::sync::atomic::Ordering::SeqCst);
+    tokio::time::sleep(POLL * 2).await;
+    let last = states.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        matches!(last, State::Known(_)),
+        "a read that works is current: {last:?}"
+    );
+    job.abort();
+}
+
+#[tokio::test]
+async fn a_service_that_looks_right_and_doesnt_answer_is_unread_not_missing() {
+    let (client, _) = fake(|_, path, _| {
+        if path == "/api/v1/services" {
+            (
+                200,
+                services_list(vec![service(
+                    "monitoring",
+                    "alertmanager-operated",
+                    json!({}),
+                    json!([{"name": "web", "port": 9093}]),
+                )]),
+            )
+        } else {
+            (503, status(503, "no endpoints"))
+        }
+    });
+    let access = ClusterAccess::Live(std::sync::Arc::new(OneClient(client)));
+    let unknown = connect(&access, None, &Scope::Cluster, &Remembered::default())
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(unknown, Unknown::Unread(why) if why.contains("alertmanager-operated")));
+}

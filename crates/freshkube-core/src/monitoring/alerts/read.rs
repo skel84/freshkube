@@ -292,13 +292,14 @@ pub struct Active {
     pub others: Vec<String>,
 }
 
-/// Orders alerts for display: most urgent first, then by name and labels.
+/// Orders alerts for display: most urgent first, then by name, firing before
+/// pending, then by labels, so each alert name's alerts sit together.
 pub fn sort(alerts: &mut [Alert]) {
     alerts.sort_by(|a, b| {
-        (a.state, a.severity, &a.name, &a.fingerprint).cmp(&(
-            b.state,
+        (a.severity, &a.name, a.state, &a.fingerprint).cmp(&(
             b.severity,
             &b.name,
+            b.state,
             &b.fingerprint,
         ))
     });
