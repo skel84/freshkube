@@ -117,6 +117,11 @@ impl Stale {
     pub fn sentence(&self) -> String {
         format!("{}{KEPT}{}", self.why, self.read_at.format("%H:%M UTC"))
     }
+
+    /// `stale, read at 13:12 UTC`: where the reason is said elsewhere.
+    pub fn read_words(&self) -> String {
+        format!("stale, read at {}", self.read_at.format("%H:%M UTC"))
+    }
 }
 
 /// The cause a note names: its words before where an old answer was read.

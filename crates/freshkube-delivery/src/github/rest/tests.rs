@@ -1278,3 +1278,28 @@ fn a_detail_key_is_the_client_the_pull_request_and_its_head() {
     summary.head = None;
     assert_eq!(DetailKey::of(&identity, &summary), None);
 }
+
+#[test]
+fn a_limit_whose_reset_has_passed_is_not_said_to_be_still_waited_on() {
+    let until = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let limited = Error::Limited {
+        until,
+        secondary: false,
+    };
+    let before = until - chrono::Duration::minutes(5);
+    let after = until + chrono::Duration::minutes(5);
+    assert_eq!(
+        limited.words_at(before),
+        format!(
+            "GitHub's rate limit is reached until {}",
+            until.format("%H:%M UTC")
+        )
+    );
+    let words = limited.words_at(after);
+    assert!(
+        words.starts_with("GitHub's rate limit was reached until ")
+            && words.ends_with("; asking again"),
+        "{words}"
+    );
+    assert!(!words.contains(" is reached"), "{words}");
+}

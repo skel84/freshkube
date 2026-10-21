@@ -93,13 +93,24 @@ fn kept_answers_say_why_they_are_old_and_a_refused_token_leaves_no_row(cx: &mut 
             "GitHub didn't answer: could not connect",
         ),
     ] {
-        let (_, page) = open(cx, shape);
+        let (handle, page) = open(cx, shape);
         let text = line(cx, &page).expect("the kept answer");
         assert!(text.starts_with("Pull request #418 · Merged · "), "{text}");
-        assert!(
-            text.ends_with(&format!("{why}; showing what was read at 13:12 UTC")),
-            "{text}"
-        );
+        // The banner of what may be missing gives the reason; the line says
+        // only that it is old, so the two never repeat each other.
+        assert!(text.ends_with(" · stale, read at 13:12 UTC"), "{text}");
+        assert!(!text.contains(why) && !text.contains("GitHub"), "{text}");
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window
+                    .find("change-missing")
+                    .label()
+                    .is_some_and(|label| label.contains(why)),
+                "the banner gives the reason"
+            );
+        })
+        .unwrap();
     }
     // Nothing was ever read, so there is no pull request to ask about; the
     // page's banner of what may be missing says why.

@@ -283,7 +283,8 @@ impl ChangePage {
                 }
                 let tone = match (&detail.stale, error) {
                     (Some(stale), _) => {
-                        parts.push(stale.sentence());
+                        // Why is the banner's to say; the line says only that it is old.
+                        parts.push(stale.read_words());
                         Tone::Warn
                     }
                     (None, Some(error)) => {
