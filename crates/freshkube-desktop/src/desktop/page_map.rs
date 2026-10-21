@@ -404,6 +404,8 @@ mod tests {
                         mapping: Mapping::default(),
                         sources: Default::default(),
                         public_key_file: None,
+                        transparency_log: false,
+                        transparency_url: None,
                         evidence_result: None,
                         build_namespace: None,
                         stage_naming: None,

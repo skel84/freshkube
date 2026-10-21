@@ -289,6 +289,8 @@ pub struct ApplicationsPage {
     runtime: tokio::runtime::Handle,
     secrets: Option<freshkube_core::secrets::Secrets>,
     public_key_file: Option<std::path::PathBuf>,
+    transparency_log: bool,
+    transparency_url: Option<String>,
     evidence_result: Option<freshkube_core::setup::Evidence>,
     build_namespace: Option<String>,
     stage_naming: Option<freshkube_core::setup::StageNaming>,
@@ -414,6 +416,8 @@ impl ApplicationsPage {
             runtime,
             secrets,
             public_key_file: None,
+            transparency_log: false,
+            transparency_url: None,
             evidence_result: None,
             build_namespace: None,
             stage_naming: None,
@@ -555,6 +559,14 @@ impl ApplicationsPage {
             .supply_chain
             .as_ref()
             .and_then(|chain| chain.public_key_file.clone());
+        self.transparency_log = setup
+            .supply_chain
+            .as_ref()
+            .is_some_and(|chain| chain.transparency_log);
+        self.transparency_url = setup
+            .supply_chain
+            .as_ref()
+            .and_then(|chain| chain.transparency_url.clone());
         self.evidence_result = setup
             .supply_chain
             .as_ref()
@@ -569,26 +581,12 @@ impl ApplicationsPage {
             .and_then(|delivery| delivery.stage_naming.clone());
         let naming_changed = naming != self.stage_naming;
         self.stage_naming = naming;
+        let across = self.across();
         if let Some((change, _)) = &self.change {
-            change.update(cx, |page, cx| {
-                page.reload_setup(
-                    self.public_key_file.clone(),
-                    self.evidence_result.clone(),
-                    self.build_namespace.clone(),
-                    self.stage_naming.clone(),
-                    cx,
-                )
-            });
+            change.update(cx, |page, cx| page.reload_setup(&across, cx));
         }
-        self.changes.update(cx, |page, cx| {
-            page.reload_setup(
-                self.public_key_file.clone(),
-                self.evidence_result.clone(),
-                self.build_namespace.clone(),
-                self.stage_naming.clone(),
-                cx,
-            )
-        });
+        self.changes
+            .update(cx, |page, cx| page.reload_setup(&across, cx));
         // The list derives its Applications' projects from the naming.
         let live = self
             .source
@@ -648,6 +646,8 @@ impl ApplicationsPage {
             sources: self.clusters.sources.clone(),
             kubeconfig: self.clusters.kubeconfig.clone(),
             public_key_file: self.public_key_file.clone(),
+            transparency_log: self.transparency_log,
+            transparency_url: self.transparency_url.clone(),
             evidence_result: self.evidence_result.clone(),
             build_namespace: self.build_namespace.clone(),
             stage_naming: self.stage_naming.clone(),

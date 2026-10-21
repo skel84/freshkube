@@ -209,6 +209,13 @@ pub(super) fn coroot(coroot: &Coroot) -> Result<(), Fault> {
 }
 
 pub(super) fn supply_chain(chain: &SupplyChain) -> Result<(), Fault> {
+    if let Some(address) = &chain.transparency_url {
+        let at = "supply_chain.transparency_url";
+        let parsed = parse_base_url(address).map_err(|_| Fault::NotHttpsUrl(at.into()))?;
+        if parsed.scheme() != "https" {
+            return Err(Fault::NotHttpsUrl(at.into()));
+        }
+    }
     if let Some(file) = &chain.public_key_file {
         absolute(file, "supply_chain.public_key_file".into())?;
     }
