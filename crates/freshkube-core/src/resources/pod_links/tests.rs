@@ -67,14 +67,14 @@ async fn collection_reads_only_namespace_services_and_the_referenced_replica_set
     assert_eq!(links.controller.unwrap().via_uid, "rs-uid");
     // Exactly the namespace's services and the referenced ReplicaSet; the fake
     // answers anything else 500, and it would show here.
-    let lines = recorder.lines();
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(lines.contains(&"GET /apis/apps/v1/namespaces/shop/replicasets/web-rs".to_owned()));
-    assert!(
-        lines
-            .iter()
-            .any(|line| line.starts_with("GET /api/v1/namespaces/shop/services")),
-        "{lines:?}"
+    let mut lines = recorder.lines();
+    lines.sort();
+    assert_eq!(
+        lines,
+        [
+            "GET /api/v1/namespaces/shop/services",
+            "GET /apis/apps/v1/namespaces/shop/replicasets/web-rs",
+        ]
     );
 }
 

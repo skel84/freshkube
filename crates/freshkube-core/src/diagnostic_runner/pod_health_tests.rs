@@ -53,11 +53,8 @@ async fn check(
             .then(|| crate::fake_api::json(200, &body))
     });
     let health = collect_pod_health(&client).await.unwrap();
-    // Only the pod list is read: a request the fake does not know answers 500 and is recorded here.
-    recorder.assert_all("GET /api/v1/pods only", |request| {
-        request.method == http::Method::GET && request.path == "/api/v1/pods"
-    });
-    assert!(!recorder.requests().is_empty());
+    // Exactly one pod list. Anything else the fake answers 500 and records here.
+    recorder.assert_lines(&["GET /api/v1/pods"]);
     let serialized = serde_json::to_value(&health).unwrap();
     let observed_diagnostics: Vec<_> = ["crashing", "image_pull_errors", "not_ready"]
         .into_iter()

@@ -8,7 +8,7 @@ use std::sync::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use freshkube_core::cluster_source::{ClusterAccess, KubeClientSource};
-use freshkube_core::fake_api::{Recorder, response, unknown};
+use freshkube_core::fake_api::{Recorded, Recorder, response, unknown};
 use freshkube_core::resources::Failure;
 use futures::future::BoxFuture;
 use kube::client::Body;
@@ -68,10 +68,32 @@ impl Drop for Reads {
         if std::thread::panicking() {
             return;
         }
-        self.0.assert_all("the delivery reads only GET", |request| {
-            request.method == http::Method::GET
-        });
+        self.0
+            .assert_all("an allowed GET: no Secret, no other verb", allowed);
     }
+}
+
+/// The reads the delivery chain makes of this fake, and no other: GETs of
+/// discovery, Tekton and Kargo kinds and the Kargo API ConfigMap. No Secret.
+fn allowed(request: &Recorded) -> bool {
+    request.method == http::Method::GET
+        && matches!(
+            request.path.as_str(),
+            "/apis"
+                | "/apis/kargo.akuity.io/v1alpha1"
+                | "/apis/tekton.dev/v1"
+                | "/api/v1/namespaces/kargo/configmaps/kargo-api"
+                | "/apis/kargo.akuity.io/v1alpha1/projects"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/freights"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/freights/freight-a"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/promotions"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/stages"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/warehouses"
+                | "/apis/tekton.dev/v1/pipelineruns"
+                | "/apis/tekton.dev/v1/namespaces/acme/taskruns"
+                | "/apis/tekton.dev/v1/namespaces/acme-builds/pipelineruns"
+                | "/apis/tekton.dev/v1/namespaces/acme-builds/taskruns"
+        )
 }
 
 pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> (ClusterAccess, Reads) {
@@ -81,9 +103,10 @@ pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> (ClusterAccess, Reads)
         let recorded = log.record(&request);
         let path = recorded.path.as_str();
         let runs = path.ends_with("/pipelineruns");
-        // Any GET gets `route`'s answer, an empty list for a path it has no
-        // items for, as before; any other verb is recorded and answered 500.
-        let answer = match recorded.method == http::Method::GET {
+        // An allowed read gets `route`'s answer (an empty list for a kind with no
+        // items, as before); anything else is recorded and answered 500, and the
+        // test's `Reads` fails on it.
+        let answer = match allowed(&recorded) {
             true => (200, route(path, live_runs).to_string()),
             false => unknown(&recorded),
         };
