@@ -27,7 +27,9 @@ pub use data::{
     DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState, data_table, reveal,
     reveal_when_settled, step,
 };
-pub use fix_bar::{FixItem, count_words as fix_count_words, fix_bar, visible as fix_visible};
+pub use fix_bar::{
+    FixItem, Measured as FixSizes, count_words as fix_count_words, fix_bar, visible as fix_visible,
+};
 pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look, TableLoading};
 pub use pinned::widest_pinned_run;

@@ -512,3 +512,36 @@ fn another_hop_opens_its_inspector_at_the_top(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_measured_chip_width_matches_the_chip_as_drawn(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let items = page.read(cx).fix_items.clone();
+        let sizes = freshkube_ui::table::FixSizes::of(&items, window, cx);
+        let unit = f32::from(freshkube_ui::ui::dp_px(1., window));
+        for (ix, item) in items.iter().enumerate() {
+            let drawn = f32::from(
+                window
+                    .find(format!("change-fixbar-{}", item.key))
+                    .bounds()
+                    .size
+                    .width,
+            ) / unit;
+            let measured = sizes.chip(ix);
+            // Never narrower than drawn, so no chip is cut; and not much wider.
+            assert!(
+                measured >= drawn - 1.,
+                "{}: {measured} < {drawn}",
+                item.label
+            );
+            assert!(
+                measured <= drawn * 1.1 + 2.,
+                "{}: {measured} > {drawn}",
+                item.label
+            );
+        }
+    })
+    .unwrap();
+}
