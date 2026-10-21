@@ -976,6 +976,28 @@ fn link_hop(
             value: Value::Mono(name.into()),
         });
     }
+    // An Application's Pods link keeps the Application as its subject for
+    // the read lookup and chain; the inspector names the pods' namespace.
+    if link.from == Joined::Application && link.to == Joined::Pod {
+        fields.retain(|field| field.label != "Namespace" && field.label != "Name");
+        if let Some(namespace) = evidence
+            .applications
+            .read()
+            .and_then(|apps| {
+                apps.iter()
+                    .find(|app| format!("{}/{}", app.namespace, app.name) == link.subject)
+            })
+            .and_then(|app| app.destination_namespace.as_ref())
+        {
+            fields.insert(
+                0,
+                Field {
+                    label: "Namespace".into(),
+                    value: Value::Mono(namespace.clone()),
+                },
+            );
+        }
+    }
     let revision = (!missing)
         .then(|| revision(at, sides.workloads, link, run))
         .flatten();
