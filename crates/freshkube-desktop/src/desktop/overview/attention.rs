@@ -11,6 +11,7 @@ use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
     h_flex,
+    menu::{ContextMenuExt as _, PopupMenuItem},
     tooltip::Tooltip,
     v_flex,
 };
@@ -36,6 +37,7 @@ impl Pilot {
                     self.open_object(kind, object, tab, window, cx);
                 }
             }
+            Destination::CopyLink(inner) => self.copy_link_to(&inner, window, cx),
             Destination::Service {
                 node,
                 service,
@@ -240,5 +242,16 @@ fn attention_row(row: &AttentionRow, on_open: &OnOpen, cx: &App) -> AnyElement {
                         })
                 })),
         )
+        .context_menu({
+            let on_open = on_open.clone();
+            let copy = Destination::CopyLink(Box::new(row.open.clone()));
+            move |menu, _, _| {
+                let (on_open, copy) = (on_open.clone(), copy.clone());
+                menu.item(
+                    PopupMenuItem::new("Copy link")
+                        .on_click(move |_, window, cx| on_open(copy.clone(), window, cx)),
+                )
+            }
+        })
         .into_any_element()
 }

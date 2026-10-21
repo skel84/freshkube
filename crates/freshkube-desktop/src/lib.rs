@@ -31,6 +31,8 @@ pub struct GpuiOptions {
     /// reads them here, never from the environment.
     #[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
     debug: DebugOptions,
+    /// A `freshkube://open?…` link to open once the window is up (#873).
+    open_link: Option<String>,
 }
 
 impl GpuiOptions {
@@ -50,7 +52,13 @@ impl GpuiOptions {
             keyring: false,
             setup_notice: None,
             debug: DebugOptions::default(),
+            open_link: None,
         }
+    }
+    /// A link to open at launch (`--open-link`).
+    pub fn with_open_link(mut self, link: Option<String>) -> Self {
+        self.open_link = link;
+        self
     }
     /// Hands in the debug knobs, which only a debug or stress build parses.
     pub fn with_debug(mut self, debug: DebugOptions) -> Self {

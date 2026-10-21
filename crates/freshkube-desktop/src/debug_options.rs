@@ -38,6 +38,19 @@ pub(crate) enum EtcdExample {
     Alarms,
 }
 
+/// `FRESHKUBE_LINKS`: the outcome every example link is forced to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkShape {
+    /// The reader's access refuses the read.
+    Refused,
+    /// No object by that name.
+    NotFound,
+    /// The cluster doesn't serve the kind.
+    NotServed,
+    /// The name belongs to another object now.
+    Replaced,
+}
+
 /// What the launch asks for beyond its source: where to open and how to look.
 /// A value that names nothing known is kept as given and ignored where it is
 /// used, as before.
@@ -78,6 +91,9 @@ pub struct DebugOptions {
     /// `FRESHKUBE_APP_MENU=button`: the Linux menu button on any platform.
     /// Debug builds only.
     pub(crate) app_menu_button: bool,
+    /// `FRESHKUBE_LINKS`: the outcome example links are forced to; anything
+    /// else lets them resolve against the example data.
+    pub(crate) links: Option<LinkShape>,
     /// `FRESHKUBE_TEXT_SIZE`: a step of `text_size::STEPS`, not saved; anything
     /// else is ignored. Debug builds only.
     pub(crate) text_size: Option<f32>,
@@ -145,6 +161,13 @@ impl DebugOptions {
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
             app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
+            links: match text("FRESHKUBE_LINKS").as_deref() {
+                Some("refused") => Some(LinkShape::Refused),
+                Some("not-found") => Some(LinkShape::NotFound),
+                Some("not-served") => Some(LinkShape::NotServed),
+                Some("replaced") => Some(LinkShape::Replaced),
+                _ => None,
+            },
             text_size: text("FRESHKUBE_TEXT_SIZE")
                 .and_then(|size| freshkube_ui::text_size::parse(&size)),
         }

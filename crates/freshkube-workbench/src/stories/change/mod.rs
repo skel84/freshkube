@@ -320,8 +320,8 @@ impl ChangeStory {
                 page::item("Open in Kargo ↗", kargo),
             )
             .foldable(
-                control(copy_id, "Copy link", copy.clone()),
-                page::item("Copy link", copy),
+                control(copy_id, "Copy Kargo link", copy.clone()),
+                page::item("Copy Kargo link", copy),
             )
             .render(window, cx)
     }

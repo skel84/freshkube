@@ -22,9 +22,9 @@ use gpui_kit::{
 };
 
 use super::{
-    Appearance, GoToKind, NextContext, NextScreen, Pilot, PreviousContext, PreviousScreen, Quit,
-    Refresh, ShowEtcd, ShowEvents, ShowHealth, ShowLifecycle, ShowNamespaces, ShowNodes,
-    ShowOverview, ShowSecurity, ShowSystemServices, ToggleColumn, dock,
+    Appearance, CopyLink, GoToKind, NextContext, NextScreen, Pilot, PreviousContext,
+    PreviousScreen, Quit, Refresh, ShowEtcd, ShowEvents, ShowHealth, ShowLifecycle, ShowNamespaces,
+    ShowNodes, ShowOverview, ShowSecurity, ShowSystemServices, ToggleColumn, dock,
 };
 use crate::ui::{self, dp};
 
@@ -88,6 +88,7 @@ pub(crate) fn menus(platform: Platform, state: &MenuState) -> Vec<Menu> {
             "Go",
             [
                 MenuItem::action("Search everything…", GoToKind),
+                MenuItem::action("Copy link", CopyLink),
                 MenuItem::separator(),
                 MenuItem::action("Overview", ShowOverview),
                 MenuItem::action("Nodes", ShowNodes),

@@ -5,6 +5,7 @@ mod applications_column_tests;
 #[cfg(test)]
 mod applications_tests;
 mod connection;
+mod deep_link;
 pub(crate) mod dock;
 mod entity_pages;
 #[cfg(test)]
@@ -130,6 +131,7 @@ gpui_kit::actions!(
         PreviousService,
         NextService,
         GoToKind,
+        CopyLink,
         ToggleColumn
     ]
 );
@@ -310,6 +312,8 @@ pub(crate) struct Pilot {
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
+    /// Deep links (#873).
+    deep_link: deep_link::State,
     /// Example data or a live cluster, and Talos or a kubeconfig alone
     /// (`source::Mode`): what the window shows.
     mode: source::Mode,
@@ -404,6 +408,11 @@ impl Pilot {
             KeyBinding::new(
                 "secondary-k",
                 GoToKind,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-shift-c",
+                CopyLink,
                 Some(freshkube_ui::page::SHELL_CONTEXT),
             ),
             KeyBinding::new("up", PreviousNode, Some("TalosNodes")),
@@ -715,6 +724,12 @@ impl Pilot {
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
         self.open_startup_page(&debug, window, cx);
+        // A link given at launch opens once the window has settled.
+        if let Some(link) = options.open_link.clone() {
+            cx.defer_in(window, move |this, window, cx| {
+                this.open_link_text(&link, window, cx)
+            });
+        }
         #[cfg(feature = "stress")]
         crate::stress::start(window, cx);
         // Overview's first frame needs no notify of the shell to know where
@@ -775,6 +790,7 @@ impl Pilot {
             kubeconfig: KubeconfigSelection::Automatic,
             kubeconfig_draft: Default::default(),
             navigation,
+            deep_link: deep_link::State::new(options.debug.links),
             // The one place a hold is set: example data's, from
             // `DebugOptions::hold`.
             mode: source::Mode::new(options.starts_with_examples().then_some(options.debug.hold)),

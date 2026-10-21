@@ -866,7 +866,6 @@ impl DetailPane {
     }
 
     /// What the pane shows: YAML, or the section at the top of Details.
-    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn tab(&self) -> Tab {
         match (self.tab, self.shown_section.get()) {
             (Tab::Overview, Section::Ports) => Tab::Ports,

@@ -68,6 +68,11 @@ struct Cli {
         "insecure", "kubeconfig", "config", "context", "kubernetes_only", "kube_context",
     ])]
     fixture: bool,
+
+    /// Open a `freshkube://open?…` link once the window is up. It is read
+    /// with this window's own cluster and access
+    #[arg(long, value_name = "URL")]
+    open_link: Option<String>,
 }
 
 /// Writes `--help`, errors and logs to the terminal that started a release
@@ -105,6 +110,7 @@ fn main() -> Result<()> {
         kubernetes_only: asked_kubernetes_only,
         kube_context,
         fixture,
+        open_link,
     } = Cli::parse();
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
@@ -197,7 +203,9 @@ fn main() -> Result<()> {
             .with_keyring()
     };
     // The debug knobs are read here once; a release build gets the default.
-    let options = options.with_debug(DebugOptions::from_env());
+    let options = options
+        .with_debug(DebugOptions::from_env())
+        .with_open_link(open_link);
     freshkube_desktop::run(options, runtime.handle().clone())?;
 
     tracing::info!("Goodbye!");
