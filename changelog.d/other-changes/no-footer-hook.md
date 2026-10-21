@@ -1,0 +1,1 @@
+- **Development:** agent sessions in this repository can no longer post a tool footer or a co-author trailer, in a command or in a body file it names.

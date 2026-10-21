@@ -1,1 +1,0 @@
-- **Supply chain:** the Changes list and change page read the transparency log when enabled in the setup file, using its optional HTTPS URL or Chains' configured address; reloads apply changed log settings and the log receives no tokens.
