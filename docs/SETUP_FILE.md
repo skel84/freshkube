@@ -1,6 +1,6 @@
 # The setup file
 
-`freshkube.yaml` is one file, beside the preferences, that says what the app reads and from where: the workspace's clusters and their roles, the pins, the Argo CD mapping, the metrics store, Coroot, Tekton Results and the supply chain's trust. This is the design step of [#706](https://github.com/skel84/freshkube/issues/706), written on 19 October 2026 at main `ce3e982`. It lands in [slices](#slices): on main the file is parsed and validated, migrated from the JSON files and reloaded on change; Settings saves the workspace's three lists into it; and the workspace, destinations, pins, `coroot` block and `metrics` are read. Delivery reads the build entry's `results.address` with its optional address-specific saved token, and top-level `supply_chain.public_key_file`, `supply_chain.evidence`, `supply_chain.transparency_log` and `supply_chain.transparency_url`. Per-entry `coroot` selects the application's Coroot project for change outcomes, and the Coroot cluster behind Observability's Kubernetes links. The Results forward remains a separate follow-up. Where this document and `crates/freshkube-core/src/setup/` differ, the code wins. The README has the short example of what main reads.
+`freshkube.yaml` is one file, beside the preferences, that says what the app reads and from where: the workspace's clusters and their roles, the pins, the Argo CD mapping, the metrics store, Coroot, Tekton Results and the supply chain's trust. This is the design step of [#706](https://github.com/skel84/freshkube/issues/706), written on 19 October 2026 at main `ce3e982`. It lands in [slices](#slices): on main the file is parsed and validated, migrated from the JSON files and reloaded on change; Settings saves the workspace's three lists into it; and the workspace, destinations, pins, `coroot` block and `metrics` are read. Delivery reads the build entry's `results.address` with its optional address-specific saved token, and top-level `supply_chain.public_key_file`, `supply_chain.evidence`, `supply_chain.transparency_log` and `supply_chain.transparency_url`. Per-entry `coroot` selects the application's Coroot project for change outcomes, and the Coroot cluster behind Observability's Kubernetes links. The Results client also accepts a caller-supplied loopback route for `results.forward`, with TLS service-name verification; connecting that route to the app's Forward control remains a separate follow-up. Where this document and `crates/freshkube-core/src/setup/` differ, the code wins. The README has the short example of what main reads.
 
 Today that setup is spread over `workspace.json` (core's `workspace` module), `coroot.json` (`crates/freshkube-observability/src/remember.rs`), the per-context metrics sources of `monitoring.json` (`crates/freshkube-monitoring/src/store.rs`), and nothing at all for what [#268](https://github.com/skel84/freshkube/issues/268) and [#269](https://github.com/skel84/freshkube/issues/269) add. The file replaces the first two, takes the workspace's metrics sources from the third, and holds the rest. Settings ([DESIGN.md](DESIGN.md#the-settings-page)) edits it, and Check sources stays the proof that each entry answers.
 
@@ -49,6 +49,8 @@ clusters:
         namespace: tekton-pipelines
         service: tekton-results-api-service
         port: 8080
+      token: keys.json            # optional: token account keyed by namespace, service and port
+      ca_file: /home/acme/certs/results-ca.pem  # optional: additional TLS roots for the service
     coroot:
       project: shop-api           # overrides coroot.project for this entry
       cluster: cluster-c
@@ -132,7 +134,7 @@ What each part means, and the rules a read enforces. The `metrics` blocks follow
 - **`version`** is required and is `1`. A file without it, or with another number, is refused with why, as `workspace.json` is today (`Invalid::MissingVersion`, `UnknownVersion`).
 - **`clusters`, `destinations`, `sources` and `kubeconfig`** use today's `workspace.json` schema: the same keys, the same limits (64 entries, 256 destinations, ids up to 64 bytes) and the same validation (`Workspace::validate`). Paths are absolute.
 - **In-cluster destinations** may use `server: https://kubernetes.default.svc` (with the usual server normalization) or exact `name: in-cluster`, with `entry` naming the selected Argo CD source: `sources.argocd` when pinned, otherwise the first Core entry in file order. Both aliases may coexist for that entry. An alias does not select the source itself, and a pin to a missing entry never falls back to Core. A conflicting target or an undetermined host still refuses the file with a reason; per-item recovery is a separate follow-up to [#802](https://github.com/skel84/freshkube/issues/802). Settings uses the same check when saving a mapping.
-- **Per entry, `results`** is absent (off), `address` (an `https://` URL, or plain `http://` only on a literal loopback IP), or `forward` (a Service and port in the entry's cluster, forwarded only when the person presses Forward, under [cluster safety](../AGENTS.md#cluster-safety)). Only `address` takes `token: keys.json` (the address's bearer token in the key store, never a cluster credential) and `ca_file` (an absolute path to a PEM file of additional TLS roots). Neither goes with `forward`. Any token value other than `keys.json` is refused without repeating it. Without a token the address is read anonymously; TLS certificate verification is never disabled. Absent means off; there is no `results: off`, because YAML 1.1 readers take a bare `off` for `false`.
+- **Per entry, `results`** is absent (off), `address` (an `https://` URL, or plain `http://` only on a literal loopback IP), or `forward` (a Service and port in the entry's cluster, forwarded only when the person presses Forward, under [cluster safety](../AGENTS.md#cluster-safety)). Both routes take `token: keys.json` (a Results bearer token in the key store, never a cluster credential) and `ca_file` (an absolute path to a PEM file of additional TLS roots). Any token value other than `keys.json` is refused without repeating it. Without a token Results is read anonymously; TLS certificate verification is never disabled. Absent means off; there is no `results: off`, because YAML 1.1 readers take a bare `off` for `false`.
 - **Per entry, `coroot`** links the entry to a Coroot cluster, and may name its own project. It replaced Observability's one "Link Kubernetes cluster…" for the whole connection ([#269](https://github.com/skel84/freshkube/issues/269), decision 3), which was never saved; Observability's map and reports read the open entry's key, and an entry without it is not linked. A linked entry's project is its own `project`, else `coroot.project`; with neither, the setup is refused naming the entry. Two entries may not link the same (project, Coroot cluster); the setup is refused naming both, since a Coroot application would belong to two entries (`validate::coroot_links`).
 - **`coroot`** holds the connection: the `server` (an `http://` or `https://` URL) and `sign_in` (`api-key`, `session` or `anonymous`), both required, where its key is and the default project (not empty). It never holds a key. `key` and `api_key_file` together are refused; `api_key_file` must be an absolute path. `key: keys.json` is the only value `key` takes: the key [#707](https://github.com/skel84/freshkube/issues/707)'s store keeps for this server. `api_key_file` instead names a file that holds only the key, read when connecting and never copied. With neither, the app asks at Connect and keeps nothing. Any other value of `key` is refused, and the refusal never repeats the value.
 - **`metrics`** is one choice, `mode`: `automatic` (the default, and what a file without `metrics` means), `central` or `per-entry`. `central` takes a `store`, the hosting `entry` and a Service in it (namespace, name, port, `https`, and a path prefix with or without its slashes, normalised as `PrometheusService::with_path` does today), or a `url`; and a `label`, `cluster` unless set. A URL's bearer token is `token: keys.json` or nothing; like `coroot.key`, any other value is refused unrepeated. A Service needs no token: the hosting entry's own Kubernetes credentials reach it. `store` and `label` under another mode are kept, unread, so switching modes back and forth loses nothing.
@@ -147,6 +149,10 @@ What each part means, and the rules a read enforces. The `metrics` blocks follow
 - **`delivery.build_namespace`** ([#803](https://github.com/skel84/freshkube/issues/803)) names the namespace the builds run in, read from the same cluster the commit reads use today: the entry the workspace's `sources` give for builds, else the open connection. Without it a build is found by its commit alone, as before. With it, a Freight that names no commit is also looked for by image digest: delivery lists that namespace's PipelineRuns and TaskRuns, a page cap each, compares their `IMAGE_DIGEST` results in memory with the Freight's image digests, and, when a Results address is set for that entry, the first ten PipelineRun records the archive returns for the namespace (no order is asked for). A Freight that names a commit is also searched by digest when the key is set, and the commit reads are scoped to the namespace too. Without the key, the Build hop of an image-only Freight says the build namespace isn't set and names `delivery.build_namespace`. It must be a Kubernetes namespace name (lowercase alphanumerics and `-`, at most 63); nothing checks that the namespace exists, and a wrong one finds no build.
 - **Unknown keys** are kept and written back as they were read, at every level, as [#699](https://github.com/skel84/freshkube/issues/699) did for the JSON files, and Settings names them.
 - **The file** is read only when it is a regular file of at most 256 KiB, and a new one is created `0600`, as `workspace.json` is.
+
+A forward route uses `https://<service>.<namespace>.svc/`, with no URL port. The Results client pins that hostname to `127.0.0.1:<local port>` with reqwest's `resolve` and disables proxies with `no_proxy()`. Omitting the URL port is deliberate: reqwest gives an explicit URL port precedence over the resolved socket port. TLS checks the certificate against `<service>.<namespace>.svc`, with verification always on; a private CA can be supplied through `ca_file`.
+
+The forward token's key-store account is `Tekton Results forward://<namespace>/<service>:<configured port>`. It uses the configured triple, never the local port, so a restart on another local port reads the same token. An address keeps its separate `Tekton Results <normalized address>` account. An ended route returns `Error::ForwardEnded(reason)` without reading the key store or CA file; connection and response failures keep their transport error unless the caller reports the route ended. No route falls back to the configured port or starts another forward. The caller owns the forward and must match its configured triple and replace the client on a new forward epoch; the app integration is the next slice of [#268](https://github.com/skel84/freshkube/issues/268).
 
 ## What stays out
 
@@ -225,6 +231,60 @@ When the parser gives no place, the words say which pass failed without one.
 
 Then `Workspace::validate` and the new rules run, and their errors name an entry by id (`the id “cluster-b” is used twice`), as today. The log gets the same words.
 
+### Row recovery on disk reads
+
+YAML disk reads use `setup::read`, returning an effective `Setup`, structured
+warnings and separate `SourceRecovery` state. `setup::parse`, Settings
+writes and legacy JSON migration input stay strict. Reading never rewrites YAML.
+
+A bad `clusters[i]` or `destinations[i]` row is skipped as a whole, including a
+cluster whose optional Results, metrics or Coroot block is invalid. Healthy
+neighbors and unrelated sections remain usable. Warnings keep the original
+zero-based index, a readable bounded id (the target entry for a destination),
+the field and a typed reason. They never include endpoints, path values,
+rejected YAML or parser messages. Destination server userinfo is refused by both the recovery reader and strict validation, including Settings saves, without quoting the endpoint. A later duplicate Coroot link is skipped;
+the first otherwise-valid link wins, comparing projects after inheritance.
+
+File-fatal faults still refuse the entire file: unreadable/non-regular or
+oversized files; invalid YAML and duplicate mapping keys; non-map documents;
+missing, unreadable or unknown versions; wrong top-level shapes/types;
+more than 64 input clusters or 256 input destinations; duplicate readable
+cluster ids; a relative workspace kubeconfig; and invalid source pins.
+Shared metrics, top-level Coroot and supply-chain semantic faults stay fatal.
+As before, dormant central-store semantic settings are retained but unread.
+
+Before decoding any row, a credential preflight checks recognized key/token
+positions and endpoint URL userinfo across the raw document, including dormant
+metrics blocks and rows that could not otherwise decode. A literal credential
+or embedded URL credential refuses the file without quoting it. A row fault
+cannot hide a later fatal fault.
+
+An accepted read publishes one complete sentence in input order:
+`freshkube.yaml is used with warnings: skipped clusters[1] (cluster-b): results.address: plain HTTP is allowed only on loopback. The rest of the file stays in use.`
+Settings and both delivery change views use the existing Warn banners. Delivery
+sources keeps the file row as **Used with warnings**, with the same details.
+Unknown-key and changed-on-disk notices remain available. A later fatal refusal
+shows only the existing `problem_words` sentence; item warnings return on the
+next accepted read and disappear when repaired.
+
+All-skipped arrays still yield an accepted setup and retain their original
+bytes for conflict detection. An all-skipped cluster list resolves sources as
+unavailable, preserving dangling pins and mappings; it never reads from the
+open connection. Role selection also runs over the original input rows, using the same role precedence as strict selection. If the selected row was skipped, that part is unavailable and names its original index and readable id; it never moves to a later row or a fallback role. Explicit pins still take precedence, and in-cluster alias validation uses that same recovered source selection. An intentionally empty valid setup retains its existing
+workspace-of-one behavior. Switching between those states changes effective
+source availability even when the two `Setup` values compare equal.
+
+While skipped rows remain, Settings writes nothing and says:
+`Fix the skipped items in freshkube.yaml and Reload before saving from Settings.`
+A partly accepted YAML wins over legacy JSON without merging, rewriting, or
+setting the legacy files aside. Once repaired, ordinary strict save, backup,
+conflict and migration-adoption rules resume.
+
+Warning-only edits and changed fatal reasons update diagnostics without
+restarting delivery reads. Effective setup or source-availability changes do
+invalidate them. A successful explicit Reload always invalidates reads, even
+for identical configuration, since referenced key files can change.
+
 ## Reload on change
 
 No dependency is needed. The app has no file watcher today (it reads `workspace.json` at start and on Reload, `settings/mod.rs` and `settings/edit.rs`); `notify` is in the build only inside GPUI Kit's theme registry. A watcher would also have to watch the directory, since editors save by renaming a new file over the old one. A poll is simpler and costs nothing that matters:
@@ -260,7 +320,7 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | 0 | This design | Claude | docs | none |
 | 1 | **Core types and parse.** A `setup` module in core: `Setup` (the workspace, `metrics`, `coroot`, `supply_chain`, unknown keys), `parse` with the two-pass errors and their line and column, `to_text` with the header and fixed order, `commit` on `Seen`, the `key` rule. The per-entry `results`, `coroot` and `metrics` and the `supply_chain` block are typed here, which takes over #697's slice 11. Round-trip tests on the example above, kept as `crates/freshkube-prefs/src/examples/freshkube.yaml`. | Claude | `freshkube-core/src/setup/`, `workspace/` | #697 slice 3 |
 | 2 | **Migration.** Steps 1 to 6, at startup, with tests for each stopping point, both files present, an unusable `workspace.json` and two launches at once. | Claude | core `setup/migrate.rs`, `desktop/startup/` | 1, #707 |
-| 3 | **Reload.** The `SetupFile` owner, its poll and debounce, its own-write rule and the broken-file state, handed to Settings, the switcher, delivery and Coroot. UI tests on the test clock. | Codex | `freshkube-desktop/src/setup_file.rs`, shell wiring | 1 |
+| 3 | **Reload.** The `SetupFile` owner, its poll and debounce, its own-write rule and the broken-file state, handed to Settings, the switcher, delivery and Coroot. UI tests on the test clock. | Codex | `freshkube-desktop/src/setup_file/mod.rs`, shell wiring | 1 |
 | 4 | **The Settings write path.** Settings saves into `freshkube.yaml` through `SetupFile`: the `.bak` of a hand-edited file, the receipts, the changed-on-disk and broken-file banners, the Check sources row. Today's three lists move from `workspace.json` to it unchanged. | Codex | `desktop/settings/` | 2, 3 |
 | 5 | **Metrics from the setup.** The modes, and central mode's matcher injected in core's transport, with tests on dashboards' queries, variable queries, the history panels, a matcher on the same label and an unparsable query; the source an entry reads, and the hosting entry's client handed to Monitoring; the two Check sources checks. A join: a wrong scope draws another cluster's numbers as this one's. | Claude | core `monitoring/transport.rs`, `freshkube-monitoring`'s `page/` and `history/`, shell wiring | 1, 3 |
 | 6 | **The README example.** The setup section becomes the annotated example above. | Codex | `README.md` | 4, 5 |

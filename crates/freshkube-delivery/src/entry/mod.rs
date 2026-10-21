@@ -659,7 +659,7 @@ pub async fn check_all<R: Reader>(
         .map(|open| open.as_ref().map_err(Failure::clone));
     let target = |chosen: &Chosen| -> Result<Target<'_, R>, Reach> {
         match chosen {
-            Chosen::NoEntry(_) | Chosen::Gone(_) => {
+            Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => {
                 Err(Reach::missing(chosen.missing().unwrap_or_default()))
             }
             Chosen::Open => match &open {
@@ -694,6 +694,7 @@ pub async fn check_all<R: Reader>(
         let id = match chosen {
             Chosen::Entry { entry, .. } => entry.id.clone(),
             Chosen::Gone(id) => id.clone(),
+            Chosen::Skipped(row) => row.label(),
             Chosen::Open | Chosen::NoEntry(_) => OPEN.to_owned(),
         };
         async move {
