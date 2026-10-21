@@ -1,0 +1,1 @@
+- **Protection field:** a cluster in `freshkube.yaml` can set `protection` (`read-only`, `protected`, `guarded` or `open`; none is guarded). An unknown value skips that cluster with a warning and leaves its context read-only. The write model it belongs to is in [WRITE_MODEL.md](docs/WRITE_MODEL.md).

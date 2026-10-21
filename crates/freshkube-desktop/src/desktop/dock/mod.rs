@@ -242,6 +242,8 @@ impl DockTab {
 pub(crate) struct Dock {
     runtime: Handle,
     source: Option<ClusterSource>,
+    /// The cluster refuses writes (#852): no shell tab starts a session.
+    read_only: bool,
     pub(crate) tabs: Vec<DockTab>,
     selected: Option<u64>,
     next_id: u64,
@@ -299,6 +301,7 @@ impl Dock {
         let mut dock = Self {
             runtime,
             source: None,
+            read_only: false,
             tabs: Vec::new(),
             selected: None,
             next_id: 0,
@@ -602,6 +605,7 @@ impl Dock {
         self.next_id += 1;
         let runtime = self.runtime.clone();
         let view = cx.new(|cx| ShellView::new(runtime, window, cx));
+        view.update(cx, |view, cx| view.set_read_only(self.read_only, cx));
         let subscriptions = vec![
             cx.observe(&view, Self::tab_changed),
             // Command-Escape in the terminal hands the keyboard back.
@@ -980,6 +984,20 @@ impl Dock {
     /// Resources page starts over: whoever changed it asked about running
     /// shells first (`Pilot::unless_shell`). The first source restores the
     /// saved tabs when its context is theirs.
+    /// Tells every shell tab, and the ones opened later, whether the
+    /// cluster refuses writes. A session already running is left to end.
+    pub(crate) fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        if self.read_only == read_only {
+            return;
+        }
+        self.read_only = read_only;
+        for tab in &self.tabs {
+            if let TabKind::Shell(view) = &tab.kind {
+                view.update(cx, |view, cx| view.set_read_only(read_only, cx));
+            }
+        }
+    }
+
     pub(crate) fn set_source(
         &mut self,
         source: Option<ClusterSource>,

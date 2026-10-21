@@ -1,6 +1,8 @@
 //! Labels are prepared on source and text-size changes, never while drawing.
 use super::*;
 use freshkube_core::pluralize;
+use freshkube_core::write::Protection;
+use freshkube_ui::level::Mark;
 
 /// Where the applied context's connection stands, as the header's switcher
 /// and Overview's heading show it.
@@ -20,8 +22,29 @@ pub(in crate::desktop) struct ContextDisplay {
     pub(in crate::desktop) detail: SharedString,
     pub(in crate::desktop) status: SharedString,
     pub(in crate::desktop) state: Connection,
+    /// The protection level of the context shown (#852), prepared with the
+    /// rest so the header and the status bar only draw it.
+    pub(in crate::desktop) level: Protection,
+    /// What the level's tag says in a tooltip and to a screen reader,
+    /// prepared with the level.
+    pub(in crate::desktop) level_words: SharedString,
     pub(in crate::desktop) open: bool,
     pub(in crate::desktop) counts: std::collections::BTreeMap<String, SharedString>,
+}
+
+/// The look of a protection level.
+pub(in crate::desktop) fn mark(level: Protection) -> Mark {
+    match level {
+        Protection::ReadOnly => Mark::ReadOnly,
+        Protection::Protected => Mark::Protected,
+        Protection::Guarded => Mark::Guarded,
+        Protection::Open => Mark::Open,
+    }
+}
+
+/// What a level's tag says in a tooltip and to a screen reader.
+pub(in crate::desktop) fn level_words(level: Protection) -> String {
+    format!("Protection: {}. {}", level.label(), level.meaning())
 }
 
 /// Room for the context's name in the header's switcher, in dp.
@@ -56,8 +79,47 @@ impl Pilot {
             .unwrap_or_else(|| "No context".into())
     }
 
-    pub(in crate::desktop) fn prepare_context_display(&mut self, window: &mut Window, cx: &App) {
+    /// The level the window works under: the active workspace entry's, with
+    /// the stricter of any entry naming the same kubeconfig context, else
+    /// guarded, else what a skipped row locked it to. The entry is the
+    /// source, not the name the header shows: the applied context can be a
+    /// Talos context that no entry's `context` names. With no entry active,
+    /// the context shown decides. Prepared on a source change and when the
+    /// setup changes, never while drawing.
+    pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
+        let shown = self.display_context(cx);
+        let settings = self.settings_page.read(cx);
+        let workspace = settings.workspace();
+        let active = self
+            .switch
+            .active_cluster()
+            .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id));
+        let level = match active {
+            Some(entry) => workspace
+                .level_of(&entry.context, &settings.source_recovery)
+                .stricter(entry.level()),
+            None => workspace.level_of(&shown, &settings.source_recovery),
+        };
+        if level == self.context_display.level && !self.context_display.level_words.is_empty() {
+            return false;
+        }
+        self.context_display.level = level;
+        self.context_display.level_words = level_words(level).into();
+        // What writes ask: the slot for the operations, the dock's shells.
+        crate::mutation::set_protection(level, cx);
+        self.pages
+            .dock
+            .update(cx, |dock, cx| dock.set_read_only(level.is_read_only(), cx));
+        true
+    }
+
+    pub(in crate::desktop) fn prepare_context_display(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let full = self.display_context(cx);
+        self.prepare_protection(cx);
         self.context_display.full = full.clone().into();
         let full = full.as_str();
         let font = window.text_system().resolve_font(&Font {

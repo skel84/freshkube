@@ -370,3 +370,45 @@ fn a_restart_is_refused_while_another_operation_runs(cx: &mut TestAppContext) {
     .unwrap();
     operations.update(cx, |operations, cx| operations.finish(ticket, cx));
 }
+
+/// A read-only cluster (#852) turns Restart off with the reason: pressing it
+/// opens no confirmation and takes no slot.
+#[gpui_kit::test]
+fn a_read_only_cluster_refuses_a_restart_and_takes_no_slot(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        open_services_with_room(window, cx);
+        window.render_frame(cx);
+        window.within("services-region").click("containerd", cx);
+        window.render_frame(cx);
+        crate::mutation::set_protection(freshkube_core::write::Protection::ReadOnly, cx);
+        window.render_frame(cx);
+        window.click("service-restart", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("confirm-dialog").is_none());
+        assert!(window.try_find("service-restart-result").is_none());
+        assert!(crate::mutation::Operations::current(cx).is_none());
+        let why = window
+            .find("service-restart-blocked")
+            .label()
+            .map(str::to_owned);
+        assert_eq!(why.as_deref(), Some("This cluster is read-only."));
+        crate::mutation::set_protection(freshkube_core::write::Protection::Guarded, cx);
+        window.render_frame(cx);
+        window.click("service-restart", cx);
+    })
+    .unwrap();
+    crate::mutation::settle_confirmation(cx, handle);
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(
+            window.find("confirm-dialog").label(),
+            Some("Restart containerd?")
+        );
+    })
+    .unwrap();
+}

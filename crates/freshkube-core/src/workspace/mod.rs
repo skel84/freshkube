@@ -23,7 +23,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{BoundedReadError, read_bounded_regular_file};
+use crate::{BoundedReadError, read_bounded_regular_file, write::Protection};
 
 mod destinations;
 pub(crate) use destinations::has_userinfo;
@@ -82,6 +82,10 @@ pub struct Entry {
     /// one by that name; the file's own current context is never used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub talos_context: Option<String>,
+    /// How much the app asks before it writes here (#852); `None` is unset,
+    /// which is [`Protection::Guarded`], and is written back as no key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protection: Option<Protection>,
     /// Where Tekton Results is read; `None` is off. Boxed, so an `Entry` stays small. Typed and checked by
     /// `freshkube.yaml` ([`crate::setup`]); `workspace.json` only carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,8 +112,14 @@ impl Entry {
             results: None,
             coroot: None,
             metrics: None,
+            protection: None,
             extra: Default::default(),
         }
+    }
+
+    /// The level that applies here: what the entry sets, else guarded.
+    pub fn level(&self) -> Protection {
+        self.protection.unwrap_or_default()
     }
 }
 
@@ -291,6 +301,23 @@ impl Workspace {
     /// workspace, for a file that keeps them beside the workspace's own.
     pub(crate) fn take_unknown(&mut self) -> serde_json::Map<String, serde_json::Value> {
         std::mem::take(&mut self.extra)
+    }
+
+    /// The level that applies to a kubeconfig context. The stricter of the
+    /// entries naming it wins; a context no entry names is guarded, unless
+    /// a skipped row locked it ([`SourceRecovery::locked_level`]).
+    pub fn level_of(&self, context: &str, recovery: &SourceRecovery) -> Protection {
+        recovery
+            .locked_level(context)
+            .into_iter()
+            .chain(
+                self.clusters
+                    .iter()
+                    .filter(|entry| entry.context == context)
+                    .map(Entry::level),
+            )
+            .reduce(Protection::stricter)
+            .unwrap_or_default()
     }
 
     /// An id for a new entry that no entry uses, from the context's name.
@@ -564,6 +591,15 @@ pub fn choose_start<'a>(workspace: &'a Workspace, remembered: Option<&str>) -> O
 /// paths are absolute.
 pub fn example() -> Workspace {
     let entry = |id: &str, role| Entry::new(id, role, id);
+    // The entries differ in level, so example data shows each one: core-fra
+    // and prod-fra set none and are guarded. The window opens on prod-fra,
+    // and the shell and link checks start on core-fra and dev-fra, so those
+    // stay writable.
+    let level = |id: &str, role, level| {
+        let mut entry = Entry::new(id, role, id);
+        entry.protection = Some(level);
+        entry
+    };
     // One entry is linked to the example Coroot, so example data shows both
     // states of an entry's `coroot` key; the others are not.
     let mut core = entry("core-fra", Role::Core);
@@ -572,10 +608,10 @@ pub fn example() -> Workspace {
         kubeconfig: None,
         clusters: vec![
             core,
-            entry("cicd-fra", Role::Cicd),
-            entry("dev-fra", Role::Environment),
-            entry("stage-fra", Role::Environment),
-            entry("prod-ams", Role::Environment),
+            level("cicd-fra", Role::Cicd, Protection::Guarded),
+            level("dev-fra", Role::Environment, Protection::Open),
+            level("stage-fra", Role::Environment, Protection::ReadOnly),
+            level("prod-ams", Role::Environment, Protection::Protected),
             entry("prod-fra", Role::Environment),
         ],
         // The servers acme's Argo CD Applications name

@@ -215,6 +215,7 @@ impl ChangePage {
                 && self.view == ChangeView::Chain
                 && self.focus.is_focused(window);
             self.show(change);
+            self.read_pull(false, cx);
             if focus_chain && !self.rows.is_empty() {
                 let this = cx.entity().downgrade();
                 window.on_next_frame(move |window, cx| {
@@ -263,12 +264,14 @@ impl ChangePage {
             // the change's, and a late answer never lands.
             self.hide_outcomes();
             self.want_coroot(false, cx);
+            self.pull_visible(false, cx);
             cx.notify();
             return;
         }
         if reads_again {
             self.read(None, cx);
         }
+        self.pull_visible(true, cx);
         self.want_coroot(true, cx);
         self.read_outcome(false, cx);
     }
@@ -300,6 +303,7 @@ impl ChangePage {
             place.sources = across.sources;
             *kubeconfig = across.kubeconfig;
             place.github = across.github;
+            self.pull_reset();
             self.loader.expire();
             self.refresh(cx);
         }
@@ -341,6 +345,7 @@ impl ChangePage {
             place.build_namespace = across.build_namespace.clone();
             place.stage_naming = across.stage_naming.clone();
             place.github = across.github.clone();
+            self.pull_reset();
             self.loader.reset();
             self.stale = None;
             self.hide_outcomes();

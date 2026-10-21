@@ -986,3 +986,24 @@ mod sources {
         );
     }
 }
+
+#[test]
+fn a_context_takes_the_stricter_level_of_the_entries_naming_it() {
+    let at = |id: &str, context: &str, level: Option<Protection>| {
+        let mut entry = Entry::new(id, Role::Environment, context);
+        entry.protection = level;
+        entry
+    };
+    let workspace = Workspace::new(vec![
+        at("a", "shared", Some(Protection::Open)),
+        at("b", "shared", Some(Protection::Protected)),
+        at("c", "alone", None),
+        at("d", "open", Some(Protection::Open)),
+    ]);
+    let none = SourceRecovery::default();
+    assert_eq!(workspace.level_of("shared", &none), Protection::Protected);
+    assert_eq!(workspace.level_of("alone", &none), Protection::Guarded);
+    assert_eq!(workspace.level_of("open", &none), Protection::Open);
+    // A context no entry names is guarded, whatever it is called.
+    assert_eq!(workspace.level_of("production", &none), Protection::Guarded);
+}
