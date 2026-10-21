@@ -93,7 +93,10 @@ fn a_refused_kind_is_forbidden_and_a_retryable_one_unreadable() {
         reason(&Cause::cant_read("x", Some(role), false), hop),
         "pods unreadable"
     );
-    assert_eq!(reason(&Cause::cant_read("x", None, false), hop), "unreadable");
+    assert_eq!(
+        reason(&Cause::cant_read("x", None, false), hop),
+        "unreadable"
+    );
     assert_eq!(reason(&Cause::cant_read("x", None, true), hop), "refused");
 }
 

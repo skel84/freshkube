@@ -56,7 +56,7 @@ impl ChangePage {
                 self.filter.is_some_and(|tone| {
                     !self.rows.iter().any(|row| {
                         self.trail.cards.get(&row.key) == Some(&node.key)
-                            && status(row.tone) == tone
+                            && self.groups[row.group].counts_as == tone
                     })
                 })
             })
@@ -85,7 +85,10 @@ impl ChangePage {
                 .and_then(|key| self.rows.iter().find(|row| &row.key == key))
             {
                 self.folded.remove(&row.group);
-                if self.filter.is_some_and(|tone| tone != status(row.tone)) {
+                if self
+                    .filter
+                    .is_some_and(|tone| tone != self.groups[row.group].counts_as)
+                {
                     self.filter = None;
                 }
                 self.derive();
