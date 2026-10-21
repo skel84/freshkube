@@ -5,6 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::change::Phase;
+use crate::change::example::Shape;
 use crate::fixtures::FixtureReader;
 use crate::kargo::{GROUP, parse_freight, parse_stage};
 use crate::source::Truncation;
@@ -122,6 +123,131 @@ fn a_change_is_its_pull_request_else_its_commit() {
         Some(now() - Duration::minutes(6)),
         "its age"
     );
+}
+
+#[test]
+fn a_followed_row_says_where_its_pull_request_stands() {
+    let changes = example();
+    let wonky = row(&changes, "wonky-otter");
+    assert_eq!(wonky.pull_state, Some(PullState::Merged));
+    assert_eq!(wonky.pull_note, None);
+    // Not followed: GitHub wasn't asked about it.
+    assert_eq!(row(&changes, "tidy-badger").pull_state, None);
+}
+
+#[test]
+fn github_that_cannot_be_asked_leaves_the_kept_state_stale_or_none_and_says_why() {
+    let list = |shape| derive(&example::read_shaped(now(), shape));
+    for (shape, words) in [
+        (
+            Shape::GitHubLimited,
+            "GitHub's rate limit is reached until 14:05 UTC",
+        ),
+        (
+            Shape::GitHubOffline,
+            "GitHub didn't answer: could not connect",
+        ),
+    ] {
+        let changes = list(shape);
+        let wonky = row(&changes, "wonky-otter");
+        assert_eq!(wonky.pull_state, Some(PullState::Merged), "{words}");
+        let note = wonky.pull_note.as_deref().unwrap();
+        assert!(note.starts_with(words), "{note}");
+        assert!(
+            note.ends_with("showing what was read at 13:12 UTC"),
+            "{note}"
+        );
+        assert!(
+            changes
+                .notes
+                .iter()
+                .any(|note| note.text.starts_with(words)),
+            "the status bar says it: {:?}",
+            changes.notes
+        );
+    }
+    let refused = list(Shape::GitHubRefused);
+    let wonky = row(&refused, "wonky-otter");
+    assert_eq!(wonky.pull_state, None, "nothing was ever read");
+    assert_eq!(
+        wonky.named,
+        Named::PullRequest(418),
+        "the build still names it"
+    );
+    assert!(
+        refused
+            .notes
+            .iter()
+            .any(|note| note.gap == Gap::Refused && note.text == "GitHub refused the token (401)"),
+        "{:?}",
+        refused.notes
+    );
+}
+
+#[test]
+fn github_is_said_once_per_cause_in_the_form_that_says_what_is_kept() {
+    // One followed change has a pull request whose answer is kept, another
+    // has none: their notes differ in words and are one cause.
+    for (shape, cause) in [
+        (
+            Shape::GitHubLimited,
+            "GitHub's rate limit is reached until 14:05 UTC",
+        ),
+        (
+            Shape::GitHubOffline,
+            "GitHub didn't answer: could not connect",
+        ),
+    ] {
+        let changes = derive(&example::read_shaped(now(), shape));
+        let texts: Vec<Option<&str>> = changes
+            .rows
+            .iter()
+            .filter_map(|row| row.trail.as_ref().ok())
+            .map(|change| {
+                change
+                    .missing
+                    .iter()
+                    .find(|note| note.text.starts_with(cause))
+                    .map(|note| note.text.as_str())
+            })
+            .collect();
+        let stale = format!("{cause}; showing what was read at 13:12 UTC");
+        assert!(
+            texts.contains(&Some(stale.as_str())) && texts.contains(&Some(cause)),
+            "one change keeps a copy and one has none: {texts:?}"
+        );
+        let github: Vec<&Note> = changes
+            .notes
+            .iter()
+            .filter(|note| note.text.starts_with(cause))
+            .collect();
+        assert_eq!(github.len(), 1, "{:?}", changes.notes);
+        assert_eq!(github[0].text, stale, "the form that says what is kept");
+    }
+    // Where nothing was kept, the one note is the bare cause.
+    let refused = derive(&example::read_shaped(now(), Shape::GitHubRefused));
+    let notes: Vec<&Note> = refused
+        .notes
+        .iter()
+        .filter(|note| note.text.contains("GitHub"))
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].text, "GitHub refused the token (401)");
+}
+
+#[test]
+fn a_cause_is_what_comes_before_where_an_old_answer_was_read() {
+    use crate::github::cause_of;
+    assert_eq!(
+        cause_of("GitHub didn't answer: could not connect; showing what was read at 13:12 UTC"),
+        "GitHub didn't answer: could not connect"
+    );
+    assert_eq!(
+        cause_of("GitHub didn't answer: could not connect"),
+        "GitHub didn't answer: could not connect"
+    );
+    // Other notes are their own cause, as they always were.
+    assert_eq!(cause_of("Couldn't reach cicd-b"), "Couldn't reach cicd-b");
 }
 
 /// The example's own reaches say what its hops say: a Stage's weakest link
@@ -387,6 +513,7 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let unserved = live::read(&FixtureReader::default(), &at, now(), live::BUDGET).await;
     assert!(matches!(unserved.projects, Source::NotInstalled(_)));
@@ -412,6 +539,7 @@ async fn a_live_read_lists_freight_and_follows_only_what_runs() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let freight = |name: &str| {
         json!({
@@ -548,6 +676,7 @@ fn at() -> live::Where {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     }
 }
 
@@ -872,6 +1001,7 @@ fn the_list_hands_its_log_settings_to_every_followed_change() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let off = at.place("checkout", "freight-a");
     assert!(!off.transparency_log);
