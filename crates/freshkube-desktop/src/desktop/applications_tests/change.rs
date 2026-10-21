@@ -503,7 +503,9 @@ fn a_chip_shows_the_groups_it_counts_with_every_row_in_them(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn a_hop_shows_its_link_and_a_gate_its_stage(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    // Tall enough for the headline, the fix bar and the pull request's
+    // banner above the trail, so these far rows are drawn.
+    let (_runtime, handle, _view) = open(cx, 1280., 1000.);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("pr-run"), cx);
         window.render_frame(cx);
@@ -721,7 +723,9 @@ fn o_opens_the_freight_in_resources(cx: &mut TestAppContext) {
 /// opens: the button is greyed out and the menu item too.
 #[gpui_kit::test]
 fn a_hop_on_a_cluster_that_is_not_open_does_not_open(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    // Tall enough for the headline, the fix bar and the pull request's
+    // banner above the trail, so these far rows are drawn.
+    let (_runtime, handle, view) = open(cx, 1280., 1000.);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("prod-lon-pods"), cx);
         window.render_frame(cx);
