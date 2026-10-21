@@ -76,5 +76,5 @@ pub use metadata::{MetadataNames, get_metadata, list_metadata};
 pub use pod_links::{PodLinks, ServiceSelector, collect_pod_links, resolve_owner_kind};
 
 pub use external_secrets::{
-    ExternalSecret, StoreRead, StoreRef, StoreStatus, read_external_secret_stores,
+    ExternalSecret, MAX_STORES, StoreRead, StoreRef, StoreStatus, read_external_secret_stores,
 };

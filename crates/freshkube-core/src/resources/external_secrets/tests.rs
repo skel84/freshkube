@@ -141,9 +141,11 @@ async fn fake_api_allows_only_external_secret_and_status_reads() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let sink = seen.clone();
     let api = tower::service_fn(move |request: Request<Body>| {
-        allowed(&request);
         let path = request.uri().path().to_owned();
-        sink.lock().unwrap().push(path.clone());
+        sink.lock()
+            .unwrap()
+            .push((request.method().to_string(), path.clone()));
+        allowed(&request);
         let response = match path.as_str() {
             "/apis" => {
                 json!({"groups":[{"name":"external-secrets.io","preferredVersion":{"version":"v1"},"versions":[{"version":"v1"},{"version":"v1beta1"}]}]})
@@ -174,7 +176,19 @@ async fn fake_api_allows_only_external_secret_and_status_reads() {
             "True"
         );
     }
-    assert_eq!(seen.lock().unwrap().len(), 6);
+    let mut actual = seen.lock().unwrap().clone();
+    actual.sort();
+    let mut expected = [
+        "/apis",
+        "/apis/external-secrets.io/v1",
+        "/apis/external-secrets.io/v1beta1",
+        "/apis/external-secrets.io/v1beta1/namespaces/paper-kites/externalsecrets/lantern-api",
+        "/apis/external-secrets.io/v1/namespaces/paper-kites/secretstores/meadow-store",
+        "/apis/external-secrets.io/v1/clustersecretstores/shared-meadow",
+    ]
+    .map(|path| ("GET".to_owned(), path.to_owned()));
+    expected.sort();
+    assert_eq!(actual, expected);
     let projected = format!("{reads:?}");
     for forbidden in [
         "invented-sensitive-sentinel",
@@ -191,10 +205,12 @@ async fn fake_api_allows_only_external_secret_and_status_reads() {
 async fn refused_missing_and_unknown_store_status_are_distinct() {
     use http::{Request, Response};
     use kube::client::Body;
-    for code in [200, 403, 404, 500] {
+    for code in [200, 403, 404, 500, 0, 1] {
         let api = tower::service_fn(move |request: Request<Body>| {
             allowed(&request);
             let (status, body) = match request.uri().path() {
+                "/apis" if code == 0 => (200, json!({"groups":[]})),
+                "/apis/external-secrets.io/v1" if code == 1 => (200, json!({"resources":[]})),
                 "/apis" => (
                     200,
                     json!({"groups":[{"name":"external-secrets.io","versions":[{"version":"v1"}]}]}),
@@ -224,7 +240,9 @@ async fn refused_missing_and_unknown_store_status_are_distinct() {
         let reads =
             read_external_secret_stores(&Client::new(api, "paper-kites"), &project(object())).await;
         for read in reads {
+            assert_eq!(read.api_absent, code <= 1);
             match code {
+                0 | 1 => assert_eq!(read.status.unwrap_err().kind, FailureKind::NotFound),
                 200 => assert!(read.status.unwrap().ready.is_none()),
                 403 => assert_eq!(read.status.unwrap_err().kind, FailureKind::Forbidden),
                 404 => assert_eq!(read.status.unwrap_err().kind, FailureKind::NotFound),
@@ -264,6 +282,7 @@ async fn incomplete_store_discovery_does_not_claim_the_api_is_absent() {
     let reads =
         read_external_secret_stores(&Client::new(api, "paper-kites"), &project(object())).await;
     for read in reads {
+        assert!(!read.api_absent);
         let error = read.status.unwrap_err();
         assert_eq!(error.kind, FailureKind::Forbidden);
         assert!(error.message.contains("discovery refusal"));

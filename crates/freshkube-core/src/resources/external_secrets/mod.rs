@@ -7,9 +7,7 @@ use serde::Deserialize;
 use serde_yaml::Value;
 
 use super::object::{JSON, json_get};
-use super::{
-    ApiGroup, Condition, Failure, FailureKind, ResourceKind, list_custom_groups, list_group_kinds,
-};
+use super::{Condition, Failure, FailureKind, ResourceKind, list_custom_groups, list_group_kinds};
 
 pub const EXTERNAL_SECRETS_GROUP: &str = "external-secrets.io";
 pub const MAX_STORES: usize = 20;
@@ -21,6 +19,8 @@ pub struct ExternalSecret {
     pub refreshed: Option<DateTime<Utc>>,
     pub interval: String,
     pub policy: String,
+    pub interval_default: bool,
+    pub policy_default: bool,
     pub stores: Vec<StoreRef>,
     pub unsupported_sources: bool,
     pub stores_omitted: usize,
@@ -45,6 +45,7 @@ pub struct StoreStatus {
 pub struct StoreRead {
     pub store: StoreRef,
     pub status: Result<StoreStatus, Failure>,
+    pub api_absent: bool,
 }
 
 /// Only the ESO kind gets this summary, regardless of the served version.
@@ -106,6 +107,8 @@ pub(super) fn summary(
             .and_then(|s| s.parse().ok()),
         interval: spec["refreshInterval"].as_str().unwrap_or("1h").into(),
         policy: spec["refreshPolicy"].as_str().unwrap_or("Periodic").into(),
+        interval_default: spec["refreshInterval"].as_str().is_none(),
+        policy_default: spec["refreshPolicy"].as_str().is_none(),
         stores,
         unsupported_sources: unsupported_sources || generators,
         stores_omitted,
@@ -114,7 +117,11 @@ pub(super) fn summary(
 
 impl StoreRead {
     pub fn new(store: StoreRef, status: Result<StoreStatus, Failure>) -> Self {
-        Self { store, status }
+        Self {
+            store,
+            status,
+            api_absent: false,
+        }
     }
 }
 impl StoreStatus {
@@ -176,19 +183,27 @@ pub async fn read_external_secret_stores(
         return Vec::new();
     }
     let kinds = async {
-        let group: ApiGroup = list_custom_groups(client)
+        let group = list_custom_groups(client)
             .await?
             .into_iter()
-            .find(|g| g.name == EXTERNAL_SECRETS_GROUP)
-            .ok_or_else(|| {
-                Failure::new(FailureKind::NotFound, "External Secrets API not served")
-            })?;
-        list_group_kinds(client, &group).await
+            .find(|g| g.name == EXTERNAL_SECRETS_GROUP);
+        match group {
+            Some(group) => list_group_kinds(client, &group).await.map(Some),
+            None => Ok(None),
+        }
     }
     .await;
     join_all(secret.stores.iter().map(|store| async {
+        let mut api_absent = false;
         let status = async {
-            let kinds = kinds.as_ref().map_err(Clone::clone)?;
+            let kinds = kinds
+                .as_ref()
+                .map_err(Clone::clone)?
+                .as_ref()
+                .ok_or_else(|| {
+                    api_absent = true;
+                    Failure::new(FailureKind::NotFound, "External Secrets API not served")
+                })?;
             let kind = kinds
                 .kinds
                 .iter()
@@ -201,10 +216,13 @@ pub async fn read_external_secret_stores(
                             store.kind, failure.message
                         ),
                     ),
-                    None => Failure::new(
-                        FailureKind::NotFound,
-                        format!("{} API not served", store.kind),
-                    ),
+                    None => {
+                        api_absent = true;
+                        Failure::new(
+                            FailureKind::NotFound,
+                            format!("{} API not served", store.kind),
+                        )
+                    }
                 })?;
             let response: StoreResponse = client
                 .request(json_get(
@@ -219,6 +237,7 @@ pub async fn read_external_secret_stores(
         StoreRead {
             store: store.clone(),
             status,
+            api_absent,
         }
     }))
     .await

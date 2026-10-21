@@ -1,7 +1,9 @@
 //! The selected ExternalSecret's cause, refresh facts and store status reads.
 use super::*;
 use crate::ui::{self, Tone};
-use freshkube_core::resources::{ExternalSecret, StoreRead, read_external_secret_stores};
+use freshkube_core::resources::{
+    ExternalSecret, MAX_STORES, StoreRead, read_external_secret_stores,
+};
 use gpui_kit::component::{h_flex, v_flex};
 
 #[cfg(test)]
@@ -19,7 +21,16 @@ struct Line {
 
 impl Line {
     fn describe(&mut self) {
-        self.accessible = format!("{} · {} · {}", self.label, self.status, self.detail).into();
+        self.accessible = [
+            self.label.as_ref(),
+            self.status.as_ref(),
+            self.detail.as_ref(),
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
+        .into();
     }
 }
 
@@ -52,11 +63,11 @@ impl ExternalView {
     }
 
     fn set_secret(&mut self, secret: ExternalSecret) {
-        if self
+        let changed = self
             .secret
             .as_ref()
-            .is_none_or(|before| before.stores != secret.stores)
-        {
+            .is_none_or(|before| before.stores != secret.stores);
+        if changed {
             self.previous.clear();
         }
         self.conditions = secret
@@ -84,43 +95,57 @@ impl ExternalView {
             .map(local_time)
             .unwrap_or_else(|| "Not refreshed yet".into())
             .into();
-        self.interval = secret.interval.clone().into();
-        self.policy = secret.policy.clone().into();
-        self.note = if secret.unsupported_sources {
-            Some("Some sources cannot be inspected here; their health is unknown".into())
-        } else if secret.stores_omitted > 0 {
-            Some(format!("{} more stores not read (limit 20)", secret.stores_omitted).into())
+        self.interval = if secret.interval_default {
+            format!("{} (default)", secret.interval).into()
         } else {
-            None
+            secret.interval.clone().into()
         };
-        self.stores = secret
-            .stores
-            .iter()
-            .map(|store| Line {
-                accessible: SharedString::default(),
-                id: format!(
-                    "external-store-{}-{}-{}",
-                    store.kind,
-                    store.namespace.as_deref().unwrap_or_default(),
-                    store.name
-                )
-                .into(),
-                label: format!(
-                    "{} {}{}",
-                    store.kind,
-                    store
-                        .namespace
-                        .as_ref()
-                        .map(|ns| format!("{ns}/"))
-                        .unwrap_or_default(),
-                    store.name
-                )
-                .into(),
-                status: "Reading".into(),
-                tone: Tone::Unknown,
-                detail: "Reading the store's own Ready condition".into(),
-            })
-            .collect();
+        self.policy = if secret.policy_default {
+            format!("{} (default)", secret.policy).into()
+        } else {
+            secret.policy.clone().into()
+        };
+        let mut notes = Vec::new();
+        if secret.unsupported_sources {
+            notes.push("Some sources cannot be inspected here; their health is unknown".to_owned());
+        }
+        if secret.stores_omitted > 0 {
+            notes.push(format!(
+                "{} more stores not read (limit {MAX_STORES})",
+                secret.stores_omitted
+            ));
+        }
+        self.note = (!notes.is_empty()).then(|| notes.join(". ").into());
+        if changed {
+            self.stores = secret
+                .stores
+                .iter()
+                .map(|store| Line {
+                    accessible: SharedString::default(),
+                    id: format!(
+                        "external-store-{}-{}-{}",
+                        store.kind,
+                        store.namespace.as_deref().unwrap_or_default(),
+                        store.name
+                    )
+                    .into(),
+                    label: format!(
+                        "{} {}{}",
+                        store.kind,
+                        store
+                            .namespace
+                            .as_ref()
+                            .map(|ns| format!("{ns}/"))
+                            .unwrap_or_default(),
+                        store.name
+                    )
+                    .into(),
+                    status: "Reading".into(),
+                    tone: Tone::Unknown,
+                    detail: "Reading the store's own Ready condition".into(),
+                })
+                .collect();
+        }
         for line in self.conditions.iter_mut().chain(&mut self.stores) {
             line.describe();
         }
@@ -145,12 +170,18 @@ impl ExternalView {
                     if error.is_some() { " · stale" } else { "" }
                 )
                 .into();
-                line.tone = if error.is_some() {
+                let reported_tone = super::overview::condition_tone("Ready", &ready.status);
+                line.tone = if error.is_some() && reported_tone != Tone::Crit {
                     Tone::Warn
                 } else {
-                    super::overview::condition_tone("Ready", &ready.status)
+                    reported_tone
                 };
-                line.detail = format!("{} · {}", ready.reason, ready.message).into();
+                line.detail = [ready.reason.as_str(), ready.message.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into();
             } else {
                 line.status = "Unknown".into();
                 line.tone = Tone::Unknown;
@@ -159,12 +190,13 @@ impl ExternalView {
             if let Some(error) = error {
                 let state = match error.kind {
                     FailureKind::Forbidden => "Not permitted to read store status",
-                    FailureKind::NotFound => "Store or its API not found",
+                    FailureKind::NotFound if read.api_absent => "Store API not served",
+                    FailureKind::NotFound => "Store not found",
                     _ => "Could not read store status",
                 };
                 line.detail = format!(
                     "{}{}: {}",
-                    if previous.is_some() {
+                    if previous.is_some() && !line.detail.is_empty() {
                         format!("Last known: {}. ", line.detail)
                     } else {
                         String::new()

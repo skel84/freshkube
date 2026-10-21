@@ -194,6 +194,7 @@ fn store_loading_and_unknown_conditions_keep_sync_visible(cx: &mut TestAppContex
         open(&pane, &target, cx);
         pane.update(cx, |pane, _| {
             let secret = pane.external.secret.clone().unwrap();
+            pane.external.reset();
             pane.external.set_secret(secret);
         });
         window.render_frame(cx);
@@ -414,4 +415,116 @@ fn external_store_replies_cannot_cross_access_sessions_or_deleted_objects(cx: &m
             assert_eq!(pane.external.stores[0].tone, Tone::Good);
         });
     });
+}
+
+#[test]
+fn repeated_documents_keep_store_rows_until_the_references_change() {
+    use super::ExternalView;
+    let secret = example::document(&target("lantern-api").identity, 1_767_312_000)
+        .unwrap()
+        .overview
+        .external_secret
+        .unwrap();
+    let mut view = ExternalView::default();
+    view.set_secret(secret.clone());
+    view.finish(example::external_secrets::stores(&secret));
+    let shown = view.stores[0].accessible.clone();
+    view.set_secret(secret.clone());
+    assert_eq!(view.stores[0].accessible, shown);
+    let store = secret.stores[0].clone();
+    view.finish(vec![StoreRead::new(
+        store,
+        Err(Failure::new(FailureKind::Forbidden, "Invented refusal")),
+    )]);
+    let stale = view.stores[0].accessible.clone();
+    view.set_secret(secret);
+    assert_eq!(view.stores[0].accessible, stale);
+    let other = example::document(&target("broken-store").identity, 1_767_312_000)
+        .unwrap()
+        .overview
+        .external_secret
+        .unwrap();
+    view.set_secret(other);
+    assert_eq!(view.stores[0].status, "Reading");
+    assert!(view.previous.is_empty());
+}
+
+#[test]
+fn missing_stores_have_a_specific_heading_and_stale_failures_stay_red() {
+    use super::ExternalView;
+    let mut view = ExternalView::default();
+    let secret = example::document(&target("missing-store").identity, 1_767_312_000)
+        .unwrap()
+        .overview
+        .external_secret
+        .unwrap();
+    view.set_secret(secret.clone());
+    view.finish(example::external_secrets::stores(&secret));
+    assert!(view.stores[0].detail.starts_with("Store not found:"));
+    let broken = example::document(&target("broken-store").identity, 1_767_312_000)
+        .unwrap()
+        .overview
+        .external_secret
+        .unwrap();
+    view.set_secret(broken.clone());
+    view.finish(example::external_secrets::stores(&broken));
+    view.finish(vec![StoreRead::new(
+        broken.stores[0].clone(),
+        Err(Failure::new(FailureKind::Forbidden, "Invented refusal")),
+    )]);
+    assert_eq!(view.stores[0].tone, Tone::Crit);
+    assert!(view.stores[0].status.contains("stale"));
+}
+
+#[test]
+fn defaults_are_labelled_and_both_incomplete_source_notes_are_shown() {
+    use super::ExternalView;
+    use freshkube_core::resources::object_from_yaml;
+    let mut secret = object_from_yaml(
+        &target("lantern-api").kind,
+        "metadata:\n  namespace: paper-kites\nspec: {}\nstatus: {}\n",
+    )
+    .unwrap()
+    .overview
+    .external_secret
+    .unwrap();
+    secret.unsupported_sources = true;
+    secret.stores_omitted = 7;
+    let mut view = ExternalView::default();
+    view.set_secret(secret);
+    assert_eq!(view.interval, "1h (default)");
+    assert_eq!(view.policy, "Periodic (default)");
+    let note = view.note.as_ref().unwrap();
+    assert!(note.contains("health is unknown"));
+    assert!(note.contains("7 more stores not read"));
+}
+
+#[test]
+fn absent_api_and_empty_store_causes_are_explicit() {
+    use super::ExternalView;
+    let identity = target("missing-store").identity;
+    let secret = example::document(&identity, 1_767_312_000)
+        .unwrap()
+        .overview
+        .external_secret
+        .unwrap();
+    let mut reads = example::external_secrets::stores(&secret);
+    reads[0].api_absent = true;
+    let mut view = ExternalView::default();
+    view.set_secret(secret);
+    view.finish(reads.clone());
+    assert!(view.stores[0].detail.starts_with("Store API not served:"));
+    reads[0].api_absent = false;
+    reads[0].status = Ok(freshkube_core::resources::StoreStatus::new(Some(
+        freshkube_core::resources::Condition {
+            kind: "Ready".into(),
+            status: "True".into(),
+            reason: String::new(),
+            message: String::new(),
+            changed: None,
+        },
+    )));
+    view.finish(reads);
+    assert!(view.stores[0].detail.is_empty());
+    assert!(!view.stores[0].accessible.ends_with(" · "));
 }
