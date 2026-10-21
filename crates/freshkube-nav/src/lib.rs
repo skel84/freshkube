@@ -4,9 +4,11 @@
 //! pane or the Nodes table draws a tab, stay in desktop.
 
 mod object;
+mod observability;
 mod request;
 mod tab;
 
 pub use object::{DetailTarget, ObjectRef, ResourceIdentity};
+pub use observability::{ObservabilityLink, ObservabilityTab};
 pub use request::{LogsAt, LogsRequest, ResourceLink, ShellRequest};
 pub use tab::{NodeTab, Tab};

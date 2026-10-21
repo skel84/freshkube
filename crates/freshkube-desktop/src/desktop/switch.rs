@@ -625,6 +625,24 @@ impl Pilot {
         LinkRoute::Activate(id.clone())
     }
 
+    /// Where an Observability link goes: only the entry it was made in
+    /// shows its Coroot application, so a link naming another is refused.
+    pub(super) fn route_observability(
+        &self,
+        link: &freshkube_nav::ObservabilityLink,
+    ) -> Result<(), String> {
+        match self.switch.active_cluster() {
+            Some(entry) if entry == link.entry => Ok(()),
+            // Example data has no workspace entry to compare.
+            None if self.mode().is_example() => Ok(()),
+            _ => Err(format!(
+                "Can’t open {} in Observability: it belongs to {}, which isn’t open",
+                link.app.name(),
+                link.entry
+            )),
+        }
+    }
+
     /// Sends a link where `route_link` says. True when it has been dealt
     /// with (refused, or held for another entry) and the caller stops.
     pub(super) fn divert_link(
