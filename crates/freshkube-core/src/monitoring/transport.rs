@@ -164,6 +164,20 @@ impl Prometheus {
             None => request,
         };
         let target = request.get_target().map_err(QueryError::unsupported)?;
+        let (status, bytes) = self.fetch(&target, self.limit).await?;
+        let direct = matches!(self.transport, Transport::Direct { .. });
+        classify(status, &bytes).map_err(|error| {
+            if direct && error.is_refused() {
+                QueryError::token_refused()
+            } else {
+                error
+            }
+        })
+    }
+
+    /// One GET of `target` (a path and query below the API's base), bounded
+    /// by the timeout and `limit`: the status and the body.
+    async fn fetch(&self, target: &str, limit: usize) -> Result<(u16, Vec<u8>), QueryError> {
         let _slot = self
             .slots
             .acquire()
@@ -176,10 +190,10 @@ impl Prometheus {
                         .header(http::header::ACCEPT, "application/json")
                         .body(Body::empty())
                         .map_err(|_| QueryError::unsupported("The request couldn't be built"))?;
-                    self.send(client, request).await
+                    self.send(client, request, limit).await
                 }
                 (Transport::Direct { http, token }, Endpoint::Url(url)) => {
-                    self.send_direct(http, token.as_deref(), &format!("{url}{target}"))
+                    self.send_direct(http, token.as_deref(), &format!("{url}{target}"), limit)
                         .await
                 }
                 _ => Err(QueryError::unsupported(
@@ -187,20 +201,26 @@ impl Prometheus {
                 )),
             }
         };
-        let (status, bytes) =
-            tokio::time::timeout(self.timeout, answer)
-                .await
-                .map_err(|_| {
-                    QueryError::new(
-                        ErrorKind::TimedOut,
-                        format!(
-                            "Prometheus didn't answer within {} s",
-                            self.timeout.as_secs()
-                        ),
-                    )
-                })??;
+        tokio::time::timeout(self.timeout, answer)
+            .await
+            .map_err(|_| {
+                QueryError::new(
+                    ErrorKind::TimedOut,
+                    format!(
+                        "Prometheus didn't answer within {} s",
+                        self.timeout.as_secs()
+                    ),
+                )
+            })?
+    }
+
+    /// A GET whose answer is plain JSON, not Prometheus's envelope: the
+    /// alert sources' own APIs. Never scoped, never retried; the caller
+    /// filters what it reads.
+    pub(super) async fn get_plain(&self, target: &str, limit: usize) -> Result<Value, QueryError> {
+        let (status, bytes) = self.fetch(target, limit).await?;
         let direct = matches!(self.transport, Transport::Direct { .. });
-        classify(status, &bytes).map_err(|error| {
+        classify_plain(status, &bytes).map_err(|error| {
             if direct && error.is_refused() {
                 QueryError::token_refused()
             } else {
@@ -216,6 +236,7 @@ impl Prometheus {
         http: &reqwest::Client,
         token: Option<&str>,
         url: &str,
+        limit: usize,
     ) -> Result<(u16, Vec<u8>), QueryError> {
         let mut request = http
             .get(url)
@@ -246,8 +267,8 @@ impl Prometheus {
             .await
             .map_err(|_| QueryError::new(ErrorKind::Unavailable, "The answer was cut off"))?
         {
-            if bytes.len() + chunk.len() > self.limit {
-                return Err(too_large(self.limit));
+            if bytes.len() + chunk.len() > limit {
+                return Err(too_large(limit));
             }
             bytes.extend_from_slice(&chunk);
         }
@@ -258,6 +279,7 @@ impl Prometheus {
         &self,
         client: &kube::Client,
         request: Request<Body>,
+        limit: usize,
     ) -> Result<(u16, Vec<u8>), QueryError> {
         let response = client.send(request).await.map_err(|error| {
             // kube's transport errors can name the server; keep them out.
@@ -279,8 +301,8 @@ impl Prometheus {
             let frame = frame
                 .map_err(|_| QueryError::new(ErrorKind::Unavailable, "The answer was cut off"))?;
             if let Some(data) = frame.data_ref() {
-                if bytes.len() + data.len() > self.limit {
-                    return Err(too_large(self.limit));
+                if bytes.len() + data.len() > limit {
+                    return Err(too_large(limit));
                 }
                 bytes.extend_from_slice(data);
             }
@@ -553,6 +575,37 @@ fn classify(status: u16, bytes: &[u8]) -> Result<Value, QueryError> {
             },
         ),
         code => bad_answer(format!("HTTP {code}: {detail}")),
+    })
+}
+
+/// Reads an answer from an alert source's own API by status: the JSON of a
+/// success, else the words of the failure.
+fn classify_plain(status: u16, bytes: &[u8]) -> Result<Value, QueryError> {
+    if (200..300).contains(&status) {
+        return serde_json::from_slice(bytes)
+            .map_err(|_| QueryError::new(ErrorKind::BadAnswer, "The answer isn't JSON"));
+    }
+    let detail = serde_json::from_slice::<Value>(bytes)
+        .ok()
+        .and_then(|value| {
+            let text = value.get("message").or_else(|| value.get("error"))?;
+            text.as_str().map(str::to_owned)
+        })
+        .unwrap_or_default();
+    let with = |what: &str| {
+        if detail.is_empty() {
+            what.to_owned()
+        } else {
+            format!("{what}: {detail}")
+        }
+    };
+    Err(match status {
+        401 => QueryError::unauthorized(),
+        403 => QueryError::refused(),
+        404 => QueryError::new(ErrorKind::NotFound, with("Not found")),
+        408 | 504 => QueryError::new(ErrorKind::TimedOut, "The proxy timed out"),
+        502 | 503 => QueryError::new(ErrorKind::Unavailable, with("The server isn't available")),
+        code => QueryError::new(ErrorKind::BadAnswer, with(&format!("HTTP {code}"))),
     })
 }
 

@@ -210,9 +210,13 @@ fn named_like_prometheus(name: &str) -> bool {
     name.contains("prometheus") && !COMPANIONS.iter().any(|other| name.contains(other))
 }
 
-/// Every Service that might be Prometheus, best first. Lists cluster-wide,
-/// or the usual monitoring namespaces when that is refused.
-pub async fn list_candidates(client: &kube::Client) -> Result<Vec<Candidate>, QueryError> {
+/// Every Service the identity may list: cluster-wide, or the usual
+/// monitoring namespaces when that is refused. `what` finishes the refusal's
+/// sentence: "Not allowed to list Services to find …".
+pub(super) async fn list_services(
+    client: &kube::Client,
+    what: &str,
+) -> Result<Vec<Service>, QueryError> {
     let services = match Api::<Service>::all(client.clone())
         .list(&ListParams::default())
         .await
@@ -246,12 +250,19 @@ pub async fn list_candidates(client: &kube::Client) -> Result<Vec<Candidate>, Qu
             if !allowed {
                 return Err(QueryError::new(
                     ErrorKind::Refused,
-                    "Not allowed to list Services to find Prometheus",
+                    format!("Not allowed to list Services to find {what}"),
                 ));
             }
             services
         }
     };
+    Ok(services)
+}
+
+/// Every Service that might be Prometheus, best first. Lists cluster-wide,
+/// or the usual monitoring namespaces when that is refused.
+pub async fn list_candidates(client: &kube::Client) -> Result<Vec<Candidate>, QueryError> {
+    let services = list_services(client, "Prometheus").await?;
     let mut candidates: Vec<Candidate> = services.iter().filter_map(rank).collect();
     candidates.sort_by(|a, b| {
         a.rank
