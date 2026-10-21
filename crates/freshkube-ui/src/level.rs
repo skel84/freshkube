@@ -131,6 +131,22 @@ mod tests {
     use super::*;
     use crate::palette::{dark, light};
 
+    /// Every level's glyph is in the app's assets: a name missing from them
+    /// draws nothing, which left Open blank.
+    #[test]
+    fn every_levels_glyph_loads() {
+        use crate::theme::AppAssets;
+        use gpui_kit::AssetSource;
+        for mark in Mark::ALL {
+            let path = mark.icon().path();
+            let loaded = AppAssets.load(&path).unwrap();
+            assert!(
+                loaded.is_some_and(|svg| !svg.is_empty()),
+                "{mark:?}: {path}"
+            );
+        }
+    }
+
     #[test]
     fn only_guarded_has_a_border_and_it_is_line_strong() {
         for p in [light(), dark()] {
