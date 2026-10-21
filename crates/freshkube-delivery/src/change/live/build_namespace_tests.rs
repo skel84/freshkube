@@ -94,6 +94,7 @@ fn at(template: &str, server: Option<&Server>) -> changes::Where {
         evidence_result: None,
         build_namespace: Some(template.into()),
         stage_naming: None,
+        github: None,
     }
 }
 

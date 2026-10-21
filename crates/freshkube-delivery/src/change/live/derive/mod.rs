@@ -320,6 +320,7 @@ fn origin(evidence: &Evidence, freight: &Freight) -> Origin {
                 .map(str::to_owned)
         }),
         commit,
+        ..Origin::default()
     }
 }
 
