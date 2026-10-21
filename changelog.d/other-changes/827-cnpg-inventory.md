@@ -1,0 +1,1 @@
+- **Databases:** inspect CloudNativePG clusters, backups and schedules from Storage, with reported topology, 24-hour backup freshness, explicit read coverage and restore-prerequisite limits. The collapsed Storage column retains Databases, failure states use a compact Retry action, and clipped table text has ellipses and full tooltips.

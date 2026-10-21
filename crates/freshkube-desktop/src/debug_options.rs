@@ -43,6 +43,8 @@ pub(crate) enum EtcdExample {
 /// used, as before.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DebugOptions {
+    /// Invented database inventory shape, parsed once with the other knobs.
+    pub(crate) databases: String,
     /// `FRESHKUBE_PAGE`: a page slug or a fixture check's name.
     pub(crate) page: Option<String>,
     /// `FRESHKUBE_KIND`: a Kubernetes kind's kubectl key.
@@ -109,6 +111,7 @@ impl DebugOptions {
     pub(crate) fn parse(var: impl Fn(&str) -> Option<OsString>) -> Self {
         let text = |name: &str| var(name).and_then(|value| value.into_string().ok());
         Self {
+            databases: text("FRESHKUBE_DATABASES").unwrap_or_default(),
             page: text("FRESHKUBE_PAGE"),
             kind: text("FRESHKUBE_KIND"),
             theme: match text("FRESHKUBE_THEME").as_deref() {
