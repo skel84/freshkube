@@ -596,3 +596,101 @@ async fn setup_github_client_reaches_every_delivery_read_and_is_replaced_with_ea
     })
     .unwrap();
 }
+
+fn assert_log_handoff(
+    app: &Entity<ApplicationsPage>,
+    change: &Entity<ChangePage>,
+    enabled: bool,
+    url: Option<&str>,
+    cx: &gpui_kit::App,
+) {
+    let source = app.read(cx).source.as_ref().unwrap();
+    let at = list(app, cx).read(cx).where_to_read(source);
+    assert_eq!(at.transparency_log, enabled);
+    assert_eq!(at.transparency_url.as_deref(), url);
+    let super::change::Fetch::Live { place, .. } = &change.read(cx).fetch else {
+        panic!("the invented live read");
+    };
+    assert_eq!(place.transparency_log, enabled);
+    assert_eq!(place.transparency_url.as_deref(), url);
+}
+
+#[gpui_kit::test]
+async fn log_setup_reaches_both_reads_and_reloads_replace_their_requests(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let gate = Arc::new(fake::Gate::default());
+    let mut configured = setup(None, None, false);
+    let (window, app) = mount(cx, &runtime, &configured, None, true, gate.clone());
+    wait_list(cx, window, &app).await;
+    let change = open_change(cx, window, &app);
+    cx.wait_for_io(window, |_, cx| change.read(cx).answered())
+        .await;
+    cx.update_window(window, |_, _, cx| {
+        assert_log_handoff(&app, &change, false, None, cx)
+    })
+    .unwrap();
+
+    for (enabled, url) in [
+        (true, Some("https://rekor.example.test/log")),
+        (true, Some("https://other-log.example.test")),
+        (true, None),
+        (false, None),
+    ] {
+        // Parse the actual file shape. No key means no attestation can
+        // verify, so the application test never contacts either address.
+        let text = format!(
+            "version: 1\nsupply_chain:\n  transparency_log: {enabled}\n{}",
+            url.map(|url| format!("  transparency_url: {url}\n"))
+                .unwrap_or_default()
+        );
+        configured.supply_chain = freshkube_core::setup::parse(text.as_bytes())
+            .unwrap()
+            .supply_chain;
+        gate.hold.store(true, Ordering::SeqCst);
+        let previous = gate.asked.load(Ordering::SeqCst);
+        cx.update_window(window, |_, _, cx| {
+            let before = change.read(cx).fetch.identity();
+            app.update(cx, |page, cx| page.set_setup(&configured, cx));
+            assert_log_handoff(&app, &change, enabled, url, cx);
+            assert_ne!(change.read(cx).fetch.identity(), before);
+            assert!(change.read(cx).is_reading());
+            assert!(list(&app, cx).read(cx).is_reading());
+        })
+        .unwrap();
+        until_io(cx, "both replacement delivery reads", |_| {
+            gate.asked.load(Ordering::SeqCst) >= previous + 2
+        });
+        gate.hold.store(false, Ordering::SeqCst);
+        gate.release.notify_waiters();
+        wait_list(cx, window, &app).await;
+        cx.wait_for_io(window, |_, cx| change.read(cx).answered())
+            .await;
+    }
+}
+
+#[gpui_kit::test]
+async fn an_applications_stage_hands_the_log_setup_to_its_change(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut configured = setup(None, None, false);
+    configured.supply_chain = Some(freshkube_core::setup::parse(
+        b"version: 1\nsupply_chain: {transparency_log: true, transparency_url: 'https://rekor.example.test'}\n"
+    ).unwrap().supply_chain.unwrap());
+    let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
+    cx.wait_for_io(window, |_, cx| app.read(cx).loader.data().is_some())
+        .await;
+    let change = cx
+        .update_window(window, |_, window, cx| {
+            app.update(cx, |page, cx| {
+                page.open_named("checkout", window, cx);
+                page.follow("dev", window, cx);
+                page.change.as_ref().unwrap().0.clone()
+            })
+        })
+        .unwrap();
+    cx.wait_for_io(window, |_, cx| change.read(cx).answered())
+        .await;
+    cx.update_window(window, |_, _, cx| {
+        assert_log_handoff(&app, &change, true, Some("https://rekor.example.test"), cx);
+    })
+    .unwrap();
+}

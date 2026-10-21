@@ -91,6 +91,7 @@ coroot:
 supply_chain:
   public_key_file: /home/acme/keys/cosign.pub
   transparency_log: false         # the default; true reads the log's entries
+  transparency_url: https://rekor.example.test  # optional; else Chains' transparency.url
   evidence:                       # the pipeline's own evidence record, optional
     result: build-evidence        # the PipelineRun result that holds it
     commit: /commit               # JSON pointers into that result

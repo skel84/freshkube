@@ -146,6 +146,8 @@ impl ChangePage {
                     sources: place.sources.clone(),
                     kubeconfig,
                     public_key_file: place.public_key_file.clone(),
+                    transparency_log: place.transparency_log,
+                    transparency_url: place.transparency_url.clone(),
                     evidence_result: place.evidence_result.clone(),
                     build_namespace: place.build_namespace.clone(),
                     stage_naming: place.stage_naming.clone(),
@@ -324,15 +326,7 @@ impl ChangePage {
 
     /// Trust belongs to this setup, including when the file at its path
     /// changed. Reset cancels both tasks and rejects any old request ticket.
-    pub(crate) fn reload_setup(
-        &mut self,
-        public_key_file: Option<std::path::PathBuf>,
-        evidence_result: Option<freshkube_core::setup::Evidence>,
-        build_namespace: Option<String>,
-        stage_naming: Option<freshkube_core::setup::StageNaming>,
-        github: Option<freshkube_delivery::github::Handle>,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn reload_setup(&mut self, across: &Across, cx: &mut Context<Self>) {
         if let Fetch::Live {
             place,
             setup_revision,
@@ -340,11 +334,13 @@ impl ChangePage {
         } = &mut self.fetch
         {
             *setup_revision += 1;
-            place.public_key_file = public_key_file;
-            place.evidence_result = evidence_result;
-            place.build_namespace = build_namespace;
-            place.stage_naming = stage_naming;
-            place.github = github;
+            place.public_key_file = across.public_key_file.clone();
+            place.transparency_log = across.transparency_log;
+            place.transparency_url = across.transparency_url.clone();
+            place.evidence_result = across.evidence_result.clone();
+            place.build_namespace = across.build_namespace.clone();
+            place.stage_naming = across.stage_naming.clone();
+            place.github = across.github.clone();
             self.loader.reset();
             self.stale = None;
             self.hide_outcomes();

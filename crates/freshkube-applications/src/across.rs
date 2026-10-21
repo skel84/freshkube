@@ -23,6 +23,10 @@ pub struct Across {
     pub sources: Sources,
     /// The top-level setup's public key, opened afresh off the UI thread.
     pub public_key_file: Option<std::path::PathBuf>,
+    /// Whether the log must hold each verified signature. Off by default.
+    pub transparency_log: bool,
+    /// The setup's log address; absent means read Chains' configuration.
+    pub transparency_url: Option<String>,
     /// The pipeline record configured in the same setup.
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
     /// The namespace the builds run in, from the same setup.

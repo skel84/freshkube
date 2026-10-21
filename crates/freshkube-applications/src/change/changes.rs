@@ -126,6 +126,8 @@ impl Changes {
                     mapping: across.mapping,
                     sources: across.sources,
                     public_key_file: across.public_key_file,
+                    transparency_log: across.transparency_log,
+                    transparency_url: across.transparency_url,
                     evidence_result: across.evidence_result,
                     build_namespace: across.build_namespace,
                     stage_naming: across.stage_naming,
