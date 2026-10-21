@@ -152,13 +152,15 @@ impl DatabasesScreen {
         self.loader.load(
             id,
             &self.runtime,
-            Duration::from_secs(30),
+            databases::READ_BUDGET + Duration::from_secs(10),
             "databases",
             async move {
-                let client =
-                    source.access.client().await.map_err(|failure| {
-                        format!("Database connection: {}", failure.kind.label())
-                    })?;
+                // Connection plus discovery/per-kind budgets leave a margin
+                // before the loader deadline, preserving successful kinds.
+                let client = tokio::time::timeout(Duration::from_secs(5), source.access.client())
+                    .await
+                    .map_err(|_| "Database connection timed out".to_owned())?
+                    .map_err(|failure| format!("Database connection: {}", failure.kind.label()))?;
                 let mut inventory =
                     databases::read(&client, namespace.as_deref(), Utc::now()).await;
                 if let Some(previous) = previous {
@@ -272,7 +274,12 @@ impl ScreenPanel for DatabasesScreen {
             parts.push(Part::new("Reading…"))
         }
         if self.loader.error().is_some() {
-            parts.push(Part::new("Couldn't refresh · last read retained").tone(ui::Tone::Warn))
+            let words = if self.loader.data().is_some() {
+                "Couldn't refresh · last read retained"
+            } else {
+                "Couldn't read databases"
+            };
+            parts.push(Part::new(words).tone(ui::Tone::Warn))
         }
         if let Some(at) = self.loader.last_successful() {
             parts.push(Part::new(format!("updated {}", ui::clock(at))).minor())

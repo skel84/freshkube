@@ -120,15 +120,12 @@ fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let seen = calls.clone();
     let service = tower::service_fn(move |request: Request<Body>| {
-        assert_eq!(request.method(), "GET");
+        // Record before answering: failures must be asserted on the test task,
+        // never hidden in kube's buffered service worker.
+        seen.lock()
+            .unwrap()
+            .push(format!("{} {}", request.method(), request.uri()));
         let path = request.uri().path();
-        assert!(path.starts_with("/apis/postgresql.cnpg.io"));
-        assert!(
-            !["secret", "credential", "exec", "portforward"]
-                .iter()
-                .any(|word| path.contains(word))
-        );
-        seen.lock().unwrap().push(request.uri().to_string());
         let mut status = 200;
         let body = match path {
             "/apis/postgresql.cnpg.io" => {
@@ -157,7 +154,8 @@ fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
             {
                 if mode == "oversized" {
                     json!({"items":(0..201).map(|index|json!({"metadata":{"name":format!("orders-{index}"),"namespace":"shop","uid":format!("invented-{index}")}})).collect::<Vec<_>>()})
-                } else if mode == "capped" {
+                } else if mode == "capped" || (mode == "slow-pages" && path.ends_with("/clusters"))
+                {
                     json!({"items":[],"metadata":{"continue":"more&not-a-query=1"}})
                 } else if mode == "malformed" {
                     json!({"items":[{"metadata":{"name":"missing-uid"}}]})
@@ -165,10 +163,20 @@ fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
                     json!({"items":[]})
                 }
             }
-            _ => panic!("unexpected API path {path}"),
+            _ => {
+                status = 500;
+                json!({"kind":"Status","status":"Failure","reason":"UnexpectedRequest","code":500})
+            }
         };
         let hold = mode == "timeout" && path.ends_with("/backups");
+        let slow = mode == "slow-pages"
+            && (path.ends_with("/clusters")
+                || path == "/apis/postgresql.cnpg.io"
+                || path == "/apis/postgresql.cnpg.io/v1");
         async move {
+            if slow {
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+            }
             if hold {
                 std::future::pending::<()>().await;
             }
@@ -192,7 +200,7 @@ async fn discovery_absence_refusal_and_unsupported_version_are_distinct() {
         let (client, calls) = client(mode);
         let inventory = read(&client, Some("shop"), now()).await;
         assert_eq!(inventory.discovery, expected);
-        assert_eq!(calls.lock().unwrap().len(), 1);
+        assert_requests(&calls, vec!["GET /apis/postgresql.cnpg.io".into()]);
     }
 }
 #[tokio::test]
@@ -202,7 +210,7 @@ async fn lists_are_get_only_scoped_and_refused_backup_is_not_empty_coverage() {
     assert_eq!(inventory.databases.coverage, Coverage::Complete);
     assert_eq!(inventory.backups.coverage, Coverage::Refused);
     assert_eq!(inventory.schedules.coverage, Coverage::Complete);
-    assert_eq!(calls.lock().unwrap().len(), 5);
+    assert_requests(&calls, expected_requests(1));
     assert!(!format!("{inventory:?}").contains("sensitive-canary"));
 }
 #[tokio::test]
@@ -210,21 +218,15 @@ async fn pagination_is_bounded_and_opaque_tokens_are_encoded() {
     let (client, calls) = client("capped");
     let inventory = read(&client, Some("shop"), now()).await;
     assert_eq!(inventory.databases.coverage, Coverage::Partial);
-    assert_eq!(calls.lock().unwrap().len(), 17);
-    assert!(
-        calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|path| path.contains("continue=more%26not-a-query%3D1"))
-    );
+    assert_requests(&calls, expected_requests(5));
 }
 #[tokio::test]
 async fn invalid_objects_do_not_make_a_successful_empty_inventory() {
-    let (client, _) = client("malformed");
+    let (client, calls) = client("malformed");
     let inventory = read(&client, Some("shop"), now()).await;
     assert_eq!(inventory.databases.coverage, Coverage::Partial);
     assert!(inventory.databases.items.is_empty());
+    assert_requests(&calls, expected_requests(1));
 }
 
 #[test]
@@ -267,15 +269,145 @@ fn topology_uses_reported_roles_and_never_guesses_replication_health() {
 
 #[tokio::test(start_paused = true)]
 async fn a_kind_timeout_does_not_turn_other_successful_reads_into_unknown() {
-    let (client, _) = client("timeout");
+    let (client, calls) = client("timeout");
     let inv = read(&client, Some("shop"), now()).await;
     assert_eq!(inv.backups.coverage, Coverage::TimedOut);
     assert_eq!(inv.databases.coverage, Coverage::Complete);
+    assert_requests(&calls, expected_requests(1));
 }
 #[tokio::test]
 async fn a_server_ignoring_the_page_size_cannot_make_an_unbounded_inventory() {
-    let (client, _) = client("oversized");
+    let (client, calls) = client("oversized");
     let inv = read(&client, Some("shop"), now()).await;
     assert_eq!(inv.backups.coverage, Coverage::Partial);
     assert_eq!(inv.backups.items.len(), 200);
+    assert_requests(&calls, expected_requests(1));
+}
+
+fn assert_requests(calls: &Mutex<Vec<String>>, mut expected: Vec<String>) {
+    let mut actual = calls.lock().unwrap().clone();
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected);
+}
+fn expected_requests(pages: usize) -> Vec<String> {
+    let mut expected = vec![
+        "GET /apis/postgresql.cnpg.io".into(),
+        "GET /apis/postgresql.cnpg.io/v1".into(),
+    ];
+    for kind in ["clusters", "backups", "scheduledbackups"] {
+        for page in 0..pages {
+            expected.push(format!(
+                "GET /apis/postgresql.cnpg.io/v1/namespaces/shop/{kind}?limit=200{}",
+                if page == 0 {
+                    ""
+                } else {
+                    "&continue=more%26not-a-query%3D1"
+                }
+            ));
+        }
+    }
+    expected
+}
+#[test]
+fn ready_without_observed_generation_is_current_but_reported_old_generation_is_stale() {
+    use crate::{HasHealth, HealthIndicator};
+    for (observed, current) in [(None, true), (Some(1), false), (Some(2), true)] {
+        let mut condition = json!({"type":"Ready", "status":"True", "reason":"ClusterIsReady"});
+        if let Some(generation) = observed {
+            condition["observedGeneration"] = generation.into();
+        }
+        let db = serde_json::from_value::<cnpg::Cluster>(
+            json!({"metadata":metadata("db"),"status":{"conditions":[condition]}}),
+        )
+        .unwrap()
+        .project()
+        .unwrap();
+        assert_eq!(db.conditions[0].current, current);
+        assert_eq!(
+            db.health(),
+            if current {
+                HealthIndicator::Healthy
+            } else {
+                HealthIndicator::Unknown
+            }
+        );
+    }
+}
+#[test]
+fn wal_archiver_and_reported_backup_configuration_are_projected() {
+    for (spec, expected) in [
+        (
+            json!({"plugins":[{"isWALArchiver":true,"parameters":{"token":"sensitive-canary"}}]}),
+            Fact::Known(true),
+        ),
+        (
+            json!({"plugins":[{"isWALArchiver":false}]}),
+            Fact::Known(false),
+        ),
+        (json!({}), Fact::Known(false)),
+        (serde_json::Value::Null, Fact::Unknown),
+    ] {
+        let db =
+            serde_json::from_value::<cnpg::Cluster>(json!({"metadata":metadata("db"),"spec":spec}))
+                .unwrap()
+                .project()
+                .unwrap();
+        assert_eq!(db.backup_configuration, expected);
+        assert!(!format!("{db:?}").contains("sensitive-canary"));
+    }
+    let mut inv = example::inventory(now());
+    let mut db = inv.databases.items[0].clone();
+    db.backup_configuration = Fact::Known(false);
+    inv.schedules.items.clear();
+    assert_eq!(coverage(&db, &inv, now()).restore, Restore::NoConfiguration);
+}
+#[test]
+fn backup_finalizing_and_wal_archiving_failure_use_cnpg_phases() {
+    for (phase, expected) in [
+        ("finalizing", BackupState::Running),
+        ("walArchivingFailing", BackupState::Failed),
+        ("walArchiving", BackupState::Unknown),
+    ] {
+        let backup = serde_json::from_value::<cnpg::BackupObject>(
+            json!({"metadata":metadata("backup"),"status":{"phase":phase}}),
+        )
+        .unwrap()
+        .project()
+        .unwrap();
+        assert_eq!(backup.state, expected);
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn discovery_and_slow_pages_stay_within_budget_and_keep_other_kinds() {
+    let (client, calls) = client("slow-pages");
+    let start = tokio::time::Instant::now();
+    let inv = read(&client, Some("shop"), now()).await;
+    assert_eq!(inv.discovery, Coverage::Complete);
+    assert_eq!(inv.databases.coverage, Coverage::TimedOut);
+    assert_eq!(inv.backups.coverage, Coverage::Complete);
+    assert_eq!(inv.schedules.coverage, Coverage::Complete);
+    assert!(start.elapsed() <= READ_BUDGET);
+    let mut expected = expected_requests(1);
+    for _ in 0..3 {
+        expected.push("GET /apis/postgresql.cnpg.io/v1/namespaces/shop/clusters?limit=200&continue=more%26not-a-query%3D1".into());
+    }
+    assert_requests(&calls, expected);
+}
+
+#[tokio::test]
+async fn fake_records_unknown_requests_and_returns_an_error_without_losing_the_worker() {
+    let (client, calls) = client("empty");
+    let request = http::Request::builder()
+        .method("POST")
+        .uri("/api/v1/secrets")
+        .body(Vec::new())
+        .unwrap();
+    assert!(client.request::<serde_json::Value>(request).await.is_err());
+    assert_requests(&calls, vec!["POST /api/v1/secrets".into()]);
+    let inv = read(&client, Some("shop"), now()).await;
+    assert_eq!(inv.discovery, Coverage::Complete);
+    let mut expected = expected_requests(1);
+    expected.push("POST /api/v1/secrets".into());
+    assert_requests(&calls, expected);
 }

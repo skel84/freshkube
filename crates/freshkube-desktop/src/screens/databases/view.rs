@@ -36,7 +36,6 @@ impl DatabasesScreen {
                 .id("databases-namespace")
                 .aria_label("Namespace; blank reads all namespaces; Enter applies")
                 .small()
-                .h(dp(ui::CONTROL_HEIGHT))
                 .h(dp(ui::CONTROL_HEIGHT)),
         );
         let refresh = Button::new("databases-refresh")
@@ -91,6 +90,12 @@ impl DatabasesScreen {
                 .render(cx)
                 .into_any_element(),
         )
+    }
+    pub(super) fn retry(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("databases-retry")
+            .small()
+            .label("Retry")
+            .on_click(cx.listener(|this, _, _, cx| this.read(cx)))
     }
     fn body(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let table = div()
@@ -158,7 +163,11 @@ impl Render for DatabasesScreen {
                     "Databases",
                     words,
                     None,
-                    Vec::new(),
+                    if self.loader.error().is_some() && self.source.is_some() {
+                        vec![self.retry(cx).into_any_element()]
+                    } else {
+                        Vec::new()
+                    },
                     cx,
                 ))
                 .into_any_element()
@@ -183,8 +192,11 @@ impl Render for DatabasesScreen {
             .on_action(cx.listener(|this, _: &First, _, cx| this.step(isize::MIN, cx)))
             .on_action(cx.listener(|this, _: &Last, _, cx| this.step(isize::MAX, cx)))
             .on_action(cx.listener(|this, _: &Close, _, cx| {
-                this.selected = None;
-                cx.notify()
+                if this.selected.take().is_some() {
+                    cx.notify()
+                } else {
+                    cx.propagate()
+                }
             }))
             .on_action(cx.listener(|this, _: &OpenResource, _, cx| this.open(cx)))
             .on_action(cx.listener(|this, _: &Find, window, cx| {

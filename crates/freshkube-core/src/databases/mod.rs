@@ -7,6 +7,6 @@ mod read;
 
 pub use coverage::{BackupCoverage, Freshness, LinkState, Restore, coverage, link};
 pub use model::*;
-pub use read::{read, valid_namespace};
+pub use read::{READ_BUDGET, read, valid_namespace};
 #[cfg(test)]
 mod tests;

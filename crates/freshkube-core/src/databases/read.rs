@@ -8,6 +8,10 @@ use std::time::Duration;
 const PAGE_SIZE: usize = 200;
 const MAX_PAGES: usize = 5;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
+const KIND_DEADLINE: Duration = Duration::from_secs(15);
+/// Two discovery requests plus independent, concurrent per-kind budgets.
+pub const READ_BUDGET: Duration =
+    Duration::from_secs(REQUEST_DEADLINE.as_secs() * 2 + KIND_DEADLINE.as_secs());
 #[derive(Deserialize)]
 struct Group {
     versions: Vec<Version>,
@@ -66,6 +70,7 @@ async fn list<T: DeserializeOwned, U>(
 ) -> Read<U> {
     let mut answer = Read::empty(Coverage::Complete, at);
     let mut next = String::new();
+    let deadline = tokio::time::Instant::now() + KIND_DEADLINE;
     for _ in 0..MAX_PAGES {
         let path = {
             let mut query = url::form_urlencoded::Serializer::new(String::new());
@@ -75,7 +80,9 @@ async fn list<T: DeserializeOwned, U>(
             }
             format!("{path}?{}", query.finish())
         };
-        let result = get::<List<T>>(client, path).await;
+        let result = tokio::time::timeout_at(deadline, get::<List<T>>(client, path))
+            .await
+            .unwrap_or(Err(Coverage::TimedOut));
         let page = match result {
             Ok(page) => page,
             Err(coverage) => {

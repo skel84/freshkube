@@ -24,15 +24,37 @@ impl KubeClientSource for Fake {
     }
 }
 impl Fake {
+    fn assert_read(&self, namespace: Option<&str>) {
+        let mut expected = vec![
+            "GET /apis/postgresql.cnpg.io".to_owned(),
+            "GET /apis/postgresql.cnpg.io/v1".into(),
+        ];
+        for kind in ["clusters", "backups", "scheduledbackups"] {
+            let scope = namespace
+                .map(|ns| format!("/namespaces/{ns}"))
+                .unwrap_or_default();
+            expected.push(format!(
+                "GET /apis/postgresql.cnpg.io/v1{scope}/{kind}?limit=200"
+            ));
+        }
+        self.assert_requests(expected);
+    }
+    fn assert_requests(&self, mut expected: Vec<String>) {
+        let mut actual = std::mem::take(&mut *self.calls.lock().unwrap());
+        actual.sort();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
     fn new() -> Arc<Self> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let seen = calls.clone();
         let backup_status = Arc::new(AtomicU16::new(200));
         let status = backup_status.clone();
         let service = tower::service_fn(move |request: http::Request<kube::client::Body>| {
-            assert_eq!(request.method(), "GET");
+            seen.lock()
+                .unwrap()
+                .push(format!("{} {}", request.method(), request.uri()));
             let path = request.uri().path();
-            seen.lock().unwrap().push(request.uri().to_string());
             let mut code = 200;
             let data = match path {
                 "/apis/postgresql.cnpg.io" => json!({"versions":[{"version":"v1"}]}),
@@ -56,7 +78,10 @@ impl Fake {
                 | "/apis/postgresql.cnpg.io/v1/namespaces/shop/scheduledbackups" => {
                     json!({"items":[]})
                 }
-                _ => panic!("Unexpected/disallowed request: {path}"),
+                _ => {
+                    code = 500;
+                    json!({"kind":"Status","status":"Failure","reason":"UnexpectedRequest","code":500})
+                }
             };
             async move {
                 Ok::<_, std::convert::Infallible>(
@@ -106,6 +131,7 @@ async fn real_reader_keeps_per_kind_failures_stale_and_never_reads_while_hidden(
         page.read(cx).loader.data().is_some() && !page.read(cx).loader.is_loading()
     })
     .await;
+    fake.assert_read(None);
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(page.read(cx).display.rows.len(), 1);
@@ -123,6 +149,7 @@ async fn real_reader_keeps_per_kind_failures_stale_and_never_reads_while_hidden(
             .is_some_and(|inventory| inventory.backups.stale)
     })
     .await;
+    fake.assert_read(None);
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
         window.find("databases-detail");
@@ -137,26 +164,45 @@ async fn real_reader_keeps_per_kind_failures_stale_and_never_reads_while_hidden(
                 .contains("last read")
         );
         page.update(cx, |page, cx| page.set_visible(false, window, cx));
-        let before = fake.calls.lock().unwrap().len();
         page.update(cx, |page, cx| page.refresh(window, cx));
-        assert_eq!(fake.calls.lock().unwrap().len(), before);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(61));
+    cx.run_until_parked();
+    // A real fake-API round trip drains queued work before asserting absence.
+    let client = fake.client.clone();
+    let barrier = _runtime.spawn(async move {
+        client
+            .request::<serde_json::Value>(
+                http::Request::builder()
+                    .uri("/apis/postgresql.cnpg.io")
+                    .body(Vec::new())
+                    .unwrap(),
+            )
+            .await
+    });
+    cx.wait_for_io(window.into(), |_, _| barrier.is_finished())
+        .await;
+    _runtime.block_on(barrier).unwrap().unwrap();
+    fake.assert_requests(vec!["GET /apis/postgresql.cnpg.io".into()]);
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(!page.read(cx).loader.is_loading());
         page.update(cx, |page, cx| page.set_visible(true, window, cx));
     })
     .unwrap();
     cx.wait_for_io(window.into(), |_, cx| !page.read(cx).loader.is_loading())
         .await;
+    fake.assert_read(None);
     cx.update_window(window.into(), |_, window, cx| {
         window.click("databases-namespace", cx);
         window.input("shop", cx);
         window.press("enter", cx);
     })
     .unwrap();
-    cx.wait_for_io(window.into(), |_, _| {
-        fake.calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|path| path.contains("/namespaces/shop/backups"))
+    cx.wait_for_io(window.into(), |_, cx| {
+        page.read(cx).namespace.as_deref() == Some("shop") && !page.read(cx).loader.is_loading()
     })
     .await;
+    fake.assert_read(Some("shop"));
 }

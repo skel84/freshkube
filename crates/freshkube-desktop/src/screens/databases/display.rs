@@ -47,7 +47,13 @@ fn fact<T: std::fmt::Display>(value: &Fact<T>) -> String {
 }
 fn time(value: Option<chrono::DateTime<Utc>>) -> String {
     value
-        .map(|at| at.to_rfc3339())
+        .map(|at| {
+            format!(
+                "{} {}",
+                at.with_timezone(&chrono::Local).format("%Y-%m-%d"),
+                ui::clock(at.into())
+            )
+        })
         .unwrap_or_else(|| "Unknown".into())
 }
 fn reference(value: Option<&databases::ClusterRef>, inventory: &Inventory) -> String {
@@ -123,7 +129,7 @@ impl Display {
                         "{name}: {}{}",
                         coverage.label(),
                         if stale {
-                            format!(" · last read {at}")
+                            format!(" · last read {}", time(Some(at)))
                         } else {
                             String::new()
                         }
@@ -199,6 +205,15 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
         ("Current primary".into(), fact(&db.current_primary)),
         ("Target primary".into(), fact(&db.target_primary)),
         (
+            "Backup configuration".into(),
+            match db.backup_configuration {
+                Fact::Known(true) => "Reported configured; external prerequisites unverified",
+                Fact::Known(false) => "No backup or WAL archiver configuration reported",
+                Fact::Unknown => "Unknown",
+            }
+            .into(),
+        ),
+        (
             "Newest observed attempt".into(),
             found
                 .newest
@@ -223,6 +238,8 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
             "Schedules".into(),
             if found.no_schedule {
                 "No schedule".into()
+            } else if !inv.schedules.complete() {
+                "Unknown: schedule read is incomplete or stale".into()
             } else {
                 format!(
                     "{} confirmed; see Schedules for name references and read coverage",
@@ -235,7 +252,7 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
             "Replication".into(),
             "Unknown: no replication measurement read".into(),
         ),
-        ("Observed".into(), inv.databases.observed_at.to_rfc3339()),
+        ("Observed".into(), time(Some(inv.databases.observed_at))),
     ];
     for instance in &db.instances {
         fields.push((
@@ -255,7 +272,7 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
         fields.push((
             condition.kind.clone(),
             format!(
-                "{} · {} · {} · transition {} · generation {:?}",
+                "{} · {} · {} · transition {} · generation {}",
                 condition.status,
                 condition.reason,
                 if condition.current {
@@ -264,7 +281,10 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
                     "freshness unknown / outdated"
                 },
                 time(condition.transition_time),
-                condition.observed_generation
+                condition
+                    .observed_generation
+                    .map(|generation| generation.to_string())
+                    .unwrap_or_else(|| "Not reported".into())
             ),
         ));
     }
@@ -303,7 +323,7 @@ fn backup_row(backup: &databases::Backup, inv: &Inventory) -> Row {
         ("Method".into(), fact(&backup.method)),
         ("Started".into(), time(backup.started)),
         ("Finished".into(), time(backup.completed)),
-        ("Observed".into(), inv.backups.observed_at.to_rfc3339()),
+        ("Observed".into(), time(Some(inv.backups.observed_at))),
         (
             "Restore prerequisites".into(),
             if databases::link(backup.cluster.as_ref(), &inv.databases) == LinkState::Orphaned {
@@ -351,7 +371,7 @@ fn schedule_row(schedule: &databases::Schedule, inv: &Inventory) -> Row {
         ("Last scheduled".into(), time(schedule.last)),
         ("Next scheduled".into(), time(schedule.next)),
         ("Method".into(), fact(&schedule.method)),
-        ("Observed".into(), inv.schedules.observed_at.to_rfc3339()),
+        ("Observed".into(), time(Some(inv.schedules.observed_at))),
     ];
     Row::new(
         &schedule.identity,

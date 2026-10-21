@@ -98,6 +98,7 @@ struct BackupConfig {
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct Plugin {
+    #[serde(rename = "isWALArchiver")]
     is_wal_archiver: Option<bool>,
 }
 #[derive(Default, Deserialize)]
@@ -130,6 +131,7 @@ impl Cluster {
     pub(super) fn project(self) -> Option<Database> {
         let meta = self.metadata?;
         let identity = meta.identity("Cluster", "clusters")?;
+        let spec_reported = self.spec.is_some();
         let spec = self.spec.unwrap_or_default();
         let status = self.status.unwrap_or_default();
         let current_primary = named(status.current_primary);
@@ -177,7 +179,7 @@ impl Cluster {
                 current: meta
                     .generation
                     .zip(condition.observed_generation)
-                    .is_some_and(|(generation, observed)| observed >= generation),
+                    .is_none_or(|(generation, observed)| observed >= generation),
             })
             .collect();
         let backup_configuration = if spec
@@ -190,6 +192,8 @@ impl Cluster {
                     .any(|plugin| plugin.is_wal_archiver == Some(true))
             }) {
             Fact::Known(true)
+        } else if spec_reported {
+            Fact::Known(false)
         } else {
             Fact::Unknown
         };
@@ -236,8 +240,8 @@ impl BackupObject {
         let status = self.status.unwrap_or_default();
         let state = match status.phase.as_deref() {
             Some("completed") => BackupState::Completed,
-            Some("failed") => BackupState::Failed,
-            Some("running" | "started" | "walArchiving") => BackupState::Running,
+            Some("failed" | "walArchivingFailing") => BackupState::Failed,
+            Some("running" | "started" | "finalizing") => BackupState::Running,
             Some("pending") => BackupState::Pending,
             _ => BackupState::Unknown,
         };

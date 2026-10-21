@@ -124,7 +124,11 @@ impl TableSource for DatabasesScreen {
                 .child(ui::status_mark(
                     format!("{}-state", row.data.id),
                     row.data.tone,
-                    row.data.cells[5].clone(),
+                    row.data.cells[match self.mode {
+                        Mode::Clusters | Mode::Backups => 3,
+                        Mode::Schedules => 5,
+                    }]
+                    .clone(),
                     cx,
                 ))
                 .into_any_element()
@@ -172,13 +176,16 @@ impl TableSource for DatabasesScreen {
     fn loading(&self) -> Option<&kit::LoadingRows> {
         self.loading.rows()
     }
-    fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
+    fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.display.rows.is_empty().then(|| {
             div()
                 .id("databases-empty-state")
                 .aria_label(self.display.empty.clone())
                 .test_support()
                 .child(self.display.empty.clone())
+                .when(self.display.notice.is_some(), |this| {
+                    this.child(self.retry(cx))
+                })
                 .into_any_element()
         })
     }
