@@ -91,7 +91,7 @@ pub struct Entry {
     /// alike. Typed and checked by `freshkube.yaml` ([`crate::setup`]); a link
     /// carries a hash of it, never the text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fingerprint: Option<String>,
+    pub fingerprint: Option<Box<str>>,
     /// Where Tekton Results is read; `None` is off. Boxed, so an `Entry` stays small. Typed and checked by
     /// `freshkube.yaml` ([`crate::setup`]); `workspace.json` only carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -226,7 +226,7 @@ impl Pilot {
                     .iter()
                     .find(|entry| entry.context == context && entry.fingerprint.is_some())
             })
-            .and_then(|entry| entry.fingerprint.clone())
+            .and_then(|entry| entry.fingerprint.as_deref().map(str::to_owned))
     }
 
     /// Tells Settings what each entry's link fingerprint is.
