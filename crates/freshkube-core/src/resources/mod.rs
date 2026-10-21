@@ -19,6 +19,7 @@ pub(crate) mod contexts;
 mod discovery;
 mod events;
 mod exec;
+mod external_secrets;
 // Moved to `crate::failure`; kept so `resources::failure` paths still resolve.
 use crate::failure;
 mod forward;
@@ -73,3 +74,7 @@ pub use workload_pods::{
 pub use metadata::{MetadataNames, get_metadata, list_metadata};
 
 pub use pod_links::{PodLinks, ServiceSelector, collect_pod_links, resolve_owner_kind};
+
+pub use external_secrets::{
+    ExternalSecret, StoreRead, StoreRef, StoreStatus, read_external_secret_stores,
+};
