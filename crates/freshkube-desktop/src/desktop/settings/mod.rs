@@ -16,6 +16,7 @@ mod edit;
 #[cfg(test)]
 mod edit_tests;
 mod entry;
+mod find;
 mod form;
 mod kubeconfig_row;
 mod metrics_tokens;
@@ -43,6 +44,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 pub(crate) use sections::{SettingsEvent, SettingsSection};
 use source::Column;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// The most unknown keys the page names before it says how many more.
@@ -188,7 +190,15 @@ pub(crate) struct SettingsPage {
     pub(in crate::desktop) sources: Entity<sources::SourcesList>,
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
+    /// The parts of `status`, which a list may add to.
+    status_parts: Vec<Part>,
+    /// What Argo CD destinations' finder adds to the status bar.
+    suggest_parts: Vec<Part>,
+    /// `status` with those parts, derived when either changes.
+    destinations_status: Segment,
     sources_status: Segment,
+    /// Suggestions the person ignored, for the session.
+    ignored: HashSet<find::Ignored>,
 }
 
 impl SettingsPage {
@@ -372,14 +382,19 @@ impl SettingsPage {
             visible: false,
             destinations: {
                 let page = cx.entity();
-                cx.new(|cx| destinations::Destinations::new(&page, cx))
+                let runtime = runtime.clone();
+                cx.new(|cx| destinations::Destinations::new(&page, runtime, cx))
             },
             sources: {
                 let page = cx.weak_entity();
                 cx.new(|cx| sources::SourcesList::new(runtime, page, cx))
             },
             status: Segment::default(),
+            status_parts: Vec::new(),
+            suggest_parts: Vec::new(),
+            destinations_status: Segment::default(),
             sources_status: Segment::default(),
+            ignored: HashSet::new(),
         }
     }
 
@@ -456,14 +471,11 @@ impl SettingsPage {
         };
         // The implicit workspace of one counts as the cluster this window
         // opened, so the bar and the empty table agree.
-        self.status = match self.origin {
-            Origin::Alone | Origin::Refused(_) => Segment::new(
-                None::<SharedString>,
-                [
-                    Part::new("1 cluster"),
-                    Part::new("implicit: the one this window opened").minor(),
-                ],
-            ),
+        self.status_parts = match self.origin {
+            Origin::Alone | Origin::Refused(_) => vec![
+                Part::new("1 cluster"),
+                Part::new("implicit: the one this window opened").minor(),
+            ],
             Origin::Example | Origin::File => {
                 let count = self.rows.len();
                 // Only mappings to a listed cluster map anything; a part
@@ -483,29 +495,29 @@ impl SettingsPage {
                         }
                     ))
                 });
-                Segment::new(
-                    None::<SharedString>,
-                    [
-                        Some(Part::new(format!(
-                            "{count} {}",
-                            if count == 1 { "cluster" } else { "clusters" }
-                        ))),
-                        mapped,
-                        Some(
-                            Part::new(if self.origin == Origin::Example {
-                                "Example workspace".to_owned()
-                            } else {
-                                "freshkube.yaml".to_owned()
-                            })
-                            .minor(),
-                        ),
-                        Some(Part::new(kubeconfig).minor()),
-                    ]
-                    .into_iter()
-                    .flatten(),
-                )
+                [
+                    Some(Part::new(format!(
+                        "{count} {}",
+                        if count == 1 { "cluster" } else { "clusters" }
+                    ))),
+                    mapped,
+                    Some(
+                        Part::new(if self.origin == Origin::Example {
+                            "Example workspace".to_owned()
+                        } else {
+                            "freshkube.yaml".to_owned()
+                        })
+                        .minor(),
+                    ),
+                    Some(Part::new(kubeconfig).minor()),
+                ]
+                .into_iter()
+                .flatten()
+                .collect()
             }
         };
+        self.status = Segment::new(None::<SharedString>, self.status_parts.clone());
+        self.refresh_destinations_status();
         if self
             .selected
             .as_ref()
@@ -605,6 +617,21 @@ impl SettingsPage {
         let shown = self.visible && self.section == SettingsSection::Sources;
         self.sources
             .update(cx, |sources, cx| sources.set_visible(shown, cx));
+        let shown = self.visible && self.section == SettingsSection::Destinations;
+        self.destinations
+            .update(cx, |destinations, cx| destinations.set_visible(shown, cx));
+    }
+
+    /// Derives Argo CD destinations' status line: the workspace's, with what
+    /// its finder adds. Called when either changes, so drawing only reads it.
+    fn refresh_destinations_status(&mut self) {
+        self.destinations_status = match self.suggest_parts.is_empty() {
+            true => self.status.clone(),
+            false => {
+                let parts = self.status_parts.iter().chain(&self.suggest_parts).cloned();
+                Segment::new(None::<SharedString>, parts)
+            }
+        };
     }
 
     /// The status bar's line: the workspace's, on its lists.
@@ -612,6 +639,8 @@ impl SettingsPage {
         self.section.is_list().then(|| {
             if self.section == SettingsSection::Sources {
                 self.sources_status.clone()
+            } else if self.section == SettingsSection::Destinations {
+                self.destinations_status.clone()
             } else {
                 self.status.clone()
             }
