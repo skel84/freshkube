@@ -1,0 +1,1 @@
+- **ExternalSecrets:** explicitly request one sync from Resources after confirming its context and name, with an annotation-only update and observed status; Secret values and provider credentials stay unread.

@@ -617,6 +617,15 @@ impl Render for DetailPane {
                 CONTEXT
             })
             .track_focus(&self.focus)
+            .on_action(cx.listener(
+                |pane, _: &crate::external_refresh::RefreshExternalSecret, window, cx| {
+                    if pane.focus.is_focused(window) {
+                        pane.request_external_refresh(window, cx);
+                    } else {
+                        cx.propagate();
+                    }
+                },
+            ))
             .on_action(cx.listener(|pane, _: &Dismiss, window, cx| pane.dismiss(window, cx)))
             // Edit's entries are live only where they act: Find opens the
             // YAML's search from Details too, the rest act on the YAML, and

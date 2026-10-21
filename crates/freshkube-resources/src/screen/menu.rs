@@ -50,13 +50,22 @@ impl ResourcesScreen {
     }
 
     /// The selected row's actions, with the list's keys.
-    pub(super) fn menu_actions(&self, _cx: &App) -> Vec<MenuAction> {
+    pub(super) fn menu_actions(&self, cx: &App) -> Vec<MenuAction> {
         let Some(identity) = self.projection.selected() else {
             return Vec::new();
         };
         let mut actions = vec![MenuAction::new("Open", OpenSelected)];
         if self.lists_pods() {
             actions.push(MenuAction::new("Logs", OpenLogs));
+        }
+        if self.external_secret_selected() {
+            actions.push(
+                MenuAction::new(
+                    "Refresh ExternalSecret…",
+                    crate::external_refresh::RefreshExternalSecret,
+                )
+                .enabled(!self.detail.read(cx).external_refresh_busy(cx)),
+            );
         }
         actions.push(MenuAction::Separator);
         actions.push(MenuAction::new(

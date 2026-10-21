@@ -70,3 +70,95 @@ fn external_secret_empty_refused_loading_and_unserved_lists_are_distinct(cx: &mu
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn refresh_toolbar_menu_and_shift_r_share_one_confirmation_and_leave_filters_alone(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let first = cx
+        .update_window(handle, |_, window, cx| {
+            screen.update(cx, |screen, cx| screen.set_kind(kind(KEY), window, cx));
+            window.render_frame(cx);
+            let first = identity_at(&screen, 0, cx);
+            window.within(row_id(&first)).click("name", cx);
+            window.render_frame(cx);
+            window.click("external-secret-refresh", cx);
+            window.render_frame(cx);
+            assert!(window.find("external-refresh-confirmation").visible());
+            assert!(window.try_find("external-refresh-result").is_none());
+            window.click("external-refresh-cancel", cx);
+            first
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let items = open_menu(cx, handle, |window, cx| {
+        window.within(row_id(&first)).right_click("name", cx)
+    });
+    let ix = items
+        .iter()
+        .position(|label| label.as_deref() == Some("Refresh ExternalSecret…"))
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.within("popup-menu").click(ix, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("external-refresh-confirmation").visible());
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| window.focus(&screen.focus, cx));
+        window.press("shift-r", cx);
+        window.render_frame(cx);
+        assert!(window.find("external-refresh-confirmation").visible());
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("external-refresh-result").is_none());
+        window.click("resource-filter", cx);
+        window.press("shift-r", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("external-refresh-confirmation").is_none());
+        // Clear the typed filter, then exercise Enter after the dialog draws.
+        window.press("escape", cx);
+        screen.update(cx, |screen, cx| window.focus(&screen.focus, cx));
+        window.press("shift-r", cx);
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("external-refresh-result")
+                .label()
+                .unwrap()
+                .contains("waiting for observed sync")
+        );
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("external-refresh-result")
+                .label()
+                .unwrap()
+                .contains("Resync observed")
+        );
+    })
+    .unwrap();
+}

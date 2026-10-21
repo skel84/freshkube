@@ -28,6 +28,27 @@ impl DetailPane {
                 .id("external-secret-summary")
                 .test_support()
                 .gap_3()
+                .children(
+                    self.external_refresh
+                        .read(cx)
+                        .attempt
+                        .as_ref()
+                        .filter(|attempt| self.target_identity() == Some(&attempt.identity))
+                        .map(|attempt| {
+                            div()
+                                .id("external-refresh-result")
+                                .test_support()
+                                .role(Role::Status)
+                                .aria_label(attempt.text.clone())
+                                .child(ui::banner(
+                                    attempt.tone,
+                                    None,
+                                    attempt.text.clone(),
+                                    None,
+                                    cx,
+                                ))
+                        }),
+                )
                 .child(ui::caption("Sync status", cx))
                 .when(view.conditions.is_empty(), |this| {
                     this.child(

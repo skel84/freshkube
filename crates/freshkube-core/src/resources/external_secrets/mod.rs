@@ -9,6 +9,9 @@ use serde_yaml::Value;
 use super::object::{JSON, json_get};
 use super::{Condition, Failure, FailureKind, ResourceKind, list_custom_groups, list_group_kinds};
 
+mod refresh;
+pub use refresh::refresh_external_secret;
+
 pub const EXTERNAL_SECRETS_GROUP: &str = "external-secrets.io";
 pub const MAX_STORES: usize = 20;
 

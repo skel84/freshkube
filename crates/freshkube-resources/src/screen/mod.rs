@@ -1,7 +1,7 @@
 //! The Resources page: one kind's table as the API server prints it, kept
 //! current by a watch while the page is visible. Rows are virtualized, sorted
 //! and filtered locally, and selected by identity. Read-only: nothing here
-//! changes the cluster.
+//! changes the cluster except for the separately confirmed ExternalSecret refresh.
 
 use freshkube_ui::menu::Find;
 use std::collections::BTreeSet;
@@ -260,6 +260,11 @@ impl ResourcesScreen {
             KeyBinding::new("n", ChooseNamespace, Some(CONTEXT)),
             KeyBinding::new("x", ToggleMark, Some(CONTEXT)),
             KeyBinding::new("l", OpenLogs, Some(CONTEXT)),
+            KeyBinding::new(
+                "shift-r",
+                crate::external_refresh::RefreshExternalSecret,
+                Some(CONTEXT),
+            ),
             KeyBinding::new("shift-x", SelectGroup, Some(CONTEXT)),
             KeyBinding::new("o", OpenNode, Some(CONTEXT)),
             KeyBinding::new("h", ToggleHealthy, Some(CONTEXT)),
@@ -291,6 +296,7 @@ impl ResourcesScreen {
             )
             .searchable(true)
         });
+        let external_refresh = detail.read(cx).external_refresh_owner().clone();
         let subscriptions = vec![
             // Every change to the rows notifies the screen; the flash hears
             // of it before the next frame draws, so a fade never paints on
@@ -323,6 +329,7 @@ impl ResourcesScreen {
             ),
             // Caret, selection and menu changes redraw the controls, and this
             // view is cached, so it has to hear about them.
+            cx.observe(&external_refresh, |_, _, cx| cx.notify()),
             cx.observe(&query, |_, _, cx| cx.notify()),
             cx.observe(&namespace_select, |_, _, cx| cx.notify()),
             // The picker takes focus back when its menu closes by choice or
@@ -1408,6 +1415,7 @@ impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
 mod cells;
 mod controls;
+mod external_refresh;
 mod layout;
 mod menu;
 mod pods;
