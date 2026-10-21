@@ -11,9 +11,11 @@
 mod cause;
 pub mod example;
 pub mod live;
+mod summary;
 mod unread;
 
 pub use cause::{Cause, Next, Role, SettingsField};
+pub use summary::{Fix, fixes, headline};
 
 use chrono::{DateTime, Utc};
 
