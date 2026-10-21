@@ -8,6 +8,7 @@ use std::sync::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use freshkube_core::cluster_source::{ClusterAccess, KubeClientSource};
+use freshkube_core::fake_api::{Recorder, response, unknown};
 use freshkube_core::resources::Failure;
 use futures::future::BoxFuture;
 use kube::client::Body;
@@ -57,12 +58,35 @@ impl KubeClientSource for Client {
     }
 }
 
-pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> ClusterAccess {
+/// What the test keeps beside the access: on drop it fails if the service saw
+/// anything but a GET. The check is here, not in the
+/// service, because a panic in the service only kills the client's worker.
+pub(super) struct Reads(Recorder);
+
+impl Drop for Reads {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        self.0.assert_all("the delivery reads only GET", |request| {
+            request.method == http::Method::GET
+        });
+    }
+}
+
+pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> (ClusterAccess, Reads) {
+    let recorder = Recorder::default();
+    let log = recorder.clone();
     let service = tower::service_fn(move |request: http::Request<Body>| {
-        assert_eq!(request.method(), http::Method::GET);
-        let path = request.uri().path();
+        let recorded = log.record(&request);
+        let path = recorded.path.as_str();
         let runs = path.ends_with("/pipelineruns");
-        let body = route(path, live_runs);
+        // Any GET gets `route`'s answer, an empty list for a path it has no
+        // items for, as before; any other verb is recorded and answered 500.
+        let answer = match recorded.method == http::Method::GET {
+            true => (200, route(path, live_runs).to_string()),
+            false => unknown(&recorded),
+        };
         let gate = gate.clone();
         let hold = runs && gate.hold.load(Ordering::SeqCst);
         if runs {
@@ -72,15 +96,11 @@ pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> ClusterAccess {
             if hold {
                 gate.release.notified().await;
             }
-            Ok::<_, Infallible>(
-                http::Response::builder()
-                    .header("content-type", "application/json")
-                    .body(Body::from(body.to_string().into_bytes()))
-                    .unwrap(),
-            )
+            Ok::<_, Infallible>(response(answer))
         }
     });
-    ClusterAccess::Live(Arc::new(Client(kube::Client::new(service, "acme"))))
+    let client = Client(kube::Client::new(service, "acme"));
+    (ClusterAccess::Live(Arc::new(client)), Reads(recorder))
 }
 
 fn route(path: &str, live_runs: bool) -> Value {

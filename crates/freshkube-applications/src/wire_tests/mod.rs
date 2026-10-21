@@ -48,7 +48,7 @@ fn mount(
     secrets: Option<Secrets>,
     live_runs: bool,
     gate: Arc<fake::Gate>,
-) -> (AnyWindowHandle, Entity<ApplicationsPage>) {
+) -> (AnyWindowHandle, Entity<ApplicationsPage>, fake::Reads) {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -57,7 +57,7 @@ fn mount(
         cx.set_reduce_motion(true);
         cx.bind_keys(super::key_bindings());
     });
-    let access = {
+    let (access, reads) = {
         let _entered = runtime.enter();
         fake::access(live_runs, gate)
     };
@@ -96,7 +96,7 @@ fn mount(
         app = Some(page.clone());
         Root::new(page, window, cx)
     });
-    (window.into(), app.unwrap())
+    (window.into(), app.unwrap(), reads)
 }
 
 fn list(app: &Entity<ApplicationsPage>, cx: &gpui_kit::App) -> Entity<ChangesPage> {
@@ -153,7 +153,7 @@ async fn setup_key_and_evidence_reach_both_delivery_reads(cx: &mut TestAppContex
     std::fs::write(&key, fake::KEY).unwrap();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let configured = setup(Some(key), None, true);
-    let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, true, Arc::default());
     wait_list(cx, window, &app).await;
     cx.update_window(window, |_, _, cx| {
         let list = list(&app, cx);
@@ -187,7 +187,7 @@ async fn results_token_from_the_app_store_reaches_both_read_jobs(cx: &mut TestAp
         .write(&format!("Tekton Results {}/", results.address), fake::TOKEN)
         .unwrap();
     let configured = setup(None, Some(&results), false);
-    let (window, app) = mount(
+    let (window, app, _reads) = mount(
         cx,
         &runtime,
         &configured,
@@ -244,7 +244,7 @@ async fn reload_replaces_the_key_and_cancels_the_old_read(cx: &mut TestAppContex
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let gate = Arc::new(fake::Gate::default());
     let mut configured = setup(Some(key.clone()), None, false);
-    let (window, app) = mount(cx, &runtime, &configured, None, true, gate.clone());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, true, gate.clone());
     wait_list(cx, window, &app).await;
     let change = open_change(cx, window, &app);
     cx.wait_for_io(window, |_, cx| change.read(cx).answered())
@@ -310,7 +310,7 @@ async fn reload_replaces_the_key_and_cancels_the_old_read(cx: &mut TestAppContex
 async fn the_stage_naming_reaches_the_list_and_the_open_change_on_reload(cx: &mut TestAppContext) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut configured = setup(None, None, false);
-    let (window, app) = mount(cx, &runtime, &configured, None, false, Arc::default());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, false, Arc::default());
     wait_list(cx, window, &app).await;
     let change = open_change(cx, window, &app);
     cx.wait_for_io(window, |_, cx| change.read(cx).answered())
@@ -364,7 +364,7 @@ async fn a_configured_token_without_a_store_keeps_the_named_error(cx: &mut TestA
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let results = fake::Results::new(runtime.handle());
     let configured = setup(None, Some(&results), false);
-    let (window, app) = mount(cx, &runtime, &configured, None, false, Arc::default());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, false, Arc::default());
     wait_list(cx, window, &app).await;
     let change = open_change(cx, window, &app);
     cx.wait_for_io(window, |_, cx| change.read(cx).answered())
@@ -391,7 +391,7 @@ async fn the_application_stage_hands_its_key_and_store_to_the_change(cx: &mut Te
         .write(&format!("Tekton Results {}/", results.address), fake::TOKEN)
         .unwrap();
     let configured = setup(Some(key), Some(&results), true);
-    let (window, app) = mount(
+    let (window, app, _reads) = mount(
         cx,
         &runtime,
         &configured,
@@ -431,7 +431,7 @@ async fn the_application_stage_hands_its_key_and_store_to_the_change(cx: &mut Te
 async fn a_hidden_old_setup_ticket_cannot_publish_after_reload(cx: &mut TestAppContext) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let configured = setup(None, None, false);
-    let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, true, Arc::default());
     wait_list(cx, window, &app).await;
     let change = open_change(cx, window, &app);
     cx.wait_for_io(window, |_, cx| change.read(cx).answered())
@@ -459,7 +459,7 @@ async fn a_remap_keeps_the_last_good_change_on_refresh_failure(cx: &mut TestAppC
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let gate = Arc::new(fake::Gate::default());
     let configured = setup(None, None, false);
-    let (window, app) = mount(cx, &runtime, &configured, None, true, gate.clone());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, true, gate.clone());
     wait_list(cx, window, &app).await;
     let change = open_change(cx, window, &app);
     cx.wait_for_io(window, |_, cx| change.read(cx).answered())
@@ -495,7 +495,7 @@ async fn a_remap_keeps_the_last_good_change_on_refresh_failure(cx: &mut TestAppC
 async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppContext) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut configured = setup(None, None, false);
-    let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, true, Arc::default());
     wait_list(cx, window, &app).await;
     let change = open_change(cx, window, &app);
     cx.update_window(window, |_, _, cx| {
@@ -548,7 +548,7 @@ async fn log_setup_reaches_both_reads_and_reloads_replace_their_requests(cx: &mu
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let gate = Arc::new(fake::Gate::default());
     let mut configured = setup(None, None, false);
-    let (window, app) = mount(cx, &runtime, &configured, None, true, gate.clone());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, true, gate.clone());
     wait_list(cx, window, &app).await;
     let change = open_change(cx, window, &app);
     cx.wait_for_io(window, |_, cx| change.read(cx).answered())
@@ -603,7 +603,7 @@ async fn an_applications_stage_hands_the_log_setup_to_its_change(cx: &mut TestAp
     configured.supply_chain = Some(freshkube_core::setup::parse(
         b"version: 1\nsupply_chain: {transparency_log: true, transparency_url: 'https://rekor.example.test'}\n"
     ).unwrap().supply_chain.unwrap());
-    let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
+    let (window, app, _reads) = mount(cx, &runtime, &configured, None, true, Arc::default());
     cx.wait_for_io(window, |_, cx| app.read(cx).loader.data().is_some())
         .await;
     let change = cx
