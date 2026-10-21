@@ -10,7 +10,10 @@
 //! - Every namespace, name, group, version and plural is checked against
 //!   Kubernetes' own syntax before it goes into a path, so none can add a
 //!   path segment (`..`, `/`) or a query.
-//! - Secrets are never read, in any spelling of the path.
+//! - Secrets are never read, in any spelling of the path, except by
+//!   [`Reader::cluster_secrets`]: Argo CD's cluster Secrets, of which only the
+//!   name and the two fields `server` and `name` are ever held
+//!   ([`ReadOnlyClient`]'s implementation is the one place that reads them).
 //! - A collection is read only inside a namespace or with a label selector,
 //!   a page at a time, and stops after [`MAX_PAGES`] pages, saying so. A
 //!   selector's values are checked as label values ([`label_equals`]).
@@ -24,6 +27,7 @@ use serde_json::Value;
 
 use freshkube_core::resources::{Failure, FailureKind};
 
+use super::discover::ClusterSecrets;
 use super::source::{Truncation, cap_message, redact_body};
 
 /// Items asked for per page.
@@ -144,6 +148,20 @@ pub trait Reader {
     fn probe(&self, request: &ListRequest) -> impl Future<Output = Result<(), Failure>> {
         async move { self.list(request).await.map(|_| ()) }
     }
+    /// Argo CD's cluster Secrets in one namespace: the Secrets labelled
+    /// `argocd.argoproj.io/secret-type=cluster`, one page, and of each only
+    /// its name and `server` and `name` fields. Unless overridden, it
+    /// refuses, as [`get`](Reader::get) and [`list`](Reader::list) do for any
+    /// Secret.
+    fn cluster_secrets(
+        &self,
+        namespace: &str,
+    ) -> impl Future<Output = Result<ClusterSecrets, Failure>> {
+        async move {
+            let _ = namespace;
+            Err(secrets_refused())
+        }
+    }
     /// `/apis`: every group and its served versions.
     fn groups(&self) -> impl Future<Output = Result<Vec<ServedGroup>, Failure>>;
     /// `/apis/<group>/<version>`: the plurals that version serves.
@@ -171,6 +189,9 @@ impl<R: Reader + ?Sized> Reader for &R {
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
         (**self).probe(request).await
     }
+    async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
+        (**self).cluster_secrets(namespace).await
+    }
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
         (**self).groups().await
     }
@@ -195,6 +216,9 @@ impl<R: Reader + ?Sized> Reader for std::sync::Arc<R> {
     }
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
         (**self).probe(request).await
+    }
+    async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
+        (**self).cluster_secrets(namespace).await
     }
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
         (**self).groups().await
@@ -398,12 +422,39 @@ fn discovery_path(group: &str, version: &str) -> Result<String, Failure> {
     Ok(format!("/apis/{group}/{version}"))
 }
 
+/// The most items one page of cluster Secrets holds.
+pub(crate) const SECRETS_LIMIT: u32 = 100;
+/// The longest answer to a Secret list read; a longer one fails unread.
+const MAX_SECRETS_BYTES: usize = 4 * 1024 * 1024;
+
+/// The path of one page of Argo CD's cluster Secrets in `namespace`, after
+/// the namespace is checked.
+fn cluster_secrets_path(namespace: &str) -> String {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query.append_pair("limit", &SECRETS_LIMIT.to_string());
+    query.append_pair("labelSelector", "argocd.argoproj.io/secret-type=cluster");
+    format!("/api/v1/namespaces/{namespace}/secrets?{}", query.finish())
+}
+
+fn secrets_refused() -> Failure {
+    Failure::new(
+        FailureKind::Other,
+        "Secrets are never read by the delivery spike",
+    )
+}
+
+/// The fixed words for an answer that couldn't be read. Never the parser's
+/// own message, which can quote a value.
+pub(crate) fn secrets_unreadable() -> Failure {
+    Failure::new(
+        FailureKind::Other,
+        "the cluster Secrets' answer couldn't be read",
+    )
+}
+
 fn refuse_secret(resource: &Resource) -> Result<(), Failure> {
     if resource.is_secret() {
-        return Err(Failure::new(
-            FailureKind::Other,
-            "Secrets are never read by the delivery spike",
-        ));
+        return Err(secrets_refused());
     }
     Ok(())
 }
@@ -493,6 +544,37 @@ impl Reader for ReadOnlyClient {
         self.get_value(sized_page_path(request, None, 1)?)
             .await
             .map(|_| ())
+    }
+
+    async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
+        // The one function that holds a Secret list's bytes. The buffer is
+        // only parsed into [`discover::parse_secret_list`]'s two-field
+        // structs and dropped at the end; it is never logged, formatted or
+        // put in an error. Not `Api<Secret>` and not kube's typed
+        // `Client::request`: that logs the response text when it fails to
+        // parse.
+        check_namespace(Some(namespace))?;
+        let path = cluster_secrets_path(namespace);
+        let request = http::Request::get(path)
+            .header(http::header::ACCEPT, "application/json")
+            .body(kube::client::Body::empty())
+            .map_err(|_| secrets_unreadable())?;
+        let response = self
+            .client
+            .send(request)
+            .await
+            .map_err(Failure::from_kube)?;
+        let status = response.status();
+        let body = read_body(response.into_body(), MAX_SECRETS_BYTES).await?;
+        if status.is_client_error() || status.is_server_error() {
+            return Err(decode(status, &body)
+                .err()
+                .unwrap_or_else(secrets_unreadable));
+        }
+        if !status.is_success() {
+            return Err(secrets_unreadable());
+        }
+        super::discover::parse_secret_list(namespace, &body)
     }
 
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
