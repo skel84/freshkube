@@ -11,9 +11,7 @@ use crate::tests::observed_at;
 use freshkube_core::setup::Results;
 use freshkube_core::workspace::{Role, Workspace};
 
-#[path = "../../results/tests/server.rs"]
-mod server;
-use server::{Reply, Server};
+use crate::results::tests::server::{Reply, Server};
 
 fn freight(project: &str, name: &str) -> Value {
     json!({

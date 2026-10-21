@@ -9,7 +9,7 @@ mod builds;
 mod logs;
 mod records;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod transport;
 
 use std::sync::atomic::{AtomicU64, Ordering};
