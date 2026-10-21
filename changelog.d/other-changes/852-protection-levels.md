@@ -1,0 +1,1 @@
+- **Protection levels:** each cluster in `freshkube.yaml` can set `protection` (`read-only`, `protected`, `guarded` or `open`; none is guarded), edited in Settings' Clusters Inspector and shown in the header and the status bar. A read-only cluster disables a shell's Start, Operations' Review and a service's Restart. See [WRITE_MODEL.md](docs/WRITE_MODEL.md).
