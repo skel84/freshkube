@@ -62,9 +62,11 @@ impl Level {
     /// unset level is guarded, and what enforces it today.
     fn hint(&self) -> String {
         let shown = self.values.shown();
-        let unset = (self.values.level.is_none())
-            .then_some("Not set in freshkube.yaml, so Guarded. ")
-            .unwrap_or_default();
+        let unset = if self.values.level.is_none() {
+            "Not set in freshkube.yaml, so Guarded. "
+        } else {
+            ""
+        };
         format!(
             "{unset}{} Today only Read-only does anything: it disables a shell's Start and Operations; the other levels change nothing yet.",
             shown.meaning()
