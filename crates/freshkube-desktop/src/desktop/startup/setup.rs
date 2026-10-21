@@ -50,8 +50,8 @@ impl Pilot {
         }
         let file = self.setup_file.read(cx);
         let setup = file.setup.clone();
-        let problem = file.problem.clone();
-        let revision = file.read_revision();
+        let problem = file.notice();
+        let revision = file.setup_revision();
         let reconnect = file.coroot_reconnect;
         self.pages.set_setup(setup.clone(), problem, revision, cx);
         let Some(setup) = setup else {

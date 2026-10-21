@@ -1222,6 +1222,44 @@ fn the_first_right_click_keeps_its_menu_when_the_inspector_opens(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn recovered_setup_file_is_used_with_warnings_and_all_skipped_sources_are_unavailable(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("freshkube.yaml"),
+        "version: 1\nclusters: [[]]\n",
+    )
+    .unwrap();
+    let (_runtime, handle, view) = super::super::tests::launch(cx, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(super::super::SettingsSection::Sources, window, cx)
+        });
+        window.render_frame(cx);
+        let sources = list(&view, cx);
+        let sources = sources.read(cx);
+        let row = sources
+            .rows
+            .iter()
+            .find(|row| row.read == Read::SetupFile)
+            .unwrap();
+        assert_eq!(row.state, "Used with warnings");
+        assert_eq!(row.tone, Some(crate::ui::Tone::Warn));
+        assert!(row.explanation.contains("skipped clusters[0]"));
+        assert!(
+            sources
+                .sources
+                .iter()
+                .all(|(_, chosen)| matches!(chosen, workspace::Chosen::NoEntry(_)))
+        );
+        assert!(sources.sources.workloads().is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn the_stage_naming_of_the_setup_is_a_row_of_its_own_and_goes_when_removed(
     cx: &mut TestAppContext,
 ) {

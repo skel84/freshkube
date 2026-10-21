@@ -37,7 +37,7 @@ pub(super) async fn evidence(reader: &FixtureReader, client: Result<&Client, Err
     };
     let mut plan = crate::tests::plan(&[]);
     plan.sha = SHA.into();
-    plan.build_namespace = Some("acme".into());
+    plan.build_namespace = Ok(Some("acme".into()));
     within(upstream_with_history(
         &upstream,
         &plan,
@@ -413,6 +413,23 @@ async fn missing_runs_keep_the_no_run_statement_with_results_why() {
         assert!(!row.detail.contains("Run pruned"));
         assert_eq!(row.link, Some(Confidence::Unknown));
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ended_forward_reason_names_the_forward_and_its_entry() {
+    let answer = evidence(&reader(vec![], vec![]), Err(Error::ForwardEnded("stopped"))).await;
+    let change = change(&answer);
+    let row = change
+        .hops
+        .iter()
+        .find(|row| row.name == "PipelineRun")
+        .unwrap();
+    assert!(
+        row.detail
+            .contains("the Tekton Results forward on cluster-b ended: stopped"),
+        "{}",
+        row.detail
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
