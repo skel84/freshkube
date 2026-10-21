@@ -80,6 +80,7 @@ fn place(workspace: &Workspace) -> Place {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     }
 }
 
@@ -624,6 +625,7 @@ async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let world = || {
         let mut world = on_deployment_at(ENV, |_| {});
@@ -883,6 +885,7 @@ async fn all_skipped_setup_reads_neither_the_open_connection_nor_an_entry() {
         transparency_log: false,
         transparency_url: None,
         evidence_result: None,
+        github: None,
     };
     let _ = crate::changes::live::read_in(&pool, &at, observed_at(), BUDGET).await;
     assert!(

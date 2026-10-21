@@ -1063,6 +1063,33 @@ fn stage_naming_is_a_template_with_an_optional_project_key() {
 }
 
 #[test]
+fn the_github_token_is_gh_or_keys_json_or_nothing_and_round_trips() {
+    let text = |value: &str| {
+        format!("version: 1\ndelivery:\n  github:\n    token: {value}\n    future: kept\n")
+    };
+    for (value, source) in [
+        ("keys.json", GitHubToken::KeysJson),
+        ("gh", GitHubToken::Gh),
+    ] {
+        let setup = ok(&text(value));
+        let github = setup.delivery.as_ref().unwrap().github.as_ref().unwrap();
+        assert_eq!(github.token, Some(source), "{value}");
+        assert_eq!(setup.unknown_keys(), vec!["delivery.github.future"]);
+        assert_eq!(ok(&to_text(&setup)), setup, "{value} round-trips");
+        assert!(to_text(&setup).contains(&format!("token: {value}")));
+    }
+    // GitHub with no token is anonymous.
+    let anonymous = ok("version: 1\ndelivery:\n  github: {}\n");
+    assert_eq!(anonymous.delivery.unwrap().github.unwrap().token, None);
+    // Anything else is refused, and the refusal never repeats it.
+    for bad in ["ghp_invented", "GH", "token123"] {
+        let invalid = refused(&text(bad));
+        assert!(matches!(invalid, Invalid::KeyValue(_)), "{bad}");
+        assert!(!invalid.to_string().contains(bad.trim()), "{bad}");
+    }
+}
+
+#[test]
 fn a_stage_naming_template_without_stage_is_a_fault_of_its_own() {
     let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
     assert_eq!(

@@ -1,0 +1,1 @@
+- **ExternalSecrets:** Resources details lead with reported sync errors, refresh information and referenced store health, without requesting the target Secret or changing the cluster.
