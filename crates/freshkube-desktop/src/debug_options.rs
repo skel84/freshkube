@@ -38,7 +38,8 @@ pub(crate) enum EtcdExample {
     Alarms,
 }
 
-/// `FRESHKUBE_LINKS`: the outcome every example link is forced to.
+/// `FRESHKUBE_LINKS`: the outcome every example link is forced to, or how
+/// the example clusters identify themselves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LinkShape {
     /// The reader's access refuses the read.
@@ -49,6 +50,14 @@ pub(crate) enum LinkShape {
     NotServed,
     /// The name belongs to another object now.
     Replaced,
+    /// Two of the example clusters are one cluster to a link.
+    Several,
+    /// None of the example clusters is the one a link was made in.
+    Unmatched,
+    /// The example clusters answer on their CA alone.
+    CaOnly,
+    /// Nothing is checked, not even the open cluster.
+    Unchecked,
 }
 
 /// What the launch asks for beyond its source: where to open and how to look.
@@ -166,6 +175,10 @@ impl DebugOptions {
                 Some("not-found") => Some(LinkShape::NotFound),
                 Some("not-served") => Some(LinkShape::NotServed),
                 Some("replaced") => Some(LinkShape::Replaced),
+                Some("several") => Some(LinkShape::Several),
+                Some("none") => Some(LinkShape::Unmatched),
+                Some("ca-only") => Some(LinkShape::CaOnly),
+                Some("unchecked") => Some(LinkShape::Unchecked),
                 _ => None,
             },
             text_size: text("FRESHKUBE_TEXT_SIZE")

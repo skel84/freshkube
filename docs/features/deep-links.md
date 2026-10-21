@@ -10,7 +10,10 @@ Code:
 - `crates/freshkube-resources/src/screen/link_outcome.rs`: the card the Resources drawer shows for an outcome.
 - `crates/freshkube-desktop/src/desktop/search/model.rs`: ⌘K's Open link result.
 
-Tests that prove it: `freshkube-nav`'s `view/tests.rs` and `outcome.rs`; core's `resources/discovery.rs`; desktop's `desktop/deep_link/tests.rs`, `desktop/tests/keys.rs` (the key) and `debug_options.rs` (the knob).
+- `crates/freshkube-core/src/fingerprint/`: the fingerprint, its hashes, the matching rules and the one `kube-system` read.
+- `crates/freshkube-desktop/src/desktop/deep_link/`: also `identity.rs` (candidates and the decision, pure), `cluster.rs` (the reads, the cache, the switch), `picker.rs` (the dialog) and `example.rs` (the example clusters' identities); Settings' read-only value is `desktop/settings/entry/fingerprint.rs`.
+
+Tests that prove it: `freshkube-nav`'s `view/tests.rs` and `outcome.rs`; core's `fingerprint/tests.rs`, `resources/discovery.rs` and `setup/tests.rs`; desktop's `desktop/deep_link/tests.rs` and `cluster_tests.rs`, the unit tests in `identity.rs`, `desktop/tests/keys.rs` (the key) and `debug_options.rs` (the knob).
 
 ## The link
 
@@ -28,9 +31,35 @@ freshkube://open?page=nodes&node=cp-1&ntab=diagnostics
 
 A name a link can't carry (a ClusterRole's colon) falls back to the kind's list; the toast says what the link opens.
 
+## Which cluster
+
+Context names differ between people, so a link carries the cluster's fingerprint, never a name: up to two values, each `base32(sha256(salt ‖ domain ‖ input)[..16])`, 26 characters (`freshkube_core::fingerprint`).
+
+- **Strong**, `cluster=u-…`: from the `kube-system` namespace's UID, read with one metadata `GET /api/v1/namespaces/kube-system` under the reader's own access and a 10 s deadline; or from the entry's `fingerprint:` in `freshkube.yaml` ([SETUP_FILE.md](../SETUP_FILE.md#fingerprint)), which wins and has a domain of its own, so the override text is not in a link.
+- **CA**, `ca=…`: from the CA certificates the kubeconfig names for the context (sorted and de-duplicated), computed locally.
+- The salt (`constants::FINGERPRINT_SALT`) is public: it only separates this hash from any other use, so a link is not a raw UID. A per-install salt would stop two people matching.
+- A 401 or 403 on the read makes the context **CA only**; any other failure is shown ("Can't check: …") and is not a fallback.
+
+**Matching**, link against a context (`fingerprint::matches`): both strong and equal → exact; both strong and different → no match, even on the same CA (a TLS-terminating proxy can share one CA between clusters); a side without a strong value and equal CAs → CA only; otherwise none.
+
+**What opening does** (`identity::decide`): the candidates are the workspace's entries plus, in a window without Talos, the kubeconfig contexts no entry covers.
+
+| Matches | Does |
+|---|---|
+| none, and no link fingerprint | opens in the cluster that is open |
+| one exact | opens there; on the open cluster it only navigates |
+| several exact, one open | that one, without asking |
+| several exact, none open | the dialog |
+| any CA only, even one, even the open cluster | the dialog, marking it CA only |
+| none | "No matching cluster", listing the contexts to open in explicitly |
+
+The window never switches context unasked. A switch is the one match or the reader's own **Open here**, through the header's own switch (`switch_cluster_to_view`, or `select_context` for a context no entry covers), which asks first only when a shell is running, and Cancel changes nothing; a link on the open cluster leaves a running shell alone. (A later change gives each dock shell and log tab its own connection, as forwards have, and removes this question.) The view is held until the entry has its own connection, as an object link into another entry is.
+
+**Checking.** A context's fingerprint is read when it opens, and kept in `fingerprints.json` beside the preferences (`freshkube-prefs`, hashes only, at most 256 contexts, never in `freshkube.yaml`) while its server and local CA hash are unchanged. A context never opened shows **Not checked yet** with a **Check** of its own in the dialog; nothing checks them all, since a check can run an exec plugin or a sign-in. Check builds a one-shot client for that context (`resources::connect`) and reads `kube-system` once; the open cluster's own read uses the session's client. Settings' Clusters shows each entry's fingerprint read-only, with Copy.
+
 ## Copy link
 
-⇧⌘C (Ctrl-Shift-C on Linux and Windows; a focused terminal keeps its own copy) copies the link to the view shown. It is also in the Go menu, the object pane's header (a link button beside Copy the name) and the menu of an attention row on Overview or in a node's pane, which names where Open goes. On a page a link can't name (Settings, Operations) it says so. Every copy shows a toast: `Link copied. It opens ⟨what⟩, read with the reader's own access.` The change page's Kargo address is **Copy Kargo link**; **Copy link** always means a Freshkube link.
+⇧⌘C (Ctrl-Shift-C on Linux and Windows; a focused terminal keeps its own copy) copies the link to the view shown. It is also in the Go menu, the object pane's header (a link button beside Copy the name) and the menu of an attention row on Overview or in a node's pane, which names where Open goes. On a page a link can't name (Settings, Operations) it says so. Every copy shows a toast: `Link copied. It opens ⟨what⟩, read with the reader's own access.` A link made before the cluster is identified has no fingerprint, and the toast says it opens in whichever cluster the reader has open. The change page's Kargo address is **Copy Kargo link**; **Copy link** always means a Freshkube link.
 
 ## Opening a link
 
@@ -53,4 +82,4 @@ Close, the list's Escape or opening anything else clears the card. A node the cl
 
 ## Example data
 
-`--fixture` resolves links against the example rows, so a second fixture instance can open a copied link (`--open-link`). `FRESHKUBE_LINKS` (`refused`, `not-found`, `not-served`, `replaced`) forces one outcome on every link opened ([AGENTS.md](../../AGENTS.md)).
+`--fixture` resolves links against the example rows, so a second fixture instance can open a copied link (`--open-link`). `FRESHKUBE_LINKS` forces an outcome on every link opened (`refused`, `not-found`, `not-served`, `replaced`) or reshapes how the example clusters identify themselves (`several`, `none`, `ca-only`, `unchecked`; [AGENTS.md](../../AGENTS.md)). Each example cluster has its own invented fingerprint and CA (`deep_link/example.rs`), so a link made in one window matches another on the CA alone until that context is checked.

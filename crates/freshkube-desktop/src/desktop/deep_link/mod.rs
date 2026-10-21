@@ -14,20 +14,31 @@ use freshkube_nav::{
 };
 use gpui_kit::ClipboardItem;
 
+mod cluster;
+#[cfg(test)]
+mod cluster_tests;
 mod describe;
+mod example;
+mod identity;
+mod picker;
 
 pub(super) use describe::describe;
 
 /// What the shell keeps for links.
-#[derive(Default)]
 pub(super) struct State {
-    /// Debug: forces one outcome on every example link.
+    /// Debug: forces one outcome on every example link, or reshapes how the
+    /// example clusters identify themselves.
     shape: Option<LinkShape>,
+    /// What is known of each cluster's identity, and the dialog that asks.
+    identities: cluster::Identities,
 }
 
 impl State {
-    pub(super) fn new(shape: Option<LinkShape>) -> Self {
-        Self { shape }
+    pub(super) fn new(shape: Option<LinkShape>, preferences: Option<&std::path::Path>) -> Self {
+        Self {
+            shape,
+            identities: cluster::Identities::open(preferences),
+        }
     }
 }
 
@@ -141,11 +152,6 @@ impl Pilot {
         view.tab = ViewTab::from_tab(resources.detail_tab(cx));
     }
 
-    /// The link for `view` as this window makes it.
-    pub(super) fn link_for(&self, view: ViewState) -> Link {
-        Link::here(view)
-    }
-
     /// Copy link: the current view's address, to the clipboard, with a toast
     /// that says what it opens and that it opens with the reader's access.
     pub(super) fn copy_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -212,11 +218,17 @@ impl Pilot {
             self.tell("This page can’t be linked.".into(), window, cx);
             return;
         };
-        let url = self.link_for(view.clone()).to_url();
-        cx.write_to_clipboard(ClipboardItem::new_string(url));
+        let link = self.link_for(view.clone(), cx);
+        let tied = link.cluster != freshkube_nav::ClusterRef::default();
+        cx.write_to_clipboard(ClipboardItem::new_string(link.to_url()));
+        let tail = if tied {
+            ""
+        } else {
+            " It isn’t tied to a cluster yet, so it opens in whichever cluster the reader has open."
+        };
         self.tell(
             format!(
-                "Link copied. It opens {}, read with the reader’s own access.",
+                "Link copied. It opens {}, read with the reader’s own access.{tail}",
                 describe(&view)
             ),
             window,
@@ -242,11 +254,6 @@ impl Pilot {
             ),
             Err(error) => self.tell(format!("Can’t open this link: {error}."), window, cx),
         }
-    }
-
-    /// Chooses the cluster, then opens the view in it.
-    pub(super) fn open_link(&mut self, link: Link, window: &mut Window, cx: &mut Context<Self>) {
-        self.apply_view(&link.view, window, cx);
     }
 
     /// Opens a view in the cluster that is open. Takes only the closed type,

@@ -790,7 +790,7 @@ impl Pilot {
             kubeconfig: KubeconfigSelection::Automatic,
             kubeconfig_draft: Default::default(),
             navigation,
-            deep_link: deep_link::State::new(options.debug.links),
+            deep_link: deep_link::State::new(options.debug.links, options.preferences.as_deref()),
             // The one place a hold is set: example data's, from
             // `DebugOptions::hold`.
             mode: source::Mode::new(options.starts_with_examples().then_some(options.debug.hold)),

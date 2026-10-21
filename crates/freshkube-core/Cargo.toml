@@ -12,6 +12,7 @@ talos-rs.workspace = true
 tokio.workspace = true
 base64.workspace = true
 x509-parser.workspace = true
+sha2 = "0.10"
 tonic.workspace = true
 
 # Kubernetes overview collection

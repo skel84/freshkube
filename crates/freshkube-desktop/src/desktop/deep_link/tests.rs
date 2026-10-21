@@ -92,6 +92,18 @@ fn link_for(identity: &resources::model::ResourceIdentity, extra: &str) -> Strin
     )
 }
 
+/// The fingerprint the fixture window opens on (`prod-fra`) puts in a link.
+fn tied(link: &str) -> String {
+    use freshkube_core::fingerprint::strong_from_uid;
+    format!(
+        "{}cluster=u-{}&ca={}&{}",
+        "freshkube://open?",
+        strong_from_uid("example/kube-system/prod-fra"),
+        strong_from_uid("example/ca/prod-fra"),
+        link.strip_prefix("freshkube://open?").expect("a link")
+    )
+}
+
 fn card(cx: &mut TestAppContext, view: &Entity<Pilot>) -> Option<resources::LinkOutcomeCard> {
     cx.read(|cx| {
         view.read(cx)
@@ -181,7 +193,10 @@ fn copy_link_puts_the_canonical_link_on_the_clipboard_and_says_what_it_opens(
     let text = clipboard(cx);
     assert_eq!(
         text,
-        link_for(&identity, &format!("&uid={}&tab=yaml", identity.uid))
+        tied(&link_for(
+            &identity,
+            &format!("&uid={}&tab=yaml", identity.uid)
+        ))
     );
     let said = notices.borrow().last().cloned().unwrap();
     assert!(
@@ -558,7 +573,7 @@ fn the_panes_copy_link_button_copies_the_open_objects_link(cx: &mut TestAppConte
     cx.run_until_parked();
     assert_eq!(
         clipboard(cx),
-        link_for(&identity, &format!("&uid={}", identity.uid))
+        tied(&link_for(&identity, &format!("&uid={}", identity.uid)))
     );
 }
 
@@ -572,14 +587,14 @@ fn an_attention_rows_copy_link_names_where_open_goes(cx: &mut TestAppContext) {
     for (destination, expected) in [
         (
             Destination::Object("deployments.apps", object, resources::Tab::Events),
-            format!(
+            tied(&format!(
                 "freshkube://open?page=resources&kind=deployments.apps&ns={}&name={}&uid={}&tab=events",
                 identity.namespace, identity.name, identity.uid
-            ),
+            )),
         ),
         (
             Destination::Page(Page::Etcd),
-            "freshkube://open?page=etcd".to_owned(),
+            tied("freshkube://open?page=etcd"),
         ),
         (
             Destination::Service {
@@ -587,7 +602,7 @@ fn an_attention_rows_copy_link_names_where_open_goes(cx: &mut TestAppContext) {
                 service: "etcd".into(),
                 logs: true,
             },
-            "freshkube://open?page=nodes&node=cp-1&ntab=logs".to_owned(),
+            tied("freshkube://open?page=nodes&node=cp-1&ntab=logs"),
         ),
     ] {
         cx.update_window(handle, |_, window, cx| {

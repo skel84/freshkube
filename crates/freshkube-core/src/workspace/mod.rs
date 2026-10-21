@@ -86,6 +86,12 @@ pub struct Entry {
     /// which is [`Protection::Guarded`], and is written back as no key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protection: Option<Protection>,
+    /// What deep links match this cluster by (#873), in place of its
+    /// `kube-system` UID and CA, for clusters behind a proxy that makes those
+    /// alike. Typed and checked by `freshkube.yaml` ([`crate::setup`]); a link
+    /// carries a hash of it, never the text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
     /// Where Tekton Results is read; `None` is off. Boxed, so an `Entry` stays small. Typed and checked by
     /// `freshkube.yaml` ([`crate::setup`]); `workspace.json` only carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -113,6 +119,7 @@ impl Entry {
             coroot: None,
             metrics: None,
             protection: None,
+            fingerprint: None,
             extra: Default::default(),
         }
     }
