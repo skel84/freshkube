@@ -1,0 +1,1 @@
+- **Development:** agent sessions in this repository no longer add tool trailers to commits or footers to pull requests.
