@@ -264,6 +264,7 @@ pub struct ChangePage {
     /// while the page is, and its answer's age decides whether showing
     /// reads.
     pub loader: Loader<Change, String>,
+    results: crate::results_forward::Binding,
     visible: bool,
     /// The window the page shows in, where an answer selects its Stage.
     window: AnyWindowHandle,
@@ -346,6 +347,7 @@ impl ChangePage {
             change,
             fetch,
             loader,
+            results: Default::default(),
             visible,
             window: window.window_handle(),
             stage: stage.map(str::to_owned),

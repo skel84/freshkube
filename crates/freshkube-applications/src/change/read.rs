@@ -113,7 +113,7 @@ impl ChangePage {
     /// hand, example data answers at once.
     pub(super) fn read(&mut self, window: Option<&Window>, cx: &mut Context<Self>) {
         self.configure_results(cx);
-        let request = self.loader.start(self.results_identity(cx));
+        let request = self.loader.start(self.results_identity());
         match self.fetch.clone() {
             Fetch::Example {
                 project,
@@ -156,7 +156,7 @@ impl ChangePage {
                     build_namespace: place.build_namespace.clone(),
                     stage_naming: place.stage_naming.clone(),
                 };
-                let results_route = self.results_route(cx);
+                let results_route = self.results_route();
                 let (job, receiver) = backend::spawn_job(
                     &runtime,
                     DEADLINE,
