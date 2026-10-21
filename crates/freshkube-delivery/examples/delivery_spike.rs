@@ -404,6 +404,7 @@ async fn main() {
     let plan = Plan {
         followed: None,
         sha,
+        digests: Vec::new(),
         kargo_project: project,
         argocd_namespace: argocd_ns,
         build_namespace: Some(build_ns),
@@ -414,6 +415,8 @@ async fn main() {
         map_hint: Default::default(),
         names: Default::default(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: match (
             &args.evidence_result,
             &args.evidence_commit,
@@ -429,12 +432,12 @@ async fn main() {
         },
         commit_names: args.commit_names.clone(),
         stage_naming: match (&args.stage_project_key, &args.stage_name) {
-            (Some(project_key), Some(name_template)) => Some(StageNaming {
+            (project_key, Some(name_template)) => Some(StageNaming {
                 project_key: project_key.clone(),
                 name_template: name_template.clone(),
             }),
             (None, None) => None,
-            _ => fail("--stage-project-key and --stage-name go together"),
+            _ => fail("--stage-project-key needs --stage-name"),
         },
         contexts,
     };

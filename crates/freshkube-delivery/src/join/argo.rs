@@ -24,11 +24,12 @@ pub(super) fn application_links(
     };
     let owned: Vec<&Application> = apps
         .iter()
-        .filter(|app| {
-            app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                .is_some()
-        })
+        .filter(|app| evidence.claims_stage(app, stage).is_some())
         .collect();
+    let mut links = ambiguous_links(evidence, stage, apps);
+    if owned.is_empty() && !links.is_empty() {
+        return links;
+    }
     if owned.is_empty() {
         return vec![Link::new(
             Hop::Stage,
@@ -43,7 +44,6 @@ pub(super) fn application_links(
             ),
         )];
     }
-    let mut links = Vec::new();
     for app in owned {
         let app_id = id(&app.namespace, &app.name);
         let destination = evidence
@@ -51,9 +51,15 @@ pub(super) fn application_links(
             .get(&app_id)
             .map(|destination| describe_destination(evidence, destination))
             .unwrap_or_else(|| "destination not matched".to_owned());
-        let (confidence, key, proof, mut seen) =
+        let claim = evidence.claims_stage(app, stage);
+        let (mut confidence, key, mut proof, mut seen) =
             stage_application_proof(evidence, freight, stage, app, apps);
-        let claim = app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref());
+        if claim == Some(StageClaim::NamedOnly) {
+            // Nothing but the name ties this Application to the Stage, so
+            // whatever the commit says it stays a claim.
+            confidence = confidence.max(Confidence::Claimed);
+            proof.push_str("; found by the naming template only");
+        }
         seen.push(application_claim(
             app,
             stage,
@@ -78,6 +84,48 @@ pub(super) fn application_links(
         links.extend(rollout_links(evidence, freight, app));
     }
     links
+}
+
+/// An Unknown link for each Application that claims the Stage by name only
+/// where more than one does, so none of them is linked.
+fn ambiguous_links(evidence: &Evidence, stage: &Stage, apps: &[Application]) -> Vec<Link> {
+    let claimants = evidence.name_only_claimants(stage);
+    if claimants <= 1 {
+        return Vec::new();
+    }
+    apps.iter()
+        .filter(|app| {
+            app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
+                == Some(StageClaim::NamedOnly)
+        })
+        .map(|app| {
+            Link::new(
+                Hop::Stage,
+                Hop::Application,
+                id(&app.namespace, &app.name),
+                Key::None,
+                Confidence::Unknown,
+                format!(
+                    "{claimants} Applications match the naming template for this Stage, so none is linked"
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Whether a name-only claim ties the Application to a Stage of the project
+/// read, so to the project. Only the one project is read, and one name gives
+/// one Stage of it; the ambiguity of a name that fits Stages of several
+/// projects is for the Applications page, which reads them all.
+fn is_named_for_project(evidence: &Evidence, app: &Application) -> bool {
+    let stages = evidence.kargo.stages.read().map_or(&[][..], Vec::as_slice);
+    !app.name_only_fits(
+        evidence.stage_naming.as_ref(),
+        stages
+            .iter()
+            .map(|stage| (stage.project.as_str(), stage.name.as_str())),
+    )
+    .is_empty()
 }
 
 /// Whether a succeeded Promotion of this Freight to this Stage pushed the very
@@ -147,10 +195,9 @@ fn stage_application_proof(
     let shared = apps.iter().any(|other| {
         (other.namespace != app.namespace || other.name != app.name)
             && at(other, commit)
-            && other
-                .claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                .is_none()
-            && other.is_of_project(&stage.project, evidence.stage_naming.as_ref())
+            && evidence.claims_stage(other, stage).is_none()
+            && (other.is_of_project(&stage.project, evidence.stage_naming.as_ref())
+                || is_named_for_project(evidence, other))
     });
     if let Some(truncation) = evidence.applications.capped() {
         // An Application of another stage at the same commit may be among

@@ -5,8 +5,8 @@
 use std::path::Path;
 
 use super::{
-    Coroot, EntryCoroot, EntryMetrics, Fault, Metrics, Mode, Results, Source, Store, SupplyChain,
-    types::MetricsService,
+    Coroot, Delivery, EntryCoroot, EntryMetrics, Fault, Metrics, Mode, Results, Source, Store,
+    SupplyChain, types::MetricsService,
 };
 use crate::{base_url::parse_base_url, workspace::Entry};
 
@@ -199,6 +199,39 @@ pub(super) fn supply_chain(chain: &SupplyChain) -> Result<(), Fault> {
         pointer(&evidence.digest, format!("{at}.digest"))?;
     }
     Ok(())
+}
+
+pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
+    if let Some(namespace) = &delivery.build_namespace {
+        non_empty(namespace, "delivery.build_namespace".into())?;
+        namespace_name(namespace, "delivery.build_namespace".into())?;
+    }
+    if let Some(naming) = &delivery.stage_naming {
+        let at = "delivery.stage_naming";
+        non_empty(&naming.name_template, format!("{at}.name_template"))?;
+        if !naming.name_template.contains("{stage}") {
+            return Err(Fault::TemplateWithoutStage(format!("{at}.name_template")));
+        }
+        if let Some(key) = &naming.project_key {
+            non_empty(key, format!("{at}.project_key"))?;
+        }
+    }
+    Ok(())
+}
+
+/// A DNS-1123 label: lowercase alphanumerics and `-`, at most 63, starting
+/// and ending alphanumeric.
+fn namespace_name(text: &str, at: String) -> Result<(), Fault> {
+    let alnum = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let fine = text.len() <= 63
+        && text.chars().all(|c| alnum(c) || c == '-')
+        && text.chars().next().is_some_and(alnum)
+        && text.chars().last().is_some_and(alnum);
+    if fine {
+        Ok(())
+    } else {
+        Err(Fault::NotNamespace(at))
+    }
 }
 
 fn non_empty(text: &str, at: String) -> Result<(), Fault> {

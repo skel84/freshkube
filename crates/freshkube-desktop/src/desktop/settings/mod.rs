@@ -212,6 +212,12 @@ impl SettingsPage {
             } else if !defer {
                 self.pending_setup = false;
                 self.seen = seen;
+                let naming = setup
+                    .delivery
+                    .as_ref()
+                    .and_then(|delivery| delivery.stage_naming.clone());
+                self.sources
+                    .update(cx, |sources, cx| sources.set_stage_naming(naming, cx));
                 if !self.uses_setup || self.workspace != setup.workspace {
                     self.uses_setup = true;
                     self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);

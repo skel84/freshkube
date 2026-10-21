@@ -1,1 +1,0 @@
-- **Coroot links in the setup file:** two clusters can no longer link the same Coroot cluster of one project, and a cluster that names a Coroot cluster needs a project, its own or the connection's; the setup is refused and the message names the clusters.

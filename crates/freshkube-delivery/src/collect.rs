@@ -19,10 +19,13 @@ use super::argocd::{
     Application, DestinationMatch, Destinations, MapHint, StageNaming, match_destination,
     read_applications,
 };
+use super::chains::config::{CHAINS_NAMESPACE, read_config};
 use super::deployments::{
     Deployment, DeploymentSet, current_set, read_deployment_sets, read_deployments,
 };
+use super::digest::Digest;
 use super::github::GitHub;
+use super::join::{DigestOutcome, DigestSearch};
 use super::join::{
     Evidence, RolloutPods, Workloads, candidate_applications, candidate_deployments,
     candidate_rollouts,
@@ -30,11 +33,14 @@ use super::join::{
 use super::kargo::read_project;
 use super::pods::{read_deployment_pods, read_namespace_pods, read_rollout_pods};
 use super::read::Reader;
+use super::rekor::{Address, Client as RekorClient, LogRead, read_log};
 use super::rollouts::{
     AnalysisRun, ReplicaSet, Rollout, read_analysis_runs, read_replica_sets, read_rollouts,
 };
 use super::source::Source;
-use super::tekton::{CommitNames, EvidenceResult, read_builds};
+use super::tekton::{
+    Build, CommitNames, EvidenceResult, FoundBy, read_builds, read_builds_by_digest,
+};
 use super::verify::{KeyProblem, Trust};
 
 /// Which namespaces to read, all named by the caller.
@@ -43,6 +49,11 @@ pub struct Plan {
     /// The commit; empty when the change is followed from a Freight that
     /// names none, and then no build is read.
     pub sha: String,
+    /// The image digests of the Freight followed, searched for among the
+    /// results of the builds in `build_namespace` (and of its archive). A
+    /// Freight that names no commit is joined to its build by these alone;
+    /// one that names a commit is searched by both. Empty: no digest search.
+    pub digests: Vec<Digest>,
     /// A Freight followed by name, whose Stages' workloads and pods are
     /// read whether or not it matches the commit.
     pub followed: Option<String>,
@@ -50,7 +61,8 @@ pub struct Plan {
     pub kargo_project: String,
     /// The namespace Argo CD's Applications live in.
     pub argocd_namespace: String,
-    /// The namespace PaC runs the build in; every namespace when `None`.
+    /// The namespace PaC runs the build in; every namespace when `None`, for
+    /// a commit. A search by digest needs it and reads nothing without.
     pub build_namespace: Option<String>,
     /// `owner/name` of the GitHub repository, when pull requests are read.
     pub github_repo: Option<String>,
@@ -74,6 +86,12 @@ pub struct Plan {
     /// The public key signatures are verified against; nothing is verified
     /// unless it is named.
     pub public_key_file: Option<std::path::PathBuf>,
+    /// Whether the transparency log is required for a signature to confirm.
+    /// Off, nothing is fetched from it.
+    pub transparency_log: bool,
+    /// The log's address when the setting names one; else Chains'
+    /// configuration is read for it.
+    pub transparency_url: Option<String>,
     /// Parameter and result names, besides upstream's, under which the
     /// pipelines record the commit they built. Empty unless configured.
     pub commit_names: CommitNames,
@@ -198,23 +216,48 @@ pub(crate) async fn upstream_with_history<K: Reader, A: Reader, T: Reader, G: Gi
     until: tokio::time::Instant,
 ) -> Evidence {
     let builds = async {
-        let live = if plan.sha.is_empty() {
-            Source::Unreadable("the Freight names no commit to find its builds by".into())
+        let (live, search) = read_all_builds(clusters.tekton, plan).await;
+        let (live, commit_history) = if plan.sha.is_empty() {
+            (live, Err(crate::results::Error::Off))
         } else {
-            read_builds(clusters.tekton, plan.build_namespace.as_deref(), &plan.sha).await
+            crate::results::supplement(
+                live,
+                history.clone(),
+                plan.build_namespace.as_deref(),
+                &plan.sha,
+                until,
+            )
+            .await
         };
-        crate::results::supplement(
-            live,
-            history,
-            plan.build_namespace.as_deref(),
-            &plan.sha,
-            until,
-        )
-        .await
+        // The archive is searched by digest only where a live search ran.
+        match (search, plan.build_namespace.as_deref()) {
+            (Some(mut search), Some(namespace))
+                if !matches!(search.outcome, DigestOutcome::Failed(_)) =>
+            {
+                let (live, archived) = crate::results::supplement_digests(
+                    live,
+                    history,
+                    namespace,
+                    &search.digests,
+                    until,
+                )
+                .await;
+                // The digest's archive is the build history when no commit
+                // asked: its words are about the digest then.
+                let history = if plan.sha.is_empty() {
+                    archived.clone()
+                } else {
+                    commit_history
+                };
+                search.archive = Some(archived);
+                (live, history, Some(search))
+            }
+            (search, _) => (live, commit_history, search),
+        }
     };
     let kargo = read_project(clusters.kargo, &plan.kargo_project);
     // Each part is asked of its own cluster, so none waits on another's.
-    let ((builds, build_history), kargo, applications) =
+    let ((builds, build_history, digest_search), kargo, applications) =
         futures::join!(builds, kargo, applications);
     let destinations: BTreeMap<String, DestinationMatch> = applications
         .read()
@@ -237,17 +280,20 @@ pub(crate) async fn upstream_with_history<K: Reader, A: Reader, T: Reader, G: Gi
         })
         .unwrap_or_default();
     let trust = read_trust(plan).await;
+    let log = read_transparency(clusters.tekton, plan, &trust, &builds).await;
     let mut evidence = Evidence {
         sha: plan.sha.clone(),
         followed: plan.followed.clone(),
         observed_at,
         evidence_result: plan.evidence_result.clone(),
         trust,
+        log,
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
         map_hint: plan.map_hint.clone(),
         names: plan.names.clone(),
         builds,
+        digest_search,
         build_history,
         kargo,
         applications,
@@ -384,6 +430,9 @@ async fn read_pull_requests<K: Reader, A: Reader, T: Reader, G: GitHub>(
     let Some(repo) = &plan.github_repo else {
         return;
     };
+    if plan.sha.is_empty() {
+        return;
+    }
     let read = Source::from_result(clusters.github.pulls_for_commit(repo, &plan.sha).await);
     if let Some(prs) = read.read() {
         for pr in prs
@@ -423,6 +472,30 @@ pub async fn commit_of_pull_request<G: GitHub>(
 }
 
 /// The key the person named, read off the async thread: a file read blocks.
+/// What the transparency log says of the verified attestations, when the
+/// person turned it on. Off, nothing is read or fetched.
+async fn read_transparency<T: Reader>(
+    tekton: &T,
+    plan: &Plan,
+    trust: &Trust,
+    builds: &Source<Vec<Build>>,
+) -> LogRead {
+    if !plan.transparency_log {
+        return LogRead::Off;
+    }
+    // Read only if an attestation verified: until then the address is moot.
+    let address = async {
+        match &plan.transparency_url {
+            Some(url) => Address::Set(url.clone()),
+            None => Address::FromChains(read_config(tekton, CHAINS_NAMESPACE).await),
+        }
+    };
+    let client = RekorClient::new();
+    let builds = builds.read().map_or(&[][..], Vec::as_slice);
+    read_log(client.as_ref(), address, trust, builds).await
+}
+
+/// The key the person named, read off the async thread: a file read blocks.
 async fn read_trust(plan: &Plan) -> Trust {
     let Some(path) = plan.public_key_file.clone() else {
         return Trust::Unset;
@@ -432,4 +505,94 @@ async fn read_trust(plan: &Plan) -> Trust {
         .unwrap_or_else(|_| {
             Trust::Unusable(KeyProblem::Unreadable("the read did not finish".into()))
         })
+}
+
+/// The builds of the commit, by its label, and of the Freight's image
+/// digests, by their results, as one read: a build found by both is the
+/// commit's. A commit read that failed is the answer when it did, since the
+/// digest search goes through the same API.
+async fn read_all_builds<T: Reader>(
+    reader: &T,
+    plan: &Plan,
+) -> (Source<Vec<Build>>, Option<DigestSearch>) {
+    let commit = (!plan.sha.is_empty())
+        .then(|| read_builds(reader, plan.build_namespace.as_deref(), &plan.sha));
+    let search = async {
+        if plan.digests.is_empty() {
+            return None;
+        }
+        let digests = plan.digests.clone();
+        Some(match plan.build_namespace.as_deref() {
+            None => (Vec::new(), DigestOutcome::NoNamespace, None),
+            Some(namespace) => match read_builds_by_digest(reader, namespace, &digests).await {
+                Ok((builds, searched)) => {
+                    let cap = searched.cap;
+                    (builds, DigestOutcome::Read(searched), cap)
+                }
+                Err(failure) => (
+                    Vec::new(),
+                    DigestOutcome::Failed(crate::source::printable(&failure)),
+                    None,
+                ),
+            },
+        })
+        .map(|(builds, outcome, cap)| {
+            (
+                builds,
+                cap,
+                DigestSearch {
+                    digests,
+                    outcome,
+                    archive: None,
+                },
+            )
+        })
+    };
+    let (commit, searched) = futures::join!(async { Some(commit?.await) }, search);
+    let (found, cap, search) = match searched {
+        Some((builds, cap, search)) => (builds, cap, Some(search)),
+        None => (Vec::new(), None, None),
+    };
+    let builds = match commit {
+        None => match &search {
+            None => Source::Unreadable("the Freight names no commit or image digest".into()),
+            Some(DigestSearch {
+                outcome: DigestOutcome::NoNamespace | DigestOutcome::Failed(_),
+                ..
+            }) => Source::Unreadable(
+                search
+                    .as_ref()
+                    .map(DigestSearch::why_none)
+                    .unwrap_or_default(),
+            ),
+            Some(_) => cap.map_or(Source::Read(found.clone()), |cap| {
+                Source::Capped(found.clone(), cap)
+            }),
+        },
+        Some(Source::Read(mut builds)) => {
+            add_found(&mut builds, found);
+            cap.map_or(Source::Read(builds.clone()), |cap| {
+                Source::Capped(builds, cap)
+            })
+        }
+        Some(Source::Capped(mut builds, cap)) => {
+            add_found(&mut builds, found);
+            Source::Capped(builds, cap)
+        }
+        Some(failed) => failed,
+    };
+    (builds, search)
+}
+
+/// `found` after `builds`, without the builds `builds` holds already.
+fn add_found(builds: &mut Vec<Build>, found: Vec<Build>) {
+    for build in found {
+        let known = builds
+            .iter()
+            .any(|b| b.run.namespace == build.run.namespace && b.run.name == build.run.name);
+        if !known {
+            debug_assert_eq!(build.found_by, FoundBy::Digest);
+            builds.push(build);
+        }
+    }
 }

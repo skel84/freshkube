@@ -307,6 +307,59 @@ async fn reload_replaces_the_key_and_cancels_the_old_read(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+async fn the_stage_naming_reaches_the_list_and_the_open_change_on_reload(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut configured = setup(None, None, false);
+    let (window, app) = mount(cx, &runtime, &configured, None, false, Arc::default());
+    wait_list(cx, window, &app).await;
+    let change = open_change(cx, window, &app);
+    cx.wait_for_io(window, |_, cx| change.read(cx).answered())
+        .await;
+    configured.delivery = Some(freshkube_core::setup::Delivery::naming(
+        freshkube_core::setup::StageNaming::new("{stage}-{project}"),
+    ));
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx))
+    })
+    .unwrap();
+    // The list derives its projects from the naming, so it reads again.
+    cx.update_window(window, |_, _, cx| {
+        assert!(app.read(cx).loader.is_loading());
+    })
+    .unwrap();
+    wait_list(cx, window, &app).await;
+    cx.update_window(window, |_, _, cx| {
+        let expected = Some("{stage}-{project}");
+        let page = app.read(cx);
+        let of = |naming: &Option<freshkube_core::setup::StageNaming>| {
+            naming.as_ref().map(|naming| naming.name_template.clone())
+        };
+        assert_eq!(of(&page.stage_naming).as_deref(), expected);
+        // The change page's own read.
+        match &change.read(cx).fetch {
+            crate::change::Fetch::Live { place, .. } => {
+                assert_eq!(of(&place.stage_naming).as_deref(), expected)
+            }
+            _ => panic!("the change reads live"),
+        }
+    })
+    .unwrap();
+    // Removing the key turns it off again.
+    configured.delivery = None;
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx))
+    })
+    .unwrap();
+    cx.update_window(window, |_, _, cx| {
+        let page = app.read(cx);
+        assert!(page.stage_naming.is_none());
+        assert!(page.loader.is_loading());
+    })
+    .unwrap();
+    wait_list(cx, window, &app).await;
+}
+
+#[gpui_kit::test]
 async fn a_configured_token_without_a_store_keeps_the_named_error(cx: &mut TestAppContext) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let results = fake::Results::new(runtime.handle());
@@ -434,6 +487,40 @@ async fn a_remap_keeps_the_last_good_change_on_refresh_failure(cx: &mut TestAppC
             assert!(page.loader.is_stale());
             assert_eq!(page.loader.error(), Some("invented refresh failure"));
         });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut configured = setup(None, None, false);
+    let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
+    wait_list(cx, window, &app).await;
+    let change = open_change(cx, window, &app);
+    cx.update_window(window, |_, _, cx| {
+        assert_eq!(app.read(cx).across().build_namespace, None);
+        assert_eq!(change.read(cx).build_namespace(), None);
+    })
+    .unwrap();
+    let mut delivery = freshkube_core::setup::Delivery::default();
+    delivery.build_namespace = Some("acme-builds".into());
+    configured.delivery = Some(delivery);
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(
+            app.read(cx).across().build_namespace.as_deref(),
+            Some("acme-builds")
+        );
+        assert_eq!(change.read(cx).build_namespace(), Some("acme-builds"));
+    })
+    .unwrap();
+    // A reload that drops the key drops it from the reads too.
+    configured.delivery = None;
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(app.read(cx).across().build_namespace, None);
+        assert_eq!(change.read(cx).build_namespace(), None);
     })
     .unwrap();
 }

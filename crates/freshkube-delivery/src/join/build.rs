@@ -3,8 +3,9 @@ use crate::digest::{Digest, tag, written_repository};
 use crate::github::PullRequest;
 use crate::kargo::Freight;
 use crate::observation::ObjectRef;
+use crate::rekor::{Standing as LogStanding, entry_key};
 use crate::source::{Source, cap_note};
-use crate::tekton::{Build, CommitNames, EvidenceResult, WitnessSource};
+use crate::tekton::{Build, CommitNames, EvidenceResult, WitnessSource, built_images};
 use crate::verify::{NotRead, Trust, Verification, Verified, verify};
 
 use super::argo::short_commit;
@@ -89,7 +90,7 @@ pub(super) fn pull_request_links(
             for build in builds {
                 // A verified provenance is the commit's own witness; it cannot
                 // raise the pull request's links, so none is passed.
-                let run = commit_link(sha, build, &evidence.commit_names, &Trust::Unset);
+                let run = commit_link(sha, build, &evidence.commit_names, &Proof::none());
                 let numbered = match build.run.pull_request {
                     Some(number) if number != pr.number => {
                         format!("; the run says pull request #{number}, not #{}", pr.number)
@@ -159,7 +160,7 @@ fn head_build_links(
     }
     let mut links = Vec::new();
     for build in builds {
-        let run = commit_link(head, build, &evidence.commit_names, &Trust::Unset);
+        let run = commit_link(head, build, &evidence.commit_names, &Proof::none());
         let run_confidence = run.confidence;
         let head_run = run_commit(build, &evidence.commit_names, head);
         let digests: Vec<Digest> = build.images().into_iter().map(|i| i.digest).collect();
@@ -232,7 +233,7 @@ fn head_build_links(
     links
 }
 
-pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames, trust: &Trust) -> Link {
+pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames, proof: &Proof) -> Link {
     let subject = id(&build.run.namespace, &build.run.name);
     let outcome = match (&build.run.succeeded, &build.run.reason) {
         (Some(status), Some(reason)) => format!("Succeeded={status} ({reason})"),
@@ -260,7 +261,7 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames, trust: 
         seen
     };
     let reported_other = !others.is_empty();
-    let attested = verified_attestations(build, trust)
+    let attested = verified_attestations(build, proof)
         .into_iter()
         .find(|attested| {
             attested
@@ -362,7 +363,7 @@ pub(super) fn supply_chain_links(
     build: &Build,
     evidence_result: Option<&EvidenceResult>,
     names: &CommitNames,
-    trust: &Trust,
+    proof: &Proof,
 ) -> Vec<Link> {
     let verdict = match build.conforma() {
         Some(conforma) => format!(
@@ -419,7 +420,7 @@ pub(super) fn supply_chain_links(
     images
         .into_iter()
         .map(|image| {
-            let standing = standing(build, trust, &image.digest);
+            let standing = standing(build, proof, &image.digest);
             // The build reports the digest; what else is said about it is
             // the attestation's, reported only once its signature verified,
             // and Chains' annotation, declared.
@@ -435,7 +436,11 @@ pub(super) fn supply_chain_links(
                 standing.confidence,
                 format!(
                     "{} {}; {}; {verdict}",
-                    written_repository(&image.url),
+                    if image.url.is_empty() {
+                        format!("image {}", image.digest.short())
+                    } else {
+                        written_repository(&image.url)
+                    },
                     tag(&image.url)
                         .map(|t| format!("(tag {t})"))
                         .unwrap_or_default(),
@@ -486,8 +491,9 @@ fn judge(build: &Build, trust: &Trust, digest: &Digest) -> Vec<Judged> {
 }
 
 /// The attestations of `build` that verify with the person's key for one of
-/// the images the build reported.
-fn verified_attestations(build: &Build, trust: &Trust) -> Vec<Attested> {
+/// the images the build reported, and that the transparency log lets stand
+/// when it is on.
+fn verified_attestations(build: &Build, proof: &Proof) -> Vec<Attested> {
     let images = build.images();
     build
         .attestations()
@@ -496,18 +502,26 @@ fn verified_attestations(build: &Build, trust: &Trust) -> Vec<Attested> {
         .filter_map(|(object, attestation)| {
             images
                 .iter()
-                .find_map(|image| match verify(trust, attestation, &image.digest) {
-                    Verification::Verified(verified) => Some(Attested {
-                        object: attestation.verified_object(&object),
-                        verified,
-                    }),
-                    Verification::NoTrust
-                    | Verification::KeyUnusable(_)
-                    | Verification::Malformed(_)
-                    | Verification::SignatureFailed { .. }
-                    | Verification::SubjectDiffers { .. }
-                    | Verification::NotStoredHere(_)
-                    | Verification::NotRead(_) => None,
+                .find_map(
+                    |image| match verify(proof.trust, attestation, &image.digest) {
+                        Verification::Verified(verified) => Some(Attested {
+                            object: attestation.verified_object(&object),
+                            verified,
+                        }),
+                        Verification::NoTrust
+                        | Verification::KeyUnusable(_)
+                        | Verification::Malformed(_)
+                        | Verification::SignatureFailed { .. }
+                        | Verification::SubjectDiffers { .. }
+                        | Verification::NotStoredHere(_)
+                        | Verification::NotRead(_) => None,
+                    },
+                )
+                .filter(|_| {
+                    matches!(
+                        proof.log.standing(&entry_key(&object, attestation)),
+                        LogStanding::Stands(_)
+                    )
                 })
         })
         .collect()
@@ -555,12 +569,17 @@ fn annotation_words(build: &Build) -> (bool, String) {
     }
 }
 
-fn standing(build: &Build, trust: &Trust, digest: &Digest) -> Standing {
+fn standing(build: &Build, proof: &Proof, digest: &Digest) -> Standing {
+    let trust = proof.trust;
     let (annotated, annotation) = annotation_words(build);
     let judged = judge(build, trust, digest);
     let chosen = judged
         .iter()
-        .find(|judged| judged.outcome.confirms())
+        .find(|judged| {
+            judged.outcome.confirms()
+                && log_of(proof, judged).is_some_and(|log| matches!(log, LogStanding::Stands(_)))
+        })
+        .or_else(|| judged.iter().find(|judged| judged.outcome.confirms()))
         .or_else(|| {
             judged
                 .iter()
@@ -591,14 +610,27 @@ fn standing(build: &Build, trust: &Trust, digest: &Digest) -> Standing {
             warn: annotated && matches!(trust, Trust::Unusable(_)),
         };
     };
-    let confidence = confidence_of(&chosen.outcome);
+    let mut confidence = confidence_of(&chosen.outcome);
     let (words, evidence) = match &chosen.outcome {
         Verification::Verified(verified) => {
             let object = chosen.attestation.verified_object(&chosen.object);
-            (
-                format!("{}; {annotation}", chosen.outcome),
-                vec![attested_digest(&object, &verified.subject)],
-            )
+            // The log can only take the confirmation away: with it on, a
+            // verified signature without a matching entry is a claim.
+            let log = match log_of(proof, chosen) {
+                Some(LogStanding::Stands(words)) => words,
+                Some(LogStanding::Claims(why)) => {
+                    confidence = Confidence::Claimed;
+                    why
+                }
+                None => String::new(),
+            };
+            // With the log off the words are as they were before it existed.
+            let words = if proof.log.is_off() {
+                format!("{}; {annotation}", chosen.outcome)
+            } else {
+                format!("{}; {log}; {annotation}", chosen.outcome)
+            };
+            (words, vec![attested_digest(&object, &verified.subject)])
         }
         Verification::NoTrust
         | Verification::KeyUnusable(_)
@@ -637,6 +669,16 @@ fn warns(outcome: &Verification) -> bool {
     }
 }
 
+/// What the transparency log says of a verified attestation; `None` for one
+/// that did not verify.
+fn log_of(proof: &Proof, judged: &Judged) -> Option<LogStanding> {
+    judged.outcome.confirms().then(|| {
+        proof
+            .log
+            .standing(&entry_key(&judged.object, &judged.attestation))
+    })
+}
+
 /// The names of the run's own results, which a configured evidence result
 /// could be one of.
 fn run_results(build: &Build) -> String {
@@ -651,4 +693,61 @@ fn run_results(build: &Build) -> String {
         ),
         _ => format!(" (the run's results: {})", names.join(", ")),
     }
+}
+
+/// The link from an image to a build found by its digest: a result of the
+/// run, or of one of its TaskRuns, reports it, so the link is confirmed. The
+/// build's own commit, if any, is shown beside it and joins nothing.
+pub(super) fn digest_links(build: &Build, evidence: &Evidence) -> Vec<Link> {
+    let wanted: Vec<&Digest> = evidence
+        .digest_search
+        .iter()
+        .flat_map(|search| &search.digests)
+        .collect();
+    let subject = id(&build.run.namespace, &build.run.name);
+    let outcome = match (&build.run.succeeded, &build.run.reason) {
+        (Some(status), Some(reason)) => format!("Succeeded={status} ({reason})"),
+        _ => "no Succeeded condition".to_owned(),
+    };
+    let outcome = match &build.tasks_unread {
+        Some(why) => format!("{outcome}; its TaskRuns were not read ({why})"),
+        None => outcome,
+    };
+    let stored = match build.origin {
+        crate::tekton::Origin::Results => ", read from the archive",
+        crate::tekton::Origin::Cluster => "",
+    };
+    build
+        .images()
+        .into_iter()
+        .filter(|image| wanted.contains(&&image.digest))
+        .map(|image| {
+            let by_run = built_images(&build.run.results)
+                .iter()
+                .any(|built| built.digest == image.digest);
+            let from = if by_run {
+                "a result of the PipelineRun"
+            } else {
+                "a result of one of its TaskRuns"
+            };
+            let mut seen: Vec<Observation> =
+                built_image(build, &image.digest).into_iter().collect();
+            seen.push(concluded(
+                "a build's IMAGE_DIGEST result == the Freight's image",
+                image.digest.as_str(),
+            ));
+            Link::new(
+                Hop::Image,
+                Hop::PipelineRun,
+                subject.clone(),
+                Key::Digest(image.digest.clone()),
+                Confidence::Confirmed,
+                format!(
+                    "{from} reports image digest {}{stored}; no commit joins it; {outcome}",
+                    image.digest.short()
+                ),
+            )
+            .observed(seen)
+        })
+        .collect()
 }

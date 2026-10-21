@@ -1,1 +1,0 @@
-- **Setup file:** detect same-size edits and editor replacements even when their modification time stays the same, keeping the two-sample debounce and making its Windows regression tests deterministic.

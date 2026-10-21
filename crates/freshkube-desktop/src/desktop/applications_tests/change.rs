@@ -1319,6 +1319,8 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
                     sources: Default::default(),
                     public_key_file: None,
                     evidence_result: None,
+                    build_namespace: None,
+                    stage_naming: None,
                 }),
                 kubeconfig: None,
             };

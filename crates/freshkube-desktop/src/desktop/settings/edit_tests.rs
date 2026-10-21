@@ -13,6 +13,31 @@ const TWO: &str = r#"{"version":1,"clusters":[
     {"id":"mgmt","role":"core","context":"acme-mgmt"},
     {"id":"prod","role":"environment","context":"acme-prod"}]}"#;
 
+#[gpui_kit::test]
+fn in_cluster_alias_edit_error_names_the_selected_source(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), TWO);
+    let before = std::fs::read(directory.path().join("freshkube.yaml")).unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.navigate_from_keyboard(Page::Settings, window, cx));
+        let page = view.read(cx).settings_page.clone();
+        for key in [
+            workspace::Key::Server(workspace::IN_CLUSTER_SERVER.into()),
+            workspace::Key::Name(workspace::IN_CLUSTER_NAME.into()),
+        ] {
+            let error = page.update(cx, |page, cx| page.map_destination(None, key, "prod", cx)).unwrap_err();
+            assert_eq!(error.as_ref(), "The mapping names Argo CD's own cluster but maps it to another entry; use mgmt, the selected Argo CD source entry");
+            assert!(page.read(cx).saving.is_none());
+        }
+    }).unwrap();
+    assert_eq!(
+        std::fs::read(directory.path().join("freshkube.yaml")).unwrap(),
+        before
+    );
+}
+
 pub(super) fn read_workspace(directory: &Path) -> workspace::Workspace {
     setup::parse(&std::fs::read(directory.join("freshkube.yaml")).unwrap())
         .unwrap()

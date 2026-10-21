@@ -1,1 +1,0 @@
-- **Change trail:** unread Pods name their destination once, and workloads Argo CD reports as missing have no Pods placeholder.

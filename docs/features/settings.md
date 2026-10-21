@@ -28,7 +28,7 @@ The header's gear keeps only "Quick controls": Talos auto-refresh, Appearance an
 
 App sections are padded forms. Settings dialogs use `freshkube_ui::dialog::frame`: Kit caps the surface to the window and scrolls its body, with the title and the platform-ordered actions in its fixed header and footer.
 
-Workspace sections are table pages: Clusters and Delivery sources hold the selection in the shared Inspector, while Argo CD destinations edits in a dialog. Only the three lists put a segment in the status bar. Delivery sources' check runs only while its section shows: leaving the section, or the page, drops a check in flight.
+Workspace sections are table pages: Clusters and Delivery sources hold the selection in the shared Inspector, while Argo CD destinations edits in a dialog. Only the three lists put a segment in the status bar. Delivery sources' check runs only while its section shows: leaving the section, or the page, drops a check in flight. When the setup has `delivery.stage_naming` ([#804](https://github.com/skel84/freshkube/issues/804)), Delivery sources also lists a read-only Stage naming row (`sources/rows.rs`, `Read::StageNaming`): the template, and whether a Stage is named by project key or by name only. It is read from the file, so Check sources doesn't touch it, and it is edited in `freshkube.yaml` only.
 
 **Where a section is saved.** Every group ends with one muted line from `form::SavedIn`, naming the file, and the store when a key goes elsewhere:
 
@@ -103,7 +103,7 @@ Observability no longer holds the connection: with none, its card is one line, "
 
 ## Argo CD destinations
 
-A table page of the workspace's `destinations`: a status column, Destination, Match by (Server URL or Cluster name) and Workspace cluster. Map (`a`), Edit (Enter or `e`) and Remove (Backspace) run from the toolbar, the keys and the row menu; Map and Edit need a workspace cluster. Map and Edit open a dialog with one *Mapping* group: Match by, the value (`spec.destination.server` or `.name`) and the workspace cluster, a searchable select. The value is checked on blur (empty, not an http or https address, Argo CD's own cluster, already mapped), and Save focuses the first invalid field. Remove asks first. A mapping whose cluster the workspace no longer lists shows the Unknown mark and says to edit it. Every change saves to `freshkube.yaml` through the page's `commit`, with Clusters' refusals.
+A table page of the workspace's `destinations`: a status column, Destination, Match by (Server URL or Cluster name) and Workspace cluster. Map (`a`), Edit (Enter or `e`) and Remove (Backspace) run from the toolbar, the keys and the row menu; Map and Edit need a workspace cluster. Map and Edit open a dialog with one *Mapping* group: Match by, the value (`spec.destination.server` or `.name`) and the workspace cluster, a searchable select. The value is checked on blur (empty, not an http or https address, already mapped), and Save focuses the first invalid field. `https://kubernetes.default.svc` and exact `in-cluster` are accepted for the selected Argo CD source entry: the explicit pin, otherwise the first Core entry in file order. A conflicting target or an undetermined host is an error on the workspace cluster field; the same core check protects the file read and write paths. Remove asks first. A mapping whose cluster the workspace no longer lists shows the Unknown mark and says to edit it. Every change saves to `freshkube.yaml` through the page's `commit`, with Clusters' refusals.
 
 ## Delivery sources
 

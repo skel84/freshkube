@@ -31,6 +31,7 @@ pub mod kargo;
 pub(crate) mod observation;
 pub(crate) mod pods;
 pub mod read;
+pub(crate) mod rekor;
 pub(crate) mod results;
 pub(crate) mod rollouts;
 pub(crate) mod shared;
@@ -44,6 +45,8 @@ pub mod words;
 mod attested;
 #[cfg(test)]
 mod deployment_tests;
+#[cfg(test)]
+mod digest_builds_tests;
 #[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]

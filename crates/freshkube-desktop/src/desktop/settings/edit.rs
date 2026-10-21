@@ -185,14 +185,11 @@ impl SettingsPage {
                 next.destinations.len() - 1
             }
         };
-        if let Some(fault) = next.destinations[at].fault() {
+        if let Some(fault) = next.destinations[at].fault_in(&next) {
             return Err(match fault {
                 Fault::EmptyServer => "Enter the server URL the Application names".into(),
                 Fault::EmptyName => "Enter Argo CD's name for the cluster".into(),
                 Fault::NotHttp => "The server must be an http or https address".into(),
-                Fault::ArgoCdOwn => {
-                    "Argo CD knows its own cluster already; it needs no mapping".into()
-                }
                 fault => capitalized(&format!("the mapping {}", fault.words())).into(),
             });
         }

@@ -346,6 +346,11 @@ pub(super) fn note_words(note: &Note, labels: &Labels) -> String {
             member_words(member, labels),
             labels.of(session)
         ),
+        Note::NameFitsSeveralStages { member, stages } => format!(
+            "{} is named for several Stages by the configured template ({}), so it is tied to none",
+            member_words(member, labels),
+            stages.join(", ")
+        ),
     }
 }
 
@@ -577,7 +582,8 @@ fn note_about<'a>(note: &'a Note, labels: &Labels) -> Option<(&'a MemberRef, Str
         | Note::UnmappedDestination { member }
         | Note::ProjectNotRead { member, .. }
         | Note::ManagerUnknown { member }
-        | Note::DestinationUnread { member, .. } => member,
+        | Note::DestinationUnread { member, .. }
+        | Note::NameFitsSeveralStages { member, .. } => member,
         _ => return None,
     };
     let lead = member_words(member, labels);

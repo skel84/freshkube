@@ -1,1 +1,0 @@
-- **Tests:** a second Coroot test no longer fails at random under load: it drops the look once the fake server holds the request, not after a timer on the paused clock.

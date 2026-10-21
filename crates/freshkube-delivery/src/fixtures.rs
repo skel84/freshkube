@@ -33,6 +33,9 @@ pub struct FixtureReader {
     capped: HashSet<String>,
     /// Kinds refused for one label selector, by plural and selector.
     refused_selectors: HashSet<(String, String)>,
+    /// Kinds whose listing of a whole namespace is refused, while a listing
+    /// by label selector answers.
+    refused_namespace_lists: HashSet<String>,
     /// Kinds whose GET or listing never answers, as a server that hangs.
     hanging: HashSet<String>,
     /// Kinds whose listing in a namespace never answers, by plural and
@@ -100,6 +103,13 @@ impl FixtureReader {
     pub fn refusing_selector(mut self, plural: &str, selector: &str) -> Self {
         self.refused_selectors
             .insert((plural.into(), selector.into()));
+        self
+    }
+
+    /// Listing the kind in a whole namespace is refused; a selector's listing
+    /// answers.
+    pub fn refusing_namespace_lists(mut self, plural: &str) -> Self {
+        self.refused_namespace_lists.insert(plural.into());
         self
     }
 
@@ -222,6 +232,13 @@ impl Reader for FixtureReader {
         }
         if let Some(by) = self.slow {
             tokio::time::sleep(by).await;
+        }
+        if matches!(request.scope, Scope::Namespace(_))
+            && self
+                .refused_namespace_lists
+                .contains(&request.resource.plural)
+        {
+            return Err(Failure::new(FailureKind::Forbidden, "forbidden by RBAC"));
         }
         if let Some(selector) = &selector
             && self
