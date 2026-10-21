@@ -57,6 +57,7 @@ pub(super) fn reason(evidence: &Evidence, entry: &str) -> Option<String> {
     let prefix = format!("Tekton Results on {entry}");
     Some(match &evidence.build_history {
         Err(Error::Off | Error::Skipped(Skip::LiveFailed)) => return None,
+        Err(Error::BuildNamespace(why)) => format!("{prefix} wasn't read: {why}"),
         Err(Error::Skipped(why)) => format!("{prefix} wasn't read: {why}"),
         Err(Error::NotForwarded) => format!("{prefix} isn't forwarded yet"),
         Err(Error::ForwardEnded(why)) => format!("the Tekton Results forward on {entry} ended: {why}"),
@@ -145,7 +146,7 @@ pub(super) fn decorate(hop: &mut Hop, evidence: &Evidence, link: &Link, entry: &
 pub(super) fn missing(evidence: &Evidence, entry: &str) -> Vec<Missing> {
     let mut lines = Vec::new();
     let gap = |error: &Error| match error {
-        Error::Refused { .. } => Gap::Refused,
+        Error::Refused { .. } | Error::BuildNamespace(_) => Gap::Refused,
         Error::NotInstalled | Error::LogsNotServed => Gap::NotServed,
         _ => Gap::Unreadable,
     };

@@ -126,7 +126,7 @@ async fn every_links_confidence_is_the_joins() {
 
     let mut plan = plan(&[]);
     plan.followed = Some("f-new".into());
-    plan.build_namespace = None;
+    plan.build_namespace = Ok(None);
     plan.argocd = "cluster-key".into();
     plan.environment = "cluster-key".into();
     let clusters = crate::collect::Clusters {
@@ -1299,6 +1299,39 @@ fn deployed_running(sets: Vec<Value>, running: &str) -> FixtureReader {
                 )],
             );
     })
+}
+
+#[tokio::test]
+async fn application_pods_name_the_destination_namespace_instead_of_the_application() {
+    let reader = one_cluster(|world| {
+        let mut app = application(Some(IN_CLUSTER_SERVER));
+        app["status"]["resources"] = json!([]);
+        world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let pods = change.hop("dev-pods-1").expect("Application's pods");
+    assert_eq!(field(pods, "Namespace"), Some(&Shown::Mono("shop".into())));
+    assert_eq!(field(pods, "Name"), None);
+    assert_eq!(pods.state, HealthIndicator::Healthy);
+    assert_eq!(pods.after.as_deref(), Some("dev-argocd-0"));
+}
+
+#[tokio::test]
+async fn controller_pods_keep_the_controllers_namespace_and_name() {
+    let image = format!("{REPO}@{NEW}");
+    for reader in [
+        one_cluster(|_| {}),
+        deployed(vec![deployment_set("6fdf", "2", &image, 1, 1)]),
+    ] {
+        let change = read(&reader, &place("f-new"), observed_at())
+            .await
+            .expect("read");
+        let pods = change.hop("dev-pods-2").expect("controller's pods");
+        assert_eq!(field(pods, "Namespace"), Some(&Shown::Mono("shop".into())));
+        assert_eq!(field(pods, "Name"), Some(&Shown::Mono("storefront".into())));
+    }
 }
 
 /// The hop's field labelled `label`, as shown.
