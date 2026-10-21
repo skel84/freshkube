@@ -9,6 +9,7 @@ use super::rest::{
     PullSummary, Review, ReviewState, Reviewer, RunState, Stale,
 };
 use crate::address::Address;
+use freshkube_core::setup::GitHubToken;
 
 pub const REPO: &str = "acme/shop";
 
@@ -19,7 +20,7 @@ fn at(hour: u32, minute: u32) -> DateTime<Utc> {
 fn person(login: &str, id: u64) -> Person {
     Person {
         login: login.into(),
-        avatar: AvatarUrl::parse(&format!("https://{}/u/{id}?v=4", super::AVATAR_HOST)),
+        avatar: AvatarUrl::parse(&format!("https://{}/u/{id}?v=4", super::rest::AVATAR_HOST)),
     }
 }
 
@@ -106,7 +107,7 @@ fn run(name: &str, state: RunState) -> CheckRun {
 /// leaves it: whole, kept and stale, or refused with the token's words.
 pub fn detail(summary: &PullSummary, trouble: Option<Trouble>) -> Result<PullDetail, String> {
     if trouble == Some(Trouble::Refused) {
-        return Err(Error::Unauthorized.words(&summary.repo));
+        return Err(Error::Unauthorized(GitHubToken::KeysJson).words(&summary.repo));
     }
     let open = summary.state == PullState::Open;
     let mut runs = vec![

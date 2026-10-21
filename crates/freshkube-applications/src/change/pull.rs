@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use freshkube_core::job as backend;
 use freshkube_delivery::github::{
-    ChecksState, DetailKey, PullDetail, ReviewState, example as github_example,
+    ChecksState, DetailKey, PullDetail, ReviewState, example_detail, example_identity,
 };
 use freshkube_reads::{Loader, OnShow};
 
@@ -105,14 +105,14 @@ impl ChangePage {
         };
         let (key, work) = match &self.fetch {
             Fetch::Example { shape, .. } => {
-                let Some(key) = DetailKey::of(&github_example::identity(), &summary) else {
+                let Some(key) = DetailKey::of(&example_identity(), &summary) else {
                     return;
                 };
                 if !force && self.pull.key.as_ref() == Some(&key) && self.pull.read.data().is_some()
                 {
                     return;
                 }
-                let result = github_example::detail(&summary, shape.github());
+                let result = example_detail(&summary, shape.github());
                 self.pull.key = Some(key.clone());
                 self.pull.read.resolve(key, result);
                 self.derive_pull(cx);

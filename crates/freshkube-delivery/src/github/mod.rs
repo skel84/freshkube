@@ -10,7 +10,7 @@
 //! displays.
 
 pub mod avatars;
-pub mod example;
+pub(crate) mod example;
 mod rest;
 #[cfg(test)]
 pub(crate) use rest::fake;
@@ -83,17 +83,17 @@ pub(crate) fn parse_pull_request(repo: &str, value: &Value) -> Option<PullReques
     })
 }
 
+pub use example::{detail as example_detail, identity as example_identity};
 pub use rest::{
-    ACCOUNT, AVATAR_HOST, AvatarUrl, Capped, Cause, CheckRun, Checks, ChecksState, DetailKey,
-    Error, Handle, Identity, Person, PullDetail, PullState, PullSummary, RateLimit, Review,
-    ReviewState, Reviewer, RunState, Stale, StatusContext, StatusState,
+    ACCOUNT, ChecksState, DetailKey, Error, Handle, NotSetUp, PullDetail, PullState, ReviewState,
 };
+pub(crate) use rest::{PullSummary, Stale};
 
 /// `owner/name` of the GitHub repository a Freight's first commit is on:
 /// `https://github.com/owner/name`, with an optional `.git` and trailing
 /// slash. Any other host, a deeper path or anything else is no repository,
 /// and nothing is read.
-pub fn repo_of(freight: &Freight) -> Option<String> {
+pub(crate) fn repo_of(freight: &Freight) -> Option<String> {
     let url = url::Url::parse(freight.commits.first()?.repo_url.trim()).ok()?;
     if url.scheme() != "https"
         || url.host_str() != Some("github.com")

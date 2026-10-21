@@ -126,7 +126,7 @@ impl Place {
                 missing: None,
             },
             Chosen::Entry { .. } | Chosen::Open => self.open(),
-            Chosen::NoEntry(_) | Chosen::Gone(_) => At {
+            Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => At {
                 cluster: String::new(),
                 label: crate::applications::across::WORKSPACE.into(),
                 missing: chosen.missing(),

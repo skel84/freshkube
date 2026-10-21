@@ -60,10 +60,10 @@ pub struct Results {
     /// An `https://` or `http://` URL the person enters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    /// The address's bearer token, kept separately in `keys.json`.
+    /// The address's or configured forward's bearer token, kept in `keys.json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<KeysJson>,
-    /// Additional certificate authorities, PEM, for the address's TLS.
+    /// Additional certificate authorities, PEM, for Results' TLS on either route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_file: Option<PathBuf>,
     /// A Service and port in the entry's cluster, forwarded only when the
@@ -306,15 +306,56 @@ pub struct Delivery {
     pub(super) extra: Extra,
 }
 
+/// Where GitHub's token comes from: the `gh` command line's, or the one
+/// kept in `keys.json`. Never a value of the token itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitHubToken {
+    /// `gh auth token`, run when GitHub is read and kept in memory only.
+    Gh,
+    /// The account `GitHub https://api.github.com/` of `keys.json`.
+    KeysJson,
+}
+
+impl Serialize for GitHubToken {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Gh => "gh",
+            Self::KeysJson => KEYS_JSON,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for GitHubToken {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Only;
+        impl Visitor<'_> for Only {
+            type Value = GitHubToken;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("gh or keys.json")
+            }
+
+            // Whatever the value is, the refusal does not quote it.
+            fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<GitHubToken, E> {
+                match text {
+                    "gh" => Ok(GitHubToken::Gh),
+                    KEYS_JSON => Ok(GitHubToken::KeysJson),
+                    _ => Err(E::custom(REFUSED)),
+                }
+            }
+        }
+        deserializer.deserialize_str(Only)
+    }
+}
+
 /// GitHub's REST API at `api.github.com`, the only host a pull request is
 /// read from. It never holds a token.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitHub {
-    /// The token kept in `keys.json` under the account
-    /// `GitHub https://api.github.com/`. Without it, public repositories
-    /// are read anonymously, at a lower rate limit.
+    /// Where the token comes from. Without it, public repositories are
+    /// read anonymously, at a lower rate limit, and `gh` is never run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token: Option<KeysJson>,
+    pub token: Option<GitHubToken>,
     #[serde(flatten)]
     pub(super) extra: Extra,
 }

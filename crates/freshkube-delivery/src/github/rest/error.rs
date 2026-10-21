@@ -3,6 +3,7 @@
 
 use chrono::{DateTime, Utc};
 use freshkube_core::resources::{Failure, FailureKind};
+use freshkube_core::setup::GitHubToken;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cause {
@@ -21,13 +22,47 @@ impl std::fmt::Display for Cause {
     }
 }
 
+/// Why the token couldn't be had at all, so GitHub isn't read: a cause
+/// with its next step, not an error to retry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotSetUp {
+    /// The setup names `gh`, and there is none to run.
+    GhNotFound,
+    /// `gh auth token` failed: not signed in.
+    GhNotSignedIn,
+    /// `gh auth token` didn't finish in time.
+    GhSlow,
+    /// The setup names `keys.json`, and the key store couldn't be read.
+    KeysUnavailable,
+    /// The setup names `keys.json`, and no GitHub token is saved there.
+    NoSavedToken,
+    /// What was saved, or what `gh` printed, isn't a bearer token.
+    TokenUnreadable,
+}
+
+impl std::fmt::Display for NotSetUp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::GhNotFound => {
+                "gh not found. Install the GitHub CLI, or set delivery.github.token to keys.json"
+            }
+            Self::GhNotSignedIn => "gh isn't signed in to GitHub. Run gh auth login",
+            Self::GhSlow => "gh didn't answer in time",
+            Self::KeysUnavailable => "the key store can't be read",
+            Self::NoSavedToken => "no GitHub token is saved in keys.json",
+            Self::TokenUnreadable => "the saved GitHub token can't be read",
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// The stored token can't be used; why, in a fixed phrase.
-    Token(&'static str),
+    /// The token couldn't be had, so nothing is read.
+    NotSetUp(NotSetUp),
     Unreachable(Cause),
-    /// 401: the token was refused. It is never retried without it.
-    Unauthorized,
+    /// 401: the token was refused, where it came from. It is never retried
+    /// without it.
+    Unauthorized(GitHubToken),
     /// 403 that is not a rate limit.
     Forbidden,
     NotFound {
@@ -57,9 +92,9 @@ impl std::fmt::Display for Error {
     /// The words of the status bar and the list.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Token(why) => write!(f, "The GitHub token can't be used: {why}"),
+            Self::NotSetUp(cause) => write!(f, "GitHub isn't set up: {cause}"),
             Self::Unreachable(cause) => write!(f, "GitHub didn't answer: {cause}"),
-            Self::Unauthorized => f.write_str("GitHub refused the token (401)"),
+            Self::Unauthorized(_) => f.write_str("GitHub refused the token (401)"),
             Self::Forbidden => f.write_str("GitHub refused the request (403)"),
             Self::NotFound { .. } => f.write_str("GitHub didn't find it (404)"),
             Self::Moved => f.write_str("GitHub says the repository moved (301)"),
@@ -82,10 +117,13 @@ impl Error {
     /// The card's words, which name the repository and what to do.
     pub fn words(&self, repo: &str) -> String {
         match self {
-            Self::Unauthorized => format!(
+            Self::Unauthorized(GitHubToken::KeysJson) => format!(
                 "GitHub refused the token: it may have expired. It is the keys.json entry {}",
                 super::ACCOUNT
             ),
+            Self::Unauthorized(GitHubToken::Gh) => "GitHub refused the token: it may have \
+                 expired. It is the one gh holds; run gh auth login"
+                .to_owned(),
             Self::Forbidden => format!(
                 "GitHub refused reading {repo} (403): the token may not be granted this repository"
             ),
@@ -102,20 +140,30 @@ impl Error {
 
     pub(super) fn kind(&self) -> FailureKind {
         match self {
-            Self::Token(_) => FailureKind::Config,
+            Self::NotSetUp(_) => FailureKind::Config,
             Self::Unreachable(Cause::TimedOut) => FailureKind::Timeout,
             Self::Unreachable(_) => FailureKind::Unreachable,
-            Self::Unauthorized => FailureKind::Unauthorized,
-            Self::Forbidden | Self::Limited { .. } | Self::Low { .. } => FailureKind::Forbidden,
-            // A missing repository is not an uninstalled API.
-            Self::NotFound { .. } | Self::Moved | Self::Http(_) | Self::Unreadable(_) => {
-                FailureKind::Other
-            }
+            Self::Unauthorized(_) => FailureKind::Unauthorized,
+            Self::Forbidden => FailureKind::Forbidden,
+            // A missing repository is not an uninstalled API, and a limit
+            // reached or nearly spent is not a refusal.
+            Self::NotFound { .. }
+            | Self::Moved
+            | Self::Limited { .. }
+            | Self::Low { .. }
+            | Self::Http(_)
+            | Self::Unreadable(_) => FailureKind::Other,
         }
     }
 }
 
 impl std::error::Error for Error {}
+
+impl From<NotSetUp> for Error {
+    fn from(cause: NotSetUp) -> Self {
+        Self::NotSetUp(cause)
+    }
+}
 
 impl From<Error> for Failure {
     fn from(error: Error) -> Self {
