@@ -203,7 +203,7 @@ fn targets<R>(sources: &Sources, open: Option<&Open<'_, R>>) -> Vec<Target> {
                     false => Place::Entry(entry.clone()),
                 },
             ),
-            Chosen::NoEntry(_) => (
+            Chosen::NoEntry(_) | Chosen::Skipped(_) => (
                 part.map_or_else(|| SessionKey::new(WORKSPACE), missing_key),
                 Place::Missing(chosen.missing().unwrap_or_default()),
             ),

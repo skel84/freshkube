@@ -1,0 +1,1 @@
+- **Change page:** an Application's Pods card shows the pods' destination namespace instead of the Application's namespace and name.

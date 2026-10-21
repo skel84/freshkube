@@ -33,7 +33,7 @@ pub(super) fn plan(contexts: &[(&str, &str)]) -> Plan {
         followed: None,
         kargo_project: "storefront".into(),
         argocd_namespace: "argocd".into(),
-        build_namespace: Some("acme-builds".into()),
+        build_namespace: Ok(Some("acme-builds".into())),
         github_repo: None,
         environment: "env-a".into(),
         argocd: "core".into(),

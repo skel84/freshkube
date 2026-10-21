@@ -420,7 +420,7 @@ mod served {
             github: &github,
         };
         let mut plan = plan(&[]);
-        plan.build_namespace = Some("acme".into());
+        plan.build_namespace = Ok(Some("acme".into()));
         plan.public_key_file = Some(public_key);
         plan.transparency_url = Some(log.address.clone());
         // The default switch is off: even a named, reachable log gets no GET.
