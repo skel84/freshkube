@@ -33,7 +33,7 @@ impl ForwardList {
         self.items.iter().any(|item| item.read(cx).id == id)
     }
 
-    /// The most recently started matching Service forward, including ended
+    /// The newest matching Service forward entry, including ended
     /// ones. A caller retains its selected entity rather than falling back
     /// to another forward after Stop or removal.
     pub fn find(

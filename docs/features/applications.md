@@ -31,3 +31,19 @@ The change page's Chain view (`change/chain.rs`, `change/trail.rs`) shares List'
 Both delivery reads (the Changes list and an opened change, from either the list or an application's Stage) receive the setup's workspace-wide `supply_chain.public_key_file`, `evidence`, `transparency_log` and optional `transparency_url`. The log is off by default and off reads no log or Chains configuration. When on, a verified signature needs a matching log entry to confirm the supply-chain link; the log address is the setup's HTTPS URL, else the builds entry's `chains-config` `transparency.url`, never an annotation's host or a public default. No token or Results CA reaches the log. A setup reload, including an identical explicit Reload, advances each read owner's setup revision, cancels old work and rejects old completions; a changed switch or URL takes effect on the next read while shown. Unrelated Settings notifications keep current reads.
 
 The hand-off and reload regressions are in `crates/freshkube-applications/src/wire_tests/mod.rs`; delivery's `change/live/tests.rs` and `changes/tests.rs` check the settings through to the Plan. Delivery's `rekor/tests.rs` exercises the fake HTTPS log and token isolation with an authenticated Results read, using the existing delivery-only client helper. These tests use invented data and no application test transport injection.
+
+Results forwards (`results_forward/`, [#268](https://github.com/skel84/freshkube/issues/268))
+use the Builds entry's `results.forward`. The Changes toolbar, `F` and row menu
+share the explicit Forward action; its status bar supplies the next step. The
+change page offers the same action in the Builds/PipelineRun Inspector. An entry
+that is not open offers Switch to its Service's Ports through the guarded switch
+path; switching never forwards. Rows have no buttons. Both read pools receive
+the matching app-owned forward's typed Results route. Each page owns only its
+subscription, and reads only while shown; the forward survives navigation and
+source replacement in `ForwardList`. Exact target matching, retained owner,
+restart epoch, read invalidation and failure distinctions are described in
+[PORT_FORWARD.md](../PORT_FORWARD.md#tekton-results). The headless fake Kubernetes
+and loopback TLS tests are in `wire_tests/results_forward/{mod.rs,fake.rs}`;
+Resources' matching and owner-state tests are in
+`crates/freshkube-resources/src/forwards/matching_tests.rs`. Existing address-only
+Results and no-Results delivery tests continue to cover those routes.
