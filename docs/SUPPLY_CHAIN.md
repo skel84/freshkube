@@ -10,7 +10,7 @@ It follows the owner's decisions on #268 (16 October): trust is a public key fil
 - `join/build.rs` (`supply_chain_links`) matches the verifier's result exhaustively. A verified signature with a matching subject digest can confirm the supply-chain link, supported by a reported `Attestation` observation. Chains' annotation alone remains Claimed at most.
 - A PipelineRun the cluster pruned can be read from the build entry's configured Tekton Results address, with its recorded tasks and attestations. Without Results, an absent run keeps the existing no-run statement and says history isn't set up; it is never assumed to be pruned.
 - The app hands top-level `supply_chain.public_key_file` and `supply_chain.evidence` to both the change page and the Changes list. Each read opens the public key off the UI thread, and the evidence result name and commit/digest JSON pointers feed the existing join. A signature that verifies and names the build's digest can now show Confirmed; an evidence record alone cannot.
-- The existing setup owner advances a read revision for an accepted changed setup or a successful explicit Reload, including identical bytes. Applications receives each revision once, so unrelated Settings notifications keep its reads. A new revision cancels delivery reads made with the previous setup, including hidden pages, and the next read opens the key file and address-specific Results store again. Reloading the same key path also rereads its contents. The app still leaves transparency lookup off; slice 4 and its caller wiring remain separate.
+- The existing setup owner advances a read revision for an accepted changed setup or a successful explicit Reload, including identical bytes. Applications receives each revision once, so unrelated Settings notifications keep its reads. A new revision cancels delivery reads made with the previous setup, including hidden pages, and the next read opens the key file and address-specific Results store again. Reloading the same key path also rereads its contents. Both delivery reads also receive the log switch and optional HTTPS URL from the setup, with the switch off by default; reloading either setting follows the same setup revision.
 
 ## The rule
 
@@ -267,9 +267,9 @@ Results         cluster-b    setup file  Not forwarded               Forward…
 
 The Inspector of each holds its form group (`Save`/`Revert`, `Saved in freshkube.yaml`). The Clusters Inspector's **Build history** group holds the route per entry: Off / Address (with its token as a secret field, `Kept in the Keychain`, and an optional CA file) / Port forward (namespace, service, port), and a **Forward** / **Stop** button. Evidence result: the result's name and two JSON pointers, validated as pointers at the field.
 
-### Proposed additions to the setup file
+### Supply-chain and Results setup
 
-[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), `supply_chain.public_key_file`, `transparency_log` and `evidence`. This design adds, as the owner decided ([Decisions](#decisions), 2 to 4), three optional keys, each backward compatible and ignored by an older build as an unknown key:
+[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), including its optional token and CA file, and `supply_chain.public_key_file`, `transparency_log`, `transparency_url` and `evidence`. Both delivery reads receive the supply-chain settings under their setup revision. The optional log URL is HTTPS without credentials, query or fragment; without it Chains names the log. Older builds keep unknown keys when saving:
 
 ```yaml
 clusters:
