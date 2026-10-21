@@ -1,6 +1,7 @@
 //! Changes' lifecycle and explicit commands; the shared state is in Session.
 use super::*;
 use crate::results_forward::{Binding, Target};
+use freshkube_ui::ui::{self, dp};
 use gpui_kit::component::{
     Disableable, Sizable,
     button::{Button, ButtonVariants},
@@ -64,6 +65,7 @@ impl ChangesPage {
             Button::new("changes-forward-results")
                 .ghost()
                 .small()
+                .h(dp(ui::CONTROL_HEIGHT))
                 .label(session.label.clone())
                 .tooltip(session.words.clone())
                 .disabled(!session.enabled)
