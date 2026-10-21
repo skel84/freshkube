@@ -64,6 +64,7 @@ fn place() -> Place {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     }
 }
 
@@ -538,6 +539,7 @@ async fn the_pool_opens_one_address_client_and_counts_a_two_change_refresh() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let read = within(crate::changes::live::read_in(
         &pool,

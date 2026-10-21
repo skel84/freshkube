@@ -15,7 +15,7 @@ use super::rows::{self, PodState};
 use crate::fixture;
 
 /// Kinds the example data includes; the rest say so instead of listing.
-pub(crate) const KINDS: [&str; 11] = [
+pub(crate) const KINDS: [&str; 12] = [
     "pods",
     "replicasets.apps",
     "events",
@@ -27,12 +27,14 @@ pub(crate) const KINDS: [&str; 11] = [
     "namespaces",
     "secrets",
     "certificates.cert-manager.io",
+    "externalsecrets.external-secrets.io",
 ];
 
 /// The example cluster's custom API groups and their served versions,
 /// preferred first. Some fail or offer nothing listable, as real ones can.
-const CUSTOM_GROUPS: [(&str, &[&str]); 7] = [
+const CUSTOM_GROUPS: [(&str, &[&str]); 8] = [
     ("cert-manager.io", &["v1"]),
+    ("external-secrets.io", &["v1", "v1beta1"]),
     ("cilium.io", &["v2", "v2alpha1"]),
     ("external.metrics.k8s.io", &["v1beta1"]),
     ("metrics.k8s.io", &["v1beta1"]),
@@ -44,8 +46,29 @@ const CUSTOM_GROUPS: [(&str, &[&str]); 7] = [
 
 /// (group, version, kind, plural, namespaced) of the custom kinds that
 /// discovery finds, each at the version that serves it.
-const CUSTOM_KINDS: [(&str, &str, &str, &str, bool); 9] = [
+const CUSTOM_KINDS: [(&str, &str, &str, &str, bool); 12] = [
     ("cert-manager.io", "v1", "Certificate", "certificates", true),
+    (
+        "external-secrets.io",
+        "v1",
+        "ExternalSecret",
+        "externalsecrets",
+        true,
+    ),
+    (
+        "external-secrets.io",
+        "v1",
+        "SecretStore",
+        "secretstores",
+        true,
+    ),
+    (
+        "external-secrets.io",
+        "v1",
+        "ClusterSecretStore",
+        "clustersecretstores",
+        false,
+    ),
     (
         "cert-manager.io",
         "v1",
@@ -265,6 +288,7 @@ pub fn read(
         "nodes" => (node_columns(), nodes(&connection, context, now)),
         "secrets" => (secret_columns(), secrets(&connection, now)),
         "certificates.cert-manager.io" => (certificate_columns(), certificates(&connection, now)),
+        "externalsecrets.external-secrets.io" => external_secrets::read(&connection, now),
         "namespaces" => (
             namespace_columns(),
             NAMESPACES
@@ -999,3 +1023,5 @@ pub(crate) fn read_filtered(
     }
     Some((columns, rows))
 }
+
+pub(crate) mod external_secrets;
