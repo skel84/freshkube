@@ -211,8 +211,17 @@ impl TableSource for SettingsPage {
         if !self.rows.is_empty() {
             return None;
         }
-        Some(
+        let text = if self.source_recovery.all_clusters_skipped {
+            "All configured clusters were skipped. Fix the skipped rows in freshkube.yaml and Reload to use them."
+        } else {
             "Nothing is listed. The one cluster counted in the status bar is implicit: the one this window opened."
+        };
+        Some(
+            div()
+                .id("settings-empty-explanation")
+                .test_support()
+                .aria_label(text)
+                .child(text)
                 .into_any_element(),
         )
     }

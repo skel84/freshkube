@@ -60,10 +60,10 @@ pub struct Results {
     /// An `https://` or `http://` URL the person enters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    /// The address's bearer token, kept separately in `keys.json`.
+    /// The address's or configured forward's bearer token, kept in `keys.json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<KeysJson>,
-    /// Additional certificate authorities, PEM, for the address's TLS.
+    /// Additional certificate authorities, PEM, for Results' TLS on either route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_file: Option<PathBuf>,
     /// A Service and port in the entry's cluster, forwarded only when the
@@ -294,7 +294,8 @@ pub struct Delivery {
     /// Stage; off when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage_naming: Option<StageNaming>,
-    /// The namespace the builds run in. A build is searched for by its image
+    /// The namespace the builds run in, optionally containing `{project}`
+    /// for the change's Kargo project. A build is searched for by its image
     /// digest only in a namespace named here; without it only a commit finds
     /// a build.
     #[serde(default, skip_serializing_if = "Option::is_none")]

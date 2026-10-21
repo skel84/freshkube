@@ -1,0 +1,1 @@
+- **Tests:** split the delivery chain's and Coroot client's tests by scenario, with shared helpers in each directory's `mod.rs`; test bodies and behavior are unchanged.

@@ -37,7 +37,7 @@ pub(super) async fn evidence(reader: &FixtureReader, client: Result<&Client, Err
     };
     let mut plan = crate::tests::plan(&[]);
     plan.sha = SHA.into();
-    plan.build_namespace = Some("acme".into());
+    plan.build_namespace = Ok(Some("acme".into()));
     within(upstream_with_history(
         &upstream,
         &plan,
@@ -416,6 +416,23 @@ async fn missing_runs_keep_the_no_run_statement_with_results_why() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ended_forward_reason_names_the_forward_and_its_entry() {
+    let answer = evidence(&reader(vec![], vec![]), Err(Error::ForwardEnded("stopped"))).await;
+    let change = change(&answer);
+    let row = change
+        .hops
+        .iter()
+        .find(|row| row.name == "PipelineRun")
+        .unwrap();
+    assert!(
+        row.detail
+            .contains("the Tekton Results forward on cluster-b ended: stopped"),
+        "{}",
+        row.detail
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn capped_history_keeps_the_cap_in_read_from_and_missing() {
     let replies = (0..5)
         .map(|n| {
@@ -547,26 +564,29 @@ async fn without_supply_chain_or_results_derives_exactly_as_main() {
     let sources = Sources::of(&setup.workspace);
     // Complete Change debug fingerprints captured on main 62f0c92f, using
     // that revision's derive.rs and links.rs with these invented fixtures.
+    // Moved by #823: the hops and links gained a `cause`, and Kargo's newest
+    // Freight history entry confirms the Freight -> Stage link by name. Without
+    // the `cause` fields, the Debug output differs from main's only there.
     for (name, reader, expected) in [
         (
             "live",
             reader(vec![pipeline("live-uid")], vec![]),
-            "fff83c6dacfc7cfc9000396397f2cb9461aebe9dcad0414f2928324ee36ef5a7",
+            "5d8517f930dabf36a1111ae7cf3b403035a403c4ea9d2203fb4ee73bd75ab3cc",
         ),
         (
             "empty",
             reader(vec![], vec![]),
-            "ca0b7347abf8bb16fc5b1144b21130aca4fd30684bdc66b6759b34cbcfa67971",
+            "3a1502f9defd0f9e6e7e8697e9a7d84a6cfe74d98ad89ba89becc3303951ffb6",
         ),
         (
             "capped",
             reader(vec![pipeline("live-uid")], vec![]).capped("pipelineruns"),
-            "fff83c6dacfc7cfc9000396397f2cb9461aebe9dcad0414f2928324ee36ef5a7",
+            "5d8517f930dabf36a1111ae7cf3b403035a403c4ea9d2203fb4ee73bd75ab3cc",
         ),
         (
             "refused",
             reader(vec![], vec![]).refusing("pipelineruns"),
-            "ceed894f02052b4b6c7d6ccfa3daec02999daaa8474bfb0d0b3f352de3287f02",
+            "93b55bceb0e45cad84e501117c6a8ecfb14f9afe96cc3656a871ee87f144de42",
         ),
     ] {
         let pool = Pool::new(

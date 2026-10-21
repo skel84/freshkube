@@ -25,6 +25,10 @@
 mod across_tests;
 #[cfg(test)]
 mod after_tests;
+#[cfg(test)]
+mod build_namespace_tests;
+#[cfg(test)]
+mod cause_tests;
 mod derive;
 mod gates;
 mod history;
@@ -84,7 +88,7 @@ pub struct Place {
     pub transparency_url: Option<String>,
     /// The pipeline record configured in the same setup.
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
-    /// The namespace the builds run in, from the same setup. A build is
+    /// The build namespace or `{project}` template, from the same setup. A build is
     /// searched for by image digest only in it.
     pub build_namespace: Option<String>,
     /// How an Application with no authorized-stage annotation names its
@@ -120,7 +124,7 @@ impl Place {
                 missing: None,
             },
             Chosen::Entry { .. } | Chosen::Open => self.open(),
-            Chosen::NoEntry(_) | Chosen::Gone(_) => At {
+            Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => At {
                 cluster: String::new(),
                 label: crate::applications::across::WORKSPACE.into(),
                 missing: chosen.missing(),
@@ -431,7 +435,10 @@ where
     let history_until = until
         .at()
         .unwrap_or_else(|| tokio::time::Instant::now() + BUDGET);
-    let history = pool.results(history_until).await;
+    let history = match &plan.build_namespace {
+        Ok(_) => pool.results(history_until).await,
+        Err(why) => Err(crate::results::Error::BuildNamespace(why.clone())),
+    };
     let mut scope = (Vec::new(), ArgoFound::Default);
     let applications = async {
         scope = argo_namespaces(&read_argo_workloads(&argocd).await);
@@ -670,7 +677,13 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         followed: Some(freight.name.clone()),
         kargo_project: place.project.clone(),
         argocd_namespace: place.argocd_namespace.clone(),
-        build_namespace: place.build_namespace.clone(),
+        build_namespace: place
+            .build_namespace
+            .as_deref()
+            .map(|template| {
+                freshkube_core::setup::resolve_build_namespace(template, &place.project)
+            })
+            .transpose(),
         github_repo: None,
         contexts,
         cluster_names,

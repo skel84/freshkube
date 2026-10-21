@@ -12,32 +12,28 @@ use crate::{base_url::parse_base_url, workspace::Entry};
 
 pub(super) fn entry(entry: &Entry) -> Result<(), Fault> {
     let at = |field: &str| format!("the cluster “{}” {field}", entry.id);
+    entry_at(entry, &at)
+}
+
+pub(super) fn entry_fields(entry: &Entry) -> Result<(), Fault> {
+    entry_at(entry, &str::to_owned)
+}
+
+fn entry_at(entry: &Entry, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
     if let Some(results) = &entry.results {
-        results_of(results, &at)?;
+        results_of(results, at)?;
     }
     if let Some(coroot) = &entry.coroot {
-        coroot_of(coroot, &at)?;
+        coroot_of(coroot, at)?;
     }
     if let Some(metrics) = &entry.metrics {
-        entry_metrics(metrics, &at)?;
+        entry_metrics(metrics, at)?;
     }
     Ok(())
 }
 
 fn results_of(results: &Results, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
-    if results.token.is_some() && results.address.is_none() {
-        return Err(Fault::Only {
-            at: at("results.token"),
-            with: "address",
-        });
-    }
     if let Some(path) = &results.ca_file {
-        if results.address.is_none() {
-            return Err(Fault::Only {
-                at: at("results.ca_file"),
-                with: "address",
-            });
-        }
         absolute(path, at("results.ca_file"))?;
     }
     match (&results.address, &results.forward) {
@@ -223,7 +219,10 @@ pub(super) fn supply_chain(chain: &SupplyChain) -> Result<(), Fault> {
 pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
     if let Some(namespace) = &delivery.build_namespace {
         non_empty(namespace, "delivery.build_namespace".into())?;
-        namespace_name(namespace, "delivery.build_namespace".into())?;
+        namespace_name(
+            &namespace.replace("{project}", "p"),
+            "delivery.build_namespace".into(),
+        )?;
     }
     if let Some(naming) = &delivery.stage_naming {
         let at = "delivery.stage_naming";
@@ -236,6 +235,18 @@ pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
         }
     }
     Ok(())
+}
+
+/// Resolves a build namespace for one Kargo project and checks the result.
+/// A bad result refuses this change's build reads, not the setup file.
+pub fn resolve_build_namespace(template: &str, project: &str) -> Result<String, String> {
+    let name = template.replace("{project}", project);
+    namespace_name(&name, "delivery.build_namespace".into()).map_err(|_| {
+        format!(
+            "delivery.build_namespace resolves to \"{name}\" for project {project}, which isn't a namespace name"
+        )
+    })?;
+    Ok(name)
 }
 
 /// A DNS-1123 label: lowercase alphanumerics and `-`, at most 63, starting

@@ -123,15 +123,15 @@ Both routes the owner chose, per workspace entry (`results:` in the setup file):
 | Route | Setup | What the app does |
 | --- | --- | --- |
 | **Address** | `results.address: https://results.example.com` | GETs it directly. `https://` or `http://`; plain `http://` is allowed only for a loopback address and says so. |
-| **Port forward** | `results.forward: {namespace, service, port}` | Does nothing until the person presses **Forward** on the entry. Then it starts a port forward ([PORT_FORWARD.md](PORT_FORWARD.md)) to the Service's pod and reads `http://127.0.0.1:<port>` as an address. The forward is the app's `ForwardList`'s, owned and stopped like any other, and it is the second exception to read-only in [AGENTS.md](../AGENTS.md#cluster-safety)'s terms: it creates a `pods/portforward` and nothing else. |
+| **Port forward** | `results.forward: {namespace, service, port}` | Does nothing until the person presses **Forward** on the entry. The app integration will start a port forward ([PORT_FORWARD.md](PORT_FORWARD.md)) to the Service's pod and pass its local port to the Results client. The client reads `https://<service>.<namespace>.svc/`, pins that hostname to `127.0.0.1:<local port>` and disables proxies. The URL deliberately has no port, so reqwest preserves the resolved local port; TLS verifies the Service name. The forward is the app's `ForwardList`'s, owned and stopped like any other, and it is the second exception to read-only in [AGENTS.md](../AGENTS.md#cluster-safety)'s terms: it creates a `pods/portforward` and nothing else. |
 
-Delivery sees only an address. The shell turns a started forward into one (as the central metrics store's hosting entry hands Monitoring a source), so `freshkube-delivery` names no forward and no UI type.
+Delivery accepts an address or a caller-supplied `Route::Forward` with a local port. It never starts a forward and has no Resources or UI dependency. The caller must match the configured triple and replace the client on a new forward epoch. An ended route reports `Error::ForwardEnded(reason)` without falling back. The client transport is implemented; wiring the app's Forward control is the next slice.
 
-**TLS and credentials.** The Results API normally serves TLS with its own certificate and wants a bearer token for the Kubernetes API's authorisation. Two rules:
+**TLS and credentials.** The Results API normally serves TLS with its own certificate and wants a bearer token for the Kubernetes API's authorisation. The rules:
 
 - **The cluster's credentials are never sent to an address the person typed.** A token for the address route is `results.token: keys.json`, the key [#707](https://github.com/skel84/freshkube/issues/707)'s store keeps for that address, exactly as a metrics URL's. Without one the request goes without a token and a refusal says so.
-- **The forward route may use the entry's own credentials,** since the forward ends at that cluster's own pod, through that cluster's API server. This is the only place a cluster credential reaches Results, and it is a bearer token read from the client the entry already has (Q4 asks whether to go further and prefer the API server's service proxy).
-- **Certificate verification is never skipped by default.** A self-signed Results certificate needs `results.ca_file`, a PEM the person names; the Check sources row says `certificate not trusted` otherwise. There is no "insecure" switch in this step.
+- **The forward route also uses only its saved Results token.** `results.token: keys.json` selects the account `Tekton Results forward://<namespace>/<service>:<configured port>`, independent of the local port. No cluster credential is sent to Results. Both routes allow `results.ca_file`.
+- **Certificate verification is never skipped.** A self-signed Results certificate needs `results.ca_file`, a PEM the person names; the Check sources row says `certificate not trusted` otherwise. There is no "insecure" switch in this step.
 
 ### Which API and which records
 

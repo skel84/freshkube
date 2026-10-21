@@ -210,11 +210,16 @@ fn adopt(files: &Files, now: DateTime<Utc>) -> Outcome {
     if !exists(&files.workspace) && !exists(&files.coroot) {
         return Outcome::Nothing;
     }
-    let usable = read_bounded_regular_file(&files.setup, MAX_BYTES)
+    let accepted = read_bounded_regular_file(&files.setup, MAX_BYTES)
         .ok()
-        .is_some_and(|bytes| parse(&bytes).is_ok());
-    if !usable {
+        .and_then(|bytes| super::read(&bytes).ok());
+    let Some(accepted) = accepted else {
         return Outcome::Kept(Kept::SetupUnusable);
+    };
+    // The YAML wins, but leave legacy originals where they are until every
+    // configured row can be used. Never rewrite a partially accepted file.
+    if !accepted.warnings.is_empty() {
+        return Outcome::Done { moved: Vec::new() };
     }
     let mut moved = Vec::new();
     for (name, path) in [(WORKSPACE, &files.workspace), (COROOT, &files.coroot)] {

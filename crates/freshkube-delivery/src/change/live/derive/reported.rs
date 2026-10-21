@@ -1,6 +1,7 @@
 //! Workloads reported by Argo CD on a destination that was not read.
 
 use super::*;
+use freshkube_core::resources::FailureKind;
 
 /// The Application `app_id` names and the workspace cluster it is mapped
 /// to, when that is a cluster the workspace lists other than this one, and
@@ -14,17 +15,25 @@ pub(super) fn elsewhere<'a>(
     if place.is_here(entry) || !place.mapping.lists(entry) {
         return None;
     }
-    let why = match evidence.environments.get(entry) {
+    let (why, refused) = match evidence.environments.get(entry) {
         Some(Ok(_)) => return None,
-        Some(Err(why)) => Some(why.message.as_str()),
-        None => None,
+        Some(Err(why)) => (
+            Some(why.message.as_str()),
+            matches!(why.kind, FailureKind::Forbidden | FailureKind::Unauthorized),
+        ),
+        None => (None, false),
     };
     let app = evidence
         .applications
         .read()?
         .iter()
         .find(|app| format!("{}/{}", app.namespace, app.name) == app_id)?;
-    Some(Away { app, entry, why })
+    Some(Away {
+        app,
+        entry,
+        why,
+        refused,
+    })
 }
 
 /// Whether Argo CD reports a workload for an Application that deploys to
@@ -64,7 +73,7 @@ pub(super) fn reported_hops(sides: &Sides, stage: &str, group: usize, away: Away
             let pods = away
                 .why
                 .filter(|_| object.health.as_deref() != Some("Missing"))
-                .map(|why| crate::change::unread::pods(&workload, away.entry, why));
+                .map(|why| crate::change::unread::pods(&workload, away.entry, why, away.refused));
             std::iter::once(workload).chain(pods)
         })
         .collect()
@@ -146,6 +155,7 @@ fn reported_hop(
         name: object.name.clone(),
     };
     Hop {
+        cause: None,
         key,
         group,
         state,
@@ -173,6 +183,7 @@ fn reported_hop(
             }),
             fields,
             link: Some(LinkDetail {
+                cause: None,
                 confidence: Confidence::Claimed,
                 by: "name".into(),
                 before: "Application".into(),

@@ -539,11 +539,11 @@ impl ApplicationsPage {
 
     /// The setup owner's safe warning text; no setup bytes reach a banner.
     pub fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
-        freshkube_probe::probe::hit("applications.setup_handoff");
         let problem = problem.map(SharedString::from);
         if self.setup_problem == problem {
             return;
         }
+        freshkube_probe::probe::hit("applications.setup_handoff");
         self.setup_problem = problem.clone();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));

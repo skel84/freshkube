@@ -850,3 +850,48 @@ async fn reported_missing_workloads_have_no_unread_pods() {
         "only the existing Deployment has unread Pods"
     );
 }
+
+#[tokio::test]
+async fn all_skipped_setup_reads_neither_the_open_connection_nor_an_entry() {
+    let recovered = freshkube_core::setup::read(b"version: 1\nclusters: [{id: broken, role: core, context: ''}]\nsources: {argocd: broken}\ndestinations: [{name: remote, entry: broken}]\n").unwrap();
+    let mut place = place(&recovered.setup.workspace);
+    place.sources = Sources::of_recovered(&recovered.setup.workspace, &recovered.source_recovery);
+    let open = healthy().one_cluster();
+    let connections = std::cell::Cell::new(0);
+    let pool = Pool::new(
+        &place.sources,
+        Some(Open {
+            entry: None,
+            reader: Ok(&open),
+        }),
+        |_entry: Entry| {
+            connections.set(connections.get() + 1);
+            async { Ok::<FixtureReader, Failure>(FixtureReader::default()) }
+        },
+        BUDGET,
+    );
+    let _ = read_in(&pool, &place, observed_at()).await;
+    let at = crate::changes::live::Where {
+        stage_naming: None,
+        build_namespace: None,
+        cluster: place.cluster,
+        label: place.label,
+        argocd_namespace: place.argocd_namespace,
+        mapping: place.mapping,
+        sources: place.sources.clone(),
+        public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
+        evidence_result: None,
+    };
+    let _ = crate::changes::live::read_in(&pool, &at, observed_at(), BUDGET).await;
+    assert!(
+        open.requests.borrow().is_empty(),
+        "the open connection must not be used"
+    );
+    assert_eq!(
+        connections.get(),
+        0,
+        "skipped and unresolved entries must never connect"
+    );
+}
