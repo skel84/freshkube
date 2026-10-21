@@ -78,6 +78,7 @@ fn place(workspace: &Workspace) -> Place {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     }
 }
 
@@ -620,6 +621,7 @@ async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let world = || {
         let mut world = on_deployment_at(ENV, |_| {});

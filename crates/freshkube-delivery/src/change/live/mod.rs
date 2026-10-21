@@ -30,6 +30,7 @@ mod gates;
 mod history;
 mod links;
 pub(crate) mod pages;
+mod pull;
 #[cfg(test)]
 mod tests;
 
@@ -46,7 +47,7 @@ use crate::applications::read::{
 use crate::argocd::MapHint;
 use crate::collect::{Plan, Upstream, read_environment, upstream_with_history};
 use crate::entry::pool::{Open, Pool, PoolReader, Read, Unread, Until};
-use crate::github::{GitHub, PullRequest};
+use crate::github::{GitHub, Handle, PullRequest, repo_of};
 use crate::join::{Evidence, candidate_applications, candidate_deployments, candidate_rollouts};
 use crate::kargo::{Freight, read_freight};
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
@@ -86,6 +87,9 @@ pub struct Place {
     /// How an Application with no authorized-stage annotation names its
     /// Stage, from the same setup.
     pub stage_naming: Option<freshkube_core::setup::StageNaming>,
+    /// GitHub's REST client for this setup revision; without it no pull
+    /// request is read.
+    pub github: Option<Handle>,
 }
 
 impl Place {
@@ -422,7 +426,7 @@ where
         kargo: &kargo,
         argocd: &argocd,
         tekton: &builds,
-        github: &NoGitHub,
+        github: &pull::Pulls::of(place.github.as_ref()),
     };
     let history_until = until
         .at()
@@ -452,6 +456,7 @@ where
         ..place.clone()
     };
     let mut change = derive(&described, &evidence, freight, &pages, &reached);
+    pull::attach(&mut change, &evidence);
     if let Some(note) = argo_namespace_note(&place.at(Part::ArgoCd).label, &scope.0, &scope.1) {
         change.missing.push(Missing::new(Gap::Unreadable, note));
     }
@@ -667,7 +672,7 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         kargo_project: place.project.clone(),
         argocd_namespace: place.argocd_namespace.clone(),
         build_namespace: place.build_namespace.clone(),
-        github_repo: None,
+        github_repo: place.github.as_ref().and_then(|_| repo_of(freight)),
         contexts,
         cluster_names,
         argocd: place.argocd(),

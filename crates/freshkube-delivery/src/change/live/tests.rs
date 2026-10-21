@@ -28,6 +28,7 @@ pub(super) fn place(freight: &str) -> Place {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     }
 }
 
@@ -1780,6 +1781,7 @@ async fn the_changes_list_finds_an_application_in_the_second_namespace() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let read =
         crate::changes::live::read(&reader, &at, observed_at(), crate::changes::live::BUDGET).await;
@@ -1837,6 +1839,7 @@ async fn changes_and_applications_share_the_namespace_cap() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let read =
         crate::changes::live::read(&reader, &at, observed_at(), crate::changes::live::BUDGET).await;

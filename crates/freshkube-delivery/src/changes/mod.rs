@@ -24,6 +24,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use super::change::{self, Change, Reach};
+use super::github::PullState;
 use super::join::Confidence;
 use super::kargo::{Freight, Stage, promotion_order};
 use super::source::Source;
@@ -108,6 +109,11 @@ pub struct Row {
     pub freight: String,
     pub alias: Option<String>,
     pub named: Named,
+    /// Where its pull request stands on GitHub, when GitHub was asked and
+    /// named one.
+    pub pull_state: Option<PullState>,
+    /// Why that is not the latest, when GitHub couldn't be asked.
+    pub pull_note: Option<String>,
     pub title: Option<String>,
     /// When the Warehouse made the Freight.
     pub created: Option<DateTime<Utc>>,
@@ -397,6 +403,15 @@ fn row(project: &Project, freight: &Freight) -> Row {
         (None, Some(commit)) => Named::Commit(commit),
         (None, None) => Named::Nothing,
     };
+    let pull = origin.and_then(|origin| origin.pull.as_ref());
+    let pull_state = pull.map(|pull| pull.state);
+    let pull_note = pull.and_then(|pull| pull.stale.as_ref()).map(|stale| {
+        format!(
+            "{}; showing what was read at {}",
+            stale.why,
+            stale.read_at.format("%H:%M UTC")
+        )
+    });
     let title = origin.and_then(|origin| origin.title.clone()).or_else(|| {
         freight
             .commits
@@ -410,6 +425,8 @@ fn row(project: &Project, freight: &Freight) -> Row {
         freight: freight.name.clone(),
         alias: freight.alias.clone(),
         named,
+        pull_state,
+        pull_note,
         title,
         created: freight.created,
         stages: cells,

@@ -588,6 +588,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             pull_request: invented.pull_request,
             commit: Some(invented.commit.into()),
             title: Some(invented.title()),
+            pull: invented.pull_request.and_then(crate::github::example::pull),
         },
         missing: Vec::new(),
         groups,

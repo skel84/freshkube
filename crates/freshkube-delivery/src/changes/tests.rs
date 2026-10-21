@@ -385,6 +385,7 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let unserved = live::read(&FixtureReader::default(), &at, now(), live::BUDGET).await;
     assert!(matches!(unserved.projects, Source::NotInstalled(_)));
@@ -408,6 +409,7 @@ async fn a_live_read_lists_freight_and_follows_only_what_runs() {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     };
     let freight = |name: &str| {
         json!({
@@ -542,6 +544,7 @@ fn at() -> live::Where {
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
+        github: None,
     }
 }
 

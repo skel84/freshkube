@@ -64,6 +64,10 @@ pub struct Where {
     /// How an Application with no authorized-stage annotation names its
     /// Stage, from the same setup.
     pub stage_naming: Option<freshkube_core::setup::StageNaming>,
+    /// GitHub's REST client for this setup revision. The list reads
+    /// through it sparingly: it stops looking things up when the limit is
+    /// low.
+    pub github: Option<crate::github::Handle>,
 }
 
 impl Where {
@@ -273,6 +277,7 @@ where
                 evidence_result: at.evidence_result.clone(),
                 build_namespace: at.build_namespace.clone(),
                 stage_naming: at.stage_naming.clone(),
+                github: at.github.as_ref().map(crate::github::Handle::sparing),
             };
             (place, listed)
         })
