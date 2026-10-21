@@ -59,17 +59,19 @@ impl Pilot {
                 h_flex()
                     .id("status-bar")
                     .test_support()
+                    .flex_1()
                     .min_w_0()
                     .gap_3()
                     .child(
                         div()
                             .min_w_0()
-                            .when(page.is_some(), |this| this.flex_none().max_w(dp(360.)))
+                            .when(page.is_some(), |this| this.flex_shrink(1.).max_w(dp(360.)))
                             .when(compact && page.is_none(), |this| this.max_w(dp(160.)))
                             .child(left),
                     )
                     .children(page.map(|page| {
                         h_flex()
+                            .flex_auto()
                             .min_w_0()
                             .gap_3()
                             .child(div().flex_none().w(px(1.)).h(dp(14.)).bg(p.line))

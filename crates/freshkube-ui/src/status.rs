@@ -15,9 +15,9 @@ use gpui_kit::component::h_flex;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AvailableSpace, Bounds, Element, ElementId, Font, GlobalElementId, Hsla,
-    InspectorElementId, LayoutId, Pixels, Role, ShapedLine, SharedString, Style, TestSupportExt,
-    TextAlign, TextRun, TruncateFrom, Window, px, size,
+    AnyElement, App, Bounds, Element, ElementId, Font, GlobalElementId, Hsla, InspectorElementId,
+    LayoutId, Pixels, Role, ShapedLine, SharedString, Style, TestSupportExt, TextAlign, TextRun,
+    TruncateFrom, Window, px, size,
 };
 
 use crate::palette::palette;
@@ -29,7 +29,7 @@ enum Weight {
     /// Dropped first: what the shell shows already, or a count of none.
     Minor,
     Normal,
-    /// Never dropped: the first part and toned parts.
+    /// Never dropped: warnings and an explicitly kept workflow state.
     Keep,
 }
 
@@ -40,6 +40,7 @@ pub struct Part {
     text: SharedString,
     tone: Option<Tone>,
     minor: bool,
+    keep: bool,
 }
 
 impl Part {
@@ -48,6 +49,7 @@ impl Part {
             text: text.into(),
             tone: None,
             minor: false,
+            keep: false,
         }
     }
 
@@ -64,7 +66,17 @@ impl Part {
         self
     }
 
+    /// Keep a current workflow's state when secondary counts must give way,
+    /// without giving an ordinary state a warning colour.
+    pub fn keep(mut self) -> Self {
+        self.keep = true;
+        self
+    }
+
     fn weight(&self) -> Weight {
+        if self.keep {
+            return Weight::Keep;
+        }
         match self.tone {
             Some(Tone::Warn | Tone::Crit | Tone::Died) => Weight::Keep,
             _ if self.minor => Weight::Minor,
@@ -241,6 +253,7 @@ pub fn segment(
             .test_support()
             .role(Role::Status)
             .aria_label(line)
+            .flex_auto()
             .min_w_0()
             .child(Fitted {
                 id,
@@ -441,16 +454,25 @@ impl Element for Fitted {
         // picks a shorter line.
         let mut layout = Style::default();
         layout.min_size.width = px(0.).into();
+        // Fit against the allocated remainder, rather than the intrinsic
+        // width of an earlier, shorter rung chosen during flex measuring.
+        layout.flex_grow = 1.;
+        layout.flex_shrink = 1.;
+
         let measured = fit.clone();
-        let layout = window.request_measured_layout(layout, move |known, available, window, cx| {
-            let width = known.width.or(match available.width {
-                AvailableSpace::Definite(width) => Some(width),
-                _ => None,
+        let layout =
+            window.request_measured_layout(layout, move |known, _available, window, cx| {
+                // Flex's intrinsic measurement must see the full line. Choosing
+                // a short rung from its provisional available width understates
+                // the space the segment needs before siblings are fitted.
+                let width = known.width;
+                let mut fit = measured.borrow_mut();
+                let shown = fit.choose(width, window, cx);
+                size(
+                    width.unwrap_or_else(|| fit.line(shown).width().ceil()),
+                    fit.line_height,
+                )
             });
-            let mut fit = measured.borrow_mut();
-            let shown = fit.choose(width, window, cx);
-            size(fit.line(shown).width().ceil(), fit.line_height)
-        });
         (layout, fit)
     }
 
@@ -607,5 +629,24 @@ mod tests {
             lines(&segment, None),
             ["Talos v1.13 · kubelet v1.34", "Talos v1.13"]
         );
+    }
+}
+
+#[cfg(test)]
+mod workflow_tests {
+    use super::*;
+    #[test]
+    fn a_kept_workflow_survives_secondary_counts_without_warning_colour() {
+        let segment = Segment::new(
+            None::<&str>,
+            [
+                Part::new("6 changes"),
+                Part::new("2 not fully confirmed"),
+                Part::new("Tekton Results forward is listening").keep(),
+            ],
+        );
+        let last = segment.full.last().unwrap();
+        assert_eq!(last.text.as_ref(), "Tekton Results forward is listening");
+        assert!(last.toned.is_empty());
     }
 }

@@ -227,6 +227,9 @@ impl ForwardView {
     }
 
     pub(crate) fn address(&self) -> Option<String> {
+        if super::example_results::matches(&self.spec) {
+            return None;
+        }
         self.local_port.map(|port| format!("localhost:{port}"))
     }
 
@@ -364,6 +367,27 @@ impl ForwardView {
         fallback: Option<ForwardRequest>,
         cx: &mut Context<Self>,
     ) {
+        if super::example_results::matches(&self.spec) {
+            let task = cx.spawn(async move |this, cx| {
+                // Let fixture smoke observe Starting without running I/O.
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                _ = this.update(cx, |view, cx| {
+                    if view.seq != seq || view.phase != Phase::Starting {
+                        return;
+                    }
+                    let ExampleForward {
+                        local_port,
+                        status,
+                        guard,
+                    } = super::example_results::start(&view.spec.runtime);
+                    view.run(seq, local_port, status, Guard::Example(guard), cx);
+                });
+            });
+            self.session = Some(Session::Binding { _task: task });
+            self.describe();
+            cx.notify();
+            return;
+        }
         let route = match example::route(
             &self.spec.context,
             &self.spec.identity,
@@ -525,9 +549,13 @@ impl ForwardView {
             spec.identity.namespace,
             spec.identity.name
         );
-        let local = match self.local_port {
-            Some(port) => format!("localhost:{port}"),
-            None => "localhost".to_owned(),
+        let local = if super::example_results::matches(spec) {
+            "Example transport (no socket)".to_owned()
+        } else {
+            match self.local_port {
+                Some(port) => format!("localhost:{port}"),
+                None => "localhost".to_owned(),
+            }
         };
         let pod = match self.status.as_ref().map(|status| &status.state) {
             Some(ForwardState::Listening { pod, port }) if self.phase == Phase::Running => {

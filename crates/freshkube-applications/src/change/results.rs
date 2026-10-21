@@ -24,6 +24,7 @@ impl ChangePage {
         } else {
             self.results = Binding::default();
         }
+        self.detail = self.derive_detail();
         cx.notify();
     }
 
@@ -66,6 +67,7 @@ impl ChangePage {
                 self.read(None, cx);
             }
         }
+        self.detail = self.derive_detail();
         cx.notify();
     }
 
@@ -80,6 +82,20 @@ impl ChangePage {
             Some(epoch) => format!("{identity}/forward/{}/{}", epoch.id, epoch.start),
             None => identity,
         }
+    }
+
+    /// The pruned example run cannot infer installation from its absence.
+    /// Its configured forward supplies the next step; live evidence is kept.
+    pub(super) fn results_example_banner(
+        &self,
+        key: &str,
+    ) -> Option<(Tone, SharedString, SharedString)> {
+        if key != "pr-run" || !matches!(self.fetch, Fetch::Example { .. }) {
+            return None;
+        }
+        let words = self.results.words.as_ref()?;
+        Some((Tone::Unknown, "Run pruned; Results forward configured.".into(),
+            format!("Tekton pruned this run. {words}. This example keeps synthetic build evidence; no Results server is contacted.").into()))
     }
 
     pub(crate) fn results_action(&self, cx: &mut Context<Self>) -> Option<Button> {

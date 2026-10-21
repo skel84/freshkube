@@ -101,7 +101,9 @@ Closing releases both sides, unlike exec. The live check counted the pod's TCP c
 
 An entry's `results.forward` names a Service namespace, name and port. Applications
 uses the entry selected for Builds. In the Changes list, **Forward** is a toolbar
-action, the `F` key and a row-menu action; the status bar says the next step.
+action, the `F` key and a row-menu action; the status bar keeps the current
+Results state ahead of secondary counts when space is short. Its measured
+segment uses the full intrinsic line before fitting to the allocated width.
 On the change page it is the Builds/PipelineRun Inspector's next-step action.
 There are no row buttons. If that entry is not open, **Switch to ⟨entry⟩** uses
 the guarded switch/link path to the Service's Ports section. Switching starts
@@ -110,12 +112,20 @@ nothing: Forward is still an explicit action.
 The fixture workspace configures `acme/results:8443` on its Builds entry,
 `cicd-fra`. Both change-opening routes hand their example source to the same
 forward binding as the list. Opening or refreshing keeps the reads synthetic;
-only Forward enters Resources' example forward resolver. This invented Service
-has no example pods, so it reports **The Service selects no pods** before any
-socket is bound. It never requests Kubernetes access or contacts Results.
+only Forward enters Resources' example forward path. For this exact invented
+Service it models a one-second **Starting** interval, **Listening** on the
+invented `results-example-0` pod and explicit **Stop**. The transport is entirely
+in memory: its route number is synthetic, no socket is bound, no Kubernetes or
+Results client is contacted, and Ports says **Example transport (no socket)**
+with no browser/copy address. Other example forwards keep their existing local
+HTTP listener behavior. The pruned example run's callout points to the configured
+Forward (or guarded Switch), without claiming Results is absent.
 `desktop/applications_tests/results_forward.rs` checks Switch without starting,
-the list action and both Inspector routes in the real fixture app. The maintainer
-re-runs the visual smoke on this fixture.
+the list and both Inspector routes, the visible status at default size,
+Starting/Listening, disabled duplicate starts, Stop in Ports and a reachable
+stacked action at text size 20. A Resources test installs a recording socket
+binder that fails if invoked, then proves Listening, Stop and cancellation
+without a bind. The maintainer re-runs the visual smoke on this fixture.
 
 `freshkube-applications/src/results_forward/` shares the selected owner between
 the list and change page through a weak session registry. Their route subscriptions

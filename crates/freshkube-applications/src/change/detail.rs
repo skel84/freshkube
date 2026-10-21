@@ -137,6 +137,9 @@ impl ChangePage {
             }
             Shows::Stage(stage) => self.stage_detail(&self.change.stages[*stage]),
         };
+        if let Some(banner) = self.results_example_banner(&hop.key) {
+            detail.banner = Some(banner);
+        }
         // A gate row has no notice of its own: a cause says what it waits
         // for, or why it can't be said.
         if matches!(hop.shows, Shows::Stage(_)) && detail.banner.is_none() {
@@ -360,6 +363,9 @@ impl ChangePage {
             .heading(heading(detail, cx))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
+                    .id("change-detail-notice")
+                    .aria_label(body.clone())
+                    .test_support()
             }));
         let inspector = inspector.children(
             detail

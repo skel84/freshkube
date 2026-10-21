@@ -200,7 +200,12 @@ impl Inspector {
                 div()
                     .id(part("banner"))
                     .test_support()
-                    .flex_none()
+                    // A long notice shares the pane with its footer instead
+                    // of pushing the actions below the clipped panel.
+                    .flex_shrink(1.)
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
                     .px(dp(PANE_PADDING))
                     .pt(dp(UNDER_HEADING))
                     .child(banner)

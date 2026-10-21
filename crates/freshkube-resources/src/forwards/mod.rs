@@ -14,6 +14,7 @@ use gpui_kit::*;
 use tokio::task::JoinHandle;
 
 mod example;
+mod example_results;
 mod indicator;
 mod matching;
 #[cfg(test)]

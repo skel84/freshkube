@@ -613,7 +613,7 @@ impl ChangesPage {
         let context = self.source.as_ref().map(|s| s.context.clone());
         let segment = |mut parts: Vec<Part>| {
             if let Some(words) = &self.results.words {
-                parts.push(Part::new(words.clone()));
+                parts.push(Part::new(words.clone()).keep());
             }
             Segment::new(context.clone(), parts)
         };
