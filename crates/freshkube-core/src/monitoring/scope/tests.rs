@@ -231,3 +231,173 @@ async fn other_modes_have_no_checks_here() {
     }
     assert!(seen.lock().unwrap().is_empty());
 }
+
+// ---- label counts ------------------------------------------------------------
+
+/// A store whose `count by (label) (up)` answers with `values`.
+fn counting(
+    values: &'static [(&'static str, &'static str)],
+) -> (kube::Client, crate::monitoring::tests::Seen) {
+    fake(move |_, path, query| match path {
+        p if p.ends_with("/query") && query.contains("count") => (
+            200,
+            success(
+                json!({"resultType": "vector", "result": values.iter().map(|(value, count)| {
+                json!({"metric": {"cluster": value}, "value": [1_700_000_000, count]})
+            }).collect::<Vec<_>>()}),
+            ),
+        ),
+        p if p.ends_with("/query") => (200, query_one()),
+        p if p.ends_with("/status/buildinfo") => (200, build_info()),
+        p if p.ends_with("/targets") => (200, targets()),
+        _ => (404, status(404, "not found")),
+    })
+}
+
+fn counts_for(values: &'static [(&'static str, &'static str)]) -> LabelCounts {
+    LabelCounts {
+        label: "cluster".into(),
+        counts: values
+            .iter()
+            .map(|(value, count)| ((*value).to_owned(), count.parse().unwrap()))
+            .collect(),
+        capped: false,
+    }
+}
+
+#[tokio::test]
+async fn label_counts_sends_one_count_by_query() {
+    let (client, seen) = counting(&[("cluster-a", "3"), ("cluster-b", "0"), ("", "4")]);
+    let counts = label_counts(&central(), &host(client), None).await.unwrap();
+    // A value with no series, and a series without the label, are not kept.
+    assert_eq!(counts, counts_for(&[("cluster-a", "3")]));
+    let seen = seen.lock().unwrap();
+    let queries: Vec<_> = seen.iter().filter(|r| r.contains("count")).collect();
+    assert_eq!(queries.len(), 1, "{seen:?}");
+    assert!(
+        queries[0].contains("count+by+%28cluster%29+%28up%29")
+            || queries[0].contains("count%20by%20%28cluster%29%20%28up%29"),
+        "{}",
+        queries[0]
+    );
+}
+
+#[tokio::test]
+async fn an_invalid_label_queries_nothing() {
+    let (client, seen) = counting(&[]);
+    let resolved = Resolved::Central {
+        place: service("monitoring", "central"),
+        host: None,
+        matcher: Matcher::new("bad-label\"}", "x"),
+    };
+    let why = label_counts(&resolved, &host(client.clone()), None)
+        .await
+        .unwrap_err();
+    assert!(why.contains("label name"), "{why}");
+    let other = label_counts(&Resolved::Discovery, &host(client), None)
+        .await
+        .unwrap_err();
+    assert!(other.contains("Central"), "{other}");
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_refused_store_gives_words_and_no_counts() {
+    let (client, _) = fake(|_, _, _| (403, status(403, "forbidden")));
+    assert!(label_counts(&central(), &host(client), None).await.is_err());
+}
+
+fn two_entries(extra_b: &str) -> Setup {
+    setup(&file(CENTRAL, extra_b))
+}
+
+fn state(labels: &EntryLabels, entry: &str) -> LabelState {
+    labels
+        .entries
+        .iter()
+        .find(|e| e.entry == entry)
+        .unwrap()
+        .state
+        .clone()
+}
+
+#[test]
+fn an_entry_with_series_has_series() {
+    let labels = entry_labels(
+        &two_entries(""),
+        &counts_for(&[("cluster-a", "3"), ("cluster-b", "5")]),
+    );
+    assert_eq!(state(&labels, "cluster-a"), LabelState::HasSeries(3));
+    assert_eq!(state(&labels, "cluster-b"), LabelState::HasSeries(5));
+    assert!(labels.unclaimed.is_empty());
+}
+
+#[test]
+fn no_series_is_unknown_not_failed() {
+    // The state carries no failure: a store that answers and lacks the value
+    // is "no series now", which the page shows as Unknown.
+    let labels = entry_labels(&two_entries(""), &counts_for(&[("cluster-a", "3")]));
+    assert_eq!(
+        state(&labels, "cluster-b"),
+        LabelState::NoSeries { suggest: None }
+    );
+}
+
+#[test]
+fn an_own_source_is_not_checked() {
+    let own = "    metrics:\n      source:\n        service:\n          namespace: obs\n          name: prom\n          port: 9090\n";
+    let labels = entry_labels(&two_entries(own), &counts_for(&[("cluster-b", "9")]));
+    assert_eq!(state(&labels, "cluster-b"), LabelState::OwnSource);
+    // An entry that reads its own store claims no central value.
+    assert_eq!(labels.unclaimed, [("cluster-b".to_owned(), 9)]);
+}
+
+#[test]
+fn an_unclaimed_context_value_is_suggested() {
+    // cluster-b reads `shop-b`, which the store lacks; its context name holds
+    // series that no entry claims.
+    let labels = entry_labels(
+        &two_entries("    metrics:\n      value: shop-b\n"),
+        &counts_for(&[("cluster-a", "3"), ("cluster-b", "5"), ("legacy", "1")]),
+    );
+    assert_eq!(
+        state(&labels, "cluster-b"),
+        LabelState::NoSeries {
+            suggest: Some("cluster-b".into())
+        }
+    );
+    // Both unclaimed values are named for hand edits; none beyond the
+    // suggestion is suggested.
+    assert_eq!(
+        labels.unclaimed,
+        [("cluster-b".to_owned(), 5), ("legacy".to_owned(), 1)]
+    );
+}
+
+#[test]
+fn a_claimed_value_is_not_suggested() {
+    // cluster-a's own value is `cluster-b`: the context value is claimed.
+    let mut setup = two_entries("    metrics:\n      value: shop-b\n");
+    setup.workspace.clusters[0]
+        .metrics
+        .get_or_insert_with(Default::default)
+        .value = Some("cluster-b".into());
+    let labels = entry_labels(&setup, &counts_for(&[("cluster-b", "5")]));
+    assert_eq!(state(&labels, "cluster-a"), LabelState::HasSeries(5));
+    assert_eq!(
+        state(&labels, "cluster-b"),
+        LabelState::NoSeries { suggest: None }
+    );
+}
+
+#[test]
+fn unclaimed_values_are_cut_and_counted() {
+    let many: LabelCounts = LabelCounts {
+        label: "cluster".into(),
+        counts: (0..25).map(|n| (format!("v{n:02}"), 1)).collect(),
+        capped: false,
+    };
+    let labels = entry_labels(&two_entries(""), &many);
+    assert_eq!(labels.unclaimed.len(), MAX_UNCLAIMED);
+    assert_eq!(labels.more, 5);
+}

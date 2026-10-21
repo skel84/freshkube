@@ -31,6 +31,7 @@ use crate::workspace::{self, Destination, Entry, MAX_BYTES, Pins, Seen, VERSION,
 mod migrate;
 mod types;
 mod validate;
+pub(crate) use validate::is_label_name;
 
 pub use migrate::{Kept, Outcome, migrate};
 pub use types::{
