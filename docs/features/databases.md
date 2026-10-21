@@ -80,6 +80,8 @@ showing refreshes after 30 seconds, or after interrupted/failed work. Source or
 scope replacement clears incompatible evidence and selection. Request generation
 and identity reject old completions. Switching inventory views reads nothing.
 Rows and Inspector fields are prepared when data changes, outside render.
+The Inspector shows at most 128 fields plus an explicit count of omitted fields;
+Open in Resources retains access to the full object status.
 
 `FRESHKUBE_DATABASES` reshapes fixture data: `not-installed`, `refused`,
 `unsupported`, `failed`, `empty`, `backup-refused`, `partial`, `old`,

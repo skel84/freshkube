@@ -294,3 +294,26 @@ fn shell_shortcut_opens_databases_in_the_storage_column(cx: &mut TestAppContext)
     })
     .unwrap();
 }
+
+#[test]
+fn a_large_cluster_keeps_the_inspector_bounded_and_discloses_omitted_evidence() {
+    let mut inventory = databases::example::inventory(at());
+    inventory.databases.items[0].instances = (0..500)
+        .map(|index| databases::Instance {
+            name: format!("orders-{index}"),
+            role: databases::Fact::Unknown,
+            state: databases::Fact::Unknown,
+            replication: databases::Fact::Unknown,
+        })
+        .collect();
+    let display = super::display::Display::new(Some(&inventory), Mode::Clusters);
+    assert!(display.rows[0].fields.len() <= 129);
+    assert!(
+        display.rows[0]
+            .fields
+            .last()
+            .unwrap()
+            .1
+            .contains("additional fields are not shown")
+    );
+}

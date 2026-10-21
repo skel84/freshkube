@@ -1,5 +1,6 @@
 //! Prepared rows, fields and state sentences; render does no collection work.
 use super::*;
+const MAX_DETAIL_FIELDS: usize = 128;
 use freshkube_core::HasHealth;
 use freshkube_core::databases::{BackupState, Coverage, Fact, Identity, LinkState};
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -62,8 +63,13 @@ impl Row {
         identity: &Identity,
         cells: [String; 6],
         tone: ui::Tone,
-        fields: Vec<(String, String)>,
+        mut fields: Vec<(String, String)>,
     ) -> Self {
+        if fields.len() > MAX_DETAIL_FIELDS {
+            let remaining = fields.len() - MAX_DETAIL_FIELDS;
+            fields.truncate(MAX_DETAIL_FIELDS);
+            fields.push(("More evidence".into(), format!("{remaining} additional fields are not shown; open the object in Resources for its full status")));
+        }
         let key: SharedString = format!(
             "{}/{}/{}/{}",
             identity.group, identity.namespace, identity.kind, identity.uid
