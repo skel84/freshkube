@@ -71,12 +71,19 @@ pub fn columns() -> Vec<Column> {
 
 /// A link's glyph, if any, and its word: Confirmed muted, the other two
 /// in ink.
-pub(super) fn link_mark(confidence: Confidence, cx: &App) -> Div {
+pub(super) fn link_mark(confidence: Confidence, cause: Option<&Cause>, cx: &App) -> Div {
     let p = palette(cx);
+    // A link that waits is the clock, not the ring of what can't be said.
+    let glyph = match cause {
+        Some(cause) if confidence == Confidence::Unknown && !cause.is_problem() => {
+            Some(Tone::Waiting)
+        }
+        _ => link_glyph(confidence),
+    };
     h_flex()
         .items_center()
         .gap(dp(5.))
-        .children(link_glyph(confidence).and_then(|tone| ui::status_glyph(tone, cx)))
+        .children(glyph.and_then(|tone| ui::status_glyph(tone, cx)))
         .child(
             div()
                 .flex_none()
@@ -84,7 +91,7 @@ pub(super) fn link_mark(confidence: Confidence, cx: &App) -> Div {
                     Confidence::Confirmed => p.muted,
                     _ => p.ink,
                 })
-                .child(link_word(confidence)),
+                .child(cause_word(confidence, cause)),
         )
 }
 
@@ -196,10 +203,10 @@ impl TableSource for ChangePage {
                 None => kit::cell(column).into_any_element(),
                 Some(confidence) => kit::cell(column)
                     .child(
-                        link_mark(confidence, cx)
+                        link_mark(confidence, row.cause.as_ref(), cx)
                             .id(SharedString::from(format!("{PREFIX}-hop-{}-link", row.key)))
                             .test_support()
-                            .aria_label(link_word(confidence)),
+                            .aria_label(cause_word(confidence, row.cause.as_ref())),
                     )
                     .into_any_element(),
             },
@@ -352,7 +359,7 @@ impl TableSource for ChangePage {
             );
         }
         let item = |confidence: Confidence, text: &str| {
-            kit::legend_item(link_mark(confidence, cx), text.to_owned()).into_any_element()
+            kit::legend_item(link_mark(confidence, None, cx), text.to_owned()).into_any_element()
         };
         Some(
             kit::legend(

@@ -77,11 +77,12 @@ impl Trail {
                 .and_then(|link| link.key.as_deref())
                 .map(short_key)
                 .unwrap_or_else(|| "no key".into());
+            let cause = hop.cause.as_ref();
             let why = link
                 .map(|link| {
                     format!(
                         "{} by {}. {} reports {}. This hop reports {}. {}",
-                        link_word(confidence),
+                        cause_word(confidence, cause),
                         link.by,
                         link.before,
                         link.before_says,
@@ -103,7 +104,7 @@ impl Trail {
                 row_id: format!("change-link-row-{to}").into(),
                 tone: None,
                 width: 1.1,
-                label: link_word(confidence).into(),
+                label: cause_word(confidence, cause).into(),
                 tooltip: why.into(),
                 style: match confidence {
                     Confidence::Confirmed => EdgeStyle::Solid,
@@ -111,7 +112,12 @@ impl Trail {
                     Confidence::Unknown => EdgeStyle::Dotted,
                 },
                 pill: Some(label.into()),
-                pill_tone: link_glyph(confidence),
+                pill_tone: match cause {
+                    Some(cause) if confidence == Confidence::Unknown && !cause.is_problem() => {
+                        Some(Tone::Waiting)
+                    }
+                    _ => link_glyph(confidence),
+                },
             });
         }
         trail

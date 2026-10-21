@@ -950,6 +950,90 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
     ]
 }
 
+/// The causes of the example's hops that are Unknown or pending: the
+/// Stage that waits for someone to promote it, the pods a user may not list,
+/// and the run Tekton pruned.
+fn name_causes(hops: &mut [Hop]) {
+    let cause_of = |key: &str| -> Option<Cause> {
+        Some(match key {
+            "prod-ams-promotion" => Cause::waiting("a Promotion of the Freight to prod-ams"),
+            "prod-ams-verification" => {
+                Cause::waiting("the Freight promoted to prod-ams, which starts its verification")
+            }
+            "prod-ams-pods" => Cause::cant_read(
+                "the pods of checkout-api on prod-ams, to see which image they run",
+                Some(Role::new("", "pods", Some(PROJECT))),
+                true,
+            ),
+            "pr-run" => Cause::cant_read("the PipelineRun, which Tekton pruned", None, true),
+            _ => return None,
+        })
+    };
+    for hop in hops {
+        let Some(cause) = cause_of(&hop.key) else {
+            continue;
+        };
+        if let Shows::Hop(detail) = &mut hop.shows
+            && let Some(link) = &mut detail.link
+            && link.confidence == Confidence::Unknown
+        {
+            link.cause = Some(cause.clone());
+        }
+        hop.cause = Some(cause);
+    }
+}
+
+/// [`Shape::Causes`]: the whole change, with its policy result missing and
+/// the Application of `stage` unfound, beside the waiting Stage and the
+/// forbidden pods it already has, so one change shows every cause.
+fn all_causes(change: &mut Change) {
+    let unknown = |hop: &mut Hop, detail: &str, cause: Cause, body: &str| {
+        hop.state = Unknown;
+        hop.detail = detail.into();
+        hop.link = Some(Confidence::Unknown);
+        hop.cause = Some(cause.clone());
+        if let Shows::Hop(shown) = &mut hop.shows {
+            shown.state = "Unknown".into();
+            shown.notice = Some(Notice {
+                state: Warning,
+                lead: "Not joined.".into(),
+                body: body.into(),
+            });
+            shown.fields.clear();
+            shown.link = Some(LinkDetail {
+                cause: Some(cause),
+                confidence: Confidence::Unknown,
+                by: "nothing".into(),
+                before: "Pipeline run".into(),
+                key: None,
+                before_says: String::new(),
+                here_says: "not found".into(),
+                why: body.into(),
+            });
+        }
+    };
+    for hop in &mut change.hops {
+        match hop.key.as_str() {
+            "policy" => unknown(
+                hop,
+                "No policy result on the image",
+                Cause::not_found("a Conforma result that names the image digest"),
+                "No policy result names this image.",
+            ),
+            "stage-argocd" => unknown(
+                hop,
+                "No Application names this Stage",
+                Cause::not_set_up(
+                    "an Application whose name follows a template the setup gives",
+                    SettingsField::STAGE_NAMING,
+                ),
+                "No Application names this Stage, and the setup has no naming template for one.",
+            ),
+            _ => {}
+        }
+    }
+}
+
 /// The whole invented change, its times counted back from `now`.
 pub(crate) fn change(now: DateTime<Utc>) -> Change {
     let stages = stages(now);
@@ -1042,6 +1126,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
         at(now, 53),
         "6 of 6 run the digest",
     ));
+    name_causes(&mut hops);
     Change {
         project: PROJECT.into(),
         freight: FREIGHT.into(),
@@ -1080,6 +1165,10 @@ pub enum Shape {
     /// The Freight names an image and no commit, so the build is joined to
     /// it by the image digest a result of the build reports.
     ImageOnly,
+    /// One change with all four causes of an Unknown: a Stage waiting for
+    /// promotion, pods a user may not list, a policy result that isn't
+    /// there, and an Application the setup never told how to find.
+    Causes,
 }
 
 /// Why the example's unreachable entry wasn't read.
@@ -1092,7 +1181,7 @@ impl Shape {
     /// The words of what wasn't read, as a live read says it.
     fn words(self) -> Option<String> {
         match self {
-            Self::Whole | Self::Spread | Self::ImageOnly => None,
+            Self::Whole | Self::Spread | Self::ImageOnly | Self::Causes => None,
             Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
@@ -1123,11 +1212,15 @@ impl Shape {
             image_only(&mut change);
             return Ok(change);
         }
+        if self == Self::Causes {
+            all_causes(&mut change);
+            return Ok(change);
+        }
         let Some(why) = self.words() else {
             return Ok(change);
         };
         match self {
-            Self::Whole | Self::Spread | Self::ImageOnly => {}
+            Self::Whole | Self::Spread | Self::ImageOnly | Self::Causes => {}
             Self::KargoUnreachable => {
                 return Err(Failure::new(
                     FailureKind::Unreachable,
@@ -1326,8 +1419,14 @@ fn is_gate(hop: &Hop) -> bool {
 
 /// In place of what Argo CD's Applications would have said of a Stage.
 fn refused_application(project: &str, stage: &str, group: usize, why: &str) -> Hop {
-    Hop {
-        cause: None,
+    // The list was refused, so only access to Applications reads it again.
+    let cause = Cause::cant_read(
+        "Argo CD's Applications, to find the one that syncs this Stage",
+        Some(Role::new(argocd::GROUP, "applications", Some("argocd"))),
+        true,
+    );
+    let mut hop = Hop {
+        cause: Some(cause.clone()),
         key: format!("{stage}-argocd"),
         group,
         state: Unknown,
@@ -1364,7 +1463,13 @@ fn refused_application(project: &str, stage: &str, group: usize, why: &str) -> H
             unlinked: None,
             actions: Vec::new(),
         })),
+    };
+    if let Shows::Hop(detail) = &mut hop.shows
+        && let Some(link) = &mut detail.link
+    {
+        link.cause = Some(cause);
     }
+    hop
 }
 
 /// What Argo CD reports of a Stage's Deployment on an entry that couldn't

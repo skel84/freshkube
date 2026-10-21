@@ -30,7 +30,7 @@ pub(super) struct Detail {
     title: SharedString,
     tone: Tone,
     state: SharedString,
-    banner: Option<(Tone, SharedString, SharedString)>,
+    pub(super) banner: Option<(Tone, SharedString, SharedString)>,
     body: Body,
     /// What Coroot found after the deploy, for a Deployment's hop.
     after: Option<super::outcome::Section>,
@@ -132,7 +132,9 @@ impl ChangePage {
     pub(super) fn derive_detail(&self) -> Option<Detail> {
         let hop = self.change.hop(self.selected.as_ref()?)?;
         let mut detail = match &hop.shows {
-            Shows::Hop(detail) => self.hop_detail(&hop.key, tone(hop.state), detail),
+            Shows::Hop(detail) => {
+                self.hop_detail(&hop.key, hop_tone(hop), hop.cause.as_ref(), detail)
+            }
             Shows::Stage(stage) => self.stage_detail(&self.change.stages[*stage]),
         };
         if self.link_selected {
@@ -170,19 +172,13 @@ impl ChangePage {
         Some(detail)
     }
 
-    fn hop_detail(&self, key: &str, tone: Tone, hop: &HopDetail) -> Detail {
+    fn hop_detail(&self, key: &str, tone: Tone, cause: Option<&Cause>, hop: &HopDetail) -> Detail {
         Detail {
             kind: hop.kind.clone().into(),
             title: hop.title.clone().into(),
             tone,
             state: hop.state.clone().into(),
-            banner: hop.notice.as_ref().map(|notice| {
-                (
-                    super::tone(notice.state),
-                    notice.lead.clone().into(),
-                    notice.body.clone().into(),
-                )
-            }),
+            banner: cause_banner(cause, hop.notice.as_ref()),
             body: Body::Hop {
                 fields: hop.fields.iter().map(field_line).collect(),
                 link: hop.link.as_ref().map(link_lines),
@@ -444,11 +440,53 @@ fn field_line(field: &Field) -> FieldLine {
     }
 }
 
+/// The banner under a hop's heading. A hop with a cause leads with it, as
+/// the table's Link column does, and says what would confirm it and what to
+/// do next; Waiting is no problem, so it is a note, not a warning.
+fn cause_banner(
+    cause: Option<&Cause>,
+    notice: Option<&freshkube_delivery::change::Notice>,
+) -> Option<(Tone, SharedString, SharedString)> {
+    let Some(cause) = cause else {
+        return notice.map(|notice| {
+            (
+                tone(notice.state),
+                notice.lead.clone().into(),
+                notice.body.clone().into(),
+            )
+        });
+    };
+    let mut body = notice.map(|notice| notice.body.clone()).unwrap_or_default();
+    if !body.is_empty() {
+        body.push(' ');
+    }
+    body.push_str(&format!("Needs {}.", cause.needs()));
+    for next in cause.next() {
+        body.push(' ');
+        body.push_str(&next_words(&next));
+    }
+    let banner_tone = if cause.is_problem() {
+        notice.map_or(Tone::Warn, |notice| tone(notice.state))
+    } else {
+        Tone::Info
+    };
+    Some((
+        banner_tone,
+        format!("{}.", cause.word()).into(),
+        body.into(),
+    ))
+}
+
 fn link_lines(link: &LinkDetail) -> LinkLines {
     LinkLines {
         confidence: link.confidence,
         by: format!("by {}", link.by).into(),
-        label: format!("{} by {}", link_word(link.confidence), link.by).into(),
+        label: format!(
+            "{} by {}",
+            cause_word(link.confidence, link.cause.as_ref()),
+            link.by
+        )
+        .into(),
         before: link.before.clone().into(),
         before_says: link.before_says.clone().into(),
         here_says: link.here_says.clone().into(),
