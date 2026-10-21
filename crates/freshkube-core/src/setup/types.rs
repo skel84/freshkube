@@ -346,6 +346,9 @@ pub struct SupplyChain {
     /// Read the transparency log's entries.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub transparency_log: bool,
+    /// The log's HTTPS address; absent means Chains' configured address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transparency_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Evidence>,
     #[serde(flatten)]

@@ -351,6 +351,140 @@ mod served {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn archived_results_and_log_reads_keep_the_results_token_at_results_only() {
+        use crate::collect::{Upstream, upstream_with_history};
+        use crate::fixtures::{FixtureGitHub, healthy};
+        use crate::join::{Confidence, Hop, join};
+        use crate::source::Source;
+        use crate::tekton::Origin;
+        use crate::tests::{observed_at, plan};
+        use freshkube_core::secrets::{MemoryStore, SecretStore};
+        use freshkube_core::setup::{KeysJson, Results};
+        use std::sync::Arc;
+
+        let key = signing_key_pem();
+        let statement = statement_with(vec![subject(BUILT.trim_start_matches("sha256:"))]);
+        let envelope: Value =
+            serde_json::from_str(&signed_envelope("application/vnd.in-toto+json", &statement))
+                .unwrap();
+        let signature = STANDARD
+            .decode(envelope["signatures"][0]["sig"].as_str().unwrap())
+            .unwrap();
+        let run = json!({"apiVersion":"tekton.dev/v1", "kind":"PipelineRun",
+        "metadata":{"name":"checkout-build", "namespace":"acme", "uid":"run-a",
+            "labels":{"pipelinesascode.tekton.dev/sha": crate::fixtures::SHA},
+            "annotations":{
+                "chains.tekton.dev/signature-pipelinerun-run-a": b64(envelope.to_string()),
+                "chains.tekton.dev/payload-pipelinerun-run-a": b64(statement.to_string()),
+                "chains.tekton.dev/transparency":"https://annotation.example.test/api/v1/log/entries?logIndex=42"
+            }},
+        "status":{"results":[
+            {"name":"IMAGE_DIGEST","value":BUILT},
+            {"name":"IMAGE_URL","value":"registry.example.test/acme/checkout"}
+        ]}});
+        let results = Log::new(ok(serde_json::to_vec(&json!({"records":[{
+            "name":"acme/results/result-a/records/run-a", "data":{
+                "type":"tekton.dev/v1.PipelineRun", "value":b64(run.to_string())}
+        }]}))
+        .unwrap()));
+        let log = Log::new(ok(answer(42, &hashedrekord(&signature, &key)).body));
+        let dir = tempfile::tempdir().unwrap();
+        let public_key = dir.path().join("checkout.pub");
+        let ca = dir.path().join("results-ca.pem");
+        std::fs::write(&public_key, key).unwrap();
+        std::fs::write(&ca, CERT).unwrap();
+        let store = Arc::new(MemoryStore::default());
+        const TOKEN: &str = "invented-results-token";
+        store
+            .write(
+                &crate::results::token_account(&results.address).unwrap(),
+                TOKEN,
+            )
+            .unwrap();
+        let mut settings = Results::default();
+        settings.address = Some(results.address.clone());
+        settings.token = Some(KeysJson);
+        settings.ca_file = Some(ca);
+        let results_client = crate::results::Client::open(Some(&settings), Some(store))
+            .await
+            .unwrap();
+        let world = healthy().with_meta();
+        let tekton = crate::fixtures::FixtureReader::default()
+            .serves("tekton.dev", "v1", &["pipelineruns", "taskruns"])
+            .with("pipelineruns", vec![]);
+        let github = FixtureGitHub::default();
+        let upstream = Upstream {
+            kargo: &world.kargo,
+            argocd: &world.argocd,
+            tekton: &tekton,
+            github: &github,
+        };
+        let mut plan = plan(&[]);
+        plan.build_namespace = Ok(Some("acme".into()));
+        plan.public_key_file = Some(public_key);
+        plan.transparency_url = Some(log.address.clone());
+        // The default switch is off: even a named, reachable log gets no GET.
+        assert!(!plan.transparency_log);
+        let mut evidence = within(upstream_with_history(
+            &upstream,
+            &plan,
+            observed_at(),
+            std::future::ready(Source::Read(vec![])),
+            Ok(&results_client),
+            tokio::time::Instant::now() + Duration::from_secs(20),
+        ))
+        .await;
+        assert_eq!(evidence.log, LogRead::Off);
+        assert!(log.requests.lock().unwrap().is_empty());
+        assert_eq!(evidence.build_history.as_ref().unwrap().runs, 1);
+        let builds = evidence.builds.read().unwrap();
+        assert_eq!(builds.len(), 1);
+        assert_eq!(builds[0].origin, Origin::Results);
+
+        // Exercise the existing delivery-only HTTPS seam with the same
+        // collected archived build and trust. No application injection.
+        let client = Client::trusting(CERT).unwrap();
+        for address in [
+            Address::Set(log.address.clone()),
+            Address::FromChains(Ok(crate::chains::config::ChainsConfig::parse(
+                &json!({"data":{"transparency.url":log.address}}),
+            ))),
+        ] {
+            evidence.log = within(read_log(
+                Ok(&client),
+                std::future::ready(address),
+                &evidence.trust,
+                evidence.builds.read().unwrap(),
+            ))
+            .await;
+            let LogRead::Read(entries) = &evidence.log else {
+                panic!("the log answered");
+            };
+            assert_eq!(entries.len(), 1);
+            assert!(entries.values().all(Outcome::matches));
+            let trail = join(&evidence);
+            assert!(trail.links.iter().any(
+                |link| link.to == Hop::SupplyChain && link.confidence == Confidence::Confirmed
+            ));
+        }
+        let requests = results.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests.iter().all(|request| {
+            request
+                .lines()
+                .any(|line| line.eq_ignore_ascii_case(&format!("authorization: Bearer {TOKEN}")))
+        }));
+        let requests = log.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests.iter() {
+            assert!(request.starts_with("GET /api/v1/log/entries?logIndex=42 "));
+            for forbidden in ["authorization", "proxy-authorization", "cookie", TOKEN] {
+                assert!(!request.to_ascii_lowercase().contains(forbidden));
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn a_redirect_is_an_answer_and_is_not_followed() {
         let elsewhere = Log::new(ok(Vec::new()));
         let log = Log::new(Reply {
