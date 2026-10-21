@@ -500,14 +500,22 @@ impl ChangePage {
                 (None, Some(tooltip)) => button.tooltip(tooltip),
                 (None, None) => button,
             };
-            v_flex().gap(dp(3.)).child(h_flex().child(button)).child(
-                div()
-                    .id(SharedString::from(format!("{}-words", step.id)))
-                    .test_support()
-                    .aria_label(step.words.clone())
-                    .text_color(p.muted)
-                    .child(step.words.clone()),
-            )
+            // The words sit beside the button when they fit, so the next
+            // step takes one line, and under it when they don't.
+            h_flex()
+                .flex_wrap()
+                .items_center()
+                .gap_x(dp(8.))
+                .gap_y(dp(3.))
+                .child(button)
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{}-words", step.id)))
+                        .test_support()
+                        .aria_label(step.words.clone())
+                        .text_color(p.muted)
+                        .child(step.words.clone()),
+                )
         });
         section(
             if fix.problem {
@@ -759,9 +767,19 @@ fn link_lines(link: &LinkDetail) -> LinkLines {
         )
         .into(),
         before: link.before.clone().into(),
-        before_says: link.before_says.clone().into(),
-        here_says: link.here_says.clone().into(),
+        before_says: says(&link.before_says),
+        here_says: says(&link.here_says),
         why: link.why.clone().into(),
+    }
+}
+
+/// What a side of a link says; a side that was not found says so, in place
+/// of an empty line.
+fn says(text: &str) -> SharedString {
+    if text.is_empty() {
+        "Nothing found".into()
+    } else {
+        text.to_owned().into()
     }
 }
 

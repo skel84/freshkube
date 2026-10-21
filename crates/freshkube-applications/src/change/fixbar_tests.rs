@@ -196,6 +196,12 @@ fn the_headline_stays_within_two_lines_at_the_narrowest_window_and_text_20(
             headline.size.height
         );
         assert!(window.find("change-fixbar").visible());
+        // Neither runs past the window's right edge.
+        let edge = window.viewport_size().width;
+        for id in ["change-headline", "change-fixbar"] {
+            let right = window.find(id).bounds().right();
+            assert!(right <= edge, "{id} ends at {right:?}, past {edge:?}");
+        }
     })
     .unwrap();
 }

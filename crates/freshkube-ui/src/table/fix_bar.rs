@@ -19,9 +19,9 @@ use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
 /// A character of a chip's text, in dp.
-const CHAR: f32 = 6.6;
+const CHAR: f32 = 5.9;
 /// A chip's glyph, padding and gap, in dp, beside its text.
-const CHIP_PAD: f32 = 34.;
+const CHIP_PAD: f32 = 30.;
 /// The gap between the bar's parts, in dp.
 const GAP: f32 = 6.;
 
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(visible(&list, 10.), 1);
     }
 
-    /// `n` chips of 20 characters each: 166 dp wide.
+    /// `n` chips of 20 characters each: 148 dp wide.
     fn same(n: usize) -> Vec<FixItem> {
         (0..n)
             .map(|ix| FixItem::new(format!("k{ix}"), "Not found: signature"))
@@ -201,22 +201,24 @@ mod tests {
 
     #[test]
     fn a_known_room_shows_an_exact_number_of_chips() {
-        // "12 to fix" 59.4 and a gap, then 172 (166 and a gap) for each
-        // chip, and the "+7" button (30.2 and a gap) while any are left
-        // out: five chips take 925.4 and the button 36.2, so 961.6.
+        // "12 to fix" 53.1 and a gap, then 154 (148 and a gap) for each
+        // chip, and the "+7" button (26.8 and a gap) while any are left
+        // out: five chips take 829.1 and the button 32.8, so 861.9.
         assert_eq!(visible(&same(12), 1000.), 5);
-        assert_eq!(visible(&same(12), 962.), 5);
-        assert_eq!(visible(&same(12), 961.), 4);
+        assert_eq!(visible(&same(12), 862.), 5);
+        assert_eq!(visible(&same(12), 861.), 4);
         // Room for everything needs no button.
         assert_eq!(visible(&same(3), 600.), 3);
     }
 
     #[test]
     fn a_two_digit_rest_takes_the_wider_button() {
-        // Eleven left out is "+11", wider than "+9": 925.4 + 42.8 does not
-        // fit 965, where a one-digit button (36.2) would.
+        // Eleven left out is "+11" (38.7 with its gap, against 32.8 for
+        // "+7"): five chips and it take 867.8, which 865 does not hold.
         assert_eq!(visible(&same(16), 1000.), 5);
-        assert_eq!(visible(&same(16), 965.), 4);
+        assert_eq!(visible(&same(16), 868.), 5);
+        assert_eq!(visible(&same(16), 865.), 4);
+        assert_eq!(visible(&same(12), 865.), 5);
         assert_eq!(more_width(11), more_width(10));
         assert!(more_width(11) > more_width(9));
     }

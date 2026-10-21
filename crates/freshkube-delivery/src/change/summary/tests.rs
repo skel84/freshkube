@@ -130,3 +130,14 @@ fn a_list_reads_as_words() {
     assert_eq!(names(&["a", "b"]), "a and b");
     assert_eq!(names(&["a", "b", "c"]), "a, b and c");
 }
+
+#[test]
+fn a_chip_does_not_say_twice_that_a_hop_was_not_read() {
+    let change = Shape::ArgoRefused.apply(example()).expect("change");
+    let words: Vec<String> = fixes(&change).iter().map(Fix::words).collect();
+    assert!(!words.is_empty());
+    for words in &words {
+        assert!(!words.ends_with("not read"), "{words}");
+    }
+    assert!(words.iter().any(|w| w == "Can't read: dev application"), "{words:?}");
+}

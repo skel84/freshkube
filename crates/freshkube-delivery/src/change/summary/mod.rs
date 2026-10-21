@@ -37,9 +37,13 @@ pub fn fixes(change: &Change) -> Vec<Fix> {
             Some(Fix {
                 hop: hop.key.clone(),
                 cause: cause.word(),
-                place: match stage_of(change, hop) {
-                    Some(stage) => format!("{} {}", stage.name, hop.name.to_lowercase()),
-                    None => hop.name.clone(),
+                place: {
+                    // The cause already says it wasn't read.
+                    let name = hop.name.trim_end_matches(" not read");
+                    match stage_of(change, hop) {
+                        Some(stage) => format!("{} {}", stage.name, name.to_lowercase()),
+                        None => name.to_owned(),
+                    }
                 },
             })
         })

@@ -40,12 +40,17 @@ impl ChangePage {
                 .id("change-summary")
                 .child(
                     v_flex()
+                        .w_full()
+                        .min_w_0()
                         .gap(dp(6.))
                         .child(
                             div()
                                 .id("change-headline")
                                 .test_support()
                                 .aria_label(self.headline.clone())
+                                .w_full()
+                                .min_w_0()
+                                .overflow_hidden()
                                 .line_clamp(2)
                                 .text_size(dp(12.5))
                                 .text_color(p.ink_2)
