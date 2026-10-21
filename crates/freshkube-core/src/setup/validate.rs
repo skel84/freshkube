@@ -174,7 +174,7 @@ fn service_of(service: &MetricsService, at: &str) -> Result<(), Fault> {
 }
 
 /// A Prometheus label name: `[a-zA-Z_][a-zA-Z0-9_]*`.
-fn is_label_name(name: &str) -> bool {
+pub(crate) fn is_label_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()

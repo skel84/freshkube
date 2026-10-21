@@ -143,6 +143,7 @@ pub fn row(
         hint: None,
         error: None,
         checked: false,
+        selected: false,
         on_click: None,
     }
 }
@@ -156,6 +157,7 @@ pub struct Row {
     hint: Option<AnyElement>,
     error: Option<SharedString>,
     checked: bool,
+    selected: bool,
     on_click: Option<ClickHandler>,
 }
 
@@ -178,6 +180,13 @@ impl Row {
         self
     }
 
+    /// Draw the row, label and control, as the table draws a selected row:
+    /// its soft accent fill and accent border, inset from the group's edges.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
     /// Click anywhere on the row, its label included. A click on the control
     /// reaches the control's own handler too.
     pub fn on_click(
@@ -191,6 +200,7 @@ impl Row {
     fn render(self, narrow: bool, cx: &App) -> impl IntoElement {
         let p = palette(cx);
         let error = self.error.is_some();
+        let selected = self.selected;
         let on_click = self.on_click.clone();
         div()
             .id(self.id.clone())
@@ -201,6 +211,22 @@ impl Row {
             })
             .flex()
             .when(narrow, |this| this.flex_col())
+            .relative()
+            .when(selected, |this| {
+                this.bg(p.accent_soft)
+                    .rounded(gpui_kit::px(4.))
+                    .px(dp(6.))
+                    .mx(dp(-6.))
+                    // The border is drawn over the row, so it moves nothing.
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(gpui_kit::px(4.))
+                            .border_1()
+                            .border_color(p.accent),
+                    )
+            })
             .gap(dp(if narrow { 4. } else { 12. }))
             .child(
                 h_flex()
@@ -557,6 +583,7 @@ mod tests {
         chosen: bool,
         typing: bool,
         store_name: Option<SharedString>,
+        selected: bool,
         clicks: std::rc::Rc<std::cell::Cell<usize>>,
     }
 
@@ -604,6 +631,7 @@ mod tests {
                         .row({
                             let clicks = self.clicks.clone();
                             row("next-field", "Namespace", div().h(dp(CONTROL_HEIGHT)))
+                                .selected(self.selected)
                                 .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
                         })
                         .saved_in(SavedIn::file("workspace.json"))
@@ -656,6 +684,7 @@ mod tests {
                 chosen: false,
                 typing: false,
                 store_name: None,
+                selected: false,
                 clicks: Default::default(),
             });
             view = Some(form.clone());
@@ -670,6 +699,37 @@ mod tests {
             (actual - px(expected)).abs() < px(1.),
             "{actual:?} != {expected}"
         );
+    }
+
+    #[gpui_kit::test]
+    fn selecting_a_row_moves_nothing(cx: &mut TestAppContext) {
+        let (handle, form) = open(cx);
+        for narrow in [false, true] {
+            let mut seen = Vec::new();
+            for selected in [false, true] {
+                cx.update_window(handle, |_, window, cx| {
+                    form.update(cx, |form, cx| {
+                        form.narrow = narrow;
+                        form.selected = selected;
+                        cx.notify();
+                    });
+                    window.render_frame(cx);
+                    seen.push((
+                        window.find("next-field-label").bounds(),
+                        window.find("next-field").bounds().size.height,
+                        window.find("group").bounds().size.height,
+                    ));
+                })
+                .unwrap();
+            }
+            let [(label, row, group), (chosen, selected_row, selected_group)] = seen[..] else {
+                unreachable!()
+            };
+            close(chosen.left() - label.left(), 0.);
+            close(chosen.top() - label.top(), 0.);
+            close(selected_row - row, 0.);
+            close(selected_group - group, 0.);
+        }
     }
 
     #[gpui_kit::test]
