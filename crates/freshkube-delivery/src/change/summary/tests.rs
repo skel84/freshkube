@@ -139,5 +139,8 @@ fn a_chip_does_not_say_twice_that_a_hop_was_not_read() {
     for words in &words {
         assert!(!words.ends_with("not read"), "{words}");
     }
-    assert!(words.iter().any(|w| w == "Can't read: dev application"), "{words:?}");
+    assert!(
+        words.iter().any(|w| w == "Can't read: dev application"),
+        "{words:?}"
+    );
 }
