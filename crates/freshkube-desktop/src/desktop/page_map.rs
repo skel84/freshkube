@@ -298,11 +298,13 @@ impl Pages {
         revision: u64,
         cx: &mut App,
     ) {
-        // Settings notifications also repeat this hand-off. Deliver the setup
-        // and its current problem only once per read revision.
+        // Diagnostic changes publish without invalidating effective reads.
+        self.applications
+            .update(cx, |page, cx| page.set_setup_problem(problem, cx));
+        // Settings notifications repeat this hand-off; only a new effective
+        // setup or an explicit Reload invalidates delivery.
         if self.delivery_revision.replace(Some(revision)) != Some(revision) {
             self.applications.update(cx, |page, cx| {
-                page.set_setup_problem(problem, cx);
                 if let Some(setup) = &setup {
                     page.set_setup(setup, cx);
                 }
@@ -402,6 +404,8 @@ mod tests {
                         mapping: Mapping::default(),
                         sources: Default::default(),
                         public_key_file: None,
+                        transparency_log: false,
+                        transparency_url: None,
                         evidence_result: None,
                         build_namespace: None,
                         stage_naming: None,
@@ -422,6 +426,11 @@ mod tests {
             // same owner's read. It must not cancel or expire delivery.
             pilot.update(cx, |pilot, cx| {
                 pilot.pages.set_setup(Some(setup.clone()), None, 1, cx)
+            });
+            assert_eq!(change.read(cx).loader.revision(), before);
+            assert!(change.read(cx).is_reading());
+            pilot.update(cx, |pilot, cx| {
+                pilot.pages.set_setup(Some(setup.clone()), Some("freshkube.yaml is used with warnings: skipped destinations[1]: row: wrong shape. The rest of the file stays in use.".into()), 1, cx)
             });
             assert_eq!(change.read(cx).loader.revision(), before);
             assert!(change.read(cx).is_reading());

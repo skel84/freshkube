@@ -992,6 +992,42 @@ fn results_plain_http_is_only_saved_for_literal_loopback() {
 }
 
 #[test]
+fn destination_url_credentials_are_refused_by_strict_parse_and_save_without_echoing() {
+    use crate::workspace::{Destination, Key};
+    for address in [
+        "https://invented-private-marker@example.test",
+        "https://user:invented-private-marker@example.test",
+        "https://user:invented-private-marker@[invalid",
+    ] {
+        let text = format!(
+            "version: 1\nclusters: []\ndestinations: [{{server: '{address}', entry: cluster-a}}]\n"
+        );
+        let invalid = parse(text.as_bytes()).unwrap_err();
+        assert!(!invalid.to_string().contains("invented-private-marker"));
+        assert!(!format!("{invalid:?}").contains("invented-private-marker"));
+        assert!(matches!(
+            invalid,
+            Invalid::Workspace(workspace::Invalid::Destination {
+                fault: workspace::Fault::Userinfo,
+                ..
+            })
+        ));
+        let mut setup = Setup::default();
+        setup
+            .workspace
+            .destinations
+            .push(Destination::new(Key::Server(address.into()), "cluster-a"));
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("freshkube.yaml");
+        std::fs::write(&file, "version: 1\n").unwrap();
+        let before = std::fs::read(&file).unwrap();
+        let error = commit(&file, &Seen::Bytes(before.clone()), &setup).unwrap_err();
+        assert!(!format!("{error:?}").contains("invented-private-marker"));
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+}
+
+#[test]
 fn stage_naming_is_a_template_with_an_optional_project_key() {
     let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
     // Off when absent.
@@ -1123,5 +1159,39 @@ fn the_build_namespace_must_be_a_namespace_name_and_is_never_repeated() {
         ok(&format!(
             "version: 1\ndelivery:\n  build_namespace: {good}\n"
         ));
+    }
+}
+
+#[test]
+fn transparency_url_is_optional_https_and_round_trips_without_repeating_bad_values() {
+    let text = |url: &str| format!("version: 1\nsupply_chain:\n  transparency_url: '{url}'\n");
+    let empty = ok("version: 1\nsupply_chain: {}\n");
+    assert_eq!(empty.supply_chain.unwrap().transparency_url, None);
+    for url in [
+        "https://rekor.example.test",
+        "https://rekor.example.test:443/log/",
+    ] {
+        let setup = ok(&text(url));
+        let chain = setup.supply_chain.as_ref().unwrap();
+        assert_eq!(chain.transparency_url.as_deref(), Some(url));
+        assert!(!chain.transparency_log);
+        assert_eq!(ok(&to_text(&setup)), setup);
+        assert!(setup.unknown_keys().is_empty());
+    }
+    for url in [
+        "",
+        "not-a-url",
+        "http://127.0.0.1:8080",
+        "http://rekor.example.test",
+        "ftp://rekor.example.test",
+        "https://invented-token@rekor.example.test",
+        "https://user:invented-token@rekor.example.test",
+        "https://rekor.example.test/?token=invented-token",
+        "https://rekor.example.test/#entry",
+    ] {
+        assert_eq!(
+            rule(&text(url)),
+            "supply_chain.transparency_url must be an https:// URL without credentials, query or fragment"
+        );
     }
 }

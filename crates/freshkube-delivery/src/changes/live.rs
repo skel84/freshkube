@@ -57,6 +57,10 @@ pub struct Where {
     pub sources: Sources,
     /// The top-level setup's public key, opened afresh off the UI thread.
     pub public_key_file: Option<std::path::PathBuf>,
+    /// Whether the log must hold each verified signature. Off by default.
+    pub transparency_log: bool,
+    /// The setup's log address; absent means read Chains' configuration.
+    pub transparency_url: Option<String>,
     /// The pipeline record configured in the same setup.
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
     /// The namespace the builds run in, from the same setup.
@@ -67,6 +71,25 @@ pub struct Where {
 }
 
 impl Where {
+    /// Each followed change keeps the list's supply-chain settings.
+    pub(super) fn place(&self, project: &str, freight: &str) -> Place {
+        Place {
+            cluster: self.cluster.clone(),
+            label: self.label.clone(),
+            project: project.to_owned(),
+            freight: freight.to_owned(),
+            argocd_namespace: self.argocd_namespace.clone(),
+            mapping: self.mapping.clone(),
+            sources: self.sources.clone(),
+            public_key_file: self.public_key_file.clone(),
+            transparency_log: self.transparency_log,
+            transparency_url: self.transparency_url.clone(),
+            evidence_result: self.evidence_result.clone(),
+            build_namespace: self.build_namespace.clone(),
+            stage_naming: self.stage_naming.clone(),
+        }
+    }
+
     /// The name of the cluster Kargo is read on, which the notes name.
     fn kargo(&self) -> String {
         match self.sources.get(Part::Kargo) {
@@ -261,19 +284,7 @@ where
                 .read()
                 .and_then(|all| all.iter().find(|item| &item.name == freight))
                 .cloned();
-            let place = Place {
-                cluster: at.cluster.clone(),
-                label: at.label.clone(),
-                project: project.name.clone(),
-                freight: freight.clone(),
-                argocd_namespace: at.argocd_namespace.clone(),
-                mapping: at.mapping.clone(),
-                sources: at.sources.clone(),
-                public_key_file: at.public_key_file.clone(),
-                evidence_result: at.evidence_result.clone(),
-                build_namespace: at.build_namespace.clone(),
-                stage_naming: at.stage_naming.clone(),
-            };
+            let place = at.place(&project.name, freight);
             (place, listed)
         })
         .collect();

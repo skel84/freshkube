@@ -78,6 +78,10 @@ pub struct Place {
     pub sources: Sources,
     /// The top-level setup's public key, opened afresh off the UI thread.
     pub public_key_file: Option<std::path::PathBuf>,
+    /// Whether the log must hold each verified signature. Off by default.
+    pub transparency_log: bool,
+    /// The setup's log address; absent means read Chains' configuration.
+    pub transparency_url: Option<String>,
     /// The pipeline record configured in the same setup.
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
     /// The namespace the builds run in, from the same setup. A build is
@@ -116,7 +120,7 @@ impl Place {
                 missing: None,
             },
             Chosen::Entry { .. } | Chosen::Open => self.open(),
-            Chosen::NoEntry(_) | Chosen::Gone(_) => At {
+            Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => At {
                 cluster: String::new(),
                 label: crate::applications::across::WORKSPACE.into(),
                 missing: chosen.missing(),
@@ -680,8 +684,8 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
             }
         }),
         public_key_file: place.public_key_file.clone(),
-        transparency_log: false,
-        transparency_url: None,
+        transparency_log: place.transparency_log,
+        transparency_url: place.transparency_url.clone(),
         commit_names: Default::default(),
         stage_naming: place.stage_naming.as_ref().map(Into::into),
         map_hint: match place.mapping.settings {

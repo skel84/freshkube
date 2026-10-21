@@ -66,7 +66,7 @@ impl Place {
             Chosen::Open => Place::Open,
             Chosen::Entry { entry, .. } if open == Some(entry.id.as_str()) => Place::Open,
             Chosen::Entry { entry, .. } => Place::Entry(entry.clone()),
-            Chosen::NoEntry(_) | Chosen::Gone(_) => {
+            Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => {
                 Place::Missing(chosen.missing().unwrap_or_default())
             }
         }

@@ -551,3 +551,46 @@ fn the_notice_names_what_moved_and_is_empty_when_nothing_did() {
         Some("Moved workspace.json into freshkube.yaml; the old file is .bak")
     );
 }
+
+#[test]
+fn partly_accepted_yaml_wins_without_rewriting_or_moving_legacy_files() {
+    for yaml in [
+        "version: 1\nclusters: [{id: retained, role: core, context: retained}, []]\n",
+        "version: 1\nclusters: [[]]\n",
+        "version: 1\ndestinations: [[]]\n",
+    ] {
+        let home = Home::with(&[
+            (SETUP, yaml),
+            (WORKSPACE, WORKSPACE_JSON),
+            (COROOT, COROOT_JSON),
+        ]);
+        let files = Files::beside(&home.directory.path().join(PREFERENCES));
+        assert_eq!(adopt(&files, now()), Outcome::Done { moved: Vec::new() });
+        assert_eq!(std::fs::read_to_string(&files.setup).unwrap(), yaml);
+        assert_eq!(
+            std::fs::read_to_string(&files.workspace).unwrap(),
+            WORKSPACE_JSON
+        );
+        assert_eq!(std::fs::read_to_string(&files.coroot).unwrap(), COROOT_JSON);
+        assert!(super::super::read(yaml.as_bytes()).is_ok());
+        assert!(!files.workspace.with_extension("json.bak").exists());
+    }
+}
+
+#[test]
+fn invalid_legacy_rows_are_never_recovered_into_a_lossy_migration() {
+    for workspace in [
+        r#"{"version":1,"clusters":[{"id":"bad","role":"core","context":""}]}"#,
+        r#"{"version":1,"clusters":[],"destinations":[{}]}"#,
+        r#"{"version":1,"clusters":[{"id":"bad","role":"core","context":"bad","results":{"address":"invalid"}}]}"#,
+    ] {
+        let home = Home::with(&[(WORKSPACE, workspace)]);
+        let preferences = home.directory.path().join(PREFERENCES);
+        assert!(matches!(migrate(&preferences, now()), Outcome::Kept(_)));
+        assert!(!home.directory.path().join(SETUP).exists());
+        assert_eq!(
+            std::fs::read_to_string(home.directory.path().join(WORKSPACE)).unwrap(),
+            workspace
+        );
+    }
+}
