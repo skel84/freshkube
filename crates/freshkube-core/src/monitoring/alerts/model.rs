@@ -230,7 +230,7 @@ impl Silence {
     pub fn muted<'a>(&self, alerts: &'a [Alert]) -> Vec<&'a Alert> {
         alerts
             .iter()
-            .filter(|alert| alert.silenced_by.iter().any(|id| *id == self.id))
+            .filter(|alert| alert.silenced_by.contains(&self.id))
             .collect()
     }
 }

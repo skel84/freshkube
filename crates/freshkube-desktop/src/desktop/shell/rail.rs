@@ -1,8 +1,8 @@
 //! The icon rail: one button per area, with a dot where the overview
 //! found a problem in it.
 use super::*;
-use freshkube_core::monitoring::alerts::State;
 use crate::presentation::overview::{Card, CardTarget};
+use freshkube_core::monitoring::alerts::State;
 use std::collections::HashMap;
 
 /// The rail's problem dots and the column's marks, and what each one is
@@ -94,14 +94,15 @@ impl RailMarks {
             (Health::Alerting(counts), _) if counts.critical + counts.warning > 0 => {
                 Some((counts_tone(counts), alerts_words(counts)))
             }
-            (_, State::Stale { why, .. }) => Some((
-                Tone::Unknown,
-                format!("Alerts: last read is stale ({why})"),
-            )),
+            (_, State::Stale { why, .. }) => {
+                Some((Tone::Unknown, format!("Alerts: last read is stale ({why})")))
+            }
             (
                 _,
                 State::Unknown(
-                    unknown @ (Unknown::Refused(_) | Unknown::Unread(_) | Unknown::NoClusterLabel(_)),
+                    unknown @ (Unknown::Refused(_)
+                    | Unknown::Unread(_)
+                    | Unknown::NoClusterLabel(_)),
                 ),
             ) => Some((Tone::Unknown, unknown.words())),
             _ => None,

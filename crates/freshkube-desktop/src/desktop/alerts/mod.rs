@@ -16,9 +16,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use freshkube_core::monitoring::alerts::{
-    self as alerts, Remembered, Scope, State, example,
-};
+use freshkube_core::monitoring::alerts::{self as alerts, Remembered, Scope, State, example};
 use freshkube_reads::Pace;
 use gpui_kit::Context;
 
@@ -72,6 +70,7 @@ impl Pilot {
         let monitoring = self.pages.monitoring.read(cx);
         let scope = Scope::of(&monitoring.scope().resolved);
         let host = monitoring.scope().host.clone();
+        let remembered = monitoring.remembered_alerts();
         let identity = (source.context.clone(), source.id.clone(), scope.clone());
         if self
             .switch
@@ -97,7 +96,7 @@ impl Pilot {
                     self.apply_alerts(identity, example::state(shape, chrono::Utc::now()), cx);
                 }
             }
-            access => self.start_alerts(identity, access, host, scope, cx),
+            access => self.start_alerts(identity, access, host, scope, remembered, cx),
         }
         self.rebuild_joined_nodes(cx);
     }
@@ -108,6 +107,7 @@ impl Pilot {
         access: ClusterAccess,
         host: Option<ClusterAccess>,
         scope: Scope,
+        remembered: Remembered,
         cx: &mut Context<Self>,
     ) {
         let runtime = self.runtime.clone();
@@ -115,7 +115,7 @@ impl Pilot {
             identity,
             &runtime,
             ALERTS_PACE,
-            move |sender| run_alerts(access, host, scope, sender),
+            move |sender| run_alerts(access, host, scope, remembered, sender),
             |view: &mut Self| &mut view.switch.registry.alerts_watch,
             Self::deliver_alerts,
             cx,
@@ -161,6 +161,13 @@ impl Pilot {
             return;
         }
         read.state = Arc::new(state);
+        // The Services that answered are tried first next time.
+        let found = read.state.evidence().map(|active| active.remembered());
+        if let Some(found) = found {
+            self.pages
+                .monitoring
+                .update(cx, |monitoring, cx| monitoring.remember_alerts(found, cx));
+        }
         crate::desktop::probe::hit("alerts.apply");
         self.rebuild_joined_nodes(cx);
         cx.notify();
@@ -172,10 +179,11 @@ async fn run_alerts(
     access: ClusterAccess,
     host: Option<ClusterAccess>,
     scope: Scope,
+    remembered: Remembered,
     sender: tokio::sync::mpsc::Sender<AlertFeed>,
 ) {
     let (latest, feed) = tokio::sync::watch::channel(None);
-    alerts::drive(access, host, scope, Remembered::default(), move |state| {
+    alerts::drive(access, host, scope, remembered, move |state| {
         latest.send_replace(Some(Arc::new(state)));
         // A full channel already points at this latest value.
         _ = sender.try_send(feed.clone());

@@ -216,6 +216,8 @@ pub struct AlertsPage {
     /// The cluster that hosts a central store's Service, when it isn't the
     /// open one.
     host: Option<ClusterAccess>,
+    /// The Services that last answered for this context, tried first.
+    remembered: Remembered,
     /// Counts what changed the inputs, so an answer for old ones is dropped.
     revision: u64,
     visible: bool,
@@ -263,6 +265,7 @@ impl AlertsPage {
             source: None,
             scope: Scope::Cluster,
             host: None,
+            remembered: Remembered::default(),
             revision: 0,
             visible: false,
             shape: Shape::default(),
@@ -323,6 +326,12 @@ impl AlertsPage {
         if !same {
             self.changed_inputs(cx);
         }
+    }
+
+    /// The Services that last answered for the open context. They only say
+    /// where to look first, so what was read stays.
+    pub fn set_remembered(&mut self, remembered: Remembered, _: &mut Context<Self>) {
+        self.remembered = remembered;
     }
 
     /// Something the answer depends on changed: what was read is another
@@ -400,11 +409,12 @@ impl AlertsPage {
         }
         let (shape, now) = (self.shape, (self.now)());
         let (scope, host, access) = (self.scope.clone(), self.host.clone(), source.access.clone());
+        let remembered = self.remembered.clone();
         let work = async move {
             if example {
                 return Ok(example_answer(which, shape, now));
             }
-            live(which, &access, host.as_ref(), &scope).await
+            live(which, &access, host.as_ref(), &scope, &remembered).await
         };
         let captured = request.clone();
         let (job, task) = crate::dispatch(
@@ -642,9 +652,10 @@ async fn live(
     access: &ClusterAccess,
     host: Option<&ClusterAccess>,
     scope: &Scope,
+    remembered: &Remembered,
 ) -> Result<Answer, QueryError> {
     let unread = |why: String| QueryError::new(ErrorKind::Unavailable, why);
-    let connected = alerts::connect(access, host, scope, &Remembered::default()).await;
+    let connected = alerts::connect(access, host, scope, remembered).await;
     let found = match (&connected, which) {
         (Ok(found), _) => found.clone(),
         (Err(Unknown::Unread(why)), _) => return Err(unread(why.clone())),

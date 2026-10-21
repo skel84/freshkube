@@ -220,6 +220,7 @@ impl Sources {
             .map(|client| ReadFrom {
                 kind: client.kind(),
                 label: client.label(),
+                service: client.service().cloned(),
                 version: client.version().map(str::to_owned),
                 replicas: client.replicas(),
             })
@@ -232,6 +233,8 @@ impl Sources {
 pub struct ReadFrom {
     pub kind: Kind,
     pub label: String,
+    /// The Service it was read through; none for a URL and for example data.
+    pub service: Option<PrometheusService>,
     pub version: Option<String>,
     pub replicas: Option<usize>,
 }
@@ -290,6 +293,22 @@ pub struct Active {
     pub read: Vec<ReadFrom>,
     /// Other Services of the same kind that also answered.
     pub others: Vec<String>,
+}
+
+impl Active {
+    /// The Services it was read through, to try first the next time.
+    pub fn remembered(&self) -> super::discover::Remembered {
+        let service = |kind| {
+            self.read
+                .iter()
+                .find(|from| from.kind == kind)
+                .and_then(|from| from.service.clone())
+        };
+        super::discover::Remembered {
+            alertmanager: service(Kind::Alertmanager),
+            vmalert: service(Kind::Vmalert),
+        }
+    }
 }
 
 /// Orders alerts for display: most urgent first, then by name, firing before

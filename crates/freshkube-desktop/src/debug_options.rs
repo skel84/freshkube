@@ -11,8 +11,8 @@ use std::{ffi::OsString, path::PathBuf};
 use freshkube_ui::motion::Choice;
 
 use crate::applications::Variant;
-use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
 use crate::fixture::Hold;
+use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
 
 /// `FRESHKUBE_THEME`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

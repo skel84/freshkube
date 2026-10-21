@@ -698,9 +698,11 @@ async fn the_session_never_polls_without_a_source() {
         move |state| sink.lock().unwrap().push(state),
     )
     .await;
-    let states = states.lock().unwrap();
-    assert_eq!(states.len(), 1, "it published once and ended");
-    assert!(matches!(states[0], State::Unknown(Unknown::NotFound(_))));
+    {
+        let states = states.lock().unwrap();
+        assert_eq!(states.len(), 1, "it published once and ended");
+        assert!(matches!(states[0], State::Unknown(Unknown::NotFound(_))));
+    }
     let seen_before = seen.lock().unwrap().len();
     tokio::time::sleep(POLL * 3).await;
     assert_eq!(seen.lock().unwrap().len(), seen_before, "no polling");

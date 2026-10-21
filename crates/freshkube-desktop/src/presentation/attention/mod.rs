@@ -8,13 +8,13 @@ use crate::{
     ui::Tone,
 };
 use chrono::{DateTime, Utc};
+use freshkube_core::monitoring::alerts::{
+    Alert, Severity as AlertSeverity, State as AlertState, Unknown as AlertUnknown,
+};
 use freshkube_core::{
     cluster_overview::ClusterOverview,
     kubernetes_summary::KubernetesSummary,
     workloads::{HealthState, PodIssue, WorkloadKind},
-};
-use freshkube_core::monitoring::alerts::{
-    Alert, Severity as AlertSeverity, State as AlertState, Unknown as AlertUnknown,
 };
 use gpui_kit::SharedString;
 use std::collections::BTreeMap;
@@ -252,7 +252,14 @@ pub(crate) fn build_with_alerts(
 /// node or namespace its labels name, with the namespace in front.
 fn alert_subject(alert: &Alert) -> String {
     let namespace = alert.label("namespace");
-    for key in ["pod", "deployment", "statefulset", "daemonset", "job_name", "service"] {
+    for key in [
+        "pod",
+        "deployment",
+        "statefulset",
+        "daemonset",
+        "job_name",
+        "service",
+    ] {
         if let Some(name) = alert.label(key) {
             return match namespace {
                 Some(namespace) => format!("{namespace}/{name}"),
@@ -287,7 +294,12 @@ fn append_alerts(state: &AlertState, rows: &mut Vec<AttentionRow>) {
             tone = Tone::Unknown;
         }
         rows.push(AttentionRow {
-            id: format!("attention-alert-{}-{}", alert.source.label(), alert.fingerprint).into(),
+            id: format!(
+                "attention-alert-{}-{}",
+                alert.source.label(),
+                alert.fingerprint
+            )
+            .into(),
             kind: "Alert",
             name: if subject.is_empty() {
                 alert.name.clone().into()

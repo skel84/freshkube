@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use freshkube_core::monitoring::PrometheusService;
+use freshkube_core::monitoring::alerts::Remembered;
 use freshkube_prefs::{Document, Layout};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::Error as _};
 use serde_json::{Map, Value, json};
@@ -20,10 +21,14 @@ pub(crate) struct Saved {
     pub(crate) services: BTreeMap<String, PrometheusService>,
     /// The source the user chose, by context name; none is automatic.
     pub(crate) choices: BTreeMap<String, Choice>,
+    /// The Alertmanager and vmalert Services that last answered, by context
+    /// name, which alert discovery tries first.
+    pub(crate) alerts: BTreeMap<String, Remembered>,
     /// Unknown keys at the top level and within each context's entries.
     extra: Map<String, Value>,
     service_extra: BTreeMap<String, Map<String, Value>>,
     choice_extra: BTreeMap<String, Map<String, Value>>,
+    alert_extra: BTreeMap<String, Map<String, Value>>,
 }
 
 const SERVICE_KEYS: &[&str] = &["namespace", "name", "port", "https", "path"];
@@ -80,6 +85,28 @@ fn write_service(service: &PrometheusService) -> Value {
         "https": service.https,
         "path": service.path,
     })
+}
+
+const ALERT_KEYS: &[&str] = &["alertmanager", "vmalert"];
+
+/// A context's remembered alert Services; none when it names neither.
+fn read_alerts(value: &Value) -> Option<Remembered> {
+    let remembered = Remembered {
+        alertmanager: value.get("alertmanager").and_then(read_service),
+        vmalert: value.get("vmalert").and_then(read_service),
+    };
+    (remembered != Remembered::default()).then_some(remembered)
+}
+
+fn write_alerts(remembered: &Remembered) -> Value {
+    let mut value = Map::new();
+    if let Some(service) = &remembered.alertmanager {
+        value.insert("alertmanager".into(), write_service(service));
+    }
+    if let Some(service) = &remembered.vmalert {
+        value.insert("vmalert".into(), write_service(service));
+    }
+    Value::Object(value)
 }
 
 fn read_choice(value: &Value) -> Option<Choice> {
@@ -141,7 +168,7 @@ pub fn saved_token_urls(preferences: &Path) -> Result<BTreeSet<String>, String> 
     load_checked(preferences).map(|saved| saved.token_urls())
 }
 
-/// `{dashboards, prometheus, sources}`, the last two by context name.
+/// `{dashboards, prometheus, sources, alerts}`, the last three by context name.
 impl Serialize for Saved {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let services: serde_json::Map<String, Value> = self
@@ -164,15 +191,24 @@ impl Serialize for Saved {
                 )
             })
             .collect();
-        with_extra(
-            json!({
-                "dashboards": serde_json::to_value(&self.folder).map_err(S::Error::custom)?,
-                "prometheus": services,
-                "sources": choices,
-            }),
-            Some(&self.extra),
-        )
-        .serialize(serializer)
+        let mut alerts = serde_json::Map::new();
+        for (context, remembered) in &self.alerts {
+            alerts.insert(
+                context.clone(),
+                with_extra(write_alerts(remembered), self.alert_extra.get(context)),
+            );
+        }
+        let mut written = json!({
+            "dashboards": serde_json::to_value(&self.folder).map_err(S::Error::custom)?,
+            "prometheus": services,
+            "sources": choices,
+        });
+        // Only once there is something to say, so a file without alerts is
+        // written as it always was.
+        if !alerts.is_empty() {
+            written["alerts"] = Value::Object(alerts);
+        }
+        with_extra(written, Some(&self.extra)).serialize(serializer)
     }
 }
 
@@ -236,13 +272,26 @@ impl Saved {
                 Some((context, extra(value, &known)))
             })
             .collect();
+        let alerts = by_context("alerts")
+            .into_iter()
+            .filter_map(|(context, value)| Some((context, read_alerts(value)?)))
+            .collect();
+        let alert_extra = by_context("alerts")
+            .into_iter()
+            .filter_map(|(context, value)| {
+                read_alerts(value)?;
+                Some((context, extra(value, ALERT_KEYS)))
+            })
+            .collect();
         Saved {
             folder,
             services,
             choices,
-            extra: extra(value, &["dashboards", "prometheus", "sources"]),
+            alerts,
+            extra: extra(value, &["dashboards", "prometheus", "sources", "alerts"]),
             service_extra,
             choice_extra,
+            alert_extra,
         }
     }
 }
@@ -313,6 +362,36 @@ mod tests {
         std::fs::write(file(&preferences), "{").unwrap();
         assert!(saved_token_urls(&preferences).is_err());
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn remembered_alert_services_round_trip_with_their_unknown_keys() {
+        let service = json!({"namespace": "monitoring", "name": "alertmanager-operated",
+            "port": 9093, "https": false, "path": ""});
+        let value = json!({"alerts": {
+            "cluster-a": {"alertmanager": service, "future": [1, 2]},
+            "cluster-b": {"nothing": true}
+        }});
+        let saved = Saved::from_json(&value);
+        assert_eq!(
+            saved.alerts.len(),
+            1,
+            "an entry naming no Service is left out"
+        );
+        let remembered = &saved.alerts["cluster-a"];
+        assert_eq!(remembered.alertmanager.as_ref().unwrap().port, 9093);
+        assert!(remembered.vmalert.is_none());
+        assert_eq!(
+            serde_json::to_value(&saved).unwrap()["alerts"],
+            json!({"cluster-a": {"alertmanager": service, "future": [1, 2]}})
+        );
+        // A file that says nothing of alerts is written as it always was.
+        assert!(
+            serde_json::to_value(Saved::default())
+                .unwrap()
+                .get("alerts")
+                .is_none()
+        );
     }
 
     #[test]

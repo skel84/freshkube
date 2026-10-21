@@ -71,12 +71,14 @@ fn read() -> Vec<ReadFrom> {
         ReadFrom {
             kind: Kind::Alertmanager,
             label: "monitoring/alertmanager-operated:9093".into(),
+            service: None,
             version: Some("0.27.0".into()),
             replicas: Some(3),
         },
         ReadFrom {
             kind: Kind::Vmalert,
             label: "monitoring/vmalert-shop:8880".into(),
+            service: None,
             version: None,
             replicas: None,
         },

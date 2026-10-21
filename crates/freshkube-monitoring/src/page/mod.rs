@@ -26,6 +26,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
+use freshkube_core::monitoring::alerts::Remembered;
 use freshkube_core::monitoring::scope::Resolved;
 use freshkube_core::monitoring::{Endpoint, QueryError};
 use freshkube_reads::Loader;
@@ -369,6 +370,45 @@ impl MonitoringPage {
         cx.notify();
     }
 
+    /// The Alertmanager and vmalert Services that last answered for the open
+    /// context, which alert discovery tries first.
+    pub fn remembered_alerts(&self) -> Remembered {
+        self.source
+            .as_ref()
+            .and_then(|source| self.saved.alerts.get(&source.context))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Remembers what the session alert read found for the open context, and
+    /// saves it when it changed. Nothing remembered is dropped for finding
+    /// less: a Service that answered once is tried first again.
+    pub fn remember_alerts(&mut self, found: Remembered, cx: &mut Context<Self>) {
+        let Some(context) = self.context() else {
+            return;
+        };
+        let was = self.remembered_alerts();
+        let now = Remembered {
+            alertmanager: found.alertmanager.or(was.alertmanager.clone()),
+            vmalert: found.vmalert.or(was.vmalert.clone()),
+        };
+        if now == was || now == Remembered::default() {
+            return;
+        }
+        self.saved.alerts.insert(context.clone(), now.clone());
+        self.save(move |saved| _ = saved.alerts.insert(context, now), cx);
+        self.sync_remembered(cx);
+    }
+
+    /// Hands each alert page what is remembered for the open context.
+    fn sync_remembered(&mut self, cx: &mut Context<Self>) {
+        let remembered = self.remembered_alerts();
+        for page in &self.alerts {
+            let remembered = remembered.clone();
+            page.update(cx, |page, cx| page.set_remembered(remembered, cx));
+        }
+    }
+
     /// What example data's alert pages show (`FRESHKUBE_ALERTS`).
     pub fn set_alerts_shape(
         &mut self,
@@ -450,6 +490,7 @@ impl MonitoringPage {
             page.update(cx, |page, cx| page.set_source(source, cx));
         }
         self.source = source;
+        self.sync_remembered(cx);
         if same {
             return;
         }
