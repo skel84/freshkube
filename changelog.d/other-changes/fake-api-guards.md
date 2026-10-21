@@ -1,1 +1,1 @@
-Tests: fake API guards now fail on a forbidden request instead of panicking inside the kube client.
+- **Tests:** fake API guards now fail on a forbidden request instead of panicking inside the kube client.
