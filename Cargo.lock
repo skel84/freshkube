@@ -2538,6 +2538,7 @@ dependencies = [
  "freshkube-ui",
  "futures",
  "gpui-kit",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2551,6 +2552,7 @@ dependencies = [
  "talos-rs",
  "tempfile",
  "tokio",
+ "tower 0.5.2",
  "tracing",
 ]
 

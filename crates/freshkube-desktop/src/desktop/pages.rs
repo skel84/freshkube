@@ -14,6 +14,7 @@ pub(crate) enum Page {
     Nodes,
     Health,
     Resources,
+    Databases,
     Etcd,
     SystemServices,
     Security,
@@ -38,6 +39,7 @@ pub(super) enum PageId {
     Applications,
     Settings,
     Resources,
+    Databases,
     Processes,
     Storage,
     Network,
@@ -50,8 +52,9 @@ pub(super) enum PageId {
 }
 
 impl PageId {
-    /// The Talos screens, the retained inspection views.
-    pub(super) const SCREENS: [Self; 9] = [
+    /// The retained inspection views (Databases uses the Kubernetes source).
+    pub(super) const SCREENS: [Self; 10] = [
+        Self::Databases,
         Self::Processes,
         Self::Storage,
         Self::Network,
@@ -63,7 +66,7 @@ impl PageId {
         Self::Operations,
     ];
 
-    /// Whether this is one of the [Talos screens](Self::SCREENS).
+    /// Whether this is one of the [inspection screens](Self::SCREENS).
     pub(super) fn is_screen(self) -> bool {
         Self::SCREENS.contains(&self)
     }
@@ -82,8 +85,8 @@ mod tests {
         let screen = |id: PageId| match id {
             Overview | Nodes | SystemServices | Monitoring | Observability | Applications
             | Settings | Resources => false,
-            Processes | Storage | Network | Diagnostics | Etcd | Health | Security | Lifecycle
-            | Operations => true,
+            Databases | Processes | Storage | Network | Diagnostics | Etcd | Health | Security
+            | Lifecycle | Operations => true,
         };
         let pages = [
             Overview,
@@ -167,6 +170,7 @@ impl Area {
             Page::Overview => Self::Overview,
             Page::Nodes => Self::Nodes,
             Page::Health => Self::Group("workloads"),
+            Page::Databases => Self::Group("storage"),
             Page::Resources => match kind.key().as_str() {
                 "namespaces" => Self::Namespaces,
                 "events" => Self::Events,
@@ -255,7 +259,7 @@ impl Area {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 13] = [
+    pub(super) const ALL: [Page; 14] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -269,6 +273,7 @@ impl Page {
         Self::Observability,
         Self::Applications,
         Self::Settings,
+        Self::Databases,
     ];
 
     /// The page's key.
@@ -278,6 +283,7 @@ impl Page {
             Self::Nodes => PageId::Nodes,
             Self::Health => PageId::Health,
             Self::Resources => PageId::Resources,
+            Self::Databases => PageId::Databases,
             Self::Etcd => PageId::Etcd,
             Self::SystemServices => PageId::SystemServices,
             Self::Security => PageId::Security,
@@ -299,6 +305,7 @@ impl Page {
                 | Self::Nodes
                 | Self::Health
                 | Self::Resources
+                | Self::Databases
                 | Self::Monitoring
                 | Self::Observability
                 | Self::Applications
@@ -316,6 +323,7 @@ impl Page {
             Self::Nodes => "Nodes",
             Self::Health => "Health",
             Self::Resources => "Resources",
+            Self::Databases => "Databases",
             Self::Etcd => "etcd",
             Self::SystemServices => "System services",
             Self::Security => "Security",
@@ -333,6 +341,7 @@ impl Page {
             Self::Nodes => "nodes",
             Self::Health => "health",
             Self::Resources => "resources",
+            Self::Databases => "databases",
             Self::Etcd => "etcd",
             Self::SystemServices => "system-services",
             Self::Security => "security",

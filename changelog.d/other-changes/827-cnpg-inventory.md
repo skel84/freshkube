@@ -1,0 +1,1 @@
+- **Databases:** inspect CloudNativePG clusters, backups and schedules from Storage, with reported topology, 24-hour backup freshness, explicit read coverage and restore-prerequisite limits.

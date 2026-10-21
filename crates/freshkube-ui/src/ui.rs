@@ -600,6 +600,11 @@ pub fn mono(text: impl Into<SharedString>) -> Div {
 
 /// A labelled value, as in the Services detail pane.
 pub fn field(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
+    named_field(label.into(), value, cx)
+}
+
+/// The same field for a label supplied by the inspected object.
+pub fn named_field(label: SharedString, value: impl IntoElement, cx: &App) -> Div {
     let p = palette(cx);
     h_flex()
         .items_start()

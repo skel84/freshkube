@@ -37,3 +37,5 @@ The keyboard follows one path through the page, and each level owns a key contex
 
 Pod Overview opens on its cause (`resources/pane/cross_links/cause.rs`): core's `PodStatus::diagnose` reads the status alone, and a pod it can't fault shows no card. Pod Overview relationships (`resources/pane/cross_links/`) read namespace Services once and the ReplicaSet controller once, checking its UID. Runs on shares the shell’s joined node snapshot, as the `NodeFacts` (`resources/node_facts.rs`) the Nodes workspace builds from its rows, which the pods list’s not-ready group reads too; recent warnings reuse the pane’s event watch. Owner links carry API version and UID, and custom owner kinds use discovery. Every destination uses the same object entry point; Forward opens Service Ports without starting a forward.
 
+
+The Storage column also offers the read-only [Databases page](databases.md), whose selected Cluster, Backup or ScheduledBackup opens in Resources through the existing object link. Database evidence is interpreted in core; generic custom-resource inspection remains available.

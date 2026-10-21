@@ -155,7 +155,9 @@ fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
                     path == format!("/apis/postgresql.cnpg.io/v1/namespaces/shop/{kind}")
                 }) =>
             {
-                if mode == "capped" {
+                if mode == "oversized" {
+                    json!({"items":(0..201).map(|index|json!({"metadata":{"name":format!("orders-{index}"),"namespace":"shop","uid":format!("invented-{index}")}})).collect::<Vec<_>>()})
+                } else if mode == "capped" {
                     json!({"items":[],"metadata":{"continue":"more&not-a-query=1"}})
                 } else if mode == "malformed" {
                     json!({"items":[{"metadata":{"name":"missing-uid"}}]})
@@ -165,7 +167,11 @@ fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
             }
             _ => panic!("unexpected API path {path}"),
         };
+        let hold = mode == "timeout" && path.ends_with("/backups");
         async move {
+            if hold {
+                std::future::pending::<()>().await;
+            }
             Ok::<_, Infallible>(
                 Response::builder()
                     .status(status)
@@ -244,4 +250,32 @@ async fn invalid_namespace_makes_no_request() {
     let inv = read(&client, Some("../secrets?x=1"), now()).await;
     assert_eq!(inv.discovery, Coverage::Failed);
     assert!(calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn topology_uses_reported_roles_and_never_guesses_replication_health() {
+    let db=serde_json::from_value::<cnpg::Cluster>(json!({"metadata":metadata("db"),"status":{"currentPrimary":"orders-1","instancesStatus":{"healthy":["orders-1","orders-2","orders-3"]},"instancesReportedState":{"orders-1":{"isPrimary":true},"orders-2":{"isPrimary":false}}}})).unwrap().project().unwrap();
+    assert_eq!(db.instances[0].role, Fact::Known(Role::Primary));
+    assert_eq!(db.instances[1].role, Fact::Known(Role::Replica));
+    assert_eq!(db.instances[2].role, Fact::Unknown);
+    assert!(
+        db.instances
+            .iter()
+            .all(|instance| instance.replication == Fact::Unknown)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_kind_timeout_does_not_turn_other_successful_reads_into_unknown() {
+    let (client, _) = client("timeout");
+    let inv = read(&client, Some("shop"), now()).await;
+    assert_eq!(inv.backups.coverage, Coverage::TimedOut);
+    assert_eq!(inv.databases.coverage, Coverage::Complete);
+}
+#[tokio::test]
+async fn a_server_ignoring_the_page_size_cannot_make_an_unbounded_inventory() {
+    let (client, _) = client("oversized");
+    let inv = read(&client, Some("shop"), now()).await;
+    assert_eq!(inv.backups.coverage, Coverage::Partial);
+    assert_eq!(inv.backups.items.len(), 200);
 }

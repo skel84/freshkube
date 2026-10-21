@@ -108,6 +108,7 @@ struct ClusterStatus {
     target_primary: Option<String>,
     phase: Option<String>,
     instances_status: Option<BTreeMap<String, Vec<String>>>,
+    instances_reported_state: Option<BTreeMap<String, ReportedInstance>>,
     conditions: Option<Vec<RawCondition>>,
 }
 #[derive(Default, Deserialize)]
@@ -120,6 +121,11 @@ struct RawCondition {
     last_transition_time: Option<String>,
     observed_generation: Option<i64>,
 }
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct ReportedInstance {
+    is_primary: Option<bool>,
+}
 impl Cluster {
     pub(super) fn project(self) -> Option<Database> {
         let meta = self.metadata?;
@@ -127,21 +133,33 @@ impl Cluster {
         let spec = self.spec.unwrap_or_default();
         let status = self.status.unwrap_or_default();
         let current_primary = named(status.current_primary);
-        let instances = status
+        let mut states: BTreeMap<String, Fact<String>> = status
             .instances_status
             .unwrap_or_default()
             .into_iter()
-            .flat_map(|(state, names)| names.into_iter().map(move |name| (state.clone(), name)))
-            .map(|(state, name)| {
-                let role = if current_primary.known() == Some(&name) {
-                    Fact::Known(Role::Primary)
-                } else {
-                    Fact::Unknown
+            .flat_map(|(state, names)| {
+                names
+                    .into_iter()
+                    .map(move |name| (name, Fact::Known(state.clone())))
+            })
+            .collect();
+        let reported = status.instances_reported_state.unwrap_or_default();
+        for name in reported.keys() {
+            states.entry(name.clone()).or_insert(Fact::Unknown);
+        }
+        let instances = states
+            .into_iter()
+            .map(|(name, state)| {
+                let role = match reported.get(&name).and_then(|instance| instance.is_primary) {
+                    Some(true) => Fact::Known(Role::Primary),
+                    Some(false) => Fact::Known(Role::Replica),
+                    None if current_primary.known() == Some(&name) => Fact::Known(Role::Primary),
+                    None => Fact::Unknown,
                 };
                 Instance {
                     name,
                     role,
-                    state: Fact::Known(state),
+                    state,
                     replication: Fact::Unknown,
                 }
             })
