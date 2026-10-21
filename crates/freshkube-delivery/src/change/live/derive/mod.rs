@@ -158,7 +158,13 @@ pub fn derive(
         hops.push(hop);
     }
     if let Some(why) = evidence.kargo.stages.why_not_read() {
-        let mut unread = unread_stages(&sides, &why);
+        let cause = join::unread(
+            &evidence.kargo.stages,
+            join::STAGES,
+            Some(&freight.project),
+            "the project's Stages, to show where the Freight went",
+        );
+        let mut unread = unread_stages(&sides, &why, cause);
         unread.after = Some("freight".into());
         hops.push(unread);
     }
@@ -728,6 +734,7 @@ fn link_detail(link: &Link) -> LinkDetail {
         _ => says(&before),
     };
     LinkDetail {
+        cause: link.cause.clone(),
         confidence: link.confidence,
         by: key_word(&link.key).into(),
         before: sentence(link.from.word()).trim_end_matches('.').into(),
@@ -1042,6 +1049,7 @@ fn link_hop(
         body: sentence(&link.reason),
     });
     let mut hop = Hop {
+        cause: link.cause.clone(),
         key,
         group,
         state,
@@ -1152,6 +1160,9 @@ fn build_hops(
 ) -> Vec<Hop> {
     let Some(trail) = trail else {
         return vec![Hop {
+            cause: Some(Cause::not_found(
+                "a commit or an image digest on the Freight",
+            )),
             key: "build".into(),
             group: 0,
             state: Unknown,
@@ -1279,6 +1290,7 @@ fn freight_hop(
         .clone()
         .unwrap_or_else(|| freight.name.clone());
     Hop {
+        cause: into.and_then(|link| link.cause.clone()),
         key: "freight".into(),
         group: 1,
         state,
@@ -1337,9 +1349,10 @@ fn freight_hop(
 }
 
 /// The row that says the project's Stages weren't read, so none is shown.
-fn unread_stages(sides: &Sides, why: &str) -> Hop {
+fn unread_stages(sides: &Sides, why: &str, cause: Option<Cause>) -> Hop {
     let body = sentence(&format!("The project's Stages weren't read: {why}"));
     Hop {
+        cause,
         key: "stages".into(),
         group: 1,
         state: Unknown,
@@ -1411,6 +1424,7 @@ fn unjoined(evidence: &Evidence, freight: &Freight, entry: &str) -> String {
 
 fn gate_hop(sides: &Sides, stage: &str, group: usize, ix: usize, gate: &str, row: &Row) -> Hop {
     Hop {
+        cause: row.cause.clone(),
         key: format!("{stage}-{}", gate.to_lowercase()),
         group,
         state: row.state,
@@ -1431,6 +1445,8 @@ struct Away<'a> {
     /// Why it wasn't read, when its entry was asked; else nothing asked it,
     /// as the workspace of one asks no other entry.
     why: Option<&'a str>,
+    /// Whether `why` is a refusal, which reading again does not mend.
+    refused: bool,
 }
 
 /// The workload kinds Argo CD may report for an Application, by group.

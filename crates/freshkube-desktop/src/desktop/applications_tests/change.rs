@@ -216,7 +216,7 @@ fn hops_come_in_travel_order_with_fine_stages_folded(cx: &mut TestAppContext) {
         );
         assert_eq!(
             window.find("change-hop-prod-ams-pods-link").label(),
-            Some("Unknown")
+            Some("Can't read")
         );
         // A gate has no link: it isn't joined to anything.
         assert!(
@@ -517,7 +517,7 @@ fn a_hop_shows_its_link_and_a_gate_its_stage(cx: &mut TestAppContext) {
             .label()
             .unwrap()
             .to_owned();
-        assert!(link.starts_with("Unknown"), "{link}");
+        assert!(link.starts_with("Can't read"), "{link}");
     })
     .unwrap();
 }
@@ -1385,6 +1385,7 @@ fn detail_keeps_its_room_beside_the_inspector(cx: &mut TestAppContext) {
 /// inside the cell's padding, at the default text size and the largest.
 #[gpui_kit::test]
 fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
+    use freshkube_delivery::change::{Cause, SettingsField};
     use freshkube_delivery::join::Confidence;
     use freshkube_ui::table::{CELL_PAD, TableColumn as _};
     use gpui_kit::{TextRun, font};
@@ -1403,12 +1404,32 @@ fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
             }
             window.render_frame(cx);
             let room = crate::ui::dp_px(link - 2. * CELL_PAD, window);
-            for confidence in [
+            // The three confidences, and the four causes that stand in for
+            // Unknown, each with its glyph.
+            let causes = [
+                Cause::waiting(""),
+                Cause::cant_read("", None, false),
+                Cause::not_set_up("", SettingsField::STAGE_NAMING),
+                Cause::not_found(""),
+            ];
+            let words = [
                 Confidence::Confirmed,
                 Confidence::Claimed,
                 Confidence::Unknown,
-            ] {
-                let word = crate::applications::testing::change::link_word(confidence);
+            ]
+            .map(|confidence| {
+                (
+                    crate::applications::testing::change::link_word(confidence),
+                    confidence,
+                )
+            })
+            .into_iter()
+            .chain(
+                causes
+                    .iter()
+                    .map(|cause| (cause.word(), Confidence::Unknown)),
+            );
+            for (word, confidence) in words {
                 let run = TextRun {
                     len: word.len(),
                     font: font(".SystemUIFont"),

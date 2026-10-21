@@ -343,6 +343,7 @@ mod tests {
             ("github-limited", Variant::GitHubLimited),
             ("github-refused", Variant::GitHubRefused),
             ("github-offline", Variant::GitHubOffline),
+            ("causes", Variant::Causes),
         ] {
             assert_eq!(
                 parse(&[("FRESHKUBE_APPLICATIONS", value)]).applications,
