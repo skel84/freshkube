@@ -116,6 +116,7 @@ gpui_kit::actions!(
         ShowNamespaces,
         ShowEvents,
         ShowHealth,
+        ShowDatabases,
         ShowEtcd,
         ShowSystemServices,
         ShowSecurity,

@@ -3,8 +3,9 @@
 //! owns once; what needs other shell state stays on `Pilot`.
 use super::*;
 use crate::desktop::{
-    MENU_BAR_ONLY, NextScreen, PreviousScreen, ShowEtcd, ShowEvents, ShowHealth, ShowLifecycle,
-    ShowNamespaces, ShowNodes, ShowOverview, ShowSecurity, ShowSystemServices, ToggleColumn,
+    MENU_BAR_ONLY, NextScreen, PreviousScreen, ShowDatabases, ShowEtcd, ShowEvents, ShowHealth,
+    ShowLifecycle, ShowNamespaces, ShowNodes, ShowOverview, ShowSecurity, ShowSystemServices,
+    ToggleColumn,
 };
 use crate::navigation_file::NavigationFile;
 use freshkube_core::resources::{ResourceKind, builtin};
@@ -172,6 +173,7 @@ impl Navigation {
             // Between Events and Health, which has no row of its own.
             Page::Monitoring | Page::Observability | Page::Applications | Page::Settings => 3,
             Page::Health => 4,
+            Page::Databases => 5,
             Page::Resources => 5,
             Page::Etcd => 6,
             Page::SystemServices => 7,
@@ -246,6 +248,11 @@ impl Navigation {
                 Some(freshkube_ui::page::SHELL_CONTEXT),
             ),
             KeyBinding::new(
+                "secondary-shift-d",
+                ShowDatabases,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
                 "secondary-5",
                 ShowHealth,
                 Some(freshkube_ui::page::SHELL_CONTEXT),
@@ -306,6 +313,9 @@ impl Navigation {
         .on_action(
             cx.listener(|view, _: &ShowEvents, window, cx| view.open_builtin("events", window, cx)),
         )
+        .on_action(cx.listener(|view, _: &ShowDatabases, window, cx| {
+            view.show_page(Page::Databases, window, cx)
+        }))
         .on_action(
             cx.listener(|view, _: &ShowHealth, window, cx| {
                 view.show_page(Page::Health, window, cx)

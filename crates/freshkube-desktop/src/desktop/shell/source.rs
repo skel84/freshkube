@@ -138,6 +138,9 @@ impl Pilot {
         if slug == "workloads" {
             lines.push(self.page_line(Page::Health, Some("5")).into());
         }
+        if slug == "storage" {
+            lines.push(self.page_line(Page::Databases, None).into());
+        }
         let first_kind = lines.len();
         lines.extend(group.items.iter().map(|(label, key)| {
             let row = Row::new(ColumnKey::Kind(key), format!("nav-k8s-{key}"), *label)

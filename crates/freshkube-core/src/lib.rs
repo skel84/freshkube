@@ -33,6 +33,8 @@ pub mod diagnostics;
 pub mod errors;
 pub mod example;
 pub mod failure;
+#[cfg(any(test, feature = "testing"))]
+pub mod fake_api;
 pub mod formatting;
 pub mod indicators;
 pub mod inspection;
@@ -73,3 +75,5 @@ pub use types::*;
 // Use freshkube_core::network::* explicitly
 
 pub mod kubernetes_summary;
+
+pub mod databases;

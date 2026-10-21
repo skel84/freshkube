@@ -1,1 +1,0 @@
-- **Build namespaces:** `delivery.build_namespace` accepts `{project}` templates for each change's Kargo project; invalid resolved names refuse only that change's build reads, with a reason.

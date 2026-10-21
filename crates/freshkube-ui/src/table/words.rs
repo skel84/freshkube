@@ -235,7 +235,12 @@ impl Element for WordCut {
         // it was cut for less room than they give. A flex parent sizes the
         // cell to the measured line, a little under the width it was cut
         // for: that line still fits and keeps its words.
-        let width = bounds.size.width;
+        // A horizontally scrolled column can extend beyond the table's
+        // viewport. End the text at the visible edge, not behind its mask.
+        let width = bounds
+            .size
+            .width
+            .min((window.content_mask().bounds.right() - bounds.left()).max(px(0.)));
         let fits = cut.shaped.as_ref().is_some_and(|(cut_for, line)| {
             *cut_for == Some(width)
                 || (line.width() <= width
@@ -414,6 +419,49 @@ mod tests {
             })
             .unwrap();
         }
+    }
+
+    struct ClippedCell(Pixels);
+    impl Render for ClippedCell {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(self.0).overflow_hidden().child(
+                div()
+                    .flex()
+                    .w(px(600.))
+                    .child(word_cut("clipped-cell", "Cluster missing (or replaced)")),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn text_ends_with_ellipsis_at_the_visible_viewport_edge(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+        });
+        let mut view = None;
+        let window = cx.open_window(size(px(800.), px(100.)), |window, cx| {
+            let cell = cx.new(|_| ClippedCell(px(95.)));
+            view = Some(cell.clone());
+            Root::new(cell, window, cx)
+        });
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let cut = shown_style("clipped-cell").unwrap();
+            assert!(cut.text.ends_with(ELLIPSIS), "{:?}", cut.text);
+            assert_ne!(cut.text.as_ref(), "Cluster missing (or replaced)");
+            view.as_ref().unwrap().update(cx, |view, cx| {
+                view.0 = px(600.);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                shown_style("clipped-cell").unwrap().text.as_ref(),
+                "Cluster missing (or replaced)"
+            );
+        })
+        .unwrap();
     }
 
     #[test]
