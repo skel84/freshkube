@@ -61,8 +61,8 @@ pub fn columns() -> Vec<Column> {
     };
     vec![
         column(Field::Glyph, "", kit::GLYPH_WIDTH),
-        column(Field::Hop, "Hop", 176.),
-        column(Field::Link, "Link", 96.),
+        column(Field::Hop, "Hop", 162.),
+        column(Field::Link, "Link", 112.),
         column(Field::Detail, "Detail", 240.),
         column(Field::Time, "Time", 64.),
         column(Field::From, "Read from", 136.),
