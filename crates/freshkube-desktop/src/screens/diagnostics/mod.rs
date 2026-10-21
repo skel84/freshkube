@@ -290,6 +290,7 @@ pub(crate) struct DiagnosticsScreen {
     table: table::TableState,
     /// The rows, tallies and meta parts, derived from the loader's data.
     derived: Option<Derived>,
+    _protection: Subscription,
 }
 
 impl EventEmitter<ScreenEvent> for DiagnosticsScreen {}
@@ -315,6 +316,8 @@ impl DiagnosticsScreen {
             loading: TableLoading::new(PREFIX, cx),
             table: table::TableState::new("diagnostic"),
             derived: None,
+            // Apply fix turns off at once when the cluster becomes read-only.
+            _protection: cx.observe_global::<mutation::GlobalProtection>(|_, cx| cx.notify()),
         }
     }
 }

@@ -171,6 +171,7 @@ The forward token's key-store account is `Tekton Results forward://<namespace>/<
 - **An unknown value** (another word, a number, a list, an empty string) skips that entry, like an unknown `role`, with the warning `skipped clusters[1] (cluster-b): protection: is unknown; use read-only, protected, guarded or open; its context is read-only until fixed`. The value is never repeated. A strict read (a Settings save, a migration) refuses the file the same way.
 - **A skipped entry's context keeps its level.** The entry is not in the workspace, so without this its context could be opened from the switcher as a context outside the workspace, which is `guarded`: a typo in `protected` would loosen the cluster. While the row stays skipped, its context is `read-only` when its `protection` is unknown, and keeps `read-only` or `protected` when the row set one and was skipped for another fault. An unset, `guarded` or `open` row locks nothing, and neither does a row whose context can't be read.
 - **Two entries on one context:** the stricter level wins: `read-only`, then `protected`, `guarded`, `open`.
+- **What `read-only` refuses today:** a shell's Start, Operations, a service's Restart and Diagnostics' Apply fix ([WRITE_MODEL.md](WRITE_MODEL.md#what-is-enforced-today)). Maintenance mode is not governed by the level: it isn't tied to a cluster entry, since it works on a node that has no cluster yet.
 - **A hand-edited value** is read as written, and a read never rewrites the file.
 
 ## What stays out
