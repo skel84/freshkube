@@ -48,6 +48,10 @@ pub use types::{AVATAR_HOST, AvatarUrl, Person, PullState, PullSummary, Reviewer
 
 /// The keys.json account of the token, normalized as Results' is.
 pub const ACCOUNT: &str = "GitHub https://api.github.com/";
+/// How long a caller that runs [`Handle::open`] should give it: longer than
+/// `gh`'s own deadline, so a `gh` that hangs is stopped by that deadline and
+/// worded as gh being slow, never cut off first by the caller's.
+pub const OPEN_DEADLINE: Duration = Duration::from_secs(gh::DEADLINE.as_secs() + 5);
 /// What the identity calls a token that `gh` gave.
 pub const GH_ACCOUNT: &str = "gh";
 const API: &str = "https://api.github.com/";
@@ -123,17 +127,26 @@ impl Client {
         secrets: Option<Secrets>,
         setup_revision: u64,
     ) -> Result<Self, Error> {
-        Self::open_with(source, secrets, setup_revision, &gh::default_dirs()).await
+        Self::open_with(
+            source,
+            secrets,
+            setup_revision,
+            &gh::default_dirs(),
+            gh::DEADLINE,
+        )
+        .await
     }
 
-    /// [`open`](Self::open), looking for `gh` in `dirs`.
+    /// [`open`](Self::open), looking for `gh` in `dirs` and giving it
+    /// `gh_deadline`.
     async fn open_with(
         source: GitHubToken,
         secrets: Option<Secrets>,
         setup_revision: u64,
         dirs: &[std::path::PathBuf],
+        gh_deadline: Duration,
     ) -> Result<Self, Error> {
-        let token = Self::token_of(source, secrets, dirs).await?;
+        let token = Self::token_of(source, secrets, dirs, gh_deadline).await?;
         let api = Url::parse(API).map_err(|_| Error::Unreadable("the API address"))?;
         Self::build(
             reqwest::Client::builder(),
@@ -148,9 +161,10 @@ impl Client {
         source: GitHubToken,
         secrets: Option<Secrets>,
         dirs: &[std::path::PathBuf],
+        gh_deadline: Duration,
     ) -> Result<String, Error> {
         Ok(match source {
-            GitHubToken::Gh => gh::token(dirs, gh::DEADLINE).await?,
+            GitHubToken::Gh => gh::token(dirs, gh_deadline).await?,
             GitHubToken::KeysJson => {
                 let read = tokio::task::spawn_blocking(move || {
                     secrets

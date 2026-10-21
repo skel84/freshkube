@@ -82,9 +82,7 @@ use freshkube_ui::ui;
 
 use freshkube_core::job::OwnedJob;
 use freshkube_delivery::change::live::Mapping;
-use freshkube_delivery::github::{
-    Error as GitHubError, Handle as GitHubHandle, NotSetUp as GitHubNotSetUp,
-};
+use freshkube_delivery::github::{Error as GitHubError, Handle as GitHubHandle, OPEN_DEADLINE};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -129,8 +127,6 @@ pub const FRESH_FOR: Duration = Duration::from_secs(30);
 const ON_SHOW: OnShow = OnShow::ReadIfOlder(FRESH_FOR);
 /// How long one cluster's read may take: up to a few hundred lists.
 const DEADLINE: Duration = Duration::from_secs(60);
-/// How long the key store may take to give GitHub's token.
-const GITHUB_OPEN_DEADLINE: Duration = Duration::from_secs(10);
 
 gpui_kit::actions!(
     applications,
@@ -672,16 +668,17 @@ impl ApplicationsPage {
         };
         self.github = None;
         let secrets = self.secrets.clone();
+        // Longer than `gh`'s own deadline, so a `gh` that hangs is stopped
+        // by that and worded as gh being slow; this only backs it up.
+        let gave_up = GitHubError::not_had(source);
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
-            GITHUB_OPEN_DEADLINE,
-            GitHubError::NotSetUp(GitHubNotSetUp::KeysUnavailable),
+            OPEN_DEADLINE,
+            gave_up.clone(),
             GitHubHandle::open(source, secrets, revision),
         );
         let task = cx.spawn(async move |this, cx| {
-            let opened = receiver
-                .await
-                .unwrap_or(Err(GitHubError::NotSetUp(GitHubNotSetUp::KeysUnavailable)));
+            let opened = receiver.await.unwrap_or(Err(gave_up));
             _ = this.update(cx, |page, cx| page.github_opened(revision, opened, cx));
         });
         self.github_open = Some((job, task));
