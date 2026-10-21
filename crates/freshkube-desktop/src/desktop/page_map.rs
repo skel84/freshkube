@@ -421,6 +421,7 @@ mod tests {
                         evidence_result: None,
                         build_namespace: None,
                         stage_naming: None,
+                        github: None,
                     }),
                 };
             });
