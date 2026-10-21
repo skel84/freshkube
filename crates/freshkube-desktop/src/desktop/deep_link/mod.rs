@@ -31,13 +31,20 @@ pub(super) struct State {
     shape: Option<LinkShape>,
     /// What is known of each cluster's identity, and the dialog that asks.
     identities: cluster::Identities,
+    /// Links from the operating system or the command line, waiting for the
+    /// window to have a cluster to read.
+    waiting: Vec<String>,
 }
+
+/// The most links held while the window has no cluster yet.
+const WAITING_LIMIT: usize = 4;
 
 impl State {
     pub(super) fn new(shape: Option<LinkShape>, preferences: Option<&std::path::Path>) -> Self {
         Self {
             shape,
             identities: cluster::Identities::open(preferences),
+            waiting: Vec::new(),
         }
     }
 }
@@ -234,6 +241,36 @@ impl Pilot {
             window,
             cx,
         );
+    }
+
+    /// Opens a link the operating system or the command line gave: at once
+    /// when the window has a cluster to read (example data always has), else
+    /// once it does.
+    pub(in crate::desktop) fn open_external_link(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode().is_example() || self.source().kube.is_some() {
+            self.open_link_text(&text, window, cx);
+        } else if self.deep_link.waiting.len() < WAITING_LIMIT {
+            self.deep_link.waiting.push(text);
+        }
+    }
+
+    /// Opens the links that waited for a cluster, once the window has one.
+    pub(in crate::desktop) fn open_waiting_links(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.deep_link.waiting.is_empty() || self.source().kube.is_none() {
+            return;
+        }
+        for text in std::mem::take(&mut self.deep_link.waiting) {
+            self.open_link_text(&text, window, cx);
+        }
     }
 
     /// Opens a link given as text: a click, a paste or the command line. A

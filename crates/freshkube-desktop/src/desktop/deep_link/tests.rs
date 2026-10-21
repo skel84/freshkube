@@ -618,3 +618,60 @@ fn an_attention_rows_copy_link_names_where_open_goes(cx: &mut TestAppContext) {
     cx.read(|cx| assert_ne!(view.read(cx).navigation.page, Page::Etcd));
     assert_eq!(notices.borrow().len(), 3);
 }
+
+#[gpui_kit::test]
+fn a_link_given_at_launch_opens_once_the_window_is_up(cx: &mut TestAppContext) {
+    let options = GpuiOptions::fixture().with_open_link(Some("freshkube://open?page=etcd".into()));
+    let (_runtime, _handle, view) = mount(cx, options, 1280., 820.);
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(view.read(cx).navigation.page, Page::Etcd));
+}
+
+#[gpui_kit::test]
+fn links_the_system_opens_us_with_open_as_they_arrive(cx: &mut TestAppContext) {
+    let (sender, receiver) = futures::channel::mpsc::unbounded::<String>();
+    // One that came before the window did waits in the channel.
+    sender
+        .unbounded_send("freshkube://open?page=health".into())
+        .unwrap();
+    let (_runtime, _handle, view) =
+        mount(cx, GpuiOptions::fixture().with_urls(receiver), 1280., 820.);
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(view.read(cx).navigation.page, Page::Health));
+    sender
+        .unbounded_send("freshkube://open?page=etcd".into())
+        .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(view.read(cx).navigation.page, Page::Etcd));
+    // A bad one says so and moves nothing.
+    let notices = record_notices(cx, &view);
+    sender
+        .unbounded_send("freshkube://open?page=settings".into())
+        .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(view.read(cx).navigation.page, Page::Etcd));
+    assert_eq!(notices.borrow().len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_link_waits_for_a_cluster_to_read_and_only_so_many_wait(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let options = GpuiOptions::new(Some(directory.path().join("missing")), None, 100)
+        .with_preferences(Some(directory.path().join("preferences.json")));
+    let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+    cx.read(|cx| assert!(view.read(cx).source().kube.is_none()));
+    for _ in 0..6 {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.open_external_link("freshkube://open?page=etcd".into(), window, cx)
+            })
+        })
+        .unwrap();
+    }
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.deep_link.waiting.len(), 4);
+        assert_ne!(pilot.navigation.page, Page::Etcd);
+    });
+}

@@ -22,7 +22,9 @@ One directory, `Freshkube-<version>-<target>/`, with:
 
 Fonts, themes and icons are embedded in the executable. The Linux tarball adds:
 - `RUNTIME-PACKAGES.txt`, the shared libraries it needs as Ubuntu/Debian package names;
-- a `freshkube.desktop` entry that runs `freshkube` from `PATH`.
+- a `freshkube.desktop` entry that runs `freshkube %u` from `PATH` and claims `x-scheme-handler/freshkube`, for [deep links](features/deep-links.md#opening-from-the-system).
+
+The Windows zip adds `freshkube-url-handler.reg`, a template that registers `freshkube://` for the current user.
 
 Next to each archive are a `.sha256` and a `.json` manifest with:
 - the version, target and source commit (clean);
@@ -124,13 +126,17 @@ sudo apt-get install $(grep -v '^#' Freshkube-<version>-x86_64-unknown-linux-gnu
 ```
 
 GPUI draws on X11 or Wayland through Vulkan or OpenGL. Remembered keys go to
-the Secret Service (GNOME Keyring, KWallet).
+the Secret Service (GNOME Keyring, KWallet). The tarball isn't installed, so to
+open `freshkube://` links with it, put `freshkube` on `PATH`, copy
+`freshkube.desktop` to `~/.local/share/applications/` and run
+`xdg-mime default freshkube.desktop x-scheme-handler/freshkube`.
 
 **Windows:**
 - Check the zip with `Get-FileHash -Algorithm SHA256`, extract it, and run `freshkube.exe`.
 - The executable isn't signed, so SmartScreen may stop the first start: choose
   **More info → Run anyway**.
 - Remembered keys go to Credential Manager.
+- To open `freshkube://` links, edit the path in `freshkube-url-handler.reg` to where `freshkube.exe` is and merge the file. It only adds keys under the current user's `Software\Classes\freshkube`; the app never writes the registry.
 
 ## Before a platform is supported
 

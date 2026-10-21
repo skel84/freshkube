@@ -83,3 +83,14 @@ Close, the list's Escape or opening anything else clears the card. A node the cl
 ## Example data
 
 `--fixture` resolves links against the example rows, so a second fixture instance can open a copied link (`--open-link`). `FRESHKUBE_LINKS` forces an outcome on every link opened (`refused`, `not-found`, `not-served`, `replaced`) or reshapes how the example clusters identify themselves (`several`, `none`, `ca-only`, `unchecked`; [AGENTS.md](../../AGENTS.md)). Each example cluster has its own invented fingerprint and CA (`deep_link/example.rs`), so a link made in one window matches another on the CA alone until that context is checked.
+
+## Opening from the system
+
+Every way in ends at `Pilot::open_external_link`, which parses the text like ⌘K does and waits (at most 4 links) until the window has a Kubernetes source to read; example data always has one.
+
+- **macOS:** the bundle registers `freshkube` in `Info.plist` (`CFBundleURLTypes`), and GPUI's `on_open_urls` delivers each URL into a channel the shell reads (`desktop::run`), so one that starts the app waits there until the window is up.
+- **Linux:** the tarball's `freshkube.desktop` has `Exec=freshkube %u` and `MimeType=x-scheme-handler/freshkube;`. It isn't installed, so the user registers it once with `xdg-mime default freshkube.desktop x-scheme-handler/freshkube` ([PACKAGING.md](../PACKAGING.md)).
+- **Windows:** the zip ships `freshkube-url-handler.reg`, a template for `HKCU\Software\Classes\freshkube` that the user edits and merges. The app never writes the registry.
+- **Command line, all platforms:** `freshkube <url>` or `freshkube --open-link <url>`; with `--fixture` a smoke opens a link in a second example window.
+
+On Linux and Windows a click starts a second process, so the link opens in a new window, in the same way a second launch would. Handing it to the window that is running (a per-user socket or named pipe) is a later change.
