@@ -21,6 +21,7 @@
 mod inspector;
 mod rows;
 mod source;
+mod suggest;
 #[cfg(test)]
 mod tests;
 
@@ -68,6 +69,9 @@ pub(crate) enum Read {
     Workloads,
     SetupFile,
     StageNaming,
+    BuildNamespace,
+    /// The suggested build namespace.
+    BuildSuggestion,
 }
 
 impl Read {
@@ -77,6 +81,8 @@ impl Read {
             Read::Workloads => "workloads",
             Read::SetupFile => "setup-file",
             Read::StageNaming => "stage-naming",
+            Read::BuildNamespace => "build-namespace",
+            Read::BuildSuggestion => "build-suggestion",
         }
     }
 
@@ -86,6 +92,8 @@ impl Read {
             Read::Workloads => "Workloads",
             Read::SetupFile => "Setup file",
             Read::StageNaming => "Naming",
+            Read::BuildNamespace => "Build namespace",
+            Read::BuildSuggestion => "Build namespace",
         }
     }
 }
@@ -124,6 +132,11 @@ pub(crate) struct SourcesList {
     setup_skips: bool,
     /// `delivery.stage_naming` of the setup, shown and never edited here.
     stage_naming: Option<freshkube_core::setup::StageNaming>,
+    /// `delivery.build_namespace` of the setup, shown and never edited here
+    /// but through an accepted suggestion.
+    build_namespace: Option<String>,
+    /// Find suggestions: the findings and the suggestion they make.
+    finder: suggest::Finder,
     columns: Vec<Column>,
     width: f32,
     table: table::TableState,
@@ -165,6 +178,8 @@ impl SourcesList {
             setup_problem: None,
             setup_skips: false,
             stage_naming: None,
+            build_namespace: None,
+            finder: suggest::Finder::new(),
             columns: Vec::new(),
             width: 0.,
             table: table::TableState::new(PREFIX),
@@ -217,6 +232,20 @@ impl SourcesList {
         }
     }
 
+    /// The setup's `delivery.build_namespace`, as the page last read it.
+    pub(super) fn set_build_namespace(
+        &mut self,
+        namespace: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.build_namespace != namespace {
+            self.build_namespace = namespace;
+            self.derive_rows();
+            self.derive_suggestion();
+            cx.notify();
+        }
+    }
+
     /// Takes a new workspace from the page: resolves where each part is
     /// read, and forgets a check of the old one.
     pub(super) fn set_recovered_workspace(
@@ -231,7 +260,9 @@ impl SourcesList {
         self.kubeconfig = workspace.kubeconfig.clone();
         self.example = example;
         self.forget();
+        self.follow_findings();
         self.derive_rows();
+        self.derive_suggestion();
         self.publish_status(cx);
         cx.notify();
     }
@@ -260,6 +291,7 @@ impl SourcesList {
     /// Not checked when the page shows again; a finished one is kept.
     pub(in crate::desktop) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.read.set_visible(visible, OnShow::Never, cx);
+        self.set_finder_visible(visible, cx);
         if !visible && self.check == Check::Running {
             self.forget();
             self.derive_rows();
@@ -441,6 +473,7 @@ impl SourcesList {
         let page = self.page.clone();
         let checked = self.checked_at.clone();
         let running = self.check == Check::Running;
+        let found = self.finder_status();
         cx.defer(move |cx| {
             _ = page.update(cx, |page, cx| {
                 let mut parts = vec![status::Part::new("Delivery sources")];
@@ -450,6 +483,7 @@ impl SourcesList {
                 if running {
                     parts.push(status::Part::new("Reading sources"));
                 }
+                parts.extend(found);
                 page.sources_status = status::Segment::new(None::<SharedString>, parts);
                 cx.notify();
             });
@@ -485,8 +519,16 @@ impl SourcesList {
             menu::MenuAction::new("Check sources", CheckSources).enabled(!running),
             &self.focus,
         );
+        let [
+            (find, find_fold),
+            (accept, accept_fold),
+            (ignore, ignore_fold),
+        ] = self.render_suggest_actions(cx);
         page::PageHeader::new(PREFIX, "Delivery sources")
             .foldable(button, fold)
+            .foldable(find, find_fold)
+            .foldable(accept, accept_fold)
+            .foldable(ignore, ignore_fold)
             .render(window, cx)
     }
 
@@ -573,6 +615,27 @@ impl Render for SourcesList {
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &CheckSources, _, cx| this.check(cx)))
+            .on_action(cx.listener(|this, _: &suggest::FindBuilds, _, cx| {
+                if this.can_find() {
+                    this.find(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &suggest::AcceptBuild, _, cx| {
+                if this.can_accept(cx) {
+                    this.accept(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &suggest::IgnoreBuild, _, cx| {
+                if this.can_ignore() {
+                    this.ignore(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|this, action: &inspector::PinSource, _, cx| {
                 this.pin(action.entry.clone(), cx)
             }))
@@ -587,14 +650,20 @@ impl Render for SourcesList {
             }))
             .child(page::toolbar(cx).child(header))
             .children(banners)
+            .children(self.render_notes(cx))
             .child(split)
     }
 }
 
-/// The list's keys: C checks.
+/// The list's keys: C checks, F finds suggestions; on the suggestion, A and
+/// Enter accept it and Backspace ignores it.
 pub(in crate::desktop) fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("c", CheckSources, Some(CONTEXT)),
+        KeyBinding::new("f", suggest::FindBuilds, Some(CONTEXT)),
+        KeyBinding::new("a", suggest::AcceptBuild, Some(CONTEXT)),
+        KeyBinding::new("enter", suggest::AcceptBuild, Some(CONTEXT)),
+        KeyBinding::new("backspace", suggest::IgnoreBuild, Some(CONTEXT)),
         KeyBinding::new("down", NextSource, Some(CONTEXT)),
         KeyBinding::new("up", PreviousSource, Some(CONTEXT)),
         KeyBinding::new("escape", CloseSource, Some(CONTEXT)),

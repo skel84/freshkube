@@ -38,7 +38,8 @@ impl TableColumn for Column {
     }
 }
 
-pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
+pub(super) fn columns(rows: &[SourceRow], suggested: Option<&SourceRow>) -> (Vec<Column>, f32) {
+    let rows: Vec<&SourceRow> = rows.iter().chain(suggested).collect();
     let column = |field, label: &str, width| Column {
         field,
         label: label.to_owned().into(),
@@ -47,7 +48,7 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
     };
     let mut columns = vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
-        column(Field::Part, "Part", 96.),
+        column(Field::Part, "Part", 120.),
         column(
             Field::Entry,
             "Entry",
@@ -141,11 +142,18 @@ impl TableSource for SourcesList {
     fn sort(&mut self, _: (), _: &mut Context<Self>) {}
 
     fn line_count(&self) -> usize {
-        self.rows.len()
+        self.rows.len() + if self.finder.shows_group() { 2 } else { 0 }
     }
 
+    /// The parts, then the suggestion's group and its row.
     fn line(&self, line: usize, _: &App) -> Option<Line<Read, &SourceRow>> {
-        let row = self.rows.get(line)?;
+        let shown = self.finder.shows_group();
+        let row = match line.checked_sub(self.rows.len()) {
+            None => &self.rows[line],
+            Some(0) if shown => return Some(Line::Group(0)),
+            Some(1) if shown => self.finder.row.as_ref()?,
+            Some(_) => return None,
+        };
         Some(Line::Row(TableRow {
             key: row.read,
             id: row.id.clone().into(),
@@ -218,8 +226,10 @@ impl TableSource for SourcesList {
         }
     }
 
-    fn group(&self, _: usize, _: &mut Context<Self>) -> Option<AnyElement> {
-        None
+    fn group(&self, _: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.finder
+            .shows_group()
+            .then(|| self.render_suggested_group(cx))
     }
 
     fn selected_key(&self) -> Option<&Read> {
@@ -227,7 +237,10 @@ impl TableSource for SourcesList {
     }
 
     fn line_of(&self, key: &Read) -> Option<usize> {
-        self.rows.iter().position(|row| &row.read == key)
+        if let Some(at) = self.rows.iter().position(|row| &row.read == key) {
+            return Some(at);
+        }
+        (self.finder.row.as_ref()?.read == *key).then_some(self.rows.len() + 1)
     }
 
     fn click(&mut self, key: &Read, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -258,6 +271,14 @@ impl TableSource for SourcesList {
             menu::MenuAction::new("Check sources", CheckSources)
                 .enabled(self.check != Check::Running),
         ];
+        if *key == Read::BuildSuggestion {
+            actions.push(menu::MenuAction::Separator);
+            actions.push(
+                menu::MenuAction::new("Accept", suggest::AcceptBuild)
+                    .enabled(self.editable(cx) && self.finder.accept.is_some()),
+            );
+            actions.push(menu::MenuAction::new("Ignore", suggest::IgnoreBuild));
+        }
         if matches!(key, Read::Part(_)) {
             actions.push(menu::MenuAction::Separator);
             actions.push(
@@ -266,6 +287,10 @@ impl TableSource for SourcesList {
             );
             actions.push(self.follow_roles(cx));
         }
+        actions.push(
+            menu::MenuAction::new("Find suggestions", suggest::FindBuilds)
+                .enabled(!self.finder.read.is_loading()),
+        );
         actions
     }
 

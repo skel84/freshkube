@@ -20,8 +20,9 @@ use crate::{
     monitoring::page::MonitoringPage,
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
-        DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen, OperationsScreen,
-        ProcessesScreen, ScreenHandle, ScreenPanel, SecurityScreen, StorageScreen, WorkloadsScreen,
+        DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen,
+        OperationsScreen, ProcessesScreen, ScreenHandle, ScreenPanel, SecurityScreen,
+        StorageScreen, WorkloadsScreen,
     },
 };
 
@@ -74,6 +75,17 @@ impl Pages {
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
+                    PageId::Databases => {
+                        let shape = options.debug.databases.clone();
+                        screen(
+                            move |runtime, window, cx| {
+                                DatabasesScreen::new(runtime, window, cx).with_example(shape)
+                            },
+                            runtime,
+                            window,
+                            cx,
+                        )
+                    }
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
                     PageId::Network => screen(NetworkScreen::new, runtime, window, cx),
@@ -93,7 +105,7 @@ impl Pages {
                     PageId::Security => screen(SecurityScreen::new, runtime, window, cx),
                     PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
                     PageId::Operations => screen(OperationsScreen::new, runtime, window, cx),
-                    _ => unreachable!("SCREENS holds the Talos screens alone"),
+                    _ => unreachable!("SCREENS holds the retained inspection screens"),
                 };
                 (page, handle)
             })

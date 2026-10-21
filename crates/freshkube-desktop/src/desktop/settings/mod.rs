@@ -236,8 +236,14 @@ impl SettingsPage {
                     .delivery
                     .as_ref()
                     .and_then(|delivery| delivery.stage_naming.clone());
-                self.sources
-                    .update(cx, |sources, cx| sources.set_stage_naming(naming, cx));
+                let build_namespace = setup
+                    .delivery
+                    .as_ref()
+                    .and_then(|delivery| delivery.build_namespace.clone());
+                self.sources.update(cx, |sources, cx| {
+                    sources.set_stage_naming(naming, cx);
+                    sources.set_build_namespace(build_namespace, cx);
+                });
                 if !self.uses_setup
                     || self.workspace != setup.workspace
                     || self.source_recovery != source_recovery
