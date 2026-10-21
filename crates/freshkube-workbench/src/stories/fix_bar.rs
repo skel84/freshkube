@@ -47,7 +47,7 @@ impl Case {
     /// The room the bar has, in dp.
     fn room(self) -> f32 {
         match self {
-            Self::Narrow => 520.,
+            Self::Narrow => 450.,
             _ => 1100.,
         }
     }
