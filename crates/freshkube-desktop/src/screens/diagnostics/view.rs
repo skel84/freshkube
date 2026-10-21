@@ -30,7 +30,10 @@ impl DiagnosticsScreen {
             .as_ref()
             .filter(|notice| notice.key == check_key)
             .map(|notice| (notice.ok, notice.text.clone()));
-        let fix_blocked = Operations::current(cx).map(|running| running.label.to_string());
+        // A read-only cluster refuses before anything else is asked (#852).
+        let fix_blocked = mutation::refusal(cx).map(String::from).or_else(|| {
+            Operations::current(cx).map(|running| format!("{} is still running", running.label))
+        });
         let evidence = check.details.clone().filter(|text| !text.trim().is_empty());
         let message = check.message.clone();
         panel(cx)
@@ -154,9 +157,7 @@ impl DiagnosticsScreen {
                                         .icon(IconName::Wrench)
                                         .label("Apply fix")
                                         .disabled(fix_blocked.is_some())
-                                        .when_some(fix_blocked, |this, label| {
-                                            this.tooltip(format!("{label} is still running"))
-                                        })
+                                        .when_some(fix_blocked, |this, why| this.tooltip(why))
                                         .on_click(cx.listener(move |view, _, window, cx| {
                                             view.confirm_fix(check_key.clone(), window, cx)
                                         })),

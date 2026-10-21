@@ -465,7 +465,11 @@ impl OperationsScreen {
                     .into_any_element()
             }
         };
-        let blocked = blocked_reason(&self.preview, kind);
+        // A read-only cluster refuses before anything else is asked (#852).
+        let refusal = mutation::refusal(cx);
+        let blocked = refusal
+            .map(String::from)
+            .or_else(|| blocked_reason(&self.preview, kind));
         let busy = Operations::current(cx);
         let can_review = blocked.is_none() && busy.is_none();
         let danger = matches!(
@@ -510,9 +514,12 @@ impl OperationsScreen {
                     .py_3()
                     .border_t_1()
                     .border_color(p.line)
-                    .children((count > 0).then(|| {
+                    .children((count > 0 || refusal.is_some()).then(|| {
                         match &blocked {
-                            Some(reason) if !matches!(self.preview, PreviewState::Loading(_)) => {
+                            Some(reason)
+                                if refusal.is_some()
+                                    || !matches!(self.preview, PreviewState::Loading(_)) =>
+                            {
                                 div()
                                     .id("ops-blocked")
                                     .test_support()

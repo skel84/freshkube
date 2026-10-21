@@ -21,6 +21,9 @@ mod chain;
 mod changes;
 mod detail;
 mod outcome;
+mod pull;
+#[cfg(test)]
+mod pull_tests;
 pub(crate) mod read;
 pub(crate) mod table;
 #[cfg(test)]
@@ -343,6 +346,9 @@ pub struct ChangePage {
     /// A refresh that failed over an earlier answer, and its label for
     /// assistive technology, derived with it.
     stale: Option<(SharedString, SharedString)>,
+    /// The pull request card's read, which only a placeholder row shows
+    /// yet.
+    pull: pull::Card,
     /// What the change may be missing, one sentence each that names the
     /// entry, and its words for assistive technology, derived with the
     /// change.
@@ -421,6 +427,7 @@ impl ChangePage {
             window: window.window_handle(),
             stage: stage.map(str::to_owned),
             stale: None,
+            pull: pull::Card::default(),
             missing: None,
             setup_problem: None,
             loading,

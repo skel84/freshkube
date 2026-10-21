@@ -154,6 +154,8 @@ impl NodeServices {
             cx.observe(&filter, |_, _, cx| cx.notify()),
             // A restart's notice shows under its service, here alone.
             cx.observe_global::<restart::RestartNotices>(|_, cx| cx.notify()),
+            // A level that refuses writes turns Restart off at once (#852).
+            cx.observe_global::<crate::mutation::GlobalProtection>(|_, cx| cx.notify()),
         ];
         let page = cx.weak_entity();
         let on_config: OnConfigAction = Rc::new(move |action, _, cx| {

@@ -735,3 +735,63 @@ fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// A read-only cluster (#852) refuses Apply fix at the slot: the button is
+/// off with the reason, pressing it opens no confirmation, and one that was
+/// already open starts nothing and takes no slot.
+#[gpui_kit::test]
+fn a_read_only_cluster_refuses_apply_fix_and_starts_nothing(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    let level =
+        |cx: &mut TestAppContext, level| cx.update(|cx| crate::mutation::set_protection(level, cx));
+    level(cx, freshkube_core::write::Protection::ReadOnly);
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, _| screen.selected = Some(KUBELET.into()));
+        window.render_frame(cx);
+        assert!(window.find("diagnostic-apply-fix").visible());
+        window.click("diagnostic-apply-fix", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("confirm-dialog").is_none());
+    })
+    .unwrap();
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
+    // A confirmation that was open when the level changed.
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.start_fix(KUBELET.into(), window, cx)
+        });
+    })
+    .unwrap();
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        let screen = screen.read(cx);
+        let notice = screen.notice.as_ref().unwrap();
+        assert!(!notice.ok);
+        assert!(
+            notice.text.contains("This cluster is read-only."),
+            "{}",
+            notice.text
+        );
+        assert!(
+            notice.text.contains("Nothing was started."),
+            "{}",
+            notice.text
+        );
+    });
+    // Guarded again, the same press opens the confirmation.
+    level(cx, freshkube_core::write::Protection::Guarded);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("diagnostic-apply-fix", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find("confirm-dialog").visible());
+    })
+    .unwrap();
+}

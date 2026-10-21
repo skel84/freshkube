@@ -20,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{Entry, Invalid, Role, Workspace};
+use crate::write::Protection;
 
 /// A part of the delivery chain that is read from one entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -81,11 +82,16 @@ impl Part {
     }
 }
 
-/// Recovery information that affects source availability, kept beside Setup.
+/// Recovery information that affects source availability and the level of a
+/// skipped row's context, kept beside Setup.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SourceRecovery {
     pub all_clusters_skipped: bool,
     skipped_roles: Vec<(Part, SkippedRow)>,
+    /// Contexts of skipped rows that set a level stricter than guarded, or a
+    /// value that isn't one, with the level they keep until the file is
+    /// fixed (#852).
+    locked_contexts: Vec<(String, Protection)>,
 }
 
 impl SourceRecovery {
@@ -98,6 +104,29 @@ impl SourceRecovery {
 
     pub(crate) fn skip_role(&mut self, part: Part, row: SkippedRow) {
         self.skipped_roles.push((part, row));
+    }
+
+    pub(crate) fn lock_context(&mut self, context: String, level: Protection) {
+        match self
+            .locked_contexts
+            .iter_mut()
+            .find(|(at, _)| *at == context)
+        {
+            Some((_, kept)) => *kept = kept.stricter(level),
+            None => self.locked_contexts.push((context, level)),
+        }
+    }
+
+    /// The level a skipped row's context keeps. The row is not in the
+    /// workspace, so without this its context would open as one outside the
+    /// workspace, which is guarded: a misspelt `protected`, or a `protected`
+    /// on a row skipped for another fault, would loosen the cluster. A value
+    /// that isn't a level locks it read-only.
+    pub fn locked_level(&self, context: &str) -> Option<Protection> {
+        self.locked_contexts
+            .iter()
+            .find(|(at, _)| at == context)
+            .map(|(_, level)| *level)
     }
 }
 

@@ -1185,7 +1185,7 @@ pub enum Shape {
 
 impl Shape {
     /// What is wrong with the example's GitHub in this shape.
-    fn github(self) -> Option<Trouble> {
+    pub fn github(self) -> Option<Trouble> {
         match self {
             Self::GitHubLimited => Some(Trouble::Limited),
             Self::GitHubRefused => Some(Trouble::Refused),

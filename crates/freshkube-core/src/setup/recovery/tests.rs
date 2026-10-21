@@ -1,5 +1,6 @@
 use super::*;
 use crate::workspace::{Chosen, Part, Sources};
+use crate::write::Protection;
 
 const GOOD: &str = "{id: first, role: core, context: first, future: {keep: true}}";
 const LAST: &str = "{id: last, role: environment, context: last}";
@@ -514,4 +515,88 @@ fn row_recovery_keeps_and_validates_shared_delivery_settings() {
     assert!(
         read(b"version: 1\nclusters: [[]]\ndelivery: {build_namespace: invalid/name}\n").is_err()
     );
+}
+
+fn protection_of(recovered: &Recovered, context: &str) -> Protection {
+    recovered
+        .setup
+        .workspace
+        .level_of(context, &recovered.source_recovery)
+}
+
+#[test]
+fn an_unknown_protection_skips_the_row_with_a_safe_reason_and_locks_its_context() {
+    for value in ["invented-private-marker", "''", "17", "[read-only]", "{}"] {
+        let recovered = recover(&format!(
+            "version: 1\nclusters: [{GOOD}, {{id: skipped, context: skipped-ctx, role: core, protection: {value}}}, {LAST}]\n"
+        ));
+        let warning = &recovered.warnings[0];
+        assert_eq!(warning.field, "protection");
+        assert_eq!(
+            warning.reason,
+            RowReason::UnknownProtection { locked: true }
+        );
+        assert_eq!(recovered.setup.workspace.clusters.len(), 2);
+        assert!(!format!("{warning:?}").contains("invented-private-marker"));
+        assert_eq!(
+            warning.to_string(),
+            "skipped clusters[1] (skipped): protection: is unknown; use read-only, protected, guarded or open; its context is read-only until fixed"
+        );
+        assert_eq!(
+            protection_of(&recovered, "skipped-ctx"),
+            Protection::ReadOnly
+        );
+        // The rest of the workspace is untouched.
+        assert_eq!(protection_of(&recovered, "first"), Protection::Guarded);
+        assert_eq!(protection_of(&recovered, "elsewhere"), Protection::Guarded);
+    }
+}
+
+#[test]
+fn a_row_with_an_unknown_protection_and_no_context_locks_nothing() {
+    let recovered = recover(
+        "version: 1\nclusters: [{id: skipped, role: core, context: '', protection: nope}]\n",
+    );
+    let warning = &recovered.warnings[0];
+    assert_eq!(
+        warning.reason,
+        RowReason::UnknownProtection { locked: false }
+    );
+    assert!(!warning.to_string().contains("read-only until fixed"));
+    assert_eq!(protection_of(&recovered, ""), Protection::Guarded);
+}
+
+#[test]
+fn a_null_protection_is_unset_and_a_known_one_is_read() {
+    let recovered = recover(
+        "version: 1\nclusters: [{id: a, role: core, context: a, protection: null}, {id: b, role: cicd, context: b, protection: read-only}, {id: c, role: environment, context: c, protection: open}]\n",
+    );
+    assert!(recovered.warnings.is_empty());
+    let clusters = &recovered.setup.workspace.clusters;
+    assert_eq!(clusters[0].protection, None);
+    assert_eq!(protection_of(&recovered, "a"), Protection::Guarded);
+    assert_eq!(protection_of(&recovered, "b"), Protection::ReadOnly);
+    assert_eq!(protection_of(&recovered, "c"), Protection::Open);
+}
+
+#[test]
+fn a_row_skipped_for_another_fault_keeps_a_stricter_level_for_its_context() {
+    let recovered = recover(
+        "version: 1\nclusters: [{id: a, role: core, context: ctx-a, protection: protected, results: {address: invalid-endpoint}}, {id: b, role: cicd, context: ctx-b, protection: open, results: {address: invalid-endpoint}}, {id: c, role: environment, context: ctx-c, results: {address: invalid-endpoint}}]\n",
+    );
+    assert_eq!(recovered.warnings.len(), 3);
+    assert!(recovered.setup.workspace.clusters.is_empty());
+    assert_eq!(protection_of(&recovered, "ctx-a"), Protection::Protected);
+    // Nothing stricter than the default is kept: open and unset are guarded.
+    assert_eq!(protection_of(&recovered, "ctx-b"), Protection::Guarded);
+    assert_eq!(protection_of(&recovered, "ctx-c"), Protection::Guarded);
+}
+
+#[test]
+fn a_locked_context_and_a_healthy_entry_on_it_take_the_stricter_level() {
+    let recovered = recover(
+        "version: 1\nclusters: [{id: a, role: core, context: shared, protection: open}, {id: b, role: cicd, context: shared, protection: typo}]\n",
+    );
+    assert_eq!(recovered.setup.workspace.clusters.len(), 1);
+    assert_eq!(protection_of(&recovered, "shared"), Protection::ReadOnly);
 }

@@ -792,7 +792,7 @@ impl MaintenanceView {
         cx: &mut Context<Self>,
     ) -> Option<mutation::OperationTicket> {
         let operations = Operations::global(cx);
-        match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
+        match operations.update(cx, |operations, cx| operations.begin_maintenance(label, cx)) {
             Ok(ticket) => Some(ticket),
             Err(running) => {
                 self.error = Some(format!(

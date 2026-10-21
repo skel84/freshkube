@@ -589,3 +589,35 @@ fn quit_is_bounded_when_the_transport_never_closes(cx: &mut TestAppContext) {
     transport.wait_for_completion(cx);
     assert!(!cx.has_pending_prompt());
 }
+
+/// A read-only cluster (#852) starts no session: Start is off with the
+/// reason, pressing it runs nothing, and a level that allows writes again
+/// turns it back on.
+#[gpui_kit::test]
+fn a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
+    let shell = mount(cx);
+    shell.open(cx, &running_pod());
+    cx.update(|cx| {
+        shell
+            .shell
+            .update(cx, |view, cx| view.set_read_only(true, cx))
+    });
+    assert!(!cx.read(|cx| shell.shell.read(cx).can_start()));
+    shell.step(cx, |window, cx| {
+        assert!(window.find("pod-shell-start").visible());
+        window.click("pod-shell-start", cx);
+    });
+    // Nothing started: no session, nothing running in the app, no transport.
+    assert_eq!(shell.state(cx), ShellState::Idle);
+    assert!(cx.read(|cx| shell.shell.read(cx).session.is_none()));
+    assert!(cx.read(running_anywhere).is_empty());
+    assert!(shell.screen(cx).trim().is_empty(), "{}", shell.screen(cx));
+    // Writes allowed again: the same press starts the shell.
+    cx.update(|cx| {
+        shell
+            .shell
+            .update(cx, |view, cx| view.set_read_only(false, cx))
+    });
+    shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
+    assert_eq!(shell.state(cx), ShellState::Running);
+}
