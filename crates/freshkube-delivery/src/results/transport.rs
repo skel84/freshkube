@@ -113,6 +113,18 @@ enum Page {
 }
 
 impl Client {
+    pub(super) fn request_error(&self, error: reqwest::Error) -> Error {
+        match request_error(error) {
+            Error::Unreachable(Cause::Connect) if self.forwarded => {
+                Error::ForwardEnded("the connection failed")
+            }
+            Error::Unreachable(Cause::Transport) if self.forwarded => {
+                Error::ForwardEnded("the response could not be received")
+            }
+            error => error,
+        }
+    }
+
     async fn page(&self, url: Url, until: Instant) -> Result<Page, Error> {
         let ends = until.min(Instant::now() + REQUEST_DEADLINE);
         tokio::time::timeout_at(ends, async {
@@ -123,7 +135,10 @@ impl Client {
             if let Some(token) = &self.token {
                 request = request.header(http::header::AUTHORIZATION, token.clone());
             }
-            let mut response = request.send().await.map_err(request_error)?;
+            let mut response = request
+                .send()
+                .await
+                .map_err(|error| self.request_error(error))?;
             match response.status().as_u16() {
                 200 => {}
                 401 | 403 => {
@@ -147,7 +162,11 @@ impl Client {
                 return Ok(Page::Capped);
             }
             let mut body = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(request_error)? {
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|error| self.request_error(error))?
+            {
                 if chunk.len() > MAX_BODY_BYTES - body.len() {
                     return Ok(Page::Capped);
                 }

@@ -1,4 +1,5 @@
 mod builds;
+mod forward;
 mod logs;
 mod server;
 

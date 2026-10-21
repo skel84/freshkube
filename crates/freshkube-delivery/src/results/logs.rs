@@ -3,7 +3,7 @@
 use tokio::time::Instant;
 
 use super::records::{manifest, result_parts};
-use super::transport::{request_error, segment};
+use super::transport::segment;
 use super::{Cap, Cause, Client, Error, Listing, MOST_RESULT_TASKS, REQUEST_DEADLINE, Record};
 
 /// A whole task log, never inferred by splitting step prefixes.
@@ -134,7 +134,10 @@ impl Client {
             if let Some(token) = &self.token {
                 request = request.header(http::header::AUTHORIZATION, token.clone());
             }
-            let mut response = request.send().await.map_err(request_error)?;
+            let mut response = request
+                .send()
+                .await
+                .map_err(|error| self.request_error(error))?;
             match response.status().as_u16() {
                 200 => {}
                 404 => return Err(Error::LogMissing),
@@ -158,7 +161,11 @@ impl Client {
                 return Err(Error::Unreadable("the log response is not plain text"));
             }
             let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(request_error)? {
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(|error| self.request_error(error))?
+            {
                 let take = chunk.len().min(MOST_LOG_BYTES + 1 - bytes.len());
                 bytes.extend_from_slice(&chunk[..take]);
                 if bytes.len() > MOST_LOG_BYTES {
