@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use serde_json::Value;
 use tokio::sync::OnceCell;
 
+use super::discover::NamespaceCounts;
 use super::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use freshkube_core::resources::Failure;
 
@@ -83,6 +84,11 @@ impl<R: Reader> Reader for SharedReader<R> {
     /// is never what a listing answers.
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
         self.reader.probe(request).await
+    }
+
+    /// Not shared: a count is read when asked.
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        self.reader.namespace_counts(resource).await
     }
 
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {

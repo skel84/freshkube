@@ -33,6 +33,7 @@ use tokio::sync::{OnceCell, Semaphore};
 use tokio::time::Instant;
 
 use super::{MAX_AT_ONCE, OPEN};
+use crate::discover::NamespaceCounts;
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use crate::results::{self, Client as ResultsClient};
 use crate::shared::SharedReader;
@@ -262,6 +263,12 @@ impl<O: Reader, E: Reader> Reader for Via<O, E> {
         match self {
             Via::Open(reader) => reader.probe(request).await,
             Via::Entry(reader) => reader.probe(request).await,
+        }
+    }
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        match self {
+            Via::Open(reader) => reader.namespace_counts(resource).await,
+            Via::Entry(reader) => reader.namespace_counts(resource).await,
         }
     }
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {

@@ -24,8 +24,11 @@ use serde_json::Value;
 
 use freshkube_core::resources::{Failure, FailureKind};
 
+use super::discover::NamespaceCounts;
 use super::source::{Truncation, cap_message, redact_body};
 
+/// The items one namespace count asks for, and the most it counts.
+pub(crate) const NAMESPACE_COUNT_LIMIT: usize = 2_000;
 /// Items asked for per page.
 pub(crate) const PAGE_LIMIT: u32 = 200;
 /// Pages read before a listing is cut off and marked truncated.
@@ -144,6 +147,21 @@ pub trait Reader {
     fn probe(&self, request: &ListRequest) -> impl Future<Output = Result<(), Failure>> {
         async move { self.list(request).await.map(|_| ()) }
     }
+    /// How many objects of a namespaced kind each namespace holds, from one
+    /// metadata-only list across all namespaces (`limit=2000`). Only
+    /// `metadata.namespace` is kept. Unless overridden, it refuses.
+    fn namespace_counts(
+        &self,
+        resource: &Resource,
+    ) -> impl Future<Output = Result<NamespaceCounts, Failure>> {
+        async move {
+            let _ = resource;
+            Err(Failure::new(
+                FailureKind::Other,
+                "this source counts no namespaces",
+            ))
+        }
+    }
     /// `/apis`: every group and its served versions.
     fn groups(&self) -> impl Future<Output = Result<Vec<ServedGroup>, Failure>>;
     /// `/apis/<group>/<version>`: the plurals that version serves.
@@ -171,6 +189,9 @@ impl<R: Reader + ?Sized> Reader for &R {
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
         (**self).probe(request).await
     }
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        (**self).namespace_counts(resource).await
+    }
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
         (**self).groups().await
     }
@@ -195,6 +216,9 @@ impl<R: Reader + ?Sized> Reader for std::sync::Arc<R> {
     }
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
         (**self).probe(request).await
+    }
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        (**self).namespace_counts(resource).await
     }
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
         (**self).groups().await
@@ -238,8 +262,12 @@ impl ReadOnlyClient {
     }
 
     async fn get_value(&self, path: String) -> Result<Value, Failure> {
+        self.get_value_as(path, "application/json").await
+    }
+
+    async fn get_value_as(&self, path: String, accept: &str) -> Result<Value, Failure> {
         let request = http::Request::get(path)
-            .header(http::header::ACCEPT, "application/json")
+            .header(http::header::ACCEPT, accept)
             .body(kube::client::Body::empty())
             .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
         let response = self
@@ -493,6 +521,21 @@ impl Reader for ReadOnlyClient {
         self.get_value(sized_page_path(request, None, 1)?)
             .await
             .map(|_| ())
+    }
+
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        check_resource(resource)?;
+        let path = format!(
+            "{}?limit={NAMESPACE_COUNT_LIMIT}&resourceVersion=0",
+            resource.collection(None)
+        );
+        let body = self
+            .get_value_as(
+                path,
+                "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1",
+            )
+            .await?;
+        Ok(super::discover::count_namespaces(&body))
     }
 
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {

@@ -31,6 +31,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use kube::config::{Config, KubeConfigOptions};
 
+use super::discover::NamespaceCounts;
 use super::read::{
     ListRequest, Listing, MAX_PAGES, ReadOnlyClient, Reader, Resource, Scope, ServedGroup,
 };
@@ -150,6 +151,14 @@ impl<R: Reader> Reader for Deadline<R> {
         self.within(
             &format!("Listing {}", request.resource.plural),
             self.reader.probe(request),
+        )
+        .await
+    }
+
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        self.within(
+            &format!("Counting {}", resource.plural),
+            self.reader.namespace_counts(resource),
         )
         .await
     }
