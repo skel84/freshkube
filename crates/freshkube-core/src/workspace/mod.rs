@@ -568,11 +568,17 @@ pub fn example() -> Workspace {
     // states of an entry's `coroot` key; the others are not.
     let mut core = entry("core-fra", Role::Core);
     core.coroot = Some(Box::new(crate::setup::EntryCoroot::new("fixture")));
+    let mut builds = entry("cicd-fra", Role::Cicd);
+    let mut results = crate::setup::Results::default();
+    // This invented Service has no example pods: the example resolver reports
+    // the failure before binding a socket, so fixture Forward stays offline.
+    results.forward = Some(crate::setup::Forward::new("acme", "results", 8443));
+    builds.results = Some(Box::new(results));
     Workspace {
         kubeconfig: None,
         clusters: vec![
             core,
-            entry("cicd-fra", Role::Cicd),
+            builds,
             entry("dev-fra", Role::Environment),
             entry("stage-fra", Role::Environment),
             entry("prod-ams", Role::Environment),

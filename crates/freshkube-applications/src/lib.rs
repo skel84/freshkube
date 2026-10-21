@@ -688,7 +688,10 @@ impl ApplicationsPage {
         };
         let connections = self.connections(read);
         let across = self.across();
-        change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
+        change.update(cx, |page, cx| {
+            page.configure_example_results(&self.runtime, self.source.as_ref(), &across, cx);
+            page.set_clusters(across, connections, cx);
+        });
     }
 
     /// Which connection each cluster of a read is, and which workspace
@@ -1028,6 +1031,7 @@ impl ApplicationsPage {
         let coroot = self.coroot();
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
+            page.configure_example_results(&self.runtime, Some(source), &self.across(), cx);
             page.set_coroot(coroot, cx);
             page.set_setup_problem(self.setup_problem.clone(), cx);
             page

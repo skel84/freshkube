@@ -48,6 +48,11 @@ and failure distinctions are described in
 and loopback TLS tests are in `wire_tests/results_forward/{mod.rs,review.rs,fake.rs}`;
 Resources' matching and owner-state tests are in
 `crates/freshkube-resources/src/forwards/matching_tests.rs`. Existing address-only
-Results and no-Results delivery tests continue to cover those routes.
+Results and no-Results delivery tests continue to cover those routes. The fixture
+workspace's Builds entry (`cicd-fra`) configures invented `acme/results:8443`.
+Its explicit action uses the example resolver and reports no selected pods before
+opening a socket; fixture reads remain synthetic. The real-app regressions in
+`desktop/applications_tests/results_forward.rs` cover the list and both change
+opening routes, including retained selection after this example failure.
 
 Causes of an Unknown (#823; `delivery::change::cause`, `delivery::join::cause`, tests in `cause_tests.rs` of `delivery/src`, `change/live/` and `applications/change/`): every Unknown or pending hop and link carries `Hop.cause` and `LinkDetail.cause`, a `Cause` that is Waiting, Can't read, Not set up or Not found, with what would confirm it and its steps as data (`Cause::next`: Open in Kargo, Copy access request with the read-only `Role`, Retry, Open Settings at a `SettingsField`, Check sources). A cause comes from a `Source` variant (`join::cause::unread`: a refusal names the Role and no retry, anything else may retry, a kind not served is not found), from the setup (no `delivery.build_namespace`, no `delivery.stage_naming`, an unmapped destination) or from the join site itself (no Stage holds the Freight yet is Waiting). A listing that stopped at its page cap, a failed digest search, an ambiguous naming, an unsigned build and an environment the destination match leaves open name no cause. A commit that can't be a label value (a SHA-256 one) is Can't read with no Retry, since the builds were never asked for. Waiting is `Tone::Waiting` in `freshkube-ui` (the clock, `waiting.svg`): the change page gives it its own chip, never counted with warnings or unknowns. A Stage's link to a Freight is Confirmed by name when the newest entry of its Freight history names it (`Stage::history_names`), unless its record holds a contradicting digest.

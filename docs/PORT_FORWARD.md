@@ -107,6 +107,16 @@ There are no row buttons. If that entry is not open, **Switch to ⟨entry⟩** u
 the guarded switch/link path to the Service's Ports section. Switching starts
 nothing: Forward is still an explicit action.
 
+The fixture workspace configures `acme/results:8443` on its Builds entry,
+`cicd-fra`. Both change-opening routes hand their example source to the same
+forward binding as the list. Opening or refreshing keeps the reads synthetic;
+only Forward enters Resources' example forward resolver. This invented Service
+has no example pods, so it reports **The Service selects no pods** before any
+socket is bound. It never requests Kubernetes access or contacts Results.
+`desktop/applications_tests/results_forward.rs` checks Switch without starting,
+the list action and both Inspector routes in the real fixture app. The maintainer
+re-runs the visual smoke on this fixture.
+
 `freshkube-applications/src/results_forward/` shares the selected owner between
 the list and change page through a weak session registry. Their route subscriptions
 and explicit commands live in `changes/results.rs` and `change/results.rs`.

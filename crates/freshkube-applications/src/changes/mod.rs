@@ -290,7 +290,10 @@ impl ChangesPage {
         self.configure_results(cx);
         self.sync_outcomes(cx);
         if let Some((change, _)) = &self.change {
-            change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
+            change.update(cx, |page, cx| {
+                page.configure_example_results(&self.runtime, self.source.as_ref(), &across, cx);
+                page.set_clusters(across, connections, cx);
+            });
         }
         // A live list reads each part where the workspace says and
         // resolves its Stages by the mapping: read it again, now if shown,
@@ -745,6 +748,7 @@ impl ChangesPage {
         let coroot = self.coroot.clone();
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, None, connections, visible, window, cx);
+            page.configure_example_results(&self.runtime, self.source.as_ref(), &self.across, cx);
             page.set_parent("Changes");
             page.set_setup_problem(self.setup_problem.clone(), cx);
             page.set_coroot(coroot, cx);

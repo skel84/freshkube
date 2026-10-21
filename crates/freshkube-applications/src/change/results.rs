@@ -5,6 +5,28 @@ use freshkube_delivery::entry::pool::ResultsRoute;
 use gpui_kit::component::{Disableable, Sizable, button::Button};
 
 impl ChangePage {
+    /// Example reads stay synthetic; their owner hands over the same workspace
+    /// and example access that the Changes list uses for its explicit action.
+    pub(crate) fn configure_example_results(
+        &mut self,
+        runtime: &tokio::runtime::Handle,
+        source: Option<&crate::resources::ClusterSource>,
+        across: &crate::across::Across,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(self.fetch, Fetch::Example { .. }) {
+            return;
+        }
+        if let Some(source) = source.filter(|source| source.access.is_example()) {
+            let target = Target::of(&across.sources, across.mapping.open.as_deref(), source);
+            self.results
+                .configure(target, source, runtime.clone(), Self::results_changed, cx);
+        } else {
+            self.results = Binding::default();
+        }
+        cx.notify();
+    }
+
     pub(super) fn configure_results(&mut self, cx: &mut Context<Self>) {
         let changed = if let Fetch::Live {
             runtime,
@@ -22,8 +44,9 @@ impl ChangePage {
             self.results
                 .configure(target, &source, runtime.clone(), Self::results_changed, cx)
         } else {
-            self.results = Binding::default();
-            false
+            // The example owner configures this binding; refreshing synthetic
+            // data must preserve its shared forward session.
+            return;
         };
         if changed {
             self.loader.reset();

@@ -4,6 +4,7 @@ mod change;
 mod changes;
 mod outcome;
 mod page;
+mod results_forward;
 mod setup;
 
 use crate::applications::{ApplicationsPage, Variant};
