@@ -77,13 +77,18 @@ impl Detail {
 /// The Why / Needs / Fix block of a hop with a cause.
 struct FixBlock {
     word: &'static str,
+    /// Whether something is wrong; Waiting is not.
+    problem: bool,
     tone: Tone,
     why: SharedString,
     needs: SharedString,
     steps: Vec<Step>,
 }
 
-/// One next step of a cause, as a button with its words.
+/// One next step of a cause, as a button with its words. A label or a
+/// state that follows the page (Copied, Reading…) is worked out when it is
+/// drawn, from the page, never kept in the detail derived with the
+/// selection.
 struct Step {
     id: &'static str,
     label: SharedString,
@@ -104,7 +109,27 @@ enum Does {
     /// Reads the change again.
     Retry,
     /// Settings, on the section that holds the setup file's key.
-    Settings(&'static str),
+    Settings(Opens),
+    /// Nothing: the step is greyed out with why.
+    Nothing,
+}
+
+/// The Settings sections a step opens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Opens {
+    Sources,
+    Destinations,
+}
+
+impl Opens {
+    /// The section a Settings page slug names, when a step opens it.
+    fn of(slug: &str) -> Option<Self> {
+        match slug {
+            "settings-sources" => Some(Self::Sources),
+            "settings-destinations" => Some(Self::Destinations),
+            _ => None,
+        }
+    }
 }
 
 enum Body {
@@ -183,10 +208,7 @@ impl ChangePage {
         };
         // A hop with a cause says it in the Why / Needs / Fix block, in
         // place of a banner.
-        detail.fix = hop
-            .cause
-            .as_ref()
-            .map(|cause| self.fix_block(hop, cause, &detail));
+        detail.fix = hop.cause.as_ref().map(|cause| self.fix_block(hop, cause));
         if detail.fix.is_some() {
             detail.banner = None;
         }
@@ -455,15 +477,25 @@ impl ChangePage {
     /// each next step as a button with its words.
     fn render_fix(&self, fix: &FixBlock, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
+        let reading = self.loader.is_loading();
         let steps = fix.steps.iter().map(|step| {
             let does = step.does.clone();
+            // What follows the page is worked out here, not when the
+            // selection's detail was derived.
+            let (label, held): (SharedString, Option<SharedString>) = match &step.does {
+                Does::CopyAccess(_) if self.copied_request == self.selected => {
+                    ("Copied".into(), None)
+                }
+                Does::Retry if reading => ("Reading…".into(), Some("Reading…".into())),
+                _ => (step.label.clone(), step.why.clone()),
+            };
             let button = Button::new(step.id)
                 .outline()
                 .xsmall()
-                .label(step.label.clone())
-                .accessibility_label(step.label.clone())
+                .label(label.clone())
+                .accessibility_label(label)
                 .on_click(cx.listener(move |this, _, window, cx| this.run_step(&does, window, cx)));
-            let button = match (step.why.clone(), step.tooltip.clone()) {
+            let button = match (held, step.tooltip.clone()) {
                 (Some(why), _) => button.disabled(true).tooltip(why),
                 (None, Some(tooltip)) => button.tooltip(tooltip),
                 (None, None) => button,
@@ -477,50 +509,57 @@ impl ChangePage {
                     .child(step.words.clone()),
             )
         });
-        section("Why this can't be confirmed", cx)
-            .id("change-fix")
-            .test_support()
-            .child(
-                h_flex()
-                    .id("change-fix-cause")
+        section(
+            if fix.problem {
+                "Why this can't be confirmed"
+            } else {
+                "Why it waits"
+            },
+            cx,
+        )
+        .id("change-fix")
+        .test_support()
+        .child(
+            h_flex()
+                .id("change-fix-cause")
+                .test_support()
+                .aria_label(SharedString::from(fix.word))
+                .child(ui::tag(fix.tone, None, fix.word, cx)),
+        )
+        .child(field(
+            "Why",
+            div().child(
+                div()
+                    .id("change-fix-why")
                     .test_support()
-                    .aria_label(SharedString::from(fix.word))
-                    .child(ui::tag(fix.tone, None, fix.word, cx)),
-            )
-            .child(field(
-                "Why",
-                div().child(
-                    div()
-                        .id("change-fix-why")
-                        .test_support()
-                        .aria_label(fix.why.clone())
-                        .child(fix.why.clone()),
-                ),
-                cx,
-            ))
-            .child(field(
-                "Needs",
-                div().child(
-                    div()
-                        .id("change-fix-needs")
-                        .test_support()
-                        .aria_label(fix.needs.clone())
-                        .child(fix.needs.clone()),
-                ),
-                cx,
-            ))
-            .child(field(
-                "Fix",
-                div().child(
-                    v_flex()
-                        .id("change-fix-steps")
-                        .test_support()
-                        .gap(dp(7.))
-                        .children(steps),
-                ),
-                cx,
-            ))
-            .into_any_element()
+                    .aria_label(fix.why.clone())
+                    .child(fix.why.clone()),
+            ),
+            cx,
+        ))
+        .child(field(
+            "Needs",
+            div().child(
+                div()
+                    .id("change-fix-needs")
+                    .test_support()
+                    .aria_label(fix.needs.clone())
+                    .child(fix.needs.clone()),
+            ),
+            cx,
+        ))
+        .child(field(
+            "Fix",
+            div().child(
+                v_flex()
+                    .id("change-fix-steps")
+                    .test_support()
+                    .gap(dp(7.))
+                    .children(steps),
+            ),
+            cx,
+        ))
+        .into_any_element()
     }
 
     /// The hop's buttons: into Resources on its cluster, greyed out with
@@ -559,7 +598,7 @@ impl ChangePage {
 impl ChangePage {
     /// Why a hop can't be confirmed, what would confirm it, and each next
     /// step as an action. The reason is what the hop already said.
-    fn fix_block(&self, hop: &Hop, cause: &Cause, detail: &Detail) -> FixBlock {
+    fn fix_block(&self, hop: &Hop, cause: &Cause) -> FixBlock {
         let why = match &hop.shows {
             Shows::Hop(shown) => shown
                 .notice
@@ -569,9 +608,9 @@ impl ChangePage {
                 .unwrap_or_else(|| hop.detail.clone()),
             Shows::Stage(_) => hop.detail.clone(),
         };
-        let _ = detail;
         FixBlock {
             word: cause.word(),
+            problem: cause.is_problem(),
             tone: if cause.is_problem() {
                 Tone::Unknown
             } else {
@@ -602,12 +641,7 @@ impl ChangePage {
             }
             Next::CopyAccessRequest(role) => Step {
                 id: "change-fix-copy",
-                label: if self.copied_request.is_some() && self.copied_request == self.selected {
-                    "Copied"
-                } else {
-                    "Copy access request"
-                }
-                .into(),
+                label: "Copy access request".into(),
                 tooltip: Some(
                     format!(
                         "Copies a read-only Role: get, list and watch on {}",
@@ -621,32 +655,32 @@ impl ChangePage {
             },
             Next::Retry => Step {
                 id: "change-fix-retry",
-                label: if self.loader.is_loading() {
-                    "Reading…"
-                } else {
-                    "Retry"
-                }
-                .into(),
+                label: "Retry".into(),
                 tooltip: Some("Read the change again".into()),
-                why: self.loader.is_loading().then(|| "Reading…".into()),
+                why: None,
                 words,
                 does: Does::Retry,
             },
-            Next::OpenSettings(field) => Step {
-                id: "change-fix-settings",
-                label: "Open Settings".into(),
-                tooltip: Some(
-                    format!(
-                        "Set {} in Settings › {}",
-                        field.field,
-                        settings_title(field.section)
-                    )
-                    .into(),
-                ),
-                why: None,
-                words,
-                does: Does::Settings(field.section),
-            },
+            Next::OpenSettings(field) => {
+                let opens = Opens::of(field.section);
+                Step {
+                    id: "change-fix-settings",
+                    label: "Open Settings".into(),
+                    tooltip: Some(
+                        format!(
+                            "Set {} in Settings › {}",
+                            field.field,
+                            settings_title(field.section)
+                        )
+                        .into(),
+                    ),
+                    why: opens
+                        .is_none()
+                        .then(|| format!("Settings has no section for {}", field.field).into()),
+                    words,
+                    does: opens.map_or(Does::Nothing, Does::Settings),
+                }
+            }
             Next::CheckSources => Step {
                 id: "change-fix-sources",
                 label: "Check sources".into(),
@@ -655,7 +689,7 @@ impl ChangePage {
                 ),
                 why: None,
                 words,
-                does: Does::Settings("settings-sources"),
+                does: Does::Settings(Opens::Sources),
             },
         }
     }
@@ -670,13 +704,19 @@ impl ChangePage {
                 self.copied_request = self.selected.clone();
                 cx.notify();
             }
-            Does::Retry => self.refresh(cx),
-            Does::Settings(section) => match *section {
-                "settings-destinations" => {
-                    window.dispatch_action(Box::new(OpenDestinationsSettings), cx)
+            Does::Retry => {
+                if !self.loader.is_loading() {
+                    self.refresh(cx);
+                    cx.notify();
                 }
-                _ => window.dispatch_action(Box::new(OpenSourcesSettings), cx),
-            },
+            }
+            Does::Settings(Opens::Sources) => {
+                window.dispatch_action(Box::new(OpenSourcesSettings), cx)
+            }
+            Does::Settings(Opens::Destinations) => {
+                window.dispatch_action(Box::new(OpenDestinationsSettings), cx)
+            }
+            Does::Nothing => {}
         }
     }
 }

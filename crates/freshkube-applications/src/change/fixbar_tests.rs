@@ -300,3 +300,190 @@ fn the_inspector_keeps_its_frame_with_the_block_beside_and_stacked(cx: &mut Test
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn copy_access_request_says_copied_after_it_copies(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("prod-ams-pods", window, cx));
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("change-fix-copy").label(),
+            Some("Copy access request")
+        );
+        window.click("change-fix-copy", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("change-fix-copy").label(), Some("Copied"));
+        // Another hop's button is not Copied.
+        page.update(cx, |page, cx| page.select("policy", window, cx));
+        window.render_frame(cx);
+        assert!(window.try_find("change-fix-copy").is_none());
+        page.update(cx, |page, cx| page.select("prod-ams-pods", window, cx));
+        window.render_frame(cx);
+        assert_eq!(window.find("change-fix-copy").label(), Some("Copied"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_chip_clears_a_filter_that_hides_its_hop(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1700., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("change-tally-ok", cx);
+        window.render_frame(cx);
+        let lines = page.read(cx).lines_text();
+        assert!(!lines.contains(&"prod-ams-pods".to_owned()), "{lines:?}");
+        window.click("change-fixbar-prod-ams-pods", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let p = page.read(cx);
+        assert_eq!(p.selected().map(|s| s.as_ref()), Some("prod-ams-pods"));
+        assert!(p.filter.is_none(), "the filter that hid the row is cleared");
+        assert!(p.lines_text().contains(&"prod-ams-pods".to_owned()));
+        // A filter that shows the row stays.
+        window.click("change-tally-unknown", cx);
+        window.render_frame(cx);
+        window.click("change-fixbar-prod-ams-pods", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).filter.is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_menu_clears_a_filter_that_hides_its_hop_too(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("change-tally-ok", cx);
+        window.render_frame(cx);
+        window.click("change-fixbar-more", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menu = window.within("popup-menu");
+        let last = (0usize..)
+            .take_while(|&ix| menu.try_find(ix).is_some())
+            .count()
+            - 1;
+        window.within("popup-menu").click(last, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let p = page.read(cx);
+        let key = p.selected().cloned().expect("a selection");
+        assert!(p.filter.is_none());
+        assert!(p.lines_text().contains(&key.to_string()));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn retry_shows_reading_and_holds_while_the_change_is_read(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let mut change = page.read(cx).change.clone();
+        let policy = change.hops.iter_mut().find(|h| h.key == "policy").unwrap();
+        policy.cause = Some(Cause::cant_read("the policy results", None, false));
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        page.update(cx, |page, cx| page.select("policy", window, cx));
+        window.render_frame(cx);
+        assert_eq!(window.find("change-fix-retry").label(), Some("Retry"));
+        window.click("change-fix-retry", cx);
+        window.render_frame(cx);
+        // The read is in flight: the button says so and holds.
+        assert_eq!(window.find("change-fix-retry").label(), Some("Reading…"));
+        assert!(page.read(cx).loader.is_loading());
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!page.read(cx).loader.is_loading());
+        // The answer is the example's again, so the hop's cause is back to
+        // what the example says; whatever it is, the button no longer
+        // says Reading….
+        if let Some(button) = window.try_find("change-fix-retry") {
+            assert_ne!(button.label(), Some("Reading…"));
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn check_sources_and_open_settings_open_their_section(cx: &mut TestAppContext) {
+    use freshkube_ui::platform::OpenSourcesSettings;
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    let opened = Rc::new(Cell::new(0));
+    cx.update(|cx| {
+        let opened = opened.clone();
+        cx.on_action(move |_: &OpenSourcesSettings, _| opened.set(opened.get() + 1));
+    });
+    for key in ["policy", "stage-argocd"] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            page.update(cx, |page, cx| page.select(key, window, cx));
+            window.render_frame(cx);
+            let id = if key == "policy" {
+                "change-fix-sources"
+            } else {
+                "change-fix-settings"
+            };
+            window.click(id, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(opened.get(), 2);
+}
+
+#[gpui_kit::test]
+fn open_in_kargo_opens_the_address_and_is_greyed_out_without_one(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("prod-ams-promotion", window, cx));
+        window.render_frame(cx);
+        assert_eq!(window.find("change-fix-cause").label(), Some("Waiting"));
+        window.click("change-fix-kargo", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let address = cx.opened_url().expect("Kargo's page opens");
+    assert!(
+        address.starts_with("https://kargo.example.test"),
+        "{address}"
+    );
+    // Without an address nothing more opens.
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let mut change = page.read(cx).change.clone();
+        change.page = Err("the cluster records no address for Kargo".into());
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        page.update(cx, |page, cx| page.select("prod-ams-promotion", window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let before = cx.opened_url();
+    cx.update_window(handle, |_, window, cx| window.click("change-fix-kargo", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.opened_url(), before);
+}

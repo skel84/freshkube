@@ -192,6 +192,35 @@ mod tests {
         assert_eq!(visible(&list, 10.), 1);
     }
 
+    /// `n` chips of 20 characters each: 166 dp wide.
+    fn same(n: usize) -> Vec<FixItem> {
+        (0..n)
+            .map(|ix| FixItem::new(format!("k{ix}"), "Not found: signature"))
+            .collect()
+    }
+
+    #[test]
+    fn a_known_room_shows_an_exact_number_of_chips() {
+        // "12 to fix" 59.4 and a gap, then 172 (166 and a gap) for each
+        // chip, and the "+7" button (30.2 and a gap) while any are left
+        // out: five chips take 925.4 and the button 36.2, so 961.6.
+        assert_eq!(visible(&same(12), 1000.), 5);
+        assert_eq!(visible(&same(12), 962.), 5);
+        assert_eq!(visible(&same(12), 961.), 4);
+        // Room for everything needs no button.
+        assert_eq!(visible(&same(3), 600.), 3);
+    }
+
+    #[test]
+    fn a_two_digit_rest_takes_the_wider_button() {
+        // Eleven left out is "+11", wider than "+9": 925.4 + 42.8 does not
+        // fit 965, where a one-digit button (36.2) would.
+        assert_eq!(visible(&same(16), 1000.), 5);
+        assert_eq!(visible(&same(16), 965.), 4);
+        assert_eq!(more_width(11), more_width(10));
+        assert!(more_width(11) > more_width(9));
+    }
+
     #[test]
     fn the_count_is_in_words() {
         assert_eq!(count_words(4), "4 to fix");

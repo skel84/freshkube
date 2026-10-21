@@ -705,7 +705,15 @@ impl ChangePage {
         self.graph.clear_selection();
         self.detail = self.derive_detail();
         self.read_outcome(false, cx);
-        if self.folded.remove(&group) {
+        // A filter that hides the row gives way: the selection is shown.
+        let hidden = self
+            .filter
+            .is_some_and(|tone| tone != self.groups[group].counts_as);
+        if hidden {
+            self.filter = None;
+            self.dim_chain();
+        }
+        if self.folded.remove(&group) || hidden {
             self.derive();
         }
         if self.view == ChangeView::Chain {
