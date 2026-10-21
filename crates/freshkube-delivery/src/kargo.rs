@@ -296,6 +296,9 @@ pub(crate) fn parse_freight(value: &Value) -> Option<Freight> {
     })
 }
 
+/// The newest entry of a Stage's Freight history: what Kargo records it runs.
+const NEWEST_HISTORY: &str = "/status/freightHistory/0/items";
+
 pub(crate) fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
     let mut current_at: Vec<&'static str> = Vec::new();
@@ -306,7 +309,7 @@ pub(crate) fn parse_stage(value: &Value) -> Option<Stage> {
         .pointer("/status/freightHistory/0/items")
         .and_then(Value::as_object)
     {
-        let at = "/status/freightHistory/0/items";
+        let at = NEWEST_HISTORY;
         for name in items.values().filter_map(|item| text(item, "/name")) {
             current.push(name);
             current_at.push(at);
@@ -577,6 +580,13 @@ impl Stage {
         latest
     }
 
+    /// Whether Kargo's own record of what the Stage runs, the newest entry of
+    /// its Freight history, names `freight`. The older `currentFreight` and
+    /// `lastPromotion` fields are the Stage's own say-so and don't count.
+    pub(crate) fn history_names(&self, freight: &str) -> bool {
+        self.freight_pointer(freight) == NEWEST_HISTORY
+    }
+
     /// Where the Stage's status names `freight` as current.
     pub fn freight_pointer(&self, freight: &str) -> &'static str {
         let at = self.current_freight.iter().position(|name| name == freight);
@@ -695,14 +705,24 @@ pub(crate) async fn read_kind<R: Reader, T>(
 /// Reads one project's Kargo objects. Each kind is its own [`Source`], so a
 /// refused Promotion list doesn't hide the Freight.
 pub struct KargoRead {
+    /// The project, which is the namespace of every kind below.
+    pub project: String,
     pub warehouses: Source<Vec<Warehouse>>,
     pub freight: Source<Vec<Freight>>,
     pub stages: Source<Vec<Stage>>,
     pub promotions: Source<Vec<Promotion>>,
 }
 
+impl KargoRead {
+    /// The namespace the kinds were read in, when it is known.
+    pub(crate) fn namespace(&self) -> Option<&str> {
+        Some(self.project.as_str()).filter(|project| !project.is_empty())
+    }
+}
+
 pub(crate) async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
     KargoRead {
+        project: project.to_owned(),
         warehouses: Source::from_listing(
             read_kind(reader, "warehouses", project, parse_warehouse).await,
         ),

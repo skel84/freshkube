@@ -8,9 +8,12 @@
 //! [`HealthIndicator`]s and times are instants, which the page words. It
 //! reads nothing; [`example`] invents one change for example mode.
 
+mod cause;
 pub mod example;
 pub mod live;
 mod unread;
+
+pub use cause::{Cause, Next, Role, SettingsField};
 
 use chrono::{DateTime, Utc};
 
@@ -128,6 +131,9 @@ pub struct Hop {
     pub at: Option<DateTime<Utc>>,
     /// How sure its link to the hop before is. Gates have none.
     pub link: Option<Confidence>,
+    /// Why it can't be confirmed, when its state or its link is Unknown or
+    /// pending and the join or the derive knew the cause.
+    pub cause: Option<Cause>,
     /// The key of the hop it joins, the one before it in the chain: a
     /// chain drawn from the hops needs it, since the rows' order is not
     /// the chain's. A Stage's gates share one, the hop their Stage follows.
@@ -198,6 +204,8 @@ pub struct LinkDetail {
     pub here_says: String,
     /// Why the link has its confidence.
     pub why: String,
+    /// Why it is Unknown, when the join knew the cause.
+    pub cause: Option<Cause>,
 }
 
 /// An object to open in Resources, on the cluster that holds it.
