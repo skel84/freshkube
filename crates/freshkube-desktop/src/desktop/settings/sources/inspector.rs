@@ -114,6 +114,7 @@ impl SourcesList {
         let row = self
             .rows
             .iter()
+            .chain(self.finder.row.as_ref())
             .find(|row| Some(row.read) == self.selected)?;
         let width = crate::screens::page_width(window);
         let pane_width = if width >= freshkube_ui::inspector::SPLIT_WIDTH {
@@ -149,6 +150,9 @@ impl SourcesList {
                     .child(row.label.clone()),
             )
             .child(description.render(cx));
+        if row.read == Read::BuildSuggestion {
+            detail = detail.child(self.render_evidence(narrow, cx));
+        }
         if matches!(row.read, Read::Part(_)) {
             let editable = self.editable(cx);
             let reason = self

@@ -28,8 +28,11 @@ use serde_json::Value;
 use freshkube_core::resources::{Failure, FailureKind};
 
 use super::discover::ClusterSecrets;
+use super::discover::NamespaceCounts;
 use super::source::{Truncation, cap_message, redact_body};
 
+/// The items one namespace count asks for, and the most it counts.
+pub(crate) const NAMESPACE_COUNT_LIMIT: usize = 2_000;
 /// Items asked for per page.
 pub(crate) const PAGE_LIMIT: u32 = 200;
 /// Pages read before a listing is cut off and marked truncated.
@@ -148,6 +151,36 @@ pub trait Reader {
     fn probe(&self, request: &ListRequest) -> impl Future<Output = Result<(), Failure>> {
         async move { self.list(request).await.map(|_| ()) }
     }
+    /// How many objects of a namespaced kind each namespace holds, from one
+    /// metadata-only list across all namespaces (`limit=2000`). Only
+    /// `metadata.namespace` is kept. Unless overridden, it refuses.
+    fn namespace_counts(
+        &self,
+        resource: &Resource,
+    ) -> impl Future<Output = Result<NamespaceCounts, Failure>> {
+        async move {
+            let _ = resource;
+            Err(Failure::new(
+                FailureKind::Other,
+                "this source counts no namespaces",
+            ))
+        }
+    }
+    /// Whether a namespaced kind has at least one object in `namespace`:
+    /// one page of one item (`limit=1`). Unless overridden, it refuses.
+    fn any_in(
+        &self,
+        resource: &Resource,
+        namespace: &str,
+    ) -> impl Future<Output = Result<bool, Failure>> {
+        async move {
+            let _ = (resource, namespace);
+            Err(Failure::new(
+                FailureKind::Other,
+                "this source reads no single namespace",
+            ))
+        }
+    }
     /// Argo CD's cluster Secrets in one namespace: the Secrets labelled
     /// `argocd.argoproj.io/secret-type=cluster`, one page, and of each only
     /// its name and `server` and `name` fields. Unless overridden, it
@@ -189,6 +222,12 @@ impl<R: Reader + ?Sized> Reader for &R {
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
         (**self).probe(request).await
     }
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        (**self).namespace_counts(resource).await
+    }
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        (**self).any_in(resource, namespace).await
+    }
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         (**self).cluster_secrets(namespace).await
     }
@@ -216,6 +255,12 @@ impl<R: Reader + ?Sized> Reader for std::sync::Arc<R> {
     }
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
         (**self).probe(request).await
+    }
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        (**self).namespace_counts(resource).await
+    }
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        (**self).any_in(resource, namespace).await
     }
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         (**self).cluster_secrets(namespace).await
@@ -262,8 +307,12 @@ impl ReadOnlyClient {
     }
 
     async fn get_value(&self, path: String) -> Result<Value, Failure> {
+        self.get_value_as(path, "application/json").await
+    }
+
+    async fn get_value_as(&self, path: String, accept: &str) -> Result<Value, Failure> {
         let request = http::Request::get(path)
-            .header(http::header::ACCEPT, "application/json")
+            .header(http::header::ACCEPT, accept)
             .body(kube::client::Body::empty())
             .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
         let response = self
@@ -544,6 +593,33 @@ impl Reader for ReadOnlyClient {
         self.get_value(sized_page_path(request, None, 1)?)
             .await
             .map(|_| ())
+    }
+
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        check_resource(resource)?;
+        let path = format!(
+            "{}?limit={NAMESPACE_COUNT_LIMIT}",
+            resource.collection(None)
+        );
+        let body = self
+            .get_value_as(
+                path,
+                "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1",
+            )
+            .await?;
+        Ok(super::discover::count_namespaces(&body))
+    }
+
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        let request = ListRequest {
+            resource: resource.clone(),
+            scope: Scope::Namespace(namespace.to_owned()),
+        };
+        let body = self.get_value(sized_page_path(&request, None, 1)?).await?;
+        Ok(body
+            .get("items")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty()))
     }
 
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
