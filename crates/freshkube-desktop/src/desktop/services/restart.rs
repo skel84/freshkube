@@ -3,7 +3,7 @@
 use super::super::Pilot;
 use crate::actions;
 use crate::backend;
-use crate::mutation::{self, Confirmation, Operations};
+use crate::mutation::{self, Confirmation, Operations, Refused};
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
 use gpui_kit::*;
 use std::rc::Rc;
@@ -163,7 +163,7 @@ impl Pilot {
         let label = format!("Restarting {service_id} on {}", node.name);
         let ticket = match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
             Ok(ticket) => ticket,
-            Err(running) => {
+            Err(Refused::Busy(running)) => {
                 self.set_restart_notice(
                     &service_id,
                     false,
@@ -171,6 +171,15 @@ impl Pilot {
                         "{} is still running; try again when it has finished.",
                         running.label
                     ),
+                    cx,
+                );
+                return;
+            }
+            Err(Refused::ReadOnly(why)) => {
+                self.set_restart_notice(
+                    &service_id,
+                    false,
+                    format!("{why} Nothing was started."),
                     cx,
                 );
                 return;

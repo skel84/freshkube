@@ -25,6 +25,9 @@ pub(in crate::desktop) struct ContextDisplay {
     /// The protection level of the context shown (#852), prepared with the
     /// rest so the header and the status bar only draw it.
     pub(in crate::desktop) level: Protection,
+    /// What the level's tag says in a tooltip and to a screen reader,
+    /// prepared with the level.
+    pub(in crate::desktop) level_words: SharedString,
     pub(in crate::desktop) open: bool,
     pub(in crate::desktop) counts: std::collections::BTreeMap<String, SharedString>,
 }
@@ -76,19 +79,32 @@ impl Pilot {
             .unwrap_or_else(|| "No context".into())
     }
 
-    /// The level the context shown has: its entry's, else guarded, else what
-    /// a skipped row locked it to. Prepared on a source change and when the
+    /// The level the window works under: the active workspace entry's, with
+    /// the stricter of any entry naming the same kubeconfig context, else
+    /// guarded, else what a skipped row locked it to. The entry is the
+    /// source, not the name the header shows: the applied context can be a
+    /// Talos context that no entry's `context` names. With no entry active,
+    /// the context shown decides. Prepared on a source change and when the
     /// setup changes, never while drawing.
     pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
-        let context = self.display_context(cx);
+        let shown = self.display_context(cx);
         let settings = self.settings_page.read(cx);
-        let level = settings
-            .workspace()
-            .level_of(&context, &settings.source_recovery);
-        if level == self.context_display.level {
+        let workspace = settings.workspace();
+        let active = self
+            .switch
+            .active_cluster()
+            .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id));
+        let level = match active {
+            Some(entry) => workspace
+                .level_of(&entry.context, &settings.source_recovery)
+                .stricter(entry.level()),
+            None => workspace.level_of(&shown, &settings.source_recovery),
+        };
+        if level == self.context_display.level && !self.context_display.level_words.is_empty() {
             return false;
         }
         self.context_display.level = level;
+        self.context_display.level_words = level_words(level).into();
         // What writes ask: the slot for the operations, the dock's shells.
         crate::mutation::set_protection(level, cx);
         self.pages

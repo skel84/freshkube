@@ -268,13 +268,33 @@ fn a_narrow_status_bar_drops_minor_parts_and_keeps_the_toned_ones(cx: &mut TestA
                 if text_size == 20. {
                     // The protection level's tag keeps its word whole (#852),
                     // so here the segment is what is left beside it: it gives
-                    // way first, and can be cut to its first characters.
-                    assert!(!shown.is_empty(), "{room}");
+                    // way first, but its first warning still leads.
                     let tag = window.find("status-protection").bounds();
                     assert!(
                         tag.right() <= window.find("status-bar").bounds().right(),
                         "{room}"
                     );
+                    match warnings.first() {
+                        Some(first) => {
+                            // Cut to its first characters, not whole: what is
+                            // drawn is the start of the first warning, enough
+                            // to tell it from a count, and not the lead.
+                            let kept = shown.trim_end_matches('…');
+                            let at = line.find(first).expect("the warning is in the line");
+                            let part = line[..at].rfind('·').map_or(0, |dot| dot + '·'.len_utf8());
+                            assert!(line[part..].trim_start().starts_with(kept), "{room}");
+                            assert!(kept.chars().count() >= 3, "{room}");
+                            assert!(
+                                !shown.contains(lead),
+                                "warnings outrank the first part: {room}"
+                            );
+                        }
+                        None => {
+                            let kept = shown.trim_end_matches('…');
+                            assert!(lead.starts_with(kept), "{room}");
+                            assert!(kept.chars().count() >= 3, "{room}");
+                        }
+                    }
                     return;
                 }
                 let Some(first) = warnings.first() else {

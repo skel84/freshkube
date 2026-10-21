@@ -82,7 +82,7 @@ use super::{
     page_width, panel, reading, refresh_control, retry_button, segment, split_at,
 };
 use crate::backend;
-use crate::mutation::{self, Confirmation, Operations};
+use crate::mutation::{self, Confirmation, Operations, Refused};
 use crate::palette::palette;
 use crate::presentation::Role as NodeRole;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -1403,11 +1403,16 @@ impl OperationsScreen {
         );
         let ticket = match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
             Ok(ticket) => ticket,
-            Err(running) => {
+            Err(Refused::Busy(running)) => {
                 self.notice = Some(format!(
                     "{} is running. Nothing was started; wait for it to finish, or cancel it from the status bar.",
                     running.label
                 ));
+                cx.notify();
+                return;
+            }
+            Err(Refused::ReadOnly(why)) => {
+                self.notice = Some(format!("{why} Nothing was started."));
                 cx.notify();
                 return;
             }

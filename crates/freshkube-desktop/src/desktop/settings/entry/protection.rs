@@ -63,12 +63,12 @@ impl Level {
     fn hint(&self) -> String {
         let shown = self.values.shown();
         let unset = if self.values.level.is_none() {
-            "Not set in freshkube.yaml, so Guarded. "
+            "Not set in freshkube.yaml: guarded. "
         } else {
             ""
         };
         format!(
-            "{unset}{} Today only Read-only does anything: it disables a shell's Start and Operations; the other levels change nothing yet.",
+            "{unset}{} Today only Read-only does anything: it disables a shell's Start, Operations, Diagnostics' Apply fix and a service's Restart; the other levels change nothing yet.",
             shown.meaning()
         )
     }

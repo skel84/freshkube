@@ -110,7 +110,7 @@ impl Pilot {
     /// the page's segment gives way first.
     fn render_level_status(&self, cx: &App) -> AnyElement {
         let level = self.context_display.level;
-        let words = level_words(level);
+        let words = self.context_display.level_words.clone();
         freshkube_ui::level::tag(mark(level), freshkube_ui::level::Form::Word, cx)
             .id("status-protection")
             .test_support()

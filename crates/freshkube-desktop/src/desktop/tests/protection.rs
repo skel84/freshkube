@@ -148,3 +148,37 @@ fn a_narrow_window_and_large_text_keep_the_word_in_the_status_bar(cx: &mut TestA
         .unwrap();
     }
 }
+
+/// The level is the active entry's, not whatever the header names: the
+/// applied context can be a Talos context that no entry's `context` names,
+/// and a read-only entry must not read as guarded there.
+#[gpui_kit::test]
+fn the_level_follows_the_active_entry_when_the_applied_context_is_another_name(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    switch(cx, handle, &view, "stage-fra");
+    let entry = freshkube_core::workspace::example()
+        .clusters
+        .into_iter()
+        .find(|entry| entry.id == "stage-fra")
+        .unwrap();
+    assert_eq!(entry.protection, Some(Protection::ReadOnly));
+    let talos = "admin@stage-fra-talos";
+    assert_ne!(entry.context, talos);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.applied.context = Some(talos.into());
+            pilot.prepare_protection(cx);
+            assert_eq!(pilot.context_display.level, Protection::ReadOnly);
+            // What every write asks, too.
+            assert!(crate::mutation::refusal(cx).is_some());
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("header-protection").label(),
+            Some(words(Protection::ReadOnly).as_str())
+        );
+    })
+    .unwrap();
+}

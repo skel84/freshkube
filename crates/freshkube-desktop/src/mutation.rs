@@ -45,6 +45,14 @@ impl Running {
     }
 }
 
+/// Why [`Operations::begin`] gave no ticket.
+pub(crate) enum Refused {
+    /// Another operation holds the slot.
+    Busy(Running),
+    /// The cluster's level refuses writes.
+    ReadOnly(&'static str),
+}
+
 /// Proof of holding the operation slot. Hand [`Self::cancellation`] to core
 /// runners and return the ticket through [`Operations::finish`].
 pub(crate) struct OperationTicket {
@@ -109,8 +117,35 @@ impl Operations {
             .filter(|running| running.alive.upgrade().is_some())
     }
 
-    /// Takes the slot, or returns what already holds it.
+    /// Takes the slot for a write to the cluster the window shows, or says
+    /// why not: something else holds it, or the cluster is read-only. Every
+    /// Talos write goes through here, so a control that forgot to ask the
+    /// level still starts nothing (#852).
     pub(crate) fn begin(
+        &mut self,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Result<OperationTicket, Refused> {
+        if let Some(why) = refusal(cx) {
+            return Err(Refused::ReadOnly(why));
+        }
+        self.take(label, cx).map_err(Refused::Busy)
+    }
+
+    /// Takes the slot for maintenance mode, which the level does not govern:
+    /// it is not tied to a workspace entry, and it works on a node the
+    /// maintainer reached over the Talos maintenance API. WRITE_MODEL.md says
+    /// so; this is the one exemption from [`Self::begin`].
+    pub(crate) fn begin_maintenance(
+        &mut self,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Result<OperationTicket, Running> {
+        self.take(label, cx)
+    }
+
+    /// Takes the slot, or returns what already holds it.
+    fn take(
         &mut self,
         label: impl Into<SharedString>,
         cx: &mut Context<Self>,

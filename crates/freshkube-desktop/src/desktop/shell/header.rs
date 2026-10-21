@@ -212,7 +212,7 @@ impl Pilot {
     ) -> AnyElement {
         let p = palette(cx);
         let level = self.context_display.level;
-        let level_words = level_words(level);
+        let level_words = self.context_display.level_words.clone();
         let pilot = cx.entity().downgrade();
         let full = self.context_display.full.clone();
         let open_pilot = pilot.clone();

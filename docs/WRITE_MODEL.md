@@ -11,11 +11,12 @@ Nothing in the app changes a Kubernetes object yet, so there is no tier to apply
 | Pod exec (`pods/exec`) | A shell tab's Start is disabled, with the reason "This cluster is read-only."; a shell already running is left for its person to end | no change: the explicit Start, as before |
 | Talos Operations | Review is disabled with the same reason, and a confirmation already open when the level changed starts nothing | no change: their own preflight and confirmation |
 | Restarting a Talos service (System services) | Restart is disabled with the same reason | no change: its own confirmation |
+| Diagnostics' Apply fix (a machine-config patch, perhaps a reboot, or a service restart) | Apply fix is disabled with the same reason, and a confirmation already open starts nothing | no change: its own confirmation |
 | Port forwarding | allowed, see [Sessions](#sessions) | no change |
 
-Maintenance mode is not tied to a cluster entry (it works on a node before it is in one), so the level does not govern it; it keeps its own rules.
+Every Talos write takes the one operation slot through `Operations::begin`, which refuses under `read-only`; a control that forgot to ask still starts nothing. Maintenance mode is the one exemption, by name (`Operations::begin_maintenance`): it is not tied to a cluster entry (it works on a node before it is in one), so the level does not govern it; it keeps its own rules.
 
-`protected` and `guarded` change nothing for exec and Operations until [#853](https://github.com/skel84/freshkube/issues/853) adds the typed name to Operations; `open` changes nothing for them ever, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
+`protected` and `guarded` change nothing for exec, Operations, Restart and Apply fix until [#853](https://github.com/skel84/freshkube/issues/853) adds the typed name to Operations; `open` changes nothing for them ever, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
 
 ## The protection level
 
@@ -31,6 +32,7 @@ Each cluster entry in `freshkube.yaml` has a level ([SETUP_FILE.md](SETUP_FILE.m
 - **Never inferred.** No code reads a context's name, an entry's id or its role to choose a level.
 - **A skipped entry stays closed.** An entry skipped because its `protection` value is unknown does not become `guarded` through its context: that context is `read-only` until the file is fixed. A row skipped for another fault keeps a `read-only` or `protected` level of its own the same way.
 - **Two entries on one context:** the stricter level wins, in the order `read-only`, `protected`, `guarded`, `open`.
+- **Which entry:** the window works under the active entry's level (with the stricter of any entry on the same kubeconfig context), not under the name the header shows: the applied context can be a Talos context that no entry's `context` names.
 - A person sets the level, in Settings' Clusters Inspector or in the file. No action changes it, and an agent's checks never do.
 
 ## The tiers
