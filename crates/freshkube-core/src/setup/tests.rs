@@ -1125,3 +1125,77 @@ fn the_build_namespace_must_be_a_namespace_name_and_is_never_repeated() {
         ));
     }
 }
+
+#[test]
+fn build_namespace_templates_keep_the_placeholder_on_round_trip() {
+    for template in [
+        "{project}",
+        "{project}-ci",
+        "ci-{project}",
+        "{project}-{project}",
+    ] {
+        let setup = ok(&format!(
+            "version: 1\ndelivery:\n  build_namespace: '{template}'\n"
+        ));
+        assert_eq!(
+            setup.delivery.as_ref().unwrap().build_namespace.as_deref(),
+            Some(template)
+        );
+        assert_eq!(ok(&to_text(&setup)), setup);
+    }
+}
+
+#[test]
+fn build_namespace_templates_refuse_unknown_or_malformed_placeholders() {
+    for template in [
+        "{stage}",
+        "{app}",
+        "{project}-{stage}",
+        "{project",
+        "project}",
+        "{{project}}",
+    ] {
+        assert_eq!(
+            rule(&format!(
+                "version: 1\ndelivery:\n  build_namespace: '{template}'\n"
+            )),
+            "delivery.build_namespace isn’t a Kubernetes namespace name"
+        );
+    }
+}
+
+#[test]
+fn build_namespace_resolution_checks_each_projects_result() {
+    for project in ["shop", "billing"] {
+        assert_eq!(
+            resolve_build_namespace("{project}", project),
+            Ok(project.into())
+        );
+        assert_eq!(
+            resolve_build_namespace("{project}-ci", project),
+            Ok(format!("{project}-ci"))
+        );
+        assert_eq!(
+            resolve_build_namespace("builds", project),
+            Ok("builds".into())
+        );
+    }
+    let project = "s".repeat(60);
+    assert!(resolve_build_namespace("{project}-ci", &project).is_ok());
+    for project in [
+        "s".repeat(61),
+        "Shop".into(),
+        "shop.team".into(),
+        String::new(),
+    ] {
+        let name = format!("{project}-ci");
+        assert_eq!(
+            resolve_build_namespace("{project}-ci", &project),
+            Err(format!(
+                "delivery.build_namespace resolves to \"{name}\" for project {project}, which isn't a namespace name"
+            ))
+        );
+    }
+    // A valid file can produce a bad name for one project without refusing the file.
+    ok("version: 1\ndelivery:\n  build_namespace: '{project}-ci'\n");
+}

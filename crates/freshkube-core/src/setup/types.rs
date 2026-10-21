@@ -294,7 +294,8 @@ pub struct Delivery {
     /// Stage; off when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage_naming: Option<StageNaming>,
-    /// The namespace the builds run in. A build is searched for by its image
+    /// The namespace the builds run in, optionally containing `{project}`
+    /// for the change's Kargo project. A build is searched for by its image
     /// digest only in a namespace named here; without it only a commit finds
     /// a build.
     #[serde(default, skip_serializing_if = "Option::is_none")]

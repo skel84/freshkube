@@ -37,7 +37,7 @@ pub(super) async fn evidence(reader: &FixtureReader, client: Result<&Client, Err
     };
     let mut plan = crate::tests::plan(&[]);
     plan.sha = SHA.into();
-    plan.build_namespace = Some("acme".into());
+    plan.build_namespace = Ok(Some("acme".into()));
     within(upstream_with_history(
         &upstream,
         &plan,

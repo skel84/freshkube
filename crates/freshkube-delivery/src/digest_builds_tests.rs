@@ -60,7 +60,7 @@ async fn by_digest(world: &World, namespace: Option<&str>) -> Trail {
     run_configured(world, CONTEXTS, &FixtureGitHub::default(), None, |plan| {
         plan.sha = String::new();
         plan.digests = vec![Digest::parse(NEW).unwrap()];
-        plan.build_namespace = namespace.map(str::to_owned);
+        plan.build_namespace = Ok(namespace.map(str::to_owned));
     })
     .await
 }
