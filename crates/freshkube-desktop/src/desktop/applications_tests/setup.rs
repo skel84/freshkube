@@ -339,6 +339,8 @@ async fn shell_hands_recovered_sources_to_both_change_routes_without_open_fallba
                     sources: Default::default(),
                     public_key_file: None,
                     evidence_result: None,
+                    stage_naming: None,
+                    build_namespace: None,
                 }),
             };
         });

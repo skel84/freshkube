@@ -20,6 +20,8 @@ mod form;
 mod kubeconfig_row;
 mod metrics_tokens;
 mod monitoring;
+#[cfg(test)]
+mod recovery_tests;
 mod sections;
 #[cfg(test)]
 mod small_window_tests;
@@ -660,13 +662,12 @@ impl SettingsPage {
                 .test_support()
                 .role(Role::Alert)
                 .aria_label(body.clone())
-                .child(ui::banner(
-                    tone,
-                    Some(lead.to_owned().into()),
-                    body,
-                    None,
-                    cx,
-                ))
+                .child(
+                    ui::banner(tone, Some(lead.to_owned().into()), body, None, cx)
+                        .id(SharedString::from(format!("{id}-content")))
+                        .test_support()
+                        .aria_label(lead.to_owned()),
+                )
                 .into_any_element()
         };
         let mut banners = Vec::new();
@@ -679,6 +680,8 @@ impl SettingsPage {
                     .is_some_and(|file| file.read(cx).problem.is_some())
                 {
                     "Setup file"
+                } else if self.setup_skips {
+                    "Some rows in freshkube.yaml skipped"
                 } else if self.pending_setup {
                     "Unsaved edit is stale"
                 } else {
@@ -818,13 +821,35 @@ impl SettingsPage {
         } else {
             format!("{label}: select a cluster first")
         };
+        let tooltip: SharedString = tooltip.into();
+        let tooltip_action = action.boxed_clone();
         let button = Button::new(SharedString::from(format!("settings-{id}")))
             .outline()
             .small()
             .h(dp(ui::CONTROL_HEIGHT))
             .label(label)
             .disabled(!enabled)
-            .tooltip_with_action(tooltip, &action, Some(CONTEXT))
+            .map(|mut button| {
+                button.interactivity().tooltip(move |window, cx| {
+                    let text = tooltip.clone();
+                    gpui_kit::component::tooltip::Tooltip::element(move |window, _| {
+                        div()
+                            .id("settings-action-tooltip")
+                            .test_support()
+                            .aria_label(text.clone())
+                            .min_w_0()
+                            .max_w(
+                                ui::dp_px(360., window)
+                                    .min(window.viewport_size().width - ui::dp_px(128., window)),
+                            )
+                            .whitespace_normal()
+                            .child(text.clone())
+                    })
+                    .action(tooltip_action.as_ref(), Some(CONTEXT))
+                    .build(window, cx)
+                });
+                button
+            })
             .on_click(move |_, window, cx| handler(window, cx));
         let fold = page::action_entry(
             menu::MenuAction::new(label, action).enabled(enabled),

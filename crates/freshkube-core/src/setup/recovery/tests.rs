@@ -469,3 +469,49 @@ fn an_unrelated_skip_does_not_make_a_healthy_role_choice_unavailable() {
     }
     assert_eq!(read.setup.workspace.destinations.len(), 1);
 }
+
+#[test]
+fn unknown_roles_get_a_safe_reason_distinct_from_missing_or_wrong_shape() {
+    for (role, unknown) in [
+        ("invented-private-marker", true),
+        ("''", true),
+        ("null", false),
+        ("[]", false),
+        ("{}", false),
+    ] {
+        let recovered = recover(&format!(
+            "version: 1\nclusters: [{GOOD}, {{id: skipped, context: skipped, role: {role}}}, {LAST}]\n"
+        ));
+        let warning = &recovered.warnings[0];
+        assert_eq!(warning.field, "role");
+        assert_eq!(warning.reason == RowReason::UnknownRole, unknown);
+        assert_eq!(recovered.setup.workspace.clusters.len(), 2);
+        assert!(!format!("{warning:?}").contains("invented-private-marker"));
+        assert!(!warning.to_string().contains("invented-private-marker"));
+        if unknown {
+            assert_eq!(
+                warning.to_string(),
+                "skipped clusters[1] (skipped): role: is unknown; use core, cicd or environment"
+            );
+        }
+    }
+    let recovered = recover("version: 1\nclusters: [{id: skipped, context: skipped}]\n");
+    assert_eq!(recovered.warnings[0].reason, RowReason::Shape);
+    assert_eq!(recovered.warnings[0].field, "role");
+}
+
+#[test]
+fn row_recovery_keeps_and_validates_shared_delivery_settings() {
+    let recovered = recover(&format!(
+        "version: 1\nclusters: [{GOOD}, []]\ndelivery:\n  build_namespace: builds\n  stage_naming: {{name_template: '{{stage}}-{{project}}'}}\n"
+    ));
+    let delivery = recovered.setup.delivery.unwrap();
+    assert_eq!(delivery.build_namespace.as_deref(), Some("builds"));
+    assert_eq!(
+        delivery.stage_naming.unwrap().name_template,
+        "{stage}-{project}"
+    );
+    assert!(
+        read(b"version: 1\nclusters: [[]]\ndelivery: {build_namespace: invalid/name}\n").is_err()
+    );
+}

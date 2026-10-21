@@ -868,6 +868,8 @@ async fn all_skipped_setup_reads_neither_the_open_connection_nor_an_entry() {
     );
     let _ = read_in(&pool, &place, observed_at()).await;
     let at = crate::changes::live::Where {
+        stage_naming: None,
+        build_namespace: None,
         cluster: place.cluster,
         label: place.label,
         argocd_namespace: place.argocd_namespace,

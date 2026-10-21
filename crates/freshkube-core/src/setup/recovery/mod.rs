@@ -26,6 +26,7 @@ pub enum Row {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RowReason {
     Shape,
+    UnknownRole,
     Workspace(workspace::Invalid),
     Rule(Fault),
     Destination(workspace::Fault),
@@ -59,6 +60,7 @@ impl std::fmt::Display for Warning {
             RowReason::Shape => {
                 f.write_str("a required value is missing or has the wrong type or shape")
             }
+            RowReason::UnknownRole => f.write_str("is unknown; use core, cicd or environment"),
             RowReason::Workspace(why) => match why {
                 workspace::Invalid::EmptyId
                 | workspace::Invalid::EmptyContext(_)
@@ -359,7 +361,15 @@ fn wrong<T: DeserializeOwned>(row: &Value, key: &str, required: bool) -> bool {
 }
 
 fn decode_cluster(row: &Value) -> Result<Entry, RowFault> {
-    serde_yaml::from_value(row.clone()).map_err(|_| (cluster_shape_field(row), RowReason::Shape))
+    serde_yaml::from_value(row.clone()).map_err(|_| {
+        let field = cluster_shape_field(row);
+        let reason = if field == "role" && row.get("role").is_some_and(Value::is_string) {
+            RowReason::UnknownRole
+        } else {
+            RowReason::Shape
+        };
+        (field, reason)
+    })
 }
 
 fn cluster_shape_field(row: &Value) -> String {
