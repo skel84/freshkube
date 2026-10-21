@@ -4,15 +4,7 @@ How Freshkube decides what a person may change in a cluster, and what it asks fi
 
 ## What is enforced today
 
-Nothing in the app changes a Kubernetes object yet, so there is no tier to apply to one. What the level does today:
-
-| Writer | `read-only` | `protected`, `guarded`, `open` |
-|--------|-------------|--------------------------------|
-| Pod exec (`pods/exec`) | Start is disabled, with the reason "This cluster is read-only" | no change: the explicit Start, as before |
-| Talos Operations and maintenance | Submit is disabled, with the same reason | no change: their own preflight and confirmation |
-| Port forwarding | allowed, see [Sessions](#sessions) | no change |
-
-`protected` and `guarded` change nothing for exec and Operations until [#853](https://github.com/skel84/freshkube/issues/853) adds the typed name to Operations; `open` changes nothing for them ever, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
+Nothing in the app changes a Kubernetes object yet, so there is no tier to apply to one. This change adds the field and its validation ([SETUP_FILE.md](SETUP_FILE.md#protection)). The tags that show the level, Settings' control for it and the `read-only` gates on a shell's Start, Operations' Review and a service's Restart follow in the next change, and the tiers with the framework that enforces them are [#853](https://github.com/skel84/freshkube/issues/853). Until then every level behaves as `guarded` does today.
 
 ## The protection level
 

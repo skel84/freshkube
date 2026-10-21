@@ -591,8 +591,9 @@ pub fn choose_start<'a>(workspace: &'a Workspace, remembered: Option<&str>) -> O
 /// paths are absolute.
 pub fn example() -> Workspace {
     let entry = |id: &str, role| Entry::new(id, role, id);
-    // The entries differ in level, so example data shows each one: core-fra
-    // and stage-fra set none and are guarded.
+    // The entries differ in level, so example data shows each one: stage-fra
+    // and prod-fra set none and are guarded. The window opens on prod-fra,
+    // so it stays writable for the shell and Operations checks.
     let level = |id: &str, role, level| {
         let mut entry = Entry::new(id, role, id);
         entry.protection = Some(level);
@@ -600,7 +601,7 @@ pub fn example() -> Workspace {
     };
     // One entry is linked to the example Coroot, so example data shows both
     // states of an entry's `coroot` key; the others are not.
-    let mut core = entry("core-fra", Role::Core);
+    let mut core = level("core-fra", Role::Core, Protection::ReadOnly);
     core.coroot = Some(Box::new(crate::setup::EntryCoroot::new("fixture")));
     Workspace {
         kubeconfig: None,
@@ -610,7 +611,7 @@ pub fn example() -> Workspace {
             level("dev-fra", Role::Environment, Protection::Open),
             entry("stage-fra", Role::Environment),
             level("prod-ams", Role::Environment, Protection::Protected),
-            level("prod-fra", Role::Environment, Protection::ReadOnly),
+            entry("prod-fra", Role::Environment),
         ],
         // The servers acme's Argo CD Applications name
         // (`applications::example`); prod-lon isn't in the workspace, so
