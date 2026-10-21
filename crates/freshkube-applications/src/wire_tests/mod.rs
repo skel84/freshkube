@@ -670,6 +670,80 @@ async fn setup_github_client_reaches_every_delivery_read_and_follows_its_entry(
     .unwrap();
 }
 
+/// The Changes list's setup banner says why GitHub isn't set up, beside
+/// the setup file's own problem, and goes when it is.
+#[gpui_kit::test]
+async fn the_changes_list_banner_says_why_github_is_not_set_up(cx: &mut TestAppContext) {
+    use freshkube_core::setup::GitHubToken;
+    use freshkube_delivery::github::ACCOUNT;
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let store = Arc::new(MemoryStore::default());
+    let secrets: Secrets = store.clone();
+    let mut configured = setup(None, None, false);
+    let (window, app) = mount(
+        cx,
+        &runtime,
+        &configured,
+        Some(secrets),
+        true,
+        Arc::default(),
+    );
+    wait_list(cx, window, &app).await;
+    let banner = |cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window
+                .try_find("changes-setup-problem")
+                .map(|banner| banner.label().unwrap_or_default().to_owned())
+        })
+        .unwrap()
+    };
+    assert_eq!(banner(cx), None, "anonymous is nothing to say");
+    // Named, and nothing saved.
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).github_open.is_none())
+        .await;
+    assert_eq!(
+        banner(cx).as_deref(),
+        Some("GitHub isn't set up: no GitHub token is saved in keys.json")
+    );
+    // Beside the setup file's own problem.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| {
+            page.set_setup_problem(Some("The setup file has a problem.".into()), cx)
+        });
+    })
+    .unwrap();
+    assert_eq!(
+        banner(cx).as_deref(),
+        Some(
+            "The setup file has a problem. GitHub isn't set up: no GitHub token is saved in keys.json"
+        )
+    );
+    // The file's problem goes, and the GitHub one stays.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup_problem(None, cx));
+    })
+    .unwrap();
+    assert_eq!(
+        banner(cx).as_deref(),
+        Some("GitHub isn't set up: no GitHub token is saved in keys.json")
+    );
+    // A token saved and the setup reloaded: the banner goes.
+    store.write(ACCOUNT, "ghp_exampleToken0123456789").unwrap();
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).across().github.is_some())
+        .await;
+    assert_eq!(banner(cx), None);
+}
+
 fn assert_log_handoff(
     app: &Entity<ApplicationsPage>,
     change: &Entity<ChangePage>,

@@ -114,6 +114,16 @@ impl std::fmt::Display for Error {
 }
 
 impl Error {
+    /// The token of `source` was not had in the time allowed, or the work
+    /// that had it stopped: a slow `gh` reads as gh being slow, never as the
+    /// key store.
+    pub fn not_had(source: GitHubToken) -> Self {
+        Self::NotSetUp(match source {
+            GitHubToken::Gh => NotSetUp::GhSlow,
+            GitHubToken::KeysJson => NotSetUp::KeysUnavailable,
+        })
+    }
+
     /// The card's words, which name the repository and what to do.
     pub fn words(&self, repo: &str) -> String {
         match self {

@@ -85,7 +85,8 @@ pub(crate) fn parse_pull_request(repo: &str, value: &Value) -> Option<PullReques
 
 pub use example::{detail as example_detail, identity as example_identity};
 pub use rest::{
-    ACCOUNT, ChecksState, DetailKey, Error, Handle, NotSetUp, PullDetail, PullState, ReviewState,
+    ACCOUNT, ChecksState, DetailKey, Error, Handle, NotSetUp, OPEN_DEADLINE, PullDetail, PullState,
+    ReviewState,
 };
 pub(crate) use rest::{PullSummary, Stale};
 
