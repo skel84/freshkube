@@ -96,13 +96,20 @@ The app's binaries parse all of these knobs once into `DebugOptions` (`crates/fr
 
 ## Cluster safety
 
-- Read-only by default. Checks against a real cluster list, watch and read; they never create, change or delete resources.
-- Pod exec and port forwarding are the two exceptions, and each starts only from an explicit action.
+- **An agent's checks stay read-only.** A check against a real cluster lists, watches and reads; it never creates, changes or deletes resources, except an action the maintainer names, on an object the maintainer names as disposable. The app's write model below is for the people who use the app. It does not widen what an agent may do: a cluster's `open` or `guarded` level is not permission for an agent.
+- **The app's writes follow the write model** ([docs/WRITE_MODEL.md](docs/WRITE_MODEL.md)):
+  - Every cluster entry has a protection level in `freshkube.yaml`: `read-only`, `protected`, `guarded` or `open`. An entry with none is `guarded`. A person sets a level; it is never inferred from a context's name.
+  - Every write has a risk tier: session, reversible, spec change or destructive. The action declares it in core, not the page. The tier and the level together decide what the user must do before the write is sent.
+  - Every change to a Kubernetes object goes through core's `write` module, which is where the model is enforced: access review, the UID and resourceVersion check, the server-side dry run, server-side apply with field manager `freshkube` and no forced takeover, the observed outcome and the audit log. A page describes an action and draws what core answers; it never builds a write request, skips a requirement or decides a level.
+  - The level is always shown, in the header and the status bar.
+  - A submitted write outlives its page, is never replayed and is counted once ([docs/STATE_LIFETIMES.md](docs/STATE_LIFETIMES.md)).
+- Pod exec and port forwarding are the session tier. They change no object through the write module and keep their own owners, and each starts only from an explicit action.
   - Pod exec (`resources/exec/`) creates a `pods/exec`. The app starts one only from an explicit Start, and a live check runs one only on a pod and container the user named, with harmless commands ([docs/POD_EXEC.md](docs/POD_EXEC.md)).
   - Port forwarding (`freshkube-resources`' `forwards/`) creates a `pods/portforward`. It changes no objects, but it reaches whatever the port serves. The app starts one only from an explicit Forward, and a live check forwards only a pod and port the user named ([docs/PORT_FORWARD.md](docs/PORT_FORWARD.md)).
+- Operations and maintenance actions keep their own preflight and confirmation, and a `read-only` cluster refuses them.
 - Never run Operations or maintenance actions (drain, reboot, upgrade, apply config, reset) during verification unless the user asked for that specific action on a node they named as disposable.
 - Use the context the user chose. Never fall back to whatever kubeconfig or talosconfig context is current.
-- Never print or commit credentials: talosconfig and kubeconfig contents, tokens, Secret values, keys. Redact them in logs, screenshots and evidence.
+- Never print or commit credentials: talosconfig and kubeconfig contents, tokens, Secret values, keys. Redact them in logs, screenshots, evidence and the audit log.
 
 ## Working with GPUI
 
