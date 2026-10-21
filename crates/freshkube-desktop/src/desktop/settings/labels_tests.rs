@@ -1,8 +1,8 @@
 //! Check entries in the real app: the store's counts become one line per
 //! entry, and Accept sets one entry's value.
-use super::super::labels::Line;
+use super::super::monitoring::tests::{live, replace};
 use super::super::{SettingsPage, SettingsSection};
-use super::tests::{live, replace};
+use super::Line;
 use freshkube_core::monitoring::scope::LabelCounts;
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, test::TestWindowExt};
@@ -76,7 +76,7 @@ fn lines(cx: &TestAppContext, page: &Entity<SettingsPage>) -> Vec<(String, Strin
 async fn checked(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<SettingsPage>) {
     cx.wait_for_io(handle, |_, cx| {
         let labels = &page.read(cx).monitoring.as_ref().unwrap().labels;
-        !labels.read.is_loading() && (labels.read.data().is_some() || labels.failed.is_some())
+        !labels.read.is_loading() && (labels.read.data().is_some() || labels.read.error().is_some())
     })
     .await;
     cx.run_until_parked();
@@ -134,10 +134,7 @@ async fn check_entries_lists_each_entry(cx: &mut TestAppContext) {
         for entry in ["cluster-a", "cluster-b", "cluster-c"] {
             assert!(window.find(format!("metrics-entry-{entry}")).visible());
         }
-        assert!(
-            window.find("entries-unclaimed").visible()
-                || window.try_find("entries-unclaimed").is_none()
-        );
+        assert!(window.find("entries-unclaimed").visible());
     })
     .unwrap();
     cx.read(|cx| {
@@ -235,14 +232,28 @@ async fn ignore_writes_nothing_and_stays_hidden(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(lines(cx, &page).iter().all(|(_, _, suggest)| !suggest));
+    // The ignored line reads as if it had never had a suggestion.
+    let shown = lines(cx, &page);
+    assert!(
+        shown
+            .iter()
+            .all(|(_, words, suggest)| !suggest && !words.contains("set metrics.value")),
+        "{shown:?}"
+    );
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(window.find("entries-ignored").visible());
         window.click("metrics-check-entries", cx);
     })
     .unwrap();
     checked(cx, handle, &page).await;
-    assert!(lines(cx, &page).iter().all(|(_, _, suggest)| !suggest));
+    let shown = lines(cx, &page);
+    assert!(
+        shown
+            .iter()
+            .all(|(_, words, suggest)| !suggest && !words.contains("set metrics.value")),
+        "{shown:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap(),
         SETUP
@@ -336,10 +347,7 @@ async fn a_refused_store_suggests_nothing(cx: &mut TestAppContext) {
     .unwrap();
     cx.read(|cx| {
         let labels = &page.read(cx).monitoring.as_ref().unwrap().labels;
-        assert_eq!(
-            labels.failed.as_deref(),
-            Some("The store refused the query")
-        );
+        assert_eq!(labels.read.error(), Some("The store refused the query"));
     });
 }
 
@@ -371,8 +379,112 @@ fn example_data_answers_at_once_and_cannot_accept(cx: &mut TestAppContext) {
     cx.run_until_parked();
     // Nothing is saved from example data.
     cx.read(|cx| {
-        let page = page.read(cx);
-        assert!(page.saving.is_none());
-        assert!(page.workspace().clusters[1].metrics.is_none());
+        assert!(page.read(cx).saving.is_none());
     });
+    // The suggestion for the example's cluster-b is still there: Accept did
+    // nothing.
+    assert!(
+        lines(cx, &page)
+            .iter()
+            .any(|(entry, _, suggest)| entry == "cluster-b" && *suggest)
+    );
+}
+
+#[gpui_kit::test]
+async fn a_modified_key_never_accepts_and_the_bare_key_does(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let (_runtime, handle, _pilot, page) = start(cx, directory.path()).await;
+    answering(cx, &page, Ok(counts(&[("cluster-a", 3), ("cluster-b", 5)])));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-check-entries", cx);
+    })
+    .unwrap();
+    checked(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-entry-cluster-b", cx);
+        // Select all is not Accept.
+        window.press("secondary-a", cx);
+        window.press("ctrl-a", cx);
+        window.press("secondary-backspace", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap(),
+        SETUP
+    );
+    assert!(lines(cx, &page).iter().any(|(_, _, suggest)| *suggest));
+    cx.update_window(handle, |_, window, cx| window.press("a", cx))
+        .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).saving.is_none())
+        .await;
+    cx.run_until_parked();
+    assert_ne!(
+        std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap(),
+        SETUP
+    );
+}
+
+#[gpui_kit::test]
+async fn a_reload_with_a_new_label_drops_the_old_lines(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let (_runtime, handle, _pilot, page) = start(cx, directory.path()).await;
+    answering(cx, &page, Ok(counts(&[("cluster-a", 3), ("cluster-b", 5)])));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-check-entries", cx);
+    })
+    .unwrap();
+    checked(cx, handle, &page).await;
+    assert!(!lines(cx, &page).is_empty());
+    let changed = SETUP.replace("  mode: central\n", "  mode: central\n  label: region\n");
+    assert_ne!(changed, SETUP);
+    std::fs::write(directory.path().join("freshkube.yaml"), &changed).unwrap();
+    cx.update(|cx| {
+        let file = page.read(cx).monitoring.as_ref().unwrap().file.clone();
+        file.update(cx, |file, cx| file.reload(cx)).detach();
+    });
+    cx.wait_for_io(handle, |_, cx| {
+        page.read(cx)
+            .monitoring
+            .as_ref()
+            .unwrap()
+            .baseline
+            .label
+            .as_deref()
+            == Some("region")
+    })
+    .await;
+    cx.run_until_parked();
+    // Lines for the old label are gone, so Accept cannot write a value found
+    // under it.
+    assert!(lines(cx, &page).is_empty());
+    cx.read(|cx| {
+        let labels = &page.read(cx).monitoring.as_ref().unwrap().labels;
+        assert!(labels.read.data().is_none());
+    });
+}
+
+#[gpui_kit::test]
+async fn a_capped_answer_says_so_and_suggests_nothing(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let (_runtime, handle, _pilot, page) = start(cx, directory.path()).await;
+    let mut capped = counts(&[("cluster-a", 3), ("cluster-b", 5)]);
+    capped.capped = true;
+    answering(cx, &page, Ok(capped));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-check-entries", cx);
+    })
+    .unwrap();
+    checked(cx, handle, &page).await;
+    let shown = lines(cx, &page);
+    let b = shown
+        .iter()
+        .find(|(entry, _, _)| entry == "cluster-b")
+        .unwrap();
+    assert!(b.1.contains("not among the values read"), "{b:?}");
+    assert!(!b.2);
 }

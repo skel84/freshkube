@@ -63,7 +63,7 @@ fn open(
     cx.read(|cx| pilot.read(cx).settings_page.clone())
 }
 
-pub(super) async fn live(
+pub(in crate::desktop::settings) async fn live(
     cx: &mut TestAppContext,
     directory: &std::path::Path,
     context: &str,
@@ -116,7 +116,12 @@ pub(super) async fn live(
     (runtime, handle, pilot, page)
 }
 
-pub(super) fn replace(window: &mut Window, cx: &mut App, id: &'static str, value: &str) {
+pub(in crate::desktop::settings) fn replace(
+    window: &mut Window,
+    cx: &mut App,
+    id: &'static str,
+    value: &str,
+) {
     window.click(id, cx);
     window.press("secondary-a", cx);
     window.input(value, cx);

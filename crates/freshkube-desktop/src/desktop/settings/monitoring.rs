@@ -76,7 +76,7 @@ pub(super) struct MonitoringForm {
     pub(super) pilot: WeakEntity<Pilot>,
     pub(super) page: Entity<MonitoringPage>,
     pub(super) file: Entity<SetupFile>,
-    baseline: Metrics,
+    pub(super) baseline: Metrics,
     initial: Values,
     seen: Seen,
     pub(super) mode: Mode,
@@ -159,6 +159,10 @@ impl MonitoringForm {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if metrics != self.baseline {
+            // Lines and suggestions were for the metrics block as it was.
+            self.labels.clear();
+        }
         self.mode = metrics.mode;
         let store = metrics.store.as_ref();
         self.by_url = store.is_some_and(|store| store.url.is_some());
@@ -516,6 +520,7 @@ impl SettingsPage {
                         page.workspace.clusters.iter().any(|entry| &entry.id == id)
                     });
                     draft.read.reset();
+                    draft.labels.clear();
                     draft.outcome = None;
                     draft
                         .page
@@ -1520,8 +1525,4 @@ fn describe_checks(checks: &[Check]) -> (ui::Tone, String) {
 
 #[cfg(test)]
 #[path = "monitoring_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "labels_tests.rs"]
-mod labels_tests;
+pub(in crate::desktop::settings) mod tests;

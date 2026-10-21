@@ -401,3 +401,13 @@ fn unclaimed_values_are_cut_and_counted() {
     assert_eq!(labels.unclaimed.len(), MAX_UNCLAIMED);
     assert_eq!(labels.more, 5);
 }
+
+#[test]
+fn a_capped_answer_says_not_read_and_suggests_nothing() {
+    let mut counts = counts_for(&[("cluster-a", "3"), ("cluster-b", "5")]);
+    counts.capped = true;
+    let setup = two_entries("    metrics:\n      value: shop-b\n");
+    let labels = entry_labels(&setup, &counts);
+    assert_eq!(state(&labels, "cluster-a"), LabelState::HasSeries(3));
+    assert_eq!(state(&labels, "cluster-b"), LabelState::NotRead);
+}

@@ -101,6 +101,9 @@ pub enum LabelState {
     /// It has none now. When the entry's context name holds series and no
     /// entry claims that value, `suggest` is it: `metrics.value: <context>`.
     NoSeries { suggest: Option<String> },
+    /// The store had more values than were read, and this one is not among
+    /// those: it may have series, and none is suggested.
+    NotRead,
     /// The entry names its own store: not checked here.
     OwnSource,
 }
@@ -156,6 +159,8 @@ pub fn entry_labels(setup: &Setup, counts: &LabelCounts) -> EntryLabels {
                 LabelState::OwnSource
             } else if let Some(count) = counts.counts.get(&value) {
                 LabelState::HasSeries(*count)
+            } else if counts.capped {
+                LabelState::NotRead
             } else {
                 let suggest = counts
                     .counts

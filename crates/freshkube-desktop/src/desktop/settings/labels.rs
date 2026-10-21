@@ -43,8 +43,6 @@ pub(super) type Labeler = Arc<
 pub(super) struct Labels {
     pub(super) read: Loader<LabelCounts, (Metrics, Option<String>)>,
     pub(super) labeler: Labeler,
-    /// Why the check could not run or the store could not answer.
-    pub(super) failed: Option<String>,
     /// The lines, derived when the counts or the setup change.
     pub(super) lines: Vec<Line>,
     /// The unclaimed values, in one line.
@@ -69,7 +67,6 @@ impl Labels {
             labeler: Arc::new(|resolved, access, token| {
                 Box::pin(async move { scope::label_counts(&resolved, &access, token).await })
             }),
-            failed: None,
             lines: Vec::new(),
             unclaimed: None,
             ignored: 0,
@@ -80,13 +77,12 @@ impl Labels {
 
     /// Whether the group shows: a check runs, failed, or left lines.
     pub(super) fn shows(&self) -> bool {
-        self.read.is_loading() || self.failed.is_some() || self.read.data().is_some()
+        self.read.is_loading() || self.read.error().is_some() || self.read.data().is_some()
     }
 
     /// Drops the findings and a check in flight.
     pub(super) fn clear(&mut self) {
         self.read.reset();
-        self.failed = None;
         self.lines.clear();
         self.unclaimed = None;
         self.ignored = 0;
@@ -116,6 +112,11 @@ fn line_of(label: EntryLabel, counts: &LabelCounts) -> Line {
             }
             (words, Some(ui::Tone::Unknown), suggest)
         }
+        LabelState::NotRead => (
+            format!("{name}=\"{value}\" is not among the values read; the store has more"),
+            Some(ui::Tone::Unknown),
+            None,
+        ),
         LabelState::OwnSource => ("reads its own store".to_owned(), None, None),
     };
     Line {
@@ -171,7 +172,6 @@ impl SettingsPage {
         if self.origin == super::Origin::Example {
             let counts = scope::example_label_counts(&setup);
             let draft = self.monitoring.as_mut().unwrap();
-            draft.labels.failed = None;
             draft
                 .labels
                 .read
@@ -193,14 +193,29 @@ impl SettingsPage {
         } = match prepared {
             Ok(prepared) => prepared,
             Err(why) => {
-                draft.labels.read.reset();
-                draft.labels.failed = Some(why);
+                draft
+                    .labels
+                    .read
+                    .resolve((identity_metrics.clone(), None), Err(why));
                 self.derive_labels(cx);
                 return;
             }
         };
+        // The open entry names its own store, so the central one isn't what
+        // it resolves to; saying so is truer than "needs the Central mode".
+        if !matches!(resolved, scope::Resolved::Central { .. }) {
+            draft.labels.read.resolve(
+                (identity_metrics, None),
+                Err(
+                    "The open entry reads its own store, so it can’t ask the central one; \
+                     open an entry that reads the central store"
+                        .to_owned(),
+                ),
+            );
+            self.derive_labels(cx);
+            return;
+        }
         let labeler = draft.labels.labeler.clone();
-        draft.labels.failed = None;
         let request = draft.labels.read.start((identity_metrics, identity));
         let (job, receiver) = freshkube_core::job::spawn_job(
             &runtime,
@@ -219,9 +234,7 @@ impl SettingsPage {
                 let Some(draft) = &mut page.monitoring else {
                     return;
                 };
-                let failed = result.as_ref().err().cloned();
                 if draft.labels.read.land(&request, result, cx) {
-                    draft.labels.failed = failed;
                     page.derive_labels(cx);
                 }
             });
@@ -239,20 +252,24 @@ impl SettingsPage {
             labels.lines.clear();
             labels.unclaimed = None;
             labels.ignored = 0;
-            if let (Some(counts), Some(setup)) = (labels.read.data(), &setup) {
+            // A check that failed, or is stale, leaves no lines to accept.
+            let counts = labels.read.data().filter(|_| labels.read.error().is_none());
+            if let (Some(counts), Some(setup)) = (counts, &setup) {
                 let derived = entry_labels(setup, counts);
-                for label in derived.entries {
-                    let skipped = matches!(&label.state, LabelState::NoSeries { suggest: Some(value) }
-                    if ignored.contains(&Ignored::MetricsValue {
-                        entry: label.entry.clone(),
-                        value: value.clone(),
-                    }));
-                    let mut line = line_of(label, counts);
-                    if skipped {
+                for mut label in derived.entries {
+                    if let LabelState::NoSeries {
+                        suggest: Some(value),
+                    } = &label.state
+                        && ignored.contains(&Ignored::MetricsValue {
+                            entry: label.entry.clone(),
+                            value: value.clone(),
+                        })
+                    {
+                        // Ignored: the line reads as if it had no suggestion.
                         labels.ignored += 1;
-                        line.suggest = None;
+                        label.state = LabelState::NoSeries { suggest: None };
                     }
-                    labels.lines.push(line);
+                    labels.lines.push(line_of(label, counts));
                 }
                 if !derived.unclaimed.is_empty() {
                     let mut text = derived
@@ -361,8 +378,8 @@ impl SettingsPage {
                 "Asking the store…",
             ));
         }
-        if let Some(why) = &labels.failed {
-            group = group.row(form::row("entries-failed", "Not checked", why.clone()));
+        if let Some(why) = labels.read.error() {
+            group = group.row(form::row("entries-failed", "Not checked", why.to_owned()));
         }
         let selected = self.selected_label();
         for line in &labels.lines {
@@ -398,6 +415,17 @@ impl SettingsPage {
                 content,
             ));
         }
+        if labels.ignored > 0 {
+            group = group.row(form::row(
+                "entries-ignored",
+                "Ignored",
+                format!(
+                    "{} suggestion{} hidden until the app restarts",
+                    labels.ignored,
+                    if labels.ignored == 1 { "" } else { "s" }
+                ),
+            ));
+        }
         if let Some(unclaimed) = &labels.unclaimed {
             group = group.row(form::row(
                 "entries-unclaimed",
@@ -431,6 +459,10 @@ impl SettingsPage {
                 .test_support()
                 .track_focus(&labels.focus)
                 .on_key_down(cx.listener(|page, event: &KeyDownEvent, _, cx| {
+                    // Only the bare key: Cmd-A and Ctrl-A are select-all.
+                    if event.keystroke.modifiers.modified() {
+                        return;
+                    }
                     match event.keystroke.key.as_str() {
                         "enter" | "a" => page.accept_label(cx),
                         "backspace" => page.ignore_label(cx),
@@ -474,3 +506,7 @@ impl SettingsPage {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "labels_tests.rs"]
+mod labels_tests;
