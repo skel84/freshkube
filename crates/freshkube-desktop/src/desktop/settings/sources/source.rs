@@ -48,7 +48,7 @@ pub(super) fn columns(rows: &[SourceRow], suggested: Option<&SourceRow>) -> (Vec
     };
     let mut columns = vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
-        column(Field::Part, "Part", 96.),
+        column(Field::Part, "Part", 120.),
         column(
             Field::Entry,
             "Entry",

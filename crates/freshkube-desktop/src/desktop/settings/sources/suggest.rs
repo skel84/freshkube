@@ -333,8 +333,8 @@ impl SourcesList {
                                  delivery.build_namespace",
                                 fits.len(),
                                 match partial {
-                                    true => "some namespaces with runs belong to no project",
-                                    false => "every namespace with runs belongs to a project",
+                                    true => "Some namespaces with runs belong to no project",
+                                    false => "Every namespace with runs belongs to a project",
                                 }
                             ),
                         )
