@@ -1,1 +1,0 @@
-- **Settings:** Argo CD destinations can find suggestions: Find reads Argo CD's cluster Secrets (their name, server and cluster name only), matches each server to the kubeconfig's contexts, and lists mappings to accept or ignore. Nothing is written until Accept.
