@@ -97,6 +97,15 @@ pub mod testing {
         crate::change::example::change(now)
     }
 
+    /// A loopback https server that answers GitHub's API and avatar host's
+    /// requests from a handler and records each one. [`Handle::anonymous_at`]
+    /// trusts it alone.
+    ///
+    /// [`Handle::anonymous_at`]: crate::github::Handle::anonymous_at
+    pub mod github {
+        pub use crate::github::fake::{Reply, Request, Server};
+    }
+
     /// A Kargo Stage as the reads parse it.
     pub fn parse_stage(value: &Value) -> Option<Stage> {
         crate::kargo::parse_stage(value)

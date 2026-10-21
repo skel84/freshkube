@@ -4,8 +4,12 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use super::rest::{AvatarUrl, Person, PullState, PullSummary, Reviewer, Stale};
+use super::rest::{
+    AvatarUrl, Changed, CheckRun, Checks, ChecksState, Error, Identity, Label, Person, PullDetail,
+    PullState, PullSummary, Review, ReviewState, Reviewer, RunState, Stale,
+};
 use crate::address::Address;
+use freshkube_core::setup::GitHubToken;
 
 pub const REPO: &str = "acme/shop";
 
@@ -17,6 +21,15 @@ fn person(login: &str, id: u64) -> Person {
     Person {
         login: login.into(),
         avatar: AvatarUrl::parse(&format!("https://{}/u/{id}?v=4", super::rest::AVATAR_HOST)),
+    }
+}
+
+/// The head commit of the example's pull request `number`. Pull request 418
+/// is the one the example change deploys, whose commit is `a1f3c9e`.
+fn head_of(number: u64) -> String {
+    match number {
+        418 => format!("a1f3c9e{}", "0".repeat(33)),
+        other => format!("{other:0>40}"),
     }
 }
 
@@ -60,6 +73,7 @@ pub fn pull(number: u64) -> Option<PullSummary> {
         repo: REPO.into(),
         number,
         title: Some(title.into()),
+        head: Some(head_of(number)),
         state,
         author: Some(person(author, if author == "ken" { 1001 } else { 1002 })),
         merged_at: (state == PullState::Merged).then(|| at(9, 30)),
@@ -79,6 +93,95 @@ pub fn pull(number: u64) -> Option<PullSummary> {
     })
 }
 
+/// Whose answers the example's are: an anonymous client, no setup.
+pub fn identity() -> Identity {
+    Identity {
+        api: url::Url::parse("https://api.github.com/").expect("an address"),
+        account: None,
+        setup_revision: 0,
+    }
+}
+
+fn run(name: &str, state: RunState) -> CheckRun {
+    CheckRun {
+        name: name.into(),
+        state,
+        started_at: Some(at(9, 40)),
+        completed_at: (state == RunState::Passed).then(|| at(9, 44)),
+        page: None,
+    }
+}
+
+/// The card's read of the example's pull request `summary`, as GitHub
+/// leaves it: whole, kept and stale, or refused with the token's words.
+pub fn detail(summary: &PullSummary, trouble: Option<Trouble>) -> Result<PullDetail, String> {
+    if trouble == Some(Trouble::Refused) {
+        return Err(Error::Unauthorized(GitHubToken::KeysJson).words(&summary.repo));
+    }
+    let open = summary.state == PullState::Open;
+    let mut runs = vec![
+        run("build", RunState::Passed),
+        run("lint", RunState::Passed),
+    ];
+    runs.push(if open {
+        run("e2e", RunState::Running)
+    } else {
+        run("e2e", RunState::Passed)
+    });
+    let reviews = if open {
+        Vec::new()
+    } else {
+        vec![
+            Review {
+                who: person("mira", 1002),
+                state: ReviewState::Approved,
+                submitted_at: Some(at(9, 20)),
+                commit: summary.head.clone(),
+            },
+            Review {
+                who: person("zoe", 1003),
+                state: ReviewState::Commented,
+                submitted_at: Some(at(9, 10)),
+                commit: summary.head.clone(),
+            },
+        ]
+    };
+    let stale = trouble
+        .and_then(|trouble| trouble.leaves(Some(summary.clone())))
+        .and_then(|pull| pull.stale);
+    Ok(PullDetail {
+        changed: Some(Changed {
+            additions: 84,
+            deletions: 12,
+            files: 5,
+        }),
+        labels: vec![Label {
+            name: "reliability".into(),
+            color: Some("0e8a16".into()),
+        }],
+        merge_commit: (summary.state == PullState::Merged).then(|| "c0ffee0".repeat(5) + "00000"),
+        summary: PullSummary {
+            stale: stale.clone(),
+            ..summary.clone()
+        },
+        reviews,
+        reviews_capped: false,
+        checks: Checks {
+            state: if open {
+                ChecksState::Pending
+            } else {
+                ChecksState::Passing
+            },
+            runs,
+            statuses: Vec::new(),
+            capped: None,
+            statuses_capped: None,
+        },
+        read_at: stale.as_ref().map_or_else(Utc::now, |stale| stale.read_at),
+        stale,
+    })
+}
+
 /// What kept the example's GitHub from answering, in a capture's shapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trouble {
@@ -90,13 +193,25 @@ pub enum Trouble {
     Offline,
 }
 
+/// When the example's limit resets: fifty minutes after the run began, so a
+/// run at any hour shows a limit still to wait for, and one time for the
+/// whole run so every surface says the same.
+fn limit_resets() -> DateTime<Utc> {
+    static RESET: std::sync::OnceLock<DateTime<Utc>> = std::sync::OnceLock::new();
+    *RESET.get_or_init(|| Utc::now() + chrono::Duration::minutes(50))
+}
+
 impl Trouble {
     /// The words the status bar and the page's banner carry.
-    pub fn words(self) -> &'static str {
+    pub fn words(self) -> String {
         match self {
-            Self::Limited => "GitHub's rate limit is reached until 14:05 UTC",
-            Self::Refused => "GitHub refused the token (401)",
-            Self::Offline => "GitHub didn't answer: could not connect",
+            Self::Limited => Error::Limited {
+                until: limit_resets(),
+                secondary: false,
+            }
+            .to_string(),
+            Self::Refused => "GitHub refused the token (401)".into(),
+            Self::Offline => "GitHub didn't answer: could not connect".into(),
         }
     }
 
@@ -107,7 +222,7 @@ impl Trouble {
             Self::Limited | Self::Offline => pull.map(|mut pull| {
                 pull.stale = Some(Stale {
                     read_at: at(13, 12),
-                    why: self.words().into(),
+                    why: self.words(),
                 });
                 pull
             }),
@@ -126,6 +241,32 @@ mod tests {
         assert_eq!(pull.state, PullState::Merged);
         assert!(pull.merged_by.is_some() && pull.page.is_some());
         assert!(super::pull(1).is_none());
+    }
+
+    #[test]
+    fn the_cards_example_is_whole_kept_or_refused_in_words() {
+        let summary = pull(418).unwrap();
+        let whole = detail(&summary, None).unwrap();
+        assert_eq!(whole.reviews.len(), 2);
+        assert_eq!(whole.checks.state, ChecksState::Passing);
+        assert!(whole.stale.is_none() && whole.summary.stale.is_none());
+        let kept = detail(&summary, Some(Trouble::Limited)).unwrap();
+        assert_eq!(kept.stale.as_ref().unwrap().why, Trouble::Limited.words());
+        assert_eq!(kept.summary.stale, kept.stale);
+        assert!(
+            detail(&summary, Some(Trouble::Offline))
+                .unwrap()
+                .stale
+                .is_some()
+        );
+        assert_eq!(
+            detail(&summary, Some(Trouble::Refused)).unwrap_err(),
+            "GitHub refused the token: it may have expired. It is the keys.json entry GitHub https://api.github.com/"
+        );
+        // An open pull request has no review yet and a check still going.
+        let open = detail(&pull(421).unwrap(), None).unwrap();
+        assert!(open.reviews.is_empty());
+        assert_eq!(open.checks.state, ChecksState::Pending);
     }
 
     #[test]
