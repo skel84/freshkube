@@ -91,7 +91,7 @@ fn findings_have_no_secrets(findings: &DestinationFindings) -> bool {
         Read::Done { namespaces, .. } => namespaces
             .iter()
             .all(|(_, read)| matches!(read, NamespaceRead::Found(found) if found.is_empty())),
-        Read::Unreached(_) => true,
+        Read::Unreached(_) | Read::NotRead(_) => true,
     }
 }
 
@@ -451,17 +451,28 @@ async fn a_reader_that_does_not_override_refuses_secrets() {
 }
 
 #[test]
-fn a_find_names_an_unreached_entry_and_suggests_nothing() {
+fn a_find_names_an_unreached_entry_and_suggests_only_what_needs_no_read() {
     let findings = DestinationFindings {
         entry: "core-fra".into(),
         read: Read::Unreached("the server could not be reached".into()),
     };
     let suggestions = suggest_destinations(&findings, &workspace::example());
-    assert!(suggestions.items.is_empty());
+    // Only Argo CD's own cluster, which needs no read.
+    assert_eq!(suggestions.items.len(), 1);
     assert!(
         suggestions.notes[0]
             .text
             .starts_with("core-fra couldn't be reached")
+    );
+    let not_read = DestinationFindings {
+        entry: "the open cluster".into(),
+        read: Read::NotRead("the workspace lists no cluster".into()),
+    };
+    let suggestions = suggest_destinations(&not_read, &Workspace::default());
+    assert!(matches!(suggestions.items[0].verdict, Verdict::Unknown(_)));
+    assert_eq!(
+        suggestions.notes[0].text,
+        "Nothing was read: the workspace lists no cluster"
     );
 }
 

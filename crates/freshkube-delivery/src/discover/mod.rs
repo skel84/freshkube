@@ -20,3 +20,35 @@ pub use destinations::{
     ClusterSecret, ClusterSecrets, DestinationFindings, Field, Found, Item, MAX_CLUSTER_SECRETS,
     NamespaceRead, Note, Read, Suggestions, Verdict, find_destinations, suggest_destinations,
 };
+
+/// The findings a Secret list body gives for `entry`, matched against
+/// `servers` (context, server) as a find matches them. For other crates'
+/// tests, which must prove nothing but the two fields comes through.
+#[cfg(any(test, feature = "testing"))]
+pub fn findings_from_body(
+    entry: &str,
+    namespace: &str,
+    body: &[u8],
+    servers: &[(&str, &str)],
+) -> Result<DestinationFindings, freshkube_core::resources::Failure> {
+    let servers: Vec<(String, String)> = servers
+        .iter()
+        .map(|(context, server)| ((*context).to_owned(), (*server).to_owned()))
+        .collect();
+    let found = parse_secret_list(namespace, body)?
+        .items
+        .into_iter()
+        .map(|secret| Found {
+            contexts: destinations::contexts_of(&servers, &secret),
+            secret,
+        })
+        .collect();
+    Ok(DestinationFindings {
+        entry: entry.to_owned(),
+        read: Read::Done {
+            namespaces: vec![(namespace.to_owned(), NamespaceRead::Found(found))],
+            skipped: Vec::new(),
+            no_servers: None,
+        },
+    })
+}

@@ -194,6 +194,9 @@ pub enum NamespaceRead {
 /// Where the find stood.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Read {
+    /// Nothing was read: Settings knows no entry Argo CD is read from, and
+    /// the words say why.
+    NotRead(String),
     /// The entry Argo CD is read from couldn't be reached.
     Unreached(String),
     Done {
@@ -365,20 +368,31 @@ pub fn suggest_destinations(findings: &DestinationFindings, workspace: &Workspac
     let mut out = Suggestions::default();
     let note = |out: &mut Suggestions, warn, text: String| out.notes.push(Note { warn, text });
     let entry = &findings.entry;
-    let Read::Done {
-        namespaces,
-        skipped,
-        no_servers,
-    } = &findings.read
-    else {
-        if let Read::Unreached(why) = &findings.read {
+    let mapped = |key: &Key| workspace.destinations.iter().any(|row| row.key().same(key));
+    let (namespaces, skipped, no_servers) = match &findings.read {
+        Read::Done {
+            namespaces,
+            skipped,
+            no_servers,
+        } => (namespaces.as_slice(), skipped.as_slice(), no_servers),
+        // Argo CD's own cluster needs no Secret, so it stays an item
+        // whatever the read came to.
+        Read::NotRead(why) => {
+            note(&mut out, false, format!("Nothing was read: {why}"));
+            out.items
+                .extend(in_cluster_item(&[], workspace, findings, &mapped));
+            return out;
+        }
+        Read::Unreached(why) => {
             note(
                 &mut out,
                 true,
                 format!("{entry} couldn't be reached to list Argo CD's clusters: {why}"),
             );
+            out.items
+                .extend(in_cluster_item(&[], workspace, findings, &mapped));
+            return out;
         }
-        return out;
     };
     if let Some(why) = no_servers {
         note(

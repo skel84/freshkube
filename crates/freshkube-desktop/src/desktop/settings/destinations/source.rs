@@ -8,6 +8,7 @@ enum Field {
     Destination,
     By,
     Entry,
+    Found,
 }
 
 pub(crate) struct Column {
@@ -45,26 +46,41 @@ fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>, most: f32
     (chars as f32 * 7.5 + 24.).clamp(64., most)
 }
 
-pub(super) fn columns(rows: &[DestinationRow]) -> (Vec<Column>, f32) {
+pub(super) fn columns(rows: &[DestinationRow], suggested: &[DestinationRow]) -> (Vec<Column>, f32) {
     let column = |field, label: &str, width| Column {
         field,
         label: label.to_owned().into(),
         width,
     };
-    let columns = vec![
+    let all = || rows.iter().chain(suggested);
+    let mut columns = vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(
             Field::Destination,
             "Destination",
-            fit("Destination", rows.iter().map(|row| &row.destination), 360.),
+            fit("Destination", all().map(|row| &row.destination), 360.),
         ),
         column(Field::By, "Match by", 120.),
         column(
             Field::Entry,
             "Workspace cluster",
-            fit("Workspace cluster", rows.iter().map(|row| &row.entry), 240.),
+            fit("Workspace cluster", all().map(|row| &row.entry), 240.),
         ),
     ];
+    // Found from only shows while there are suggestions to say it of.
+    if !suggested.is_empty() {
+        columns.push(column(
+            Field::Found,
+            "Found from",
+            fit(
+                "Found from",
+                suggested
+                    .iter()
+                    .filter_map(|row| row.suggested.as_ref().map(|s| &s.found_from)),
+                360.,
+            ),
+        ));
+    }
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
 }
@@ -98,11 +114,24 @@ impl TableSource for Destinations {
     fn sort(&mut self, _: (), _: &mut Context<Self>) {}
 
     fn line_count(&self) -> usize {
+        let suggested = self.finder.rows.len();
         self.rows.len()
+            + if self.finder.shows_group() {
+                1 + suggested
+            } else {
+                0
+            }
     }
 
+    /// The mapped rows, then the suggestions' group and its rows.
     fn line(&self, line: usize, _: &App) -> Option<Line<Key, &DestinationRow>> {
-        let row = self.rows.get(line)?;
+        let shown = self.finder.shows_group();
+        let row = match line.checked_sub(self.rows.len()) {
+            None => &self.rows[line],
+            Some(0) if shown => return Some(Line::Group(0)),
+            Some(past) if shown => self.finder.rows.get(past - 1)?,
+            Some(_) => return None,
+        };
         Some(Line::Row(TableRow {
             key: row.key.clone(),
             id: row.id.clone().into(),
@@ -125,29 +154,40 @@ impl TableSource for Destinations {
         let text_cell = |field: &str, text: &SharedString| {
             table::word_cell(column, format!("{}-{field}", row.id), text.clone()).test_support()
         };
+        let suggested = row.suggested.as_ref();
+        // A suggestion that can't be accepted is marked, and says why.
+        let mark = match (suggested, row.listed) {
+            (Some(suggested), _) => suggested.tone.map(|tone| (tone, row.mark.clone())),
+            (None, false) => Some((ui::Tone::Unknown, row.mark.clone())),
+            (None, true) => None,
+        };
+        let muted = !row.listed || suggested.is_some_and(|s| s.accept.is_none());
         match column.field {
             Field::Glyph => table::glyph_cell(column)
                 .id(SharedString::from(format!("{}-glyph", row.id)))
                 .test_support()
-                .when(!row.listed, |this| {
-                    this.child(ui::status_mark(
-                        row.mark_id.clone(),
-                        ui::Tone::Unknown,
-                        row.mark.clone(),
-                        cx,
-                    ))
+                .when_some(mark, |this, (tone, words)| {
+                    this.child(ui::status_mark(row.mark_id.clone(), tone, words, cx))
                 })
                 .into_any_element(),
             Field::Destination => text_cell("destination", &row.destination).into_any_element(),
             Field::By => text_cell("by", &row.by).into_any_element(),
             Field::Entry => text_cell("entry", &row.entry)
-                .when(!row.listed, |this| this.text_color(style.p.muted))
+                .when(muted, |this| this.text_color(style.p.muted))
                 .into_any_element(),
+            Field::Found => text_cell(
+                "found",
+                suggested.map_or(&SharedString::default(), |s| &s.found_from),
+            )
+            .text_color(style.p.muted)
+            .into_any_element(),
         }
     }
 
-    fn group(&self, _: usize, _: &mut Context<Self>) -> Option<AnyElement> {
-        None
+    fn group(&self, _: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.finder
+            .shows_group()
+            .then(|| self.render_suggested_group(cx))
     }
 
     fn selected_key(&self) -> Option<&Key> {
@@ -155,7 +195,11 @@ impl TableSource for Destinations {
     }
 
     fn line_of(&self, key: &Key) -> Option<usize> {
-        self.rows.iter().position(|row| &row.key == key)
+        if let Some(at) = self.rows.iter().position(|row| &row.key == key) {
+            return Some(at);
+        }
+        let at = self.finder.rows.iter().position(|row| &row.key == key)?;
+        Some(self.rows.len() + 1 + at)
     }
 
     fn click(&mut self, key: &Key, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -177,15 +221,31 @@ impl TableSource for Destinations {
     ) -> Vec<menu::MenuAction> {
         self.select(key.clone(), cx);
         self.focus(window, cx);
+        let find = menu::MenuAction::new("Find suggestions", FindDestinations)
+            .enabled(!self.finder.is_finding());
+        if let Some(suggested) = self
+            .selected_suggestion()
+            .and_then(|row| row.suggested.as_ref())
+        {
+            return vec![
+                menu::MenuAction::new("Accept", AcceptSuggestion)
+                    .enabled(self.editable && suggested.accept.is_some()),
+                menu::MenuAction::new("Ignore", IgnoreSuggestion),
+                menu::MenuAction::Separator,
+                find,
+            ];
+        }
         vec![
             menu::MenuAction::new("Map", MapDestination).enabled(self.mappable()),
             menu::MenuAction::new("Edit", EditDestination).enabled(self.mappable()),
             menu::MenuAction::new("Remove", RemoveDestination).enabled(self.editable),
+            menu::MenuAction::Separator,
+            find,
         ]
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.rows.is_empty() {
+        if !self.rows.is_empty() || self.finder.shows_group() {
             return None;
         }
         Some(

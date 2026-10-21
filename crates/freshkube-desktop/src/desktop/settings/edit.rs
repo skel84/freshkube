@@ -225,6 +225,58 @@ impl SettingsPage {
         Ok(key)
     }
 
+    /// Accepts a destination suggestion: maps each of `rows` that isn't
+    /// mapped yet to the cluster `entry`, in one save. Checked against the
+    /// workspace as it is now, not as the suggestion was made; the file is
+    /// untouched, and the banner says why, when it can't be.
+    pub(super) fn map_suggested(&mut self, entry: &str, rows: &[Key], cx: &mut Context<Self>) {
+        let refuse = |this: &mut Self, why: String, cx: &mut Context<Self>| {
+            this.notice = Some(Notice::Failed(capitalized(&why).into()));
+            cx.notify();
+        };
+        if !self.editable() {
+            let why = self.why_not_editable().to_owned();
+            return refuse(self, why, cx);
+        }
+        if !self.workspace.clusters.iter().any(|e| e.id == entry) {
+            return refuse(self, format!("{entry} is no longer in the workspace"), cx);
+        }
+        let mut next = self.workspace.clone();
+        let mut described = Vec::new();
+        for key in rows {
+            if next.destinations.iter().any(|row| row.key().same(key)) {
+                continue;
+            }
+            next.destinations
+                .push(Destination::new(key.clone(), entry.to_owned()));
+            described.push(key.describe());
+        }
+        if described.is_empty() {
+            return refuse(self, "That destination is already mapped".to_owned(), cx);
+        }
+        let first_new = next.destinations.len() - described.len();
+        let faulty = (first_new..next.destinations.len())
+            .find_map(|at| next.destinations[at].fault_in(&next));
+        if let Some(fault) = faulty {
+            return refuse(self, format!("the mapping {}", fault.words()), cx);
+        }
+        if let Err(why) = next.check_saveable() {
+            return refuse(self, why.to_string(), cx);
+        }
+        self.commit(
+            next,
+            format!("Mapped {} to {entry}.", described.join(" and ")),
+            cx,
+        );
+    }
+
+    /// Ignores a suggestion for the session. Nothing is written.
+    pub(super) fn ignore_suggestion(&mut self, ignored: find::Ignored, cx: &mut Context<Self>) {
+        if self.ignored.insert(ignored) {
+            cx.notify();
+        }
+    }
+
     /// Removes the mapping at `at`, if it still matches `was`.
     pub(super) fn remove_destination(&mut self, at: usize, was: &Key, cx: &mut Context<Self>) {
         if !self.editable() {
