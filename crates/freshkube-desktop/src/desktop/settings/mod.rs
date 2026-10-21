@@ -86,6 +86,8 @@ pub(crate) struct ClusterRow {
     role: SharedString,
     context: SharedString,
     talosconfig: SharedString,
+    /// What the file sets; `None` reads as guarded, by default.
+    protection: Option<freshkube_core::write::Protection>,
     /// The row's tooltip: the cluster, the talosconfig path in full and the
     /// note about how it opened, if there is one.
     tooltip: SharedString,
@@ -446,6 +448,7 @@ impl SettingsPage {
                     role: entry.role.label().into(),
                     context: entry.context.clone().into(),
                     talosconfig: talosconfig.into(),
+                    protection: entry.protection,
                     tooltip: tooltip.into(),
                 }
             })

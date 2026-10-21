@@ -269,3 +269,42 @@ fn the_group_fits_the_smallest_window_at_the_largest_text(cx: &mut TestAppContex
     .unwrap();
     to_top(cx, handle);
 }
+
+/// The Clusters table's Protection column: a tag at the table's size, and
+/// "· default" in muted beside Guarded when the entry sets none.
+#[gpui_kit::test]
+async fn the_table_shows_each_level_and_says_when_guarded_is_the_default(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), THREE);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("settings-cluster-mgmt-protection").label(),
+            Some("Guarded · default")
+        );
+        assert_eq!(
+            window
+                .find("settings-cluster-mgmt-protection-default")
+                .label(),
+            Some("· default")
+        );
+        assert_eq!(
+            window.find("settings-cluster-prod-protection").label(),
+            Some("Protected")
+        );
+        assert!(
+            window
+                .try_find("settings-cluster-prod-protection-default")
+                .is_none()
+        );
+        // The tag fits the row: 18 dp in a 26 dp row.
+        let tag = window.find("settings-cluster-prod-protection").bounds();
+        let row = window.find("settings-cluster-prod").bounds();
+        assert!(tag.size.height < row.size.height);
+        assert!(tag.top() >= row.top() && tag.bottom() <= row.bottom());
+    })
+    .unwrap();
+}

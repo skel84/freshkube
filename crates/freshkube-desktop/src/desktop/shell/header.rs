@@ -281,10 +281,18 @@ impl Pilot {
                                     ),
                             )
                             .child(
-                                freshkube_ui::level::tag(mark(level), glyph_only_level, cx)
-                                    .id("header-protection")
-                                    .test_support()
-                                    .aria_label(level_words.clone()),
+                                freshkube_ui::level::tag(
+                                    mark(level),
+                                    if glyph_only_level {
+                                        freshkube_ui::level::Form::Square
+                                    } else {
+                                        freshkube_ui::level::Form::Word
+                                    },
+                                    cx,
+                                )
+                                .id("header-protection")
+                                .test_support()
+                                .aria_label(level_words.clone()),
                             ),
                     ),
             )

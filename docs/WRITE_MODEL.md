@@ -64,7 +64,7 @@ The level is always shown, so a protected cluster can't be mistaken for a test o
 |-------|-----|------|
 | `read-only` | lock, "Read-only" | Info (blue) |
 | `protected` | shield, "Protected" | Crit (coral) |
-| `guarded` | shield with a tick, "Guarded" | none: a hairline and `muted` ink |
+| `guarded` | shield with a tick, "Guarded" | none: `surface_2`, `muted` ink and a 1 px border |
 | `open` | open lock, "Open" | Warn (amber) |
 
 The tag always has its glyph and its word, so it is never colour alone, and it does not read as a fault. The tones are existing tokens ([DESIGN.md](DESIGN.md#the-header)); changing one is one token. The header's context switcher carries it and the status bar carries it at every width.

@@ -121,10 +121,14 @@ fn a_narrow_window_and_large_text_keep_the_word_in_the_status_bar(cx: &mut TestA
                 < 900.;
             let header = window.find("header-protection").bounds();
             if narrow {
+                // The glyph alone, in a 20 dp square: filled, never bare.
+                let (w, h) = (dp(header.size.width), dp(header.size.height));
                 assert!(
-                    dp(header.size.width) <= 24.,
-                    "glyph alone at {width}x{height} text {text_size}"
+                    (w - 20.).abs() < 0.5 && (h - 20.).abs() < 0.5,
+                    "{w}x{h} at {width}x{height} text {text_size}"
                 );
+            } else {
+                assert!(dp(header.size.width) > 40., "the word is there");
             }
             let switcher = window.find("context-switcher").bounds();
             assert!(header.right() <= switcher.right(), "inside the switcher");
