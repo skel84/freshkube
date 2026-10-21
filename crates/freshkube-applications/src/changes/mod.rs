@@ -310,29 +310,16 @@ impl ChangesPage {
 
     /// A setup reload replaces trust and cancels every delivery read made
     /// with the old setup, including a change opened from this list.
-    pub(crate) fn reload_setup(
-        &mut self,
-        public_key_file: Option<std::path::PathBuf>,
-        evidence_result: Option<freshkube_core::setup::Evidence>,
-        build_namespace: Option<String>,
-        stage_naming: Option<freshkube_core::setup::StageNaming>,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn reload_setup(&mut self, across: &Across, cx: &mut Context<Self>) {
         self.setup_revision += 1;
-        self.across.public_key_file = public_key_file.clone();
-        self.across.evidence_result = evidence_result.clone();
-        self.across.build_namespace = build_namespace.clone();
-        self.across.stage_naming = stage_naming.clone();
+        self.across.public_key_file = across.public_key_file.clone();
+        self.across.transparency_log = across.transparency_log;
+        self.across.transparency_url = across.transparency_url.clone();
+        self.across.evidence_result = across.evidence_result.clone();
+        self.across.build_namespace = across.build_namespace.clone();
+        self.across.stage_naming = across.stage_naming.clone();
         if let Some((change, _)) = &self.change {
-            change.update(cx, |page, cx| {
-                page.reload_setup(
-                    public_key_file,
-                    evidence_result,
-                    build_namespace,
-                    stage_naming,
-                    cx,
-                )
-            });
+            change.update(cx, |page, cx| page.reload_setup(across, cx));
         }
         if self.is_live() {
             self.loader.reset();
@@ -427,6 +414,23 @@ impl ChangesPage {
         self.read(cx);
     }
 
+    /// The settings handed to the list's delivery read.
+    pub(crate) fn where_to_read(&self, source: &ClusterSource) -> Where {
+        Where {
+            cluster: source.id.clone(),
+            label: source.context.clone(),
+            argocd_namespace: self.argocd_namespace.clone(),
+            mapping: self.across.mapping.clone(),
+            sources: self.across.sources.clone(),
+            public_key_file: self.across.public_key_file.clone(),
+            transparency_log: self.across.transparency_log,
+            transparency_url: self.across.transparency_url.clone(),
+            evidence_result: self.across.evidence_result.clone(),
+            build_namespace: self.across.build_namespace.clone(),
+            stage_naming: self.across.stage_naming.clone(),
+        }
+    }
+
     fn read(&mut self, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
@@ -461,17 +465,7 @@ impl ChangesPage {
             access => {
                 let access = access.clone();
                 self.read_namespace = Some(self.argocd_namespace.clone());
-                let at = Where {
-                    cluster: source.id.clone(),
-                    label: source.context.clone(),
-                    argocd_namespace: self.argocd_namespace.clone(),
-                    mapping: self.across.mapping.clone(),
-                    sources: self.across.sources.clone(),
-                    public_key_file: self.across.public_key_file.clone(),
-                    evidence_result: self.across.evidence_result.clone(),
-                    build_namespace: self.across.build_namespace.clone(),
-                    stage_naming: self.across.stage_naming.clone(),
-                };
+                let at = self.where_to_read(&source);
                 let across = self.across.clone();
                 let secrets = self.secrets.clone();
                 let (job, receiver) = backend::spawn_job(
@@ -777,6 +771,8 @@ impl ChangesPage {
                     mapping: self.across.mapping.clone(),
                     sources: self.across.sources.clone(),
                     public_key_file: self.across.public_key_file.clone(),
+                    transparency_log: self.across.transparency_log,
+                    transparency_url: self.across.transparency_url.clone(),
                     evidence_result: self.across.evidence_result.clone(),
                     build_namespace: self.across.build_namespace.clone(),
                     stage_naming: self.across.stage_naming.clone(),

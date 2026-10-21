@@ -96,6 +96,7 @@ impl std::fmt::Display for Place {
 pub enum Fault {
     Empty(String),
     NotUrl(String),
+    NotHttpsUrl(String),
     /// Not a Kubernetes namespace name; the value is never repeated.
     NotNamespace(String),
     NonLoopbackHttp(String),
@@ -137,6 +138,12 @@ impl std::fmt::Display for Fault {
             Fault::Empty(at) => write!(f, "{at} is empty"),
             Fault::NotNamespace(at) => write!(f, "{at} isn’t a Kubernetes namespace name"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
+            Fault::NotHttpsUrl(at) => {
+                write!(
+                    f,
+                    "{at} must be an https:// URL without credentials, query or fragment"
+                )
+            }
             Fault::NonLoopbackHttp(at) => write!(f, "{at}: plain HTTP is allowed only on loopback"),
             Fault::RelativePath(at) => write!(f, "{at} isn’t an absolute path"),
             Fault::ZeroPort(at) => write!(f, "{at} isn’t a port"),
