@@ -299,6 +299,22 @@ pub struct Delivery {
     /// a build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_namespace: Option<String>,
+    /// How pull requests are read from GitHub; anonymous when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GitHub>,
+    #[serde(flatten)]
+    pub(super) extra: Extra,
+}
+
+/// GitHub's REST API at `api.github.com`, the only host a pull request is
+/// read from. It never holds a token.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitHub {
+    /// The token kept in `keys.json` under the account
+    /// `GitHub https://api.github.com/`. Without it, public repositories
+    /// are read anonymously, at a lower rate limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<KeysJson>,
     #[serde(flatten)]
     pub(super) extra: Extra,
 }

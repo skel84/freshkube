@@ -34,7 +34,8 @@ mod validate;
 
 pub use migrate::{Kept, Outcome, migrate};
 pub use types::{
-    Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson,
+    Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, GitHub,
+    KeysJson,
     Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming, Store, SupplyChain,
 };
 
@@ -310,6 +311,9 @@ impl Setup {
             named(&mut keys, "delivery", &delivery.extra);
             if let Some(naming) = &delivery.stage_naming {
                 named(&mut keys, "delivery.stage_naming", &naming.extra);
+            }
+            if let Some(github) = &delivery.github {
+                named(&mut keys, "delivery.github", &github.extra);
             }
         }
         for entry in &self.workspace.clusters {

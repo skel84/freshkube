@@ -1019,6 +1019,22 @@ fn stage_naming_is_a_template_with_an_optional_project_key() {
 }
 
 #[test]
+fn the_github_token_is_keys_json_or_nothing_and_round_trips() {
+    let text = "version: 1\ndelivery:\n  github:\n    token: keys.json\n    future: kept\n";
+    let setup = ok(text);
+    let github = setup.delivery.as_ref().unwrap().github.as_ref().unwrap();
+    assert_eq!(github.token, Some(KeysJson));
+    assert_eq!(setup.unknown_keys(), vec!["delivery.github.future"]);
+    assert_eq!(ok(&to_text(&setup)), setup);
+    // GitHub with no token is anonymous.
+    let anonymous = ok("version: 1\ndelivery:\n  github: {}\n");
+    assert_eq!(anonymous.delivery.unwrap().github.unwrap().token, None);
+    let invalid = refused(&text.replace("token: keys.json", "token: ghp_invented"));
+    assert!(matches!(invalid, Invalid::KeyValue(_)));
+    assert!(!invalid.to_string().contains("ghp_invented"));
+}
+
+#[test]
 fn a_stage_naming_template_without_stage_is_a_fault_of_its_own() {
     let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
     assert_eq!(
