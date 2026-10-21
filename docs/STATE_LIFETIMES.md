@@ -222,6 +222,12 @@ delivery task, and a late answer fails `land`. Findings that landed are kept
 and the suggestions are derived from them again whenever the setup changes; a
 changed source, kubeconfig or example mode resets the loader. Ignored
 suggestions live on the settings page for the session and are never saved.
+The Delivery sources list owns a second one, a `Loader<BuildFindings,
+FindIdentity>`, with the same rules: it counts PipelineRuns and lists Kargo's
+Projects only on press, hiding drops it, and the item is derived from the kept
+findings and the setup's `delivery.build_namespace`. Its keys (`f`, `a`, Enter,
+Backspace) act only when there is something to start, accept or ignore, and
+otherwise let the key through to the focused control.
 
 ## Exceptions
 
