@@ -119,6 +119,7 @@ impl Render for FixBarStory {
                     cx.notify();
                 });
             },
+            window,
             cx,
         );
         let picked = self

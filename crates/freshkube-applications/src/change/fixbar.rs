@@ -33,11 +33,13 @@ impl ChangePage {
             move |key, window, cx| {
                 _ = this.update(cx, |page, cx| page.select(key, window, cx));
             },
+            window,
             cx,
         );
         Some(
             page::inset()
                 .id("change-summary")
+                .w_full()
                 .child(
                     v_flex()
                         .w_full()

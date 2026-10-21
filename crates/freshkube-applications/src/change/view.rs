@@ -263,8 +263,11 @@ impl Render for ChangePage {
             .flex_col()
             .size_full()
             .min_h_0()
+            .min_w_0()
             .child(
                 page::page("change-page")
+                    .min_w_0()
+                    .w_full()
                     .track_scroll(&self.page_scroll)
                     .when(short, |this| {
                         this.overflow_y_scroll().restrict_scroll_to_axis()

@@ -3,14 +3,16 @@
 //! page"). A chip selects what it names. The chips that don't fit the room
 //! fold into a `+N` menu of the rest, so the bar stays one line.
 //!
-//! How many chips fit is worked out from their text, in dp, as [`fit`]
-//! sizes a column, so drawing measures nothing.
+//! How many chips fit is worked out from their text, measured with the
+//! text system at the chip's size, in dp, plus each chip's fixed icon and
+//! padding.
 
 use std::rc::Rc;
 
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::plot::label::measure_text_width;
 use gpui_kit::component::{Sizable, h_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{Anchor, App, Div, ElementId, SharedString, Stateful, TestSupportExt, Window, div};
@@ -18,12 +20,14 @@ use gpui_kit::{Anchor, App, Div, ElementId, SharedString, Stateful, TestSupportE
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
-/// A character of a chip's text, in dp.
-const CHAR: f32 = 5.;
 /// A chip's glyph, padding and gap, in dp, beside its text.
-const CHIP_PAD: f32 = 20.;
+const CHIP_PAD: f32 = 18.;
+/// The `+N` button's padding, in dp, beside its text.
+const MORE_PAD: f32 = 10.;
 /// The gap between the bar's parts, in dp.
 const GAP: f32 = 6.;
+/// The text's size in the bar, in dp.
+const TEXT: f32 = 12.;
 
 /// One thing to fix: what a chip selects, and its words.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,10 +45,6 @@ impl FixItem {
             label: label.into(),
         }
     }
-
-    fn width(&self) -> f32 {
-        self.label.chars().count() as f32 * CHAR + CHIP_PAD
-    }
 }
 
 /// The count's words: `3 to fix`.
@@ -52,26 +52,66 @@ pub fn count_words(count: usize) -> String {
     format!("{count} to fix")
 }
 
-/// The width of the count, in dp.
-fn lead_width(count: usize) -> f32 {
-    count_words(count).chars().count() as f32 * CHAR
+/// The widths of a bar's parts in dp, worked out from their text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Measured {
+    /// The count's words.
+    lead: f32,
+    /// Each chip, with its glyph and padding.
+    chips: Vec<f32>,
+    /// The `+N` button for `n` left out, at index `n`.
+    more: Vec<f32>,
 }
 
-/// The width of the `+N` button, in dp.
-fn more_width(hidden: usize) -> f32 {
-    format!("+{hidden}").chars().count() as f32 * CHAR + CHIP_PAD / 2.
+impl Measured {
+    /// Measures the bar's text at its size with the window's text system.
+    pub fn of(items: &[FixItem], window: &mut Window) -> Self {
+        let size = ui::dp_px(TEXT, window);
+        let unit = ui::dp_px(1., window).as_f32();
+        let mut width = |text: String| {
+            let text = SharedString::from(text);
+            measure_text_width(&text, size, window) / unit
+        };
+        Self {
+            lead: width(count_words(items.len())),
+            chips: items
+                .iter()
+                .map(|item| width(item.label.to_string()) + CHIP_PAD)
+                .collect(),
+            more: (0..=items.len())
+                .map(|hidden| width(format!("+{hidden}")) + MORE_PAD)
+                .collect(),
+        }
+    }
+
+    /// Widths of `char` dp a character, for tests that need exact rooms.
+    #[cfg(test)]
+    fn of_chars(items: &[FixItem], char: f32) -> Self {
+        let width = |text: &str| text.chars().count() as f32 * char;
+        Self {
+            lead: width(&count_words(items.len())),
+            chips: items
+                .iter()
+                .map(|item| width(&item.label) + CHIP_PAD)
+                .collect(),
+            more: (0..=items.len())
+                .map(|hidden| width(&format!("+{hidden}")) + MORE_PAD)
+                .collect(),
+        }
+    }
 }
 
-/// How many of `items` fit one line `room` dp wide, with the count before
-/// them and `+N` after the last, whenever some are left out. At least one
-/// shows: a bar of nothing but `+N` says nothing.
-pub fn visible(items: &[FixItem], room: f32) -> usize {
-    let mut used = lead_width(items.len()) + GAP;
+/// How many chips fit one line `room` dp wide, with the count before them
+/// and `+N` after the last, whenever some are left out. At least one shows:
+/// a bar of nothing but `+N` says nothing.
+pub fn visible(sizes: &Measured, room: f32) -> usize {
+    let total = sizes.chips.len();
+    let mut used = sizes.lead + GAP;
     let mut shown = 0;
-    for (ix, item) in items.iter().enumerate() {
-        let left = items.len() - ix - 1;
-        let more = if left > 0 { more_width(left) + GAP } else { 0. };
-        used += item.width() + GAP;
+    for (ix, chip) in sizes.chips.iter().enumerate() {
+        let left = total - ix - 1;
+        let more = if left > 0 { sizes.more[left] + GAP } else { 0. };
+        used += chip + GAP;
         if used + more > room && shown >= 1 {
             break;
         }
@@ -89,6 +129,7 @@ pub fn fix_bar(
     items: &[FixItem],
     room: f32,
     select: impl Fn(&SharedString, &mut Window, &mut App) + 'static,
+    window: &mut Window,
     cx: &App,
 ) -> Option<Observed<Stateful<Div>>> {
     if items.is_empty() {
@@ -98,7 +139,7 @@ pub fn fix_bar(
     let name = id.to_string();
     let p = palette(cx);
     let select = Rc::new(select);
-    let shown = visible(items, room);
+    let shown = visible(&Measured::of(items, window), room);
     let chips = items[..shown].iter().map(|item| {
         let select = select.clone();
         let key = item.key.clone();
@@ -166,10 +207,15 @@ mod tests {
             .collect()
     }
 
+    /// The bar's widths at 5 dp a character.
+    fn sized(list: &[FixItem]) -> Measured {
+        Measured::of_chars(list, 5.)
+    }
+
     #[test]
     fn every_chip_shows_when_the_room_holds_them() {
         let list = items(&["Not found: policy", "Can't read: prod pods"]);
-        assert_eq!(visible(&list, 1200.), 2);
+        assert_eq!(visible(&sized(&list), 1200.), 2);
     }
 
     #[test]
@@ -180,8 +226,8 @@ mod tests {
             "Not found: policy result",
             "Not found: signature",
         ]);
-        let wide = visible(&list, 1200.);
-        let narrow = visible(&list, 480.);
+        let wide = visible(&sized(&list), 1200.);
+        let narrow = visible(&sized(&list), 400.);
         assert_eq!(wide, 4);
         assert!(narrow < wide && narrow >= 1, "{narrow}");
     }
@@ -189,24 +235,25 @@ mod tests {
     #[test]
     fn one_chip_shows_however_narrow_the_room() {
         let list = items(&["Can't read: prod-ams pods", "Not found: policy result"]);
-        assert_eq!(visible(&list, 10.), 1);
+        assert_eq!(visible(&sized(&list), 10.), 1);
     }
 
-    /// `n` chips of 20 characters each: 120 dp wide.
-    fn same(n: usize) -> Vec<FixItem> {
-        (0..n)
+    /// `n` chips of 20 characters each: 118 dp wide with their padding.
+    fn same(n: usize) -> Measured {
+        let list: Vec<FixItem> = (0..n)
             .map(|ix| FixItem::new(format!("k{ix}"), "Not found: signature"))
-            .collect()
+            .collect();
+        sized(&list)
     }
 
     #[test]
     fn a_known_room_shows_an_exact_number_of_chips() {
-        // "12 to fix" 45 and a gap, then 126 (120 and a gap) for each
+        // "12 to fix" 45 and a gap, then 124 (118 and a gap) for each
         // chip, and the "+7" button (20 and a gap) while any are left
-        // out: five chips take 681 and the button 26, so 707.
+        // out: five chips take 671 and the button 26, so 697.
         assert_eq!(visible(&same(12), 1000.), 7);
-        assert_eq!(visible(&same(12), 707.), 5);
-        assert_eq!(visible(&same(12), 706.), 4);
+        assert_eq!(visible(&same(12), 697.), 5);
+        assert_eq!(visible(&same(12), 696.), 4);
         // Room for everything needs no button.
         assert_eq!(visible(&same(3), 600.), 3);
     }
@@ -214,12 +261,13 @@ mod tests {
     #[test]
     fn a_two_digit_rest_takes_the_wider_button() {
         // Eleven left out is "+11" (31 with its gap, against 26 for "+7"):
-        // five chips and it take 712, which 711 does not hold.
-        assert_eq!(visible(&same(16), 712.), 5);
-        assert_eq!(visible(&same(16), 711.), 4);
-        assert_eq!(visible(&same(12), 708.), 5);
-        assert_eq!(more_width(11), more_width(10));
-        assert!(more_width(11) > more_width(9));
+        // five chips and it take 702, which 701 does not hold.
+        assert_eq!(visible(&same(16), 702.), 5);
+        assert_eq!(visible(&same(16), 701.), 4);
+        assert_eq!(visible(&same(12), 701.), 5);
+        let sizes = same(16);
+        assert_eq!(sizes.more[11], sizes.more[10]);
+        assert!(sizes.more[11] > sizes.more[9]);
     }
 
     #[test]
