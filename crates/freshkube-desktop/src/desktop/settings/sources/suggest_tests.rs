@@ -498,8 +498,15 @@ async fn while_finding_nothing_is_listed_and_find_does_not_restart(cx: &mut Test
         });
         window.click("settings-sources-find", cx);
         window.press("f", cx);
+        window.press("f", cx);
+        window.click("settings-sources-find", cx);
         window.render_frame(cx);
         assert!(list(&view, cx).read(cx).finder.read.is_loading());
+        assert!(
+            window
+                .try_find("settings-source-build-suggestion")
+                .is_none()
+        );
     })
     .unwrap();
     assert_eq!(suggestion(&view, cx), None);
@@ -507,6 +514,15 @@ async fn while_finding_nothing_is_listed_and_find_does_not_restart(cx: &mut Test
     found(cx, handle, &view).await;
     assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(suggestion(&view, cx).is_some());
+    // One group and one row, however many times Find was pressed.
+    cx.read(|cx| {
+        let list = list(&view, cx);
+        let list = list.read(cx);
+        assert_eq!(
+            freshkube_ui::table::TableSource::line_count(list),
+            list.rows.len() + 2
+        );
+    });
 }
 
 #[gpui_kit::test]
