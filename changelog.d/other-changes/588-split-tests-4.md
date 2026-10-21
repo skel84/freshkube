@@ -1,1 +1,1 @@
-- **Tests:** the shell change page's and the Observability page's test files are split by scenario into directories; no test changed.
+- **Tests:** the Observability page's test file is split by scenario into a directory; no test changed.
