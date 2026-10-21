@@ -26,6 +26,7 @@ clusters:
     context: cluster-a            # the kubeconfig context
     talosconfig: /home/acme/.talos/config   # optional: Talos pages for this entry
     talos_context: cluster-a                # optional, needs talosconfig
+    protection: protected         # optional (#852): read-only, protected, guarded or open; none is guarded
     coroot:                       # optional (#269): this entry in Coroot
       cluster: cluster-a          # the Coroot cluster that is this entry
     # No metrics: key, so in the central store its series are cluster="cluster-a".
@@ -153,6 +154,25 @@ What each part means, and the rules a read enforces. The `metrics` blocks follow
 A forward route uses `https://<service>.<namespace>.svc/`, with no URL port. The Results client pins that hostname to `127.0.0.1:<local port>` with reqwest's `resolve` and disables proxies with `no_proxy()`. Omitting the URL port is deliberate: reqwest gives an explicit URL port precedence over the resolved socket port. TLS checks the certificate against `<service>.<namespace>.svc`, with verification always on; a private CA can be supplied through `ca_file`.
 
 The forward token's key-store account is `Tekton Results forward://<namespace>/<service>:<configured port>`. It uses the configured triple, never the local port, so a restart on another local port reads the same token. An address keeps its separate `Tekton Results <normalized address>` account. An ended route returns `Error::ForwardEnded(reason)` without reading the key store or CA file; connection and response failures keep their transport error unless the caller reports the route ended. No route falls back to the configured port or starts another forward. The caller owns the forward and must match its configured triple and replace the client on a new forward epoch; the app integration is the next slice of [#268](https://github.com/skel84/freshkube/issues/268).
+
+## Protection
+
+[#852](https://github.com/skel84/freshkube/issues/852). Each `clusters[i]` entry may set `protection`, how much the app asks before a write ([WRITE_MODEL.md](WRITE_MODEL.md)):
+
+| Value | Means |
+|-------|-------|
+| `read-only` | no writes at all |
+| `protected` | every write asks the user to type the object's name |
+| `guarded` | each action's own confirmation |
+| `open` | reversible actions skip their confirmation |
+
+- **Default.** An entry with no `protection` is `guarded`, and so is a context outside the workspace. The level is never inferred from a context's name, an id or a role. A save writes the key only when it was set: an unset level stays unset, and choosing Guarded in Settings writes `guarded`.
+- **Spelling.** One of the four words, lowercase, exactly. There are no aliases. A `null` is unset.
+- **An unknown value** (another word, a number, a list, an empty string) skips that entry, like an unknown `role`, with the warning `skipped clusters[1] (cluster-b): protection: is unknown; use read-only, protected, guarded or open; its context is read-only until fixed`. The value is never repeated. A strict read (a Settings save, a migration) refuses the file the same way.
+- **A skipped entry's context keeps its level.** The entry is not in the workspace, so without this its context could be opened from the switcher as a context outside the workspace, which is `guarded`: a typo in `protected` would loosen the cluster. While the row stays skipped, its context is `read-only` when its `protection` is unknown, and keeps `read-only` or `protected` when the row set one and was skipped for another fault. An unset, `guarded` or `open` row locks nothing, and neither does a row whose context can't be read.
+- **Two entries on one context:** the stricter level wins: `read-only`, then `protected`, `guarded`, `open`.
+- **What `read-only` refuses today:** a shell's Start, Operations, a service's Restart and Diagnostics' Apply fix ([WRITE_MODEL.md](WRITE_MODEL.md#what-is-enforced-today)). Maintenance mode is not governed by the level: it isn't tied to a cluster entry, since it works on a node that has no cluster yet.
+- **A hand-edited value** is read as written, and a read never rewrites the file.
 
 ## What stays out
 

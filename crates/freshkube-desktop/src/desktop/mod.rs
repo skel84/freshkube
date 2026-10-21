@@ -691,6 +691,10 @@ impl Pilot {
                     .settings_unsaved_changed(page.section(), unsaved);
                 this.finish_settings_leave(window, cx);
                 this.rebuild_switcher(cx);
+                // A saved level shows at once, in the header and the status bar.
+                if this.prepare_protection(cx) {
+                    cx.notify();
+                }
                 this.sync_setup_connection(window, cx);
                 // The shell and its cached column draw again only when the
                 // section shown changes or a section's dot appears or clears.

@@ -59,6 +59,7 @@ pub mod talos_nodes;
 pub mod types;
 pub mod workloads;
 pub mod workspace;
+pub mod write;
 
 // Re-export commonly used items at crate root
 pub use client_cache::{

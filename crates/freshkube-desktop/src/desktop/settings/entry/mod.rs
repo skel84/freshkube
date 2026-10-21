@@ -1,15 +1,19 @@
 //! The selected cluster, in the Inspector beside the table: one form group
-//! per concern, Identity and Metrics, each with its own Save and Revert
+//! per concern, Identity, Protection and Metrics, each with its own Save and Revert
 //! (DESIGN.md, The Settings page). A group's fields are drafts the page
 //! keeps until Save writes them through `commit`, which changes only that
 //! entry's keys and keeps the rest of the setup.
 mod identity;
 mod metrics;
+mod protection;
+#[cfg(test)]
+mod protection_tests;
 #[cfg(test)]
 mod tests;
 
 use super::*;
 use freshkube_core::workspace::Entry;
+use freshkube_core::write::Protection;
 use freshkube_ui::form;
 use freshkube_ui::inspector::Inspector;
 use freshkube_ui::tooltip::FollowTooltip as _;
@@ -25,6 +29,7 @@ fn saved_in() -> form::SavedIn {
 pub(super) enum Group {
     Identity,
     Metrics,
+    Protection,
 }
 
 /// A field of the Inspector's groups.
@@ -67,11 +72,12 @@ pub(super) struct EntryDraft {
     synced: u64,
     identity: identity::Identity,
     metrics: metrics::Metrics,
+    protection: protection::Level,
     /// Why the setup refused a save that no field explains.
     error: Option<SharedString>,
     /// Whether each group differs from the file, derived when a field, the
     /// choice of a group or the baseline changes, so a frame only reads it.
-    dirty: [bool; 2],
+    dirty: [bool; 3],
     _subscriptions: Vec<Subscription>,
 }
 
@@ -95,8 +101,9 @@ impl EntryDraft {
             synced: revision,
             identity: identity::Identity::new(entry, window, cx),
             metrics: metrics::Metrics::new(entry, window, cx),
+            protection: protection::Level::new(entry),
             error: None,
-            dirty: [false; 2],
+            dirty: [false; 3],
             _subscriptions: Vec::new(),
         };
         for field in Field::ALL {
@@ -136,7 +143,11 @@ impl EntryDraft {
 
     /// Derives which groups differ from the file.
     fn refresh_dirty(&mut self, cx: &App) {
-        self.dirty = [self.identity.dirty(cx), self.metrics.dirty(cx)];
+        self.dirty = [
+            self.identity.dirty(cx),
+            self.metrics.dirty(cx),
+            self.protection.dirty(),
+        ];
     }
 
     /// Takes what the file now holds for the entry as the baseline. A group
@@ -160,6 +171,16 @@ impl EntryDraft {
             self.metrics.baseline = metrics.clone();
             if was_clean || !self.metrics.dirty(cx) {
                 self.metrics.load(&metrics, window, cx);
+            }
+        }
+        // A level being chosen stays the person's until saved or reverted,
+        // as an edited field does; one left as it was shows the file.
+        let protection = protection::Values::of(entry);
+        if protection != self.protection.baseline {
+            let was_clean = !self.protection.dirty();
+            self.protection.baseline = protection;
+            if was_clean || !self.protection.dirty() {
+                self.protection.values = protection;
             }
         }
         self.refresh_dirty(cx);
@@ -263,7 +284,7 @@ impl SettingsPage {
         let Some(draft) = &self.entry else {
             return Vec::new();
         };
-        [Group::Identity, Group::Metrics]
+        [Group::Identity, Group::Metrics, Group::Protection]
             .into_iter()
             .filter(|group| draft.dirty(*group))
             .collect()
@@ -397,6 +418,19 @@ impl SettingsPage {
         }
     }
 
+    /// A level chosen in the Protection group; it is a draft until Save.
+    pub(super) fn set_entry_protection(&mut self, level: Protection, cx: &mut Context<Self>) {
+        if !self.editable() {
+            return;
+        }
+        if let Some(draft) = self.entry.as_mut() {
+            draft.protection.values.level = Some(level);
+            draft.error = None;
+            draft.refresh_dirty(cx);
+            cx.notify();
+        }
+    }
+
     pub(super) fn set_entry_store(&mut self, kind: metrics::Kind, cx: &mut Context<Self>) {
         if !self.editable() {
             return;
@@ -449,6 +483,7 @@ impl SettingsPage {
                             let errors = draft.metrics.values(cx).check();
                             draft.metrics.errors.set(field, errors.of(field));
                         }
+                        Group::Protection => {}
                     }
                     cx.notify();
                 }
@@ -486,6 +521,7 @@ impl SettingsPage {
                 let baseline = draft.metrics.baseline.clone();
                 draft.metrics.load(&baseline, window, cx);
             }
+            Group::Protection => draft.protection.values = draft.protection.baseline,
         }
         draft.refresh_dirty(cx);
         cx.notify();
@@ -513,6 +549,7 @@ impl SettingsPage {
         let mut failing = None;
         let mut identity = None;
         let mut metrics = None;
+        let mut protection = None;
         for group in groups {
             match group {
                 Group::Identity => {
@@ -529,6 +566,7 @@ impl SettingsPage {
                     draft.metrics.errors = errors;
                     metrics = Some(values);
                 }
+                Group::Protection => protection = Some(draft.protection.values),
             }
         }
         if let Some(field) = failing {
@@ -551,6 +589,9 @@ impl SettingsPage {
             values.apply(entry);
         }
         if let Some(values) = &metrics {
+            values.apply(entry);
+        }
+        if let Some(values) = &protection {
             values.apply(entry);
         }
         let saveable = next_workspace
@@ -684,6 +725,11 @@ impl SettingsPage {
                 draft
                     .identity
                     .render(editable, draft.dirty(Group::Identity), cx),
+            )
+            .child(
+                draft
+                    .protection
+                    .render(editable, draft.dirty(Group::Protection), cx),
             )
             .child(
                 draft

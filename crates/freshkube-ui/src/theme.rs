@@ -40,6 +40,7 @@ gpui_kit::assets::icon_assets!(
         Shield,
         KeyRound,
         Lock,
+        LockOpen,
         Download,
         Save,
         ArrowUpDown,

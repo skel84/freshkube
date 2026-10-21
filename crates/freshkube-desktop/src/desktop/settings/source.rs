@@ -7,6 +7,7 @@ enum Field {
     Glyph,
     Name,
     Role,
+    Protection,
     Context,
     Talosconfig,
 }
@@ -50,6 +51,7 @@ pub(super) fn columns(rows: &[ClusterRow]) -> (Vec<Column>, f32) {
             table::fit("Cluster", rows.iter().map(|row| &row.id), table::WIDEST),
         ),
         column(Field::Role, "Role", 120.),
+        column(Field::Protection, "Protection", 170.),
         column(
             Field::Context,
             "Context",
@@ -144,6 +146,44 @@ impl TableSource for SettingsPage {
                 .into_any_element(),
             Field::Name => text_cell("name", &row.id).into_any_element(),
             Field::Role => text_cell("role", &row.role).into_any_element(),
+            Field::Protection => {
+                // An unset level is guarded, and says it is the default.
+                let level = row.protection.unwrap_or_default();
+                let id = format!("settings-cluster-{}-protection", row.id);
+                let words = if row.protection.is_none() {
+                    format!("{} · default", level.label())
+                } else {
+                    level.label().to_owned()
+                };
+                table::cell(column)
+                    .id(SharedString::from(format!("{id}-cell")))
+                    .flex()
+                    .items_center()
+                    .gap(dp(6.))
+                    .child(
+                        freshkube_ui::level::tag(
+                            crate::desktop::shell::mark(level),
+                            freshkube_ui::level::Form::Cell,
+                            cx,
+                        )
+                        .id(SharedString::from(id.clone()))
+                        .test_support()
+                        .aria_label(words.clone()),
+                    )
+                    .when(row.protection.is_none(), |this| {
+                        this.child(
+                            div()
+                                .id(SharedString::from(format!("{id}-default")))
+                                .test_support()
+                                .aria_label("· default")
+                                .text_size(dp(12.))
+                                .text_color(style.p.muted)
+                                .whitespace_nowrap()
+                                .child("· default"),
+                        )
+                    })
+                    .into_any_element()
+            }
             Field::Context => text_cell("context", &row.context).into_any_element(),
             Field::Talosconfig => text_cell("talosconfig", &row.talosconfig)
                 .text_color(style.p.muted)

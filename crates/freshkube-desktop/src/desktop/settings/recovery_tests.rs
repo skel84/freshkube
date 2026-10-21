@@ -182,3 +182,50 @@ fn disabled_add_explains_recovery_without_clipping_at_the_window_edge(cx: &mut T
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn an_unknown_protection_is_a_warning_and_its_context_opens_read_only(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let yaml = "version: 1\nclusters: [{id: retained, role: core, context: retained}, {id: skipped, role: environment, context: locked-ctx, protection: invented-private-marker}]\n";
+    std::fs::write(directory.path().join("freshkube.yaml"), yaml).unwrap();
+    let (_runtime, handle, pilot) = mount(cx, options(directory.path()), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Clusters, window, cx)
+        });
+        window.render_frame(cx);
+        let words = window.find("settings-banner").label().unwrap().to_owned();
+        assert!(
+            words.contains(
+                "skipped clusters[1] (skipped): protection: is unknown; use read-only, protected, guarded or open; its context is read-only until fixed"
+            ),
+            "{words}"
+        );
+        assert!(!words.contains("invented-private-marker"));
+        // The context the skipped row names opens read-only, not guarded.
+        pilot.update(cx, |pilot, cx| {
+            pilot.applied.context = Some("locked-ctx".into());
+            pilot.prepare_context_display(window, cx);
+        });
+        window.render_frame(cx);
+        let read_only = format!(
+            "Protection: {}. {}",
+            freshkube_core::write::Protection::ReadOnly.label(),
+            freshkube_core::write::Protection::ReadOnly.meaning()
+        );
+        assert_eq!(window.find("status-protection").label(), Some(read_only.as_str()));
+        // Another context is guarded, whatever it is called.
+        pilot.update(cx, |pilot, cx| {
+            pilot.applied.context = Some("production".into());
+            pilot.prepare_context_display(window, cx);
+        });
+        window.render_frame(cx);
+        assert_ne!(window.find("status-protection").label(), Some(read_only.as_str()));
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap(),
+        yaml
+    );
+}
