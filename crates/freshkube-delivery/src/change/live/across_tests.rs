@@ -880,6 +880,8 @@ async fn all_skipped_setup_reads_neither_the_open_connection_nor_an_entry() {
         mapping: place.mapping,
         sources: place.sources.clone(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: None,
     };
     let _ = crate::changes::live::read_in(&pool, &at, observed_at(), BUDGET).await;
