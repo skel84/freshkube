@@ -9,7 +9,7 @@ text="$command"
 for file in $(printf '%s' "$command" | grep -oE '(--body-file|--file|-F|-m|--message)[= ]+@?[^ ;|&]+' | sed -E 's/^[^ =]+[= ]+@?//'); do
   [ -f "$file" ] && text="$text"$'\n'"$(cat "$file")"
 done
-if printf '%s' "$text" | grep -qiE 'generated (by|with) \[|co-authored-by:|^[a-z]+-session: https://'; then
+if printf '%s' "$text" | grep -qiE 'generated (by|with) \[|co-authored-by:|cl.ude\.ai/code/session_|^[a-z]+-session: https://'; then
   echo "blocked: remove the tool footer or co-author trailer from this text and retry" >&2
   exit 2
 fi
