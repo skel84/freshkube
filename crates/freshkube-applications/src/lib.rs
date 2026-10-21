@@ -82,7 +82,9 @@ use freshkube_ui::ui;
 
 use freshkube_core::job::OwnedJob;
 use freshkube_delivery::change::live::Mapping;
-use freshkube_delivery::github::{Error as GitHubError, Handle as GitHubHandle};
+use freshkube_delivery::github::{
+    Error as GitHubError, Handle as GitHubHandle, NotSetUp as GitHubNotSetUp,
+};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -307,6 +309,13 @@ pub struct ApplicationsPage {
     /// dropped.
     github_revision: u64,
     github_open: Option<(OwnedJob, Task<()>)>,
+    /// The GitHub entry of the setup `github` was made for: a reload that
+    /// leaves it as it was keeps the client, and with it what the client
+    /// knows of the rate limit.
+    github_entry: Option<freshkube_core::setup::GitHub>,
+    /// Why GitHub can't be read though the setup names a token, in words
+    /// with their next step; shown beside the setup file's problem.
+    github_problem: Option<SharedString>,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
@@ -437,6 +446,8 @@ impl ApplicationsPage {
             github: None,
             github_revision: 0,
             github_open: None,
+            github_entry: None,
+            github_problem: None,
             source: None,
             visible: false,
             variant,
@@ -560,7 +571,24 @@ impl ApplicationsPage {
         if self.setup_problem == problem {
             return;
         }
-        self.setup_problem = problem.clone();
+        self.setup_problem = problem;
+        self.push_problem(cx);
+    }
+
+    /// What the pages warn of: the setup file's problem, then why GitHub
+    /// isn't set up.
+    fn problem(&self) -> Option<SharedString> {
+        match (&self.setup_problem, &self.github_problem) {
+            (Some(file), Some(github)) => {
+                Some(format!("{}. {github}", file.trim_end_matches('.')).into())
+            }
+            (Some(only), None) | (None, Some(only)) => Some(only.clone()),
+            (None, None) => None,
+        }
+    }
+
+    fn push_problem(&mut self, cx: &mut Context<Self>) {
+        let problem = self.problem();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));
         }
@@ -598,6 +626,7 @@ impl ApplicationsPage {
         let naming_changed = naming != self.stage_naming;
         self.stage_naming = naming;
         self.open_github(setup, cx);
+        self.push_problem(cx);
         let across = self.across();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.reload_setup(&across, cx));
@@ -617,41 +646,53 @@ impl ApplicationsPage {
         }
     }
 
-    /// A new GitHub client for the setup just loaded. Without a token it
-    /// exists at once; with one, the key store is read off the UI thread and
-    /// the pages read without GitHub until it answers. A token that can't be
-    /// used leaves no client: it is never replaced by an anonymous one.
+    /// A GitHub client for the setup just loaded, unless its GitHub entry is
+    /// as it was and a client was made for it. Without a token it exists at
+    /// once; with one, the token is had off the UI thread (the key store, or
+    /// `gh`) and the pages read without GitHub until it is. A token that
+    /// can't be had leaves no client, never an anonymous one, and says why.
     fn open_github(&mut self, setup: &freshkube_core::setup::Setup, cx: &mut Context<Self>) {
+        let entry = setup
+            .delivery
+            .as_ref()
+            .and_then(|delivery| delivery.github.clone());
+        let made = self.github.is_some() || self.github_open.is_some();
+        if made && self.github_entry == entry {
+            return;
+        }
+        self.github_entry = entry;
         self.github_revision += 1;
         let revision = self.github_revision;
         self.github_open = None;
-        let token = setup
-            .delivery
-            .as_ref()
-            .and_then(|delivery| delivery.github.as_ref())
-            .is_some_and(|github| github.token.is_some());
-        if !token {
+        self.set_github_problem(None);
+        let source = self.github_entry.as_ref().and_then(|github| github.token);
+        let Some(source) = source else {
             self.github = GitHubHandle::anonymous(revision).ok();
             return;
-        }
+        };
         self.github = None;
         let secrets = self.secrets.clone();
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
             GITHUB_OPEN_DEADLINE,
-            GitHubError::Token("the key store did not answer in time"),
-            GitHubHandle::open(secrets, revision),
+            GitHubError::NotSetUp(GitHubNotSetUp::KeysUnavailable),
+            GitHubHandle::open(source, secrets, revision),
         );
         let task = cx.spawn(async move |this, cx| {
             let opened = receiver
                 .await
-                .unwrap_or(Err(GitHubError::Token("the key store was not read")));
+                .unwrap_or(Err(GitHubError::NotSetUp(GitHubNotSetUp::KeysUnavailable)));
             _ = this.update(cx, |page, cx| page.github_opened(revision, opened, cx));
         });
         self.github_open = Some((job, task));
     }
 
-    /// The client a token's read opened, when it is still the one wanted.
+    fn set_github_problem(&mut self, problem: Option<SharedString>) {
+        self.github_problem = problem;
+    }
+
+    /// The client a token's read opened, when it is still the one wanted;
+    /// or why there is none.
     fn github_opened(
         &mut self,
         revision: u64,
@@ -662,7 +703,14 @@ impl ApplicationsPage {
             return;
         }
         self.github_open = None;
-        self.github = opened.ok();
+        match opened {
+            Ok(handle) => self.github = Some(handle),
+            Err(error) => {
+                self.github = None;
+                self.set_github_problem(Some(error.to_string().into()));
+            }
+        }
+        self.push_problem(cx);
         self.update_change(cx);
         self.update_changes(cx);
     }
@@ -1096,7 +1144,7 @@ impl ApplicationsPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
             page.set_coroot(coroot, cx);
-            page.set_setup_problem(self.setup_problem.clone(), cx);
+            page.set_setup_problem(self.problem(), cx);
             page
         });
         let subscription =

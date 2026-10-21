@@ -164,7 +164,7 @@ async fn a_refused_token_never_falls_back_to_an_anonymous_request() {
             .is_some_and(|value| value == format!("Bearer {TOKEN}"))
     }));
     assert_eq!(
-        Error::Unauthorized.words("acme/shop"),
+        Error::Unauthorized(GitHubToken::KeysJson).words("acme/shop"),
         "GitHub refused the token: it may have expired. It is the keys.json entry GitHub https://api.github.com/"
     );
 }
@@ -519,7 +519,7 @@ fn a_handle_prints_whose_it_is_and_never_the_token() {
     let client = Client::build(
         reqwest::Client::builder().add_root_certificate(root),
         Url::parse("https://127.0.0.1:1/").unwrap(),
-        Some(TOKEN.into()),
+        Some((TOKEN.into(), GitHubToken::KeysJson)),
         3,
     )
     .unwrap();
@@ -541,40 +541,279 @@ fn client_identity() -> Identity {
     }
 }
 
-#[tokio::test]
-async fn open_reads_the_token_from_the_key_store_by_its_account() {
-    use freshkube_core::secrets::SecretStore;
-    struct Keys(Mutex<Vec<String>>, Option<String>);
-    impl SecretStore for Keys {
-        fn read(&self, account: &str) -> Result<Option<String>, String> {
-            self.0.lock().unwrap().push(account.to_owned());
-            Ok(self.1.clone())
-        }
-        fn write(&self, _: &str, _: &str) -> Result<(), String> {
-            unreachable!()
-        }
-        fn forget(&self, _: &str) -> Result<(), String> {
-            unreachable!()
-        }
+struct Keys(Mutex<Vec<String>>, Option<String>);
+
+impl freshkube_core::secrets::SecretStore for Keys {
+    fn read(&self, account: &str) -> Result<Option<String>, String> {
+        self.0.lock().unwrap().push(account.to_owned());
+        Ok(self.1.clone())
     }
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let keys = Arc::new(Keys(Mutex::default(), Some(TOKEN.into())));
+    fn write(&self, _: &str, _: &str) -> Result<(), String> {
+        unreachable!()
+    }
+    fn forget(&self, _: &str) -> Result<(), String> {
+        unreachable!()
+    }
+}
+
+fn keys(token: Option<&str>) -> (Arc<Keys>, Secrets) {
+    let keys = Arc::new(Keys(Mutex::default(), token.map(str::to_owned)));
     let secrets: Secrets = keys.clone();
-    let client = Client::open(true, Some(secrets.clone()), 5).await.unwrap();
+    (keys, secrets)
+}
+
+#[tokio::test]
+async fn keys_json_is_read_by_its_account_when_it_is_named() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let (store, secrets) = keys(Some(TOKEN));
+    let client = Client::open(GitHubToken::KeysJson, Some(secrets), 5)
+        .await
+        .unwrap();
     assert!(client.authenticated());
-    assert_eq!(*keys.0.lock().unwrap(), [ACCOUNT]);
+    assert_eq!(*store.0.lock().unwrap(), [ACCOUNT]);
     assert_eq!(client.identity().api.as_str(), API);
-    // Not asked for: the store is not read.
-    let anonymous = Client::open(false, Some(secrets), 5).await.unwrap();
-    assert!(!anonymous.authenticated());
-    assert_eq!(keys.0.lock().unwrap().len(), 1);
-    // Asked for, and the store is not there: not a quiet anonymous read.
-    let missing = Client::open(true, None, 5).await;
-    assert!(matches!(missing, Err(Error::Token(_))));
-    // A stored key that isn't a token is refused.
-    let bad: Secrets = Arc::new(Keys(Mutex::default(), Some("bad token".into())));
-    assert!(matches!(
-        Client::open(true, Some(bad), 5).await,
-        Err(Error::Token(_))
+    assert_eq!(client.identity().account.as_deref(), Some(ACCOUNT));
+    // Named, and the store is not there, or holds nothing, or holds what is
+    // not a token: nothing is read, and the cause says which.
+    for (secrets, cause) in [
+        (None, NotSetUp::KeysUnavailable),
+        (Some(keys(None).1), NotSetUp::NoSavedToken),
+        (Some(keys(Some("bad token")).1), NotSetUp::TokenUnreadable),
+        (Some(keys(Some("")).1), NotSetUp::TokenUnreadable),
+    ] {
+        let opened = Client::open(GitHubToken::KeysJson, secrets, 5).await;
+        assert_eq!(opened.err(), Some(Error::NotSetUp(cause)), "{cause}");
+    }
+}
+
+/// A `gh` in a temporary folder that runs `script`, and the folder.
+#[cfg(unix)]
+fn fake_gh(script: &str) -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gh");
+    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_gives_the_token_which_reaches_the_api_host_alone() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let place = tempfile::tempdir().unwrap();
+    let args = place.path().join("args");
+    let gh = fake_gh(&format!(
+        "echo \"$@\" > {args}\necho ghp_fromGhExample0123456789",
+        args = args.display()
     ));
+    let dirs = [gh.path().to_owned()];
+    let token = Client::token_of(GitHubToken::Gh, None, &dirs)
+        .await
+        .unwrap();
+    assert_eq!(token, "ghp_fromGhExample0123456789");
+    // Pinned to github.com, so the token is that host's.
+    assert_eq!(
+        std::fs::read_to_string(&args).unwrap().trim(),
+        "auth token --hostname github.com"
+    );
+    // The client built from it sends it to the API host and to no other.
+    let avatars = Server::new(|_| Reply::empty(200, ""));
+    let elsewhere = avatars.address.clone();
+    let api = Server::new(move |_| {
+        let mut pull = pull(418);
+        pull["user"]["avatar_url"] = json!(format!("{elsewhere}/u/7"));
+        Reply::json(200, "", &json!([pull]))
+    });
+    let handle = Handle::trusting_as(&api.address, Some(&token), GitHubToken::Gh);
+    assert_eq!(handle.identity().account.as_deref(), Some(GH_ACCOUNT));
+    ask(&handle).await.unwrap();
+    assert_eq!(
+        api.seen()[0].header("authorization").as_deref(),
+        Some("Bearer ghp_fromGhExample0123456789")
+    );
+    assert!(avatars.seen().is_empty());
+    // Refused, it names gh, not keys.json.
+    let refusing = Server::new(|_| Reply::empty(401, ""));
+    let handle = Handle::trusting_as(&refusing.address, Some(&token), GitHubToken::Gh);
+    let error = handle
+        .client
+        .pulls("acme/shop", SHA, false)
+        .await
+        .unwrap_err();
+    assert_eq!(error, Error::Unauthorized(GitHubToken::Gh));
+    assert!(error.words("acme/shop").contains("gh auth login"));
+    assert!(!error.words("acme/shop").contains("keys.json"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_missing_gh_is_not_set_up_and_says_how_to() {
+    let empty = tempfile::tempdir().unwrap();
+    let opened = Client::open_with(GitHubToken::Gh, None, 1, &[empty.path().to_owned()]).await;
+    let error = opened.err().unwrap();
+    assert_eq!(error, Error::NotSetUp(NotSetUp::GhNotFound));
+    let words = error.to_string();
+    assert!(
+        words.starts_with("GitHub isn't set up: gh not found"),
+        "{words}"
+    );
+    assert!(words.contains("keys.json"), "the next step: {words}");
+    // A folder with a `gh` that can't be run is not found either.
+    let plain = tempfile::tempdir().unwrap();
+    std::fs::write(plain.path().join("gh"), "not executable").unwrap();
+    let opened = Client::open_with(GitHubToken::Gh, None, 1, &[plain.path().to_owned()]).await;
+    assert_eq!(opened.err(), Some(Error::NotSetUp(NotSetUp::GhNotFound)));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_gh_that_fails_says_it_is_not_signed_in_and_shows_none_of_its_output() {
+    let gh = fake_gh("echo 'secret-stderr-text ghp_leaked0123456789' >&2\nexit 1");
+    let dirs = [gh.path().to_owned()];
+    let opened = Client::open_with(GitHubToken::Gh, None, 1, &dirs).await;
+    let error = opened.err().unwrap();
+    assert_eq!(error, Error::NotSetUp(NotSetUp::GhNotSignedIn));
+    for shown in [
+        error.to_string(),
+        format!("{error:?}"),
+        error.words("acme/shop"),
+    ] {
+        assert!(
+            !shown.contains("secret-stderr-text") && !shown.contains("ghp_leaked"),
+            "{shown}"
+        );
+    }
+    assert!(error.to_string().contains("gh auth login"));
+    // Even one that succeeds and writes to standard error is not read.
+    let noisy = fake_gh("echo 'warning: something' >&2\necho ghp_fine0123456789");
+    let token = Client::token_of(GitHubToken::Gh, None, &[noisy.path().to_owned()])
+        .await
+        .unwrap();
+    assert_eq!(token, "ghp_fine0123456789");
+    // What gh prints that is not a token is not used.
+    let odd = fake_gh("echo 'not a token'");
+    let opened = Client::open_with(GitHubToken::Gh, None, 1, &[odd.path().to_owned()]).await;
+    assert_eq!(
+        opened.err(),
+        Some(Error::NotSetUp(NotSetUp::TokenUnreadable))
+    );
+    // An empty answer is not signed in.
+    let empty = fake_gh("true");
+    let opened = Client::open_with(GitHubToken::Gh, None, 1, &[empty.path().to_owned()]).await;
+    assert_eq!(opened.err(), Some(Error::NotSetUp(NotSetUp::GhNotSignedIn)));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_gh_that_takes_too_long_is_stopped() {
+    let gh = fake_gh("sleep 30");
+    let started = std::time::Instant::now();
+    let token = super::gh::token(&[gh.path().to_owned()], Duration::from_millis(200)).await;
+    assert_eq!(token, Err(NotSetUp::GhSlow));
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn gh_runs_only_when_the_setup_names_it() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let place = tempfile::tempdir().unwrap();
+    let marker = place.path().join("ran");
+    let gh = fake_gh(&format!("touch {}\necho ghp_x0123456789", marker.display()));
+    let dirs = [gh.path().to_owned()];
+    // keys.json named, in every state: gh is not asked.
+    let (_, secrets) = keys(Some(TOKEN));
+    Client::open_with(GitHubToken::KeysJson, Some(secrets), 1, &dirs)
+        .await
+        .unwrap();
+    let missing = Client::open_with(GitHubToken::KeysJson, Some(keys(None).1), 1, &dirs).await;
+    assert!(missing.is_err(), "no saved token is not a reason to run gh");
+    // Neither named: an anonymous client exists at once and gh is not asked.
+    let anonymous = Client::anonymous(1).unwrap();
+    assert!(!anonymous.authenticated());
+    assert_eq!(anonymous.identity().account, None);
+    assert!(!marker.exists(), "gh was not run");
+    // Named, it is.
+    Client::open_with(GitHubToken::Gh, None, 1, &dirs)
+        .await
+        .unwrap();
+    assert!(marker.exists());
+}
+
+#[test]
+fn gh_is_looked_for_in_the_usual_places_before_path() {
+    let dirs = super::gh::default_dirs();
+    assert_eq!(dirs[0], std::path::Path::new("/opt/homebrew/bin"));
+    assert_eq!(dirs[1], std::path::Path::new("/usr/local/bin"));
+    if let Some(path) = std::env::var_os("PATH") {
+        let rest: Vec<_> = std::env::split_paths(&path).collect();
+        assert_eq!(dirs[2..], rest[..]);
+    }
+}
+
+#[tokio::test]
+async fn a_304_for_an_answer_the_memo_dropped_reads_it_again() {
+    // The server forgets nothing, but the client's memo loses the entry
+    // between asking with its validator and the 304 coming back, as the cap
+    // can make it.
+    let held: Arc<Mutex<Option<Handle>>> = Arc::default();
+    let api = Server::new({
+        let held = held.clone();
+        move |request| match request.header("if-none-match") {
+            Some(_) => {
+                let handle = held.lock().unwrap().clone().unwrap();
+                handle.client.state.lock().unwrap().memo = memo::Memo::default();
+                Reply::empty(304, &limit_headers(4999, in_an_hour()))
+            }
+            None => Reply::json(
+                200,
+                &format!("etag: \"v1\"\r\n{}", limit_headers(4000, in_an_hour())),
+                &json!([pull(418)]),
+            ),
+        }
+    });
+    let handle = client(&api, Some(TOKEN));
+    *held.lock().unwrap() = Some(handle.clone());
+    ask(&handle).await.unwrap();
+    handle
+        .client
+        .state
+        .lock()
+        .unwrap()
+        .memo
+        .age(Duration::from_secs(120));
+    let again = ask(&handle).await.unwrap();
+    assert_eq!(again.len(), 1);
+    let seen = api.seen();
+    assert_eq!(seen.len(), 3, "the read, the validation, the read again");
+    assert!(seen[1].header("if-none-match").is_some());
+    assert_eq!(seen[2].header("if-none-match"), None);
+}
+
+#[tokio::test]
+async fn a_limit_reached_or_nearly_spent_is_not_a_refusal() {
+    use freshkube_core::resources::FailureKind;
+    let until = Utc::now() + Span::hours(1);
+    for error in [
+        Error::Limited {
+            until,
+            secondary: false,
+        },
+        Error::Limited {
+            until,
+            secondary: true,
+        },
+        Error::Low { left: 8, until },
+    ] {
+        let failure: Failure = error.clone().into();
+        assert_eq!(failure.kind, FailureKind::Other, "{error}");
+        let source = crate::source::Source::<()>::from_failure(failure);
+        assert!(
+            matches!(source, crate::source::Source::Unreadable(_)),
+            "{error}"
+        );
+    }
+    let refused: Failure = Error::Forbidden.into();
+    assert_eq!(refused.kind, FailureKind::Forbidden);
 }

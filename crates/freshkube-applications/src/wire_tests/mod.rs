@@ -9,6 +9,7 @@ use freshkube_core::workspace::{Entry, Role, Workspace};
 use freshkube_delivery::change::live::Mapping;
 use freshkube_delivery::join::Confidence;
 use freshkube_ui::real_io::{RealIo, until_io};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, component::Root, px, size};
 use std::sync::{Arc, atomic::Ordering};
 
@@ -525,10 +526,21 @@ async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppConte
     .unwrap();
 }
 
+fn github_entry(
+    token: Option<freshkube_core::setup::GitHubToken>,
+) -> Option<freshkube_core::setup::Delivery> {
+    let mut github = freshkube_core::setup::GitHub::default();
+    github.token = token;
+    let mut delivery = freshkube_core::setup::Delivery::default();
+    delivery.github = Some(github);
+    Some(delivery)
+}
+
 #[gpui_kit::test]
-async fn setup_github_client_reaches_every_delivery_read_and_is_replaced_with_each_reload(
+async fn setup_github_client_reaches_every_delivery_read_and_follows_its_entry(
     cx: &mut TestAppContext,
 ) {
+    use freshkube_core::setup::GitHubToken;
     use freshkube_delivery::github::ACCOUNT;
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let store = Arc::new(MemoryStore::default());
@@ -555,44 +567,105 @@ async fn setup_github_client_reaches_every_delivery_read_and_is_replaced_with_ea
             handle
         })
         .unwrap();
-    // A token in keys.json: no client until the key store has been read,
-    // then a new one with the account, and the old client's answers go.
-    store.write(ACCOUNT, "ghp_exampleToken0123456789").unwrap();
-    let mut github = freshkube_core::setup::GitHub::default();
-    github.token = Some(KeysJson);
-    let mut delivery = freshkube_core::setup::Delivery::default();
-    delivery.github = Some(github);
-    configured.delivery = Some(delivery);
+    // A reload that leaves the GitHub entry as it was keeps the client, and
+    // with it what it knows of the rate limit.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(app.read(cx).across().github.as_ref(), Some(&first));
+    })
+    .unwrap();
+    // keys.json named and nothing saved: no client, and the pages say why.
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
     cx.update_window(window, |_, _, cx| {
         app.update(cx, |page, cx| page.set_setup(&configured, cx));
         assert!(app.read(cx).across().github.is_none(), "not read yet");
         assert!(change.read(cx).github().is_none());
     })
     .unwrap();
-    cx.wait_for_io(window, |_, cx| app.read(cx).across().github.is_some())
+    cx.wait_for_io(window, |_, cx| app.read(cx).github_open.is_none())
         .await;
-    cx.update_window(window, |_, _, cx| {
-        let second = app.read(cx).across().github.unwrap();
-        assert_ne!(second, first);
-        assert_eq!(second.identity().account.as_deref(), Some(ACCOUNT));
-        assert!(second.identity().setup_revision > first.identity().setup_revision);
-        assert_eq!(change.read(cx).github(), Some(&second));
-        assert_eq!(list(&app, cx).read(cx).github(), Some(&second));
+    cx.update_window(window, |_, window, cx| {
+        assert!(app.read(cx).across().github.is_none());
+        window.render_frame(cx);
+        assert!(window.find("change-missing").label().is_some_and(|label| {
+            label.contains("GitHub isn't set up: no GitHub token is saved in keys.json")
+        }),);
     })
     .unwrap();
-    // A stored value that is not a token leaves no client: never an
-    // anonymous one in its place.
+    // Saved, and the same entry reloaded: it is tried again, the client has
+    // the account, and the warning goes.
+    store.write(ACCOUNT, "ghp_exampleToken0123456789").unwrap();
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).across().github.is_some())
+        .await;
+    let second = cx
+        .update_window(window, |_, window, cx| {
+            let second = app.read(cx).across().github.unwrap();
+            assert_ne!(second, first);
+            assert_eq!(second.identity().account.as_deref(), Some(ACCOUNT));
+            assert!(second.identity().setup_revision > first.identity().setup_revision);
+            assert_eq!(change.read(cx).github(), Some(&second));
+            assert_eq!(list(&app, cx).read(cx).github(), Some(&second));
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find("change-missing")
+                    .is_none_or(|missing| !missing.label().unwrap_or_default().contains("GitHub")),
+            );
+            second
+        })
+        .unwrap();
+    // Reloaded as it is, it is the same client.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(app.read(cx).across().github.as_ref(), Some(&second));
+    })
+    .unwrap();
+    // A saved value that is not a token leaves no client, never an
+    // anonymous one, and says so.
     store.write(ACCOUNT, "not a token").unwrap();
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
+    configured
+        .delivery
+        .as_mut()
+        .unwrap()
+        .github
+        .as_mut()
+        .unwrap()
+        .token = None;
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        // Named no token: anonymous again.
+        assert_eq!(
+            app.read(cx)
+                .across()
+                .github
+                .as_ref()
+                .unwrap()
+                .identity()
+                .account,
+            None
+        );
+    })
+    .unwrap();
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
     cx.update_window(window, |_, _, cx| {
         app.update(cx, |page, cx| page.set_setup(&configured, cx));
     })
     .unwrap();
     cx.wait_for_io(window, |_, cx| app.read(cx).github_open.is_none())
         .await;
-    cx.update_window(window, |_, _, cx| {
+    cx.update_window(window, |_, window, cx| {
         assert!(app.read(cx).across().github.is_none());
         assert!(change.read(cx).github().is_none());
         assert!(list(&app, cx).read(cx).github().is_none());
+        window.render_frame(cx);
+        assert!(window.find("change-missing").label().is_some_and(|label| {
+            label.contains("GitHub isn't set up: the saved GitHub token can't be read")
+        }),);
     })
     .unwrap();
 }

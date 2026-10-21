@@ -16,7 +16,7 @@ fn at(hour: u32, minute: u32) -> DateTime<Utc> {
 fn person(login: &str, id: u64) -> Person {
     Person {
         login: login.into(),
-        avatar: AvatarUrl::parse(&format!("https://{}/u/{id}?v=4", super::AVATAR_HOST)),
+        avatar: AvatarUrl::parse(&format!("https://{}/u/{id}?v=4", super::rest::AVATAR_HOST)),
     }
 }
 

@@ -19,6 +19,7 @@ mod budget;
 mod error;
 #[cfg(test)]
 pub(crate) mod fake;
+mod gh;
 mod memo;
 #[cfg(test)]
 mod tests;
@@ -30,6 +31,7 @@ use std::time::Duration;
 use chrono::Utc;
 use freshkube_core::resources::Failure;
 use freshkube_core::secrets::Secrets;
+use freshkube_core::setup::GitHubToken;
 use serde_json::Value;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
@@ -40,12 +42,14 @@ use budget::Budget;
 use memo::Memo;
 
 pub use budget::RateLimit;
-pub use error::{Cause, Error};
+pub use error::{Cause, Error, NotSetUp};
 pub(crate) use types::summary;
 pub use types::{AVATAR_HOST, AvatarUrl, Person, PullState, PullSummary, Reviewer, Stale};
 
 /// The keys.json account of the token, normalized as Results' is.
 pub const ACCOUNT: &str = "GitHub https://api.github.com/";
+/// What the identity calls a token that `gh` gave.
+pub const GH_ACCOUNT: &str = "gh";
 const API: &str = "https://api.github.com/";
 const DEADLINE: Duration = Duration::from_secs(5);
 /// The most of an answer read.
@@ -67,7 +71,8 @@ const BLOCK_WITHOUT_RETRY: u64 = 60;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     pub api: Url,
-    /// The keys.json account the token was read from; `None` when anonymous.
+    /// Where the token was read from: the keys.json account, or `gh`;
+    /// `None` when anonymous.
     pub account: Option<String>,
     pub setup_revision: u64,
 }
@@ -76,6 +81,8 @@ pub struct Client {
     http: reqwest::Client,
     api: Url,
     token: Option<http::HeaderValue>,
+    /// Where the token came from, which a refusal names.
+    source: Option<GitHubToken>,
     identity: Identity,
     /// One request at a time, as GitHub's secondary limits ask.
     turn: Semaphore,
@@ -90,7 +97,7 @@ struct State {
 
 fn token_header(token: &str) -> Result<http::HeaderValue, Error> {
     if token.trim().is_empty() {
-        return Err(Error::Token("the stored token is empty"));
+        return Err(Error::NotSetUp(NotSetUp::TokenUnreadable));
     }
     if token.len() > MOST_TOKEN_BYTES
         || !token.bytes().all(|byte| {
@@ -98,37 +105,64 @@ fn token_header(token: &str) -> Result<http::HeaderValue, Error> {
                 || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'+' | b'/' | b'=')
         })
     {
-        return Err(Error::Token("the stored token is not a bearer token"));
+        return Err(Error::NotSetUp(NotSetUp::TokenUnreadable));
     }
     let mut header = http::HeaderValue::from_str(&format!("Bearer {token}"))
-        .map_err(|_| Error::Token("the stored token is not a bearer token"))?;
+        .map_err(|_| Error::NotSetUp(NotSetUp::TokenUnreadable))?;
     header.set_sensitive(true);
     Ok(header)
 }
 
 impl Client {
-    /// Opens on an I/O worker, reading only the key store when the setup
-    /// names `keys.json`. A key store that fails is an error, never a quiet
-    /// downgrade to anonymous; a store with no key is anonymous.
+    /// Opens on an I/O worker, taking the token from where the setup names
+    /// it: the key store's GitHub account, or `gh auth token`. Neither is
+    /// read unless it is named, and a source that can't give a token is a
+    /// cause to show ([`NotSetUp`]), never a quiet downgrade to anonymous.
     pub async fn open(
-        use_token: bool,
+        source: GitHubToken,
         secrets: Option<Secrets>,
         setup_revision: u64,
     ) -> Result<Self, Error> {
-        let token = if use_token {
-            tokio::task::spawn_blocking(move || {
-                secrets
-                    .ok_or(Error::Token("the key store isn't available to this read"))?
-                    .read(ACCOUNT)
-                    .map_err(|_| Error::Token("the key store is unavailable"))
-            })
-            .await
-            .map_err(|_| Error::Token("the key store could not be read"))??
-        } else {
-            None
-        };
+        Self::open_with(source, secrets, setup_revision, &gh::default_dirs()).await
+    }
+
+    /// [`open`](Self::open), looking for `gh` in `dirs`.
+    async fn open_with(
+        source: GitHubToken,
+        secrets: Option<Secrets>,
+        setup_revision: u64,
+        dirs: &[std::path::PathBuf],
+    ) -> Result<Self, Error> {
+        let token = Self::token_of(source, secrets, dirs).await?;
         let api = Url::parse(API).map_err(|_| Error::Unreadable("the API address"))?;
-        Self::build(reqwest::Client::builder(), api, token, setup_revision)
+        Self::build(
+            reqwest::Client::builder(),
+            api,
+            Some((token, source)),
+            setup_revision,
+        )
+    }
+
+    /// The token, from where `source` says, and from nowhere else.
+    async fn token_of(
+        source: GitHubToken,
+        secrets: Option<Secrets>,
+        dirs: &[std::path::PathBuf],
+    ) -> Result<String, Error> {
+        Ok(match source {
+            GitHubToken::Gh => gh::token(dirs, gh::DEADLINE).await?,
+            GitHubToken::KeysJson => {
+                let read = tokio::task::spawn_blocking(move || {
+                    secrets
+                        .ok_or(NotSetUp::KeysUnavailable)?
+                        .read(ACCOUNT)
+                        .map_err(|_| NotSetUp::KeysUnavailable)
+                })
+                .await
+                .map_err(|_| NotSetUp::KeysUnavailable)??;
+                read.ok_or(NotSetUp::NoSavedToken)?
+            }
+        })
     }
 
     /// A client that asks anonymously: no I/O, so it exists at once.
@@ -140,10 +174,14 @@ impl Client {
     fn build(
         builder: reqwest::ClientBuilder,
         api: Url,
-        token: Option<String>,
+        token: Option<(String, GitHubToken)>,
         setup_revision: u64,
     ) -> Result<Self, Error> {
-        let token = token.as_deref().map(token_header).transpose()?;
+        let source = token.as_ref().map(|(_, source)| *source);
+        let token = token
+            .as_ref()
+            .map(|(token, _)| token_header(token))
+            .transpose()?;
         let http = builder
             .use_rustls_tls()
             .https_only(true)
@@ -154,13 +192,17 @@ impl Client {
             .map_err(|_| Error::Unreadable("the HTTP client could not be configured"))?;
         let identity = Identity {
             api: api.clone(),
-            account: token.is_some().then(|| ACCOUNT.to_owned()),
+            account: source.map(|source| match source {
+                GitHubToken::Gh => GH_ACCOUNT.to_owned(),
+                GitHubToken::KeysJson => ACCOUNT.to_owned(),
+            }),
             setup_revision,
         };
         Ok(Self {
             http,
             api,
             token,
+            source,
             identity,
             turn: Semaphore::new(1),
             state: Mutex::new(State::default()),
@@ -244,50 +286,47 @@ impl Client {
                 .then(|| state.memo.etag(path).map(str::to_owned))
                 .flatten()
         };
-        let url = self
-            .api
-            .join(path)
-            .map_err(|_| Error::Unreadable("the address"))?;
-        let mut request = self
-            .http
-            .get(url)
-            .header(http::header::ACCEPT, "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header(
-                http::header::USER_AGENT,
-                concat!("freshkube/", env!("CARGO_PKG_VERSION")),
-            );
-        if let Some(token) = &self.token {
-            request = request.header(http::header::AUTHORIZATION, token.clone());
-        }
-        if let Some(etag) = etag {
-            request = request.header(http::header::IF_NONE_MATCH, etag);
-        }
-        let mut response = request.send().await.map_err(unreachable)?;
-        let status = response.status().as_u16();
-        let headers = response.headers().clone();
+        let mut etag = etag;
+        let (mut response, status, headers) = loop {
+            let response = self.send(path, etag.as_deref()).await?;
+            let status = response.status().as_u16();
+            let headers = response.headers().clone();
+            self.state
+                .lock()
+                .unwrap()
+                .budget
+                .observe(&headers, self.authenticated(), Utc::now());
+            if status == 304 {
+                let kept = {
+                    let mut state = self.state.lock().unwrap();
+                    let kept = state.memo.kept(path);
+                    if let Some((body, _)) = &kept {
+                        state.memo.renew(path, keep(body), Instant::now());
+                    }
+                    kept
+                };
+                if let Some((body, _)) = kept {
+                    return Ok(body);
+                }
+                // The answer it validates was dropped from the memo: read
+                // it again, without the validator.
+                if etag.take().is_some() {
+                    continue;
+                }
+                return Err(Error::Unreadable("an answer that was never kept"));
+            }
+            break (response, status, headers);
+        };
         let now = Utc::now();
-        self.state
-            .lock()
-            .unwrap()
-            .budget
-            .observe(&headers, self.authenticated(), now);
         match status {
             200 => {}
-            304 => {
-                let mut state = self.state.lock().unwrap();
-                let kept = state.memo.kept(path);
-                return match kept {
-                    Some((body, _)) => {
-                        state.memo.renew(path, keep(&body), Instant::now());
-                        Ok(body)
-                    }
-                    None => Err(Error::Unreadable("an answer that was never kept")),
-                };
-            }
             // A redirect is an answer, never a hop.
             301 | 302 | 307 | 308 => return Err(Error::Moved),
-            401 => return Err(Error::Unauthorized),
+            401 => {
+                return Err(Error::Unauthorized(
+                    self.source.unwrap_or(GitHubToken::KeysJson),
+                ));
+            }
             403 | 429 => return Err(self.limit_or_refusal(status, &headers, now)),
             404 => {
                 return Err(Error::NotFound {
@@ -318,6 +357,31 @@ impl Client {
             Instant::now(),
         );
         Ok(value)
+    }
+
+    /// One GET of `path`, with the token when there is one and the
+    /// validator when it is given.
+    async fn send(&self, path: &str, etag: Option<&str>) -> Result<reqwest::Response, Error> {
+        let url = self
+            .api
+            .join(path)
+            .map_err(|_| Error::Unreadable("the address"))?;
+        let mut request = self
+            .http
+            .get(url)
+            .header(http::header::ACCEPT, "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header(
+                http::header::USER_AGENT,
+                concat!("freshkube/", env!("CARGO_PKG_VERSION")),
+            );
+        if let Some(token) = &self.token {
+            request = request.header(http::header::AUTHORIZATION, token.clone());
+        }
+        if let Some(etag) = etag {
+            request = request.header(http::header::IF_NONE_MATCH, etag);
+        }
+        request.send().await.map_err(unreachable)
     }
 
     /// A 403 or 429 is a limit when the budget says none is left or a
@@ -447,10 +511,14 @@ impl Handle {
         Client::anonymous(setup_revision).map(Self::new)
     }
 
-    /// A client that reads its token from the key store, off the calling
-    /// thread; see [`Client::open`].
-    pub async fn open(secrets: Option<Secrets>, setup_revision: u64) -> Result<Self, Error> {
-        Client::open(true, secrets, setup_revision)
+    /// A client whose token comes from where the setup names it, read off
+    /// the calling thread; see [`Client::open`].
+    pub async fn open(
+        source: GitHubToken,
+        secrets: Option<Secrets>,
+        setup_revision: u64,
+    ) -> Result<Self, Error> {
+        Client::open(source, secrets, setup_revision)
             .await
             .map(Self::new)
     }
@@ -484,12 +552,25 @@ impl Handle {
     /// A client for the fake API at `address`, which trusts its certificate
     /// alone and never uses a proxy.
     pub(crate) fn trusting(address: &str, token: Option<&str>) -> Self {
+        Self::trusting_as(address, token, GitHubToken::KeysJson)
+    }
+
+    /// [`trusting`](Self::trusting), the token given by `source`.
+    pub(crate) fn trusting_as(address: &str, token: Option<&str>, source: GitHubToken) -> Self {
         let root = reqwest::Certificate::from_pem(fake::CERT).unwrap();
         let builder = reqwest::Client::builder()
             .add_root_certificate(root)
             .no_proxy();
         let url = Url::parse(&format!("{address}/")).unwrap();
-        Self::new(Client::build(builder, url, token.map(str::to_owned), 1).unwrap())
+        Self::new(
+            Client::build(
+                builder,
+                url,
+                token.map(|token| (token.to_owned(), source)),
+                1,
+            )
+            .unwrap(),
+        )
     }
 }
 
