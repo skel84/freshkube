@@ -1,6 +1,6 @@
 # The setup file
 
-`freshkube.yaml` is one file, beside the preferences, that says what the app reads and from where: the workspace's clusters and their roles, the pins, the Argo CD mapping, the metrics store, Coroot, Tekton Results and the supply chain's trust. This is the design step of [#706](https://github.com/skel84/freshkube/issues/706), written on 19 October 2026 at main `ce3e982`. It lands in [slices](#slices): on main the file is parsed and validated, migrated from the JSON files and reloaded on change; Settings saves the workspace's three lists into it; and the workspace, destinations, pins, `coroot` block and `metrics` are read. Delivery reads the build entry's `results.address` with its optional address-specific saved token, and top-level `supply_chain.public_key_file` and `supply_chain.evidence`. Per-entry `coroot` selects the application's Coroot project for change outcomes, and the Coroot cluster behind Observability's Kubernetes links. The Results client also accepts a caller-supplied loopback route for `results.forward`, with TLS service-name verification; connecting that route to the app's Forward control remains a separate follow-up, as does supply-chain transparency lookup. Where this document and `crates/freshkube-core/src/setup/` differ, the code wins. The README has the short example of what main reads.
+`freshkube.yaml` is one file, beside the preferences, that says what the app reads and from where: the workspace's clusters and their roles, the pins, the Argo CD mapping, the metrics store, Coroot, Tekton Results and the supply chain's trust. This is the design step of [#706](https://github.com/skel84/freshkube/issues/706), written on 19 October 2026 at main `ce3e982`. It lands in [slices](#slices): on main the file is parsed and validated, migrated from the JSON files and reloaded on change; Settings saves the workspace's three lists into it; and the workspace, destinations, pins, `coroot` block and `metrics` are read. Delivery reads the build entry's `results.address` with its optional address-specific saved token, and top-level `supply_chain.public_key_file`, `supply_chain.evidence`, `supply_chain.transparency_log` and `supply_chain.transparency_url`. Per-entry `coroot` selects the application's Coroot project for change outcomes, and the Coroot cluster behind Observability's Kubernetes links. The Results client also accepts a caller-supplied loopback route for `results.forward`, with TLS service-name verification; connecting that route to the app's Forward control remains a separate follow-up. Where this document and `crates/freshkube-core/src/setup/` differ, the code wins. The README has the short example of what main reads.
 
 Today that setup is spread over `workspace.json` (core's `workspace` module), `coroot.json` (`crates/freshkube-observability/src/remember.rs`), the per-context metrics sources of `monitoring.json` (`crates/freshkube-monitoring/src/store.rs`), and nothing at all for what [#268](https://github.com/skel84/freshkube/issues/268) and [#269](https://github.com/skel84/freshkube/issues/269) add. The file replaces the first two, takes the workspace's metrics sources from the third, and holds the rest. Settings ([DESIGN.md](DESIGN.md#the-settings-page)) edits it, and Check sources stays the proof that each entry answers.
 
@@ -106,6 +106,7 @@ coroot:
 supply_chain:
   public_key_file: /home/acme/keys/cosign.pub
   transparency_log: false         # the default; true reads the log's entries
+  # transparency_url: https://rekor.example.test  # optional; else Chains' transparency.url
   evidence:                       # the pipeline's own evidence record, optional
     result: build-evidence        # the PipelineRun result that holds it
     commit: /commit               # JSON pointers into that result
@@ -134,7 +135,7 @@ What each part means, and the rules a read enforces. The `metrics` blocks follow
 - **`coroot`** holds the connection: the `server` (an `http://` or `https://` URL) and `sign_in` (`api-key`, `session` or `anonymous`), both required, where its key is and the default project (not empty). It never holds a key. `key` and `api_key_file` together are refused; `api_key_file` must be an absolute path. `key: keys.json` is the only value `key` takes: the key [#707](https://github.com/skel84/freshkube/issues/707)'s store keeps for this server. `api_key_file` instead names a file that holds only the key, read when connecting and never copied. With neither, the app asks at Connect and keeps nothing. Any other value of `key` is refused, and the refusal never repeats the value.
 - **`metrics`** is one choice, `mode`: `automatic` (the default, and what a file without `metrics` means), `central` or `per-entry`. `central` takes a `store`, the hosting `entry` and a Service in it (namespace, name, port, `https`, and a path prefix with or without its slashes, normalised as `PrometheusService::with_path` does today), or a `url`; and a `label`, `cluster` unless set. A URL's bearer token is `token: keys.json` or nothing; like `coroot.key`, any other value is refused unrepeated. A Service needs no token: the hosting entry's own Kubernetes credentials reach it. `store` and `label` under another mode are kept, unread, so switching modes back and forth loses nothing.
 - **Per entry, `metrics`** may set `value`, the entry's value of the central label (its id unless set), and `source`, its own `service` or `url` (the store's shapes without `entry`). A `source` wins under any mode, sets exactly one of `service` and `url`, and takes a `token` only with a `url`. A label name must be a Prometheus label name (`metrics.label`, checked under `central` only) and a value non-empty.
-- **`supply_chain`** is workspace-wide ([#268](https://github.com/skel84/freshkube/issues/268), decision 1): a public key file the person names, never read from a cluster; the transparency log, read only when `transparency_log` is `true`; and the evidence result, with the JSON pointers to its commit and digest.
+- **`supply_chain`** is workspace-wide ([#268](https://github.com/skel84/freshkube/issues/268), decision 1): a public key file the person names, never read from a cluster, and the evidence result with the JSON pointers to its commit and digest. The transparency log is read only when `transparency_log` is `true`, at optional `transparency_url` (HTTPS, with no URL credentials, query or fragment), else at `transparency.url` from the builds entry's `chains-config`. A missing or unreadable config never defaults to the public log. The log receives no token or Results CA. Both delivery reads take these settings, and an accepted setup revision or explicit Reload cancels old requests before reading again.
 - **`delivery.stage_naming`** ([#804](https://github.com/skel84/freshkube/issues/804)) ties an Application that carries no `kargo.akuity.io/authorized-stage` annotation to its Kargo Stage by name. `name_template` is required and must contain `{stage}`; `{project}` is optional. A template without `{stage}` is refused as its own fault, naming the key. `project_key` is optional: an annotation, or else a label, of that key on the Application that holds its Kargo project. With it, an Application claims a Stage when its project key names the Stage's project and its name is exactly the template's: a claim by convention. Without it, the name alone makes the claim, which is weaker and says so (the Link column and the change page show it as Claimed, never Confirmed, in words that say it matched by the name template only). The annotation still wins: an Application with the annotation is tied only to the Stage it names, whatever its name. A name-only claim is never graded above Claimed, whatever the Promotion's pushed commit and the synced revision say. Two rules keep a name from guessing: when more than one Application claims a Stage by name only (the same name in two namespaces Argo CD is read in), none of them is linked to it and each says "N Applications match the naming template for this Stage"; and an Application whose name fits Stages of more than one project (`a-b` in project `c` and `a` in project `b-c` both make `a-b-c` under `{stage}-{project}`) is tied to none of them on the Applications page, which says why. Annotation and project-key claims are unaffected. Absent means off.
 - **`delivery.build_namespace`** ([#803](https://github.com/skel84/freshkube/issues/803)) names the namespace the builds run in, read from the same cluster the commit reads use today: the entry the workspace's `sources` give for builds, else the open connection. Without it a build is found by its commit alone, as before. With it, a Freight that names no commit is also looked for by image digest: delivery lists that namespace's PipelineRuns and TaskRuns, a page cap each, compares their `IMAGE_DIGEST` results in memory with the Freight's image digests, and, when a Results address is set for that entry, the first ten PipelineRun records the archive returns for the namespace (no order is asked for). A Freight that names a commit is also searched by digest when the key is set, and the commit reads are scoped to the namespace too. Without the key, the Build hop of an image-only Freight says the build namespace isn't set and names `delivery.build_namespace`. It must be a Kubernetes namespace name (lowercase alphanumerics and `-`, at most 63); nothing checks that the namespace exists, and a wrong one finds no build.
 - **Unknown keys** are kept and written back as they were read, at every level, as [#699](https://github.com/skel84/freshkube/issues/699) did for the JSON files, and Settings names them.
@@ -221,6 +222,60 @@ When the parser gives no place, the words say which pass failed without one.
 
 Then `Workspace::validate` and the new rules run, and their errors name an entry by id (`the id “cluster-b” is used twice`), as today. The log gets the same words.
 
+### Row recovery on disk reads
+
+YAML disk reads use `setup::read`, returning an effective `Setup`, structured
+warnings and separate `SourceRecovery` state. `setup::parse`, Settings
+writes and legacy JSON migration input stay strict. Reading never rewrites YAML.
+
+A bad `clusters[i]` or `destinations[i]` row is skipped as a whole, including a
+cluster whose optional Results, metrics or Coroot block is invalid. Healthy
+neighbors and unrelated sections remain usable. Warnings keep the original
+zero-based index, a readable bounded id (the target entry for a destination),
+the field and a typed reason. They never include endpoints, path values,
+rejected YAML or parser messages. Destination server userinfo is refused by both the recovery reader and strict validation, including Settings saves, without quoting the endpoint. A later duplicate Coroot link is skipped;
+the first otherwise-valid link wins, comparing projects after inheritance.
+
+File-fatal faults still refuse the entire file: unreadable/non-regular or
+oversized files; invalid YAML and duplicate mapping keys; non-map documents;
+missing, unreadable or unknown versions; wrong top-level shapes/types;
+more than 64 input clusters or 256 input destinations; duplicate readable
+cluster ids; a relative workspace kubeconfig; and invalid source pins.
+Shared metrics, top-level Coroot and supply-chain semantic faults stay fatal.
+As before, dormant central-store semantic settings are retained but unread.
+
+Before decoding any row, a credential preflight checks recognized key/token
+positions and endpoint URL userinfo across the raw document, including dormant
+metrics blocks and rows that could not otherwise decode. A literal credential
+or embedded URL credential refuses the file without quoting it. A row fault
+cannot hide a later fatal fault.
+
+An accepted read publishes one complete sentence in input order:
+`freshkube.yaml is used with warnings: skipped clusters[1] (cluster-b): results.address: plain HTTP is allowed only on loopback. The rest of the file stays in use.`
+Settings and both delivery change views use the existing Warn banners. Delivery
+sources keeps the file row as **Used with warnings**, with the same details.
+Unknown-key and changed-on-disk notices remain available. A later fatal refusal
+shows only the existing `problem_words` sentence; item warnings return on the
+next accepted read and disappear when repaired.
+
+All-skipped arrays still yield an accepted setup and retain their original
+bytes for conflict detection. An all-skipped cluster list resolves sources as
+unavailable, preserving dangling pins and mappings; it never reads from the
+open connection. Role selection also runs over the original input rows, using the same role precedence as strict selection. If the selected row was skipped, that part is unavailable and names its original index and readable id; it never moves to a later row or a fallback role. Explicit pins still take precedence, and in-cluster alias validation uses that same recovered source selection. An intentionally empty valid setup retains its existing
+workspace-of-one behavior. Switching between those states changes effective
+source availability even when the two `Setup` values compare equal.
+
+While skipped rows remain, Settings writes nothing and says:
+`Fix the skipped items in freshkube.yaml and Reload before saving from Settings.`
+A partly accepted YAML wins over legacy JSON without merging, rewriting, or
+setting the legacy files aside. Once repaired, ordinary strict save, backup,
+conflict and migration-adoption rules resume.
+
+Warning-only edits and changed fatal reasons update diagnostics without
+restarting delivery reads. Effective setup or source-availability changes do
+invalidate them. A successful explicit Reload always invalidates reads, even
+for identical configuration, since referenced key files can change.
+
 ## Reload on change
 
 No dependency is needed. The app has no file watcher today (it reads `workspace.json` at start and on Reload, `settings/mod.rs` and `settings/edit.rs`); `notify` is in the build only inside GPUI Kit's theme registry. A watcher would also have to watch the directory, since editors save by renaming a new file over the old one. A poll is simpler and costs nothing that matters:
@@ -256,7 +311,7 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | 0 | This design | Claude | docs | none |
 | 1 | **Core types and parse.** A `setup` module in core: `Setup` (the workspace, `metrics`, `coroot`, `supply_chain`, unknown keys), `parse` with the two-pass errors and their line and column, `to_text` with the header and fixed order, `commit` on `Seen`, the `key` rule. The per-entry `results`, `coroot` and `metrics` and the `supply_chain` block are typed here, which takes over #697's slice 11. Round-trip tests on the example above, kept as `crates/freshkube-prefs/src/examples/freshkube.yaml`. | Claude | `freshkube-core/src/setup/`, `workspace/` | #697 slice 3 |
 | 2 | **Migration.** Steps 1 to 6, at startup, with tests for each stopping point, both files present, an unusable `workspace.json` and two launches at once. | Claude | core `setup/migrate.rs`, `desktop/startup/` | 1, #707 |
-| 3 | **Reload.** The `SetupFile` owner, its poll and debounce, its own-write rule and the broken-file state, handed to Settings, the switcher, delivery and Coroot. UI tests on the test clock. | Codex | `freshkube-desktop/src/setup_file.rs`, shell wiring | 1 |
+| 3 | **Reload.** The `SetupFile` owner, its poll and debounce, its own-write rule and the broken-file state, handed to Settings, the switcher, delivery and Coroot. UI tests on the test clock. | Codex | `freshkube-desktop/src/setup_file/mod.rs`, shell wiring | 1 |
 | 4 | **The Settings write path.** Settings saves into `freshkube.yaml` through `SetupFile`: the `.bak` of a hand-edited file, the receipts, the changed-on-disk and broken-file banners, the Check sources row. Today's three lists move from `workspace.json` to it unchanged. | Codex | `desktop/settings/` | 2, 3 |
 | 5 | **Metrics from the setup.** The modes, and central mode's matcher injected in core's transport, with tests on dashboards' queries, variable queries, the history panels, a matcher on the same label and an unparsable query; the source an entry reads, and the hosting entry's client handed to Monitoring; the two Check sources checks. A join: a wrong scope draws another cluster's numbers as this one's. | Claude | core `monitoring/transport.rs`, `freshkube-monitoring`'s `page/` and `history/`, shell wiring | 1, 3 |
 | 6 | **The README example.** The setup section becomes the annotated example above. | Codex | `README.md` | 4, 5 |

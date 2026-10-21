@@ -382,6 +382,8 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
         mapping: Default::default(),
         sources: Default::default(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
@@ -405,6 +407,8 @@ async fn a_live_read_lists_freight_and_follows_only_what_runs() {
         mapping: Default::default(),
         sources: Default::default(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
@@ -539,6 +543,8 @@ fn at() -> live::Where {
         mapping: Default::default(),
         sources: Default::default(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
@@ -718,6 +724,8 @@ fn across() -> live::Where {
     live::Where {
         sources: Sources::of(&workspace),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: None,
         build_namespace: None,
         ..at()
@@ -848,4 +856,31 @@ fn the_spread_example_follows_applications_in_later_namespaces() {
     assert!(changes.notes[0].text.contains("sandbox, tenants"));
     assert!(changes.notes[0].text.contains("namespace cap"));
     assert_eq!(trail.missing[0].text, changes.notes[0].text);
+}
+
+#[test]
+fn the_list_hands_its_log_settings_to_every_followed_change() {
+    let mut at = live::Where {
+        cluster: "cluster-b".into(),
+        label: "cluster-b".into(),
+        argocd_namespace: "argocd".into(),
+        mapping: Default::default(),
+        sources: Default::default(),
+        public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
+        evidence_result: None,
+        build_namespace: None,
+        stage_naming: None,
+    };
+    let off = at.place("checkout", "freight-a");
+    assert!(!off.transparency_log);
+    assert_eq!(off.transparency_url, None);
+    at.transparency_log = true;
+    at.transparency_url = Some("https://rekor.example.test/log".into());
+    let on = at.place("checkout", "freight-b");
+    assert!(on.transparency_log);
+    assert_eq!(on.transparency_url, at.transparency_url);
+    assert_eq!(on.project, "checkout");
+    assert_eq!(on.freight, "freight-b");
 }

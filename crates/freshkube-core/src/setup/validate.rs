@@ -12,14 +12,22 @@ use crate::{base_url::parse_base_url, workspace::Entry};
 
 pub(super) fn entry(entry: &Entry) -> Result<(), Fault> {
     let at = |field: &str| format!("the cluster “{}” {field}", entry.id);
+    entry_at(entry, &at)
+}
+
+pub(super) fn entry_fields(entry: &Entry) -> Result<(), Fault> {
+    entry_at(entry, &str::to_owned)
+}
+
+fn entry_at(entry: &Entry, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
     if let Some(results) = &entry.results {
-        results_of(results, &at)?;
+        results_of(results, at)?;
     }
     if let Some(coroot) = &entry.coroot {
-        coroot_of(coroot, &at)?;
+        coroot_of(coroot, at)?;
     }
     if let Some(metrics) = &entry.metrics {
-        entry_metrics(metrics, &at)?;
+        entry_metrics(metrics, at)?;
     }
     Ok(())
 }
@@ -189,6 +197,13 @@ pub(super) fn coroot(coroot: &Coroot) -> Result<(), Fault> {
 }
 
 pub(super) fn supply_chain(chain: &SupplyChain) -> Result<(), Fault> {
+    if let Some(address) = &chain.transparency_url {
+        let at = "supply_chain.transparency_url";
+        let parsed = parse_base_url(address).map_err(|_| Fault::NotHttpsUrl(at.into()))?;
+        if parsed.scheme() != "https" {
+            return Err(Fault::NotHttpsUrl(at.into()));
+        }
+    }
     if let Some(file) = &chain.public_key_file {
         absolute(file, "supply_chain.public_key_file".into())?;
     }
