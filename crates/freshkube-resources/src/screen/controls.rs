@@ -65,6 +65,31 @@ impl ResourcesScreen {
                 page::columns_fold(items, hidden, hidden == 0),
             );
         }
+        if self.kind.group == "external-secrets.io"
+            && self.kind.plural == "externalsecrets"
+            && !self.embedded
+        {
+            use gpui_kit::component::Disableable;
+            let action = crate::external_refresh::RefreshExternalSecret;
+            header = header.foldable(
+                Button::new("external-secret-refresh")
+                    .outline()
+                    .small()
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .label("Refresh ExternalSecret…")
+                    .tooltip_with_action(
+                        "Request an ExternalSecret sync after confirmation",
+                        &action,
+                        Some(CONTEXT),
+                    )
+                    .disabled(
+                        !self.external_secret_selected()
+                            || self.detail.read(cx).external_refresh_busy(cx),
+                    )
+                    .on_click(page::dispatch(action.clone(), &self.focus)),
+                page::action_item("Refresh ExternalSecret…", action, &self.focus),
+            );
+        }
         let tip = if self.lists_pods() {
             "Refresh pods"
         } else {

@@ -6,6 +6,9 @@ use freshkube_core::resources::{
 };
 use gpui_kit::component::{h_flex, v_flex};
 
+pub(in crate::pane) mod refresh;
+#[cfg(test)]
+mod refresh_tests;
 #[cfg(test)]
 mod tests;
 mod view;

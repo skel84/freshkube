@@ -288,6 +288,11 @@ impl ResourcesScreen {
                 view.choose_namespace(window, cx)
             }))
             .on_action(cx.listener(|view, _: &ToggleMark, _, cx| view.toggle_mark(cx)))
+            .on_action(cx.listener(
+                |view, _: &crate::external_refresh::RefreshExternalSecret, window, cx| {
+                    view.refresh_external_secret(window, cx)
+                },
+            ))
             .on_action(cx.listener(|view, _: &OpenLogs, window, cx| view.open_logs(window, cx)))
             .on_action(cx.listener(|view, _: &SelectGroup, _, cx| view.select_group(cx)))
             .on_action(cx.listener(|view, _: &OpenNode, _, cx| view.open_selected_node(cx)))

@@ -77,4 +77,5 @@ pub use pod_links::{PodLinks, ServiceSelector, collect_pod_links, resolve_owner_
 
 pub use external_secrets::{
     ExternalSecret, MAX_STORES, StoreRead, StoreRef, StoreStatus, read_external_secret_stores,
+    refresh_external_secret,
 };

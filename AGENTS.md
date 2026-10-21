@@ -97,9 +97,10 @@ The app's binaries parse all of these knobs once into `DebugOptions` (`crates/fr
 ## Cluster safety
 
 - Read-only by default. Checks against a real cluster list, watch and read; they never create, change or delete resources.
-- Pod exec and port forwarding are the two exceptions, and each starts only from an explicit action.
+- Pod exec, port forwarding and ExternalSecret refresh are the three exceptions, and each starts only from an explicit action.
   - Pod exec (`resources/exec/`) creates a `pods/exec`. The app starts one only from an explicit Start, and a live check runs one only on a pod and container the user named, with harmless commands ([docs/POD_EXEC.md](docs/POD_EXEC.md)).
   - Port forwarding (`freshkube-resources`' `forwards/`) creates a `pods/portforward`. It changes no objects, but it reaches whatever the port serves. The app starts one only from an explicit Forward, and a live check forwards only a pod and port the user named ([docs/PORT_FORWARD.md](docs/PORT_FORWARD.md)).
+  - ExternalSecret refresh (`freshkube-core`'s `resources::external_secrets`, called from Resources) patches only the `force-sync` annotation on one chosen ExternalSecret, using field manager `freshkube`, after an explicit Refresh and a confirmation naming its context and namespace/name. It never requests or changes the target Secret, reads provider credentials, changes other fields, runs automatically, retries the write or refreshes in bulk. A live check runs only on one disposable ExternalSecret the maintainer names, in the context they choose ([docs/EXTERNAL_SECRETS_REFRESH.md](docs/EXTERNAL_SECRETS_REFRESH.md)).
 - Never run Operations or maintenance actions (drain, reboot, upgrade, apply config, reset) during verification unless the user asked for that specific action on a node they named as disposable.
 - Use the context the user chose. Never fall back to whatever kubeconfig or talosconfig context is current.
 - Never print or commit credentials: talosconfig and kubeconfig contents, tokens, Secret values, keys. Redact them in logs, screenshots and evidence.

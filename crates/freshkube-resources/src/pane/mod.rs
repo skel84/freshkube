@@ -4,7 +4,7 @@
 //! opened and again whenever the list shows a new version of it, at most once
 //! a second, and watches the object's events while open on a visible page.
 //! Secret values stay hidden until one is revealed. Nothing here changes the
-//! cluster.
+//! cluster except for the separately confirmed ExternalSecret refresh.
 
 use freshkube_core::pluralize;
 use std::cell::Cell;
@@ -160,6 +160,11 @@ pub struct DetailPane {
     title: SharedString,
     summary: Option<Summary>,
     external: external_secrets::ExternalView,
+    external_refresh: Entity<crate::external_refresh::ExternalRefresh>,
+    refresh_poll: Option<Task<()>>,
+    refresh_epoch: u64,
+    refresh_dialog: Option<WeakEntity<external_secrets::refresh::Confirmation>>,
+    context: SharedString,
     node_facts: std::sync::Arc<Vec<crate::NodeFacts>>,
     cross_links: cross_links::CrossLinks,
     pod_links: Option<freshkube_core::resources::PodLinks>,
@@ -233,6 +238,11 @@ fn after(
 impl DetailPane {
     pub fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
+            KeyBinding::new(
+                "shift-r",
+                crate::external_refresh::RefreshExternalSecret,
+                Some(CONTEXT),
+            ),
             KeyBinding::new("secondary-f", Find, Some(CONTEXT)),
             KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
             KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
@@ -259,8 +269,13 @@ impl DetailPane {
         ]);
         let find = cx.new(|cx| InputState::new(window, cx).placeholder("Find in YAML"));
         let ports = cx.new(|cx| PortsView::new(runtime.clone(), window, cx));
+        let external_refresh =
+            cx.new(|cx| crate::external_refresh::ExternalRefresh::new(runtime.clone(), cx));
         let history = cx.new(|_| HistoryView::new(runtime.clone(), "pod"));
         let subscriptions = vec![
+            cx.observe(&external_refresh, |pane, _, cx| {
+                pane.external_refresh_changed(cx)
+            }),
             // Whether the pod's history shows, which this cached view draws.
             cx.observe(&history, |_, _, cx| cx.notify()),
             cx.subscribe_in(&find, window, |this, input, event, _, cx| match event {
@@ -286,6 +301,11 @@ impl DetailPane {
             title: SharedString::default(),
             summary: None,
             external: Default::default(),
+            external_refresh,
+            refresh_poll: None,
+            refresh_epoch: 0,
+            refresh_dialog: None,
+            context: "Unknown context".into(),
             node_facts: Default::default(),
             cross_links: Default::default(),
             pod_links: None,
@@ -338,6 +358,7 @@ impl DetailPane {
 
     /// Fresh handles for the same connection.
     pub(crate) fn set_access(&mut self, access: ClusterAccess, cx: &mut Context<Self>) {
+        self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         self.ports
             .update(cx, |ports, _| ports.set_access(access.clone()));
         self.access = Some(access);
@@ -345,6 +366,10 @@ impl DetailPane {
 
     /// The context objects open in, which a forward started here names.
     pub fn set_context(&mut self, context: String, cx: &mut Context<Self>) {
+        if self.context.as_ref() != context {
+            self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
+        }
+        self.context = context.clone().into();
         self.ports.update(cx, |ports, _| ports.set_context(context));
     }
 
@@ -370,6 +395,7 @@ impl DetailPane {
             }
             return;
         }
+        self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         self.stop_reads();
         // Another object starts at the top of its details.
         self.details_scroll = ScrollHandle::new();
@@ -414,6 +440,7 @@ impl DetailPane {
     }
 
     pub fn close(&mut self, cx: &mut Context<Self>) {
+        self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         self.stop_reads();
         self.shell_choices = Rc::default();
         self.ports
@@ -438,6 +465,7 @@ impl DetailPane {
         if self.active == active {
             return;
         }
+        self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         self.active = active;
         self.show_tab(cx);
         if active {
@@ -470,6 +498,8 @@ impl DetailPane {
         if detail.gone(successor) {
             // Nothing read now could bring it back.
             self.external.stop();
+            self.refresh_poll = None;
+            self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
             self.read_job = None;
             self.timer = None;
             self.reveal_jobs.clear();
@@ -479,6 +509,7 @@ impl DetailPane {
     }
 
     fn stop_reads(&mut self) {
+        self.refresh_poll = None;
         self.external.stop();
         self.read_job = None;
         self.events_job = None;
@@ -583,6 +614,8 @@ impl DetailPane {
         detail.finish_read(result);
         if detail.read == DocumentRead::Deleted {
             self.external.stop();
+            self.refresh_poll = None;
+            self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         }
         if detail.reveal_epoch != epoch {
             self.reveal_jobs.clear();
@@ -620,6 +653,7 @@ impl DetailPane {
         self.rebuild_links();
         self.start_links(cx);
         self.start_external_stores(cx);
+        self.external_refresh_changed(cx);
         self.matches = view.find(&self.query);
         self.current = match self.current {
             Some(current) if current < self.matches.len() => Some(current),
