@@ -8,6 +8,7 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 
 pub(super) const CERT: &[u8] = include_bytes!("../../../testdata/results/loopback-cert.pem");
+pub(super) const SERVICE_CERT: &[u8] = include_bytes!("../../../testdata/results/service-cert.pem");
 const KEY: &[u8] = include_bytes!("../../../testdata/results/loopback-key.pem");
 
 pub(super) struct Reply {
@@ -16,6 +17,7 @@ pub(super) struct Reply {
     pub headers: String,
     pub chunked: bool,
     pub hold: bool,
+    pub truncate: bool,
     matching: Option<String>,
 }
 
@@ -30,6 +32,7 @@ impl Reply {
             headers: String::new(),
             chunked: false,
             hold: false,
+            truncate: false,
             matching: None,
         }
     }
@@ -43,17 +46,23 @@ impl Reply {
 pub(super) struct Server {
     pub address: String,
     pub requests: Arc<Mutex<Vec<String>>>,
+    pub server_names: Arc<Mutex<Vec<String>>>,
     task: JoinHandle<()>,
 }
 
 impl Server {
     pub fn new(tls: bool, replies: Vec<Reply>) -> Self {
+        Self::with_certificate(tls.then_some(CERT), replies)
+    }
+
+    pub fn with_certificate(certificate: Option<&[u8]>, replies: Vec<Reply>) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let server_names = Arc::new(Mutex::new(Vec::new()));
         let queued = Arc::new(Mutex::new(VecDeque::from(replies)));
-        let acceptor = tls.then(|| {
+        let acceptor = certificate.map(|certificate| {
             use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
             let config = rustls::ServerConfig::builder_with_provider(Arc::new(
                 rustls::crypto::ring::default_provider(),
@@ -62,7 +71,7 @@ impl Server {
             .unwrap()
             .with_no_client_auth()
             .with_single_cert(
-                vec![CertificateDer::from_pem_slice(CERT).unwrap()],
+                vec![CertificateDer::from_pem_slice(certificate).unwrap()],
                 PrivateKeyDer::from_pem_slice(KEY).unwrap(),
             )
             .unwrap();
@@ -70,6 +79,7 @@ impl Server {
         });
         let task = tokio::spawn({
             let requests = requests.clone();
+            let server_names = server_names.clone();
             let replies = queued.clone();
             async move {
                 let listener = TcpListener::from_std(listener).unwrap();
@@ -79,11 +89,15 @@ impl Server {
                         accepted = listener.accept() => {
                             let (stream, _) = accepted.unwrap();
                             let requests = requests.clone();
+                            let server_names = server_names.clone();
                             let replies = replies.clone();
                             let acceptor = acceptor.clone();
                             connections.spawn(async move {
                                 if let Some(acceptor) = acceptor {
                                     if let Ok(stream) = acceptor.accept(stream).await {
+                                        if let Some(name) = stream.get_ref().1.server_name() {
+                                            server_names.lock().unwrap().push(name.to_owned());
+                                        }
                                         serve(stream, requests, replies).await;
                                     }
                                 } else {
@@ -97,8 +111,16 @@ impl Server {
             }
         });
         Self {
-            address: format!("{}://127.0.0.1:{port}", if tls { "https" } else { "http" }),
+            address: format!(
+                "{}://127.0.0.1:{port}",
+                if certificate.is_some() {
+                    "https"
+                } else {
+                    "http"
+                }
+            ),
             requests,
+            server_names,
             task,
         }
     }
@@ -155,6 +177,10 @@ async fn serve(
     }
     if reply.hold {
         std::future::pending::<()>().await;
+    }
+    if reply.truncate {
+        _ = stream.shutdown().await;
+        return;
     }
     if reply.chunked {
         for chunk in reply.body.chunks(16 * 1024) {

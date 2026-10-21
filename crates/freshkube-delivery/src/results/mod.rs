@@ -1,6 +1,7 @@
-//! Tekton Results' address route. No cluster client, discovery or forward is
-//! used here. The caller owns the read's job, identity and Snapshot; replacing
-//! the client gives it a new identity even if only the key or CA changed.
+//! Tekton Results through an address or a caller-supplied loopback route.
+//! No cluster client, discovery or forward is started here. The caller owns
+//! the read's job, identity and Snapshot; replacing the client gives it a new
+//! identity even if only the key or CA changed.
 //!
 //! The build read supplements a successful live listing. Archived log
 //! content has a bounded on-demand API; its dock consumer is a later slice.
@@ -12,11 +13,13 @@ mod records;
 mod tests;
 mod transport;
 
+use std::net::{Ipv4Addr, SocketAddr};
+use std::num::NonZeroU16;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use freshkube_core::secrets::Secrets;
-use freshkube_core::setup::Results;
+use freshkube_core::setup::{Forward, Results};
 use freshkube_core::snapshot::Snapshot;
 use tokio::time::Instant;
 
@@ -30,6 +33,24 @@ pub(crate) use logs::Log;
 pub(crate) const MOST_RESULT_RUNS: usize = MOST_TASK_READS;
 const MOST_RESULT_TASKS: usize = PAGE_LIMIT as usize * MAX_PAGES as usize;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
+
+/// Supplied by the forward's owner; this client never starts or replaces one.
+#[derive(Clone, Copy)]
+pub(crate) enum Route {
+    Address,
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "forward slice 2 supplies the route")
+    )]
+    Forward {
+        local_port: NonZeroU16,
+    },
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "forward slice 2 supplies the route")
+    )]
+    Ended(&'static str),
+}
 
 /// Deliberately has no Debug: neither an address nor an authorization header
 /// should appear in logs. There is no constructor accepting cluster credentials.
@@ -97,6 +118,7 @@ pub(crate) enum State {
     Skipped,
     Loading,
     NotForwarded,
+    ForwardEnded,
     NotInstalled,
     Unreachable,
     Refused,
@@ -113,6 +135,7 @@ pub(crate) enum Error {
     Off,
     Skipped(Skip),
     NotForwarded,
+    ForwardEnded(&'static str),
     NotInstalled,
     LogsNotServed,
     LogMissing,
@@ -171,6 +194,7 @@ impl Error {
             Self::Off => State::Off,
             Self::Skipped(_) => State::Skipped,
             Self::NotForwarded => State::NotForwarded,
+            Self::ForwardEnded(_) => State::ForwardEnded,
             Self::NotInstalled | Self::LogsNotServed => State::NotInstalled,
             Self::LogMissing => State::Empty,
             Self::Unreachable(_) => State::Unreachable,
@@ -186,6 +210,7 @@ impl std::fmt::Display for Error {
             Self::Off => f.write_str("Tekton Results isn't set up"),
             Self::Skipped(why) => write!(f, "Tekton Results wasn't read: {why}"),
             Self::NotForwarded => f.write_str("Tekton Results isn't forwarded yet"),
+            Self::ForwardEnded(why) => write!(f, "the Tekton Results forward ended: {why}"),
             Self::NotInstalled => {
                 f.write_str("the Tekton Results API isn't installed or served here")
             }
@@ -238,6 +263,14 @@ pub(crate) fn token_account(address: &str) -> Result<String, Error> {
     transport::base_url(address).map(|base| format!("Tekton Results {base}"))
 }
 
+/// Stable across local ports and restarts; only the configured triple matters.
+pub(crate) fn forward_token_account(forward: &Forward) -> String {
+    format!(
+        "Tekton Results forward://{}/{}:{}",
+        forward.namespace, forward.service, forward.port
+    )
+}
+
 impl Client {
     /// Opens on an I/O worker, reading only the explicitly selected key store
     /// and CA file. Missing keys allow an anonymous request; store failures do
@@ -246,14 +279,37 @@ impl Client {
         settings: Option<&Results>,
         secrets: Option<Secrets>,
     ) -> Result<Self, Error> {
+        Self::open_routed(settings, secrets, Route::Address).await
+    }
+
+    /// The caller must match a running forward to the configured triple and
+    /// replace the client when that forward's epoch changes. An ended route
+    /// reads neither the key store nor the CA file and never falls back.
+    pub(crate) async fn open_routed(
+        settings: Option<&Results>,
+        secrets: Option<Secrets>,
+        route: Route,
+    ) -> Result<Self, Error> {
         let settings = settings.ok_or(Error::Off)?;
-        let address = match (&settings.address, &settings.forward) {
-            (None, Some(_)) => return Err(Error::NotForwarded),
-            (Some(address), None) => address,
+        let (base, account, pin) = match (&settings.address, &settings.forward, route) {
+            (Some(address), None, Route::Address) => {
+                (transport::base_url(address)?, token_account(address)?, None)
+            }
+            (None, Some(_), Route::Address) => return Err(Error::NotForwarded),
+            (None, Some(_), Route::Ended(why)) => return Err(Error::ForwardEnded(why)),
+            (None, Some(forward), Route::Forward { local_port }) => {
+                transport::segment(&forward.namespace)?;
+                transport::segment(&forward.service)?;
+                let host = format!("{}.{}.svc", forward.service, forward.namespace);
+                let base = transport::base_url(&format!("https://{host}/"))?;
+                let pin = SocketAddr::from((Ipv4Addr::LOCALHOST, local_port.get()));
+                (base, forward_token_account(forward), Some((host, pin)))
+            }
+            (Some(_), None, _) => {
+                return Err(Error::Unreadable("a forward route needs forward settings"));
+            }
             _ => return Err(Error::Unreadable("set exactly one address or forward")),
         };
-        let base = transport::base_url(address)?;
-        let account = token_account(address)?;
         let use_token = settings.token.is_some();
         let ca_file = settings.ca_file.clone();
         let (token, ca) = tokio::task::spawn_blocking(move || {
@@ -271,7 +327,7 @@ impl Client {
             Ok::<_, Error>((token, ca))
         })
         .await
-        .map_err(|_| Error::Unreadable("the address settings could not be read"))??;
+        .map_err(|_| Error::Unreadable("the Results settings could not be read"))??;
         let token = token
             .map(|token| {
                 if token.trim().is_empty() {
@@ -296,6 +352,10 @@ impl Client {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(REQUEST_DEADLINE)
             .timeout(REQUEST_DEADLINE);
+        if let Some((host, address)) = &pin {
+            // No URL port: an explicit one would override resolve's local port.
+            builder = builder.resolve(host, *address).no_proxy();
+        }
         // Loopback is an explicit local route, never sent to an environment
         // proxy. HTTPS addresses retain reqwest's normal proxy handling.
         if transport::is_loopback(&base) {

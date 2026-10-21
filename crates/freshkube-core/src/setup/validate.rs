@@ -33,19 +33,7 @@ fn entry_at(entry: &Entry, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
 }
 
 fn results_of(results: &Results, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
-    if results.token.is_some() && results.address.is_none() {
-        return Err(Fault::Only {
-            at: at("results.token"),
-            with: "address",
-        });
-    }
     if let Some(path) = &results.ca_file {
-        if results.address.is_none() {
-            return Err(Fault::Only {
-                at: at("results.ca_file"),
-                with: "address",
-            });
-        }
         absolute(path, at("results.ca_file"))?;
     }
     match (&results.address, &results.forward) {
