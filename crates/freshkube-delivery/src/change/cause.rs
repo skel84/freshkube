@@ -6,7 +6,7 @@
 //! without one.
 
 /// The verbs of a read-only Role: what an access request asks for.
-pub const READ_VERBS: [&str; 3] = ["get", "list", "watch"];
+pub(crate) const READ_VERBS: [&str; 3] = ["get", "list", "watch"];
 
 /// A kind of object a read-only Role names.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,7 +30,9 @@ impl Role {
 
     /// The Role (or ClusterRole, for all namespaces) a person would ask an
     /// administrator for: read-only, and only this kind.
-    pub fn manifest(&self) -> String {
+    // The Copy access request button of the Why / Needs / Fix block copies it.
+    #[allow(dead_code)]
+    pub(crate) fn manifest(&self) -> String {
         let (kind, scope) = match &self.namespace {
             Some(namespace) => ("Role", format!("\n  namespace: {namespace}")),
             None => ("ClusterRole", String::new()),
@@ -66,10 +68,6 @@ impl SettingsField {
     pub const DESTINATIONS: Self = Self {
         section: "settings-destinations",
         field: "destinations",
-    };
-    pub const PUBLIC_KEY: Self = Self {
-        section: "settings-sources",
-        field: "supply_chain.public_key_file",
     };
 }
 

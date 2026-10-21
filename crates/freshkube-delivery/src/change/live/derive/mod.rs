@@ -1422,6 +1422,8 @@ struct Away<'a> {
     /// Why it wasn't read, when its entry was asked; else nothing asked it,
     /// as the workspace of one asks no other entry.
     why: Option<&'a str>,
+    /// Whether `why` is a refusal, which reading again does not mend.
+    refused: bool,
 }
 
 /// The workload kinds Argo CD may report for an Application, by group.

@@ -36,6 +36,15 @@ fn waiting(detail: impl Into<String>, needs: impl Into<String>) -> Row {
     }
 }
 
+/// The row without its cause when the listing it came from stopped at its
+/// page cap: what it didn't find may be past the cap.
+fn gated(row: Row, capped: bool) -> Row {
+    Row {
+        cause: row.cause.filter(|_| !capped),
+        ..row
+    }
+}
+
 /// A gate whose record isn't there to read.
 fn not_found(detail: impl Into<String>, needs: impl Into<String>) -> Row {
     Row {
@@ -178,6 +187,7 @@ fn promotion(
     promotions: &Source<Vec<KargoPromotion>>,
     holds: bool,
 ) -> (Promotion, Row) {
+    let capped = promotions.capped().is_some();
     let Some(promotions) = promotions.read() else {
         let why = promotions.why_not_read().unwrap_or_default();
         return (
@@ -212,17 +222,24 @@ fn promotion(
                           it: Kargo may have deleted the Promotion."
                         .into(),
                 },
-                not_found(
-                    "No Promotion read",
-                    "a Promotion of the Freight to this Stage",
+                // A listing that stopped at its cap may not have reached it.
+                gated(
+                    not_found(
+                        "No Promotion read",
+                        "a Promotion of the Freight to this Stage",
+                    ),
+                    capped,
                 ),
             )
         } else {
             (
                 Promotion::NotYet,
-                waiting(
-                    "Not promoted yet",
-                    "a Promotion of the Freight to this Stage",
+                gated(
+                    waiting(
+                        "Not promoted yet",
+                        "a Promotion of the Freight to this Stage",
+                    ),
+                    capped,
                 ),
             )
         };

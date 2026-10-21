@@ -13,7 +13,7 @@ pub mod example;
 pub mod live;
 mod unread;
 
-pub use cause::{Cause, Next, READ_VERBS, Role, SettingsField};
+pub use cause::{Cause, Next, Role, SettingsField};
 
 use chrono::{DateTime, Utc};
 

@@ -102,8 +102,21 @@ pub(super) fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
     if current.is_empty() {
         // Every Stage was read and none holds it: it hasn't been promoted
         // yet. A capped listing may only not have reached the Stage.
+        // A Freight an older history entry names was promoted and has been
+        // moved past: that is not waiting, and no Stage runs it now.
+        let moved_past = stages.iter().any(|stage| {
+            stage
+                .history
+                .iter()
+                .flatten()
+                .any(|name| *name == freight.name)
+        });
         let waiting = evidence.kargo.stages.capped().is_none().then(|| {
-            Cause::waiting("a Stage whose newest Freight history entry names this Freight")
+            if moved_past {
+                Cause::not_found("a Stage whose newest Freight history entry names this Freight")
+            } else {
+                Cause::waiting("a Stage whose newest Freight history entry names this Freight")
+            }
         });
         links.push(
             Link::new(

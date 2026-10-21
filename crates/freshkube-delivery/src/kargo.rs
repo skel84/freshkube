@@ -583,7 +583,7 @@ impl Stage {
     /// Whether Kargo's own record of what the Stage runs, the newest entry of
     /// its Freight history, names `freight`. The older `currentFreight` and
     /// `lastPromotion` fields are the Stage's own say-so and don't count.
-    pub fn history_names(&self, freight: &str) -> bool {
+    pub(crate) fn history_names(&self, freight: &str) -> bool {
         self.freight_pointer(freight) == NEWEST_HISTORY
     }
 
@@ -705,14 +705,24 @@ pub(crate) async fn read_kind<R: Reader, T>(
 /// Reads one project's Kargo objects. Each kind is its own [`Source`], so a
 /// refused Promotion list doesn't hide the Freight.
 pub struct KargoRead {
+    /// The project, which is the namespace of every kind below.
+    pub project: String,
     pub warehouses: Source<Vec<Warehouse>>,
     pub freight: Source<Vec<Freight>>,
     pub stages: Source<Vec<Stage>>,
     pub promotions: Source<Vec<Promotion>>,
 }
 
+impl KargoRead {
+    /// The namespace the kinds were read in, when it is known.
+    pub(crate) fn namespace(&self) -> Option<&str> {
+        Some(self.project.as_str()).filter(|project| !project.is_empty())
+    }
+}
+
 pub(crate) async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
     KargoRead {
+        project: project.to_owned(),
         warehouses: Source::from_listing(
             read_kind(reader, "warehouses", project, parse_warehouse).await,
         ),

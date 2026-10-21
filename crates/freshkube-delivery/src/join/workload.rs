@@ -69,7 +69,10 @@ fn rollout_chain(evidence: &Evidence, freight: &Freight, app: &Application) -> V
             .because(cause::unread(
                 &read.rollouts,
                 cause::ROLLOUTS,
-                None,
+                managed
+                    .first()
+                    .and_then(|object| rollout_namespace(app, object))
+                    .as_deref(),
                 "the environment cluster's Rollouts, to see what the Application runs",
             )),
         ];

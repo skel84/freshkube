@@ -1046,7 +1046,7 @@ pub fn join(evidence: &Evidence) -> Trail {
                 .because(cause::unread(
                     &evidence.kargo.freight,
                     cause::FREIGHT,
-                    None,
+                    evidence.kargo.namespace(),
                     "Kargo's Freight, to find the one built from this commit",
                 )),
             );

@@ -83,6 +83,32 @@ async fn a_verification_waits_only_while_the_promotion_is_under_way() {
 }
 
 #[tokio::test]
+async fn a_capped_promotions_list_names_no_cause_for_what_it_did_not_find() {
+    // The Promotion may be past the cap.
+    let reader = one_cluster(|world| {
+        world.kargo = std::mem::take(&mut world.kargo)
+            .with("freights", vec![unverified()])
+            .with(
+                "stages",
+                vec![
+                    stage_of("dev", &[], &["f-old"]),
+                    stage_of("prod", &["dev"], &["f-old"]),
+                ],
+            )
+            .with("promotions", vec![])
+            .capped("promotions");
+    });
+    let change = change_of(&reader).await;
+    assert_eq!(hop(&change, "prod-promotion").cause, None);
+    let held = one_cluster(|world| {
+        world.kargo = std::mem::take(&mut world.kargo)
+            .with("promotions", vec![])
+            .capped("promotions");
+    });
+    assert_eq!(hop(&change_of(&held).await, "dev-promotion").cause, None);
+}
+
+#[tokio::test]
 async fn a_gate_that_is_met_has_no_cause() {
     let change = change_of(&one_cluster(|_| {})).await;
     assert_eq!(hop(&change, "dev-eligible").cause, None);
@@ -189,10 +215,16 @@ fn pods_of_an_unread_entry_can_be_read_again() {
         after: None,
         shows: super::super::Shows::Stage(0),
     };
-    let pods = super::super::unread::pods(&workload, "prod-lon", "no answer");
+    let pods = super::super::unread::pods(&workload, "prod-lon", "no answer", false);
     assert_eq!(
         pods.cause.as_ref().map(Cause::next),
         Some(vec![Next::Retry])
+    );
+    // A refusing entry is not mended by reading again.
+    let refused = super::super::unread::pods(&workload, "prod-lon", "forbidden", true);
+    assert_eq!(
+        refused.cause.as_ref().map(Cause::next),
+        Some(Vec::<Next>::new())
     );
     assert!(matches!(pods.cause, Some(Cause::CantRead { .. })));
 }

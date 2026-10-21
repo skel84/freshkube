@@ -86,16 +86,24 @@ async fn the_older_fields_of_a_stage_stay_a_claim() {
 
 #[tokio::test]
 async fn a_history_that_does_not_name_the_freight_confirms_nothing() {
-    // The Stage runs another Freight; this one is only in an older entry.
-    for stage in [history(&["f-old"], &[]), history(&["f-old"], &["f-new"])] {
-        let trail = run(&with_stage(stage), &ENV).await;
-        let link = one(&trail, Hop::Freight, Hop::Stage);
-        assert_eq!(link.confidence, Confidence::Unknown);
-        assert!(link.reason.contains("no Stage reports it as current"));
-        // Not reached yet, and nothing is wrong.
-        assert!(matches!(link.cause, Some(Cause::Waiting { .. })));
-        assert!(!link.cause.as_ref().unwrap().is_problem());
-    }
+    // The Stage runs another Freight, and this one was never promoted to it:
+    // not reached yet, and nothing is wrong.
+    let trail = run(&with_stage(history(&["f-old"], &[])), &ENV).await;
+    let link = one(&trail, Hop::Freight, Hop::Stage);
+    assert_eq!(link.confidence, Confidence::Unknown);
+    assert!(link.reason.contains("no Stage reports it as current"));
+    assert!(matches!(link.cause, Some(Cause::Waiting { .. })));
+    assert!(!link.cause.as_ref().unwrap().is_problem());
+}
+
+#[tokio::test]
+async fn a_freight_the_stage_has_moved_past_is_not_waiting() {
+    // An older history entry names it: it was promoted and the Stage runs
+    // another Freight now, so nothing waits on it.
+    let trail = run(&with_stage(history(&["f-old"], &["f-new"])), &ENV).await;
+    let link = one(&trail, Hop::Freight, Hop::Stage);
+    assert_eq!(link.confidence, Confidence::Unknown);
+    assert!(matches!(link.cause, Some(Cause::NotFound { .. })));
 }
 
 #[tokio::test]

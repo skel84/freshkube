@@ -965,7 +965,7 @@ fn name_causes(hops: &mut [Hop]) {
                 Some(Role::new("", "pods", Some(PROJECT))),
                 true,
             ),
-            "pr-run" => Cause::cant_read("the PipelineRun, which Tekton pruned", None, true),
+            "pr-run" => Cause::not_found("the PipelineRun, which Tekton pruned"),
             _ => return None,
         })
     };
@@ -987,7 +987,7 @@ fn name_causes(hops: &mut [Hop]) {
 /// the Application of `stage` unfound, beside the waiting Stage and the
 /// forbidden pods it already has, so one change shows every cause.
 fn all_causes(change: &mut Change) {
-    let unknown = |hop: &mut Hop, detail: &str, cause: Cause, body: &str| {
+    let unknown = |hop: &mut Hop, before: &str, detail: &str, cause: Cause, body: &str| {
         hop.state = Unknown;
         hop.detail = detail.into();
         hop.link = Some(Confidence::Unknown);
@@ -1004,7 +1004,7 @@ fn all_causes(change: &mut Change) {
                 cause: Some(cause),
                 confidence: Confidence::Unknown,
                 by: "nothing".into(),
-                before: "Pipeline run".into(),
+                before: before.into(),
                 key: None,
                 before_says: String::new(),
                 here_says: "not found".into(),
@@ -1016,12 +1016,14 @@ fn all_causes(change: &mut Change) {
         match hop.key.as_str() {
             "policy" => unknown(
                 hop,
+                "Pipeline run",
                 "No policy result on the image",
                 Cause::not_found("a Conforma result that names the image digest"),
                 "No policy result names this image.",
             ),
             "stage-argocd" => unknown(
                 hop,
+                "Stage",
                 "No Application names this Stage",
                 Cause::not_set_up(
                     "an Application whose name follows a template the setup gives",
@@ -1284,7 +1286,7 @@ impl Shape {
                     if let Some(at) = change.hops.iter().position(read_there) {
                         change.hops.retain(|hop| !read_there(hop));
                         let workload = reported(name, cluster, group, &why);
-                        let pods = super::unread::pods(&workload, cluster, &why);
+                        let pods = super::unread::pods(&workload, cluster, &why, false);
                         change.hops.splice(at..at, [workload, pods]);
                     }
                 }

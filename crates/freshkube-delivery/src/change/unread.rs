@@ -3,13 +3,14 @@
 
 use super::*;
 
-pub(super) fn pods(workload: &Hop, cluster: &str, why: &str) -> Hop {
+pub(super) fn pods(workload: &Hop, cluster: &str, why: &str, refused: bool) -> Hop {
     let reason = format!("Pods couldn't be read: {why}");
-    // The entry didn't answer; which kind it would refuse is not known.
+    // Which kind a refusing entry would refuse is not known, so no Role;
+    // a refusal offers no retry.
     let cause = Cause::cant_read(
         "the destination cluster's pods, to see which image they run",
         None,
-        false,
+        refused,
     );
     Hop {
         cause: Some(cause.clone()),

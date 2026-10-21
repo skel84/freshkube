@@ -90,7 +90,10 @@ pub(super) fn deployment_links(
         let cause = cause::unread(
             &read.deployments,
             cause::DEPLOYMENTS,
-            None,
+            managed
+                .first()
+                .and_then(|object| rollout_namespace(app, object))
+                .as_deref(),
             "the environment cluster's Deployments, to see what the Application runs",
         );
         return vec![

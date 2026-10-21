@@ -137,6 +137,11 @@ impl ChangePage {
             }
             Shows::Stage(stage) => self.stage_detail(&self.change.stages[*stage]),
         };
+        // A gate row has no notice of its own: a cause says what it waits
+        // for, or why it can't be said.
+        if matches!(hop.shows, Shows::Stage(_)) && detail.banner.is_none() {
+            detail.banner = cause_banner(hop.cause.as_ref(), None);
+        }
         if self.link_selected {
             detail.leading_link = match &hop.shows {
                 Shows::Hop(hop) => hop.link.as_ref(),

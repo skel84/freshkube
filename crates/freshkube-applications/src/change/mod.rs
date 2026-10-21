@@ -119,15 +119,15 @@ const TONES: [(Tone, &str, &str); 5] = [
     (Tone::Good, "ok", "ok"),
 ];
 
-/// A hop's state as a glyph's tone: waiting is the clock, which counts with
-/// neither warnings nor unknowns, unknown is the dashed ring, and a hand
-/// approval is the blue dot.
+/// A hop's state as a glyph's tone: pending and unknown are the dashed ring
+/// (a build that runs, a Rollout that progresses and pods that aren't all
+/// ready are not waiting), and a hand approval is the blue dot. Only a cause
+/// draws the clock ([`hop_tone`]).
 pub(super) fn tone(state: HealthIndicator) -> Tone {
     match state {
         HealthIndicator::Healthy => Tone::Good,
         HealthIndicator::Info => Tone::Info,
-        HealthIndicator::Pending => Tone::Waiting,
-        HealthIndicator::Unknown => Tone::Unknown,
+        HealthIndicator::Pending | HealthIndicator::Unknown => Tone::Unknown,
         HealthIndicator::Warning => Tone::Warn,
         HealthIndicator::Error => Tone::Crit,
     }
@@ -147,10 +147,12 @@ fn status(tone: Tone) -> Tone {
 /// How bad a tone is, for a group's worst row.
 fn rank(tone: Tone) -> u8 {
     match tone {
-        Tone::Crit | Tone::Died => 4,
-        Tone::Warn => 3,
-        Tone::Unknown => 2,
-        // Waiting is no problem: it ranks with the rest that are fine.
+        Tone::Crit | Tone::Died => 5,
+        Tone::Warn => 4,
+        Tone::Unknown => 3,
+        // Waiting is no problem, but a Stage that waits is not one that is
+        // fine: it ranks above ok, so its group says so and never folds.
+        Tone::Waiting => 2,
         _ => 1,
     }
 }
@@ -230,6 +232,15 @@ pub(super) fn hop_tone(hop: &Hop) -> Tone {
     }
 }
 
+/// A Settings section's name on screen, from its page slug.
+fn settings_title(slug: &str) -> &'static str {
+    match slug {
+        "settings-sources" => "Delivery sources",
+        "settings-destinations" => "Argo CD destinations",
+        _ => "Settings",
+    }
+}
+
 /// The step a cause offers, in words. The page never changes anything: the
 /// buttons for these come with the Why / Needs / Fix block.
 pub(super) fn next_words(next: &Next) -> String {
@@ -249,10 +260,15 @@ pub(super) fn next_words(next: &Next) -> String {
                 .unwrap_or_default()
         ),
         Next::Retry => "Read it again.".into(),
-        Next::OpenSettings(field) => {
-            format!("Set {} in Settings ({}).", field.field, field.section)
-        }
-        Next::CheckSources => "Check the sources in Settings (settings-sources).".into(),
+        Next::OpenSettings(field) => format!(
+            "Set {} in Settings › {}.",
+            field.field,
+            settings_title(field.section)
+        ),
+        Next::CheckSources => format!(
+            "Check sources in Settings › {}.",
+            settings_title("settings-sources")
+        ),
     }
 }
 
