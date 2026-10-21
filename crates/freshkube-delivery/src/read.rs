@@ -598,7 +598,7 @@ impl Reader for ReadOnlyClient {
     async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
         check_resource(resource)?;
         let path = format!(
-            "{}?limit={NAMESPACE_COUNT_LIMIT}&resourceVersion=0",
+            "{}?limit={NAMESPACE_COUNT_LIMIT}",
             resource.collection(None)
         );
         let body = self

@@ -9,9 +9,9 @@
 //! namespace holds runs. The best fit of at least two projects is suggested;
 //! a tie chooses neither. Without a fit, a namespace is suggested only when
 //! every run is in it. When the run list was cut at its cap, the best
-//! candidate is confirmed by one `limit=1` read per project namespace
-//! ([`Reader::any_in`]), and nothing is suggested from a partial list
-//! otherwise.
+//! candidatess are confirmed by one `limit=1` read per project namespace
+//! ([`Reader::any_in`]) for the two best candidates, so a tie shows, and
+//! nothing is suggested from a partial list otherwise.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -36,6 +36,9 @@ pub const MAX_LISTED: usize = 10;
 /// The most Kargo projects whose namespaces are probed when the run list
 /// was cut; with more, nothing is suggested.
 pub const MAX_PROBED: usize = 50;
+/// How many candidate templates are probed when the run list was cut, so a
+/// tie between the best two shows.
+const PROBED_TEMPLATES: usize = 2;
 
 /// How many runs each namespace holds, and whether the list was cut.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -189,24 +192,27 @@ pub(crate) async fn read_all<B: Reader, K: Reader>(
         (builds, &read, &projects, resource)
         && counts.capped
         && names.len() <= MAX_PROBED
-        && let Some(best) = rank(
+    {
+        let candidates = rank(
             counts.counts.keys().map(String::as_str),
             names,
             |namespace| counts.counts.contains_key(namespace),
-        )
-        .into_iter()
-        .next()
-    {
-        for name in names {
-            let Ok(namespace) = resolve_build_namespace(&best.template, name) else {
-                continue;
-            };
-            let probe = match reader.any_in(&resource, &namespace).await {
-                Ok(true) => Probe::Runs,
-                Ok(false) => Probe::Empty,
-                Err(failure) => Probe::Failed(printable(&failure)),
-            };
-            probes.push((namespace, probe));
+        );
+        for candidate in candidates.iter().take(PROBED_TEMPLATES) {
+            for name in names {
+                let Ok(namespace) = resolve_build_namespace(&candidate.template, name) else {
+                    continue;
+                };
+                if probes.iter().any(|(probed, _)| *probed == namespace) {
+                    continue;
+                }
+                let probe = match reader.any_in(&resource, &namespace).await {
+                    Ok(true) => Probe::Runs,
+                    Ok(false) => Probe::Empty,
+                    Err(failure) => Probe::Failed(printable(&failure)),
+                };
+                probes.push((namespace, probe));
+            }
         }
     }
     BuildFindings {
@@ -276,7 +282,7 @@ fn rank<'a>(
     let mut templates = std::collections::BTreeSet::new();
     for namespace in namespaces {
         for project in projects.iter().filter(|project| !project.is_empty()) {
-            if let Some(at) = namespace.find(project.as_str()) {
+            for (at, _) in namespace.match_indices(project.as_str()) {
                 let template = format!(
                     "{}{{project}}{}",
                     &namespace[..at],
@@ -429,6 +435,23 @@ pub fn suggest_build_namespace(
             format!("delivery.build_namespace is {current}, which holds no PipelineRuns"),
         );
     }
+    if let Some(current) = current
+        && !matches!(findings.projects, Projects::Read(_))
+        && counts
+            .counts
+            .keys()
+            .any(|namespace| template_matches(current, namespace))
+    {
+        note(
+            &mut out,
+            false,
+            format!(
+                "delivery.build_namespace is {current}, a template that still names namespaces \
+                 with PipelineRuns; Kargo's projects weren't read, so nothing is suggested"
+            ),
+        );
+        return out;
+    }
     let mut evidence: Vec<(String, u64)> = counts
         .counts
         .iter()
@@ -467,6 +490,19 @@ pub fn suggest_build_namespace(
         evidence,
     });
     out
+}
+
+/// Whether `namespace` is what `template` resolves to for some project name.
+fn template_matches(template: &str, namespace: &str) -> bool {
+    let Some((before, rest)) = template.split_once("{project}") else {
+        return false;
+    };
+    let after = rest
+        .rsplit_once("{project}")
+        .map_or(rest, |(_, after)| after);
+    namespace.len() > before.len() + after.len()
+        && namespace.starts_with(before)
+        && namespace.ends_with(after)
 }
 
 /// The template verdict, when the projects allow one: `None` to fall back to
@@ -509,6 +545,36 @@ fn template_verdict(
         });
         return Some(BuildVerdict::Capped);
     }
+    if counts.capped {
+        let mut unchecked: Vec<&str> = findings
+            .probes
+            .iter()
+            .filter(|(_, probe)| matches!(probe, Probe::Failed(_)))
+            .map(|(namespace, _)| namespace.as_str())
+            .collect();
+        unchecked.dedup();
+        if !unchecked.is_empty() {
+            let listed = unchecked
+                .iter()
+                .take(MAX_LISTED)
+                .copied()
+                .collect::<Vec<_>>();
+            let more = unchecked.len().saturating_sub(MAX_LISTED);
+            out.notes.push(Note {
+                warn: true,
+                text: format!(
+                    "Couldn't check {}{} for PipelineRuns; nothing is suggested",
+                    listed.join(", "),
+                    if more > 0 {
+                        format!(" and {more} more")
+                    } else {
+                        String::new()
+                    }
+                ),
+            });
+            return Some(BuildVerdict::Capped);
+        }
+    }
     let has = |namespace: &str| match counts.capped {
         true => findings
             .probes
@@ -525,6 +591,23 @@ fn template_verdict(
         .collect();
     if tied.len() > 1 {
         return Some(BuildVerdict::Tie(tied));
+    }
+    if counts.capped
+        && rank(
+            counts.counts.keys().map(String::as_str),
+            names,
+            |namespace| counts.counts.contains_key(namespace),
+        )
+        .len()
+            > PROBED_TEMPLATES
+    {
+        out.notes.push(Note {
+            warn: false,
+            text: format!(
+                "More than {NAMESPACE_COUNT_LIMIT} PipelineRuns on {entry}; only the two most \
+                 common templates were compared, so another may fit as well"
+            ),
+        });
     }
     let resolved: Vec<String> = names
         .iter()

@@ -38,6 +38,74 @@ gpui_kit::actions!(
 pub(super) type Fake =
     std::sync::Arc<dyn Fn() -> futures::future::BoxFuture<'static, BuildFindings> + Send + Sync>;
 
+/// One row of the Inspector's evidence.
+struct Evidence {
+    id: SharedString,
+    label: SharedString,
+    value: String,
+    hint: Option<&'static str>,
+}
+
+fn run_count(count: u64) -> String {
+    format!("{count} {}", if count == 1 { "run" } else { "runs" })
+}
+
+/// The evidence rows of an item: every namespace that holds runs, and for a
+/// template the projects that fit and don't, and the unexplained.
+fn evidence_rows(item: &discover::BuildItem) -> Vec<Evidence> {
+    let mut rows: Vec<Evidence> = item
+        .evidence
+        .iter()
+        .map(|(namespace, count)| Evidence {
+            id: format!("settings-source-evidence-{namespace}").into(),
+            label: namespace.clone().into(),
+            value: run_count(*count),
+            hint: None,
+        })
+        .collect();
+    if let BuildVerdict::Template {
+        fits,
+        no_runs,
+        unexplained,
+        at_least,
+        ..
+    } = &item.verdict
+    {
+        rows.push(Evidence {
+            id: "settings-source-evidence-fits".into(),
+            label: "Projects that fit".into(),
+            value: fits.join(", "),
+            hint: None,
+        });
+        if !no_runs.is_empty() {
+            rows.push(Evidence {
+                id: "settings-source-evidence-no-runs".into(),
+                label: "No runs".into(),
+                value: no_runs.join(", "),
+                hint: Some("Their changes find builds by commit only, as before."),
+            });
+        }
+        if !unexplained.is_empty() {
+            let names = unexplained
+                .iter()
+                .map(|(namespace, count)| format!("{namespace} ({})", run_count(*count)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            rows.push(Evidence {
+                id: "settings-source-evidence-unexplained".into(),
+                label: "Unexplained".into(),
+                value: if *at_least {
+                    format!("at least {names}")
+                } else {
+                    names
+                },
+                hint: Some("Runs here are not found by the template."),
+            });
+        }
+    }
+    rows
+}
+
 pub(super) struct Finder {
     pub(super) read: Loader<BuildFindings, FindIdentity>,
     identity: Option<FindIdentity>,
@@ -46,10 +114,9 @@ pub(super) struct Finder {
     pub(super) row: Option<SourceRow>,
     /// The namespace Accept sets; none when it can't be accepted.
     pub(super) accept: Option<String>,
-    /// What the Inspector shows: every namespace that holds runs.
-    evidence: Vec<(String, u64)>,
-    /// What the Inspector says of the verdict.
-    verdict: Option<BuildVerdict>,
+    /// What the Inspector shows, already worded: every namespace that holds
+    /// runs, then what the template fits.
+    evidence: Vec<Evidence>,
     pub(super) notes: Vec<(bool, SharedString)>,
     ignored: HashSet<String>,
     pub(super) ignored_count: usize,
@@ -66,7 +133,6 @@ impl Finder {
             row: None,
             accept: None,
             evidence: Vec::new(),
-            verdict: None,
             notes: Vec::new(),
             ignored: HashSet::new(),
             ignored_count: 0,
@@ -212,7 +278,6 @@ impl SourcesList {
         finder.row = None;
         finder.accept = None;
         finder.evidence.clear();
-        finder.verdict = None;
         finder.notes.clear();
         finder.ignored_count = 0;
         if let Some(why) = finder.read.error() {
@@ -233,8 +298,7 @@ impl SourcesList {
             if finder.ignored.contains(&item.key) && item.verdict.is_suggestion() {
                 finder.ignored_count = 1;
             } else {
-                finder.evidence = item.evidence.clone();
-                finder.verdict = Some(item.verdict.clone());
+                finder.evidence = evidence_rows(&item);
                 let (entry, state, tone, accept, tooltip) = match &item.verdict {
                     BuildVerdict::Suggest(namespace) => (
                         namespace.clone(),
@@ -338,6 +402,24 @@ impl SourcesList {
         if self.selected == Some(Read::BuildSuggestion) && self.finder.row.is_none() {
             self.selected = None;
         }
+    }
+
+    /// Whether Find would start a read; a key that can't act lets the focused
+    /// control have it.
+    pub(super) fn can_find(&self) -> bool {
+        !self.finder.read.is_loading()
+    }
+
+    /// Whether the suggestion is selected, so Ignore has something to drop.
+    pub(super) fn can_ignore(&self) -> bool {
+        self.selected == Some(Read::BuildSuggestion)
+    }
+
+    /// Whether Accept would save the suggestion.
+    pub(super) fn can_accept(&self, cx: &App) -> bool {
+        self.selected == Some(Read::BuildSuggestion)
+            && self.editable(cx)
+            && self.finder.accept.is_some()
     }
 
     pub(super) fn accept(&mut self, cx: &mut Context<Self>) {
@@ -509,56 +591,15 @@ impl SourcesList {
         .into_any_element()
     }
 
-    /// The Inspector's evidence: every namespace that holds runs, and for a
-    /// template the projects that fit and don't, and the unexplained.
+    /// The Inspector's evidence, derived with the suggestion.
     pub(super) fn render_evidence(&self, narrow: bool, cx: &App) -> AnyElement {
-        let runs = |count: u64| format!("{count} {}", if count == 1 { "run" } else { "runs" });
         let mut group = form::group("settings-source-evidence", "Evidence").narrow(narrow);
-        for (namespace, count) in &self.finder.evidence {
-            group = group.row(form::row(
-                SharedString::from(format!("settings-source-evidence-{namespace}")),
-                namespace.clone(),
-                runs(*count),
-            ));
-        }
-        if let Some(BuildVerdict::Template {
-            fits,
-            no_runs,
-            unexplained,
-            at_least,
-            ..
-        }) = &self.finder.verdict
-        {
-            group = group.row(form::row(
-                "settings-source-evidence-fits",
-                "Projects that fit",
-                fits.join(", "),
-            ));
-            if !no_runs.is_empty() {
-                group = group.row(
-                    form::row(
-                        "settings-source-evidence-no-runs",
-                        "No runs",
-                        no_runs.join(", "),
-                    )
-                    .hint("Their changes find builds by commit only, as before."),
-                );
+        for row in &self.finder.evidence {
+            let mut line = form::row(row.id.clone(), row.label.clone(), row.value.clone());
+            if let Some(hint) = row.hint {
+                line = line.hint(hint);
             }
-            if !unexplained.is_empty() {
-                let names = unexplained
-                    .iter()
-                    .map(|(namespace, count)| format!("{namespace} ({})", runs(*count)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let names = match at_least {
-                    true => format!("at least {names}"),
-                    false => names,
-                };
-                group = group.row(
-                    form::row("settings-source-evidence-unexplained", "Unexplained", names)
-                        .hint("Runs here are not found by the template."),
-                );
-            }
+            group = group.row(line);
         }
         group
             .saved_in(form::SavedIn::file(

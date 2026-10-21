@@ -615,9 +615,27 @@ impl Render for SourcesList {
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &CheckSources, _, cx| this.check(cx)))
-            .on_action(cx.listener(|this, _: &suggest::FindBuilds, _, cx| this.find(cx)))
-            .on_action(cx.listener(|this, _: &suggest::AcceptBuild, _, cx| this.accept(cx)))
-            .on_action(cx.listener(|this, _: &suggest::IgnoreBuild, _, cx| this.ignore(cx)))
+            .on_action(cx.listener(|this, _: &suggest::FindBuilds, _, cx| {
+                if this.can_find() {
+                    this.find(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &suggest::AcceptBuild, _, cx| {
+                if this.can_accept(cx) {
+                    this.accept(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &suggest::IgnoreBuild, _, cx| {
+                if this.can_ignore() {
+                    this.ignore(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .on_action(cx.listener(|this, action: &inspector::PinSource, _, cx| {
                 this.pin(action.entry.clone(), cx)
             }))

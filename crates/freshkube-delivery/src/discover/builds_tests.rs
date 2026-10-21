@@ -292,6 +292,19 @@ async fn a_capped_list_confirms_by_probes() {
             ("shop-ci".to_owned(), Probe::Runs),
         ]
     );
+    assert_eq!(
+        reader
+            .requests
+            .borrow()
+            .iter()
+            .filter(|r| r.starts_with("ANY"))
+            .collect::<Vec<_>>(),
+        [
+            "ANY pipelineruns ns=billing-ci",
+            "ANY pipelineruns ns=docs-ci",
+            "ANY pipelineruns ns=shop-ci",
+        ]
+    );
     let item = suggest_build_namespace(&findings, None).item.unwrap();
     let BuildVerdict::Template {
         template,
@@ -324,6 +337,15 @@ async fn past_the_probe_cap_suggests_nothing() {
         .capped("pipelineruns");
     let findings = read_all(Ok(&reader), Some(Ok(&reader)), "cicd-fra").await;
     assert!(findings.probes.is_empty(), "no probe past the cap");
+    assert!(
+        reader
+            .requests
+            .borrow()
+            .iter()
+            .all(|r| !r.starts_with("ANY")),
+        "{:?}",
+        reader.requests.borrow()
+    );
     let suggestions = suggest_build_namespace(&findings, None);
     assert_eq!(suggestions.item.unwrap().verdict, BuildVerdict::Capped);
     assert!(
@@ -405,8 +427,147 @@ async fn the_client_counts_with_a_metadata_only_list() {
     assert_eq!(counts.counts, [("shop".to_owned(), 2)].into());
     let head = seen.lock().unwrap().to_lowercase();
     assert!(
-        head.starts_with("get /apis/tekton.dev/v1/pipelineruns?limit=2000&resourceversion=0 "),
+        head.starts_with("get /apis/tekton.dev/v1/pipelineruns?limit=2000 "),
         "{head}"
     );
     assert!(head.contains("as=partialobjectmetadatalist"), "{head}");
+}
+
+#[test]
+fn a_failed_probe_is_said_and_suggests_nothing() {
+    let mut findings = with_projects(
+        done(&[("shop-ci", 5), ("billing-ci", 3)], true),
+        &["billing", "shop", "docs"],
+    );
+    findings.probes = vec![
+        ("billing-ci".to_owned(), Probe::Runs),
+        ("docs-ci".to_owned(), Probe::Failed("timed out".to_owned())),
+        ("shop-ci".to_owned(), Probe::Runs),
+    ];
+    let suggestions = suggest_build_namespace(&findings, None);
+    assert_eq!(suggestions.item.unwrap().verdict, BuildVerdict::Capped);
+    assert!(suggestions.notes.iter().any(
+        |n| n.warn && n.text == "Couldn't check docs-ci for PipelineRuns; nothing is suggested"
+    ));
+    // A failure on a fitting namespace, which would drop the fit below two,
+    // says the same rather than reading as no runs.
+    findings.probes[0].1 = Probe::Failed("refused".to_owned());
+    findings.probes[1].1 = Probe::Empty;
+    let suggestions = suggest_build_namespace(&findings, None);
+    assert_eq!(suggestions.item.unwrap().verdict, BuildVerdict::Capped);
+    assert!(
+        suggestions
+            .notes
+            .iter()
+            .any(|n| n.warn && n.text.contains("billing-ci"))
+    );
+}
+
+#[test]
+fn a_template_is_found_at_any_occurrence_of_the_name() {
+    let findings = with_projects(
+        done(&[("app-app", 4), ("app-web", 2)], false),
+        &["app", "web"],
+    );
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    let BuildVerdict::Template { template, fits, .. } = &item.verdict else {
+        panic!("{item:?}");
+    };
+    assert_eq!(template, "app-{project}");
+    assert_eq!(fits, &["app".to_owned(), "web".to_owned()]);
+}
+
+#[test]
+fn a_name_inside_another_word_is_not_a_fit() {
+    let findings = with_projects(done(&[("rapid", 4)], false), &["api", "web"]);
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    assert_eq!(item.verdict, BuildVerdict::Suggest("rapid".to_owned()));
+    // With two namespaces, the one accidental fit is no pattern.
+    let findings = with_projects(done(&[("rapid", 4), ("other", 1)], false), &["api", "web"]);
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    assert!(matches!(item.verdict, BuildVerdict::Several { .. }));
+}
+
+#[test]
+fn a_working_template_is_not_replaced_when_projects_were_not_read() {
+    let findings = done(&[("shop-ci", 5), ("billing-ci", 3)], false);
+    let suggestions = suggest_build_namespace(&findings, Some("{project}-ci"));
+    assert!(suggestions.item.is_none());
+    assert!(
+        suggestions
+            .notes
+            .iter()
+            .any(|n| n.text.contains("a template that still names namespaces"))
+    );
+    // A template naming none of the runs' namespaces doesn't hold it back.
+    let suggestions = suggest_build_namespace(&findings, Some("{project}-build"));
+    assert!(suggestions.item.is_some());
+}
+
+#[test]
+fn no_projects_is_the_plain_suggestion() {
+    let findings = with_projects(done(&[("shop-ci", 5)], false), &[]);
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    assert_eq!(item.verdict, BuildVerdict::Suggest("shop-ci".to_owned()));
+}
+
+#[tokio::test]
+async fn a_cut_list_probes_the_two_best_templates_and_sees_a_tie() {
+    let kargo = |name: &str| json!({"metadata": {"name": name}});
+    let reader = tekton()
+        .serves("kargo.akuity.io", "v1alpha1", &["projects"])
+        .with("projects", vec![kargo("a"), kargo("b")])
+        .with("pipelineruns", runs(&["a-x", "b-x", "x-a", "x-b", "ci-a"]))
+        .capped("pipelineruns");
+    let findings = read_all(Ok(&reader), Some(Ok(&reader)), "cicd-fra").await;
+    let suggestions = suggest_build_namespace(&findings, None);
+    assert!(matches!(
+        suggestions.item.unwrap().verdict,
+        BuildVerdict::Tie(_)
+    ));
+}
+
+#[tokio::test]
+async fn the_client_asks_for_one_item_in_a_namespace() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let log = seen.clone();
+    let _server = freshkube_core::job::OwnedJob::new(tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 1024];
+                let count = socket.read(&mut buffer).await.unwrap();
+                request.extend_from_slice(&buffer[..count]);
+                if count == 0 || request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            *log.lock().unwrap() = String::from_utf8(request).unwrap();
+            let body =
+                json!({"items": [{"metadata": {"name": "a", "namespace": "shop"}}]}).to_string();
+            let head = format!(
+                "HTTP/1.1 200 X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(head.as_bytes()).await.unwrap();
+        }
+    }));
+    let client = freshkube_core::kube_client::client(kube::Config::new(
+        format!("http://{address}").parse().unwrap(),
+    ))
+    .unwrap();
+    let resource = crate::read::Resource::new("tekton.dev", "v1", "pipelineruns", true);
+    let any = crate::read::ReadOnlyClient::new(client)
+        .any_in(&resource, "shop")
+        .await
+        .unwrap();
+    assert!(any);
+    let head = seen.lock().unwrap().to_lowercase();
+    assert!(
+        head.starts_with("get /apis/tekton.dev/v1/namespaces/shop/pipelineruns?limit=1 "),
+        "{head}"
+    );
 }

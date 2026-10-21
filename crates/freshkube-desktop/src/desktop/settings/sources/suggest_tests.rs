@@ -423,3 +423,143 @@ async fn accept_writes_a_template_as_the_build_namespace(cx: &mut TestAppContext
         Some("{project}")
     );
 }
+
+fn notes(view: &View, cx: &TestAppContext) -> Vec<String> {
+    cx.read(|cx| {
+        list(view, cx)
+            .read(cx)
+            .finder
+            .notes
+            .iter()
+            .map(|(_, text)| text.to_string())
+            .collect()
+    })
+}
+
+#[gpui_kit::test]
+async fn a_failed_find_says_so_and_suggests_nothing(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = start(cx, guard.path(), findings(&[("shop-ci", 6)])).await;
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |list, _| {
+            list.finder.deadline = std::time::Duration::from_millis(20);
+            list.finder.fake = Some(Arc::new(|| {
+                Box::pin(std::future::pending::<BuildFindings>())
+            }));
+        });
+        window.click("settings-sources-find", cx);
+    })
+    .unwrap();
+    let waited = view.clone();
+    cx.wait_for_io(handle, move |_, cx| {
+        let list = list(&waited, cx);
+        let finder = &list.read(cx).finder;
+        !finder.read.is_loading() && finder.read.error().is_some()
+    })
+    .await;
+    cx.run_until_parked();
+    assert_eq!(suggestion(&view, cx), None);
+    assert!(
+        notes(&view, cx)
+            .iter()
+            .any(|text| text.starts_with("Finding suggestions failed")),
+        "{:?}",
+        notes(&view, cx)
+    );
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
+        FILE
+    );
+}
+
+#[gpui_kit::test]
+async fn while_finding_nothing_is_listed_and_find_does_not_restart(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = start(cx, guard.path(), findings(&[("shop-ci", 6)])).await;
+    let (send, receive) = tokio::sync::oneshot::channel::<()>();
+    let gate = Arc::new(std::sync::Mutex::new(Some(receive)));
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    cx.update_window(handle, |_, window, cx| {
+        let (counted, late) = (started.clone(), findings(&[("shop-ci", 6)]));
+        list(&view, cx).update(cx, |list, _| {
+            list.finder.fake = Some(Arc::new(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let (gate, late) = (gate.clone(), late.clone());
+                Box::pin(async move {
+                    let receive = gate.lock().unwrap().take();
+                    if let Some(receive) = receive {
+                        _ = receive.await;
+                    }
+                    late
+                })
+            }));
+        });
+        window.click("settings-sources-find", cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+        assert!(list(&view, cx).read(cx).finder.read.is_loading());
+    })
+    .unwrap();
+    assert_eq!(suggestion(&view, cx), None);
+    _ = send.send(());
+    found(cx, handle, &view).await;
+    assert_eq!(started.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(suggestion(&view, cx).is_some());
+}
+
+#[gpui_kit::test]
+async fn no_runs_is_said_and_suggests_nothing(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = start(cx, guard.path(), findings(&[])).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-sources-find", cx)
+    })
+    .unwrap();
+    found(cx, handle, &view).await;
+    assert_eq!(suggestion(&view, cx), None);
+    assert_eq!(notes(&view, cx), ["No PipelineRuns found"]);
+}
+
+#[gpui_kit::test]
+async fn keys_with_modifiers_and_without_a_suggestion_do_nothing(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = start(cx, guard.path(), findings(&[("shop-ci", 6)])).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-sources-find", cx)
+    })
+    .unwrap();
+    found(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-source-build-suggestion", cx);
+        window.press("secondary-a", cx);
+        window.press("ctrl-a", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
+        FILE
+    );
+    assert!(suggestion(&view, cx).is_some());
+    // With nothing selected, Enter and Backspace have no suggestion to act on.
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |list, cx| {
+            list.selected = None;
+            cx.notify();
+        });
+        window.press("enter", cx);
+        window.press("backspace", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
+        FILE
+    );
+    assert!(suggestion(&view, cx).is_some(), "nothing was ignored");
+}
