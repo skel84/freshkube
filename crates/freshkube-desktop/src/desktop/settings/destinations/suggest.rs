@@ -299,7 +299,10 @@ impl Destinations {
                 parts.push(status::Part::new(format!("{count} suggested")));
             }
             if self.finder.ignored > 0 {
-                parts.push(status::Part::new(format!("{} ignored", self.finder.ignored)).minor());
+                parts.push(status::Part::new(format!(
+                    "{} ignored",
+                    self.finder.ignored
+                )));
             }
         }
         cx.defer(move |cx| {
@@ -470,20 +473,25 @@ impl Destinations {
 
     /// The group row over the suggestions.
     pub(super) fn render_suggested_group(&self, cx: &App) -> AnyElement {
-        let (tone, label) = if self.finder.is_finding() {
-            (ui::Tone::Unknown, "Finding suggestions".to_owned())
-        } else {
-            (
-                ui::Tone::Info,
-                format!("Suggested · {}", self.finder.rows.len()),
-            )
+        let finding = self.finder.is_finding();
+        let (tone, label) = match finding {
+            true => (ui::Tone::Unknown, "Finding suggestions"),
+            false => (ui::Tone::Info, "Suggested"),
         };
+        let count = self.finder.rows.len();
         table::GroupRow::new(
             self.table.id("group-suggested"),
             tone,
             label,
             table::ROW_HEIGHT,
         )
+        .detail(match finding {
+            true => Vec::new(),
+            false => vec![format!(
+                "{count} {}",
+                if count == 1 { "item" } else { "items" }
+            )],
+        })
         .render(cx)
         .into_any_element()
     }
