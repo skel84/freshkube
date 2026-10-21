@@ -741,7 +741,10 @@ fn every_coroot_state_keeps_the_operators_answer_and_says_so(cx: &mut TestAppCon
     for (shape, words) in [
         ("coroot-none", "names no Coroot cluster"),
         ("coroot-not-found", "Coroot lists no application"),
-        ("coroot-unreachable", "The last answer is dimmed and not used"),
+        (
+            "coroot-unreachable",
+            "The last answer is dimmed and not used",
+        ),
     ] {
         cx.update_window(window.into(), |_, window, cx| {
             page.update(cx, |page, cx| {
@@ -757,9 +760,16 @@ fn every_coroot_state_keeps_the_operators_answer_and_says_so(cx: &mut TestAppCon
                 "{shape}: {:?}",
                 rows.iter().map(|r| r.cells[4].clone()).collect::<Vec<_>>()
             );
-            assert!(rows.iter().all(|row| row.chip == Some("Operator") || row.chip == Some("Both")));
+            assert!(
+                rows.iter()
+                    .all(|row| row.chip == Some("Operator") || row.chip == Some("Both"))
+            );
             let coroot = rows[0].sections.iter().find(|s| s.id == "coroot").unwrap();
-            assert!(coroot.fields[0].value.contains(words), "{shape}: {}", coroot.fields[0].value);
+            assert!(
+                coroot.fields[0].value.contains(words),
+                "{shape}: {}",
+                coroot.fields[0].value
+            );
             if shape == "coroot-unreachable" {
                 // What it said before is shown, dimmed, and not used.
                 assert!(coroot.fields.iter().skip(1).all(|f| f.dim));
@@ -771,9 +781,7 @@ fn every_coroot_state_keeps_the_operators_answer_and_says_so(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn the_engine_moves_into_the_inspector_header_when_the_table_has_no_room(
-    cx: &mut TestAppContext,
-) {
+fn the_engine_moves_into_the_inspector_header_when_the_table_has_no_room(cx: &mut TestAppContext) {
     for (width, in_table) in [(1280., false), (1800., true)] {
         let (_runtime, page, window) = mount(cx, width);
         cx.update_window(window.into(), |_, window, cx| {
@@ -786,7 +794,10 @@ fn the_engine_moves_into_the_inspector_header_when_the_table_has_no_room(
             assert_eq!(page.read(cx).display.engine_shown(), in_table, "{width}");
             let columns = &page.read(cx).display.columns.0;
             assert_eq!(columns.iter().any(|c| c.label_text() == "Engine"), in_table);
-            assert_eq!(window.try_find("databases-detail-engine").is_some(), !in_table);
+            assert_eq!(
+                window.try_find("databases-detail-engine").is_some(),
+                !in_table
+            );
             if !in_table {
                 assert_eq!(
                     window.find("databases-detail-engine").label(),
@@ -839,7 +850,9 @@ fn the_filter_finds_rows_by_namespace_primary_and_engine(cx: &mut TestAppContext
 fn counts_and_the_namespace_label_read_naturally(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
     cx.update_window(window.into(), |_, _, cx| {
-        let text = page.update(cx, |page, cx| page.status(cx).unwrap().text(None).to_string());
+        let text = page.update(cx, |page, cx| {
+            page.status(cx).unwrap().text(None).to_string()
+        });
         assert!(text.contains("2 clusters"), "{text}");
         assert!(text.contains("1 need a look"), "{text}");
         assert!(text.contains("All namespaces"), "{text}");
@@ -852,9 +865,17 @@ fn counts_and_the_namespace_label_read_naturally(cx: &mut TestAppContext) {
     let one = display_of(&inv, Mode::Clusters);
     assert!(one.summary.starts_with("1 cluster"), "{}", one.summary);
     let schedules = display_of(&inv, Mode::Schedules);
-    assert!(schedules.summary.starts_with("1 schedule"), "{}", schedules.summary);
+    assert!(
+        schedules.summary.starts_with("1 schedule"),
+        "{}",
+        schedules.summary
+    );
     let backups = display_of(&inv, Mode::Backups);
-    assert!(backups.summary.starts_with("1 backup"), "{}", backups.summary);
+    assert!(
+        backups.summary.starts_with("1 backup"),
+        "{}",
+        backups.summary
+    );
 }
 
 #[test]
@@ -867,7 +888,10 @@ fn both_operators_failing_differently_say_one_line_each() {
     inv.backups.coverage = Coverage::Partial;
     let display = display_of(&inv, Mode::Clusters);
     let notice = display.notice.unwrap();
-    assert!(notice.contains("MariaDB · MariaDB operator: Not permitted"), "{notice}");
+    assert!(
+        notice.contains("MariaDB · MariaDB operator: Not permitted"),
+        "{notice}"
+    );
     assert!(notice.contains("Backups: Partial / capped"), "{notice}");
     assert!(!notice.contains("PostgreSQL"), "{notice}");
 }

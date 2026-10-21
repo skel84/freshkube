@@ -20,7 +20,11 @@ fn link() -> api::Link {
     api::Link::of(&entry, Some("shop-api")).unwrap()
 }
 
-fn input(script: &Script, obs: &Entity<crate::observability::ObservabilityPage>, cx: &mut TestAppContext) -> CorootInput {
+fn input(
+    script: &Script,
+    obs: &Entity<crate::observability::ObservabilityPage>,
+    cx: &mut TestAppContext,
+) -> CorootInput {
     CorootInput {
         reader: Some(cx.update(|_| OutcomeReader::scripted(obs, script))),
         entry: "core-fra".into(),
@@ -119,7 +123,10 @@ fn critical() -> Fired {
     }
 }
 
-fn state_of(cx: &TestAppContext, live: &Live) -> (freshkube_core::HealthIndicator, Option<&'static str>) {
+fn state_of(
+    cx: &TestAppContext,
+    live: &Live,
+) -> (freshkube_core::HealthIndicator, Option<&'static str>) {
     cx.read(|cx| {
         let page = live.page.read(cx);
         let row = &page.display.rows[0];
@@ -270,7 +277,11 @@ async fn no_link_or_no_connection_asks_nothing_and_says_why(cx: &mut TestAppCont
         })
     });
     cx.run_until_parked();
-    assert_eq!(live.script.databases_asked(), 0, "no connection, no request");
+    assert_eq!(
+        live.script.databases_asked(),
+        0,
+        "no connection, no request"
+    );
     assert!(section(cx).contains("isn't connected"));
 }
 
@@ -280,15 +291,21 @@ async fn hiding_drops_the_coroot_read_and_showing_asks_again(cx: &mut TestAppCon
     assert_eq!(live.script.databases_asked(), 1);
     assert!(!live.script.databases_dropped(0));
     cx.update_window(live.window, |_, window, cx| {
-        live.page.update(cx, |page, cx| page.set_visible(false, window, cx));
+        live.page
+            .update(cx, |page, cx| page.set_visible(false, window, cx));
     })
     .unwrap();
     cx.run_until_parked();
     assert!(live.script.databases_dropped(0), "hiding cancels the read");
     assert!(!live.script.answer_databases(0, Evidence::default()));
-    assert_eq!(live.script.databases_asked(), 1, "nothing is asked while hidden");
+    assert_eq!(
+        live.script.databases_asked(),
+        1,
+        "nothing is asked while hidden"
+    );
     cx.update_window(live.window, |_, window, cx| {
-        live.page.update(cx, |page, cx| page.set_visible(true, window, cx));
+        live.page
+            .update(cx, |page, cx| page.set_visible(true, window, cx));
     })
     .unwrap();
     cx.wait_for_io(live.window, |_, _| true).await;
@@ -313,8 +330,15 @@ async fn a_late_answer_to_an_old_read_is_rejected(cx: &mut TestAppContext) {
         live.script.databases_dropped(0),
         "the old read is dropped with its task"
     );
-    assert!(!live.script.answer_databases(0, report(&live.page, cx, vec![critical()])));
-    assert!(live.script.answer_databases(1, report(&live.page, cx, vec![])));
+    assert!(
+        !live
+            .script
+            .answer_databases(0, report(&live.page, cx, vec![critical()]))
+    );
+    assert!(
+        live.script
+            .answer_databases(1, report(&live.page, cx, vec![]))
+    );
     cx.run_until_parked();
     // Only the current answer stands: the old one was critical.
     assert_eq!(
@@ -333,7 +357,9 @@ async fn open_in_observability_names_the_entry_the_application_and_the_report(
     let _subscription = cx.update(|cx| {
         cx.subscribe(
             &live.page,
-            move |_, event: &freshkube_nav::ObservabilityLink, _| seen.borrow_mut().push(event.clone()),
+            move |_, event: &freshkube_nav::ObservabilityLink, _| {
+                seen.borrow_mut().push(event.clone())
+            },
         )
     });
     // Nothing to open until Coroot has answered.
@@ -346,7 +372,10 @@ async fn open_in_observability_names_the_entry_the_application_and_the_report(
     .unwrap();
     cx.run_until_parked();
     assert!(links.borrow().is_empty());
-    assert!(live.script.answer_databases(0, report(&live.page, cx, vec![])));
+    assert!(
+        live.script
+            .answer_databases(0, report(&live.page, cx, vec![]))
+    );
     cx.run_until_parked();
     cx.update_window(live.window, |_, window, cx| {
         window.render_frame(cx);
@@ -357,6 +386,9 @@ async fn open_in_observability_names_the_entry_the_application_and_the_report(
     let links = links.borrow();
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].entry, "core-fra");
-    assert_eq!(links[0].app.as_str(), "cluster-a:shop:DatabaseCluster:orders-db");
+    assert_eq!(
+        links[0].app.as_str(),
+        "cluster-a:shop:DatabaseCluster:orders-db"
+    );
     assert_eq!(links[0].tab, freshkube_nav::ObservabilityTab::Postgres);
 }

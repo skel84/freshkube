@@ -1,11 +1,11 @@
 //! Read-only operator inventory. The page owns reads; core owns interpretation.
+#[cfg(test)]
+mod coroot_tests;
 mod display;
 mod table;
 #[cfg(test)]
 mod tests;
 mod view;
-#[cfg(test)]
-mod coroot_tests;
 #[cfg(test)]
 mod wire_tests;
 use super::{PageEventFn, PageSource, ScreenEvent, ScreenPanel, ScreenSource, TableLoading};
