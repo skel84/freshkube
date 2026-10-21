@@ -16,3 +16,14 @@ openssl pkcs8 -topk8 -nocrypt -in loopback-raw-key.pem -out loopback-key.pem
 
 `loopback-key.pem` holds the resulting PKCS#8 key. The tests load both files
 as data; they do not require an OpenSSL executable.
+
+`service-cert.pem` uses the same public test key and has only the DNS SAN
+`results.acme.svc`, so forwarding tests cannot pass by checking the loopback
+IP instead of the Service's name. Generated with:
+
+```sh
+openssl req -x509 -key loopback-key.pem -out service-cert.pem -days 7300 \
+  -subj '/CN=Results test service' \
+  -addext 'subjectAltName=DNS:results.acme.svc' \
+  -addext 'basicConstraints=critical,CA:FALSE'
+```

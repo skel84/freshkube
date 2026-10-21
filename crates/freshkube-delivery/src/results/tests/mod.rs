@@ -1,5 +1,6 @@
 mod builds;
 mod digest;
+mod forward;
 mod logs;
 pub(crate) mod server;
 
