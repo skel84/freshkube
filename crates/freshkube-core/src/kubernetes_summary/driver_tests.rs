@@ -20,6 +20,8 @@ type Sender = mpsc::Sender<Result<Frame<Bytes>, Infallible>>;
 #[derive(Clone)]
 struct ApiLog {
     calls: Arc<Mutex<Vec<String>>>,
+    /// Any request that is not a GET; the summary only reads.
+    mutations: Arc<Mutex<Vec<String>>>,
     streams: Arc<Mutex<BTreeMap<String, Sender>>>,
 }
 fn pod(name: &str, version: &str) -> Value {
@@ -44,6 +46,7 @@ fn api_with_nodes_status(
 ) -> (Client, ApiLog) {
     let log = ApiLog {
         calls: Default::default(),
+        mutations: Default::default(),
         streams: Default::default(),
     };
     let service_log = log.clone();
@@ -51,6 +54,13 @@ fn api_with_nodes_status(
         let uri = request.uri().to_string();
         let path = request.uri().path().to_owned();
         let delayed = path == "/api/v1/pods" && !uri.contains("watch=true");
+        if request.method() != http::Method::GET {
+            service_log
+                .mutations
+                .lock()
+                .unwrap()
+                .push(format!("{} {uri}", request.method()));
+        }
         let mut calls = service_log.calls.lock().unwrap();
         calls.push(uri.clone());
         let pod_lists = calls
@@ -160,6 +170,7 @@ async fn summary_list_failure(code: u16, kind: crate::failure::FailureKind, word
             .count(),
         1
     );
+    assert_eq!(*log.mutations.lock().unwrap(), Vec::<String>::new());
     task.abort();
     let _ = task.await;
 }
@@ -253,6 +264,7 @@ async fn paginated_sync_debounces_watch_changes_and_idle_never_relists() {
         &summary_nodes.latest().unwrap(),
         &lifecycle_nodes.latest().unwrap()
     ));
+    assert_eq!(*log.mutations.lock().unwrap(), Vec::<String>::new());
     let calls = log.calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 20); // 9 initial lists + one extra Pod page + 9 watches + version.
     assert!(calls.iter().any(|u| u.contains("continue=page2")));

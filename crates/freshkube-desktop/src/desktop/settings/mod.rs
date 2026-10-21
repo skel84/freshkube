@@ -19,6 +19,7 @@ mod entry;
 mod find;
 mod form;
 mod kubeconfig_row;
+mod labels;
 mod metrics_tokens;
 mod monitoring;
 #[cfg(test)]
@@ -128,6 +129,9 @@ pub(crate) struct SettingsPage {
     width: f32,
     table: table::TableState,
     origin: Origin,
+    /// `FRESHKUBE_METRICS_LABELS=capped`: example data answers Check entries
+    /// cut at its cap.
+    example_labels_capped: bool,
     /// The workspace as the file holds it, with the keys this version
     /// doesn't know; every save writes a changed copy of it.
     workspace: Workspace,
@@ -234,8 +238,14 @@ impl SettingsPage {
                     .delivery
                     .as_ref()
                     .and_then(|delivery| delivery.stage_naming.clone());
-                self.sources
-                    .update(cx, |sources, cx| sources.set_stage_naming(naming, cx));
+                let build_namespace = setup
+                    .delivery
+                    .as_ref()
+                    .and_then(|delivery| delivery.build_namespace.clone());
+                self.sources.update(cx, |sources, cx| {
+                    sources.set_stage_naming(naming, cx);
+                    sources.set_build_namespace(build_namespace, cx);
+                });
                 if !self.uses_setup
                     || self.workspace != setup.workspace
                     || self.source_recovery != source_recovery
@@ -270,6 +280,7 @@ impl SettingsPage {
         self.sources.update(cx, |sources, cx| {
             sources.set_setup_notice(problem, self.setup_skips, cx)
         });
+        self.derive_labels(cx);
         cx.notify();
     }
 
@@ -343,6 +354,7 @@ impl SettingsPage {
             width,
             table: table::TableState::new(PREFIX),
             origin: Origin::Alone,
+            example_labels_capped: false,
             workspace: Workspace::default(),
             setup_file: None,
             metrics_secrets,

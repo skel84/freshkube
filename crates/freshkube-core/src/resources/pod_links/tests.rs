@@ -47,48 +47,48 @@ fn service_selectors_require_every_label_and_controller_uids_match() {
 
 #[tokio::test]
 async fn collection_reads_only_namespace_services_and_the_referenced_replica_set() {
-    use http::{Request, Response};
-    use kube::client::Body;
-    use std::{
-        convert::Infallible,
-        sync::{Arc, Mutex},
-    };
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let requests = seen.clone();
-    let service = tower::service_fn(move |request: Request<Body>| {
-        let uri = request.uri().to_string();
-        requests.lock().unwrap().push(uri.clone());
-        let body = if uri == "/api/v1/namespaces/shop/services?"
-            || uri == "/api/v1/namespaces/shop/services"
-        {
-            json!({"apiVersion":"v1","kind":"ServiceList","metadata":{},"items":[]})
-        } else {
-            assert_eq!(uri, "/apis/apps/v1/namespaces/shop/replicasets/web-rs");
-            json!({"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{"name":"web-rs","namespace":"shop","uid":"rs-uid"}})
-        };
-        async move { Ok::<_, Infallible>(Response::new(Body::from(body.to_string().into_bytes()))) }
+    let (client, recorder) = crate::fake_api::client(|request| {
+        match (request.method.as_str(), request.path.as_str()) {
+            ("GET", "/api/v1/namespaces/shop/services") => Some(crate::fake_api::json(
+                200,
+                json!({"apiVersion":"v1","kind":"ServiceList","metadata":{},"items":[]}),
+            )),
+            ("GET", "/apis/apps/v1/namespaces/shop/replicasets/web-rs") => {
+                Some(crate::fake_api::json(
+                    200,
+                    json!({"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{"name":"web-rs","namespace":"shop","uid":"rs-uid"}}),
+                ))
+            }
+            _ => None,
+        }
     });
-    let links = collect_pod_links(&kube::Client::new(service, "default"), &pod()).await;
+    let links = collect_pod_links(&client, &pod()).await;
     assert!(links.services.unwrap().is_empty());
     assert_eq!(links.controller.unwrap().via_uid, "rs-uid");
-    assert_eq!(seen.lock().unwrap().len(), 2);
+    // Exactly the namespace's services and the referenced ReplicaSet; the fake
+    // answers anything else 500, and it would show here.
+    let mut lines = recorder.lines();
+    lines.sort();
+    assert_eq!(
+        lines,
+        [
+            "GET /api/v1/namespaces/shop/services",
+            "GET /apis/apps/v1/namespaces/shop/replicasets/web-rs",
+        ]
+    );
 }
 
 #[tokio::test]
 async fn custom_owners_use_discovered_plural_and_scope() {
-    use http::{Request, Response};
-    use kube::client::Body;
-    let service = tower::service_fn(move |request: Request<Body>| async move {
-        assert_eq!(request.uri().path(), "/apis/sample.io/v2");
-        Ok::<_, std::convert::Infallible>(Response::new(Body::from(br#"{"resources":[{"name":"people/status","kind":"Person","namespaced":true},{"name":"people","kind":"Person","namespaced":false}]}"#.to_vec())))
+    let (client, recorder) = crate::fake_api::client(|request| {
+        (request.path == "/apis/sample.io/v2").then(|| {
+            crate::fake_api::json(200, r#"{"resources":[{"name":"people/status","kind":"Person","namespaced":true},{"name":"people","kind":"Person","namespaced":false}]}"#)
+        })
     });
-    let kind = resolve_owner_kind(
-        &kube::Client::new(service, "default"),
-        "sample.io/v2",
-        "Person",
-    )
-    .await
-    .unwrap();
+    let kind = resolve_owner_kind(&client, "sample.io/v2", "Person")
+        .await
+        .unwrap();
+    recorder.assert_lines(&["GET /apis/sample.io/v2"]);
     assert_eq!(
         kind.object_path(None, "sam"),
         "/apis/sample.io/v2/people/sam"

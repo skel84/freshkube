@@ -322,29 +322,22 @@ fn partial_etcd_sample_is_unavailable_never_safe() {
 
 /// A fake API server: a Node get answers `node` (or `status` with a Status body), any other
 /// request answers `status`.
-fn preview_client(status: u16, node: Option<serde_json::Value>) -> kube::Client {
-    use kube::client::Body;
-    let service = tower::service_fn(move |request: http::Request<Body>| {
-        let node = node.clone();
-        async move {
-            let (status, body) = match node {
-                Some(node) if request.uri().path().ends_with("/nodes/node-a") => (200, node),
-                _ => (
-                    status,
-                    serde_json::json!({"kind":"Status","apiVersion":"v1","status":"Failure",
-                        "message":"denied by policy","reason":"Forbidden","code":status}),
-                ),
-            };
-            Ok::<_, std::convert::Infallible>(
-                http::Response::builder()
-                    .status(status)
-                    .header("content-type", "application/json")
-                    .body(Body::from(body.to_string().into_bytes()))
-                    .unwrap(),
-            )
-        }
-    });
-    kube::Client::new(service, "default")
+fn preview_client(
+    status: u16,
+    node: Option<serde_json::Value>,
+) -> (kube::Client, crate::fake_api::Recorder) {
+    crate::fake_api::client(move |request| {
+        Some(match &node {
+            Some(node) if request.path.ends_with("/nodes/node-a") => {
+                crate::fake_api::json(200, node)
+            }
+            _ => crate::fake_api::json(
+                status,
+                serde_json::json!({"kind":"Status","apiVersion":"v1","status":"Failure",
+                    "message":"denied by policy","reason":"Forbidden","code":status}),
+            ),
+        })
+    })
 }
 
 fn node_a(address: &str) -> serde_json::Value {
@@ -356,7 +349,7 @@ fn node_a(address: &str) -> serde_json::Value {
 #[tokio::test]
 async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
     let targets = [NodeTarget::new("node-a", "10.0.0.1")];
-    let refused = preview_client(403, None);
+    let (refused, refused_requests) = preview_client(403, None);
     let expected = Api::<Node>::all(refused.clone())
         .get("node-a")
         .await
@@ -369,7 +362,7 @@ async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
         format!("Kubernetes precheck for node-a: {expected}")
     );
 
-    let pods_refused = preview_client(403, Some(node_a("10.0.0.1")));
+    let (pods_refused, pods_requests) = preview_client(403, Some(node_a("10.0.0.1")));
     let failure = preflight_kubernetes(&pods_refused, &targets)
         .await
         .unwrap_err();
@@ -379,7 +372,7 @@ async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
         format!("Pod precheck for node-a: {expected}")
     );
 
-    let mismatched = preview_client(403, Some(node_a("10.9.9.9")));
+    let (mismatched, mismatched_requests) = preview_client(403, Some(node_a("10.9.9.9")));
     let failure = preflight_kubernetes(&mismatched, &targets)
         .await
         .unwrap_err();
@@ -395,6 +388,14 @@ async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
         failure.message,
         format!("PodDisruptionBudget check: {expected}")
     );
+
+    // The preview only reads: no request is anything but a GET.
+    for recorder in [&refused_requests, &pods_requests, &mismatched_requests] {
+        recorder.assert_all("the preview only reads", |request| {
+            request.method == http::Method::GET
+        });
+        assert!(!recorder.requests().is_empty());
+    }
 }
 
 #[test]

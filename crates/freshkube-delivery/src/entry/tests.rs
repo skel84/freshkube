@@ -35,11 +35,18 @@ async fn api_entry_failure(code: u16, kind: FailureKind, message: &str, words: &
                 if request.windows(4).any(|part| part == b"\r\n\r\n") {
                     break;
                 }
-                assert!(request.len() <= 16 * 1024);
+                if request.len() > 16 * 1024 {
+                    // Recorded below as a malformed path, not asserted in this task.
+                    break;
+                }
             }
             let head = String::from_utf8(request).unwrap();
-            let path = head.split_whitespace().nth(1).unwrap();
-            log.lock().unwrap().push(path.to_owned());
+            let mut words = head.split_whitespace();
+            let method = words.next().unwrap_or_default();
+            let path = words.next().unwrap_or_default();
+            log.lock()
+                .unwrap()
+                .push((method.to_owned(), path.to_owned()));
             let (status, body) = match path {
                 "/apis" => (
                     200,
@@ -76,8 +83,16 @@ async fn api_entry_failure(code: u16, kind: FailureKind, message: &str, words: &
     assert_eq!(failure.kind, kind);
     assert_eq!(failure.message, message);
     assert_eq!(reach.words(Part::Kargo.label(), "cluster-a"), words);
-    let paths = seen.lock().unwrap();
-    assert_eq!(paths.len(), 3);
+    // The recorded list is the guard: discovery, then one bounded probe, all GET.
+    let requests = seen.lock().unwrap();
+    assert!(
+        requests.iter().all(|(method, _)| method == "GET"),
+        "{requests:?}"
+    );
+    let paths: Vec<_> = requests.iter().map(|(_, path)| path.as_str()).collect();
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    assert_eq!(paths[0], "/apis");
+    assert_eq!(paths[1], "/apis/kargo.akuity.io/v1alpha1");
     assert!(paths[2].starts_with("/apis/kargo.akuity.io/v1alpha1/projects?"));
     assert!(paths[2].contains("limit=1"));
     drop(server);

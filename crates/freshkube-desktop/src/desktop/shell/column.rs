@@ -293,7 +293,7 @@ impl Pilot {
 pub(super) fn page_icon(page: Page) -> IconName {
     match page {
         Page::Health => IconName::HeartPulse,
-        Page::Etcd => IconName::Database,
+        Page::Etcd | Page::Databases => IconName::Database,
         Page::SystemServices => IconName::ServerCog,
         Page::Security => IconName::ShieldCheck,
         Page::Lifecycle => IconName::RefreshCw,

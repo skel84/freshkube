@@ -31,11 +31,21 @@ impl Drop for PatchGuard {
 #[derive(Default)]
 struct ApiState {
     requests: Vec<(Method, http::Uri, Value)>,
+    /// Requests the fake has no route for, answered 500. A run must leave this empty.
+    unknown: Vec<String>,
     nodes: BTreeMap<String, Value>,
     pods: Vec<Value>,
     fail_patch: BTreeSet<String>,
     fail_eviction: bool,
     pending_patch: Option<Arc<PendingPatch>>,
+}
+
+fn unknown_request(method: &Method, path: &str) -> (u16, Value) {
+    (
+        500,
+        json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"InternalError","code":500,
+            "message":format!("the fake API has no route for {method} {path}")}),
+    )
 }
 
 fn fake_client(state: Arc<Mutex<ApiState>>) -> Client {
@@ -61,14 +71,19 @@ fn fake_client(state: Arc<Mutex<ApiState>>) -> Client {
                             403,
                             json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","message":"patch refused","code":403}),
                         )
-                    } else {
-                        let node = state.nodes.get_mut(name).expect("explicit test node");
+                    } else if let Some(node) = state
+                        .nodes
+                        .get_mut(name)
+                        .filter(|_| matches!(method, Method::GET | Method::PATCH))
+                    {
                         if method == Method::PATCH {
                             node["spec"]["unschedulable"] = body["spec"]["unschedulable"].clone();
-                        } else {
-                            assert_eq!(method, Method::GET);
                         }
                         (200, node.clone())
+                    } else {
+                        // A node the test did not name, or a verb it did not allow: recorded
+                        // above and answered 500, never a panic inside the client's worker.
+                        unknown_request(&method, &path)
                     }
                 } else if path == "/api/v1/pods" && method == Method::GET {
                     (
@@ -93,8 +108,11 @@ fn fake_client(state: Arc<Mutex<ApiState>>) -> Client {
                         json!({"apiVersion":"v1","kind":"Status","status":"Success"}),
                     )
                 } else {
-                    panic!("unexpected fake API request: {method} {path}");
+                    unknown_request(&method, &path)
                 };
+                if status == 500 {
+                    state.unknown.push(format!("{method} {path}"));
+                }
                 (status, answer, pending)
             };
             if let Some(pending) = pending {
@@ -257,7 +275,7 @@ impl Harness {
             }
         };
         let cancelled = self.cancelled.clone();
-        run_with_preflight(
+        let outcome = run_with_preflight(
             request,
             None,
             connection,
@@ -266,7 +284,14 @@ impl Harness {
             on_event,
             preflight,
         )
-        .await
+        .await;
+        // Asserted here, not in the service: a panic there only kills the client's worker.
+        assert_eq!(
+            self.api.lock().unwrap().unknown,
+            Vec::<String>::new(),
+            "requests the fake API has no route for"
+        );
+        outcome
     }
 
     fn mutations(&self) -> Vec<(Method, String)> {

@@ -43,6 +43,8 @@ pub(crate) enum EtcdExample {
 /// used, as before.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DebugOptions {
+    /// Invented database inventory shape, parsed once with the other knobs.
+    pub(crate) databases: String,
     /// `FRESHKUBE_PAGE`: a page slug or a fixture check's name.
     pub(crate) page: Option<String>,
     /// `FRESHKUBE_KIND`: a Kubernetes kind's kubectl key.
@@ -68,6 +70,9 @@ pub struct DebugOptions {
     /// `FRESHKUBE_APPLICATIONS`: the Applications example's shape; anything
     /// else is `acme`.
     pub(crate) applications: Variant,
+    /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
+    /// entries is cut at its cap.
+    pub(crate) metrics_labels_capped: bool,
     /// `FRESHKUBE_FIXTURE_HOLD`: what example data never answers.
     pub(crate) hold: Hold,
     /// `FRESHKUBE_APP_MENU=button`: the Linux menu button on any platform.
@@ -109,6 +114,7 @@ impl DebugOptions {
     pub(crate) fn parse(var: impl Fn(&str) -> Option<OsString>) -> Self {
         let text = |name: &str| var(name).and_then(|value| value.into_string().ok());
         Self {
+            databases: text("FRESHKUBE_DATABASES").unwrap_or_default(),
             page: text("FRESHKUBE_PAGE"),
             kind: text("FRESHKUBE_KIND"),
             theme: match text("FRESHKUBE_THEME").as_deref() {
@@ -136,6 +142,7 @@ impl DebugOptions {
                 _ => None,
             },
             applications: Variant::parse(text("FRESHKUBE_APPLICATIONS").as_deref()),
+            metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
             app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
             text_size: text("FRESHKUBE_TEXT_SIZE")
@@ -402,6 +409,17 @@ mod tests {
         assert!(all.talos && all.lists && all.coroot && all.monitoring && all.applications);
         for bad in ["", "Talos", "everything", "talos,lists"] {
             assert_eq!(hold(bad), Hold::default(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn metrics_labels_are_capped_only_for_capped() {
+        assert!(parse(&[("FRESHKUBE_METRICS_LABELS", "capped")]).metrics_labels_capped);
+        for bad in ["Capped", "", "cut"] {
+            assert!(
+                !parse(&[("FRESHKUBE_METRICS_LABELS", bad)]).metrics_labels_capped,
+                "{bad:?}"
+            );
         }
     }
 
