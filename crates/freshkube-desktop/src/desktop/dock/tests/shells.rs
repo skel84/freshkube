@@ -506,8 +506,8 @@ fn a_read_only_context_opens_its_shell_tab_idle_and_start_does_nothing(cx: &mut 
         .unwrap();
         cx.run_until_parked();
     };
-    // core-fra is read-only in the example workspace.
-    show("core-fra", cx);
+    // stage-fra is read-only in the example workspace.
+    show("stage-fra", cx);
     let pods = running_pods(&pilot, cx);
     pick_shell(handle, &pilot, &pods[0], cx);
     assert_eq!(titles(&dock, cx), [format!("Shell {}", pods[0].name)]);

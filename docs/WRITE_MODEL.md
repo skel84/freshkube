@@ -89,4 +89,4 @@ One JSON object per line in `<preferences>/audit/writes.jsonl`: when, the entry 
 
 ## Example data
 
-`--fixture`'s workspace (`freshkube_core::workspace::example`) gives its entries different levels, so a capture shows each: `core-fra` is `read-only`, `cicd-fra` `guarded` (written), `dev-fra` `open`, `prod-ams` `protected`, and `stage-fra` and `prod-fra`, which the window opens on, set none and are `guarded`. Switch the cluster in the header's switcher to see the tag change in the header and the status bar.
+`--fixture`'s workspace (`freshkube_core::workspace::example`) gives its entries different levels, so a capture shows each: `stage-fra` is `read-only`, `cicd-fra` `guarded` (written), `dev-fra` `open`, `prod-ams` `protected`, and `core-fra` and `prod-fra`, which the window opens on, set none and are `guarded`. Switch the cluster in the header's switcher to see the tag change in the header and the status bar.

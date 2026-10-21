@@ -43,16 +43,33 @@ impl Mark {
         }
     }
 
-    /// The fill and the ink: Read-only is Info's, Protected Crit's, Open
-    /// Warn's. Guarded is the default, so it is the quietest: no fill, the
-    /// outline tag's muted ink and a hairline border (see [`tag`]).
-    pub fn inks(self, p: &Palette) -> (Hsla, Hsla) {
+    /// The fill, the word's ink and the glyph's. The tint and the glyph carry
+    /// the tone: Read-only is Info's, Protected Crit's, Open Warn's. The word
+    /// is `ink`, since a tone's own text on its tint falls under 4.5:1 on the
+    /// switcher's `surface_2` in dark. Guarded is the default, so it is the
+    /// quietest: no fill, the outline tag's `muted` ink and a hairline
+    /// border (see [`tag`]).
+    pub fn inks(self, p: &Palette) -> Inks {
         match self {
-            Mark::ReadOnly => (p.accent_soft, p.accent),
-            Mark::Protected => (p.crit_soft, p.crit_ink),
-            Mark::Guarded => (transparent_black(), p.muted),
-            Mark::Open => (p.warn_soft, p.warn_ink),
+            Mark::ReadOnly => Inks::new(p.accent_soft, p.ink, p.accent),
+            Mark::Protected => Inks::new(p.crit_soft, p.ink, p.crit_ink),
+            Mark::Guarded => Inks::new(transparent_black(), p.muted, p.muted),
+            Mark::Open => Inks::new(p.warn_soft, p.ink, p.warn_ink),
         }
+    }
+}
+
+/// A tag's colours.
+#[derive(Clone, Copy)]
+pub struct Inks {
+    pub fill: Hsla,
+    pub word: Hsla,
+    pub glyph: Hsla,
+}
+
+impl Inks {
+    fn new(fill: Hsla, word: Hsla, glyph: Hsla) -> Self {
+        Self { fill, word, glyph }
     }
 }
 
@@ -61,7 +78,7 @@ impl Mark {
 /// an id and those.
 pub fn tag(mark: Mark, glyph_only: bool, cx: &App) -> Div {
     let p = palette(cx);
-    let (bg, ink) = mark.inks(&p);
+    let inks = mark.inks(&p);
     h_flex()
         .flex_none()
         .justify_center()
@@ -70,8 +87,8 @@ pub fn tag(mark: Mark, glyph_only: bool, cx: &App) -> Div {
         .when(glyph_only, |this| this.w(dp(22.)))
         .when(!glyph_only, |this| this.px(dp(8.)))
         .rounded_full()
-        .bg(bg)
-        .text_color(ink)
+        .bg(inks.fill)
+        .text_color(inks.word)
         .text_size(dp(11.5))
         .font_weight(FontWeight::SEMIBOLD)
         .whitespace_nowrap()
@@ -83,7 +100,7 @@ pub fn tag(mark: Mark, glyph_only: bool, cx: &App) -> Div {
                 .data(mark.drawing())
                 .flex_none()
                 .size(dp(12.))
-                .text_color(ink),
+                .text_color(inks.glyph),
         )
         .when(!glyph_only, |this| {
             this.child(SharedString::from(mark.label()))

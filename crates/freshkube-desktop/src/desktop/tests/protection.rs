@@ -6,10 +6,10 @@ use freshkube_core::write::Protection;
 
 /// What the example workspace sets for each entry, `None` for no key.
 const LEVELS: [(&str, Option<Protection>); 6] = [
-    ("core-fra", Some(Protection::ReadOnly)),
+    ("core-fra", None),
     ("cicd-fra", Some(Protection::Guarded)),
     ("dev-fra", Some(Protection::Open)),
-    ("stage-fra", None),
+    ("stage-fra", Some(Protection::ReadOnly)),
     ("prod-ams", Some(Protection::Protected)),
     ("prod-fra", None),
 ];
@@ -80,7 +80,7 @@ fn each_level_is_drawn_with_its_word_in_the_header_and_the_status_bar(cx: &mut T
 #[gpui_kit::test]
 fn an_entry_that_sets_nothing_is_guarded(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    switch(cx, handle, &view, "stage-fra");
+    switch(cx, handle, &view, "core-fra");
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
@@ -96,7 +96,7 @@ fn an_entry_that_sets_nothing_is_guarded(cx: &mut TestAppContext) {
             .workspace()
             .clusters
             .iter()
-            .find(|entry| entry.id == "stage-fra")
+            .find(|entry| entry.id == "core-fra")
             .cloned()
             .unwrap()
     });

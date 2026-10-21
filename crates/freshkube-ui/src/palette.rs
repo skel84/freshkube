@@ -374,10 +374,15 @@ mod tests {
                 ("content", content(theme)),
             ] {
                 for mark in Mark::ALL {
-                    let (fill, ink) = mark.inks(&p);
-                    let ground = over_hsla(fill, background);
-                    let read = contrast(over(ink, ground), over(ground, ground));
-                    assert!(read >= 4.5, "{theme} {mark:?} on {under}: {read}");
+                    let inks = mark.inks(&p);
+                    let ground = over_hsla(inks.fill, background);
+                    let backing = over(ground, ground);
+                    // The word reads at 4.5:1, and the glyph, a mark rather
+                    // than text, at 3:1.
+                    let word = contrast(over(inks.word, ground), backing);
+                    assert!(word >= 4.5, "{theme} {mark:?} on {under}: word {word}");
+                    let glyph = contrast(over(inks.glyph, ground), backing);
+                    assert!(glyph >= 3., "{theme} {mark:?} on {under}: glyph {glyph}");
                 }
             }
         }
