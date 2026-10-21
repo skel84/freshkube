@@ -193,13 +193,25 @@ pub enum Trouble {
     Offline,
 }
 
+/// When the example's limit resets: fifty minutes after the run began, so a
+/// run at any hour shows a limit still to wait for, and one time for the
+/// whole run so every surface says the same.
+fn limit_resets() -> DateTime<Utc> {
+    static RESET: std::sync::OnceLock<DateTime<Utc>> = std::sync::OnceLock::new();
+    *RESET.get_or_init(|| Utc::now() + chrono::Duration::minutes(50))
+}
+
 impl Trouble {
     /// The words the status bar and the page's banner carry.
-    pub fn words(self) -> &'static str {
+    pub fn words(self) -> String {
         match self {
-            Self::Limited => "GitHub's rate limit is reached until 14:05 UTC",
-            Self::Refused => "GitHub refused the token (401)",
-            Self::Offline => "GitHub didn't answer: could not connect",
+            Self::Limited => Error::Limited {
+                until: limit_resets(),
+                secondary: false,
+            }
+            .to_string(),
+            Self::Refused => "GitHub refused the token (401)".into(),
+            Self::Offline => "GitHub didn't answer: could not connect".into(),
         }
     }
 
@@ -210,7 +222,7 @@ impl Trouble {
             Self::Limited | Self::Offline => pull.map(|mut pull| {
                 pull.stale = Some(Stale {
                     read_at: at(13, 12),
-                    why: self.words().into(),
+                    why: self.words(),
                 });
                 pull
             }),

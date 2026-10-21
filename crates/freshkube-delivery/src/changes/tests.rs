@@ -141,13 +141,14 @@ fn github_that_cannot_be_asked_leaves_the_kept_state_stale_or_none_and_says_why(
     for (shape, words) in [
         (
             Shape::GitHubLimited,
-            "GitHub's rate limit is reached until 14:05 UTC",
+            crate::github::example::Trouble::Limited.words(),
         ),
         (
             Shape::GitHubOffline,
-            "GitHub didn't answer: could not connect",
+            "GitHub didn't answer: could not connect".to_owned(),
         ),
     ] {
+        let words = words.as_str();
         let changes = list(shape);
         let wonky = row(&changes, "wonky-otter");
         assert_eq!(wonky.pull_state, Some(PullState::Merged), "{words}");
@@ -191,13 +192,14 @@ fn github_is_said_once_per_cause_in_the_form_that_says_what_is_kept() {
     for (shape, cause) in [
         (
             Shape::GitHubLimited,
-            "GitHub's rate limit is reached until 14:05 UTC",
+            crate::github::example::Trouble::Limited.words(),
         ),
         (
             Shape::GitHubOffline,
-            "GitHub didn't answer: could not connect",
+            "GitHub didn't answer: could not connect".to_owned(),
         ),
     ] {
+        let cause = cause.as_str();
         let changes = derive(&example::read_shaped(now(), shape));
         let texts: Vec<Option<&str>> = changes
             .rows

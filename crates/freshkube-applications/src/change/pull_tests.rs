@@ -86,7 +86,7 @@ fn kept_answers_say_why_they_are_old_and_a_refused_token_leaves_no_row(cx: &mut 
     for (shape, why) in [
         (
             Shape::GitHubLimited,
-            "GitHub's rate limit is reached until 14:05 UTC",
+            "GitHub's rate limit is reached until ",
         ),
         (
             Shape::GitHubOffline,
