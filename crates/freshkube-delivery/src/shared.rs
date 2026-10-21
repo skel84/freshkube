@@ -92,6 +92,11 @@ impl<R: Reader> Reader for SharedReader<R> {
         self.reader.namespace_counts(resource).await
     }
 
+    /// Not shared: a probe asks whether something is there now.
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        self.reader.any_in(resource, namespace).await
+    }
+
     /// Not shared: the answer is never kept past its read.
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         self.reader.cluster_secrets(namespace).await

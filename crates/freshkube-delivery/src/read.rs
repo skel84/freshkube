@@ -166,6 +166,21 @@ pub trait Reader {
             ))
         }
     }
+    /// Whether a namespaced kind has at least one object in `namespace`:
+    /// one page of one item (`limit=1`). Unless overridden, it refuses.
+    fn any_in(
+        &self,
+        resource: &Resource,
+        namespace: &str,
+    ) -> impl Future<Output = Result<bool, Failure>> {
+        async move {
+            let _ = (resource, namespace);
+            Err(Failure::new(
+                FailureKind::Other,
+                "this source reads no single namespace",
+            ))
+        }
+    }
     /// Argo CD's cluster Secrets in one namespace: the Secrets labelled
     /// `argocd.argoproj.io/secret-type=cluster`, one page, and of each only
     /// its name and `server` and `name` fields. Unless overridden, it
@@ -210,6 +225,9 @@ impl<R: Reader + ?Sized> Reader for &R {
     async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
         (**self).namespace_counts(resource).await
     }
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        (**self).any_in(resource, namespace).await
+    }
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         (**self).cluster_secrets(namespace).await
     }
@@ -240,6 +258,9 @@ impl<R: Reader + ?Sized> Reader for std::sync::Arc<R> {
     }
     async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
         (**self).namespace_counts(resource).await
+    }
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        (**self).any_in(resource, namespace).await
     }
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         (**self).cluster_secrets(namespace).await
@@ -587,6 +608,18 @@ impl Reader for ReadOnlyClient {
             )
             .await?;
         Ok(super::discover::count_namespaces(&body))
+    }
+
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        let request = ListRequest {
+            resource: resource.clone(),
+            scope: Scope::Namespace(namespace.to_owned()),
+        };
+        let body = self.get_value(sized_page_path(&request, None, 1)?).await?;
+        Ok(body
+            .get("items")
+            .and_then(Value::as_array)
+            .is_some_and(|items| !items.is_empty()))
     }
 
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {

@@ -302,6 +302,20 @@ impl Reader for FixtureReader {
         Ok(counts)
     }
 
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        self.requests
+            .borrow_mut()
+            .push(format!("ANY {} ns={namespace}", resource.plural));
+        let items = match self.lists.get(&resource.plural) {
+            Some(Ok(items)) => items.clone(),
+            Some(Err(failure)) => return Err(failure.clone()),
+            None => Vec::new(),
+        };
+        Ok(items.iter().any(|item| {
+            item.pointer("/metadata/namespace").and_then(Value::as_str) == Some(namespace)
+        }))
+    }
+
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         self.requests
             .borrow_mut()

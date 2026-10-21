@@ -272,6 +272,12 @@ impl<O: Reader, E: Reader> Reader for Via<O, E> {
             Via::Entry(reader) => reader.namespace_counts(resource).await,
         }
     }
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        match self {
+            Via::Open(reader) => reader.any_in(resource, namespace).await,
+            Via::Entry(reader) => reader.any_in(resource, namespace).await,
+        }
+    }
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         match self {
             Via::Open(reader) => reader.cluster_secrets(namespace).await,

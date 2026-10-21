@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::builds::read_builds;
+use super::builds::{read_all, read_builds};
 use super::*;
 use crate::fixtures::FixtureReader;
 use crate::read::Reader;
@@ -21,13 +21,13 @@ fn tekton() -> FixtureReader {
 }
 
 fn done(counts: &[(&str, u64)], capped: bool) -> BuildFindings {
-    BuildFindings {
-        entry: "cicd-fra".into(),
-        read: BuildRead::Done(NamespaceCounts {
+    BuildFindings::runs_only(
+        "cicd-fra",
+        BuildRead::Done(NamespaceCounts {
             counts: counts.iter().map(|(n, c)| ((*n).to_owned(), *c)).collect(),
             capped,
         }),
-    }
+    )
 }
 
 #[test]
@@ -55,10 +55,7 @@ fn counting_keeps_only_the_namespace() {
 async fn one_namespace_with_runs_is_suggested() {
     let reader = tekton().with("pipelineruns", runs(&["shop-ci", "shop-ci", "shop-ci"]));
     let read = read_builds(&reader, "cicd-fra").await;
-    let findings = BuildFindings {
-        entry: "cicd-fra".into(),
-        read,
-    };
+    let findings = BuildFindings::runs_only("cicd-fra", read);
     let suggestions = suggest_build_namespace(&findings, None);
     let item = suggestions.item.unwrap();
     assert_eq!(item.verdict, BuildVerdict::Suggest("shop-ci".into()));
@@ -123,13 +120,7 @@ async fn a_refused_run_list_suggests_nothing() {
     let refused = tekton().refusing("pipelineruns");
     let read = read_builds(&refused, "cicd-fra").await;
     assert!(matches!(read, BuildRead::Refused(_)), "{read:?}");
-    let suggestions = suggest_build_namespace(
-        &BuildFindings {
-            entry: "cicd-fra".into(),
-            read,
-        },
-        None,
-    );
+    let suggestions = suggest_build_namespace(&BuildFindings::runs_only("cicd-fra", read), None);
     assert!(suggestions.item.is_none());
     assert!(suggestions.notes[0].warn);
     // A kind the cluster doesn't serve, and a failed read, say so too.
@@ -151,13 +142,7 @@ async fn a_refused_run_list_suggests_nothing() {
 #[tokio::test]
 async fn no_runs_is_said_and_suggests_nothing() {
     let read = read_builds(&tekton(), "cicd-fra").await;
-    let suggestions = suggest_build_namespace(
-        &BuildFindings {
-            entry: "cicd-fra".into(),
-            read,
-        },
-        None,
-    );
+    let suggestions = suggest_build_namespace(&BuildFindings::runs_only("cicd-fra", read), None);
     assert!(suggestions.item.is_none());
     assert_eq!(suggestions.notes[0].text, "No PipelineRuns found");
 }
@@ -168,20 +153,21 @@ fn an_unreached_entry_and_an_unread_one_suggest_nothing() {
         BuildRead::Unreached("down".into()),
         BuildRead::NotRead("none".into()),
     ] {
-        let suggestions = suggest_build_namespace(
-            &BuildFindings {
-                entry: "cicd-fra".into(),
-                read,
-            },
-            None,
-        );
+        let suggestions =
+            suggest_build_namespace(&BuildFindings::runs_only("cicd-fra", read), None);
         assert!(suggestions.item.is_none() && suggestions.notes.len() == 1);
     }
 }
 
 #[test]
-fn the_examples_show_a_suggestion_and_several() {
-    let one = suggest_build_namespace(&example::build_findings(), None)
+fn the_examples_show_a_template_a_suggestion_and_several() {
+    let template = suggest_build_namespace(&example::build_findings(), None)
+        .item
+        .unwrap();
+    assert!(
+        matches!(&template.verdict, BuildVerdict::Template { template, .. } if template == "{project}")
+    );
+    let one = suggest_build_namespace(&example::single_build_findings(), None)
         .item
         .unwrap();
     assert_eq!(one.verdict, BuildVerdict::Suggest("ci-shared".into()));
@@ -189,6 +175,191 @@ fn the_examples_show_a_suggestion_and_several() {
         .item
         .unwrap();
     assert!(matches!(several.verdict, BuildVerdict::Several { .. }));
+}
+
+fn with_projects(findings: BuildFindings, names: &[&str]) -> BuildFindings {
+    BuildFindings {
+        projects: Projects::Read(names.iter().map(|n| (*n).to_owned()).collect()),
+        ..findings
+    }
+}
+
+#[test]
+fn project_template_fits_projects_whose_namespace_has_runs() {
+    let item = suggest_build_namespace(&example::build_findings(), None)
+        .item
+        .unwrap();
+    assert_eq!(item.key, "{project}");
+    assert_eq!(
+        item.verdict,
+        BuildVerdict::Template {
+            template: "{project}".into(),
+            fits: vec!["acme".into(), "shop".into()],
+            no_runs: vec!["docs".into()],
+            unexplained: vec![("ci-shared".into(), 3)],
+            at_least: false,
+        }
+    );
+    assert!(item.verdict.is_suggestion());
+}
+
+#[test]
+fn an_affixed_template_is_found() {
+    let findings = with_projects(
+        done(&[("shop-ci", 5), ("billing-ci", 3)], false),
+        &["billing", "shop"],
+    );
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    assert_eq!(
+        item.verdict,
+        BuildVerdict::Template {
+            template: "{project}-ci".into(),
+            fits: vec!["billing".into(), "shop".into()],
+            no_runs: Vec::new(),
+            unexplained: Vec::new(),
+            at_least: false,
+        }
+    );
+    // A value that already equals it gives no item.
+    assert!(
+        suggest_build_namespace(&findings, Some("{project}-ci"))
+            .item
+            .is_none()
+    );
+}
+
+#[test]
+fn unexplained_namespaces_make_a_partial_fit() {
+    let findings = with_projects(
+        done(&[("shop-ci", 5), ("billing-ci", 3), ("shared", 9)], false),
+        &["billing", "shop"],
+    );
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    let BuildVerdict::Template { unexplained, .. } = &item.verdict else {
+        panic!("{item:?}");
+    };
+    assert_eq!(unexplained, &[("shared".to_owned(), 9)]);
+    // Still acceptable: a partial fit keeps Accept.
+    assert!(item.verdict.is_suggestion());
+}
+
+#[test]
+fn a_template_tie_chooses_neither() {
+    let findings = with_projects(
+        done(&[("a-x", 1), ("b-x", 1), ("x-a", 1), ("x-b", 1)], false),
+        &["a", "b"],
+    );
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    assert_eq!(
+        item.verdict,
+        BuildVerdict::Tie(vec!["x-{project}".into(), "{project}-x".into()])
+    );
+    assert!(!item.verdict.is_suggestion() && item.key.is_empty());
+}
+
+#[test]
+fn one_project_fitting_is_not_a_template() {
+    // A single fit is no pattern: with two namespaces, none is suggested.
+    let findings = with_projects(
+        done(&[("shop-ci", 5), ("other", 2)], false),
+        &["billing", "shop"],
+    );
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    assert!(matches!(item.verdict, BuildVerdict::Several { .. }));
+}
+
+#[tokio::test]
+async fn a_capped_list_confirms_by_probes() {
+    let kargo = |name: &str| json!({"metadata": {"name": name}});
+    let reader = tekton()
+        .serves("kargo.akuity.io", "v1alpha1", &["projects"])
+        .with(
+            "projects",
+            vec![kargo("billing"), kargo("shop"), kargo("docs")],
+        )
+        .with(
+            "pipelineruns",
+            runs(&["shop-ci", "billing-ci", "billing-ci"]),
+        )
+        .capped("pipelineruns");
+    let findings = read_all(Ok(&reader), Some(Ok(&reader)), "cicd-fra").await;
+    // One limit=1 read per project namespace, in the project order.
+    assert_eq!(
+        findings.probes,
+        [
+            ("billing-ci".to_owned(), Probe::Runs),
+            ("docs-ci".to_owned(), Probe::Empty),
+            ("shop-ci".to_owned(), Probe::Runs),
+        ]
+    );
+    let item = suggest_build_namespace(&findings, None).item.unwrap();
+    let BuildVerdict::Template {
+        template,
+        fits,
+        no_runs,
+        at_least,
+        ..
+    } = &item.verdict
+    else {
+        panic!("{item:?}");
+    };
+    assert_eq!(template, "{project}-ci");
+    assert_eq!(
+        (fits.len(), no_runs.as_slice(), *at_least),
+        (2, ["docs".to_owned()].as_slice(), true)
+    );
+}
+
+#[tokio::test]
+async fn past_the_probe_cap_suggests_nothing() {
+    let names: Vec<String> = (0..=MAX_PROBED).map(|n| format!("p{n:02}")).collect();
+    let kargo: Vec<serde_json::Value> = names
+        .iter()
+        .map(|n| json!({"metadata": {"name": n}}))
+        .collect();
+    let reader = tekton()
+        .serves("kargo.akuity.io", "v1alpha1", &["projects"])
+        .with("projects", kargo)
+        .with("pipelineruns", runs(&["p00-ci", "p01-ci"]))
+        .capped("pipelineruns");
+    let findings = read_all(Ok(&reader), Some(Ok(&reader)), "cicd-fra").await;
+    assert!(findings.probes.is_empty(), "no probe past the cap");
+    let suggestions = suggest_build_namespace(&findings, None);
+    assert_eq!(suggestions.item.unwrap().verdict, BuildVerdict::Capped);
+    assert!(
+        suggestions
+            .notes
+            .iter()
+            .any(|n| n.text.starts_with("More than 50 Kargo projects"))
+    );
+}
+
+#[tokio::test]
+async fn unread_projects_say_so_and_fall_back() {
+    let reader = tekton().with("pipelineruns", runs(&["a", "b"]));
+    for kargo in [None, Some(Err("down".to_owned()))] {
+        let findings = read_all(
+            Ok(&reader),
+            kargo.map(|r: Result<&FixtureReader, String>| r),
+            "cicd-fra",
+        )
+        .await;
+        assert!(matches!(
+            findings.projects,
+            Projects::NotRead(_) | Projects::Failed(_)
+        ));
+        let suggestions = suggest_build_namespace(&findings, None);
+        assert!(matches!(
+            suggestions.item.unwrap().verdict,
+            BuildVerdict::Several { .. }
+        ));
+        assert!(
+            suggestions
+                .notes
+                .iter()
+                .any(|n| n.text.contains("Kargo's projects weren't read"))
+        );
+    }
 }
 
 #[tokio::test]

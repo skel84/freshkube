@@ -164,6 +164,14 @@ impl<R: Reader> Reader for Deadline<R> {
         .await
     }
 
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        self.within(
+            &format!("Reading {}", resource.plural),
+            self.reader.any_in(resource, namespace),
+        )
+        .await
+    }
+
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
         self.within(
             "Listing cluster Secrets",

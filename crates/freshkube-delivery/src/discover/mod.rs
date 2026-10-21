@@ -19,8 +19,8 @@ pub mod example;
 mod tests;
 
 pub use builds::{
-    BuildFindings, BuildItem, BuildRead, BuildSuggestions, BuildVerdict, MAX_LISTED,
-    NamespaceCounts, count_namespaces, find_builds, suggest_build_namespace,
+    BuildFindings, BuildItem, BuildRead, BuildSuggestions, BuildVerdict, MAX_LISTED, MAX_PROBED,
+    NamespaceCounts, Probe, Projects, count_namespaces, find_builds, suggest_build_namespace,
 };
 pub(crate) use destinations::parse_secret_list;
 pub use destinations::{
