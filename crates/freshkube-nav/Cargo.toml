@@ -9,6 +9,10 @@ description = "Where a link goes: the objects, tabs and requests pages hand the 
 # Core only, for `ResourceKind` and `PodContainers`: no GPUI and nothing of desktop.
 [dependencies]
 freshkube-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lib]
 doctest = false

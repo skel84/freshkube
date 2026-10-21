@@ -18,7 +18,7 @@ pub enum Tab {
     Ports,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum NodeTab {
     #[default]
     Overview,
@@ -47,5 +47,40 @@ impl NodeTab {
             Self::Events => "Events",
             Self::Yaml => "YAML",
         }
+    }
+}
+
+impl NodeTab {
+    /// The word a link carries for this tab.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::Pods => "pods",
+            Self::Services => "services",
+            Self::Processes => "processes",
+            Self::Storage => "storage",
+            Self::Network => "network",
+            Self::Diagnostics => "diagnostics",
+            Self::Logs => "logs",
+            Self::Events => "events",
+            Self::Yaml => "yaml",
+        }
+    }
+
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        [
+            Self::Overview,
+            Self::Pods,
+            Self::Services,
+            Self::Processes,
+            Self::Storage,
+            Self::Network,
+            Self::Diagnostics,
+            Self::Logs,
+            Self::Events,
+            Self::Yaml,
+        ]
+        .into_iter()
+        .find(|tab| tab.slug() == slug)
     }
 }

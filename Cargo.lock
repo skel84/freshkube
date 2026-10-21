@@ -2600,6 +2600,8 @@ name = "freshkube-nav"
 version = "0.17.1"
 dependencies = [
  "freshkube-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
