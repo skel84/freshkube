@@ -32,7 +32,7 @@ use super::{
 };
 use crate::actions;
 use crate::backend::spawn_job;
-use crate::mutation::{self, Confirmation, Operations};
+use crate::mutation::{self, Confirmation, Operations, Refused};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use freshkube_ui::table;
@@ -290,6 +290,7 @@ pub(crate) struct DiagnosticsScreen {
     table: table::TableState,
     /// The rows, tallies and meta parts, derived from the loader's data.
     derived: Option<Derived>,
+    _protection: Subscription,
 }
 
 impl EventEmitter<ScreenEvent> for DiagnosticsScreen {}
@@ -315,6 +316,8 @@ impl DiagnosticsScreen {
             loading: TableLoading::new(PREFIX, cx),
             table: table::TableState::new("diagnostic"),
             derived: None,
+            // Apply fix turns off at once when the cluster becomes read-only.
+            _protection: cx.observe_global::<mutation::GlobalProtection>(|_, cx| cx.notify()),
         }
     }
 }
@@ -470,6 +473,12 @@ impl DiagnosticsScreen {
 
     /// Asks before applying the selected check's fix.
     fn confirm_fix(&mut self, check_key: String, window: &mut Window, cx: &mut Context<Self>) {
+        // A read-only cluster opens no confirmation; `start_fix` still
+        // refuses if one was already open when the level changed.
+        if let Some(why) = mutation::refusal(cx) {
+            self.set_notice(&check_key, false, format!("{why} Nothing was sent."), cx);
+            return;
+        }
         let (Some(fingerprint), Some(source)) =
             (self.fix_fingerprint(&check_key), self.source.clone())
         else {
@@ -582,7 +591,7 @@ impl DiagnosticsScreen {
         let label = format!("Applying fix: {}", fix.description);
         let ticket = match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
             Ok(ticket) => ticket,
-            Err(running) => {
+            Err(Refused::Busy(running)) => {
                 self.set_notice(
                     &check_key,
                     false,
@@ -592,6 +601,10 @@ impl DiagnosticsScreen {
                     ),
                     cx,
                 );
+                return;
+            }
+            Err(Refused::ReadOnly(why)) => {
+                self.set_notice(&check_key, false, format!("{why} Nothing was started."), cx);
                 return;
             }
         };

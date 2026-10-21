@@ -1069,3 +1069,53 @@ fn a_run_without_the_previews_access_submits_nothing() {
         assert_eq!(api.counts(), (0, 0));
     }
 }
+
+/// A read-only cluster (#852) refuses before anything is asked or taken:
+/// Review is off with the reason, pressing it opens nothing, and a
+/// confirmation already open when the level changed starts nothing.
+#[gpui_kit::test]
+fn a_read_only_cluster_refuses_review_and_starts_nothing(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let level =
+        |cx: &mut TestAppContext, level| cx.update(|cx| crate::mutation::set_protection(level, cx));
+    // A confirmation opened while the cluster was guarded...
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find("confirm-dialog").visible());
+    })
+    .unwrap();
+    // ...when the level changes underneath it: confirming starts nothing.
+    level(cx, freshkube_core::write::Protection::ReadOnly);
+    confirm(cx, handle);
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        let screen = screen.read(cx);
+        assert!(screen.run.is_none());
+        let notice = screen.notice.clone().unwrap_or_default();
+        assert!(notice.contains("This cluster is read-only."), "{notice}");
+        assert!(notice.contains("Nothing was started."), "{notice}");
+    });
+    // Review is off with the reason, and pressing it does nothing.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let blocked = window.find("ops-blocked").label().unwrap().to_owned();
+        assert!(blocked.contains("This cluster is read-only."), "{blocked}");
+        window.click("ops-review", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("confirm-dialog").is_none());
+    })
+    .unwrap();
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    // Guarded again, the same press opens the confirmation.
+    level(cx, freshkube_core::write::Protection::Guarded);
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find("confirm-dialog").visible());
+    })
+    .unwrap();
+}

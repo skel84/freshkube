@@ -15,6 +15,7 @@ clusters:
     context: cluster-a            # the kubeconfig context
     talosconfig: /home/acme/.talos/config   # optional: Talos pages for this entry
     talos_context: cluster-a                # optional, needs talosconfig
+    protection: protected         # optional (#852): read-only, protected, guarded or open; none is guarded
     coroot:                       # optional (#269): this entry in Coroot
       cluster: cluster-a          # the Coroot cluster that is this entry
     # No metrics: key, so in the central store its series are cluster="cluster-a".

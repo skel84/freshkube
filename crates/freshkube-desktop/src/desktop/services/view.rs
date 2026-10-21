@@ -406,7 +406,9 @@ impl NodeServices {
                     )
             });
         let busy = Operations::current(cx);
-        let restart_blocked = if !node.responding {
+        let restart_blocked = if let Some(why) = crate::mutation::refusal(cx) {
+            Some(why.to_owned())
+        } else if !node.responding {
             Some("The node isn't answering the Talos API".to_owned())
         } else if self.reading.loading || self.reading.stale {
             Some("Wait for a fresh service list before restarting".to_owned())
@@ -547,6 +549,15 @@ impl NodeServices {
                             }),
                     ),
             )
+            .children(crate::mutation::refusal(cx).map(|why| {
+                div()
+                    .id("service-restart-blocked")
+                    .test_support()
+                    .aria_label(why)
+                    .text_size(dp(12.))
+                    .text_color(crate::palette::palette(cx).muted)
+                    .child(why)
+            }))
             .children(restart_notice.map(|notice| {
                 let (tone, lead) = if notice.ok {
                     (Tone::Good, "Restart")

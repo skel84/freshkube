@@ -118,6 +118,9 @@ pub struct ShellView {
     known: bool,
     /// The pod is gone: no shell starts in it again.
     gone: bool,
+    /// The cluster is read-only (#852): no session starts, and one that
+    /// runs is left for its person to end.
+    read_only: bool,
     pub(super) container: Option<String>,
     pub state: ShellState,
     pub(super) status: Status,
@@ -163,6 +166,7 @@ impl ShellView {
             containers: PodContainers::default(),
             known: false,
             gone: false,
+            read_only: false,
             container: None,
             state: ShellState::Idle,
             status: Status::default(),
@@ -310,9 +314,19 @@ impl ShellView {
             .is_some_and(|container| matches!(container.state, ContainerState::Running(_)))
     }
 
+    /// Whether the cluster refuses writes, as the app's protection level
+    /// says. It disables Start, whatever else is ready.
+    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
+        if self.read_only != read_only {
+            self.read_only = read_only;
+            cx.notify();
+        }
+    }
+
     /// Whether Start can start a session now.
     pub fn can_start(&self) -> bool {
         !self.gone
+            && !self.read_only
             && self.pod.as_ref().is_some_and(|pod| !pod.uid.is_empty())
             && self.access.is_some()
             && !self.running()
