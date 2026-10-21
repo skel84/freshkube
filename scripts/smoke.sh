@@ -42,7 +42,7 @@ PIDFILE=$OUT/pid
 mkdir -p "$OUT" "$(dirname "$HELPER")"
 . "$ROOT/scripts/smoke/lock.sh"
 
-PAGES=(overview nodes health resources etcd system-services security lifecycle operations monitoring
+PAGES=(overview nodes health resources databases etcd system-services security lifecycle operations monitoring
   observability-applications observability-service-map observability-incidents
   observability-traces observability-profiling observability-deployments)
 
