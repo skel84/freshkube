@@ -3,6 +3,7 @@
 //! `derive` turns an answer into display data once; `panel` draws it;
 //! `page` is the rail area's page that reads and lays out a dashboard;
 //! `dispatch` runs the page and history work for their completion loaders.
+pub mod alerts;
 pub mod colors;
 pub(crate) mod derive;
 pub mod history;

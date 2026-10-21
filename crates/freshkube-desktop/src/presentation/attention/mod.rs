@@ -13,6 +13,9 @@ use freshkube_core::{
     kubernetes_summary::KubernetesSummary,
     workloads::{HealthState, PodIssue, WorkloadKind},
 };
+use freshkube_core::monitoring::alerts::{
+    Alert, Severity as AlertSeverity, State as AlertState, Unknown as AlertUnknown,
+};
 use gpui_kit::SharedString;
 use std::collections::BTreeMap;
 
@@ -21,6 +24,8 @@ pub(crate) enum Destination {
     Node(NodeKey, NodeTab),
     Object(&'static str, ObjectRef, Tab),
     Page(Page),
+    /// Monitoring's Alerts page.
+    Alerts,
     Service {
         node: String,
         service: String,
@@ -175,11 +180,26 @@ fn name_cluster(rows: &mut [AttentionRow], connection: Option<&str>) {
 }
 
 /// `connection` is the open cluster's `kube_identity`, when it has one.
+#[cfg(test)]
 pub(crate) fn build(
     nodes: &[NodeRow],
     kubernetes: Option<&KubernetesSummary>,
     talos: Option<&ClusterOverview>,
     connection: Option<&str>,
+    now: DateTime<Utc>,
+) -> Attention {
+    build_with_alerts(nodes, kubernetes, talos, connection, None, now)
+}
+
+/// [`build`], with what the session alert read knows: its critical and
+/// warning alerts, and an Unknown row when it couldn't read them. An alert
+/// source that wasn't read is never absent from here as if it were quiet.
+pub(crate) fn build_with_alerts(
+    nodes: &[NodeRow],
+    kubernetes: Option<&KubernetesSummary>,
+    talos: Option<&ClusterOverview>,
+    connection: Option<&str>,
+    alerts: Option<&AlertState>,
     now: DateTime<Utc>,
 ) -> Attention {
     let mut rows = Vec::new();
@@ -213,6 +233,9 @@ pub(crate) fn build(
     if let Some(cluster) = talos {
         append_etcd(cluster, &mut rows);
     }
+    if let Some(state) = alerts {
+        append_alerts(state, &mut rows);
+    }
     name_cluster(&mut rows, connection);
     let mut result = finish(rows);
     result.complete = kubernetes.is_some_and(|summary| {
@@ -223,6 +246,84 @@ pub(crate) fn build(
             && summary.workloads.unavailable().is_empty()
     });
     result
+}
+
+/// The object an alert is about, for its row's name: the pod, workload,
+/// node or namespace its labels name, with the namespace in front.
+fn alert_subject(alert: &Alert) -> String {
+    let namespace = alert.label("namespace");
+    for key in ["pod", "deployment", "statefulset", "daemonset", "job_name", "service"] {
+        if let Some(name) = alert.label(key) {
+            return match namespace {
+                Some(namespace) => format!("{namespace}/{name}"),
+                None => name.to_owned(),
+            };
+        }
+    }
+    alert
+        .label("node")
+        .or(namespace)
+        .map(str::to_owned)
+        .unwrap_or_default()
+}
+
+/// Critical and warning alerts, and what couldn't be read. Last-known
+/// evidence of a stale source is Unknown, never a current problem.
+fn append_alerts(state: &AlertState, rows: &mut Vec<AttentionRow>) {
+    let stale = matches!(state, AlertState::Stale { .. });
+    for alert in state.urgent() {
+        let subject = alert_subject(alert);
+        let mut reason = alert
+            .summary
+            .clone()
+            .unwrap_or_else(|| format!("{} · {}", alert.state.label(), alert.severity.label()));
+        let mut tone = if alert.severity == AlertSeverity::Critical {
+            Tone::Crit
+        } else {
+            Tone::Warn
+        };
+        if stale {
+            reason = format!("Last known · {reason}");
+            tone = Tone::Unknown;
+        }
+        rows.push(AttentionRow {
+            id: format!("attention-alert-{}-{}", alert.source.label(), alert.fingerprint).into(),
+            kind: "Alert",
+            name: if subject.is_empty() {
+                alert.name.clone().into()
+            } else {
+                format!("{} · {subject}", alert.name).into()
+            },
+            reason: reason.into(),
+            tone,
+            group: AttentionGroup::Warning,
+            open: Destination::Alerts,
+            logs: None,
+            open_node: None,
+            node: alert.label("node").map(str::to_owned),
+            since: alert.since,
+        });
+    }
+    if let AlertState::Unknown(
+        unknown @ (AlertUnknown::Refused(_)
+        | AlertUnknown::Unread(_)
+        | AlertUnknown::NoClusterLabel(_)),
+    ) = state
+    {
+        rows.push(AttentionRow {
+            id: "attention-alerts-unknown".into(),
+            kind: "Alerts",
+            name: "Alerts".into(),
+            reason: unknown.words().into(),
+            tone: Tone::Unknown,
+            group: AttentionGroup::Unknown,
+            open: Destination::Alerts,
+            logs: None,
+            open_node: None,
+            node: None,
+            since: None,
+        });
+    }
 }
 
 fn append_node_problem(row: &NodeRow, now: DateTime<Utc>, rows: &mut Vec<AttentionRow>) {

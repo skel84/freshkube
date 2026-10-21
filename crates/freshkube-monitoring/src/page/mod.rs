@@ -29,10 +29,14 @@ use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 use freshkube_core::monitoring::scope::Resolved;
 use freshkube_core::monitoring::{Endpoint, QueryError};
 use freshkube_reads::Loader;
-use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task, WeakEntity};
+use gpui_kit::{
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, ScrollHandle, Subscription, Task,
+    WeakEntity,
+};
 use tokio::runtime::Handle;
 
 use super::store::{MonitoringStore, Saved};
+use crate::alerts::{AlertObject, AlertsEvent, AlertsPage, Which};
 
 use board::Board;
 pub use catalog::{Catalog, Entry, EntryId, FolderState};
@@ -104,6 +108,20 @@ pub enum MonitoringEvent {
     History,
     /// The breadcrumb's Dashboards: show the column that lists them.
     Dashboards,
+    /// An alert's label names an object, for Resources to open.
+    OpenObject(AlertObject),
+    /// Which of the column's pages shows changed.
+    Section,
+    /// How the open entry's metrics, and so its alerts, are found changed:
+    /// the session's alert read follows.
+    Scope,
+}
+
+/// What the page shows: a dashboard, or one of the alert pages (#884).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    Dashboards,
+    Alerts(Which),
 }
 
 /// The part of the dashboard in view, in dp from the grid's top: `top` is
@@ -182,7 +200,15 @@ pub struct MonitoringPage {
     runtime: Handle,
     store: Option<MonitoringStore>,
     saved: Saved,
+    /// Whether the dashboards show: the page shows and no alert page
+    /// takes its place. Every dashboard read follows it.
     visible: bool,
+    /// Whether the page shows at all, as the shell says.
+    shown: bool,
+    section: Section,
+    /// The Alerts, Rules and Silences pages, in [`Which::ALL`]'s order.
+    alerts: [Entity<AlertsPage>; 3],
+    _alerts: Vec<Subscription>,
     source: Option<ClusterSource>,
     connection: Connection,
     connection_reads: ConnectionReads,
@@ -236,11 +262,29 @@ impl MonitoringPage {
     ) -> Self {
         let saved = preferences.map(super::store::load).unwrap_or_default();
         let store = preferences.map(|path| MonitoringStore::new(path, saved.clone()));
+        let alerts = Which::ALL.map(|which| {
+            let runtime = runtime.clone();
+            cx.new(|cx| AlertsPage::new(which, runtime, cx))
+        });
+        let alert_subscriptions = alerts
+            .iter()
+            .map(|page| {
+                cx.subscribe(page, |_, _, event: &AlertsEvent, cx| match event {
+                    AlertsEvent::Open(object) => {
+                        cx.emit(MonitoringEvent::OpenObject(object.clone()))
+                    }
+                })
+            })
+            .collect();
         let mut page = Self {
             runtime,
             store,
             saved,
             visible: false,
+            shown: false,
+            section: Section::Dashboards,
+            alerts,
+            _alerts: alert_subscriptions,
             source: None,
             connection: Connection::None,
             connection_reads: ConnectionReads::default(),
@@ -283,10 +327,96 @@ impl MonitoringPage {
         &self.focus
     }
 
-    /// Shows or hides the page. Showing connects and asks what the viewport
-    /// needs; hiding drops the page's reads and refresh timer, keeping a
-    /// rebuild requested by a history that still shows.
+    /// Shows or hides the page. What shows is the chosen dashboard or alert
+    /// page: showing connects and asks what the viewport needs, hiding
+    /// drops the page's reads and refresh timer, keeping a rebuild
+    /// requested by a history that still shows.
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.shown = visible;
+        self.sync_visible(cx);
+    }
+
+    /// Tells the dashboards and the alert pages whether they show: only
+    /// the one the section names, and only while the page does.
+    fn sync_visible(&mut self, cx: &mut Context<Self>) {
+        let dashboards = self.shown && self.section == Section::Dashboards;
+        for (which, page) in Which::ALL.into_iter().zip(&self.alerts) {
+            let shows = self.shown && self.section == Section::Alerts(which);
+            page.update(cx, |page, cx| page.set_visible(shows, cx));
+        }
+        self.set_dashboards_visible(dashboards, cx);
+    }
+
+    /// The Alerts, Rules or Silences page shows in place of the dashboard.
+    pub fn show_alerts(&mut self, which: Which, cx: &mut Context<Self>) {
+        if self.section == Section::Alerts(which) {
+            return;
+        }
+        self.section = Section::Alerts(which);
+        self.sync_visible(cx);
+        cx.emit(MonitoringEvent::Section);
+        cx.notify();
+    }
+
+    /// The dashboard shows in place of an alert page.
+    pub(super) fn show_dashboards(&mut self, cx: &mut Context<Self>) {
+        if self.section == Section::Dashboards {
+            return;
+        }
+        self.section = Section::Dashboards;
+        self.sync_visible(cx);
+        cx.emit(MonitoringEvent::Section);
+        cx.notify();
+    }
+
+    /// What example data's alert pages show (`FRESHKUBE_ALERTS`).
+    pub fn set_alerts_shape(
+        &mut self,
+        shape: freshkube_core::monitoring::alerts::example::Shape,
+        cx: &mut Context<Self>,
+    ) {
+        for page in &self.alerts {
+            page.update(cx, |page, cx| page.set_shape(shape, cx));
+        }
+    }
+
+    /// The status bar's line while an alert page shows.
+    pub fn alerts_status(&self, cx: &App) -> Option<freshkube_ui::status::Segment> {
+        let Section::Alerts(which) = self.section else {
+            return None;
+        };
+        Some(self.alerts_page(which).read(cx).status.clone())
+    }
+
+    /// The motion over an alert page's loading rows.
+    pub fn alerts_loading_motion(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        let Section::Alerts(which) = self.section else {
+            return None;
+        };
+        self.alerts_page(which).read(cx).loading_motion()
+    }
+
+    pub fn section(&self) -> Section {
+        self.section
+    }
+
+    /// The page for `which`.
+    pub fn alerts_page(&self, which: Which) -> &Entity<AlertsPage> {
+        &self.alerts[which as usize]
+    }
+
+    /// The keyboard handle of what shows: the alert page, or the dashboard.
+    pub fn shown_focus(&self, cx: &App) -> FocusHandle {
+        match self.section {
+            Section::Alerts(which) => self.alerts_page(which).read(cx).focus_handle().clone(),
+            Section::Dashboards => self.focus.clone(),
+        }
+    }
+
+    fn set_dashboards_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if self.visible == visible {
             return;
         }
@@ -315,6 +445,10 @@ impl MonitoringPage {
     pub fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
         let id = |source: &Option<ClusterSource>| source.as_ref().map(|source| source.id.clone());
         let same = id(&self.source) == id(&source);
+        for page in &self.alerts {
+            let source = source.clone();
+            page.update(cx, |page, cx| page.set_source(source, cx));
+        }
         self.source = source;
         if same {
             return;
@@ -342,10 +476,16 @@ impl MonitoringPage {
     /// asks again, so an answer for the previous scope never draws.
     pub fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
         let same = self.scope.resolved == scope.resolved;
+        let alerts = freshkube_core::monitoring::alerts::Scope::of(&scope.resolved);
+        for page in &self.alerts {
+            let (alerts, host) = (alerts.clone(), scope.host.clone());
+            page.update(cx, |page, cx| page.set_scope(alerts, host, cx));
+        }
         self.scope = scope;
         if same {
             return;
         }
+        cx.emit(MonitoringEvent::Scope);
         // History keys its source by this count, so it reads again too.
         self.clients += 1;
         self.forget_answers(cx);
@@ -371,6 +511,11 @@ impl MonitoringPage {
     /// The shell's Refresh: look again for Prometheus when it wasn't found,
     /// else read the variables and every panel again.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        if let Section::Alerts(which) = self.section {
+            self.alerts_page(which)
+                .update(cx, |page, cx| page.refresh(cx));
+            return;
+        }
         if !self.visible {
             return;
         }

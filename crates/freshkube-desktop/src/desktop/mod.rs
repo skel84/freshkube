@@ -1,4 +1,5 @@
 mod access;
+mod alerts;
 mod app_menu;
 #[cfg(test)]
 mod applications_column_tests;
@@ -321,6 +322,8 @@ pub(crate) struct Pilot {
     // The snapshots keep the display/freshness state and its existing request
     // tokens; these completion owners retain the jobs and their deliveries.
     overview_read: Loader<(), AppliedConfig>,
+    /// What example data's alerts look like (`FRESHKUBE_ALERTS`).
+    alerts_shape: freshkube_core::monitoring::alerts::example::Shape,
     _tick: Task<()>,
 }
 
@@ -475,6 +478,7 @@ impl Pilot {
         cx.bind_keys(settings::destinations::key_bindings());
         cx.bind_keys(settings::sources::key_bindings());
         cx.bind_keys(crate::applications::key_bindings());
+        cx.bind_keys(crate::monitoring::alerts::key_bindings());
         cx.bind_keys([
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
@@ -782,6 +786,7 @@ impl Pilot {
             window: window.window_handle(),
             _subscriptions: subscriptions,
             overview_read: Loader::default(),
+            alerts_shape: options.debug.alerts,
             _tick: tick,
         }
     }
