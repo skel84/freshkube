@@ -107,6 +107,16 @@ fn click(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &str) {
     cx.run_until_parked();
 }
 
+/// Closes the dialog as Escape does.
+fn cancel(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
 fn clipboard(cx: &mut TestAppContext) -> String {
     cx.read_from_clipboard()
         .and_then(|item| item.text())
@@ -209,7 +219,7 @@ fn cancel_leaves_everything_where_it_was(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let before = (active(cx, &view), page(cx, &view));
     open_text(cx, handle, &view, &made_in("dev-fra"));
-    click(cx, handle, "link-choice-cancel");
+    cancel(cx, handle);
     assert!(!asking(cx, &view));
     assert_eq!((active(cx, &view), page(cx, &view)), before);
 }
@@ -242,7 +252,7 @@ fn several_exact_matches_ask_unless_one_of_them_is_open(cx: &mut TestAppContext)
         .map(|row| row.0.as_str())
         .collect();
     assert_eq!(exact, ["dev-fra", "stage-fra"]);
-    click(cx, handle, "link-choice-cancel");
+    cancel(cx, handle);
     // With one of them open, that one is used, without asking, and nothing
     // switches.
     switch(cx, handle, &view, "stage-fra");

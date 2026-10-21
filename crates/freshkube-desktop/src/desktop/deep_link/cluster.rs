@@ -11,7 +11,6 @@ use super::picker::{LinkChoice, Why, rows};
 use super::*;
 use crate::backend::{self, OwnedJob};
 use crate::debug_options::LinkShape;
-use crate::ui::{self, dp};
 use freshkube_core::fingerprint::{
     Fingerprint, StrongRead, ca_of_context, read_strong, strong_from_override, strong_from_uid,
 };
@@ -20,7 +19,7 @@ use freshkube_core::resources::{
 };
 use freshkube_nav::{ClusterRef, FingerprintToken};
 use freshkube_prefs::{Document, Layout};
-use gpui_kit::component::{Sizable, WindowExt as _, button::Button, h_flex};
+use gpui_kit::component::WindowExt as _;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -631,7 +630,6 @@ impl Pilot {
         let on_close = pilot.clone();
         window.open_dialog(cx, move |dialog, window, _| {
             let close = on_close.clone();
-            let cancel = on_close.clone();
             let dialog = dialog.on_cancel(move |_, _, cx| {
                 _ = close.update(cx, |pilot, _| pilot.deep_link.identities.choosing = None);
                 true
@@ -641,18 +639,8 @@ impl Pilot {
                 600.,
                 why.title(),
                 entity.clone(),
-                h_flex().justify_end().child(
-                    Button::new("link-choice-cancel")
-                        .small()
-                        .h(dp(ui::CONTROL_HEIGHT))
-                        .outline()
-                        .label("Cancel")
-                        .on_click(move |_, window, cx| {
-                            _ = cancel
-                                .update(cx, |pilot, _| pilot.deep_link.identities.choosing = None);
-                            window.close_dialog(cx)
-                        }),
-                ),
+                // Closed by its own X or Escape; no button beside the rows.
+                div(),
                 window,
             )
         });
