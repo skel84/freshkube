@@ -115,6 +115,8 @@ pub struct PullSummary {
     pub repo: String,
     pub number: u64,
     pub title: Option<String>,
+    /// The head commit, which the pull request's checks are those of.
+    pub head: Option<String>,
     pub state: PullState,
     pub author: Option<Person>,
     pub merged_at: Option<DateTime<Utc>>,
@@ -126,7 +128,7 @@ pub struct PullSummary {
     pub stale: Option<Stale>,
 }
 
-fn person(value: &Value) -> Option<Person> {
+pub(super) fn person(value: &Value) -> Option<Person> {
     Some(Person {
         login: text(value, "/login")?,
         avatar: text(value, "/avatar_url").and_then(|raw| AvatarUrl::parse(&raw)),
@@ -134,7 +136,7 @@ fn person(value: &Value) -> Option<Person> {
 }
 
 /// A page on github.com, the only host a pull request's page may be on.
-fn page(raw: &str) -> Option<Address> {
+pub(super) fn page(raw: &str) -> Option<Address> {
     let address = Address::parse(raw).ok()?;
     (address.host() == "github.com").then_some(address)
 }
@@ -175,6 +177,7 @@ pub(crate) fn summary(repo: &str, value: &Value) -> Option<PullSummary> {
         repo: repo.to_owned(),
         number: value.get("number")?.as_u64()?,
         title: text(value, "/title"),
+        head: text(value, "/head/sha"),
         state,
         author: value.get("user").and_then(person),
         merged_at,

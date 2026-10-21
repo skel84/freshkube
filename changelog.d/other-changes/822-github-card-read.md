@@ -1,0 +1,1 @@
+- **GitHub pull request card read:** the change page reads a pull request's reviews and checks from GitHub while it shows, and shows them as one plain line until the card is designed; avatars are cached on disk. Hiding the page drops the read.

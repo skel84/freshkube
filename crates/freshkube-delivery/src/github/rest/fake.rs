@@ -38,7 +38,7 @@ impl Reply {
 }
 
 /// One request as the fake read it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Request {
     pub path: String,
     head: String,

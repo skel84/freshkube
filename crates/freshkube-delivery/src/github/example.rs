@@ -4,7 +4,10 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use super::rest::{AvatarUrl, Person, PullState, PullSummary, Reviewer, Stale};
+use super::rest::{
+    AvatarUrl, CheckRun, Checks, ChecksState, Error, Identity, Person, PullDetail, PullState,
+    PullSummary, Review, ReviewState, Reviewer, RunState, Stale,
+};
 use crate::address::Address;
 
 pub const REPO: &str = "acme/shop";
@@ -60,6 +63,7 @@ pub fn pull(number: u64) -> Option<PullSummary> {
         repo: REPO.into(),
         number,
         title: Some(title.into()),
+        head: Some(format!("{number:0>40}")),
         state,
         author: Some(person(author, if author == "ken" { 1001 } else { 1002 })),
         merged_at: (state == PullState::Merged).then(|| at(9, 30)),
@@ -76,6 +80,84 @@ pub fn pull(number: u64) -> Option<PullSummary> {
         },
         page: Address::parse(&format!("https://github.com/{REPO}/pull/{number}")).ok(),
         stale: None,
+    })
+}
+
+/// Whose answers the example's are: an anonymous client, no setup.
+pub fn identity() -> Identity {
+    Identity {
+        api: url::Url::parse("https://api.github.com/").expect("an address"),
+        account: None,
+        setup_revision: 0,
+    }
+}
+
+fn run(name: &str, state: RunState) -> CheckRun {
+    CheckRun {
+        name: name.into(),
+        state,
+        started_at: Some(at(9, 40)),
+        completed_at: (state == RunState::Passed).then(|| at(9, 44)),
+        page: None,
+    }
+}
+
+/// The card's read of the example's pull request `summary`, as GitHub
+/// leaves it: whole, kept and stale, or refused with the token's words.
+pub fn detail(summary: &PullSummary, trouble: Option<Trouble>) -> Result<PullDetail, String> {
+    if trouble == Some(Trouble::Refused) {
+        return Err(Error::Unauthorized.words(&summary.repo));
+    }
+    let open = summary.state == PullState::Open;
+    let mut runs = vec![
+        run("build", RunState::Passed),
+        run("lint", RunState::Passed),
+    ];
+    runs.push(if open {
+        run("e2e", RunState::Running)
+    } else {
+        run("e2e", RunState::Passed)
+    });
+    let reviews = if open {
+        Vec::new()
+    } else {
+        vec![
+            Review {
+                who: person("mira", 1002),
+                state: ReviewState::Approved,
+                submitted_at: Some(at(9, 20)),
+                commit: summary.head.clone(),
+            },
+            Review {
+                who: person("zoe", 1003),
+                state: ReviewState::Commented,
+                submitted_at: Some(at(9, 10)),
+                commit: summary.head.clone(),
+            },
+        ]
+    };
+    let stale = trouble
+        .and_then(|trouble| trouble.leaves(Some(summary.clone())))
+        .and_then(|pull| pull.stale);
+    Ok(PullDetail {
+        summary: PullSummary {
+            stale: stale.clone(),
+            ..summary.clone()
+        },
+        reviews,
+        reviews_capped: false,
+        checks: Checks {
+            state: if open {
+                ChecksState::Pending
+            } else {
+                ChecksState::Passing
+            },
+            runs,
+            statuses: Vec::new(),
+            capped: None,
+        },
+        read_at: stale.as_ref().map_or_else(Utc::now, |stale| stale.read_at),
+        stale,
     })
 }
 
@@ -126,6 +208,32 @@ mod tests {
         assert_eq!(pull.state, PullState::Merged);
         assert!(pull.merged_by.is_some() && pull.page.is_some());
         assert!(super::pull(1).is_none());
+    }
+
+    #[test]
+    fn the_cards_example_is_whole_kept_or_refused_in_words() {
+        let summary = pull(418).unwrap();
+        let whole = detail(&summary, None).unwrap();
+        assert_eq!(whole.reviews.len(), 2);
+        assert_eq!(whole.checks.state, ChecksState::Passing);
+        assert!(whole.stale.is_none() && whole.summary.stale.is_none());
+        let kept = detail(&summary, Some(Trouble::Limited)).unwrap();
+        assert_eq!(kept.stale.as_ref().unwrap().why, Trouble::Limited.words());
+        assert_eq!(kept.summary.stale, kept.stale);
+        assert!(
+            detail(&summary, Some(Trouble::Offline))
+                .unwrap()
+                .stale
+                .is_some()
+        );
+        assert_eq!(
+            detail(&summary, Some(Trouble::Refused)).unwrap_err(),
+            "GitHub refused the token: it may have expired. It is the keys.json entry GitHub https://api.github.com/"
+        );
+        // An open pull request has no review yet and a check still going.
+        let open = detail(&pull(421).unwrap(), None).unwrap();
+        assert!(open.reviews.is_empty());
+        assert_eq!(open.checks.state, ChecksState::Pending);
     }
 
     #[test]

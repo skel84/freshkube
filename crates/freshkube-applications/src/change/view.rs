@@ -154,7 +154,14 @@ impl ChangePage {
                 .test_support()
                 .role(Role::Status)
         });
-        if refresh.is_none() && missing.is_none() {
+        let pull = self.pull.line().map(|(text, label)| {
+            div()
+                .id("change-pull")
+                .aria_label(label.clone())
+                .test_support()
+                .child(text.clone())
+        });
+        if refresh.is_none() && missing.is_none() && pull.is_none() {
             return None;
         }
         Some(
@@ -165,6 +172,7 @@ impl ChangePage {
                 .gap(dp(page::PANE_PADDING_Y))
                 .children(refresh)
                 .children(missing)
+                .children(pull)
                 .into_any_element(),
         )
     }

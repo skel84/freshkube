@@ -16,6 +16,7 @@
 //! log.
 
 mod budget;
+mod detail;
 mod error;
 #[cfg(test)]
 pub(crate) mod fake;
@@ -40,6 +41,10 @@ use budget::Budget;
 use memo::Memo;
 
 pub use budget::RateLimit;
+pub use detail::{
+    Capped, CheckRun, Checks, ChecksState, DetailKey, PullDetail, Review, ReviewState, RunState,
+    StatusContext, StatusState,
+};
 pub use error::{Cause, Error};
 pub(crate) use types::summary;
 pub use types::{AVATAR_HOST, AvatarUrl, Person, PullState, PullSummary, Reviewer, Stale};
@@ -476,6 +481,17 @@ impl Handle {
 
     pub fn rate_limit(&self) -> Option<RateLimit> {
         self.client.rate_limit()
+    }
+}
+
+#[cfg(feature = "testing")]
+impl Handle {
+    /// An anonymous client for a fake at `address`, for other crates' tests.
+    /// It can hold no token, so nothing it is pointed at can ever see one.
+    pub fn anonymous_at(address: &str) -> Self {
+        let url = Url::parse(&format!("{address}/")).expect("an address");
+        let builder = reqwest::Client::builder().no_proxy();
+        Self::new(Client::build(builder, url, None, 1).expect("a client"))
     }
 }
 
