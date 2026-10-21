@@ -17,7 +17,7 @@ use gpui_kit::{
 };
 use std::time::Duration;
 
-fn open(
+pub(super) fn open(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,
@@ -1232,7 +1232,7 @@ fn list_keeps_known_unread_applications_and_pods_with_their_reason(cx: &mut Test
             let row = window.find(id.clone());
             assert!(row.visible());
             assert!(row.label().unwrap().contains(&reason));
-            assert!(row.label().unwrap().contains("link Unknown"));
+            assert!(row.label().unwrap().contains("link Can't read"));
             window.click(id, cx);
             window.render_frame(cx);
             assert_eq!(page.read(cx).selected().map(|key| key.as_ref()), Some(key));
@@ -1241,7 +1241,7 @@ fn list_keeps_known_unread_applications_and_pods_with_their_reason(cx: &mut Test
                     .find("change-detail-link")
                     .label()
                     .unwrap()
-                    .starts_with("Unknown")
+                    .starts_with("Can't read")
             );
             assert!(page.read(cx).action_labels().is_empty());
         })

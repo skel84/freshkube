@@ -1,0 +1,1 @@
+- **Pod logs:** fix intermittent startup stalls when Kubernetes watches use HTTP/1.

@@ -10,10 +10,11 @@
 //! matched, and the page checks both before it saves.
 mod form;
 mod source;
+mod suggest;
 #[cfg(test)]
 mod tests;
 
-use super::SettingsPage;
+use super::{Origin, SettingsPage};
 use crate::ui::{self, dp};
 use freshkube_core::workspace::Key;
 use freshkube_ui::{form as fields, menu, page, table, table::TableSource as _};
@@ -21,6 +22,15 @@ use gpui_kit::component::{Disableable, Sizable, WindowExt, button::Button, v_fle
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use source::Column;
+use suggest::{AcceptSuggestion, FindDestinations, IgnoreSuggestion};
+
+/// What a key does on the list, by the kind of row selected.
+#[derive(Clone, Copy)]
+enum Act {
+    Map,
+    Edit,
+    Remove,
+}
 
 /// The list's id prefix: `settings-destinations-list`, `-title`, `-map`.
 const PREFIX: &str = "settings-destinations";
@@ -60,6 +70,8 @@ pub(crate) struct DestinationRow {
     mark_id: SharedString,
     /// The mark's words, for a row whose cluster is gone.
     mark: SharedString,
+    /// What a suggestion adds; none for a mapped row.
+    suggested: Option<suggest::Suggested>,
 }
 
 pub(crate) struct Destinations {
@@ -75,6 +87,8 @@ pub(crate) struct Destinations {
     /// The workspace's cluster ids, for the form's picker.
     entries: Vec<SharedString>,
     selected: Option<Key>,
+    /// The find for suggestions and what it left.
+    finder: suggest::Finder,
     focus: FocusHandle,
     /// The form last opened, for tests to pick its cluster.
     #[cfg(test)]
@@ -83,8 +97,12 @@ pub(crate) struct Destinations {
 }
 
 impl Destinations {
-    pub(super) fn new(page: &Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
-        let (columns, width) = source::columns(&[]);
+    pub(super) fn new(
+        page: &Entity<SettingsPage>,
+        runtime: tokio::runtime::Handle,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (columns, width) = source::columns(&[], &[]);
         Self {
             page: page.downgrade(),
             rows: Vec::new(),
@@ -96,6 +114,7 @@ impl Destinations {
             why_not: "",
             entries: Vec::new(),
             selected: None,
+            finder: suggest::Finder::new(runtime),
             focus: cx.focus_handle(),
             #[cfg(test)]
             form: None,
@@ -145,11 +164,12 @@ impl Destinations {
                         id: format!("settings-destination-{at}").into(),
                         mark_id: format!("settings-destination-{at}-mark").into(),
                         mark: format!("{} isn’t in the workspace", row.entry).into(),
+                        suggested: None,
                         key,
                     }
                 })
                 .collect();
-            (self.columns, self.width) = source::columns(&self.rows);
+            (self.columns, self.width) = source::columns(&self.rows, &self.finder.rows);
             if self
                 .selected
                 .as_ref()
@@ -158,6 +178,7 @@ impl Destinations {
                 self.selected = None;
             }
         }
+        self.follow_suggestions(changed, cx);
         if changed || (editable, why_not) != (self.editable, self.why_not) {
             (self.editable, self.why_not) = (editable, why_not);
             cx.notify();
@@ -193,8 +214,11 @@ impl Destinations {
         self.focus.clone()
     }
 
+    /// The selected mapping, with its place in the file; none for a
+    /// suggestion.
     fn selected_row(&self) -> Option<(usize, &DestinationRow)> {
-        let at = self.line_of(self.selected.as_ref()?)?;
+        let key = self.selected.as_ref()?;
+        let at = self.rows.iter().position(|row| &row.key == key)?;
         Some((at, &self.rows[at]))
     }
 
@@ -202,6 +226,23 @@ impl Destinations {
     /// cluster to map to.
     fn mappable(&self) -> bool {
         self.editable && !self.entries.is_empty()
+    }
+
+    /// A key or menu action on the list: on a suggestion, Map and Edit
+    /// accept it and Remove ignores it; on a mapping, they are the form and
+    /// the removal.
+    fn act(&mut self, action: Act, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected_suggestion().is_some() {
+            return match action {
+                Act::Map | Act::Edit => self.accept_selected(cx),
+                Act::Remove => self.ignore_selected(cx),
+            };
+        }
+        match action {
+            Act::Map => self.open_form(false, window, cx),
+            Act::Edit => self.open_form(true, window, cx),
+            Act::Remove => self.ask_remove_selected(window, cx),
+        }
     }
 
     fn open_form(&mut self, editing: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -331,10 +372,18 @@ impl Destinations {
             |this, window, cx| this.ask_remove_selected(window, cx),
             cx,
         );
+        let [
+            (find, find_fold),
+            (accept, accept_fold),
+            (ignore, ignore_fold),
+        ] = self.render_suggest_actions(cx);
         page::PageHeader::new(PREFIX, "Argo CD destinations")
             .foldable(map, map_fold)
             .foldable(edit, edit_fold)
             .foldable(remove, remove_fold)
+            .foldable(find, find_fold)
+            .foldable(accept, accept_fold)
+            .foldable(ignore, ignore_fold)
             .render(window, cx)
     }
 
@@ -399,6 +448,12 @@ impl Destinations {
 impl Render for Destinations {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let short = page::is_short(window);
+        if self.finder.shows_group() {
+            self.width = source::fit_columns(
+                &mut self.columns,
+                (crate::screens::page_width(window) - 2.).max(0.),
+            );
+        }
         let header = self.render_header(window, cx);
         let banners = self
             .page
@@ -411,6 +466,7 @@ impl Render for Destinations {
             .min_h_0()
             .child(page::toolbar(cx).child(header))
             .children(banners)
+            .children(self.render_notes(cx))
             .child(
                 div()
                     .key_context(CONTEXT)
@@ -423,14 +479,21 @@ impl Render for Destinations {
                         cx.listener(|this, _: &ClearDestination, _, cx| this.clear_selection(cx)),
                     )
                     .on_action(cx.listener(|this, _: &MapDestination, window, cx| {
-                        this.open_form(false, window, cx)
+                        this.act(Act::Map, window, cx)
                     }))
                     .on_action(cx.listener(|this, _: &EditDestination, window, cx| {
-                        this.open_form(true, window, cx)
+                        this.act(Act::Edit, window, cx)
                     }))
                     .on_action(cx.listener(|this, _: &RemoveDestination, window, cx| {
-                        this.ask_remove_selected(window, cx)
+                        this.act(Act::Remove, window, cx)
                     }))
+                    .on_action(cx.listener(|this, _: &FindDestinations, _, cx| this.find(cx)))
+                    .on_action(
+                        cx.listener(|this, _: &AcceptSuggestion, _, cx| this.accept_selected(cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &IgnoreSuggestion, _, cx| this.ignore_selected(cx)),
+                    )
                     .flex()
                     .flex_col()
                     .flex_1()
@@ -442,7 +505,8 @@ impl Render for Destinations {
 }
 
 /// The list's keys, as the clusters' are: A maps, Enter or E edits,
-/// Backspace removes.
+/// Backspace removes, F finds suggestions. On a suggestion, A and Enter
+/// accept it and Backspace ignores it.
 pub(in crate::desktop) fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("down", NextDestination, Some(CONTEXT)),
@@ -452,5 +516,6 @@ pub(in crate::desktop) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("enter", EditDestination, Some(CONTEXT)),
         KeyBinding::new("e", EditDestination, Some(CONTEXT)),
         KeyBinding::new("backspace", RemoveDestination, Some(CONTEXT)),
+        KeyBinding::new("f", FindDestinations, Some(CONTEXT)),
     ]
 }
