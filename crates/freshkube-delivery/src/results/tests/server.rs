@@ -11,7 +11,7 @@ pub(super) const CERT: &[u8] = include_bytes!("../../../testdata/results/loopbac
 pub(super) const SERVICE_CERT: &[u8] = include_bytes!("../../../testdata/results/service-cert.pem");
 const KEY: &[u8] = include_bytes!("../../../testdata/results/loopback-key.pem");
 
-pub(super) struct Reply {
+pub(crate) struct Reply {
     pub status: u16,
     pub body: Vec<u8>,
     pub headers: String,
@@ -43,7 +43,7 @@ impl Reply {
     }
 }
 
-pub(super) struct Server {
+pub(crate) struct Server {
     pub address: String,
     pub requests: Arc<Mutex<Vec<String>>>,
     pub server_names: Arc<Mutex<Vec<String>>>,

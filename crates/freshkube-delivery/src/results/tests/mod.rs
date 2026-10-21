@@ -2,7 +2,7 @@ mod builds;
 mod digest;
 mod forward;
 mod logs;
-mod server;
+pub(crate) mod server;
 
 use std::future::Future;
 use std::sync::Arc;

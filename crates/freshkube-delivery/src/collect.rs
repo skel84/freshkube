@@ -61,9 +61,10 @@ pub struct Plan {
     pub kargo_project: String,
     /// The namespace Argo CD's Applications live in.
     pub argocd_namespace: String,
-    /// The namespace PaC runs the build in; every namespace when `None`, for
-    /// a commit. A search by digest needs it and reads nothing without.
-    pub build_namespace: Option<String>,
+    /// The resolved namespace PaC runs the build in; `Ok(None)` reads every
+    /// namespace for a commit. A digest search needs a namespace. `Err` holds
+    /// the reason only this change's build reads are refused.
+    pub build_namespace: Result<Option<String>, String>,
     /// `owner/name` of the GitHub repository, when pull requests are read.
     pub github_repo: Option<String>,
     /// `(context name, server)` of the kubeconfig contexts a destination may
@@ -216,21 +217,29 @@ pub(crate) async fn upstream_with_history<K: Reader, A: Reader, T: Reader, G: Gi
     until: tokio::time::Instant,
 ) -> Evidence {
     let builds = async {
-        let (live, search) = read_all_builds(clusters.tekton, plan).await;
+        let namespace = match &plan.build_namespace {
+            Ok(namespace) => namespace.as_deref(),
+            Err(why) => {
+                let search = (!plan.digests.is_empty()).then(|| DigestSearch {
+                    digests: plan.digests.clone(),
+                    outcome: DigestOutcome::Failed(why.clone()),
+                    archive: None,
+                });
+                return (
+                    Source::Refused(why.clone()),
+                    Err(crate::results::Error::BuildNamespace(why.clone())),
+                    search,
+                );
+            }
+        };
+        let (live, search) = read_all_builds(clusters.tekton, plan, namespace).await;
         let (live, commit_history) = if plan.sha.is_empty() {
             (live, Err(crate::results::Error::Off))
         } else {
-            crate::results::supplement(
-                live,
-                history.clone(),
-                plan.build_namespace.as_deref(),
-                &plan.sha,
-                until,
-            )
-            .await
+            crate::results::supplement(live, history.clone(), namespace, &plan.sha, until).await
         };
         // The archive is searched by digest only where a live search ran.
-        match (search, plan.build_namespace.as_deref()) {
+        match (search, namespace) {
             (Some(mut search), Some(namespace))
                 if !matches!(search.outcome, DigestOutcome::Failed(_)) =>
             {
@@ -441,12 +450,12 @@ async fn read_pull_requests<K: Reader, A: Reader, T: Reader, G: GitHub>(
         {
             evidence.pr_builds.insert(
                 pr.number,
-                read_builds(
-                    clusters.tekton,
-                    plan.build_namespace.as_deref(),
-                    &pr.head_sha,
-                )
-                .await,
+                match &plan.build_namespace {
+                    Ok(namespace) => {
+                        read_builds(clusters.tekton, namespace.as_deref(), &pr.head_sha).await
+                    }
+                    Err(why) => Source::Refused(why.clone()),
+                },
             );
         }
     }
@@ -514,15 +523,15 @@ async fn read_trust(plan: &Plan) -> Trust {
 async fn read_all_builds<T: Reader>(
     reader: &T,
     plan: &Plan,
+    namespace: Option<&str>,
 ) -> (Source<Vec<Build>>, Option<DigestSearch>) {
-    let commit = (!plan.sha.is_empty())
-        .then(|| read_builds(reader, plan.build_namespace.as_deref(), &plan.sha));
+    let commit = (!plan.sha.is_empty()).then(|| read_builds(reader, namespace, &plan.sha));
     let search = async {
         if plan.digests.is_empty() {
             return None;
         }
         let digests = plan.digests.clone();
-        Some(match plan.build_namespace.as_deref() {
+        Some(match namespace {
             None => (Vec::new(), DigestOutcome::NoNamespace, None),
             Some(namespace) => match read_builds_by_digest(reader, namespace, &digests).await {
                 Ok((builds, searched)) => {
