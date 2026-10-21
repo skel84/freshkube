@@ -1,0 +1,1 @@
+- **Development:** the same guard also refuses a link to an agent session.
