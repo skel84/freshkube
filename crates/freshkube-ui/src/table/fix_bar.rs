@@ -77,7 +77,7 @@ impl Measured {
             family: cx.theme().font_family.clone(),
             ..Default::default()
         };
-        let mut width = |text: String, dp: f32| {
+        let width = |text: String, dp: f32| {
             let size = ui::dp_px(dp, window);
             let text = SharedString::from(text);
             let run = TextRun {
