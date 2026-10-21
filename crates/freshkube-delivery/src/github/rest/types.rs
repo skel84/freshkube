@@ -108,6 +108,24 @@ pub struct Stale {
     pub why: String,
 }
 
+/// How a note joins why an answer is old to when it was read.
+const KEPT: &str = "; showing what was read at ";
+
+impl Stale {
+    /// `GitHub's rate limit is reached until 14:05 UTC; showing what was
+    /// read at 13:12 UTC`.
+    pub(crate) fn sentence(&self) -> String {
+        format!("{}{KEPT}{}", self.why, self.read_at.format("%H:%M UTC"))
+    }
+}
+
+/// The cause a note names: its words before where an old answer was read.
+/// Two notes of one cause, one for an answer kept and one for a lookup that
+/// had none, are the same cause.
+pub(crate) fn cause_of(note: &str) -> &str {
+    note.split_once(KEPT).map_or(note, |(cause, _)| cause)
+}
+
 /// A pull request, as the list column and the card's header show it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PullSummary {

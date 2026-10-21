@@ -83,7 +83,7 @@ pub(crate) fn parse_pull_request(repo: &str, value: &Value) -> Option<PullReques
 }
 
 pub use rest::{ACCOUNT, Error, Handle, NotSetUp, OPEN_DEADLINE, PullState};
-pub(crate) use rest::{PullSummary, Stale};
+pub(crate) use rest::{PullSummary, Stale, cause_of};
 
 /// `owner/name` of the GitHub repository a Freight's first commit is on:
 /// `https://github.com/owner/name`, with an optional `.git` and trailing

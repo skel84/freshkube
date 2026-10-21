@@ -1237,14 +1237,7 @@ fn github(change: &mut Change, trouble: Trouble) {
         change.origin.pull.as_ref().and_then(|p| p.stale.as_ref()),
     ) {
         (Trouble::Refused, _) => (Gap::Refused, trouble.words().to_owned()),
-        (_, Some(stale)) => (
-            Gap::Unreadable,
-            format!(
-                "{}; showing what was read at {}",
-                stale.why,
-                stale.read_at.format("%H:%M UTC")
-            ),
-        ),
+        (_, Some(stale)) => (Gap::Unreadable, stale.sentence()),
         (_, None) => (Gap::Unreadable, trouble.words().to_owned()),
     };
     change.missing.push(Missing::new(gap, words));

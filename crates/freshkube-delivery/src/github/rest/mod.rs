@@ -43,8 +43,8 @@ use memo::Memo;
 
 pub use budget::RateLimit;
 pub use error::{Cause, Error, NotSetUp};
-pub(crate) use types::summary;
 pub use types::{AVATAR_HOST, AvatarUrl, Person, PullState, PullSummary, Reviewer, Stale};
+pub(crate) use types::{cause_of, summary};
 
 /// The keys.json account of the token, normalized as Results' is.
 pub const ACCOUNT: &str = "GitHub https://api.github.com/";
