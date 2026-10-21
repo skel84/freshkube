@@ -31,6 +31,17 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 
+/// What a check of the store reads with.
+pub(super) struct Prepared {
+    pub(super) resolved: Resolved,
+    pub(super) access: ClusterAccess,
+    pub(super) token_url: Option<(String, bool)>,
+    pub(super) typed: String,
+    pub(super) identity: Option<String>,
+    pub(super) secrets: Option<Secrets>,
+    pub(super) runtime: tokio::runtime::Handle,
+}
+
 type CheckWork = Pin<Box<dyn Future<Output = Vec<Check>> + Send>>;
 type Checker = Arc<dyn Fn(Resolved, ClusterAccess, Option<String>) -> CheckWork + Send + Sync>;
 
@@ -62,13 +73,13 @@ struct Values {
 }
 
 pub(super) struct MonitoringForm {
-    pilot: WeakEntity<Pilot>,
-    page: Entity<MonitoringPage>,
-    file: Entity<SetupFile>,
+    pub(super) pilot: WeakEntity<Pilot>,
+    pub(super) page: Entity<MonitoringPage>,
+    pub(super) file: Entity<SetupFile>,
     baseline: Metrics,
     initial: Values,
     seen: Seen,
-    mode: Mode,
+    pub(super) mode: Mode,
     by_url: bool,
     entry: Entity<SelectState<Vec<SharedString>>>,
     missing_entry: Option<String>,
@@ -82,16 +93,17 @@ pub(super) struct MonitoringForm {
     token: Entity<InputState>,
     replacing_token: bool,
     forget_token: bool,
-    dirty: bool,
+    pub(super) dirty: bool,
     focus: FocusHandle,
     entry_open: Option<String>,
     entry_in_workspace: bool,
     errors: BTreeMap<Field, String>,
     error: Option<String>,
     read: Loader<(), (Metrics, Option<String>)>,
+    pub(super) labels: super::labels::Labels,
     outcome: Option<(ui::Tone, String)>,
     checker: Checker,
-    saving: Option<Task<()>>,
+    pub(super) saving: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -130,6 +142,9 @@ impl MonitoringForm {
 
     fn changed(&mut self, cx: &App) {
         self.dirty = self.values(cx) != self.initial;
+        if self.dirty {
+            self.labels.clear();
+        }
         self.errors.clear();
         self.error = None;
         self.read.reset();
@@ -433,6 +448,7 @@ impl SettingsPage {
             errors: BTreeMap::new(),
             error: None,
             read: Loader::default(),
+            labels: super::labels::Labels::new(cx),
             outcome: None,
             checker: Arc::new(|resolved, access, token| {
                 Box::pin(check_source(resolved, access, token))
@@ -751,60 +767,43 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn test_monitoring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.origin == super::Origin::Example {
-            return;
-        }
-        let Some(metrics) = self.validate_monitoring(true, None, window, cx) else {
-            return;
-        };
-        let draft = self.monitoring.as_mut().unwrap();
-        window.focus(&draft.focus, cx);
-        let Some(pilot) = draft.pilot.upgrade() else {
-            return;
-        };
+    /// What a check of the store needs: where the open entry reads it, the
+    /// access that reaches it and the token, for `setup`. `Err` is the words
+    /// for why not, without a state.
+    pub(super) fn prepare_check(
+        &self,
+        setup: &Setup,
+        typed: String,
+        cx: &App,
+    ) -> Result<Prepared, String> {
+        let draft = self
+            .monitoring
+            .as_ref()
+            .ok_or("There is no metrics draft.")?;
+        let pilot = draft.pilot.upgrade().ok_or("The window is closing.")?;
         let pilot = pilot.read(cx);
         let source = pilot.source();
-        let Some(entry) = source.entry.clone() else {
-            draft.outcome = Some((
-                ui::Tone::Unknown,
-                "Unknown · Open a workspace entry to test this setup.".into(),
-            ));
-            cx.notify();
-            return;
-        };
-        let Some(open) = draft.page.read(cx).open_access() else {
-            draft.outcome = Some((
-                ui::Tone::Unknown,
-                "Unknown · This entry has no Kubernetes connection.".into(),
-            ));
-            cx.notify();
-            return;
-        };
-        let mut setup = draft
-            .file
-            .read(cx)
-            .setup
+        let entry = source
+            .entry
             .clone()
-            .unwrap_or_else(|| Setup::new(self.workspace.clone()));
-        setup.metrics = metrics.clone();
+            .ok_or("Open a workspace entry to test this setup.")?;
+        let open = draft
+            .page
+            .read(cx)
+            .open_access()
+            .ok_or("This entry has no Kubernetes connection.")?;
         if !setup
             .workspace
             .clusters
             .iter()
             .any(|defined| defined.id == entry)
         {
-            draft.outcome = Some((
-                ui::Tone::Unknown,
-                "Unknown · The open context isn’t a workspace entry.".into(),
-            ));
-            cx.notify();
-            return;
+            return Err("The open context isn’t a workspace entry.".into());
         }
         let resolved = draft
             .page
             .read(cx)
-            .settings_resolution(scope::resolve(&setup, Some(&entry)));
+            .settings_resolution(scope::resolve(setup, Some(&entry)));
         let access = match resolved.host() {
             Some(host) if host != entry => crate::desktop::entity_pages::hosted_by(
                 &setup.workspace,
@@ -813,17 +812,8 @@ impl SettingsPage {
             )
             .map(ClusterAccess::Direct),
             _ => Some(open),
-        };
-        let Some(access) = access else {
-            draft.outcome = Some((
-                ui::Tone::Unknown,
-                "Unknown · The hosting entry has no Kubernetes connection.".into(),
-            ));
-            cx.notify();
-            return;
-        };
-        let typed = draft.token.read(cx).value().trim().to_owned();
-        let secrets = draft.page.read(cx).settings_secrets();
+        }
+        .ok_or("The hosting entry has no Kubernetes connection.")?;
         let token_url = match &resolved {
             Resolved::Central {
                 place: scope::Place::Url { url, token },
@@ -844,10 +834,66 @@ impl SettingsPage {
         } else {
             String::new()
         };
+        Ok(Prepared {
+            resolved,
+            access,
+            token_url,
+            typed,
+            identity: source.kube_identity,
+            secrets: draft.page.read(cx).settings_secrets(),
+            runtime: pilot.runtime.clone(),
+        })
+    }
+
+    fn test_monitoring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.origin == super::Origin::Example {
+            return;
+        }
+        let Some(metrics) = self.validate_monitoring(true, None, window, cx) else {
+            return;
+        };
+        let mut setup = self
+            .monitoring
+            .as_ref()
+            .unwrap()
+            .file
+            .read(cx)
+            .setup
+            .clone()
+            .unwrap_or_else(|| Setup::new(self.workspace.clone()));
+        setup.metrics = metrics.clone();
+        let typed = self
+            .monitoring
+            .as_ref()
+            .unwrap()
+            .token
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        let prepared = self.prepare_check(&setup, typed, cx);
+        let draft = self.monitoring.as_mut().unwrap();
+        window.focus(&draft.focus, cx);
+        let Prepared {
+            resolved,
+            access,
+            token_url,
+            typed,
+            identity,
+            secrets,
+            runtime,
+        } = match prepared {
+            Ok(prepared) => prepared,
+            Err(why) => {
+                draft.outcome = Some((ui::Tone::Unknown, format!("Unknown · {why}")));
+                cx.notify();
+                return;
+            }
+        };
         let checker = draft.checker.clone();
-        let request = draft.read.start((metrics, source.kube_identity));
+        let request = draft.read.start((metrics, identity));
         let (job, receiver) = spawn_job(
-            &pilot.runtime,
+            &runtime,
             Duration::from_secs(45),
             "The metrics check didn’t answer in time.".to_owned(),
             async move {
@@ -879,6 +925,7 @@ impl SettingsPage {
     }
 
     pub(super) fn sync_monitoring_visibility(&mut self, cx: &mut Context<Self>) {
+        self.sync_labels_visibility(cx);
         if (!self.visible || self.section != SettingsSection::Monitoring)
             && let Some(draft) = &mut self.monitoring
         {
@@ -911,6 +958,7 @@ impl SettingsPage {
             .flex_none();
         if let Some(draft) = &self.monitoring {
             content = content.child(self.render_metrics(draft, narrow, cx));
+            content = content.children(self.render_labels(draft, narrow, cx));
             let in_workspace = draft.entry_in_workspace;
             content = content.child(if in_workspace || self.origin == super::Origin::Example {
                 form::group("monitoring-this-context", "This context")
@@ -1271,6 +1319,7 @@ impl SettingsPage {
                     .disabled(example || draft.read.is_loading() || saving)
                     .on_click(cx.listener(|page, _, window, cx| page.test_monitoring(window, cx))),
             )
+            .children((draft.mode == Mode::Central).then(|| self.render_check_entries(cx)))
             .child(
                 h_flex()
                     .id("metrics-test-result")
@@ -1354,7 +1403,7 @@ impl SettingsPage {
     }
 }
 
-fn example_setup() -> Setup {
+pub(super) fn example_setup() -> Setup {
     setup::example().unwrap_or_else(|why| {
         tracing::warn!("Example setup not used: {why}");
         Setup::default()
@@ -1394,7 +1443,7 @@ fn stage_token(
     }))
 }
 
-async fn read_token(
+pub(super) async fn read_token(
     secrets: Option<Secrets>,
     url: Option<(String, bool)>,
     typed: String,
@@ -1472,3 +1521,7 @@ fn describe_checks(checks: &[Check]) -> (ui::Tone, String) {
 #[cfg(test)]
 #[path = "monitoring_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "labels_tests.rs"]
+mod labels_tests;

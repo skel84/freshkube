@@ -16,8 +16,10 @@ mod edit;
 #[cfg(test)]
 mod edit_tests;
 mod entry;
+mod find;
 mod form;
 mod kubeconfig_row;
+mod labels;
 mod metrics_tokens;
 mod monitoring;
 mod sections;
@@ -41,6 +43,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 pub(crate) use sections::{SettingsEvent, SettingsSection};
 use source::Column;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// The most unknown keys the page names before it says how many more.
@@ -185,6 +188,8 @@ pub(crate) struct SettingsPage {
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
     sources_status: Segment,
+    /// Suggestions the person ignored, for the session.
+    ignored: HashSet<find::Ignored>,
 }
 
 impl SettingsPage {
@@ -247,6 +252,7 @@ impl SettingsPage {
             .or(legacy_banner);
         self.sources
             .update(cx, |sources, cx| sources.set_setup_problem(problem, cx));
+        self.derive_labels(cx);
         cx.notify();
     }
 
@@ -367,6 +373,7 @@ impl SettingsPage {
             },
             status: Segment::default(),
             sources_status: Segment::default(),
+            ignored: HashSet::new(),
         }
     }
 
