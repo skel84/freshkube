@@ -488,3 +488,36 @@ async fn a_capped_answer_says_so_and_suggests_nothing(cx: &mut TestAppContext) {
     assert!(b.1.contains("not among the values read"), "{b:?}");
     assert!(!b.2);
 }
+
+#[gpui_kit::test]
+fn the_capped_example_says_not_read_and_suggests_nothing(cx: &mut TestAppContext) {
+    use crate::desktop::testing::fixture;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 1600.);
+    let page = cx.read(|cx| pilot.read(cx).settings_page.clone());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, _| page.set_example_labels_capped(true));
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Monitoring, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-check-entries", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let shown = lines(cx, &page);
+    assert!(!shown.is_empty());
+    assert!(
+        shown.iter().all(|(_, _, suggest)| !suggest),
+        "a cut answer suggests nothing: {shown:?}"
+    );
+    assert!(
+        shown
+            .iter()
+            .any(|(_, words, _)| words.contains("not among the values read")),
+        "{shown:?}"
+    );
+}

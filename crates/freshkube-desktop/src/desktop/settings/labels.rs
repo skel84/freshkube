@@ -158,6 +158,11 @@ impl SettingsPage {
     }
 
     /// Check entries: one query of the central store.
+    /// Example data answers Check entries cut at its cap.
+    pub(in crate::desktop) fn set_example_labels_capped(&mut self, capped: bool) {
+        self.example_labels_capped = capped;
+    }
+
     pub(super) fn check_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.why_not_check_entries().is_some() {
             return;
@@ -170,7 +175,7 @@ impl SettingsPage {
         }
         let identity_metrics = setup.metrics.clone();
         if self.origin == super::Origin::Example {
-            let counts = scope::example_label_counts(&setup);
+            let counts = scope::example_label_counts(&setup, self.example_labels_capped);
             let draft = self.monitoring.as_mut().unwrap();
             draft
                 .labels
@@ -397,9 +402,6 @@ impl SettingsPage {
                 .gap(dp(6.))
                 .items_start()
                 .cursor_pointer()
-                .when(chosen, |this| {
-                    this.bg(crate::palette::palette(cx).surface_2)
-                })
                 .children(
                     line.tone
                         .and_then(|tone| ui::status_glyph(tone, cx))
@@ -409,11 +411,14 @@ impl SettingsPage {
                 .on_click(
                     cx.listener(move |page, _, window, cx| page.select_label(&entry, window, cx)),
                 );
-            group = group.row(form::row(
-                SharedString::from(format!("entries-row-{}", line.entry)),
-                line.entry.clone(),
-                content,
-            ));
+            group = group.row(
+                form::row(
+                    SharedString::from(format!("entries-row-{}", line.entry)),
+                    line.entry.clone(),
+                    content,
+                )
+                .selected(chosen),
+            );
         }
         if labels.ignored > 0 {
             group = group.row(form::row(

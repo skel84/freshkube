@@ -193,8 +193,9 @@ pub fn entry_labels(setup: &Setup, counts: &LabelCounts) -> EntryLabels {
 
 /// What example data answers, against the example setup: the first entry's
 /// value has series, the second's has none while its context name does, and
-/// one value belongs to nobody.
-pub fn example_label_counts(setup: &Setup) -> LabelCounts {
+/// one value belongs to nobody. With `capped`, the store's answer is cut at
+/// its cap, as `FRESHKUBE_METRICS_LABELS=capped` shows.
+pub fn example_label_counts(setup: &Setup, capped: bool) -> LabelCounts {
     let mut counts = BTreeMap::new();
     for (at, entry) in setup.workspace.clusters.iter().enumerate() {
         match at {
@@ -207,6 +208,6 @@ pub fn example_label_counts(setup: &Setup) -> LabelCounts {
     LabelCounts {
         label: setup.metrics.label_name().to_owned(),
         counts,
-        capped: false,
+        capped,
     }
 }

@@ -127,6 +127,9 @@ pub(crate) struct SettingsPage {
     width: f32,
     table: table::TableState,
     origin: Origin,
+    /// `FRESHKUBE_METRICS_LABELS=capped`: example data answers Check entries
+    /// cut at its cap.
+    example_labels_capped: bool,
     /// The workspace as the file holds it, with the keys this version
     /// doesn't know; every save writes a changed copy of it.
     workspace: Workspace,
@@ -343,6 +346,7 @@ impl SettingsPage {
             width,
             table: table::TableState::new(PREFIX),
             origin: Origin::Alone,
+            example_labels_capped: false,
             workspace: Workspace::default(),
             setup_file: None,
             metrics_secrets,

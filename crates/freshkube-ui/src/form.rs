@@ -143,6 +143,7 @@ pub fn row(
         hint: None,
         error: None,
         checked: false,
+        selected: false,
     }
 }
 
@@ -153,6 +154,7 @@ pub struct Row {
     hint: Option<AnyElement>,
     error: Option<SharedString>,
     checked: bool,
+    selected: bool,
 }
 
 impl Row {
@@ -174,13 +176,29 @@ impl Row {
         self
     }
 
+    /// Draw the row, label and control, as the table draws a selected row:
+    /// its soft accent fill and accent border, inset from the group's edges.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
     fn render(self, narrow: bool, cx: &App) -> impl IntoElement {
         let p = palette(cx);
         let error = self.error.is_some();
+        let selected = self.selected;
         div()
             .id(self.id.clone())
             .test_support()
             .flex()
+            .when(selected, |this| {
+                this.bg(p.accent_soft)
+                    .border_1()
+                    .border_color(p.accent)
+                    .rounded(gpui_kit::px(4.))
+                    .px(dp(6.))
+                    .mx(dp(-6.))
+            })
             .when(narrow, |this| this.flex_col())
             .gap(dp(if narrow { 4. } else { 12. }))
             .child(
