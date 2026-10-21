@@ -9,6 +9,7 @@
 //! flight; a late answer never lands. Nothing is written except by Accept,
 //! through the setup file's save of `delivery.build_namespace` alone. Ignore
 //! writes nothing and lasts for the session.
+use super::super::find::FindIdentity;
 use super::*;
 use crate::backend;
 use freshkube_core::workspace::Chosen as SourceChosen;
@@ -32,14 +33,6 @@ gpui_kit::actions!(
     ]
 );
 
-/// What a find reads, so one for another source never answers for this.
-#[derive(Clone, PartialEq, Eq)]
-pub(super) struct FindIdentity {
-    builds: SourceChosen,
-    kubeconfig: Option<std::path::PathBuf>,
-    example: bool,
-}
-
 /// A test's stand-in for the job's work.
 #[cfg(test)]
 pub(super) type Fake =
@@ -55,6 +48,8 @@ pub(super) struct Finder {
     pub(super) accept: Option<String>,
     /// What the Inspector shows: every namespace that holds runs.
     evidence: Vec<(String, u64)>,
+    /// What the Inspector says of the verdict.
+    verdict: Option<BuildVerdict>,
     pub(super) notes: Vec<(bool, SharedString)>,
     ignored: HashSet<String>,
     pub(super) ignored_count: usize,
@@ -71,6 +66,7 @@ impl Finder {
             row: None,
             accept: None,
             evidence: Vec::new(),
+            verdict: None,
             notes: Vec::new(),
             ignored: HashSet::new(),
             ignored_count: 0,
@@ -88,7 +84,10 @@ impl Finder {
 impl SourcesList {
     fn find_identity(&self) -> FindIdentity {
         FindIdentity {
-            builds: self.sources.get(Part::Builds).clone(),
+            chosen: vec![
+                self.sources.get(Part::Builds).clone(),
+                self.sources.get(Part::Kargo).clone(),
+            ],
             kubeconfig: self.kubeconfig.clone(),
             example: self.example,
         }
@@ -126,9 +125,10 @@ impl SourcesList {
                 parts.push(status::Part::new("1 suggested"));
             }
             if self.finder.ignored_count > 0 {
-                parts.push(
-                    status::Part::new(format!("{} ignored", self.finder.ignored_count)).minor(),
-                );
+                parts.push(status::Part::new(format!(
+                    "{} ignored",
+                    self.finder.ignored_count
+                )));
             }
         }
         parts
@@ -154,14 +154,13 @@ impl SourcesList {
                 let why = other.missing().unwrap_or_else(|| {
                     "the workspace lists no cluster to read builds from".to_owned()
                 });
-                let findings = BuildFindings {
-                    entry: "the open cluster".to_owned(),
-                    read: discover::BuildRead::NotRead(why),
-                };
+                let findings =
+                    BuildFindings::runs_only("the open cluster", discover::BuildRead::NotRead(why));
                 self.finder.read.resolve(identity, Ok(findings));
                 return self.found(cx);
             }
         };
+        let kargo = self.sources.get(Part::Kargo).entry().cloned();
         let request = self.finder.read.start(identity);
         let explicit = self.kubeconfig.clone();
         #[cfg(test)]
@@ -181,7 +180,7 @@ impl SourcesList {
                 }
                 let kubeconfigs =
                     freshkube_core::resources::kubeconfig_sources(explicit.as_deref());
-                Ok(discover::find_builds(kubeconfigs, entry).await)
+                Ok(discover::find_builds(kubeconfigs, entry, kargo).await)
             },
         );
         let task = cx.spawn(async move |this, cx| {
@@ -213,6 +212,7 @@ impl SourcesList {
         finder.row = None;
         finder.accept = None;
         finder.evidence.clear();
+        finder.verdict = None;
         finder.notes.clear();
         finder.ignored_count = 0;
         if let Some(why) = finder.read.error() {
@@ -234,6 +234,7 @@ impl SourcesList {
                 finder.ignored_count = 1;
             } else {
                 finder.evidence = item.evidence.clone();
+                finder.verdict = Some(item.verdict.clone());
                 let (entry, state, tone, accept, tooltip) = match &item.verdict {
                     BuildVerdict::Suggest(namespace) => (
                         namespace.clone(),
@@ -245,6 +246,44 @@ impl SourcesList {
                              PipelineRun found; Accept sets delivery.build_namespace to it\nReads \
                              delivery.build_namespace",
                             item.found_from
+                        ),
+                    ),
+                    BuildVerdict::Template {
+                        template,
+                        fits,
+                        unexplained,
+                        ..
+                    } => {
+                        let partial = !unexplained.is_empty();
+                        (
+                            template.clone(),
+                            match partial {
+                                true => "Partial fit",
+                                false => "Suggested",
+                            },
+                            partial.then_some(ui::Tone::Warn),
+                            Some(template.clone()),
+                            format!(
+                                "Build namespace: the template {template} fits {} projects\n{}; \
+                                 Accept sets delivery.build_namespace to it\nReads \
+                                 delivery.build_namespace",
+                                fits.len(),
+                                match partial {
+                                    true => "some namespaces with runs belong to no project",
+                                    false => "every namespace with runs belongs to a project",
+                                }
+                            ),
+                        )
+                    }
+                    BuildVerdict::Tie(templates) => (
+                        format!("{} templates", templates.len()),
+                        "Tie",
+                        Some(ui::Tone::Unknown),
+                        None,
+                        format!(
+                            "Build namespace: {} fit equally; none is chosen\nReads \
+                             delivery.build_namespace",
+                            templates.join(" and ")
                         ),
                     ),
                     BuildVerdict::Several { listed, more } => {
@@ -451,10 +490,10 @@ impl SourcesList {
 
     /// The group row over the suggestion.
     pub(super) fn render_suggested_group(&self, cx: &App) -> AnyElement {
-        let (tone, label) = if self.finder.read.is_loading() {
-            (ui::Tone::Unknown, "Finding suggestions")
-        } else {
-            (ui::Tone::Info, "Suggested · 1")
+        let finding = self.finder.read.is_loading();
+        let (tone, label) = match finding {
+            true => (ui::Tone::Unknown, "Finding suggestions"),
+            false => (ui::Tone::Info, "Suggested"),
         };
         table::GroupRow::new(
             self.table.id("group-suggested"),
@@ -462,19 +501,64 @@ impl SourcesList {
             label,
             table::ROW_HEIGHT,
         )
+        .detail(match finding {
+            true => Vec::new(),
+            false => vec!["1 item".to_owned()],
+        })
         .render(cx)
         .into_any_element()
     }
 
-    /// The Inspector's evidence: every namespace that holds runs.
+    /// The Inspector's evidence: every namespace that holds runs, and for a
+    /// template the projects that fit and don't, and the unexplained.
     pub(super) fn render_evidence(&self, narrow: bool, cx: &App) -> AnyElement {
+        let runs = |count: u64| format!("{count} {}", if count == 1 { "run" } else { "runs" });
         let mut group = form::group("settings-source-evidence", "Evidence").narrow(narrow);
         for (namespace, count) in &self.finder.evidence {
             group = group.row(form::row(
                 SharedString::from(format!("settings-source-evidence-{namespace}")),
                 namespace.clone(),
-                format!("{count} {}", if *count == 1 { "run" } else { "runs" }),
+                runs(*count),
             ));
+        }
+        if let Some(BuildVerdict::Template {
+            fits,
+            no_runs,
+            unexplained,
+            at_least,
+            ..
+        }) = &self.finder.verdict
+        {
+            group = group.row(form::row(
+                "settings-source-evidence-fits",
+                "Projects that fit",
+                fits.join(", "),
+            ));
+            if !no_runs.is_empty() {
+                group = group.row(
+                    form::row(
+                        "settings-source-evidence-no-runs",
+                        "No runs",
+                        no_runs.join(", "),
+                    )
+                    .hint("Their changes find builds by commit only, as before."),
+                );
+            }
+            if !unexplained.is_empty() {
+                let names = unexplained
+                    .iter()
+                    .map(|(namespace, count)| format!("{namespace} ({})", runs(*count)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let names = match at_least {
+                    true => format!("at least {names}"),
+                    false => names,
+                };
+                group = group.row(
+                    form::row("settings-source-evidence-unexplained", "Unexplained", names)
+                        .hint("Runs here are not found by the template."),
+                );
+            }
         }
         group
             .saved_in(form::SavedIn::file(

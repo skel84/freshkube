@@ -217,6 +217,7 @@ pub(crate) async fn read_all<B: Reader, K: Reader>(
     }
 }
 
+#[cfg(test)]
 pub(crate) async fn read_builds<R: Reader>(reader: &R, entry: &str) -> BuildRead {
     read_runs(reader, entry).await.0
 }

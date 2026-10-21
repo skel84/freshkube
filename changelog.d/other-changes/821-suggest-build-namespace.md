@@ -1,1 +1,1 @@
-- **Settings:** Delivery sources can find the build namespace: Find counts PipelineRuns by namespace (names only) and suggests `delivery.build_namespace` when every run is in one. Nothing is written until Accept.
+- **Settings:** Delivery sources can find the build namespace: Find counts PipelineRuns by namespace (names only) and reads Kargo's project names, then suggests a `{project}` template when the namespaces line up with the projects, or the one namespace that holds every run. Nothing is written until Accept.

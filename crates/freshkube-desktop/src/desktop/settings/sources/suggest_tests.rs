@@ -21,13 +21,13 @@ const FILE: &str = r#"{"version":1,"clusters":[
   "delivery":{"stage_naming":{"name_template":"{stage}-{project}"},"future":{"keep":true}}}"#;
 
 fn findings(counts: &[(&str, u64)]) -> BuildFindings {
-    BuildFindings {
-        entry: "cicd-fra".into(),
-        read: BuildRead::Done(NamespaceCounts {
+    BuildFindings::runs_only(
+        "cicd-fra",
+        BuildRead::Done(NamespaceCounts {
             counts: counts.iter().map(|(n, c)| ((*n).to_owned(), *c)).collect(),
             capped: false,
         }),
-    }
+    )
 }
 
 fn list(view: &View, cx: &gpui_kit::App) -> Entity<super::super::SourcesList> {
@@ -261,10 +261,10 @@ async fn several_namespaces_and_a_refusal_have_no_accept(cx: &mut TestAppContext
     cx.update_window(handle, |_, _, cx| {
         answer_with(
             &view,
-            BuildFindings {
-                entry: "cicd-fra".into(),
-                read: BuildRead::Refused("Builds refused on cicd-fra".into()),
-            },
+            BuildFindings::runs_only(
+                "cicd-fra",
+                BuildRead::Refused("Builds refused on cicd-fra".into()),
+            ),
             cx,
         );
     })
@@ -337,7 +337,7 @@ fn example_data_answers_at_once_and_cannot_accept(cx: &mut TestAppContext) {
     .unwrap();
     assert_eq!(
         suggestion(&view, cx),
-        Some(("ci-shared".to_owned(), "Suggested".to_owned()))
+        Some(("{project}".to_owned(), "Partial fit".to_owned()))
     );
     cx.read(|cx| {
         assert!(view.read(cx).settings_page.read(cx).saving.is_none());
@@ -367,4 +367,59 @@ fn the_page_with_the_suggestion_keeps_the_table_layout(cx: &mut TestAppContext) 
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn partial_fit_shows_warn_and_the_unexplained(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 1200.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Sources, window, cx)
+        });
+        window.render_frame(cx);
+        window.click("settings-sources-find", cx);
+        window.render_frame(cx);
+        // The partial fit is marked, and its row says which template.
+        assert!(
+            window
+                .find("settings-source-build-suggestion-mark")
+                .visible()
+        );
+        window.click("settings-source-build-suggestion", cx);
+        window.render_frame(cx);
+        assert!(window.find("settings-source-evidence-fits").visible());
+        assert!(window.find("settings-source-evidence-no-runs").visible());
+        assert!(
+            window
+                .find("settings-source-evidence-unexplained")
+                .visible()
+        );
+        assert!(window.find("settings-source-evidence-ci-shared").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn accept_writes_a_template_as_the_build_namespace(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = start(cx, guard.path(), example::build_findings()).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-sources-find", cx)
+    })
+    .unwrap();
+    found(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-source-build-suggestion", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    let text = std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap();
+    let setup = freshkube_core::setup::parse(text.as_bytes()).unwrap();
+    assert_eq!(
+        setup.delivery.unwrap().build_namespace.as_deref(),
+        Some("{project}")
+    );
 }

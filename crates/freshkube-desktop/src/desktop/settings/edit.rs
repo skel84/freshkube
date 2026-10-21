@@ -312,12 +312,8 @@ impl SettingsPage {
             let why = self.why_not_editable().to_owned();
             return refuse(self, why, cx);
         }
-        let valid = (1..=63).contains(&namespace.len())
-            && namespace
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-            && !namespace.starts_with('-')
-            && !namespace.ends_with('-');
+        // A namespace, or a template that resolves to one for any project.
+        let valid = freshkube_core::setup::resolve_build_namespace(&namespace, "p").is_ok();
         let Some(file) = self.setup_file.clone().filter(|_| valid) else {
             return refuse(self, "that isn't a namespace name".to_owned(), cx);
         };
