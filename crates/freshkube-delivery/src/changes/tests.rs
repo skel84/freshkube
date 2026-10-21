@@ -184,6 +184,72 @@ fn github_that_cannot_be_asked_leaves_the_kept_state_stale_or_none_and_says_why(
     );
 }
 
+#[test]
+fn github_is_said_once_per_cause_in_the_form_that_says_what_is_kept() {
+    // One followed change has a pull request whose answer is kept, another
+    // has none: their notes differ in words and are one cause.
+    for (shape, cause) in [
+        (
+            Shape::GitHubLimited,
+            "GitHub's rate limit is reached until 14:05 UTC",
+        ),
+        (
+            Shape::GitHubOffline,
+            "GitHub didn't answer: could not connect",
+        ),
+    ] {
+        let changes = derive(&example::read_shaped(now(), shape));
+        let texts: Vec<Option<&str>> = changes
+            .rows
+            .iter()
+            .filter_map(|row| row.trail.as_ref().ok())
+            .map(|change| {
+                change
+                    .missing
+                    .iter()
+                    .find(|note| note.text.starts_with(cause))
+                    .map(|note| note.text.as_str())
+            })
+            .collect();
+        let stale = format!("{cause}; showing what was read at 13:12 UTC");
+        assert!(
+            texts.contains(&Some(stale.as_str())) && texts.contains(&Some(cause)),
+            "one change keeps a copy and one has none: {texts:?}"
+        );
+        let github: Vec<&Note> = changes
+            .notes
+            .iter()
+            .filter(|note| note.text.starts_with(cause))
+            .collect();
+        assert_eq!(github.len(), 1, "{:?}", changes.notes);
+        assert_eq!(github[0].text, stale, "the form that says what is kept");
+    }
+    // Where nothing was kept, the one note is the bare cause.
+    let refused = derive(&example::read_shaped(now(), Shape::GitHubRefused));
+    let notes: Vec<&Note> = refused
+        .notes
+        .iter()
+        .filter(|note| note.text.contains("GitHub"))
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].text, "GitHub refused the token (401)");
+}
+
+#[test]
+fn a_cause_is_what_comes_before_where_an_old_answer_was_read() {
+    use crate::github::cause_of;
+    assert_eq!(
+        cause_of("GitHub didn't answer: could not connect; showing what was read at 13:12 UTC"),
+        "GitHub didn't answer: could not connect"
+    );
+    assert_eq!(
+        cause_of("GitHub didn't answer: could not connect"),
+        "GitHub didn't answer: could not connect"
+    );
+    // Other notes are their own cause, as they always were.
+    assert_eq!(cause_of("Couldn't reach cicd-b"), "Couldn't reach cicd-b");
+}
+
 /// The example's own reaches say what its hops say: a Stage's weakest link
 /// is its cell, and a refused one leaves an Unknown link.
 #[test]

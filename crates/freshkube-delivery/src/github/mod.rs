@@ -88,7 +88,7 @@ pub use rest::{
     ACCOUNT, ChecksState, DetailKey, Error, Handle, NotSetUp, OPEN_DEADLINE, PullDetail, PullState,
     ReviewState,
 };
-pub(crate) use rest::{PullSummary, Stale};
+pub(crate) use rest::{PullSummary, Stale, cause_of};
 
 /// `owner/name` of the GitHub repository a Freight's first commit is on:
 /// `https://github.com/owner/name`, with an optional `.git` and trailing

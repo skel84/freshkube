@@ -76,14 +76,9 @@ pub(super) fn attach(change: &mut Change, evidence: &Evidence) {
                 );
                 if let Some(summary) = summary {
                     if let Some(stale) = &summary.stale {
-                        change.missing.push(Missing::new(
-                            Gap::Unreadable,
-                            format!(
-                                "{}; showing what was read at {}",
-                                stale.why,
-                                stale.read_at.format("%H:%M UTC")
-                            ),
-                        ));
+                        change
+                            .missing
+                            .push(Missing::new(Gap::Unreadable, stale.sentence()));
                     }
                     change.origin.pull_request.get_or_insert(summary.number);
                     change.origin.pull = Some(summary);
