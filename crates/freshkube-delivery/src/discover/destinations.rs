@@ -509,9 +509,7 @@ fn in_cluster_item(
     if mapped(&key) {
         return None;
     }
-    let found_from;
-    let verdict;
-    match Sources::of(workspace).get(Part::ArgoCd) {
+    let (found_from, verdict) = match Sources::of(workspace).get(Part::ArgoCd) {
         Chosen::Entry { entry, why } => {
             let mut rows = vec![key.clone(), Key::Name(IN_CLUSTER_NAME.to_owned())];
             for found in own {
@@ -522,19 +520,21 @@ fn in_cluster_item(
                 }
             }
             rows.retain(|row| !mapped(row));
-            found_from = format!("Argo CD is read from {} ({})", entry.id, why.words());
-            verdict = Verdict::Suggest {
-                entry: entry.id.clone(),
-                rows,
-            };
+            (
+                format!("Argo CD is read from {} ({})", entry.id, why.words()),
+                Verdict::Suggest {
+                    entry: entry.id.clone(),
+                    rows,
+                },
+            )
         }
-        chosen => {
-            found_from = format!("Argo CD is read from {}", findings.entry);
-            verdict = Verdict::Unknown(chosen.missing().unwrap_or_else(|| {
+        chosen => (
+            format!("Argo CD is read from {}", findings.entry),
+            Verdict::Unknown(chosen.missing().unwrap_or_else(|| {
                 "Argo CD is read from the open cluster, which the workspace doesn't list".to_owned()
-            }));
-        }
-    }
+            })),
+        ),
+    };
     Some(Item {
         key,
         destination: destination_words(Some(IN_CLUSTER_SERVER), Some(IN_CLUSTER_NAME)),
