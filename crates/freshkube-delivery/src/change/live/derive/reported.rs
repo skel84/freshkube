@@ -146,6 +146,7 @@ fn reported_hop(
         name: object.name.clone(),
     };
     Hop {
+        cause: None,
         key,
         group,
         state,
@@ -173,6 +174,7 @@ fn reported_hop(
             }),
             fields,
             link: Some(LinkDetail {
+                cause: None,
                 confidence: Confidence::Claimed,
                 by: "name".into(),
                 before: "Application".into(),

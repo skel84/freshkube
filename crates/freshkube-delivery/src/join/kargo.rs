@@ -1,6 +1,6 @@
 use crate::digest::{Digest, repository, written_repository};
 use crate::kargo::{Freight, Promotion, Stage};
-use crate::observation::Observation;
+use crate::observation::{Observation, role};
 use crate::source::{cap_note, redact_message};
 
 use super::argo::{application_links, same_commit, short_commit};
@@ -59,24 +59,40 @@ pub(super) fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
                 links.push(promotion_link(promotion, freight));
             }
         }
-        None => links.push(Link::new(
-            Hop::Freight,
-            Hop::Promotion,
-            subject.clone(),
-            Key::None,
-            Confidence::Unknown,
-            evidence.kargo.promotions.why_not_read().unwrap_or_default(),
-        )),
+        None => links.push(
+            Link::new(
+                Hop::Freight,
+                Hop::Promotion,
+                subject.clone(),
+                Key::None,
+                Confidence::Unknown,
+                evidence.kargo.promotions.why_not_read().unwrap_or_default(),
+            )
+            .because(cause::unread(
+                &evidence.kargo.promotions,
+                cause::PROMOTIONS,
+                Some(&freight.project),
+                "the Promotions of the project, to see which carried this Freight",
+            )),
+        ),
     }
     let Some(stages) = evidence.kargo.stages.read() else {
-        links.push(Link::new(
-            Hop::Freight,
-            Hop::Stage,
-            subject,
-            Key::None,
-            Confidence::Unknown,
-            evidence.kargo.stages.why_not_read().unwrap_or_default(),
-        ));
+        links.push(
+            Link::new(
+                Hop::Freight,
+                Hop::Stage,
+                subject,
+                Key::None,
+                Confidence::Unknown,
+                evidence.kargo.stages.why_not_read().unwrap_or_default(),
+            )
+            .because(cause::unread(
+                &evidence.kargo.stages,
+                cause::STAGES,
+                Some(&freight.project),
+                "the Stages of the project, to see which one runs this Freight",
+            )),
+        );
         return links;
     };
     let current: Vec<&Stage> = stages
@@ -84,18 +100,26 @@ pub(super) fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
         .filter(|stage| stage.current_freight.contains(&freight.name))
         .collect();
     if current.is_empty() {
-        links.push(Link::new(
-            Hop::Freight,
-            Hop::Stage,
-            subject,
-            Key::None,
-            Confidence::Unknown,
-            format!(
-                "no Stage reports it as current (read {} Stages){}",
-                stages.len(),
-                cap_note(evidence.kargo.stages.capped())
-            ),
-        ));
+        // Every Stage was read and none holds it: it hasn't been promoted
+        // yet. A capped listing may only not have reached the Stage.
+        let waiting = evidence.kargo.stages.capped().is_none().then(|| {
+            Cause::waiting("a Stage whose newest Freight history entry names this Freight")
+        });
+        links.push(
+            Link::new(
+                Hop::Freight,
+                Hop::Stage,
+                subject,
+                Key::None,
+                Confidence::Unknown,
+                format!(
+                    "no Stage reports it as current (read {} Stages){}",
+                    stages.len(),
+                    cap_note(evidence.kargo.stages.capped())
+                ),
+            )
+            .because(waiting),
+        );
     }
     for stage in current {
         let health = stage_health(stage);
@@ -119,19 +143,43 @@ pub(super) fn stage_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
                 )
                 .observed(seen)
             }
-            None => Link::new(
-                Hop::Freight,
-                Hop::Stage,
-                id(&stage.project, &stage.name),
-                Key::Name(freight.name.clone()),
-                Confidence::Claimed,
-                format!("the Stage names this Freight only; health {health}"),
-            )
-            .observed({
-                let mut seen = stage_names(stage, &freight.name);
-                seen.extend(verified_seen);
-                seen
-            }),
+            None => {
+                // Kargo's own record of what the Stage runs names the
+                // Freight; the older fields are only the Stage's say-so.
+                // A record that holds other image digests than the
+                // Freight's contradicts the name.
+                let contradicted = !stage.current_digests.is_empty()
+                    && freight.images.iter().any(|image| image.digest.is_some());
+                let (confidence, how) = if stage.history_names(&freight.name) && !contradicted {
+                    (
+                        Confidence::Confirmed,
+                        "the newest entry of the Stage's Freight history names this Freight",
+                    )
+                } else {
+                    (Confidence::Claimed, "the Stage names this Freight only")
+                };
+                Link::new(
+                    Hop::Freight,
+                    Hop::Stage,
+                    id(&stage.project, &stage.name),
+                    Key::Name(freight.name.clone()),
+                    confidence,
+                    format!("{how}; health {health}"),
+                )
+                .observed({
+                    // The Freight's own name, as Kargo wrote it, is the
+                    // other side of the Stage's record.
+                    let mut seen = vec![Observation::reported(
+                        role::KARGO,
+                        freight.object_ref(),
+                        "/metadata/name",
+                        Some(&freight.name),
+                    )];
+                    seen.extend(stage_names(stage, &freight.name));
+                    seen.extend(verified_seen);
+                    seen
+                })
+            }
         });
         links.extend(application_links(evidence, freight, stage));
     }
@@ -234,14 +282,23 @@ pub(super) fn warehouse_link(evidence: &Evidence, freight: &Freight) -> Link {
             Confidence::Unknown,
             Key::None,
             "the Freight names no origin Warehouse".into(),
-        );
+        )
+        .because(Some(Cause::not_found(
+            "an origin Warehouse named on the Freight",
+        )));
     };
     let Some(warehouses) = evidence.kargo.warehouses.read() else {
         return link(
             Confidence::Unknown,
             Key::None,
             evidence.kargo.warehouses.why_not_read().unwrap_or_default(),
-        );
+        )
+        .because(cause::unread(
+            &evidence.kargo.warehouses,
+            cause::WAREHOUSES,
+            Some(&freight.project),
+            "the Warehouses of the project, to see which one discovered this Freight",
+        ));
     };
     let Some(warehouse) = warehouses
         .iter()
@@ -255,6 +312,14 @@ pub(super) fn warehouse_link(evidence: &Evidence, freight: &Freight) -> Link {
                 warehouses.len(),
                 cap_note(evidence.kargo.warehouses.capped())
             ),
+        )
+        .because(
+            evidence
+                .kargo
+                .warehouses
+                .capped()
+                .is_none()
+                .then(|| Cause::not_found(format!("a Warehouse named {origin} in the project"))),
         );
     };
     let held: Vec<(&Digest, &str)> = freight

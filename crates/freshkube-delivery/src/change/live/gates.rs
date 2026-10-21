@@ -4,7 +4,7 @@
 
 use chrono::{DateTime, Utc};
 
-use super::super::{Check, Eligible, Promotion};
+use super::super::{Cause, Check, Eligible, Promotion};
 use crate::kargo::{Creator, Freight, Promotion as KargoPromotion, Stage};
 use crate::source::Source;
 use freshkube_core::indicators::HealthIndicator::{self, *};
@@ -14,6 +14,8 @@ pub(super) struct Row {
     pub state: HealthIndicator,
     pub detail: String,
     pub at: Option<DateTime<Utc>>,
+    /// Why it can't say more, when its state is pending or unknown.
+    pub cause: Option<Cause>,
 }
 
 fn row(state: HealthIndicator, detail: impl Into<String>) -> Row {
@@ -21,6 +23,24 @@ fn row(state: HealthIndicator, detail: impl Into<String>) -> Row {
         state,
         detail: detail.into(),
         at: None,
+        cause: None,
+    }
+}
+
+/// A gate not reached yet: nothing is wrong, and `needs` is what would
+/// open it.
+fn waiting(detail: impl Into<String>, needs: impl Into<String>) -> Row {
+    Row {
+        cause: Some(Cause::waiting(needs)),
+        ..row(Pending, detail)
+    }
+}
+
+/// A gate whose record isn't there to read.
+fn not_found(detail: impl Into<String>, needs: impl Into<String>) -> Row {
+    Row {
+        cause: Some(Cause::not_found(needs)),
+        ..row(Unknown, detail)
     }
 }
 
@@ -50,7 +70,17 @@ pub(super) fn gates(
     let holds = stage.current_freight.contains(&freight.name);
     let (eligible, eligible_row) = eligible(freight, stage, holds);
     let (promotion, promotion_row) = promotion(freight, stage, promotions, holds);
-    let (verification, verification_row) = verification(freight, stage, holds);
+    let (verification, mut verification_row) = verification(freight, stage, holds);
+    // A Stage that runs the Freight with no verification recorded is
+    // waiting only while its Promotion is under way; after that Kargo has
+    // no record of one.
+    if holds && verification.is_empty() && verification_row.state == Pending {
+        verification_row.cause = Some(if matches!(promotion, Promotion::Running { .. }) {
+            Cause::waiting("the verification Kargo starts once the Promotion ends")
+        } else {
+            Cause::not_found("an AnalysisRun in the Stage's verification history")
+        });
+    }
     let (state, words) = match (&promotion, verification_row.state) {
         (Promotion::Failed { .. }, _) => (Error, "Promotion failed".to_owned()),
         (_, Error) => (Error, "Verification failed".to_owned()),
@@ -121,7 +151,10 @@ fn eligible(freight: &Freight, stage: &Stage, holds: bool) -> (Eligible, Row) {
                       listed as verified upstream or approved for this Stage."
                     .into(),
             },
-            row(Unknown, "Not recorded"),
+            not_found(
+                "Not recorded",
+                "a verified or approved record of the Freight for this Stage",
+            ),
         );
     }
     let detail = match stage.upstream.as_slice() {
@@ -132,7 +165,10 @@ fn eligible(freight: &Freight, stage: &Stage, holds: bool) -> (Eligible, Row) {
         Eligible::NotYet {
             upstream: stage.upstream.clone(),
         },
-        row(Pending, detail),
+        waiting(
+            detail,
+            "the Freight verified in an upstream Stage, or approved for this one",
+        ),
     )
 }
 
@@ -148,7 +184,15 @@ fn promotion(
             Promotion::Unknown {
                 why: format!("Promotions are {why}"),
             },
-            row(Unknown, "Promotions not readable"),
+            Row {
+                cause: crate::join::unread(
+                    promotions,
+                    crate::join::PROMOTIONS,
+                    Some(&stage.project),
+                    "the project's Promotions, to see how the Freight reached the Stage",
+                ),
+                ..row(Unknown, "Promotions not readable")
+            },
         );
     };
     // Kargo names a Promotion after its Stage and a sortable time, so the
@@ -168,10 +212,19 @@ fn promotion(
                           it: Kargo may have deleted the Promotion."
                         .into(),
                 },
-                row(Unknown, "No Promotion read"),
+                not_found(
+                    "No Promotion read",
+                    "a Promotion of the Freight to this Stage",
+                ),
             )
         } else {
-            (Promotion::NotYet, row(Pending, "Not promoted yet"))
+            (
+                Promotion::NotYet,
+                waiting(
+                    "Not promoted yet",
+                    "a Promotion of the Freight to this Stage",
+                ),
+            )
         };
     };
     let phase = newest.phase.clone().unwrap_or_else(|| "Pending".into());
@@ -247,7 +300,10 @@ fn verification(freight: &Freight, stage: &Stage, holds: bool) -> (Vec<Check>, R
     let verified_here = freight.verified_in.contains(&stage.name);
     let row = match (checks.first(), holds) {
         (None, false) if verified_here => row(Healthy, "Verified here before"),
-        (None, false) => row(Pending, "Runs after promotion"),
+        (None, false) => waiting(
+            "Runs after promotion",
+            "the Freight promoted to this Stage, which starts its verification",
+        ),
         (None, true) if verified_here => row(Healthy, "Verified, no run recorded"),
         (None, true) => row(Pending, "Not verified yet"),
         (Some(newest), _) => {
@@ -261,6 +317,7 @@ fn verification(freight: &Freight, stage: &Stage, holds: bool) -> (Vec<Check>, R
                 state: newest.state,
                 detail,
                 at: newest.at,
+                cause: None,
             }
         }
     };

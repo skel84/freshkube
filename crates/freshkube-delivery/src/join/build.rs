@@ -25,25 +25,36 @@ pub(super) fn pull_request_links(
         None => return Vec::new(),
         Some(read) if read.read().is_some() => read.read().unwrap(),
         Some(other) => {
-            return vec![Link::new(
+            return vec![
+                Link::new(
+                    Hop::PullRequest,
+                    Hop::Commit,
+                    "-",
+                    Key::Sha(sha.clone()),
+                    Confidence::Unknown,
+                    other.why_not_read().unwrap_or_default(),
+                )
+                .because(cause::unread_outside(
+                    other,
+                    "GitHub's pull requests for the commit",
+                )),
+            ];
+        }
+    };
+    if prs.is_empty() {
+        return vec![
+            Link::new(
                 Hop::PullRequest,
                 Hop::Commit,
                 "-",
                 Key::Sha(sha.clone()),
                 Confidence::Unknown,
-                other.why_not_read().unwrap_or_default(),
-            )];
-        }
-    };
-    if prs.is_empty() {
-        return vec![Link::new(
-            Hop::PullRequest,
-            Hop::Commit,
-            "-",
-            Key::Sha(sha.clone()),
-            Confidence::Unknown,
-            "GitHub read, no pull request is associated with this commit",
-        )];
+                "GitHub read, no pull request is associated with this commit",
+            )
+            .because(Some(Cause::not_found(
+                "a pull request GitHub associates with the commit",
+            ))),
+        ];
     }
     let deployed: Vec<Digest> = builds
         .iter()
@@ -134,29 +145,44 @@ fn head_build_links(
     let builds = match read {
         Some(source) if source.read().is_some() => source.read().unwrap(),
         Some(other) => {
-            return vec![Link::new(
+            return vec![
+                Link::new(
+                    Hop::PullRequest,
+                    Hop::PipelineRun,
+                    subject,
+                    Key::Sha(head.clone()),
+                    Confidence::Unknown,
+                    other.why_not_read().unwrap_or_default(),
+                )
+                .because(cause::unread(
+                    other,
+                    cause::PIPELINE_RUNS,
+                    None,
+                    "the CI/CD cluster's PipelineRuns, to find a build of the pull request",
+                )),
+            ];
+        }
+        None => return Vec::new(),
+    };
+    if builds.is_empty() {
+        return vec![
+            Link::new(
                 Hop::PullRequest,
                 Hop::PipelineRun,
                 subject,
                 Key::Sha(head.clone()),
                 Confidence::Unknown,
-                other.why_not_read().unwrap_or_default(),
-            )];
-        }
-        None => return Vec::new(),
-    };
-    if builds.is_empty() {
-        return vec![Link::new(
-            Hop::PullRequest,
-            Hop::PipelineRun,
-            subject,
-            Key::Sha(head.clone()),
-            Confidence::Unknown,
-            format!(
-                "CI/CD cluster read, no PipelineRun for the pull request's head commit{}",
-                cap_note(read.and_then(Source::capped))
+                format!(
+                    "CI/CD cluster read, no PipelineRun for the pull request's head commit{}",
+                    cap_note(read.and_then(Source::capped))
+                ),
+            )
+            .because(
+                read.and_then(Source::capped)
+                    .is_none()
+                    .then(|| Cause::not_found("a PipelineRun for the pull request's head commit")),
             ),
-        )];
+        ];
     }
     let mut links = Vec::new();
     for build in builds {

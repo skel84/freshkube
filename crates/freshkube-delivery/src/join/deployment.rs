@@ -11,7 +11,7 @@ use crate::kargo::Freight;
 use crate::pods::RunningImage;
 use crate::source::cap_note;
 
-use super::argo::{rollout_namespace, workloads};
+use super::argo::{rollout_namespace, workloads, workloads_cause};
 use super::observe::{concluded, deployment_revision, deployment_state, deployment_tie, manages};
 use super::workload::{Controller, judge_revision, pinned_containers, pinned_link, running};
 use super::*;
@@ -81,13 +81,21 @@ pub(super) fn deployment_links(
     };
     let read = match workloads(evidence, &app_id) {
         Ok(read) => read,
-        Err(why) => return vec![unknown(app_id.clone(), why)],
+        Err(why) => {
+            let cause = workloads_cause(evidence, &app_id);
+            return vec![unknown(app_id.clone(), why).because(cause)];
+        }
     };
     let Some(deployments) = read.deployments.read() else {
-        return vec![unknown(
-            app_id,
-            read.deployments.why_not_read().unwrap_or_default(),
-        )];
+        let cause = cause::unread(
+            &read.deployments,
+            cause::DEPLOYMENTS,
+            None,
+            "the environment cluster's Deployments, to see what the Application runs",
+        );
+        return vec![
+            unknown(app_id, read.deployments.why_not_read().unwrap_or_default()).because(cause),
+        ];
     };
     let mut links = Vec::new();
     for object in managed {
@@ -103,13 +111,22 @@ pub(super) fn deployment_links(
             .iter()
             .find(|d| d.namespace == namespace && d.name == object.name)
         else {
-            links.push(unknown(
-                deployment_id,
-                format!(
-                    "the Application lists it but it was not found in the environment cluster{}",
-                    cap_note(read.deployments.capped())
-                ),
-            ));
+            let cause = read.deployments.capped().is_none().then(|| {
+                Cause::not_found(format!(
+                    "Deployment {} in namespace {namespace} of the environment cluster",
+                    object.name
+                ))
+            });
+            links.push(
+                unknown(
+                    deployment_id,
+                    format!(
+                        "the Application lists it but it was not found in the environment cluster{}",
+                        cap_note(read.deployments.capped())
+                    ),
+                )
+                .because(cause),
+            );
             continue;
         };
         // A Deployment that pins another repository is not part of this hop.
@@ -235,7 +252,12 @@ fn pod_link(
         });
     };
     let Some(pods) = read.pods.read() else {
-        return unknown(read.pods.why_not_read().unwrap_or_default());
+        return unknown(read.pods.why_not_read().unwrap_or_default()).because(cause::unread(
+            &read.pods,
+            cause::PODS,
+            Some(&deployment.namespace),
+            "the Deployment's pods, to see which image they run",
+        ));
     };
     // Tied by owner UIDs: a pod that carries the hash label but another
     // owner is not the Deployment's.

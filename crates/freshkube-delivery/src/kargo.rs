@@ -296,6 +296,9 @@ pub(crate) fn parse_freight(value: &Value) -> Option<Freight> {
     })
 }
 
+/// The newest entry of a Stage's Freight history: what Kargo records it runs.
+const NEWEST_HISTORY: &str = "/status/freightHistory/0/items";
+
 pub(crate) fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
     let mut current_at: Vec<&'static str> = Vec::new();
@@ -306,7 +309,7 @@ pub(crate) fn parse_stage(value: &Value) -> Option<Stage> {
         .pointer("/status/freightHistory/0/items")
         .and_then(Value::as_object)
     {
-        let at = "/status/freightHistory/0/items";
+        let at = NEWEST_HISTORY;
         for name in items.values().filter_map(|item| text(item, "/name")) {
             current.push(name);
             current_at.push(at);
@@ -575,6 +578,13 @@ impl Stage {
             }
         }
         latest
+    }
+
+    /// Whether Kargo's own record of what the Stage runs, the newest entry of
+    /// its Freight history, names `freight`. The older `currentFreight` and
+    /// `lastPromotion` fields are the Stage's own say-so and don't count.
+    pub fn history_names(&self, freight: &str) -> bool {
+        self.freight_pointer(freight) == NEWEST_HISTORY
     }
 
     /// Where the Stage's status names `freight` as current.

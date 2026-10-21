@@ -11,6 +11,7 @@
 
 mod argo;
 mod build;
+mod cause;
 mod conflict;
 mod deployment;
 mod kargo;
@@ -20,6 +21,7 @@ mod workload;
 
 use argo::rollout_namespace;
 use build::{commit_link, digest_links, pull_request_links, supply_chain_links};
+pub(crate) use cause::{PROMOTIONS, STAGES, unread};
 #[cfg(test)]
 pub(crate) use conflict::BuiltDigest;
 pub(crate) use conflict::DigestConflict;
@@ -34,6 +36,7 @@ use chrono::{DateTime, Utc};
 use super::argocd::{
     Application, DestinationMatch, ManagedObject, MapHint, StageClaim, StageNaming,
 };
+use super::change::{Cause, SettingsField};
 use super::deployments::{Deployment, DeploymentSet};
 use super::digest::Digest;
 use super::github::PullRequest;
@@ -151,6 +154,10 @@ pub struct Link {
     /// or a verified signature leaves it false. Shown as the hop's Warn
     /// status, the way a digest conflict is.
     pub signature_warn: bool,
+    /// Why the link is Unknown, when the site that made it knew from the
+    /// source's answer or the setup; `None` for a link that isn't Unknown,
+    /// or whose cause only a sentence would tell.
+    pub cause: Option<Cause>,
 }
 
 impl Link {
@@ -172,7 +179,14 @@ impl Link {
             evidence: Vec::new(),
             conflicts: Vec::new(),
             signature_warn: false,
+            cause: None,
         }
+    }
+
+    /// The link with the cause of its being Unknown.
+    fn because(mut self, cause: Option<Cause>) -> Self {
+        self.cause = cause;
+        self
     }
 
     /// The link with its signature marked failing, or not.
@@ -208,6 +222,22 @@ pub(crate) enum DigestOutcome {
 }
 
 impl DigestSearch {
+    /// Why no build was found by digest: not looked for without a build
+    /// namespace, or looked for and not there. A failed search says only
+    /// its words.
+    pub(crate) fn cause(&self) -> Option<Cause> {
+        match &self.outcome {
+            DigestOutcome::NoNamespace => Some(Cause::not_set_up(
+                "a build namespace to search for a build that reports the image digest",
+                SettingsField::BUILD_NAMESPACE,
+            )),
+            DigestOutcome::Failed(_) => None,
+            DigestOutcome::Read(_) => Some(Cause::not_found(
+                "a PipelineRun or TaskRun result that reports the image digest",
+            )),
+        }
+    }
+
     /// Why no build was found by digest, or none was looked for.
     pub(crate) fn why_none(&self) -> String {
         let digests = self
@@ -911,71 +941,88 @@ pub fn join(evidence: &Evidence) -> Trail {
     // build found only by an image digest starts at the image instead.
     let names = &evidence.commit_names;
     let by_commit = !sha.is_empty();
-    let builds: &[Build] = match evidence.builds.read() {
-        Some(builds) => {
-            if by_commit && !builds.iter().any(|b| b.found_by == FoundBy::Commit) {
-                links.push(Link::new(
-                    Hop::Commit,
-                    Hop::PipelineRun,
-                    "-",
-                    Key::Sha(sha.clone()),
-                    Confidence::Unknown,
-                    format!(
-                        "CI/CD cluster read, no PipelineRun carries this sha label{}",
-                        cap_note(evidence.builds.capped())
-                    ),
-                ));
-            }
-            // With a commit, the digest search only adds builds; it speaks
-            // of itself when it is the only way a build could be found.
-            if let Some(search) = evidence.digest_search.as_ref().filter(|_| !by_commit)
-                && !builds.iter().any(|b| b.found_by == FoundBy::Digest)
-            {
-                links.push(Link::new(
-                    Hop::Image,
-                    Hop::PipelineRun,
-                    "-",
-                    search
-                        .digests
-                        .first()
-                        .cloned()
-                        .map_or(Key::None, Key::Digest),
-                    Confidence::Unknown,
-                    search.why_none(),
-                ));
-            }
-            for build in builds {
-                match build.found_by {
-                    FoundBy::Commit => {
-                        links.push(commit_link(sha, build, names, &evidence.proof()))
-                    }
-                    FoundBy::Digest => links.extend(digest_links(build, evidence)),
+    let builds: &[Build] =
+        match evidence.builds.read() {
+            Some(builds) => {
+                if by_commit && !builds.iter().any(|b| b.found_by == FoundBy::Commit) {
+                    links.push(
+                        Link::new(
+                            Hop::Commit,
+                            Hop::PipelineRun,
+                            "-",
+                            Key::Sha(sha.clone()),
+                            Confidence::Unknown,
+                            format!(
+                                "CI/CD cluster read, no PipelineRun carries this sha label{}",
+                                cap_note(evidence.builds.capped())
+                            ),
+                        )
+                        .because(evidence.builds.capped().is_none().then(
+                            || Cause::not_found("a PipelineRun carrying the commit's sha label"),
+                        )),
+                    );
                 }
-                links.extend(supply_chain_links(
-                    build,
-                    evidence.evidence_result.as_ref(),
-                    names,
-                    &evidence.proof(),
-                ));
+                // With a commit, the digest search only adds builds; it speaks
+                // of itself when it is the only way a build could be found.
+                if let Some(search) = evidence.digest_search.as_ref().filter(|_| !by_commit)
+                    && !builds.iter().any(|b| b.found_by == FoundBy::Digest)
+                {
+                    links.push(
+                        Link::new(
+                            Hop::Image,
+                            Hop::PipelineRun,
+                            "-",
+                            search
+                                .digests
+                                .first()
+                                .cloned()
+                                .map_or(Key::None, Key::Digest),
+                            Confidence::Unknown,
+                            search.why_none(),
+                        )
+                        .because(search.cause()),
+                    );
+                }
+                for build in builds {
+                    match build.found_by {
+                        FoundBy::Commit => {
+                            links.push(commit_link(sha, build, names, &evidence.proof()))
+                        }
+                        FoundBy::Digest => links.extend(digest_links(build, evidence)),
+                    }
+                    links.extend(supply_chain_links(
+                        build,
+                        evidence.evidence_result.as_ref(),
+                        names,
+                        &evidence.proof(),
+                    ));
+                }
+                builds
             }
-            builds
-        }
-        None => {
-            links.push(Link::new(
-                if by_commit { Hop::Commit } else { Hop::Image },
-                Hop::PipelineRun,
-                "-",
-                if by_commit {
-                    Key::Sha(sha.clone())
-                } else {
-                    Key::None
-                },
-                Confidence::Unknown,
-                evidence.builds.why_not_read().unwrap_or_default(),
-            ));
-            &[]
-        }
-    };
+            None => {
+                links.push(
+                    Link::new(
+                        if by_commit { Hop::Commit } else { Hop::Image },
+                        Hop::PipelineRun,
+                        "-",
+                        if by_commit {
+                            Key::Sha(sha.clone())
+                        } else {
+                            Key::None
+                        },
+                        Confidence::Unknown,
+                        evidence.builds.why_not_read().unwrap_or_default(),
+                    )
+                    .because(cause::unread(
+                        &evidence.builds,
+                        cause::PIPELINE_RUNS,
+                        None,
+                        "the CI/CD cluster's PipelineRuns, to find the build",
+                    )),
+                );
+                &[]
+            }
+        };
 
     // PullRequest -> commit and builds.
     let freight_for_prs: &[Freight] = evidence.kargo.freight.read().map_or(&[], Vec::as_slice);
@@ -987,14 +1034,22 @@ pub fn join(evidence: &Evidence) -> Trail {
     let freight_all: &[Freight] = match evidence.kargo.freight.read() {
         Some(freight) => freight,
         None => {
-            links.push(Link::new(
-                Hop::PipelineRun,
-                Hop::Freight,
-                "-",
-                Key::None,
-                Confidence::Unknown,
-                evidence.kargo.freight.why_not_read().unwrap_or_default(),
-            ));
+            links.push(
+                Link::new(
+                    Hop::PipelineRun,
+                    Hop::Freight,
+                    "-",
+                    Key::None,
+                    Confidence::Unknown,
+                    evidence.kargo.freight.why_not_read().unwrap_or_default(),
+                )
+                .because(cause::unread(
+                    &evidence.kargo.freight,
+                    cause::FREIGHT,
+                    None,
+                    "Kargo's Freight, to find the one built from this commit",
+                )),
+            );
             return Trail {
                 sha: sha.clone(),
                 observed_at: evidence.observed_at,
@@ -1004,18 +1059,23 @@ pub fn join(evidence: &Evidence) -> Trail {
     };
     let matched = matching_freight(sha, builds, freight_all);
     if matched.is_empty() {
-        links.push(Link::new(
-            Hop::PipelineRun,
-            Hop::Freight,
-            "-",
-            Key::None,
-            Confidence::Unknown,
-            format!(
-                "no Freight carries this sha or a built digest (read {} Freight); tags are not joined{}",
-                freight_all.len(),
-                cap_note(evidence.kargo.freight.capped())
-            ),
-        ));
+        links.push(
+            Link::new(
+                Hop::PipelineRun,
+                Hop::Freight,
+                "-",
+                Key::None,
+                Confidence::Unknown,
+                format!(
+                    "no Freight carries this sha or a built digest (read {} Freight); tags are not joined{}",
+                    freight_all.len(),
+                    cap_note(evidence.kargo.freight.capped())
+                ),
+            )
+            .because(evidence.kargo.freight.capped().is_none().then(|| {
+                Cause::not_found("a Freight that carries the commit or a digest the build made")
+            })),
+        );
     }
     let builds_capped = evidence.builds.capped().is_some();
     for (freight, key) in &matched {

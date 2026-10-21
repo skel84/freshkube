@@ -116,10 +116,12 @@ async fn a_healthy_change_joins_from_the_commit_to_the_pods() {
     assert_eq!(freight.confidence, Confidence::Confirmed);
     assert_eq!(freight.subject, "storefront/f-new");
     assert!(matches!(&freight.key, Key::Digest(d) if d.as_str() == NEW));
-    // Names and annotations are claims.
+    // Kargo's own record of what the Stage runs, its newest Freight history
+    // entry, names the Freight: Confirmed by name. Other names and
+    // annotations are claims.
     assert_eq!(
         one(&trail, Hop::Freight, Hop::Stage).confidence,
-        Confidence::Claimed
+        Confidence::Confirmed
     );
     assert_eq!(
         one(&trail, Hop::Freight, Hop::Promotion).confidence,

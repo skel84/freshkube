@@ -103,6 +103,7 @@ fn link(
     why: &str,
 ) -> Option<LinkDetail> {
     Some(LinkDetail {
+        cause: None,
         confidence,
         by: by.into(),
         before: before.into(),
@@ -392,6 +393,7 @@ fn gates(
         .iter()
         .zip(rows)
         .map(|(gate, (state, detail, at))| Hop {
+            cause: None,
             key: format!("{name}-{}", gate.to_lowercase()),
             group,
             state,
@@ -420,6 +422,7 @@ fn deployed(
     let app = format!("{PROJECT}-{stage}");
     let mut hops = vec![
         Hop {
+            cause: None,
             key: format!("{stage}-argocd"),
             group,
             state: Healthy,
@@ -457,6 +460,7 @@ fn deployed(
             })),
         },
         Hop {
+            cause: None,
             key: format!("{stage}-deployment"),
             group,
             state: Healthy,
@@ -493,6 +497,7 @@ fn deployed(
             })),
         },
         Hop {
+            cause: None,
             key: format!("{stage}-pods"),
             group,
             state: Healthy,
@@ -539,6 +544,7 @@ fn deployed(
 
 fn build(now: DateTime<Utc>) -> Vec<Hop> {
     let pull_request = Hop {
+        cause: None,
         key: "pr".into(),
         group: 0,
         state: Healthy,
@@ -575,6 +581,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let pruned = Hop {
+        cause: None,
         key: "pr-run".into(),
         group: 0,
         state: Unknown,
@@ -617,6 +624,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let push = Hop {
+        cause: None,
         key: "push-run".into(),
         group: 0,
         state: Healthy,
@@ -667,6 +675,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let signature = Hop {
+        cause: None,
         key: "signature".into(),
         group: 0,
         state: Healthy,
@@ -706,6 +715,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let policy = Hop {
+        cause: None,
         key: "policy".into(),
         group: 0,
         state: Healthy,
@@ -760,6 +770,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let image = Hop {
+        cause: None,
         key: "image".into(),
         group: 0,
         state: Warning,
@@ -797,6 +808,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let freight = Hop {
+        cause: None,
         key: "freight".into(),
         group: 1,
         state: Healthy,
@@ -853,6 +865,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
     let app = "checkout-prod-ams";
     vec![
         Hop {
+            cause: None,
             key: "prod-ams-argocd".into(),
             group,
             state: Healthy,
@@ -886,6 +899,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
             })),
         },
         Hop {
+            cause: None,
             key: "prod-ams-pods".into(),
             group,
             state: Unknown,
@@ -1313,6 +1327,7 @@ fn is_gate(hop: &Hop) -> bool {
 /// In place of what Argo CD's Applications would have said of a Stage.
 fn refused_application(project: &str, stage: &str, group: usize, why: &str) -> Hop {
     Hop {
+        cause: None,
         key: format!("{stage}-argocd"),
         group,
         state: Unknown,
@@ -1358,6 +1373,7 @@ fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
     let mut target = deployment(cluster);
     target.cluster = String::new();
     Hop {
+        cause: None,
         key: format!("{stage}-reported-{PROJECT}-{stage}-0"),
         group,
         state: Info,
@@ -1383,6 +1399,7 @@ fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
                 mono("Read from", &format!("Argo CD on {CORE}")),
             ],
             link: Some(LinkDetail {
+                cause: None,
                 confidence: Confidence::Claimed,
                 by: "name".into(),
                 before: "Application".into(),

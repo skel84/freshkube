@@ -1613,6 +1613,7 @@ async fn a_local_application_without_pods_stays_unknown_beside_one_elsewhere() {
     )
     .await;
     let link = |from, to, subject: &str, confidence| Link {
+        cause: None,
         from,
         to,
         subject: subject.into(),

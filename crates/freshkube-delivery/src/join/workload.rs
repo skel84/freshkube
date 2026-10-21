@@ -6,7 +6,7 @@ use crate::pods::RunningImage;
 use crate::rollouts::{AnalysisRun, Container, ReplicaSet, Rollout};
 use crate::source::{Truncation, cap_note};
 
-use super::argo::{rollout_namespace, workloads};
+use super::argo::{rollout_namespace, workloads, workloads_cause};
 use super::deployment::{deployment_links, speaks_for};
 use super::observe::{
     freight_side, manages, pods_running, pods_running_other, revision_tie, rollout_hash,
@@ -42,25 +42,37 @@ fn rollout_chain(evidence: &Evidence, freight: &Freight, app: &Application) -> V
     let read = match workloads(evidence, &app_id) {
         Ok(read) => read,
         Err(why) => {
-            return vec![Link::new(
+            let cause = workloads_cause(evidence, &app_id);
+            return vec![
+                Link::new(
+                    Hop::Application,
+                    Hop::Rollout,
+                    app_id,
+                    Key::None,
+                    Confidence::Unknown,
+                    why,
+                )
+                .because(cause),
+            ];
+        }
+    };
+    let Some(rollouts) = read.rollouts.read() else {
+        return vec![
+            Link::new(
                 Hop::Application,
                 Hop::Rollout,
                 app_id,
                 Key::None,
                 Confidence::Unknown,
-                why,
-            )];
-        }
-    };
-    let Some(rollouts) = read.rollouts.read() else {
-        return vec![Link::new(
-            Hop::Application,
-            Hop::Rollout,
-            app_id,
-            Key::None,
-            Confidence::Unknown,
-            read.rollouts.why_not_read().unwrap_or_default(),
-        )];
+                read.rollouts.why_not_read().unwrap_or_default(),
+            )
+            .because(cause::unread(
+                &read.rollouts,
+                cause::ROLLOUTS,
+                None,
+                "the environment cluster's Rollouts, to see what the Application runs",
+            )),
+        ];
     };
     let mut links = Vec::new();
     for object in managed {
@@ -80,17 +92,25 @@ fn rollout_chain(evidence: &Evidence, freight: &Freight, app: &Application) -> V
             .iter()
             .find(|r| r.namespace == namespace && r.name == object.name)
         else {
-            links.push(Link::new(
-                Hop::Application,
-                Hop::Rollout,
-                rollout_id,
-                Key::None,
-                Confidence::Unknown,
-                format!(
-                    "the Application lists it but it was not found in the environment cluster{}",
-                    cap_note(read.rollouts.capped())
-                ),
-            ));
+            links.push(
+                Link::new(
+                    Hop::Application,
+                    Hop::Rollout,
+                    rollout_id,
+                    Key::None,
+                    Confidence::Unknown,
+                    format!(
+                        "the Application lists it but it was not found in the environment cluster{}",
+                        cap_note(read.rollouts.capped())
+                    ),
+                )
+                .because(read.rollouts.capped().is_none().then(|| {
+                    Cause::not_found(format!(
+                        "Rollout {} in namespace {namespace} of the environment cluster",
+                        object.name
+                    ))
+                })),
+            );
             continue;
         };
         let pinned = rollout
@@ -290,7 +310,12 @@ fn pod_link(workloads: &Workloads, freight: &Freight, rollout: &Rollout, rollout
         });
     };
     let Some(pods) = read.pods.read() else {
-        return unknown(read.pods.why_not_read().unwrap_or_default());
+        return unknown(read.pods.why_not_read().unwrap_or_default()).because(cause::unread(
+            &read.pods,
+            cause::PODS,
+            Some(&rollout.namespace),
+            "the Rollout's pods, to see which image they run",
+        ));
     };
     let tie = current_set(workloads, rollout, &read.hash);
     // Tied by owner UIDs, only the current ReplicaSet's own pods count; a pod
@@ -508,7 +533,8 @@ pub(super) fn judge_revision(
                 count(pods.len(), "pod container"),
                 cap_note(capped)
             ),
-        );
+        )
+        .because(none_runs(capped));
     }
     link(
         Confidence::Claimed,
@@ -580,7 +606,7 @@ fn workload_pod_link(
     };
     let read = match workloads(evidence, app_id) {
         Ok(read) => read,
-        Err(why) => return unknown(why),
+        Err(why) => return unknown(why).because(workloads_cause(evidence, app_id)),
     };
     match read.namespace_pods.get(app_id) {
         Some(source) if source.read().is_some() => {
@@ -715,7 +741,16 @@ fn judge_pods(
                 cap_note(capped)
             ),
         )
+        .because(none_runs(capped))
     }
+}
+
+/// Pods were read and none runs the Freight's image: not found, unless the
+/// listing stopped at the cap and the pod may be past it.
+fn none_runs(capped: Option<Truncation>) -> Option<Cause> {
+    capped
+        .is_none()
+        .then(|| Cause::not_found("a pod whose container reports the Freight's image digest"))
 }
 
 /// `n` of a noun: "1 container", "2 containers".
