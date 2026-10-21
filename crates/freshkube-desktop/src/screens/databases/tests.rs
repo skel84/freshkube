@@ -7,7 +7,7 @@ use freshkube_core::{
 };
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+use gpui_kit::{AppContext, Entity, InputEvent, TestAppContext, WindowHandle, px, size};
 fn source(id: &str) -> PageSource {
     PageSource {
         kube: Some(ClusterSource {
@@ -331,7 +331,7 @@ fn a_large_cluster_keeps_the_inspector_bounded_and_discloses_omitted_evidence() 
             .fields
             .last()
             .unwrap()
-            .1
+            .value
             .contains("additional fields are not shown")
     );
 }
@@ -426,9 +426,9 @@ fn inspector_reports_unknown_schedule_coverage_configuration_and_plain_generatio
     let field = |name: &str| {
         fields
             .iter()
-            .find(|(label, _)| label == name)
+            .find(|field| field.label == name)
             .unwrap()
-            .1
+            .value
             .as_str()
     };
     assert!(field("Schedules").starts_with("Unknown"));
@@ -436,4 +436,190 @@ fn inspector_reports_unknown_schedule_coverage_configuration_and_plain_generatio
     assert!(field("Ready").contains("generation Not reported"));
     assert!(!field("Ready").contains("Some("));
     assert!(field("Observed").contains(&crate::ui::clock(at().into())));
+}
+
+#[gpui_kit::test]
+fn collapsed_storage_keeps_databases_reachable_and_selected(cx: &mut TestAppContext) {
+    for (width, text) in [(760., 13.), (1280., 20.)] {
+        let (_runtime, window, _pilot) = crate::desktop::tests::fixture(cx, width, 880.);
+        cx.update_window(window, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            window.press("secondary-shift-d", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let column = window.find("nav-column").bounds();
+            assert!(column.size.width < px(90.), "Storage is collapsed");
+            assert_eq!(window.find("nav-databases").checked(), Some(true));
+            window.click("nav-k8s-persistentvolumeclaims", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            assert_ne!(window.find("nav-databases").checked(), Some(true));
+            window.click("nav-databases", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window.find("databases-title");
+            assert_eq!(window.find("nav-databases").checked(), Some(true));
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn read_failure_retry_is_button_sized_at_both_text_sizes(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    for text in [13., 20.] {
+        for shape in [
+            "not-installed",
+            "refused",
+            "unsupported",
+            "failed",
+            "backup-refused",
+        ] {
+            cx.update_window(window.into(), |_, window, cx| {
+                crate::text_size::set(text, cx);
+                page.update(cx, |page, cx| {
+                    page.loader.resolve(
+                        page.identity().unwrap(),
+                        Ok(databases::example::shaped(at(), shape)),
+                    );
+                    page.mode(
+                        if shape == "backup-refused" {
+                            Mode::Backups
+                        } else {
+                            Mode::Clusters
+                        },
+                        cx,
+                    );
+                    cx.notify();
+                });
+                window.render_frame(cx);
+                let retry = window.find("databases-retry").bounds();
+                assert!(
+                    retry.size.width < px(140. * text / 13.),
+                    "{shape}: Retry must not stretch"
+                );
+                assert!(
+                    retry.size.height > px(0.) && retry.size.height <= px(40. * text / 13.),
+                    "{shape}: shared button height {retry:?}"
+                );
+                window.click("databases-retry", cx);
+                window.render_frame(cx);
+                assert!(
+                    !page.read(cx).display.rows.is_empty(),
+                    "Retry reads the fixture"
+                );
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn cluster_inspector_distinguishes_schedule_states_and_uses_prose() {
+    for (shape, expected) in [("", "1 active"), ("suspended", "1 suspended")] {
+        let inv = databases::example::shaped(at(), shape);
+        let display = super::display::Display::new(Some(&inv), Mode::Clusters);
+        let field = |name: &str| {
+            display.rows[0]
+                .fields
+                .iter()
+                .find(|f| f.label == name)
+                .unwrap()
+        };
+        assert!(field("Schedules").value.starts_with(expected));
+        for label in [
+            "Phase",
+            "Backup configuration",
+            "Schedules",
+            "Freshness",
+            "Replication",
+            "Restore prerequisites",
+        ] {
+            assert!(!field(label).monospace, "{label} is prose");
+        }
+        assert!(field("Current primary").monospace);
+        assert!(field("Observed").monospace);
+    }
+    let mut inv = databases::example::inventory(at());
+    inv.schedules.items[0].suspended = databases::Fact::Unknown;
+    inv.databases.items[0].current_primary = databases::Fact::Unknown;
+    let display = super::display::Display::new(Some(&inv), Mode::Clusters);
+    assert!(
+        display.rows[0]
+            .fields
+            .iter()
+            .any(|f| f.label == "Schedules" && f.value.starts_with("1 suspension unknown"))
+    );
+    assert!(
+        !display.rows[0]
+            .fields
+            .iter()
+            .find(|f| f.label == "Current primary")
+            .unwrap()
+            .monospace
+    );
+}
+
+#[gpui_kit::test]
+fn inspector_narrows_schedule_header_with_ellipsis_and_full_tooltip(cx: &mut TestAppContext) {
+    let (_runtime, window, _pilot) = crate::desktop::tests::fixture(cx, 1280., 880.);
+    cx.update_window(window, |_, window, cx| {
+        window.press("secondary-shift-d", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("databases-view-schedules", cx);
+        window.render_frame(cx);
+        window.click(
+            "databases-row-ScheduledBackup-shop-invented-orders-daily",
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let header = window.find((gpui_kit::SharedString::from("databases-sort"), 5_usize));
+        assert_eq!(header.label(), Some("Suspended"));
+        let text = freshkube_ui::table::word_cut_shown("databases-sort-5-label").unwrap();
+        assert!(
+            text.ends_with('…'),
+            "header must end with ellipsis: {text:?}"
+        );
+        let visible = header
+            .bounds()
+            .intersect(&window.find("databases-table").bounds());
+        assert!(visible.size.width > px(0.));
+        window.dispatch_event(
+            gpui_kit::MouseMoveEvent {
+                position: visible.center(),
+                pressed_button: None,
+                modifiers: Default::default(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.find("follow-tooltip-text");
+        assert!(freshkube_ui::tooltip::drawn("Suspended") > 0);
+    })
+    .unwrap();
 }

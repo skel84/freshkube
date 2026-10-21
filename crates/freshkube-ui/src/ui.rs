@@ -293,12 +293,15 @@ pub fn caption(text: &str, cx: &App) -> Div {
 /// A table's column label, drawn as given: pages write it in sentence
 /// case, and Kubernetes' printed columns keep their own.
 pub fn column_label(text: &SharedString, cx: &App) -> Div {
+    column_label_style(cx).child(text.clone())
+}
+
+pub(crate) fn column_label_style(cx: &App) -> Div {
     div()
         .font_weight(FontWeight::SEMIBOLD)
         .text_size(dp(11.5))
         .text_color(palette(cx).muted)
         .whitespace_nowrap()
-        .child(text.clone())
 }
 
 /// A small keycap hint such as `⌘1`.

@@ -8,7 +8,7 @@ API; the screen's `tests.rs` covers states, keys, links, identity and layout, an
 `wire_tests.rs` drives the real reader through an in-memory Kubernetes client.
 Paths above are under `crates/`.
 
-The **Databases** page is in the Storage column and also opens through
+The **Databases** page is in the expanded and collapsed Storage column and also opens through
 `FRESHKUBE_PAGE=databases` (Command-Shift-D on macOS, Control-Shift-D elsewhere). It works on Kubernetes-only connections. A table
 switches between Clusters, Backups and Schedules. Enter in the namespace field
 applies a namespace; blank reads all namespaces. The selected object's evidence
@@ -88,7 +88,12 @@ showing refreshes after 30 seconds, or after interrupted/failed work. Source or
 scope replacement clears incompatible evidence and selection. Request generation
 and identity reject old completions. Switching inventory views reads nothing.
 Rows and Inspector fields are prepared when data changes, outside render.
-Initial failures offer Retry; only a failed refresh with retained data says
+Initial failures use the shared empty state with a normally sized Retry button.
+Table cells and headers end with an ellipsis at the visible edge and offer the
+full text in a tooltip. Inspector prose uses the normal font; identifiers,
+cron expressions and reported values use mono. Complete schedule coverage
+distinguishes active, suspended and unknown suspension counts.
+Only a failed refresh with retained data says
 last read retained. Times use the shared clock format.
 The Inspector shows at most 128 fields plus an explicit count of omitted fields;
 Open in Resources retains access to the full object status.
@@ -98,7 +103,9 @@ Open in Resources retains access to the full object status.
 `backup-failed`, `no-primary`, `stale`, `no-backup`, `no-schedule`, `suspended`
 and `mariadb-model`. Every name is invented: `orders-db`, `ledger-db`, namespace
 `shop`. The default includes an active backup, a completed plugin backup and an
-orphaned backup. Tests use fakes and temporary directories only; verification
+orphaned backup. The `old` shape has consistent creation/start/end times more
+than 24 hours ago; the daily schedule brackets the observation at 02:00 UTC
+on successive days. Tests use fakes and temporary directories only; verification
 uses fixture mode, without cluster access or real credentials. Both API fakes
 record method and URI before answering; unknown paths return 500 and every read
 asserts its exact GET request list on the test task. Hidden reads are checked

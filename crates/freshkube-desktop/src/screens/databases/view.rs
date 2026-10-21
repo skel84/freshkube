@@ -80,10 +80,15 @@ impl DatabasesScreen {
                         .test_support()
                         .child(row.identity.name.clone()),
                 )
-                .children(row.fields.iter().map(|(label, value)| {
+                .children(row.fields.iter().map(|field| {
                     freshkube_ui::ui::named_field(
-                        label.clone().into(),
-                        ui::mono(value.clone()).whitespace_normal(),
+                        field.label.clone().into(),
+                        if field.monospace {
+                            ui::mono(field.value.clone())
+                        } else {
+                            div().child(field.value.clone())
+                        }
+                        .whitespace_normal(),
                         cx,
                     )
                 }))
@@ -93,7 +98,7 @@ impl DatabasesScreen {
     }
     pub(super) fn retry(&self, cx: &mut Context<Self>) -> Button {
         Button::new("databases-retry")
-            .small()
+            .icon(IconName::RefreshCw)
             .label("Retry")
             .on_click(cx.listener(|this, _, _, cx| this.read(cx)))
     }

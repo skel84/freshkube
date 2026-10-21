@@ -133,9 +133,12 @@ impl TableSource for DatabasesScreen {
                 ))
                 .into_any_element()
         } else {
-            kit::cell(column)
-                .child(row.data.cells[column.index - 1].clone())
-                .into_any_element()
+            kit::word_cell(
+                column,
+                format!("{}-text-{}", row.data.id, column.index),
+                row.data.cells[column.index - 1].clone(),
+            )
+            .into_any_element()
         }
     }
     fn selected_key(&self) -> Option<&SharedString> {
@@ -178,15 +181,22 @@ impl TableSource for DatabasesScreen {
     }
     fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.display.rows.is_empty().then(|| {
-            div()
-                .id("databases-empty-state")
-                .aria_label(self.display.empty.clone())
-                .test_support()
-                .child(self.display.empty.clone())
-                .when(self.display.notice.is_some(), |this| {
-                    this.child(self.retry(cx))
-                })
-                .into_any_element()
+            ui::empty_state(
+                gpui_kit::assets::IconName::Database,
+                "Databases",
+                self.display.empty.clone(),
+                None,
+                if self.display.notice.is_some() {
+                    vec![self.retry(cx).into_any_element()]
+                } else {
+                    Vec::new()
+                },
+                cx,
+            )
+            .id("databases-empty-state")
+            .aria_label(self.display.empty.clone())
+            .test_support()
+            .into_any_element()
         })
     }
 }

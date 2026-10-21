@@ -411,3 +411,66 @@ async fn fake_records_unknown_requests_and_returns_an_error_without_losing_the_w
     expected.push("POST /api/v1/secrets".into());
     assert_requests(&calls, expected);
 }
+
+#[test]
+fn every_example_shape_has_consistent_backup_times_and_old_is_old() {
+    let at = now();
+    for shape in [
+        "",
+        "not-installed",
+        "refused",
+        "unsupported",
+        "failed",
+        "empty",
+        "backup-refused",
+        "partial",
+        "old",
+        "backup-failed",
+        "no-primary",
+        "stale",
+        "no-backup",
+        "no-schedule",
+        "suspended",
+        "mariadb-model",
+    ] {
+        let inv = example::shaped(at, shape);
+        for backup in &inv.backups.items {
+            if let (Some(start), Some(end)) = (backup.started, backup.completed) {
+                assert!(
+                    start <= end,
+                    "{shape}: {} ends before it starts",
+                    backup.identity.name
+                );
+            }
+            if let (Some(created), Some(start)) = (backup.created, backup.started) {
+                assert!(
+                    created <= start,
+                    "{shape}: {} starts before creation",
+                    backup.identity.name
+                );
+            }
+        }
+        if shape == "old" {
+            assert_eq!(
+                coverage(&inv.databases.items[0], &inv, at).freshness,
+                Freshness::Old
+            );
+        }
+    }
+}
+
+#[test]
+fn example_daily_schedule_brackets_observation_at_two_utc_every_day() {
+    use chrono::Timelike;
+    for hour in [0, 1, 2, 12, 23] {
+        let at = now().with_hour(hour).unwrap();
+        let inv = example::inventory(at);
+        let schedule = &inv.schedules.items[0];
+        let (last, next) = (schedule.last.unwrap(), schedule.next.unwrap());
+        assert_eq!(schedule.schedule, Fact::Known("0 0 2 * * *".into()));
+        assert!(last <= at && at < next);
+        assert_eq!(next - last, Duration::days(1));
+        assert_eq!((last.hour(), last.minute(), last.second()), (2, 0, 0));
+        assert_eq!((next.hour(), next.minute(), next.second()), (2, 0, 0));
+    }
+}

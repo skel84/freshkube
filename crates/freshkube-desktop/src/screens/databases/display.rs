@@ -18,6 +18,40 @@ impl Mode {
         }
     }
 }
+pub(crate) struct Field {
+    pub label: String,
+    pub value: String,
+    pub monospace: bool,
+}
+impl Field {
+    fn prose(label: &str, value: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: value.into(),
+            monospace: false,
+        }
+    }
+    fn fact<T: std::fmt::Display>(label: &str, value: &Fact<T>) -> Self {
+        Self {
+            label: label.into(),
+            value: fact(value),
+            monospace: value.known().is_some(),
+        }
+    }
+    fn time(label: &str, value: Option<chrono::DateTime<Utc>>) -> Self {
+        Self {
+            label: label.into(),
+            value: time(value),
+            monospace: value.is_some(),
+        }
+    }
+    fn cluster(value: Option<&databases::ClusterRef>) -> Self {
+        Self::fact(
+            "Cluster",
+            &value.map(|r| Fact::Known(&r.name)).unwrap_or(Fact::Unknown),
+        )
+    }
+}
 pub(crate) struct Row {
     pub key: SharedString,
     pub id: SharedString,
@@ -25,7 +59,7 @@ pub(crate) struct Row {
     pub identity: Identity,
     pub cells: [SharedString; 6],
     pub tone: ui::Tone,
-    pub fields: Vec<(String, String)>,
+    pub fields: Vec<Field>,
 }
 pub(super) struct Display {
     pub rows: Vec<Row>,
@@ -69,12 +103,12 @@ impl Row {
         identity: &Identity,
         cells: [String; 6],
         tone: ui::Tone,
-        mut fields: Vec<(String, String)>,
+        mut fields: Vec<Field>,
     ) -> Self {
         if fields.len() > MAX_DETAIL_FIELDS {
             let remaining = fields.len() - MAX_DETAIL_FIELDS;
             fields.truncate(MAX_DETAIL_FIELDS);
-            fields.push(("More evidence".into(), format!("{remaining} additional fields are not shown; open the object in Resources for its full status")));
+            fields.push(Field::prose("More evidence", format!("{remaining} additional fields are not shown; open the object in Resources for its full status")));
         }
         let key: SharedString = format!(
             "{}/{}/{}/{}",
@@ -200,21 +234,50 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
         db.health()
     })
     .0;
+    let schedules = if found.no_schedule {
+        "No schedule".into()
+    } else if !inv.schedules.complete() {
+        "Unknown: schedule read is incomplete or stale".into()
+    } else {
+        let mut active = 0;
+        let mut suspended = 0;
+        let mut unknown = 0;
+        for schedule in &found.schedules {
+            match schedule.suspended {
+                Fact::Known(true) => suspended += 1,
+                Fact::Known(false) => active += 1,
+                Fact::Unknown => unknown += 1,
+            }
+        }
+        let mut states = Vec::new();
+        if active > 0 {
+            states.push(format!("{active} active"));
+        }
+        if suspended > 0 {
+            states.push(format!("{suspended} suspended"));
+        }
+        if unknown > 0 {
+            states.push(format!("{unknown} suspension unknown"));
+        }
+        format!(
+            "{}; see Schedules for name references and read coverage",
+            states.join(" · ")
+        )
+    };
     let mut fields = vec![
-        ("Phase".into(), fact(&db.phase)),
-        ("Current primary".into(), fact(&db.current_primary)),
-        ("Target primary".into(), fact(&db.target_primary)),
-        (
-            "Backup configuration".into(),
+        Field::prose("Phase", fact(&db.phase)),
+        Field::fact("Current primary", &db.current_primary),
+        Field::fact("Target primary", &db.target_primary),
+        Field::prose(
+            "Backup configuration",
             match db.backup_configuration {
                 Fact::Known(true) => "Reported configured; external prerequisites unverified",
                 Fact::Known(false) => "No backup or WAL archiver configuration reported",
                 Fact::Unknown => "Unknown",
-            }
-            .into(),
+            },
         ),
-        (
-            "Newest observed attempt".into(),
+        Field::prose(
+            "Newest observed attempt",
             found
                 .newest
                 .map(|b| format!("{} · {}", b.identity.name, b.state.label()))
@@ -226,37 +289,22 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
                     }
                 }),
         ),
-        (
-            "Last completed backup".into(),
+        Field::prose(
+            "Last completed backup",
             found
                 .completed
                 .map(|b| format!("{} · {}", b.identity.name, time(b.completed)))
                 .unwrap_or_else(|| "Unknown / none confirmed".into()),
         ),
-        ("Freshness".into(), found.freshness.label().into()),
-        (
-            "Schedules".into(),
-            if found.no_schedule {
-                "No schedule".into()
-            } else if !inv.schedules.complete() {
-                "Unknown: schedule read is incomplete or stale".into()
-            } else {
-                format!(
-                    "{} confirmed; see Schedules for name references and read coverage",
-                    found.schedules.len()
-                )
-            },
-        ),
-        ("Restore prerequisites".into(), found.restore.label().into()),
-        (
-            "Replication".into(),
-            "Unknown: no replication measurement read".into(),
-        ),
-        ("Observed".into(), time(Some(inv.databases.observed_at))),
+        Field::prose("Freshness", found.freshness.label()),
+        Field::prose("Schedules", schedules),
+        Field::prose("Restore prerequisites", found.restore.label()),
+        Field::prose("Replication", "Unknown: no replication measurement read"),
+        Field::time("Observed", Some(inv.databases.observed_at)),
     ];
     for instance in &db.instances {
-        fields.push((
-            instance.name.clone(),
+        fields.push(Field::prose(
+            &instance.name,
             format!(
                 "{} · {} · replication Unknown",
                 match instance.role {
@@ -269,8 +317,8 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
         ));
     }
     for condition in &db.conditions {
-        fields.push((
-            condition.kind.clone(),
+        fields.push(Field::prose(
+            &condition.kind,
             format!(
                 "{} · {} · {} · transition {} · generation {}",
                 condition.status,
@@ -310,26 +358,19 @@ fn database_row(db: &databases::Database, inv: &Inventory) -> Row {
 fn backup_row(backup: &databases::Backup, inv: &Inventory) -> Row {
     let relationship = reference(backup.cluster.as_ref(), inv);
     let fields = vec![
-        (
-            "Cluster".into(),
-            backup
-                .cluster
-                .as_ref()
-                .map(|r| r.name.clone())
-                .unwrap_or_else(|| "Unknown".into()),
-        ),
-        ("Relationship".into(), relationship.clone()),
-        ("Status".into(), backup.state.label().into()),
-        ("Method".into(), fact(&backup.method)),
-        ("Started".into(), time(backup.started)),
-        ("Finished".into(), time(backup.completed)),
-        ("Observed".into(), time(Some(inv.backups.observed_at))),
-        (
-            "Restore prerequisites".into(),
+        Field::cluster(backup.cluster.as_ref()),
+        Field::prose("Relationship", relationship.clone()),
+        Field::prose("Status", backup.state.label()),
+        Field::fact("Method", &backup.method),
+        Field::time("Started", backup.started),
+        Field::time("Finished", backup.completed),
+        Field::time("Observed", Some(inv.backups.observed_at)),
+        Field::prose(
+            "Restore prerequisites",
             if databases::link(backup.cluster.as_ref(), &inv.databases) == LinkState::Orphaned {
-                "Cluster is missing or replaced".into()
+                "Cluster is missing or replaced"
             } else {
-                "Unknown: external prerequisites are unverified".into()
+                "Unknown: external prerequisites are unverified"
             },
         ),
     ];
@@ -354,24 +395,14 @@ fn backup_row(backup: &databases::Backup, inv: &Inventory) -> Row {
 
 fn schedule_row(schedule: &databases::Schedule, inv: &Inventory) -> Row {
     let fields = vec![
-        (
-            "Cluster".into(),
-            schedule
-                .cluster
-                .as_ref()
-                .map(|r| r.name.clone())
-                .unwrap_or_else(|| "Unknown".into()),
-        ),
-        (
-            "Relationship".into(),
-            reference(schedule.cluster.as_ref(), inv),
-        ),
-        ("Schedule".into(), fact(&schedule.schedule)),
-        ("Suspended".into(), fact(&schedule.suspended)),
-        ("Last scheduled".into(), time(schedule.last)),
-        ("Next scheduled".into(), time(schedule.next)),
-        ("Method".into(), fact(&schedule.method)),
-        ("Observed".into(), time(Some(inv.schedules.observed_at))),
+        Field::cluster(schedule.cluster.as_ref()),
+        Field::prose("Relationship", reference(schedule.cluster.as_ref(), inv)),
+        Field::fact("Schedule", &schedule.schedule),
+        Field::fact("Suspended", &schedule.suspended),
+        Field::time("Last scheduled", schedule.last),
+        Field::time("Next scheduled", schedule.next),
+        Field::fact("Method", &schedule.method),
+        Field::time("Observed", Some(inv.schedules.observed_at)),
     ];
     Row::new(
         &schedule.identity,

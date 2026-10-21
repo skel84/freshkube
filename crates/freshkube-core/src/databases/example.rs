@@ -68,6 +68,12 @@ pub fn inventory(at: DateTime<Utc>) -> Inventory {
         name: "ledger-db".into(),
         uid: Some("invented-ledger-old".into()),
     });
+    let today = at.date_naive().and_hms_opt(2, 0, 0).unwrap().and_utc();
+    let last = if today > at {
+        today - Duration::days(1)
+    } else {
+        today
+    };
     let schedule = Schedule {
         created: Some(at - Duration::days(9)),
         identity: identity("ScheduledBackup", "scheduledbackups", "orders-daily"),
@@ -75,8 +81,8 @@ pub fn inventory(at: DateTime<Utc>) -> Inventory {
         schedule: Fact::Known("0 0 2 * * *".into()),
         suspended: Fact::Known(false),
         method: Fact::Known("plugin".into()),
-        last: Some(at - Duration::hours(2)),
-        next: Some(at + Duration::hours(22)),
+        last: Some(last),
+        next: Some(last + Duration::days(1)),
     };
     let read = |items| Read {
         items,
@@ -148,6 +154,8 @@ pub fn shaped(at: DateTime<Utc>, shape: &str) -> Inventory {
             inv.backups.coverage = Coverage::Partial;
         }
         "old" => {
+            inv.backups.items[0].started = Some(at - Duration::hours(27));
+            inv.backups.items[0].created = inv.backups.items[0].started;
             inv.backups.items[0].completed = Some(at - Duration::hours(26));
         }
         "no-backup" => {
