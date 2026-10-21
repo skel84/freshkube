@@ -25,6 +25,8 @@
 mod across_tests;
 #[cfg(test)]
 mod after_tests;
+#[cfg(test)]
+mod cause_tests;
 mod derive;
 mod gates;
 mod history;
