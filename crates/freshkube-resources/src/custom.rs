@@ -527,15 +527,21 @@ mod tests {
 
         custom.update(cx, |custom, cx| custom.toggle(cx));
         custom.read_with(cx, |custom, _| {
-            assert_eq!(group_names(custom).len(), 10);
+            assert_eq!(group_names(custom).len(), 11);
+            assert_eq!(kinds(custom, "external-secrets.io"), None);
             assert_eq!(kinds(custom, "cert-manager.io"), None);
         });
         custom.update(cx, |custom, cx| {
             custom.toggle_group("cert-manager.io", cx);
+            custom.toggle_group("external-secrets.io", cx);
             custom.toggle_group("velero.io", cx);
         });
         custom.read_with(cx, |custom, _| {
             assert_eq!(kinds(custom, "cert-manager.io"), Some(Discovery::Loaded(4)));
+            assert_eq!(
+                kinds(custom, "external-secrets.io"),
+                Some(Discovery::Loaded(3))
+            );
             let Some(Discovery::Failed(failure)) = kinds(custom, "velero.io") else {
                 panic!("velero.io should be refused");
             };
