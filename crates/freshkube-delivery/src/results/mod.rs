@@ -10,7 +10,7 @@ mod builds;
 mod logs;
 mod records;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod transport;
 
 use std::net::{Ipv4Addr, SocketAddr};
@@ -133,6 +133,7 @@ pub(crate) enum State {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Error {
     Off,
+    BuildNamespace(String),
     Skipped(Skip),
     NotForwarded,
     ForwardEnded(&'static str),
@@ -198,7 +199,7 @@ impl Error {
             Self::NotInstalled | Self::LogsNotServed => State::NotInstalled,
             Self::LogMissing => State::Empty,
             Self::Unreachable(_) => State::Unreachable,
-            Self::Refused { .. } => State::Refused,
+            Self::Refused { .. } | Self::BuildNamespace(_) => State::Refused,
             Self::Http(_) | Self::Unreadable(_) => State::Unreadable,
         }
     }
@@ -208,6 +209,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Off => f.write_str("Tekton Results isn't set up"),
+            Self::BuildNamespace(why) => f.write_str(why),
             Self::Skipped(why) => write!(f, "Tekton Results wasn't read: {why}"),
             Self::NotForwarded => f.write_str("Tekton Results isn't forwarded yet"),
             Self::ForwardEnded(why) => write!(f, "the Tekton Results forward ended: {why}"),
