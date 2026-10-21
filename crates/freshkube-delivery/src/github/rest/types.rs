@@ -114,7 +114,7 @@ const KEPT: &str = "; showing what was read at ";
 impl Stale {
     /// `GitHub's rate limit is reached until 14:05 UTC; showing what was
     /// read at 13:12 UTC`.
-    pub(crate) fn sentence(&self) -> String {
+    pub fn sentence(&self) -> String {
         format!("{}{KEPT}{}", self.why, self.read_at.format("%H:%M UTC"))
     }
 }

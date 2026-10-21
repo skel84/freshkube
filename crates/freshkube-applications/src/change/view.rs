@@ -154,12 +154,14 @@ impl ChangePage {
                 .test_support()
                 .role(Role::Status)
         });
-        let pull = self.pull.line().map(|(text, label)| {
-            div()
+        // The placeholder for the pull request card: a plain banner, in the
+        // shared look, until the card is designed.
+        let pull = self.pull.line().map(|line| {
+            ui::banner(line.tone, None, line.text.clone(), None, cx)
                 .id("change-pull")
-                .aria_label(label.clone())
+                .aria_label(line.text.clone())
                 .test_support()
-                .child(text.clone())
+                .role(Role::Status)
         });
         if refresh.is_none() && missing.is_none() && pull.is_none() {
             return None;

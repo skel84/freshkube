@@ -42,8 +42,11 @@ pub enum RunState {
     Running,
     Passed,
     Failed,
-    /// Ended without passing or failing: neutral, skipped, cancelled.
-    Ended,
+    /// Ended without passing or failing, by its own choice: neutral or
+    /// skipped.
+    Neutral,
+    /// Stopped before it finished; it says nothing of the code.
+    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,6 +82,12 @@ pub enum ChecksState {
     Pending,
     Passing,
     Failing,
+    /// Nothing failed and nothing is running, but nothing passed either, or
+    /// a check was cancelled: it did not all run.
+    Ended,
+    /// Not all of them were read, and none read so far failed: the ones
+    /// not read could.
+    Partial,
 }
 
 /// What a list that stopped at its cap read, of how many there are.
@@ -95,11 +104,36 @@ pub struct Checks {
     pub state: ChecksState,
     /// The check runs that were not all read: "100 of 112 checks".
     pub capped: Option<Capped>,
+    /// The commit statuses that were not all read, by the combined status's
+    /// own count.
+    pub statuses_capped: Option<Capped>,
+}
+
+/// How much a pull request changes, as `pulls/{n}` counts it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Changed {
+    pub additions: u64,
+    pub deletions: u64,
+    pub files: u64,
+}
+
+/// A label of the pull request. Its colour is six hexadecimal digits or
+/// none, so it is only ever drawn, never followed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Label {
+    pub name: String,
+    pub color: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PullDetail {
     pub summary: PullSummary,
+    /// Lines and files changed, when the answer counted them. Linked issues
+    /// are not in REST's `pulls/{n}` and are not read.
+    pub changed: Option<Changed>,
+    pub labels: Vec<Label>,
+    /// The commit the merge made on the target branch, once merged.
+    pub merge_commit: Option<String>,
     pub reviews: Vec<Review>,
     /// There may be more reviews than the first 100 that were read.
     pub reviews_capped: bool,
@@ -185,7 +219,8 @@ fn run_state(run: &Value) -> RunState {
             Some("completed"),
             Some("failure" | "timed_out" | "action_required" | "startup_failure"),
         ) => RunState::Failed,
-        (Some("completed"), _) => RunState::Ended,
+        (Some("completed"), Some("cancelled")) => RunState::Cancelled,
+        (Some("completed"), _) => RunState::Neutral,
         (Some("in_progress"), _) => RunState::Running,
         _ => RunState::Queued,
     }
@@ -246,25 +281,74 @@ pub(super) fn checks(runs: &Value, statuses: &Value) -> Checks {
         || status_list
             .iter()
             .any(|status| status.state == StatusState::Pending);
-    let state = match (
-        run_list.is_empty() && status_list.is_empty(),
-        failing,
-        pending,
-    ) {
-        (true, ..) => ChecksState::None,
-        (_, true, _) => ChecksState::Failing,
-        (_, _, true) => ChecksState::Pending,
-        _ => ChecksState::Passing,
+    let passed = run_list.iter().any(|run| run.state == RunState::Passed)
+        || status_list
+            .iter()
+            .any(|status| status.state == StatusState::Passed);
+    let cancelled = run_list.iter().any(|run| run.state == RunState::Cancelled);
+    let runs_capped = capped(
+        run_list.len(),
+        runs.get("total_count").and_then(Value::as_u64),
+    );
+    let statuses_capped = capped(
+        status_list.len(),
+        statuses.get("total_count").and_then(Value::as_u64),
+    );
+    // What was read says failing or pending whatever was not; passing needs
+    // all of it read, and something to have passed.
+    let state = if run_list.is_empty() && status_list.is_empty() {
+        ChecksState::None
+    } else if failing {
+        ChecksState::Failing
+    } else if pending {
+        ChecksState::Pending
+    } else if runs_capped.is_some() || statuses_capped.is_some() {
+        ChecksState::Partial
+    } else if cancelled || !passed {
+        ChecksState::Ended
+    } else {
+        ChecksState::Passing
     };
     Checks {
-        capped: capped(
-            run_list.len(),
-            runs.get("total_count").and_then(Value::as_u64),
-        ),
         runs: run_list,
         statuses: status_list,
         state,
+        capped: runs_capped,
+        statuses_capped,
     }
+}
+
+/// What `pulls/{n}` says of the change's size, its labels and its merge
+/// commit.
+fn size_and_labels(pull: &Value, merged: bool) -> (Option<Changed>, Vec<Label>, Option<String>) {
+    let count = |name: &str| pull.get(name).and_then(Value::as_u64);
+    let changed = match (
+        count("additions"),
+        count("deletions"),
+        count("changed_files"),
+    ) {
+        (Some(additions), Some(deletions), Some(files)) => Some(Changed {
+            additions,
+            deletions,
+            files,
+        }),
+        _ => None,
+    };
+    let labels = pull
+        .get("labels")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(50)
+        .filter_map(|label| {
+            let name = text(label, "/name").filter(|name| name.chars().count() <= 100)?;
+            let color = text(label, "/color")
+                .filter(|color| color.len() == 6 && color.bytes().all(|b| b.is_ascii_hexdigit()));
+            Some(Label { name, color })
+        })
+        .collect();
+    let merge_commit = text(pull, "/merge_commit_sha").filter(|sha| merged && is_full_sha(sha));
+    (changed, labels, merge_commit)
 }
 
 impl Client {
@@ -300,10 +384,14 @@ impl Client {
             .into_iter()
             .flatten()
             .min_by_key(|stale| stale.read_at);
+        let (changed, labels, merge_commit) = size_and_labels(&pull, merged);
         let mut summary = parsed;
         summary.stale = stale.clone();
         Ok(PullDetail {
             summary,
+            changed,
+            labels,
+            merge_commit,
             reviews: reviews(&reviews_body),
             reviews_capped: reviews_body
                 .as_array()

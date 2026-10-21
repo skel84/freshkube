@@ -14,9 +14,11 @@
 //! a write that goes over, the oldest files go until it is under 16 MiB.
 //! A client change does not touch the folder, since avatars carry no token.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use url::Url;
 
@@ -35,6 +37,8 @@ pub const KEPT_FOLDER_BYTES: u64 = 16 * 1024 * 1024;
 const SIZES: std::ops::RangeInclusive<u32> = 16..=512;
 /// A leftover temporary file this old is not another write's.
 const TEMP_GRACE: Duration = Duration::from_secs(60);
+/// How long an avatar that couldn't be fetched is not asked for again.
+pub const FAILURE_BACKOFF: Duration = Duration::from_secs(5 * 60);
 
 /// Why an avatar wasn't fetched, safe to display.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,6 +83,11 @@ pub struct Avatars {
     base: Url,
     swept: AtomicBool,
     writes: AtomicU64,
+    /// One fetch of a file at a time: the others wait for it and find it.
+    flights: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Files that couldn't be fetched, and when, so they aren't asked for
+    /// again for [`FAILURE_BACKOFF`].
+    failures: Mutex<HashMap<String, (Instant, Error)>>,
 }
 
 fn file_name(avatar: &AvatarUrl, size: u32) -> String {
@@ -130,6 +139,8 @@ impl Avatars {
             base,
             swept: AtomicBool::new(false),
             writes: AtomicU64::new(0),
+            flights: Mutex::default(),
+            failures: Mutex::default(),
         })
     }
 
@@ -142,16 +153,82 @@ impl Avatars {
     /// reads only the file's metadata.
     pub fn cached(&self, avatar: &AvatarUrl, size: u32) -> Option<Avatar> {
         let path = self.path(avatar, size);
-        let age = std::fs::metadata(&path)
-            .ok()?
-            .modified()
-            .ok()
+        let modified = std::fs::metadata(&path).ok()?.modified().ok();
+        // A file from the future, by a clock that was wrong, is not fresh
+        // for ever: it is as old as it can be, and is fetched again.
+        let stale = modified
             .and_then(|at| SystemTime::now().duration_since(at).ok())
-            .unwrap_or_default();
-        Some(Avatar {
-            path,
-            stale: age >= FRESH_FOR,
-        })
+            .is_none_or(|age| age >= FRESH_FOR);
+        Some(Avatar { path, stale })
+    }
+
+    /// The avatar to show: the file when it is fresh, else the one fetch
+    /// that replaces it, however many ask at once. A fetch that failed is
+    /// not tried again for [`FAILURE_BACKOFF`], and meanwhile an old file
+    /// stands, or the same refusal is the answer.
+    pub async fn ensure(&self, avatar: &AvatarUrl, size: u32) -> Result<Avatar, Error> {
+        let size = size.clamp(*SIZES.start(), *SIZES.end());
+        let name = file_name(avatar, size);
+        if let Some(held) = self.cached(avatar, size).filter(|held| !held.stale) {
+            return Ok(held);
+        }
+        let flight = self
+            .flights
+            .lock()
+            .unwrap()
+            .entry(name.clone())
+            .or_default()
+            .clone();
+        let answer = {
+            let _turn = flight.lock().await;
+            self.ensure_in_turn(avatar, size, &name).await
+        };
+        // The last one out takes the flight away.
+        let mut flights = self.flights.lock().unwrap();
+        drop(flight);
+        if flights
+            .get(&name)
+            .is_some_and(|held| Arc::strong_count(held) == 1)
+        {
+            flights.remove(&name);
+        }
+        answer
+    }
+
+    async fn ensure_in_turn(
+        &self,
+        avatar: &AvatarUrl,
+        size: u32,
+        name: &str,
+    ) -> Result<Avatar, Error> {
+        // Another call may have fetched it while this one waited its turn.
+        let held = self.cached(avatar, size);
+        if let Some(held) = held.clone().filter(|held| !held.stale) {
+            return Ok(held);
+        }
+        let failed = self
+            .failures
+            .lock()
+            .unwrap()
+            .get(name)
+            .filter(|(at, _)| at.elapsed() < FAILURE_BACKOFF)
+            .map(|(_, error)| *error);
+        if let Some(error) = failed {
+            return held.ok_or(error);
+        }
+        match self.fetch(avatar, size).await {
+            Ok(fetched) => {
+                self.failures.lock().unwrap().remove(name);
+                Ok(fetched)
+            }
+            Err(error) => {
+                self.failures
+                    .lock()
+                    .unwrap()
+                    .insert(name.to_owned(), (Instant::now(), error));
+                held.ok_or(error)
+            }
+        }
     }
 
     /// Fetches the avatar at `size` pixels and saves it, whatever is on disk.
@@ -294,6 +371,13 @@ fn cut(dir: &Path) {
 
 #[cfg(test)]
 impl Avatars {
+    /// Makes every remembered failure `by` older.
+    pub(crate) fn age_failures(&self, by: Duration) {
+        for (at, _) in self.failures.lock().unwrap().values_mut() {
+            *at -= by;
+        }
+    }
+
     /// Avatars fetched from the fake at `address`, which this trusts alone.
     pub(crate) fn trusting(dir: PathBuf, address: &str) -> Self {
         let root = reqwest::Certificate::from_pem(super::fake::CERT).unwrap();

@@ -18,7 +18,7 @@
 mod budget;
 mod detail;
 mod error;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub(crate) mod fake;
 mod gh;
 mod memo;
@@ -44,7 +44,8 @@ use memo::Memo;
 
 pub use budget::RateLimit;
 pub use detail::{
-    CheckRun, Checks, ChecksState, DetailKey, PullDetail, Review, ReviewState, RunState,
+    Capped, Changed, CheckRun, Checks, ChecksState, DetailKey, Label, PullDetail, Review,
+    ReviewState, RunState,
 };
 pub use error::{Cause, Error, NotSetUp};
 pub use types::{AVATAR_HOST, AvatarUrl, Person, PullState, PullSummary, Reviewer, Stale};
@@ -567,11 +568,15 @@ impl Handle {
 
 #[cfg(feature = "testing")]
 impl Handle {
-    /// An anonymous client for a fake at `address`, for other crates' tests.
-    /// It can hold no token, so nothing it is pointed at can ever see one.
+    /// An anonymous client for a fake at `address`, which it trusts alone,
+    /// for other crates' tests. It can hold no token, so nothing it is
+    /// pointed at can ever see one.
     pub fn anonymous_at(address: &str) -> Self {
         let url = Url::parse(&format!("{address}/")).expect("an address");
-        let builder = reqwest::Client::builder().no_proxy();
+        let root = reqwest::Certificate::from_pem(fake::CERT).expect("the fake's certificate");
+        let builder = reqwest::Client::builder()
+            .add_root_certificate(root)
+            .no_proxy();
         Self::new(Client::build(builder, url, None, 1).expect("a client"))
     }
 }

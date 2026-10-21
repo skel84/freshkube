@@ -60,6 +60,7 @@ async fn every_request_carries_the_headers_and_only_a_token_adds_authorization()
     assert_eq!(summary.state, PullState::Open);
     assert_eq!(summary.author.as_ref().unwrap().login, "mira");
     let seen = api.seen();
+    assert_eq!(seen.len(), 1, "one read, and nothing else: {seen:?}");
     let request = &seen[0];
     assert!(request.head().starts_with("GET /repos/acme/shop/commits/"));
     assert!(
@@ -84,8 +85,14 @@ async fn every_request_carries_the_headers_and_only_a_token_adds_authorization()
 
     let authenticated = client(&api, Some(TOKEN));
     ask(&authenticated).await.unwrap();
+    let seen = api.seen();
     assert_eq!(
-        api.seen()[1].header("authorization").as_deref(),
+        seen.len(),
+        2,
+        "the anonymous read and the token's: {seen:?}"
+    );
+    assert_eq!(
+        seen[1].header("authorization").as_deref(),
         Some(&*format!("Bearer {TOKEN}"))
     );
 }
@@ -629,8 +636,10 @@ async fn gh_gives_the_token_which_reaches_the_api_host_alone() {
     let handle = Handle::trusting_as(&api.address, Some(&token), GitHubToken::Gh);
     assert_eq!(handle.identity().account.as_deref(), Some(GH_ACCOUNT));
     ask(&handle).await.unwrap();
+    let seen = api.seen();
+    assert_eq!(seen.len(), 1, "{seen:?}");
     assert_eq!(
-        api.seen()[0].header("authorization").as_deref(),
+        seen[0].header("authorization").as_deref(),
         Some("Bearer ghp_fromGhExample0123456789")
     );
     assert!(avatars.seen().is_empty());
@@ -908,6 +917,14 @@ fn card(extra: impl Fn(&Request) -> Option<Reply> + Send + Sync + 'static) -> Se
                 pull["state"] = json!("closed");
                 pull["merged_at"] = json!("2026-10-01T10:00:00Z");
                 pull["merged_by"] = json!({"login": "ken"});
+                pull["merge_commit_sha"] = json!("e".repeat(40));
+                pull["additions"] = json!(84);
+                pull["deletions"] = json!(12);
+                pull["changed_files"] = json!(5);
+                pull["labels"] = json!([
+                    {"name": "reliability", "color": "0e8a16"},
+                    {"name": "odd", "color": "not-a-colour"},
+                ]);
                 Reply::json(200, &limits, &pull)
             }
             "/repos/acme/shop/pulls/418/reviews" => Reply::json(
@@ -943,7 +960,9 @@ fn card(extra: impl Fn(&Request) -> Option<Reply> + Send + Sync + 'static) -> Se
                     {"context": "ci/deploy-preview", "state": "success",
                      "description": "Ready", "target_url": "https://preview.example.test/418"}]}),
             ),
-            other => panic!("an unexpected read: {other}"),
+            // Anything the card is not meant to ask for is not found, and
+            // the test sees it in the requests the server recorded.
+            _ => Reply::empty(404, ""),
         }
     })
 }
@@ -978,6 +997,26 @@ async fn the_card_reads_four_things_and_nothing_else() {
     assert_eq!(detail.summary.merged_by.as_ref().unwrap().login, "ken");
     assert_eq!(detail.summary.head.as_deref(), Some(HEAD));
     assert_eq!(detail.stale, None);
+    // What `pulls/{n}` also says of it is kept for the full card.
+    assert_eq!(
+        detail.changed,
+        Some(Changed {
+            additions: 84,
+            deletions: 12,
+            files: 5
+        })
+    );
+    let labels: Vec<(&str, Option<&str>)> = detail
+        .labels
+        .iter()
+        .map(|label| (label.name.as_str(), label.color.as_deref()))
+        .collect();
+    assert_eq!(
+        labels,
+        [("reliability", Some("0e8a16")), ("odd", None)],
+        "a colour that isn't six hex digits is none"
+    );
+    assert_eq!(detail.merge_commit, Some("e".repeat(40)));
     // The address a status names is for the browser, kept as it is; a check
     // run's must be on github.com.
     assert_eq!(
@@ -1020,7 +1059,7 @@ async fn checks_roll_up_to_one_state_and_say_when_they_stopped_at_the_cap() {
     assert_eq!(detail.checks.runs.len(), 3);
     assert_eq!(detail.checks.runs[0].state, RunState::Passed);
     assert_eq!(detail.checks.runs[1].state, RunState::Running);
-    assert_eq!(detail.checks.runs[2].state, RunState::Ended);
+    assert_eq!(detail.checks.runs[2].state, RunState::Neutral);
     assert_eq!(
         detail.checks.capped,
         Some(Capped {
@@ -1033,25 +1072,39 @@ async fn checks_roll_up_to_one_state_and_say_when_they_stopped_at_the_cap() {
         super::detail::checks(&json!({"check_runs": runs}), &json!({"statuses": statuses})).state
     };
     let run = |status: &str, conclusion: Option<&str>| json!({"name": "x", "status": status, "conclusion": conclusion});
+    let ended = |conclusion: &str| run("completed", Some(conclusion));
     assert_eq!(roll(json!([]), json!([])), ChecksState::None);
     assert_eq!(
-        roll(json!([run("completed", Some("success"))]), json!([])),
+        roll(json!([ended("success")]), json!([])),
         ChecksState::Passing
     );
-    assert_eq!(
-        roll(json!([run("completed", Some("neutral"))]), json!([])),
-        ChecksState::Passing
-    );
+    // A skipped or neutral run beside a pass is fine; alone, nothing passed.
     assert_eq!(
         roll(
-            json!([run("completed", Some("failure")), run("queued", None)]),
+            json!([ended("success"), ended("skipped"), ended("neutral")]),
             json!([])
         ),
+        ChecksState::Passing
+    );
+    for only in ["skipped", "neutral", "cancelled"] {
+        assert_eq!(
+            roll(json!([ended(only)]), json!([])),
+            ChecksState::Ended,
+            "{only}"
+        );
+    }
+    // A cancelled run beside a pass did not run: not passing.
+    assert_eq!(
+        roll(json!([ended("success"), ended("cancelled")]), json!([])),
+        ChecksState::Ended
+    );
+    assert_eq!(
+        roll(json!([ended("failure"), run("queued", None)]), json!([])),
         ChecksState::Failing
     );
     assert_eq!(
         roll(
-            json!([run("completed", Some("success"))]),
+            json!([ended("success")]),
             json!([{"context": "c", "state": "pending"}])
         ),
         ChecksState::Pending
@@ -1060,6 +1113,42 @@ async fn checks_roll_up_to_one_state_and_say_when_they_stopped_at_the_cap() {
         roll(json!([]), json!([{"context": "c", "state": "error"}])),
         ChecksState::Failing
     );
+    assert_eq!(
+        roll(json!([]), json!([{"context": "c", "state": "success"}])),
+        ChecksState::Passing
+    );
+    // Cut at the cap, what was read can't say passing: the rest could fail.
+    let cut = |runs: Value, statuses: Value, runs_total: u64, statuses_total: u64| {
+        super::detail::checks(
+            &json!({"check_runs": runs, "total_count": runs_total}),
+            &json!({"statuses": statuses, "total_count": statuses_total}),
+        )
+    };
+    let passing = json!([ended("success")]);
+    let cut_runs = cut(passing.clone(), json!([]), 112, 0);
+    assert_eq!(cut_runs.state, ChecksState::Partial);
+    assert_eq!(
+        cut_runs.capped,
+        Some(Capped {
+            read: 1,
+            total: 112
+        })
+    );
+    // …by the combined status's own count, too.
+    let cut_statuses = cut(
+        passing,
+        json!([{"context": "c", "state": "success"}]),
+        1,
+        31,
+    );
+    assert_eq!(cut_statuses.state, ChecksState::Partial);
+    assert_eq!(
+        cut_statuses.statuses_capped,
+        Some(Capped { read: 1, total: 31 })
+    );
+    // A failure among what was read is a failure whatever was not.
+    let failing = cut(json!([ended("failure")]), json!([]), 112, 0);
+    assert_eq!(failing.state, ChecksState::Failing);
 }
 
 #[tokio::test]
@@ -1149,6 +1238,12 @@ async fn the_card_names_its_failures_in_the_cards_words() {
         error.words("acme/shop"),
         "acme/shop wasn't found. If it's private, add a GitHub token"
     );
+    let paths: Vec<String> = api
+        .seen()
+        .iter()
+        .map(|request| request.path.clone())
+        .collect();
+    assert_eq!(paths, ["/repos/acme/shop/pulls/1"], "it stops at the first");
     // A pull request without a usable head commit can't be asked about.
     let api = Server::new(|_| {
         let mut pull = pull(1);

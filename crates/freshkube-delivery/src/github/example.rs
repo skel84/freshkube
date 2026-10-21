@@ -5,8 +5,8 @@
 use chrono::{DateTime, TimeZone, Utc};
 
 use super::rest::{
-    AvatarUrl, CheckRun, Checks, ChecksState, Error, Identity, Person, PullDetail, PullState,
-    PullSummary, Review, ReviewState, Reviewer, RunState, Stale,
+    AvatarUrl, Changed, CheckRun, Checks, ChecksState, Error, Identity, Label, Person, PullDetail,
+    PullState, PullSummary, Review, ReviewState, Reviewer, RunState, Stale,
 };
 use crate::address::Address;
 use freshkube_core::setup::GitHubToken;
@@ -21,6 +21,15 @@ fn person(login: &str, id: u64) -> Person {
     Person {
         login: login.into(),
         avatar: AvatarUrl::parse(&format!("https://{}/u/{id}?v=4", super::rest::AVATAR_HOST)),
+    }
+}
+
+/// The head commit of the example's pull request `number`. Pull request 418
+/// is the one the example change deploys, whose commit is `a1f3c9e`.
+fn head_of(number: u64) -> String {
+    match number {
+        418 => format!("a1f3c9e{}", "0".repeat(33)),
+        other => format!("{other:0>40}"),
     }
 }
 
@@ -64,7 +73,7 @@ pub fn pull(number: u64) -> Option<PullSummary> {
         repo: REPO.into(),
         number,
         title: Some(title.into()),
-        head: Some(format!("{number:0>40}")),
+        head: Some(head_of(number)),
         state,
         author: Some(person(author, if author == "ken" { 1001 } else { 1002 })),
         merged_at: (state == PullState::Merged).then(|| at(9, 30)),
@@ -141,6 +150,16 @@ pub fn detail(summary: &PullSummary, trouble: Option<Trouble>) -> Result<PullDet
         .and_then(|trouble| trouble.leaves(Some(summary.clone())))
         .and_then(|pull| pull.stale);
     Ok(PullDetail {
+        changed: Some(Changed {
+            additions: 84,
+            deletions: 12,
+            files: 5,
+        }),
+        labels: vec![Label {
+            name: "reliability".into(),
+            color: Some("0e8a16".into()),
+        }],
+        merge_commit: (summary.state == PullState::Merged).then(|| "c0ffee0".repeat(5) + "00000"),
         summary: PullSummary {
             stale: stale.clone(),
             ..summary.clone()
@@ -156,6 +175,7 @@ pub fn detail(summary: &PullSummary, trouble: Option<Trouble>) -> Result<PullDet
             runs,
             statuses: Vec::new(),
             capped: None,
+            statuses_capped: None,
         },
         read_at: stale.as_ref().map_or_else(Utc::now, |stale| stale.read_at),
         stale,

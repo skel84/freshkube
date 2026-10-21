@@ -10,10 +10,10 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
-pub(crate) const CERT: &[u8] = include_bytes!("../../../testdata/results/loopback-cert.pem");
+pub const CERT: &[u8] = include_bytes!("../../../testdata/results/loopback-cert.pem");
 const KEY: &[u8] = include_bytes!("../../../testdata/results/loopback-key.pem");
 
-pub(crate) struct Reply {
+pub struct Reply {
     pub status: u16,
     pub headers: String,
     pub body: Vec<u8>,
@@ -39,7 +39,7 @@ impl Reply {
 
 /// One request as the fake read it.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Request {
+pub struct Request {
     pub path: String,
     head: String,
 }
@@ -60,7 +60,7 @@ impl Request {
     }
 }
 
-pub(crate) struct Server {
+pub struct Server {
     pub address: String,
     pub requests: Arc<Mutex<Vec<Request>>>,
     task: JoinHandle<()>,
@@ -115,8 +115,11 @@ impl Server {
                             .unwrap_or_default()
                             .to_owned();
                         let request = Request { path, head };
+                        // Recorded before the handler runs, so a request the
+                        // handler panics on, or answers wrongly, is still
+                        // seen by the test.
+                        requests.lock().unwrap().push(request.clone());
                         let reply = handler(&request);
-                        requests.lock().unwrap().push(request);
                         let head = format!(
                             "HTTP/1.1 {} X\r\ncontent-length: {}\r\nconnection: close\r\n{}\r\n",
                             reply.status,

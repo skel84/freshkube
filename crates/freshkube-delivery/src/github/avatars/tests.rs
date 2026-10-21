@@ -45,6 +45,7 @@ async fn the_avatar_host_never_gets_authorization_or_anything_but_the_digits() {
     let avatars = Avatars::trusting(dir.path().to_owned(), &host.address);
     avatars.fetch(&avatar(1534, Some(4)), 64).await.unwrap();
     let seen = host.seen();
+    assert_eq!(seen.len(), 1, "{seen:?}");
     let request = &seen[0];
     assert_eq!(request.path, "/u/1534?v=4&s=64");
     for header in [
@@ -61,7 +62,12 @@ async fn the_avatar_host_never_gets_authorization_or_anything_but_the_digits() {
     );
     // Without a version there is no `v`; a size is clamped.
     avatars.fetch(&avatar(9, None), 4000).await.unwrap();
-    assert_eq!(host.seen()[1].path, "/u/9?s=512");
+    let paths: Vec<String> = host
+        .seen()
+        .iter()
+        .map(|request| request.path.clone())
+        .collect();
+    assert_eq!(paths, ["/u/1534?v=4&s=64", "/u/9?s=512"]);
 }
 
 #[tokio::test]
@@ -88,9 +94,11 @@ async fn a_token_holding_client_and_the_avatar_client_share_nothing() {
     let person = pulls[0].summary.as_ref().unwrap().author.clone().unwrap();
     let avatars = Avatars::trusting(dir.path().to_owned(), &host.address);
     avatars.fetch(&person.avatar.unwrap(), 32).await.unwrap();
-    assert!(api.seen()[0].header("authorization").is_some());
-    assert_eq!(host.seen().len(), 1);
-    assert_eq!(host.seen()[0].header("authorization"), None);
+    let (api_seen, avatar_seen) = (api.seen(), host.seen());
+    assert_eq!(api_seen.len(), 1, "{api_seen:?}");
+    assert!(api_seen[0].header("authorization").is_some());
+    assert_eq!(avatar_seen.len(), 1, "{avatar_seen:?}");
+    assert_eq!(avatar_seen[0].header("authorization"), None);
 }
 
 #[tokio::test]
@@ -287,4 +295,85 @@ async fn an_unreachable_host_is_worded_without_its_address() {
     let error = avatars.fetch(&avatar(5, None), 32).await.unwrap_err();
     assert_eq!(error, Error::Unreachable);
     assert!(!error.to_string().contains("127.0.0.1"));
+}
+
+#[tokio::test]
+async fn many_asks_for_one_avatar_are_one_fetch() {
+    let host = Server::new(image);
+    let dir = tempfile::tempdir().unwrap();
+    let avatars = Arc::new(Avatars::trusting(dir.path().to_owned(), &host.address));
+    let one = avatar(21, Some(1));
+    let answers = futures::future::join_all((0..8).map(|_| avatars.ensure(&one, 32))).await;
+    assert!(
+        answers
+            .iter()
+            .all(|answer| answer.as_ref().is_ok_and(|a| !a.stale))
+    );
+    let seen = host.seen();
+    assert_eq!(seen.len(), 1, "one fetch for eight asks: {seen:?}");
+    assert!(
+        avatars.flights.lock().unwrap().is_empty(),
+        "no flight is left"
+    );
+    // Another size is another file, and another fetch.
+    avatars.ensure(&one, 64).await.unwrap();
+    assert_eq!(host.seen().len(), 2);
+    // Fresh, nothing is asked.
+    avatars.ensure(&one, 64).await.unwrap();
+    assert_eq!(host.seen().len(), 2);
+}
+
+#[tokio::test]
+async fn a_failed_fetch_is_not_asked_for_again_until_the_backoff_has_passed() {
+    let host = Server::new(|_| Reply::empty(500, ""));
+    let dir = tempfile::tempdir().unwrap();
+    let avatars = Avatars::trusting(dir.path().to_owned(), &host.address);
+    let one = avatar(22, None);
+    for _ in 0..3 {
+        assert_eq!(
+            avatars.ensure(&one, 32).await.unwrap_err(),
+            Error::Refused(500)
+        );
+    }
+    assert_eq!(host.seen().len(), 1, "asked once, then remembered");
+    avatars.age_failures(FAILURE_BACKOFF + Duration::from_secs(1));
+    assert!(avatars.ensure(&one, 32).await.is_err());
+    assert_eq!(host.seen().len(), 2, "asked again after the backoff");
+    // An old file stands in for the failure, and is not asked for either.
+    let path = avatars.path(&one, 32);
+    std::fs::write(&path, PNG).unwrap();
+    age(&path, FRESH_FOR + Duration::from_secs(3600));
+    avatars.age_failures(FAILURE_BACKOFF + Duration::from_secs(1));
+    let stood = avatars.ensure(&one, 32).await.unwrap();
+    assert!(stood.stale && stood.path == path);
+    let before = host.seen().len();
+    avatars.ensure(&one, 32).await.unwrap();
+    assert_eq!(
+        host.seen().len(),
+        before,
+        "remembered while the old file stands"
+    );
+}
+
+#[tokio::test]
+async fn a_file_from_the_future_is_not_fresh_for_ever() {
+    let host = Server::new(image);
+    let dir = tempfile::tempdir().unwrap();
+    let avatars = Avatars::trusting(dir.path().to_owned(), &host.address);
+    let one = avatar(23, None);
+    let made = avatars.fetch(&one, 32).await.unwrap();
+    let file = std::fs::File::options()
+        .write(true)
+        .open(&made.path)
+        .unwrap();
+    file.set_modified(SystemTime::now() + Duration::from_secs(30 * 24 * 3600))
+        .unwrap();
+    assert!(
+        avatars.cached(&one, 32).unwrap().stale,
+        "a clock that was wrong"
+    );
+    // It is fetched again, and the new file carries the real time.
+    avatars.ensure(&one, 32).await.unwrap();
+    assert_eq!(host.seen().len(), 2);
+    assert!(!avatars.cached(&one, 32).unwrap().stale);
 }
