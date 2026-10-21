@@ -292,7 +292,7 @@ async fn refused_pipeline_runs_ask_in_the_build_namespace_and_cluster_wide_witho
     // With no build namespace the builds are read across all of them, so
     // only a ClusterRole reads them.
     let trail = run_configured(&world, &ENV, &Default::default(), None, |plan| {
-        plan.build_namespace = None;
+        plan.build_namespace = Ok(None);
     })
     .await;
     let role = role_of(one(&trail, Hop::Commit, Hop::PipelineRun));
