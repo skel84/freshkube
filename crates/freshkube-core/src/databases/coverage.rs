@@ -173,3 +173,92 @@ pub fn coverage<'a>(
         restore,
     }
 }
+
+/// Whether WAL is archived, from the operator's `ContinuousArchiving`
+/// condition joined with Coroot's check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Archiving {
+    Ok,
+    Failing,
+    /// The operator and Coroot answer differently.
+    Disagree,
+    Unknown,
+}
+impl Archiving {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "WAL archiving working",
+            Self::Failing => "WAL archiving failing",
+            Self::Disagree => "The operator and Coroot disagree on WAL archiving",
+            Self::Unknown => "WAL archiving unknown",
+        }
+    }
+}
+
+/// The operator's side: a current `ContinuousArchiving` condition.
+fn operator_archiving(db: &Database) -> Option<bool> {
+    let condition = db
+        .conditions
+        .iter()
+        .find(|condition| condition.kind == "ContinuousArchiving" && condition.current)?;
+    match condition.status.as_str() {
+        "True" => Some(true),
+        "False" => Some(false),
+        _ => None,
+    }
+}
+fn coroot_archiving(report: Option<&super::coroot::DatabaseReport>) -> Option<bool> {
+    use crate::coroot::Status;
+    match report?.archiving? {
+        Status::Ok | Status::Info => Some(true),
+        Status::Warning | Status::Critical => Some(false),
+        Status::Unknown => None,
+    }
+}
+/// Joins the two answers. One alone stands; both must agree to be Ok.
+pub fn archiving(db: &Database, coroot: Option<&super::coroot::DatabaseReport>) -> Archiving {
+    match (operator_archiving(db), coroot_archiving(coroot)) {
+        (Some(a), Some(b)) if a != b => Archiving::Disagree,
+        (Some(true), _) | (None, Some(true)) => Archiving::Ok,
+        (Some(false), _) | (None, Some(false)) => Archiving::Failing,
+        (None, None) => Archiving::Unknown,
+    }
+}
+
+/// How far a restore can reach: from the oldest completed backup observed
+/// to the newest, or to now while WAL is known to be archived.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RestoreWindow {
+    pub from: DateTime<Utc>,
+    pub until: DateTime<Utc>,
+    /// Reaches the present through archived WAL.
+    pub to_now: bool,
+}
+pub fn restore_window(
+    db: &Database,
+    inventory: &Inventory,
+    found: &BackupCoverage,
+    archiving: Archiving,
+    now: DateTime<Utc>,
+) -> Option<RestoreWindow> {
+    let latest = found.completed?.completed?;
+    if found.freshness == Freshness::Unknown {
+        return None;
+    }
+    let from = inventory
+        .backups
+        .items
+        .iter()
+        .filter(|backup| {
+            backup.state == BackupState::Completed
+                && belongs(backup.cluster.as_ref(), db, backup.created)
+        })
+        .filter_map(|backup| backup.completed)
+        .min()?;
+    let to_now = archiving == Archiving::Ok && latest <= now;
+    Some(RestoreWindow {
+        from,
+        until: if to_now { now } else { latest },
+        to_now,
+    })
+}

@@ -424,6 +424,7 @@ impl Pilot {
             page.set_entries(&clusters, project.as_deref(), cx)
         });
         let reader = crate::observability::OutcomeReader::new(&self.pages.observability);
+        self.sync_databases_coroot(&clusters, project.as_deref(), &reader, cx);
         self.pages.applications.update(cx, |page, cx| {
             page.set_coroot(
                 crate::applications::CorootLive {
@@ -433,6 +434,40 @@ impl Pilot {
                 cx,
             )
         });
+    }
+
+    /// Hands the Databases page Observability's connection and the open
+    /// entry's Coroot link, so it reads Coroot only through the project and
+    /// cluster the setup file names for that entry.
+    fn sync_databases_coroot(
+        &mut self,
+        clusters: &[Entry],
+        project: Option<&str>,
+        reader: &crate::observability::OutcomeReader,
+        cx: &mut Context<Self>,
+    ) {
+        use freshkube_core::databases::coroot::Absence;
+        let active = self.switch.active_cluster().map(str::to_owned);
+        let link = match active
+            .as_deref()
+            .and_then(|id| clusters.iter().find(|entry| entry.id == id))
+        {
+            None => Err(Absence::NotLinked),
+            Some(entry) => {
+                freshkube_core::coroot::Link::of(entry, project).map_err(|why| match why {
+                    freshkube_core::coroot::Outcome::NoProjectForEntry => Absence::NoProject,
+                    _ => Absence::NotLinked,
+                })
+            }
+        };
+        let input = crate::screens::CorootInput {
+            reader: Some(reader.clone()),
+            entry: active.unwrap_or_default(),
+            link,
+        };
+        self.pages
+            .databases
+            .update(cx, |page, cx| page.set_coroot(Some(input), cx));
     }
 
     /// Presents a notice and tells subscribers what was said.

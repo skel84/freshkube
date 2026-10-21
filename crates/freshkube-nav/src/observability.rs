@@ -9,7 +9,7 @@ pub enum ObservabilityTab {
     Overview,
     /// The PostgreSQL report.
     Postgres,
-    /// The MySQL (and MariaDB) report.
+    /// The MySQL report, which Coroot names `Mysql` and shows for MariaDB.
     Mysql,
 }
 
@@ -20,7 +20,7 @@ impl ObservabilityTab {
         match self {
             Self::Overview => None,
             Self::Postgres => Some("Postgres"),
-            Self::Mysql => Some("MySQL"),
+            Self::Mysql => Some("Mysql"),
         }
     }
 }
@@ -44,7 +44,7 @@ mod tests {
     fn tabs_name_coroots_reports() {
         assert_eq!(ObservabilityTab::Overview.report(), None);
         assert_eq!(ObservabilityTab::Postgres.report(), Some("Postgres"));
-        assert_eq!(ObservabilityTab::Mysql.report(), Some("MySQL"));
+        assert_eq!(ObservabilityTab::Mysql.report(), Some("Mysql"));
     }
 
     #[test]

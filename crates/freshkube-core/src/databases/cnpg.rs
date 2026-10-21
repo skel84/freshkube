@@ -6,6 +6,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 pub(super) const GROUP: &str = "postgresql.cnpg.io";
+pub(super) const VERSION: &str = "v1";
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(super) struct Meta {
@@ -26,12 +27,21 @@ struct Owner {
 }
 impl Meta {
     fn identity(&self, kind: &str, plural: &str) -> Option<Identity> {
+        self.identity_in(GROUP, VERSION, kind, plural)
+    }
+    pub(super) fn identity_in(
+        &self,
+        group: &str,
+        version: &str,
+        kind: &str,
+        plural: &str,
+    ) -> Option<Identity> {
         if self.name.is_empty() || self.namespace.is_empty() || self.uid.is_empty() {
             return None;
         }
         Some(Identity {
-            group: GROUP.into(),
-            version: "v1".into(),
+            group: group.into(),
+            version: version.into(),
             kind: kind.into(),
             plural: plural.into(),
             namespace: self.namespace.clone(),
@@ -40,32 +50,71 @@ impl Meta {
         })
     }
     fn reference(&self, cluster: Option<Reference>) -> Option<ClusterRef> {
-        let name = cluster?.name?;
+        Some(self.reference_to(
+            Engine::CloudNativePg,
+            &format!("{GROUP}/{VERSION}"),
+            "Cluster",
+            None,
+            cluster?.name?,
+        ))
+    }
+    /// A reference to a database by name, carrying its UID only when an owner
+    /// reference of the given API version and kind names it.
+    pub(super) fn reference_to(
+        &self,
+        engine: Engine,
+        api_version: &str,
+        owner_kind: &str,
+        namespace: Option<String>,
+        name: String,
+    ) -> ClusterRef {
+        let namespace = namespace.unwrap_or_else(|| self.namespace.clone());
         let uid = self
             .owner_references
             .as_deref()
             .unwrap_or_default()
             .iter()
             .find(|owner| {
-                owner.api_version == format!("{GROUP}/v1")
-                    && owner.kind == "Cluster"
+                owner.api_version == api_version
+                    && owner.kind == owner_kind
                     && owner.name == name
+                    && namespace == self.namespace
             })
             .map(|owner| owner.uid.clone());
-        Some(ClusterRef {
-            engine: Engine::CloudNativePg,
-            namespace: self.namespace.clone(),
+        ClusterRef {
+            engine,
+            namespace,
             name,
             uid,
-        })
+        }
+    }
+    pub(super) fn creation(&self) -> Option<DateTime<Utc>> {
+        time(self.creation_timestamp.clone())
+    }
+    pub(super) fn generation(&self) -> Option<i64> {
+        self.generation
     }
 }
-fn time(value: Option<String>) -> Option<DateTime<Utc>> {
+pub(super) fn time(value: Option<String>) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value.as_deref()?)
         .ok()
         .map(|at| at.with_timezone(&Utc))
 }
-fn named(value: Option<String>) -> Fact<String> {
+/// The major version of a PostgreSQL image's tag: `…/postgresql:16.4-12` is 16.
+fn major_of(image: Option<&str>) -> Option<String> {
+    let tag = image?.split('@').next()?.rsplit_once(':')?.1;
+    let major: String = tag.chars().take_while(char::is_ascii_digit).collect();
+    (!major.is_empty()).then_some(major)
+}
+/// Go's `time.Time.String()`: `2026-01-02 15:04:05.123 +0000 UTC`.
+fn go_time(text: &str) -> Option<DateTime<Utc>> {
+    let mut parts = text.split_whitespace();
+    let stamp = format!("{} {} {}", parts.next()?, parts.next()?, parts.next()?);
+    DateTime::parse_from_str(&stamp, "%Y-%m-%d %H:%M:%S%.f %z")
+        .ok()
+        .map(|at| at.with_timezone(&Utc))
+}
+pub(super) fn named(value: Option<String>) -> Fact<String> {
     value
         .filter(|value| !value.is_empty() && value != "-" && value != "pending")
         .into()
@@ -83,9 +132,10 @@ pub(super) struct Cluster {
     status: Option<ClusterStatus>,
 }
 #[derive(Default, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 struct ClusterSpec {
     instances: Option<u32>,
+    image_name: Option<String>,
     backup: Option<BackupConfig>,
     plugins: Option<Vec<Plugin>>,
 }
@@ -111,21 +161,53 @@ struct ClusterStatus {
     instances_status: Option<BTreeMap<String, Vec<String>>>,
     instances_reported_state: Option<BTreeMap<String, ReportedInstance>>,
     conditions: Option<Vec<RawCondition>>,
+    image: Option<String>,
+    pg_data_image_info: Option<ImageInfo>,
+    certificates: Option<RawCertificates>,
 }
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct RawCondition {
+struct ImageInfo {
+    major_version: Option<u32>,
+}
+/// Only the expiry map: secret names and dates, never a Secret's data.
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct RawCertificates {
+    expirations: Option<BTreeMap<String, String>>,
+}
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(super) struct RawCondition {
     #[serde(rename = "type")]
-    kind: String,
-    status: String,
-    reason: String,
-    last_transition_time: Option<String>,
-    observed_generation: Option<i64>,
+    pub(super) kind: String,
+    pub(super) status: String,
+    pub(super) reason: String,
+    pub(super) last_transition_time: Option<String>,
+    pub(super) observed_generation: Option<i64>,
 }
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct ReportedInstance {
     is_primary: Option<bool>,
+}
+pub(super) fn conditions(
+    raw: Option<Vec<RawCondition>>,
+    generation: Option<i64>,
+) -> Vec<Condition> {
+    raw.unwrap_or_default()
+        .into_iter()
+        .map(|condition| Condition {
+            kind: condition.kind,
+            status: condition.status,
+            reason: condition.reason,
+            transition_time: time(condition.last_transition_time),
+            observed_generation: condition.observed_generation,
+            current: generation
+                .zip(condition.observed_generation)
+                .is_none_or(|(generation, observed)| observed >= generation),
+        })
+        .collect()
 }
 impl Cluster {
     pub(super) fn project(self) -> Option<Database> {
@@ -158,30 +240,22 @@ impl Cluster {
                     None if current_primary.known() == Some(&name) => Fact::Known(Role::Primary),
                     None => Fact::Unknown,
                 };
+                let ready = match &state {
+                    Fact::Known(state) if state == "healthy" => Fact::Known(true),
+                    Fact::Known(state) if state == "failed" || state == "unhealthy" => {
+                        Fact::Known(false)
+                    }
+                    _ => Fact::Unknown,
+                };
                 Instance {
-                    name,
                     role,
                     state,
-                    replication: Fact::Unknown,
+                    ready,
+                    ..Instance::named(name)
                 }
             })
             .collect();
-        let conditions = status
-            .conditions
-            .unwrap_or_default()
-            .into_iter()
-            .map(|condition| Condition {
-                kind: condition.kind,
-                status: condition.status,
-                reason: condition.reason,
-                transition_time: time(condition.last_transition_time),
-                observed_generation: condition.observed_generation,
-                current: meta
-                    .generation
-                    .zip(condition.observed_generation)
-                    .is_none_or(|(generation, observed)| observed >= generation),
-            })
-            .collect();
+        let conditions = conditions(status.conditions, meta.generation);
         let backup_configuration = if spec
             .backup
             .as_ref()
@@ -197,7 +271,31 @@ impl Cluster {
         } else {
             Fact::Unknown
         };
+        let version = status
+            .pg_data_image_info
+            .and_then(|info| info.major_version)
+            .map(|major| major.to_string())
+            .or_else(|| major_of(status.image.as_deref().or(spec.image_name.as_deref())))
+            .into();
+        let certificates = match status.certificates {
+            Some(RawCertificates {
+                expirations: Some(expirations),
+            }) => Fact::Known(
+                expirations
+                    .into_iter()
+                    .map(|(name, text)| Certificate {
+                        name,
+                        expires: go_time(&text),
+                    })
+                    .collect(),
+            ),
+            _ => Fact::Unknown,
+        };
         Some(Database {
+            version,
+            proxy: Fact::Unknown,
+            certificates,
+            primary_changed: None,
             created: time(meta.creation_timestamp),
             identity,
             engine: Engine::CloudNativePg,
@@ -293,4 +391,78 @@ impl ScheduleObject {
             next: time(status.next_schedule_time),
         })
     }
+}
+
+/// A Pooler's size, joined to its Cluster by name. `status.instances` counts
+/// pods scheduled; the CRD has no ready count and no conditions.
+pub(super) struct PoolerFacts {
+    pub namespace: String,
+    pub cluster: String,
+    /// None when the status doesn't report it yet.
+    pub running: Option<u32>,
+    pub desired: u32,
+}
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub(super) struct PoolerObject {
+    metadata: Option<Meta>,
+    spec: Option<PoolerSpec>,
+    status: Option<PoolerStatus>,
+}
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct PoolerSpec {
+    cluster: Option<Reference>,
+    instances: Option<u32>,
+}
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct PoolerStatus {
+    instances: Option<u32>,
+}
+impl PoolerObject {
+    pub(super) fn project(self) -> Option<PoolerFacts> {
+        let meta = self.metadata?;
+        let spec = self.spec?;
+        Some(PoolerFacts {
+            namespace: meta.namespace,
+            cluster: spec.cluster?.name?,
+            // The CRD defaults `instances` to 1.
+            desired: spec.instances.unwrap_or(1),
+            running: self.status.and_then(|status| status.instances),
+        })
+    }
+}
+
+/// The proxy fact for a Cluster: the Poolers naming it, added up; Unknown
+/// unless the list was read completely and each reports its pods.
+pub(super) fn proxy(db: &Database, poolers: &Read<PoolerFacts>) -> Fact<Option<Proxy>> {
+    // A Pooler kind the API doesn't serve means there are none.
+    if poolers.coverage == Coverage::NotServed {
+        return Fact::Known(None);
+    }
+    if !poolers.complete() {
+        return Fact::Unknown;
+    }
+    let mine: Vec<_> = poolers
+        .items
+        .iter()
+        .filter(|p| p.namespace == db.identity.namespace && p.cluster == db.identity.name)
+        .collect();
+    if mine.is_empty() {
+        return Fact::Known(None);
+    }
+    let mut running = 0;
+    for pooler in &mine {
+        match pooler.running {
+            Some(count) => running += count,
+            None => return Fact::Unknown,
+        }
+    }
+    Fact::Known(Some(Proxy {
+        kind: ProxyKind::Pooler,
+        running,
+        desired: mine.iter().map(|p| p.desired).sum(),
+        ready: Fact::Unknown,
+    }))
 }

@@ -1,5 +1,5 @@
 //! GET-only, bounded API discovery and typed lists. No raw objects escape.
-use super::{cnpg::*, *};
+use super::*;
 use chrono::{DateTime, Utc};
 use kube::Client;
 use serde::{Deserialize, de::DeserializeOwned};
@@ -43,7 +43,7 @@ struct ListMeta {
     next: String,
 }
 
-async fn get<T: DeserializeOwned>(client: &Client, path: String) -> Result<T, Coverage> {
+pub(super) async fn get<T: DeserializeOwned>(client: &Client, path: String) -> Result<T, Coverage> {
     let request = http::Request::builder()
         .method("GET")
         .uri(path)
@@ -107,74 +107,192 @@ async fn list<T: DeserializeOwned, U>(
     answer.coverage = Coverage::Partial;
     answer
 }
-/// API discovery is not an operator-health probe. Only the v1 projection is supported.
-pub async fn read(client: &Client, namespace: Option<&str>, at: DateTime<Utc>) -> Inventory {
-    if namespace.is_some_and(|namespace| !valid_namespace(namespace)) {
-        return Inventory::unavailable(Coverage::Failed, at);
-    }
-    let group = match get::<Group>(client, format!("/apis/{GROUP}")).await {
-        Ok(group) => group,
-        Err(coverage) => return Inventory::unavailable(coverage, at),
-    };
-    if !group.versions.iter().any(|version| version.version == "v1") {
-        return Inventory::unavailable(Coverage::Unsupported, at);
-    }
-    let resources = match get::<Resources>(client, format!("/apis/{GROUP}/v1")).await {
-        Ok(resources) => resources,
-        Err(coverage) => return Inventory::unavailable(coverage, at),
-    };
-    let available = |plural: &str, kind: &str| {
-        resources.resources.iter().any(|r| {
+/// The group and version one operator's reader supports.
+struct Operator {
+    group: &'static str,
+    version: &'static str,
+}
+const CNPG: Operator = Operator {
+    group: cnpg::GROUP,
+    version: cnpg::VERSION,
+};
+const MARIADB: Operator = Operator {
+    group: mariadb::GROUP,
+    version: mariadb::VERSION,
+};
+
+/// What discovery found of one operator's API.
+struct Served {
+    resources: Resources,
+    prefix: String,
+}
+impl Served {
+    fn has(&self, plural: &str, kind: &str) -> bool {
+        self.resources.resources.iter().any(|r| {
             r.name == plural
                 && r.kind == kind
                 && r.namespaced
                 && r.verbs.iter().any(|v| v == "list")
         })
-    };
+    }
+    fn path(&self, plural: &str) -> String {
+        format!("{}/{plural}", self.prefix)
+    }
+}
+
+/// API discovery is not an operator-health probe.
+async fn discover(
+    client: &Client,
+    operator: &Operator,
+    namespace: Option<&str>,
+) -> Result<Served, Coverage> {
+    let group = get::<Group>(client, format!("/apis/{}", operator.group)).await?;
+    if !group.versions.iter().any(|v| v.version == operator.version) {
+        return Err(Coverage::Unsupported);
+    }
+    let resources = get::<Resources>(
+        client,
+        format!("/apis/{}/{}", operator.group, operator.version),
+    )
+    .await?;
+    let base = format!("/apis/{}/{}", operator.group, operator.version);
     let prefix = match namespace {
-        Some(namespace) => {
-            format!("/apis/{GROUP}/v1/namespaces/{namespace}")
-        }
-        None => format!("/apis/{GROUP}/v1"),
+        Some(namespace) => format!("{base}/namespaces/{namespace}"),
+        None => base,
     };
-    let databases = async {
-        if available("clusters", "Cluster") {
-            list(client, &format!("{prefix}/clusters"), at, Cluster::project).await
-        } else {
-            Read::empty(Coverage::NotServed, at)
-        }
+    Ok(Served { resources, prefix })
+}
+
+/// Lists one kind when the API serves it, else NotServed.
+async fn kind<T: DeserializeOwned, U>(
+    client: &Client,
+    served: &Served,
+    (plural, kind): (&str, &str),
+    at: DateTime<Utc>,
+    project: fn(T) -> Option<U>,
+) -> Read<U> {
+    if served.has(plural, kind) {
+        list(client, &served.path(plural), at, project).await
+    } else {
+        Read::empty(Coverage::NotServed, at)
+    }
+}
+
+/// Reads CloudNativePG and the MariaDB operator at once; each is installed
+/// or not on its own, and one's refusal never hides the other.
+pub async fn read(client: &Client, namespace: Option<&str>, at: DateTime<Utc>) -> Inventory {
+    if namespace.is_some_and(|namespace| !valid_namespace(namespace)) {
+        return Inventory::unavailable(Coverage::Failed, at);
+    }
+    let (cnpg, mariadb) = tokio::join!(
+        read_cnpg(client, namespace, at),
+        read_mariadb(client, namespace, at)
+    );
+    Inventory::merge(
+        vec![(Engine::CloudNativePg, cnpg), (Engine::MariaDb, mariadb)],
+        at,
+    )
+}
+
+async fn read_cnpg(client: &Client, namespace: Option<&str>, at: DateTime<Utc>) -> Inventory {
+    let served = match discover(client, &CNPG, namespace).await {
+        Ok(served) => served,
+        Err(coverage) => return Inventory::unavailable(coverage, at),
     };
-    let backups = async {
-        if available("backups", "Backup") {
-            list(
-                client,
-                &format!("{prefix}/backups"),
-                at,
-                BackupObject::project,
-            )
-            .await
-        } else {
-            Read::empty(Coverage::NotServed, at)
-        }
-    };
-    let schedules = async {
-        if available("scheduledbackups", "ScheduledBackup") {
-            list(
-                client,
-                &format!("{prefix}/scheduledbackups"),
-                at,
-                ScheduleObject::project,
-            )
-            .await
-        } else {
-            Read::empty(Coverage::NotServed, at)
-        }
-    };
-    let (databases, backups, schedules) = tokio::join!(databases, backups, schedules);
+    let (mut databases, backups, schedules, poolers) = tokio::join!(
+        kind(
+            client,
+            &served,
+            ("clusters", "Cluster"),
+            at,
+            cnpg::Cluster::project
+        ),
+        kind(
+            client,
+            &served,
+            ("backups", "Backup"),
+            at,
+            cnpg::BackupObject::project
+        ),
+        kind(
+            client,
+            &served,
+            ("scheduledbackups", "ScheduledBackup"),
+            at,
+            cnpg::ScheduleObject::project
+        ),
+        kind(
+            client,
+            &served,
+            ("poolers", "Pooler"),
+            at,
+            cnpg::PoolerObject::project
+        ),
+    );
+    for db in &mut databases.items {
+        db.proxy = cnpg::proxy(db, &poolers);
+    }
     Inventory {
         discovery: Coverage::Complete,
+        engines: Vec::new(),
         databases,
         backups,
+        schedules,
+    }
+}
+
+async fn read_mariadb(client: &Client, namespace: Option<&str>, at: DateTime<Utc>) -> Inventory {
+    let served = match discover(client, &MARIADB, namespace).await {
+        Ok(served) => served,
+        Err(coverage) => return Inventory::unavailable(coverage, at),
+    };
+    let (databases, backups, scalers) = tokio::join!(
+        kind(
+            client,
+            &served,
+            ("mariadbs", "MariaDB"),
+            at,
+            |o: mariadb::MariaDbObject| o.project()
+        ),
+        kind(
+            client,
+            &served,
+            ("backups", "Backup"),
+            at,
+            mariadb::BackupObject::project
+        ),
+        kind(
+            client,
+            &served,
+            ("maxscales", "MaxScale"),
+            at,
+            mariadb::MaxScaleObject::project
+        ),
+    );
+    let mut projected = Read {
+        items: Vec::new(),
+        coverage: databases.coverage,
+        observed_at: databases.observed_at,
+        stale: false,
+    };
+    for item in databases.items {
+        let mut database = item.database;
+        database.proxy = mariadb::proxy(item.max_scale.as_ref(), &scalers);
+        projected.items.push(database);
+    }
+    let mut runs = Read::empty(backups.coverage.clone(), at);
+    let mut schedules = Read::empty(backups.coverage, at);
+    for item in backups.items {
+        match item {
+            mariadb::Item::Run(backup) => runs.items.push(backup),
+            mariadb::Item::Schedule(schedule) => schedules.items.push(schedule),
+        }
+    }
+    Inventory {
+        discovery: Coverage::Complete,
+        engines: Vec::new(),
+        databases: projected,
+        backups: runs,
         schedules,
     }
 }

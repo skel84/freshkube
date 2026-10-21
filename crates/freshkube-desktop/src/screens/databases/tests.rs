@@ -21,6 +21,21 @@ fn source(id: &str) -> PageSource {
 fn at() -> chrono::DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap()
 }
+/// The id of the row for database `name` in the current view.
+fn row_id(
+    page: &Entity<DatabasesScreen>,
+    name: &str,
+    cx: &gpui_kit::App,
+) -> gpui_kit::SharedString {
+    page.read(cx)
+        .display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == name)
+        .unwrap_or_else(|| panic!("no row {name}"))
+        .id
+        .clone()
+}
 pub(super) fn mount(
     cx: &mut TestAppContext,
     width: f32,
@@ -71,7 +86,7 @@ fn inventory_views_keyboard_inspector_and_resource_link_use_object_identity(
     });
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
-        let id = page.read(cx).display.rows[0].id.clone();
+        let id = row_id(&page, "orders-db", cx);
         window.click(id, cx);
         window.render_frame(cx);
         assert_eq!(
@@ -92,7 +107,7 @@ fn inventory_views_keyboard_inspector_and_resource_link_use_object_identity(
     cx.update_window(window.into(), |_, window, cx| {
         window.click("databases-view-backups", cx);
         window.render_frame(cx);
-        assert_eq!(page.read(cx).display.rows.len(), 3);
+        assert_eq!(page.read(cx).display.rows.len(), 4);
         window.press("down", cx);
         window.render_frame(cx);
         assert!(page.read(cx).selected.is_some());
@@ -101,7 +116,7 @@ fn inventory_views_keyboard_inspector_and_resource_link_use_object_identity(
         assert!(window.try_find("databases-detail").is_none());
         window.click("databases-view-schedules", cx);
         window.render_frame(cx);
-        assert_eq!(page.read(cx).display.rows.len(), 1);
+        assert_eq!(page.read(cx).display.rows.len(), 2);
     })
     .unwrap();
 }
@@ -109,7 +124,7 @@ fn inventory_views_keyboard_inspector_and_resource_link_use_object_identity(
 fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
     for (shape, words) in [
-        ("not-installed", "not installed"),
+        ("not-installed", "No database operator is installed"),
         ("refused", "Not permitted"),
         ("empty", "No clusters"),
         ("unsupported", "Unsupported"),
@@ -142,7 +157,7 @@ fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppCo
             cx.notify();
         });
         window.render_frame(cx);
-        assert_eq!(page.read(cx).display.rows.len(), 1);
+        assert_eq!(page.read(cx).display.rows.len(), 2);
         assert!(
             window
                 .find("databases-coverage")
@@ -150,7 +165,13 @@ fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppCo
                 .unwrap()
                 .contains("Backups: Not permitted")
         );
-        assert!(page.read(cx).display.rows[0].cells[5].contains("unknown"));
+        assert!(
+            page.read(cx)
+                .display
+                .rows
+                .iter()
+                .all(|row| row.cells[3] == "Unknown")
+        );
         page.update(cx, |page, cx| {
             let id = page.identity().unwrap();
             let request = page.loader.start(id);
@@ -160,7 +181,7 @@ fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppCo
         });
         window.render_frame(cx);
         window.find("databases-stale");
-        assert_eq!(page.read(cx).display.rows.len(), 1);
+        assert_eq!(page.read(cx).display.rows.len(), 2);
     })
     .unwrap();
 }
@@ -257,7 +278,7 @@ fn table_and_inspector_follow_shared_layout_at_wide_narrow_and_large_text(cx: &m
                         list: "databases-list",
                     },
                 );
-                let id = page.read(cx).display.rows[0].id.clone();
+                let id = row_id(&page, "orders-db", cx);
                 window.click(id, cx);
                 window.render_frame(cx);
                 layout_check::assert_inspector(
@@ -275,25 +296,41 @@ fn table_and_inspector_follow_shared_layout_at_wide_narrow_and_large_text(cx: &m
         }
     }
 }
+fn display_of(inv: &Inventory, mode: Mode) -> super::display::Display {
+    super::display::Display::new(
+        Some(inv),
+        &databases::coroot::Evidence::default(),
+        mode,
+        at(),
+    )
+}
 #[test]
 fn display_uses_both_engines_and_keeps_orphans_visible() {
-    let inventory = databases::example::shaped(at(), "mariadb-model");
-    let display = super::display::Display::new(Some(&inventory), Mode::Clusters);
+    let inventory = databases::example::inventory(at());
+    let display = display_of(&inventory, Mode::Clusters);
     assert_eq!(display.rows.len(), 2);
-    assert!(display.rows.iter().any(|row| row.cells[1] == "MariaDB"));
-    let backups = super::display::Display::new(Some(&inventory), Mode::Backups);
-    assert!(
-        backups
-            .rows
-            .iter()
-            .any(|row| row.cells[5].contains("missing"))
+    let engines: Vec<&str> = display
+        .rows
+        .iter()
+        .map(|row| row.cells[1].as_ref())
+        .collect();
+    assert!(engines.contains(&"MariaDB 11.4"), "{engines:?}");
+    assert!(engines.contains(&"PostgreSQL 16"), "{engines:?}");
+    let backups = display_of(&inventory, Mode::Backups);
+    let orphan = backups
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "archive-old")
+        .unwrap();
+    assert_eq!(
+        orphan.tone,
+        crate::ui::Tone::Warn,
+        "an orphan is not a pass"
     );
+    assert!(orphan.verdict.headline.contains("archive-db"));
+    assert!(orphan.cells[2] == "Completed");
     let partial = Inventory::unavailable(Coverage::Refused, at());
-    assert!(
-        !super::display::Display::new(Some(&partial), Mode::Backups)
-            .empty
-            .starts_with("No ")
-    );
+    assert!(!display_of(&partial, Mode::Backups).empty.starts_with("No "));
 }
 
 #[gpui_kit::test]
@@ -317,20 +354,20 @@ fn shell_shortcut_opens_databases_in_the_storage_column(cx: &mut TestAppContext)
 fn a_large_cluster_keeps_the_inspector_bounded_and_discloses_omitted_evidence() {
     let mut inventory = databases::example::inventory(at());
     inventory.databases.items[0].instances = (0..500)
-        .map(|index| databases::Instance {
-            name: format!("orders-{index}"),
-            role: databases::Fact::Unknown,
-            state: databases::Fact::Unknown,
-            replication: databases::Fact::Unknown,
-        })
+        .map(|index| databases::Instance::named(format!("orders-{index}")))
         .collect();
-    let display = super::display::Display::new(Some(&inventory), Mode::Clusters);
-    assert!(display.rows[0].fields.len() <= 129);
+    let display = display_of(&inventory, Mode::Clusters);
+    let row = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "orders-db")
+        .unwrap();
+    let total: usize = row.sections.iter().map(|s| s.fields.len()).sum();
+    assert!(total <= 129, "{total}");
+    let last = row.sections.last().unwrap();
+    assert_eq!(last.title, "More evidence");
     assert!(
-        display.rows[0]
-            .fields
-            .last()
-            .unwrap()
+        last.fields[0]
             .value
             .contains("additional fields are not shown")
     );
@@ -380,7 +417,7 @@ fn escape_passes_on_only_when_no_inspector_is_selected(cx: &mut TestAppContext) 
     });
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
-        let id = page.read(cx).display.rows[0].id.clone();
+        let id = row_id(&page, "orders-db", cx);
         window.click(id, cx);
         page.update(cx, |page, cx| page.focus(window, cx));
         window.press("escape", cx);
@@ -409,11 +446,27 @@ fn cluster_glyph_names_ready_instances_and_backup_glyph_names_phase(cx: &mut Tes
                 window
                     .find(gpui_kit::SharedString::from(format!("{}-state", row.id)))
                     .label(),
-                Some(row.cells[3].as_ref())
+                Some(row.cells[if mode == Mode::Clusters { 4 } else { 2 }].as_ref())
             );
         }
     })
     .unwrap();
+}
+fn field<'a>(
+    display: &'a super::display::Display,
+    name: &str,
+    label: &str,
+) -> &'a super::display::Field {
+    display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == name)
+        .unwrap()
+        .sections
+        .iter()
+        .flat_map(|section| &section.fields)
+        .find(|field| field.label == label)
+        .unwrap_or_else(|| panic!("no field {label}"))
 }
 #[test]
 fn inspector_reports_unknown_schedule_coverage_configuration_and_plain_generations() {
@@ -421,21 +474,25 @@ fn inspector_reports_unknown_schedule_coverage_configuration_and_plain_generatio
     inv.schedules = databases::Read::empty(Coverage::Refused, at());
     inv.databases.items[0].backup_configuration = databases::Fact::Known(false);
     inv.databases.items[0].conditions[0].observed_generation = None;
-    let display = super::display::Display::new(Some(&inv), Mode::Clusters);
-    let fields = &display.rows[0].fields;
-    let field = |name: &str| {
-        fields
-            .iter()
-            .find(|field| field.label == name)
-            .unwrap()
+    let display = display_of(&inv, Mode::Clusters);
+    assert!(
+        field(&display, "orders-db", "Schedules")
             .value
-            .as_str()
-    };
-    assert!(field("Schedules").starts_with("Unknown"));
-    assert!(field("Backup configuration").starts_with("No backup"));
-    assert!(field("Ready").contains("generation Not reported"));
-    assert!(!field("Ready").contains("Some("));
-    assert!(field("Observed").contains(&crate::ui::clock(at().into())));
+            .starts_with("Unknown")
+    );
+    assert!(
+        field(&display, "orders-db", "Backup configuration")
+            .value
+            .starts_with("No backup")
+    );
+    let ready = &field(&display, "orders-db", "Ready").value;
+    assert!(ready.contains("generation Not reported"), "{ready}");
+    assert!(!ready.contains("Some("));
+    assert!(
+        field(&display, "orders-db", "Read")
+            .value
+            .contains(&crate::ui::clock(at().into()))
+    );
 }
 
 #[gpui_kit::test]
@@ -525,52 +582,88 @@ fn read_failure_retry_is_button_sized_at_both_text_sizes(cx: &mut TestAppContext
 
 #[test]
 fn cluster_inspector_distinguishes_schedule_states_and_uses_prose() {
-    for (shape, expected) in [("", "1 active"), ("suspended", "1 suspended")] {
+    for (shape, expected) in [
+        ("", "Active · Daily at 02:00"),
+        ("suspended", "Suspended · Daily at 02:00"),
+    ] {
         let inv = databases::example::shaped(at(), shape);
-        let display = super::display::Display::new(Some(&inv), Mode::Clusters);
-        let field = |name: &str| {
-            display.rows[0]
-                .fields
-                .iter()
-                .find(|f| f.label == name)
-                .unwrap()
-        };
-        assert!(field("Schedules").value.starts_with(expected));
-        for label in [
-            "Phase",
-            "Backup configuration",
-            "Schedules",
-            "Freshness",
-            "Replication",
-            "Restore prerequisites",
-        ] {
-            assert!(!field(label).monospace, "{label} is prose");
+        let display = display_of(&inv, Mode::Clusters);
+        assert_eq!(field(&display, "orders-db", "orders-daily").value, expected);
+        // The expression is the operator's, in its own dialect.
+        let expression = field(&display, "orders-db", "Expression");
+        assert_eq!(expression.value, "0 0 2 * * *");
+        assert!(expression.monospace);
+        for label in ["Freshness", "Restore prerequisites", "Backup configuration"] {
+            assert!(
+                !field(&display, "orders-db", label).monospace,
+                "{label} is prose"
+            );
         }
-        assert!(field("Current primary").monospace);
-        assert!(field("Observed").monospace);
+        assert!(field(&display, "orders-db", "Primary").monospace);
+        assert!(field(&display, "orders-db", "Read").monospace);
     }
+    // MariaDB's schedule has five fields.
+    let inv = databases::example::inventory(at());
+    let display = display_of(&inv, Mode::Clusters);
+    assert_eq!(
+        field(&display, "ledger-db", "ledger-nightly").value,
+        "Active · Daily at 03:00"
+    );
+    assert_eq!(
+        field(&display, "ledger-db", "Expression").value,
+        "0 3 * * *"
+    );
     let mut inv = databases::example::inventory(at());
     inv.schedules.items[0].suspended = databases::Fact::Unknown;
     inv.databases.items[0].current_primary = databases::Fact::Unknown;
-    let display = super::display::Display::new(Some(&inv), Mode::Clusters);
+    let display = display_of(&inv, Mode::Clusters);
     assert!(
-        display.rows[0]
-            .fields
-            .iter()
-            .any(|f| f.label == "Schedules" && f.value.starts_with("1 suspension unknown"))
+        field(&display, "orders-db", "orders-daily")
+            .value
+            .starts_with("Suspension unknown")
     );
+    assert!(!field(&display, "orders-db", "Primary").monospace);
+}
+
+#[test]
+fn schedules_say_active_or_suspended_and_keep_the_expression_in_the_tooltip() {
+    let inv = databases::example::inventory(at());
+    let display = display_of(&inv, Mode::Schedules);
+    let cnpg = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "orders-daily")
+        .unwrap();
+    assert_eq!(cnpg.cells[2], "Daily at 02:00");
+    assert_eq!(cnpg.cells[3], "Active");
+    assert_eq!(cnpg.tips[2].as_deref(), Some("0 0 2 * * *"));
+    let maria = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "ledger-nightly")
+        .unwrap();
+    assert_eq!(maria.cells[2], "Daily at 03:00");
+    assert_eq!(maria.tips[2].as_deref(), Some("0 3 * * *"));
+    // A dialect mismatch is shown, not reinterpreted.
+    let mut bad = inv.clone();
+    bad.schedules.items[0].schedule = databases::Fact::Known("0 2 * * *".into());
+    let display = display_of(&bad, Mode::Schedules);
+    let row = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "orders-daily")
+        .unwrap();
+    assert_eq!(row.cells[2], "0 2 * * *");
     assert!(
-        !display.rows[0]
-            .fields
-            .iter()
-            .find(|f| f.label == "Current primary")
+        row.tips[2]
+            .as_deref()
             .unwrap()
-            .monospace
+            .contains("5 fields where PostgreSQL takes 6")
     );
 }
 
 #[gpui_kit::test]
-fn inspector_narrows_schedule_header_with_ellipsis_and_full_tooltip(cx: &mut TestAppContext) {
+fn the_cron_expression_is_the_tooltip_of_the_when_cell(cx: &mut TestAppContext) {
     let (_runtime, window, _pilot) = crate::desktop::tests::fixture(cx, 1280., 880.);
     cx.update_window(window, |_, window, cx| {
         window.press("secondary-shift-d", cx);
@@ -581,29 +674,13 @@ fn inspector_narrows_schedule_header_with_ellipsis_and_full_tooltip(cx: &mut Tes
         window.render_frame(cx);
         window.click("databases-view-schedules", cx);
         window.render_frame(cx);
-        window.click(
-            "databases-row-ScheduledBackup-shop-invented-orders-daily",
-            cx,
-        );
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(window, |_, window, cx| {
-        window.render_frame(cx);
-        let header = window.find((gpui_kit::SharedString::from("databases-sort"), 5_usize));
-        assert_eq!(header.label(), Some("Suspended"));
-        let text = freshkube_ui::table::word_cut_shown("databases-sort-5-label").unwrap();
-        assert!(
-            text.ends_with('…'),
-            "header must end with ellipsis: {text:?}"
-        );
-        let visible = header
-            .bounds()
-            .intersect(&window.find("databases-table").bounds());
-        assert!(visible.size.width > px(0.));
+        let cell = window
+            .within("databases-row-ScheduledBackup-shop-invented-orders-daily")
+            .find("databases-row-ScheduledBackup-shop-invented-orders-daily-text-3-cell")
+            .bounds();
         window.dispatch_event(
             gpui_kit::MouseMoveEvent {
-                position: visible.center(),
+                position: cell.center(),
                 pressed_button: None,
                 modifiers: Default::default(),
             }
@@ -619,7 +696,7 @@ fn inspector_narrows_schedule_header_with_ellipsis_and_full_tooltip(cx: &mut Tes
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
         window.find("follow-tooltip-text");
-        assert!(freshkube_ui::tooltip::drawn("Suspended") > 0);
+        assert!(freshkube_ui::tooltip::drawn("0 0 2 * * *") > 0);
     })
     .unwrap();
 }
