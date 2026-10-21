@@ -931,38 +931,46 @@ fn the_example_links_are_distinct_and_survive_a_save() {
 }
 
 #[test]
-fn results_address_credentials_are_typed_and_round_trip() {
-    let text = with_cluster(
-        "    results:\n      address: https://results.example.test\n      token: keys.json\n      ca_file: /home/acme/results-ca.pem\n      future: kept\n",
-    );
-    let setup = ok(&text);
-    let results = setup.workspace.clusters[0].results.as_ref().unwrap();
-    assert_eq!(results.token, Some(KeysJson));
-    assert_eq!(results.ca_file, Some(home("/home/acme/results-ca.pem")));
-    assert_eq!(setup.unknown_keys(), vec!["cluster-a.results.future"]);
-    assert_eq!(ok(&to_text(&setup)), setup);
-    let invalid = refused(&text.replace("token: keys.json", "token: invented-secret"));
-    assert!(matches!(invalid, Invalid::KeyValue(_)));
-    assert!(!invalid.to_string().contains("invented-secret"));
-    assert_eq!(
-        rule(&text.replace("/home/acme/results-ca.pem", "relative.pem")),
-        "the cluster “cluster-a” results.ca_file isn’t an absolute path"
-    );
+fn results_credentials_are_typed_and_round_trip_on_both_routes() {
+    for route in [
+        "address: https://results.example.test",
+        "forward: {namespace: acme, service: results, port: 8080}",
+    ] {
+        let text = with_cluster(&format!(
+            "    results:\n      {route}\n      token: keys.json\n      ca_file: /home/acme/results-ca.pem\n      future: kept\n"
+        ));
+        let setup = ok(&text);
+        let results = setup.workspace.clusters[0].results.as_ref().unwrap();
+        assert_eq!(results.token, Some(KeysJson));
+        assert_eq!(results.ca_file, Some(home("/home/acme/results-ca.pem")));
+        assert_eq!(setup.unknown_keys(), vec!["cluster-a.results.future"]);
+        assert_eq!(ok(&to_text(&setup)), setup);
+        let invalid = refused(&text.replace("token: keys.json", "token: invented-secret"));
+        assert!(matches!(invalid, Invalid::KeyValue(_)));
+        assert!(!invalid.to_string().contains("invented-secret"));
+        assert_eq!(
+            rule(&text.replace("/home/acme/results-ca.pem", "relative.pem")),
+            "the cluster “cluster-a” results.ca_file isn’t an absolute path"
+        );
+    }
 }
 
 #[test]
-fn results_address_settings_do_not_go_with_a_forward() {
-    for (extra, field) in [
-        ("      token: keys.json\n", "token"),
-        ("      ca_file: /home/acme/ca.pem\n", "ca_file"),
+fn results_credentials_still_need_exactly_one_route() {
+    for extra in [
+        "      token: keys.json\n",
+        "      ca_file: /home/acme/ca.pem\n",
     ] {
-        let text = with_cluster(&format!(
-            "    results:\n      forward: {{namespace: acme, service: results, port: 8080}}\n{extra}"
-        ));
-        assert_eq!(
-            rule(&text),
-            format!("the cluster “cluster-a” results.{field} only goes with address")
-        );
+        for route in [
+            "",
+            "      address: https://results.example.test\n      forward: {namespace: acme, service: results, port: 8080}\n",
+        ] {
+            let text = with_cluster(&format!("    results:\n{route}{extra}"));
+            assert_eq!(
+                rule(&text),
+                "the cluster “cluster-a” results must set exactly one of address or forward"
+            );
+        }
     }
 }
 
@@ -1160,6 +1168,80 @@ fn the_build_namespace_must_be_a_namespace_name_and_is_never_repeated() {
             "version: 1\ndelivery:\n  build_namespace: {good}\n"
         ));
     }
+}
+
+#[test]
+fn build_namespace_templates_keep_the_placeholder_on_round_trip() {
+    for template in [
+        "{project}",
+        "{project}-ci",
+        "ci-{project}",
+        "{project}-{project}",
+    ] {
+        let setup = ok(&format!(
+            "version: 1\ndelivery:\n  build_namespace: '{template}'\n"
+        ));
+        assert_eq!(
+            setup.delivery.as_ref().unwrap().build_namespace.as_deref(),
+            Some(template)
+        );
+        assert_eq!(ok(&to_text(&setup)), setup);
+    }
+}
+
+#[test]
+fn build_namespace_templates_refuse_unknown_or_malformed_placeholders() {
+    for template in [
+        "{stage}",
+        "{app}",
+        "{project}-{stage}",
+        "{project",
+        "project}",
+        "{{project}}",
+    ] {
+        assert_eq!(
+            rule(&format!(
+                "version: 1\ndelivery:\n  build_namespace: '{template}'\n"
+            )),
+            "delivery.build_namespace isn’t a Kubernetes namespace name"
+        );
+    }
+}
+
+#[test]
+fn build_namespace_resolution_checks_each_projects_result() {
+    for project in ["shop", "billing"] {
+        assert_eq!(
+            resolve_build_namespace("{project}", project),
+            Ok(project.into())
+        );
+        assert_eq!(
+            resolve_build_namespace("{project}-ci", project),
+            Ok(format!("{project}-ci"))
+        );
+        assert_eq!(
+            resolve_build_namespace("builds", project),
+            Ok("builds".into())
+        );
+    }
+    let project = "s".repeat(60);
+    assert!(resolve_build_namespace("{project}-ci", &project).is_ok());
+    for project in [
+        "s".repeat(61),
+        "Shop".into(),
+        "shop.team".into(),
+        String::new(),
+    ] {
+        let name = format!("{project}-ci");
+        assert_eq!(
+            resolve_build_namespace("{project}-ci", &project),
+            Err(format!(
+                "delivery.build_namespace resolves to \"{name}\" for project {project}, which isn't a namespace name"
+            ))
+        );
+    }
+    // A valid file can produce a bad name for one project without refusing the file.
+    ok("version: 1\ndelivery:\n  build_namespace: '{project}-ci'\n");
 }
 
 #[test]

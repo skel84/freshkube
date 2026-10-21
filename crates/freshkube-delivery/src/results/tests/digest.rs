@@ -19,7 +19,7 @@ async fn by_digest(reader: &FixtureReader, client: Result<&Client, Error>) -> Ev
     let mut plan = crate::tests::plan(&[]);
     plan.sha = String::new();
     plan.digests = vec![Digest::parse(fixtures::NEW).unwrap()];
-    plan.build_namespace = Some("acme".into());
+    plan.build_namespace = Ok(Some("acme".into()));
     within(upstream_with_history(
         &upstream,
         &plan,

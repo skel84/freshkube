@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use super::destinations::Note;
 use crate::entry::connect_entry;
 use crate::read::{NAMESPACE_COUNT_LIMIT, Reader};
 use crate::source::printable;
@@ -159,13 +160,6 @@ pub struct BuildItem {
     pub verdict: BuildVerdict,
     /// Every namespace that holds runs, with its count, for the Inspector.
     pub evidence: Vec<(String, u64)>,
-}
-
-/// A line about the read, or about the value set now.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Note {
-    pub warn: bool,
-    pub text: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

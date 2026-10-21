@@ -31,6 +31,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use kube::config::{Config, KubeConfigOptions};
 
+use super::discover::ClusterSecrets;
 use super::discover::NamespaceCounts;
 use super::read::{
     ListRequest, Listing, MAX_PAGES, ReadOnlyClient, Reader, Resource, Scope, ServedGroup,
@@ -159,6 +160,14 @@ impl<R: Reader> Reader for Deadline<R> {
         self.within(
             &format!("Counting {}", resource.plural),
             self.reader.namespace_counts(resource),
+        )
+        .await
+    }
+
+    async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
+        self.within(
+            "Listing cluster Secrets",
+            self.reader.cluster_secrets(namespace),
         )
         .await
     }

@@ -45,6 +45,8 @@ pub mod words;
 #[cfg(test)]
 mod attested;
 #[cfg(test)]
+mod cause_tests;
+#[cfg(test)]
 mod deployment_tests;
 #[cfg(test)]
 mod digest_builds_tests;

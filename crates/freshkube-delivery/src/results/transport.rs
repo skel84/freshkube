@@ -71,6 +71,8 @@ pub(super) fn segment(value: &str) -> Result<(), Error> {
     Ok(())
 }
 
+// A request failure does not establish that the caller-owned forward ended.
+// Only the owner can report that through Route::Ended.
 pub(super) fn request_error(error: reqwest::Error) -> Error {
     if error.is_timeout() {
         return Error::Unreachable(Cause::TimedOut);
