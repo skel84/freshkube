@@ -194,6 +194,8 @@ pub(crate) struct SettingsPage {
     status_parts: Vec<Part>,
     /// What Argo CD destinations' finder adds to the status bar.
     suggest_parts: Vec<Part>,
+    /// `status` with those parts, derived when either changes.
+    destinations_status: Segment,
     sources_status: Segment,
     /// Suggestions the person ignored, for the session.
     ignored: HashSet<find::Ignored>,
@@ -390,6 +392,7 @@ impl SettingsPage {
             status: Segment::default(),
             status_parts: Vec::new(),
             suggest_parts: Vec::new(),
+            destinations_status: Segment::default(),
             sources_status: Segment::default(),
             ignored: HashSet::new(),
         }
@@ -514,6 +517,7 @@ impl SettingsPage {
             }
         };
         self.status = Segment::new(None::<SharedString>, self.status_parts.clone());
+        self.refresh_destinations_status();
         if self
             .selected
             .as_ref()
@@ -618,16 +622,25 @@ impl SettingsPage {
             .update(cx, |destinations, cx| destinations.set_visible(shown, cx));
     }
 
+    /// Derives Argo CD destinations' status line: the workspace's, with what
+    /// its finder adds. Called when either changes, so drawing only reads it.
+    fn refresh_destinations_status(&mut self) {
+        self.destinations_status = match self.suggest_parts.is_empty() {
+            true => self.status.clone(),
+            false => {
+                let parts = self.status_parts.iter().chain(&self.suggest_parts).cloned();
+                Segment::new(None::<SharedString>, parts)
+            }
+        };
+    }
+
     /// The status bar's line: the workspace's, on its lists.
     pub(in crate::desktop) fn status(&self) -> Option<Segment> {
         self.section.is_list().then(|| {
             if self.section == SettingsSection::Sources {
                 self.sources_status.clone()
-            } else if self.section == SettingsSection::Destinations
-                && !self.suggest_parts.is_empty()
-            {
-                let parts = self.status_parts.iter().chain(&self.suggest_parts).cloned();
-                Segment::new(None::<SharedString>, parts)
+            } else if self.section == SettingsSection::Destinations {
+                self.destinations_status.clone()
             } else {
                 self.status.clone()
             }

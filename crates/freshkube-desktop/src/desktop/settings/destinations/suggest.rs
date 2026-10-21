@@ -306,6 +306,7 @@ impl Destinations {
             _ = page.update(cx, |page, cx| {
                 if page.suggest_parts != parts {
                     page.suggest_parts = parts;
+                    page.refresh_destinations_status();
                     cx.notify();
                 }
             });
@@ -497,9 +498,10 @@ fn suggestion_row(at: usize, item: Item) -> DestinationRow {
         found_from,
         verdict,
     } = item;
-    let by = match key {
-        Key::Server(_) => "Server URL",
-        Key::Name(_) => "Cluster name",
+    // The item's key identifies it; what it would map is in its words.
+    let by = match destination.starts_with("server ") {
+        true => "Server URL",
+        false => "Cluster name",
     };
     let (entry, tone, accept, why_not, note) = match verdict {
         Verdict::Suggest { entry, rows } => {

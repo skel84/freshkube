@@ -260,7 +260,7 @@ fn a_server_two_entries_share_is_ambiguous() {
         item.verdict,
         Verdict::Ambiguous(vec!["dev-fra".into(), "stage-fra".into()])
     );
-    assert!(!item.verdict.is_suggestion());
+    assert!(!matches!(item.verdict, Verdict::Suggest { .. }));
 }
 
 #[test]
@@ -350,7 +350,7 @@ fn a_mapped_key_is_not_suggested() {
         suggestions
             .items
             .iter()
-            .all(|item| item.key != Key::Server(prod_ams.secret.server.text().unwrap().into()))
+            .all(|item| item.key != Key::Name("argocd/cluster-prod-ams".into()))
     );
     // A name row that is mapped by hand is left out of the rows.
     mapped
@@ -497,12 +497,9 @@ fn the_example_shows_each_verdict() {
         verdicts,
         [
             ("https://kubernetes.default.svc".to_owned(), "suggest"),
-            (PROD_FRA.to_owned(), "suggest"),
-            (
-                "https://prod-lon.example.test:6443".to_owned(),
-                "not an entry"
-            ),
-            ("https://shared.example.test:6443".to_owned(), "ambiguous"),
+            ("argocd/cluster-prod-fra".to_owned(), "suggest"),
+            ("argocd/cluster-prod-lon".to_owned(), "not an entry"),
+            ("argocd/cluster-shared".to_owned(), "ambiguous"),
         ]
     );
 }
@@ -613,15 +610,27 @@ async fn the_client_reports_a_refusal_as_the_server_says_it() {
         .await
         .unwrap_err();
     assert_eq!(failure.kind, FailureKind::Forbidden);
-    // A 500 whose body is not a Status quotes nothing of what it holds.
-    let (client, _, _server) = serve(500, format!("oops {MARKER}").into_bytes()).await;
-    let failure = ReadOnlyClient::new(client)
-        .cluster_secrets("argocd")
-        .await
-        .unwrap_err();
-    assert_eq!(failure.kind, FailureKind::Other);
-    // The status body here is not a Secret; the marker check is for the
-    // success path, which never reaches `decode`.
+    // An error answer whose body is not the API server's Status is never
+    // quoted: a proxy that echoes a Secret list in a 502, or a plain page,
+    // gives the status code alone.
+    let echoed = list(vec![secret("a", PROD_FRA, "prod-fra")], None);
+    let page = format!("<html>upstream said {MARKER}</html>").into_bytes();
+    let looks_like_status =
+        format!(r#"{{"status":"Failure","code":503,"message":"{MARKER}","reason":"Unavailable"}}"#)
+            .into_bytes();
+    for (code, body) in [(502, echoed), (500, page), (503, looks_like_status)] {
+        let (client, _, _server) = serve(code, body).await;
+        let failure = ReadOnlyClient::new(client)
+            .cluster_secrets("argocd")
+            .await
+            .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Other, "{code}");
+        assert_eq!(
+            failure.message,
+            format!("listing the cluster Secrets answered {code}")
+        );
+        seen(&format!("{failure:?} {failure}"));
+    }
     let (client, _, _server) = serve(
         200,
         list(vec![secret("a", PROD_FRA, "prod-fra")], Some("more")),
@@ -661,4 +670,27 @@ fn an_entry_context_is_how_a_context_becomes_an_entry() {
         &findings(vec![found(PROD_FRA, "prod-fra", &["ctx-east"])]),
     );
     assert!(matches!(&item.verdict, Verdict::Suggest { entry, .. } if entry == "east"));
+}
+
+#[test]
+fn two_secrets_naming_one_server_are_two_items() {
+    // Two Argo CD namespaces, each with a Secret for the same cluster.
+    let mut first = found(PROD_FRA, "prod-fra", &["prod-fra"]);
+    first.secret.namespace = "argocd-a".into();
+    let mut second = found(PROD_FRA, "prod-fra", &["prod-fra"]);
+    second.secret.namespace = "argocd-b".into();
+    let findings = findings(vec![first, second]);
+    let suggestions = suggest_destinations(&findings, &workspace::example());
+    let keys: Vec<_> = suggestions
+        .items
+        .iter()
+        .map(|item| item.key.clone())
+        .collect();
+    assert!(keys.contains(&Key::Name("argocd-a/cluster-prod-fra".into())));
+    assert!(keys.contains(&Key::Name("argocd-b/cluster-prod-fra".into())));
+    assert_eq!(
+        keys.len(),
+        3,
+        "the own cluster and the two Secrets: {keys:?}"
+    );
 }

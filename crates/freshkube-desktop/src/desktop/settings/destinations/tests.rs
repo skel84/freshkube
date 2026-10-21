@@ -1208,7 +1208,7 @@ mod suggestions {
     use crate::desktop::settings::edit_tests::open_settings;
     use crate::desktop::settings::find::Ignored;
     use base64::Engine as _;
-    use freshkube_delivery::discover::{self, DestinationFindings};
+    use freshkube_delivery::discover::{self, DestinationFindings, NamespaceRead};
     use freshkube_ui::real_io::RealIo;
     use std::sync::Arc;
 
@@ -1534,8 +1534,8 @@ mod suggestions {
                     .settings_page
                     .read(cx)
                     .ignored
-                    .contains(&Ignored::Destination(Key::Server(
-                        "https://prod-fra.example.test:6443".into()
+                    .contains(&Ignored::Destination(Key::Name(
+                        "argocd/cluster-prod-fra".into()
                     )))
             );
             let status = view.read(cx).settings_page.read(cx).status().unwrap();
@@ -1710,6 +1710,137 @@ mod suggestions {
                 layout_check::assert_table_page(window, cx, &PAGE);
             })
             .unwrap();
+        }
+    }
+
+    #[gpui_kit::test]
+    async fn the_loading_group_row_shows_while_finding(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let guard = tempfile::tempdir().unwrap();
+        let (_runtime, handle, view) = start(cx, guard.path()).await;
+        let (send, receive) = tokio::sync::oneshot::channel::<()>();
+        let gate = Arc::new(std::sync::Mutex::new(Some(receive)));
+        cx.update_window(handle, |_, window, cx| {
+            let late = findings();
+            list(&view, cx).update(cx, |list, _| {
+                list.finder.fake = Some(Arc::new(move || {
+                    let (gate, late) = (gate.clone(), late.clone());
+                    Box::pin(async move {
+                        let receive = gate.lock().unwrap().take();
+                        if let Some(receive) = receive {
+                            _ = receive.await;
+                        }
+                        late
+                    })
+                }));
+            });
+            window.click("settings-destinations-find", cx);
+            window.render_frame(cx);
+            assert!(
+                window
+                    .find("settings-destinations-group-suggested")
+                    .visible()
+            );
+            // A second press while one runs starts nothing.
+            window.click("settings-destinations-find", cx);
+        })
+        .unwrap();
+        // The page takes the status once the update has ended.
+        cx.run_until_parked();
+        cx.update_window(handle, |_, _, cx| {
+            let status = view.read(cx).settings_page.read(cx).status().unwrap();
+            assert!(
+                status.text(None).contains("Finding suggestions"),
+                "{}",
+                status.text(None)
+            );
+        })
+        .unwrap();
+        _ = send.send(());
+        found(cx, handle, &view).await;
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("settings-suggestion-0").visible());
+        })
+        .unwrap();
+    }
+
+    async fn note_after(
+        cx: &mut TestAppContext,
+        directory: &Path,
+        text: &str,
+        answer: DestinationFindings,
+    ) -> String {
+        write(directory, text);
+        let (_runtime, handle, view) = launch(cx, directory);
+        open_settings(cx, handle, &view).await;
+        cx.update_window(handle, |_, window, cx| {
+            answer_with(&view, answer, cx);
+            view.update(cx, |pilot, cx| {
+                pilot.show_settings(SettingsSection::Destinations, window, cx)
+            });
+            window.render_frame(cx);
+            window.click("settings-destinations-find", cx);
+        })
+        .unwrap();
+        found(cx, handle, &view).await;
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window
+                .find("settings-destinations-note-0")
+                .label()
+                .unwrap()
+                .to_owned()
+        })
+        .unwrap()
+    }
+
+    fn read_of(read: NamespaceRead) -> DestinationFindings {
+        DestinationFindings {
+            entry: "core-fra".into(),
+            read: discover::Read::Done {
+                namespaces: vec![("argocd".into(), read)],
+                skipped: Vec::new(),
+                no_servers: None,
+            },
+        }
+    }
+
+    #[gpui_kit::test]
+    async fn refused_capped_and_empty_reads_say_so_in_a_banner(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let own_mapped = FILE.replace(
+            r#""destinations":["#,
+            r#""destinations":[{"server":"https://kubernetes.default.svc","entry":"core-fra"},"#,
+        );
+        for (text, answer, expected) in [
+            (
+                FILE,
+                read_of(NamespaceRead::Refused("secrets is forbidden".into())),
+                "Listing Secrets in argocd on core-fra was refused",
+            ),
+            (
+                FILE,
+                read_of(NamespaceRead::Capped),
+                "More than 100 cluster Secrets in argocd; nothing suggested from them",
+            ),
+            (
+                FILE,
+                read_of(NamespaceRead::Failed(
+                    "the cluster Secrets' answer couldn't be read".into(),
+                )),
+                "Listing Secrets in argocd on core-fra failed: the cluster Secrets' answer couldn't be read",
+            ),
+            (
+                own_mapped.as_str(),
+                read_of(NamespaceRead::Found(Vec::new())),
+                "No cluster Secrets found",
+            ),
+        ] {
+            let guard = tempfile::tempdir().unwrap();
+            let note = note_after(cx, guard.path(), text, answer).await;
+            assert!(note.starts_with(expected), "{note}");
+            assert!(!note.contains(MARKER));
         }
     }
 }

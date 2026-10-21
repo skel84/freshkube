@@ -27,7 +27,7 @@ use freshkube_core::workspace::{
 
 /// The most cluster Secrets one namespace gives a suggestion; a longer list
 /// is capped and suggests nothing.
-pub const MAX_CLUSTER_SECRETS: usize = SECRETS_LIMIT as usize;
+pub(crate) const MAX_CLUSTER_SECRETS: usize = SECRETS_LIMIT as usize;
 /// The longest server or name read from a Secret.
 const MAX_FIELD: usize = 2048;
 
@@ -329,17 +329,13 @@ pub enum Verdict {
     Unknown(String),
 }
 
-impl Verdict {
-    /// Whether it can be accepted.
-    pub fn is_suggestion(&self) -> bool {
-        matches!(self, Verdict::Suggest { .. })
-    }
-}
-
 /// One found destination, as the list shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
-    /// What identifies it: its server, else its name.
+    /// What identifies it: for a Secret, `<namespace>/<name>` as a name key,
+    /// so two Secrets that name one server are two items; for Argo CD's own
+    /// cluster, its address. Not a destination: the rows to map are in the
+    /// verdict.
     pub key: Key,
     /// `server https://… · name prod-fra`.
     pub destination: String,
@@ -449,7 +445,6 @@ pub fn suggest_destinations(findings: &DestinationFindings, workspace: &Workspac
             }
         }
     }
-    let mapped = |key: &Key| workspace.destinations.iter().any(|row| row.key().same(key));
     let in_cluster =
         |secret: &Found| {
             secret.secret.server.text().is_some_and(|server| {
@@ -564,6 +559,7 @@ fn secret_item(
     if mapped(&key) {
         return Ok(None);
     }
+    let key = Key::Name(format!("{}/{}", secret.namespace, secret.secret));
     let mut from = format!(
         "Secret {} in {} on {}",
         secret.secret, secret.namespace, findings.entry

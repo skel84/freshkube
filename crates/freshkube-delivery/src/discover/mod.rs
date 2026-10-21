@@ -17,8 +17,8 @@ mod tests;
 
 pub(crate) use destinations::parse_secret_list;
 pub use destinations::{
-    ClusterSecret, ClusterSecrets, DestinationFindings, Field, Found, Item, MAX_CLUSTER_SECRETS,
-    NamespaceRead, Note, Read, Suggestions, Verdict, find_destinations, suggest_destinations,
+    ClusterSecret, ClusterSecrets, DestinationFindings, Field, Found, Item, NamespaceRead, Note,
+    Read, Suggestions, Verdict, find_destinations, suggest_destinations,
 };
 
 /// The findings a Secret list body gives for `entry`, matched against

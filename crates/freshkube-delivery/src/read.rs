@@ -566,13 +566,19 @@ impl Reader for ReadOnlyClient {
             .map_err(Failure::from_kube)?;
         let status = response.status();
         let body = read_body(response.into_body(), MAX_SECRETS_BYTES).await?;
-        if status.is_client_error() || status.is_server_error() {
-            return Err(decode(status, &body)
-                .err()
-                .unwrap_or_else(secrets_unreadable));
-        }
         if !status.is_success() {
-            return Err(secrets_unreadable());
+            // Only the API server's own `Status` is quoted, as `decode`
+            // does for any read. Any other body, a proxy's page or one that
+            // echoes the list, is never formatted: the failure says the
+            // status code alone.
+            let text = String::from_utf8_lossy(&body);
+            return Err(match api_status(&text) {
+                Some(response) => Failure::from_kube(kube::Error::Api(response)),
+                None => Failure::new(
+                    FailureKind::Other,
+                    format!("listing the cluster Secrets answered {}", status.as_u16()),
+                ),
+            });
         }
         super::discover::parse_secret_list(namespace, &body)
     }
