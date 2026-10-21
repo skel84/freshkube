@@ -59,6 +59,9 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if crate::mutation::refusal(cx).is_some() {
+            return;
+        }
         let (Some(fingerprint), Some(node), Some(cluster)) = (
             self.restart_fingerprint(&service_id),
             self.target.summary().cloned(),
@@ -147,6 +150,15 @@ impl Pilot {
         ) else {
             return;
         };
+        if let Some(why) = crate::mutation::refusal(cx) {
+            self.set_restart_notice(
+                &service_id,
+                false,
+                format!("{why} Nothing was started."),
+                cx,
+            );
+            return;
+        }
         let operations = Operations::global(cx);
         let label = format!("Restarting {service_id} on {}", node.name);
         let ticket = match operations.update(cx, |operations, cx| operations.begin(label, cx)) {

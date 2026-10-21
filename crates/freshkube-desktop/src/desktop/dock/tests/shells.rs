@@ -491,3 +491,41 @@ fn direct_tab_close_can_be_cancelled_then_sends_one_eof(cx: &mut TestAppContext)
     transport.wait_for_completion(cx);
     assert!(!cx.has_pending_prompt());
 }
+
+/// The context the window shows is read-only (#852): the pick opens a tab
+/// that runs nothing, Start is off, and the same press works once the
+/// window shows a context that allows writes.
+#[gpui_kit::test]
+fn a_read_only_context_opens_its_shell_tab_idle_and_start_does_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let show = |id: &'static str, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| pilot.switch_cluster(id.into(), window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    // core-fra is read-only in the example workspace.
+    show("core-fra", cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    assert_eq!(titles(&dock, cx), [format!("Shell {}", pods[0].name)]);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Idle);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("pod-shell-start", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Idle);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+    let view = shell_view(&dock, 0, cx);
+    assert!(!cx.read(|cx| view.read(cx).can_start()));
+    // A context that allows writes: a tab there starts.
+    show("dev-fra", cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
+}

@@ -89,8 +89,11 @@ impl Pilot {
             return false;
         }
         self.context_display.level = level;
-        // What writes ask.
+        // What writes ask: the slot for the operations, the dock's shells.
         crate::mutation::set_protection(level, cx);
+        self.pages
+            .dock
+            .update(cx, |dock, cx| dock.set_read_only(level.is_read_only(), cx));
         true
     }
 

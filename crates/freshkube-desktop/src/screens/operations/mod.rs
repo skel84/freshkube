@@ -840,6 +840,7 @@ pub(crate) struct OperationsScreen {
     step: Duration,
     focus: FocusHandle,
     _operations: Subscription,
+    _protection: Subscription,
     /// The status bar's segment, none without a target, and the audit
     /// revision and source it was derived from.
     status: Option<(StatusKey, Option<Segment>)>,
@@ -889,6 +890,8 @@ impl OperationsScreen {
             focus: cx.focus_handle(),
             // The slot is app-wide: redraw whenever anything takes or frees it.
             _operations: cx.observe(&operations, |_, _, cx| cx.notify()),
+            // Review turns off at once when the cluster becomes read-only.
+            _protection: cx.observe_global::<mutation::GlobalProtection>(|_, cx| cx.notify()),
             status: None,
         }
     }
@@ -1198,6 +1201,11 @@ impl OperationsScreen {
     /// Opens the confirmation for the preview on screen, after a fresh one.
     fn review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.notice = None;
+        if let Some(why) = mutation::refusal(cx) {
+            self.notice = Some(why.into());
+            cx.notify();
+            return;
+        }
         if let Some(running) = Operations::current(cx) {
             self.notice = Some(format!(
                 "{} is running. Wait for it to finish, or cancel it from the status bar.",
@@ -1375,6 +1383,13 @@ impl OperationsScreen {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The confirmation can't open on a read-only cluster; this keeps a
+        // run from starting if one was already open when the level changed.
+        if let Some(why) = mutation::refusal(cx) {
+            self.notice = Some(format!("{why} Nothing was started."));
+            cx.notify();
+            return;
+        }
         let operations = Operations::global(cx);
         let label = format!(
             "{}: {} {}",

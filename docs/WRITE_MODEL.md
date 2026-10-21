@@ -8,9 +8,12 @@ Nothing in the app changes a Kubernetes object yet, so there is no tier to apply
 
 | Writer | `read-only` | `protected`, `guarded`, `open` |
 |--------|-------------|--------------------------------|
-| Pod exec (`pods/exec`) | Start is disabled, with the reason "This cluster is read-only" | no change: the explicit Start, as before |
-| Talos Operations and maintenance | Submit is disabled, with the same reason | no change: their own preflight and confirmation |
+| Pod exec (`pods/exec`) | A shell tab's Start is disabled, with the reason "This cluster is read-only."; a shell already running is left for its person to end | no change: the explicit Start, as before |
+| Talos Operations | Review is disabled with the same reason, and a confirmation already open when the level changed starts nothing | no change: their own preflight and confirmation |
+| Restarting a Talos service (System services) | Restart is disabled with the same reason | no change: its own confirmation |
 | Port forwarding | allowed, see [Sessions](#sessions) | no change |
+
+Maintenance mode is not tied to a cluster entry (it works on a node before it is in one), so the level does not govern it; it keeps its own rules.
 
 `protected` and `guarded` change nothing for exec and Operations until [#853](https://github.com/skel84/freshkube/issues/853) adds the typed name to Operations; `open` changes nothing for them ever, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
 
@@ -61,7 +64,7 @@ The level is always shown, so a protected cluster can't be mistaken for a test o
 |-------|-----|------|
 | `read-only` | lock, "Read-only" | Info (blue) |
 | `protected` | shield, "Protected" | Crit (coral) |
-| `guarded` | shield with a tick, "Guarded" | none: `surface_2`, `muted` ink |
+| `guarded` | shield with a tick, "Guarded" | none: a hairline and `muted` ink |
 | `open` | open lock, "Open" | Warn (amber) |
 
 The tag always has its glyph and its word, so it is never colour alone, and it does not read as a fault. The tones are existing tokens ([DESIGN.md](DESIGN.md#the-header)); changing one is one token. The header's context switcher carries it and the status bar carries it at every width.
@@ -83,3 +86,7 @@ A submitted write outlives its page, is never replayed (after a transport error 
 ### The audit log
 
 One JSON object per line in `<preferences>/audit/writes.jsonl`: when, the entry and context, the actor, the action and tier, the level at that moment, the objects, a summary of the request, the phase and the result. It holds field paths, never values, and no credentials or Secret values. It rotates at 5 MiB and keeps three older files. Talos Operations keep their own audit file.
+
+## Example data
+
+`--fixture`'s workspace (`freshkube_core::workspace::example`) gives its entries different levels, so a capture shows each: `core-fra` is `read-only`, `cicd-fra` `guarded` (written), `dev-fra` `open`, `prod-ams` `protected`, and `stage-fra` and `prod-fra`, which the window opens on, set none and are `guarded`. Switch the cluster in the header's switcher to see the tag change in the header and the status bar.
