@@ -18,6 +18,7 @@ One row per step: its commit, its pull requests, and where to read what it did, 
 
 | Step | Commit | Pull requests | Read more |
 |------|--------|---------------|-----------|
+| Results forward 1. Delivery transport and setup ([#268](https://github.com/skel84/freshkube/issues/268)) | `b6f79117` | — | [SETUP_FILE.md](SETUP_FILE.md#the-file), [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md#what-it-is-and-how-it-is-reached); app wiring remains slice 2 |
 | Settings 4. Clusters and its Inspector ([#697](https://github.com/skel84/freshkube/issues/697)) | `2af002d` | [#756](https://github.com/skel84/freshkube/pull/756) | [settings.md](features/settings.md) |
 | Settings 9. The Monitoring section ([#697](https://github.com/skel84/freshkube/issues/697)) | `2404fac` | [#753](https://github.com/skel84/freshkube/pull/753) | [settings.md](features/settings.md), [monitoring.md](features/monitoring.md) |
 | Settings 6. Delivery sources and their pins ([#697](https://github.com/skel84/freshkube/issues/697)) | `d2f62e4` | [#752](https://github.com/skel84/freshkube/pull/752) | [settings.md](features/settings.md) |
