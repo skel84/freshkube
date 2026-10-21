@@ -32,6 +32,9 @@ coroot-rs.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 url = "2"
 
+# The recording fake API (`fake_api`), behind `testing`.
+tower = { version = "0.5", features = ["util"], optional = true }
+
 # TLS and logging
 rustls.workspace = true
 tracing.workspace = true
@@ -46,7 +49,7 @@ thiserror.workspace = true
 [features]
 # Tests pin the zone log times show in (`logs::pin_zone`) and keep keys in
 # memory (`secrets::MemoryStore`).
-testing = []
+testing = ["dep:tower"]
 
 [dev-dependencies]
 tempfile = "3"
