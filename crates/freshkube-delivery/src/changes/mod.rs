@@ -24,6 +24,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use super::change::{self, Change, Reach};
+use super::github::PullState;
 use super::join::Confidence;
 use super::kargo::{Freight, Stage, promotion_order};
 use super::source::Source;
@@ -108,6 +109,11 @@ pub struct Row {
     pub freight: String,
     pub alias: Option<String>,
     pub named: Named,
+    /// Where its pull request stands on GitHub, when GitHub was asked and
+    /// named one.
+    pub pull_state: Option<PullState>,
+    /// Why that is not the latest, when GitHub couldn't be asked.
+    pub pull_note: Option<String>,
     pub title: Option<String>,
     /// When the Warehouse made the Freight.
     pub created: Option<DateTime<Utc>>,
@@ -227,12 +233,28 @@ pub fn derive(read: &Read) -> Changes {
 
 /// What the followed changes may be missing, each sentence once: an entry
 /// or a destination that couldn't be read, a kind refused or not served.
+/// GitHub's are once per cause, not per words: one change may show an
+/// answer kept ("…; showing what was read at 13:12 UTC") where another had
+/// none to show, and the list says the cause once, in the form that says
+/// what is kept.
 fn followed_missing(rows: &[Row]) -> Vec<Note> {
-    let mut seen = BTreeSet::new();
-    rows.iter()
+    let mut kept: Vec<&change::Missing> = Vec::new();
+    for line in rows
+        .iter()
         .filter_map(|row| row.trail.as_ref().ok())
         .flat_map(|change| &change.missing)
-        .filter(|line| seen.insert(line.text.as_str()))
+    {
+        let cause = crate::github::cause_of(&line.text);
+        match kept
+            .iter_mut()
+            .find(|held| crate::github::cause_of(&held.text) == cause)
+        {
+            Some(held) if line.text.len() > held.text.len() => *held = line,
+            Some(_) => {}
+            None => kept.push(line),
+        }
+    }
+    kept.into_iter()
         .map(|line| Note {
             gap: match line.gap {
                 change::Gap::NotServed => Gap::NotServed,
@@ -397,6 +419,11 @@ fn row(project: &Project, freight: &Freight) -> Row {
         (None, Some(commit)) => Named::Commit(commit),
         (None, None) => Named::Nothing,
     };
+    let pull = origin.and_then(|origin| origin.pull.as_ref());
+    let pull_state = pull.map(|pull| pull.state);
+    let pull_note = pull
+        .and_then(|pull| pull.stale.as_ref())
+        .map(crate::github::Stale::sentence);
     let title = origin.and_then(|origin| origin.title.clone()).or_else(|| {
         freight
             .commits
@@ -410,6 +437,8 @@ fn row(project: &Project, freight: &Freight) -> Row {
         freight: freight.name.clone(),
         alias: freight.alias.clone(),
         named,
+        pull_state,
+        pull_note,
         title,
         created: freight.created,
         stages: cells,

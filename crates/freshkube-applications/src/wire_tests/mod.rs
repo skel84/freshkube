@@ -10,6 +10,7 @@ use freshkube_core::workspace::{Entry, Role, Workspace};
 use freshkube_delivery::change::live::Mapping;
 use freshkube_delivery::join::Confidence;
 use freshkube_ui::real_io::{RealIo, until_io};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, component::Root, px, size};
 use std::sync::{Arc, atomic::Ordering};
 
@@ -536,6 +537,224 @@ async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppConte
         assert_eq!(change.read(cx).build_namespace(), None);
     })
     .unwrap();
+}
+
+fn github_entry(
+    token: Option<freshkube_core::setup::GitHubToken>,
+) -> Option<freshkube_core::setup::Delivery> {
+    let mut github = freshkube_core::setup::GitHub::default();
+    github.token = token;
+    let mut delivery = freshkube_core::setup::Delivery::default();
+    delivery.github = Some(github);
+    Some(delivery)
+}
+
+#[gpui_kit::test]
+async fn setup_github_client_reaches_every_delivery_read_and_follows_its_entry(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::setup::GitHubToken;
+    use freshkube_delivery::github::ACCOUNT;
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let store = Arc::new(MemoryStore::default());
+    let secrets: Secrets = store.clone();
+    let mut configured = setup(None, None, false);
+    let (window, app) = mount(
+        cx,
+        &runtime,
+        &configured,
+        Some(secrets),
+        true,
+        Arc::default(),
+    );
+    wait_list(cx, window, &app).await;
+    let change = open_change(cx, window, &app);
+    // Without a token the client exists at once, anonymous, and every read
+    // holds the same one.
+    let first = cx
+        .update_window(window, |_, _, cx| {
+            let handle = app.read(cx).across().github.expect("an anonymous client");
+            assert_eq!(handle.identity().account, None);
+            assert_eq!(change.read(cx).github(), Some(&handle));
+            assert_eq!(list(&app, cx).read(cx).github(), Some(&handle));
+            handle
+        })
+        .unwrap();
+    // A reload that leaves the GitHub entry as it was keeps the client, and
+    // with it what it knows of the rate limit.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(app.read(cx).across().github.as_ref(), Some(&first));
+    })
+    .unwrap();
+    // keys.json named and nothing saved: no client, and the pages say why.
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert!(app.read(cx).across().github.is_none(), "not read yet");
+        assert!(change.read(cx).github().is_none());
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).github_open.is_none())
+        .await;
+    cx.update_window(window, |_, window, cx| {
+        assert!(app.read(cx).across().github.is_none());
+        window.render_frame(cx);
+        assert!(window.find("change-missing").label().is_some_and(|label| {
+            label.contains("GitHub isn't set up: no GitHub token is saved in keys.json")
+        }),);
+    })
+    .unwrap();
+    // Saved, and the same entry reloaded: it is tried again, the client has
+    // the account, and the warning goes.
+    store.write(ACCOUNT, "ghp_exampleToken0123456789").unwrap();
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).across().github.is_some())
+        .await;
+    let second = cx
+        .update_window(window, |_, window, cx| {
+            let second = app.read(cx).across().github.unwrap();
+            assert_ne!(second, first);
+            assert_eq!(second.identity().account.as_deref(), Some(ACCOUNT));
+            assert!(second.identity().setup_revision > first.identity().setup_revision);
+            assert_eq!(change.read(cx).github(), Some(&second));
+            assert_eq!(list(&app, cx).read(cx).github(), Some(&second));
+            window.render_frame(cx);
+            assert!(
+                window
+                    .try_find("change-missing")
+                    .is_none_or(|missing| !missing.label().unwrap_or_default().contains("GitHub")),
+            );
+            second
+        })
+        .unwrap();
+    // Reloaded as it is, it is the same client.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(app.read(cx).across().github.as_ref(), Some(&second));
+    })
+    .unwrap();
+    // A saved value that is not a token leaves no client, never an
+    // anonymous one, and says so.
+    store.write(ACCOUNT, "not a token").unwrap();
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
+    configured
+        .delivery
+        .as_mut()
+        .unwrap()
+        .github
+        .as_mut()
+        .unwrap()
+        .token = None;
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        // Named no token: anonymous again.
+        assert_eq!(
+            app.read(cx)
+                .across()
+                .github
+                .as_ref()
+                .unwrap()
+                .identity()
+                .account,
+            None
+        );
+    })
+    .unwrap();
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).github_open.is_none())
+        .await;
+    cx.update_window(window, |_, window, cx| {
+        assert!(app.read(cx).across().github.is_none());
+        assert!(change.read(cx).github().is_none());
+        assert!(list(&app, cx).read(cx).github().is_none());
+        window.render_frame(cx);
+        assert!(window.find("change-missing").label().is_some_and(|label| {
+            label.contains("GitHub isn't set up: the saved GitHub token can't be read")
+        }),);
+    })
+    .unwrap();
+}
+
+/// The Changes list's setup banner says why GitHub isn't set up, beside
+/// the setup file's own problem, and goes when it is.
+#[gpui_kit::test]
+async fn the_changes_list_banner_says_why_github_is_not_set_up(cx: &mut TestAppContext) {
+    use freshkube_core::setup::GitHubToken;
+    use freshkube_delivery::github::ACCOUNT;
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let store = Arc::new(MemoryStore::default());
+    let secrets: Secrets = store.clone();
+    let mut configured = setup(None, None, false);
+    let (window, app) = mount(
+        cx,
+        &runtime,
+        &configured,
+        Some(secrets),
+        true,
+        Arc::default(),
+    );
+    wait_list(cx, window, &app).await;
+    let banner = |cx: &mut TestAppContext| {
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            window
+                .try_find("changes-setup-problem")
+                .map(|banner| banner.label().unwrap_or_default().to_owned())
+        })
+        .unwrap()
+    };
+    assert_eq!(banner(cx), None, "anonymous is nothing to say");
+    // Named, and nothing saved.
+    configured.delivery = github_entry(Some(GitHubToken::KeysJson));
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).github_open.is_none())
+        .await;
+    assert_eq!(
+        banner(cx).as_deref(),
+        Some("GitHub isn't set up: no GitHub token is saved in keys.json")
+    );
+    // Beside the setup file's own problem.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| {
+            page.set_setup_problem(Some("The setup file has a problem.".into()), cx)
+        });
+    })
+    .unwrap();
+    assert_eq!(
+        banner(cx).as_deref(),
+        Some(
+            "The setup file has a problem. GitHub isn't set up: no GitHub token is saved in keys.json"
+        )
+    );
+    // The file's problem goes, and the GitHub one stays.
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup_problem(None, cx));
+    })
+    .unwrap();
+    assert_eq!(
+        banner(cx).as_deref(),
+        Some("GitHub isn't set up: no GitHub token is saved in keys.json")
+    );
+    // A token saved and the setup reloaded: the banner goes.
+    store.write(ACCOUNT, "ghp_exampleToken0123456789").unwrap();
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window, |_, cx| app.read(cx).across().github.is_some())
+        .await;
+    assert_eq!(banner(cx), None);
 }
 
 fn assert_log_handoff(

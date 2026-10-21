@@ -61,7 +61,7 @@ impl Change {
 /// What a change is, as the Changes list names it: the pull request its
 /// build's Pipelines as Code annotations name, else its commit, and the
 /// commit's title.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct Origin {
     pub pull_request: Option<u64>,
     /// The commit the Freight names.
@@ -69,6 +69,25 @@ pub struct Origin {
     /// The commit's title: Pipelines as Code's, else the message Kargo
     /// copied onto the Freight.
     pub title: Option<String>,
+    /// The pull request GitHub says the commit belongs to, when it was
+    /// asked.
+    pub pull: Option<crate::github::PullSummary>,
+}
+
+/// Prints as the struct did before it had a `pull`, which only a read of
+/// GitHub fills in, so a change derived without GitHub prints as it always
+/// has.
+impl std::fmt::Debug for Origin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("Origin");
+        out.field("pull_request", &self.pull_request)
+            .field("commit", &self.commit)
+            .field("title", &self.title);
+        if self.pull.is_some() {
+            out.field("pull", &self.pull);
+        }
+        out.finish()
+    }
 }
 
 /// How sure it is that a Stage's pods run the change: the Changes list's

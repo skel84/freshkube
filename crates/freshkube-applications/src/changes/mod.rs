@@ -306,6 +306,12 @@ impl ChangesPage {
         }
     }
 
+    /// GitHub's client the list reads through, for tests.
+    #[cfg(test)]
+    pub(crate) fn github(&self) -> Option<&freshkube_delivery::github::Handle> {
+        self.across.github.as_ref()
+    }
+
     pub(crate) fn set_setup_problem(
         &mut self,
         problem: Option<SharedString>,
@@ -331,6 +337,7 @@ impl ChangesPage {
         self.across.evidence_result = across.evidence_result.clone();
         self.across.build_namespace = across.build_namespace.clone();
         self.across.stage_naming = across.stage_naming.clone();
+        self.across.github = across.github.clone();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.reload_setup(across, cx));
         }
@@ -441,6 +448,7 @@ impl ChangesPage {
             evidence_result: self.across.evidence_result.clone(),
             build_namespace: self.across.build_namespace.clone(),
             stage_naming: self.across.stage_naming.clone(),
+            github: self.across.github.clone(),
         }
     }
 
@@ -801,6 +809,7 @@ impl ChangesPage {
                     evidence_result: self.across.evidence_result.clone(),
                     build_namespace: self.across.build_namespace.clone(),
                     stage_naming: self.across.stage_naming.clone(),
+                    github: self.across.github.clone(),
                 }),
                 kubeconfig: self.across.kubeconfig.clone(),
             },

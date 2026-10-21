@@ -276,10 +276,38 @@ impl TableSource for ChangesPage {
                 ))
                 .into_any_element(),
             Field::Named => kit::cell(column)
-                .when(row.by_commit, |cell| {
-                    cell.font_family(MONO_FONT).text_color(p.ink_2)
+                .id(SharedString::from(format!("{PREFIX}-row-{}-pr", row.key)))
+                .test_support()
+                .flex()
+                .items_center()
+                .gap(dp(4.))
+                // The column's width is the layout's, and a pull request's
+                // state is smaller text beside the number; cut, never wider.
+                .overflow_hidden()
+                .when_some(row.pull_note.clone(), |cell, note| {
+                    cell.follow_tooltip(note)
                 })
-                .child(row.named.clone())
+                .child(
+                    div()
+                        .when(row.by_commit, |cell| {
+                            cell.font_family(MONO_FONT).text_color(p.ink_2)
+                        })
+                        .child(row.named.clone()),
+                )
+                // Where the pull request stands, dimmer when it is what was
+                // kept and not read now.
+                .when_some(row.pull.clone(), |cell, state| {
+                    cell.child(
+                        div()
+                            .text_size(dp(10.))
+                            .text_color(if row.pull_stale {
+                                p.muted.opacity(0.6)
+                            } else {
+                                p.muted
+                            })
+                            .child(state),
+                    )
+                })
                 .into_any_element(),
             // The title, then its application, dimmer, in one line cut at a
             // word: the application gives way before the title.

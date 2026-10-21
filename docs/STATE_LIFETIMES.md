@@ -215,6 +215,14 @@ page-owned read with one owner, the change page.
 | The Changes list’s summaries | An app-lifetime [`SessionMemo`](../crates/freshkube-applications/src/change/outcome/session.rs) keeps only the summaries completed change-page reads publish, keyed by the same hop, link, Deployment, hash, window and provider. It drops other providers on a write and keeps at most 256 summaries, evicting the oldest completed read. Closing a change page keeps its summary; the list observes this memo and starts no Coroot read or connection. |
 | Wanting the connection | Each change page tells Observability, by its own entity, that it wants Coroot connected while it shows (and on release). While any does and Observability is hidden, a reconnecting setup makes the **provider alone** (`Live.provider_only`: no request, no project list, no read; it is built on the I/O worker). Showing Observability lists the projects over that provider. Not wanting it drops no provider, and nothing connects when no change page shows, when the person chose not to reconnect, or for example data. |
 
+Settings' setup finders are page-section reads of this kind. The Argo CD
+destinations list owns a `Loader<DestinationFindings, FindIdentity>`: it starts
+only on press (`OnShow::Never`), `set_visible(false)` drops the job and its
+delivery task, and a late answer fails `land`. Findings that landed are kept
+and the suggestions are derived from them again whenever the setup changes; a
+changed source, kubeconfig or example mode resets the loader. Ignored
+suggestions live on the settings page for the session and are never saved.
+
 ## Exceptions
 
 Only the following two classes follow a lifetime other than ordinary reads.

@@ -152,6 +152,7 @@ impl ChangePage {
                     evidence_result: place.evidence_result.clone(),
                     build_namespace: place.build_namespace.clone(),
                     stage_naming: place.stage_naming.clone(),
+                    github: place.github.clone(),
                 };
                 let results_route = self.results_route();
                 let (job, receiver) = backend::spawn_job(
@@ -290,17 +291,32 @@ impl ChangePage {
         if let Fetch::Live {
             place, kubeconfig, ..
         } = &mut self.fetch
-            && (&place.mapping, &place.sources, &*kubeconfig)
-                != (&across.mapping, &across.sources, &across.kubeconfig)
+            && (&place.mapping, &place.sources, &*kubeconfig, &place.github)
+                != (
+                    &across.mapping,
+                    &across.sources,
+                    &across.kubeconfig,
+                    &across.github,
+                )
         {
             place.mapping = across.mapping;
             place.sources = across.sources;
             *kubeconfig = across.kubeconfig;
+            place.github = across.github;
             self.configure_results(cx);
             self.loader.expire();
             self.refresh(cx);
         }
         cx.notify();
+    }
+
+    /// GitHub's client a live read asks, for tests.
+    #[cfg(test)]
+    pub(crate) fn github(&self) -> Option<&freshkube_delivery::github::Handle> {
+        match &self.fetch {
+            Fetch::Live { place, .. } => place.github.as_ref(),
+            Fetch::Example { .. } => None,
+        }
     }
 
     /// The build namespace a live read searches, for tests.
@@ -328,6 +344,7 @@ impl ChangePage {
             place.evidence_result = across.evidence_result.clone();
             place.build_namespace = across.build_namespace.clone();
             place.stage_naming = across.stage_naming.clone();
+            place.github = across.github.clone();
             self.loader.reset();
             self.stale = None;
             self.hide_outcomes();

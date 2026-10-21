@@ -33,6 +33,7 @@ use tokio::sync::{OnceCell, Semaphore};
 use tokio::time::Instant;
 
 use super::{MAX_AT_ONCE, OPEN};
+use crate::discover::ClusterSecrets;
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use crate::results::{self, Client as ResultsClient};
 pub use crate::results::{Route as ResultsRoute, Wait as ResultsWait};
@@ -263,6 +264,12 @@ impl<O: Reader, E: Reader> Reader for Via<O, E> {
         match self {
             Via::Open(reader) => reader.probe(request).await,
             Via::Entry(reader) => reader.probe(request).await,
+        }
+    }
+    async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
+        match self {
+            Via::Open(reader) => reader.cluster_secrets(namespace).await,
+            Via::Entry(reader) => reader.cluster_secrets(namespace).await,
         }
     }
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
