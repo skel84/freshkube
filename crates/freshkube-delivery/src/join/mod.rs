@@ -304,6 +304,11 @@ pub struct Evidence {
     /// How Applications are tied to stages where they carry no annotation;
     /// `None` when the caller configured none.
     pub stage_naming: Option<StageNaming>,
+    /// The namespace Argo CD's Applications were read in.
+    pub argocd_namespace: String,
+    /// The namespace the builds were read in, when the setup names one;
+    /// without it they are read across all of them.
+    pub build_namespace: Option<String>,
     /// How a destination no context matches says it could be matched.
     pub map_hint: MapHint,
     /// The words for a context, by its key, where they differ ([`Evidence::name`]).
@@ -933,6 +938,12 @@ pub(crate) fn freight_links(evidence: &Evidence, freight: &Freight) -> Vec<Link>
     links
 }
 
+/// Whether builds can be found by this commit: the full SHA, short enough
+/// for the label value (a SHA-256 commit is not), as `read_builds` requires.
+fn is_label_sha(sha: &str) -> bool {
+    crate::digest::is_full_sha(sha) && sha.len() <= 63
+}
+
 pub fn join(evidence: &Evidence) -> Trail {
     let mut links = Vec::new();
     let sha = &evidence.sha;
@@ -1013,12 +1024,22 @@ pub fn join(evidence: &Evidence) -> Trail {
                         Confidence::Unknown,
                         evidence.builds.why_not_read().unwrap_or_default(),
                     )
-                    .because(cause::unread(
-                        &evidence.builds,
-                        cause::PIPELINE_RUNS,
-                        None,
-                        "the CI/CD cluster's PipelineRuns, to find the build",
-                    )),
+                    .because(if by_commit && !is_label_sha(sha) {
+                        // The builds were never asked for: reading again
+                        // can't help, since this commit can't be a label value.
+                        Some(Cause::cant_read(
+                            "a commit SHA of 40 or 64 digits that fits a label, to find its build",
+                            None,
+                            true,
+                        ))
+                    } else {
+                        cause::unread(
+                            &evidence.builds,
+                            cause::PIPELINE_RUNS,
+                            evidence.build_namespace.as_deref(),
+                            "the CI/CD cluster's PipelineRuns, to find the build",
+                        )
+                    }),
                 );
                 &[]
             }

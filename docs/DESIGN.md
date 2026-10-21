@@ -251,7 +251,7 @@ Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette 
 | Died | Coral skull, `Tone::Died`: a container that ran and stopped (`CrashLoopBackOff`, `Error`, `OOMKilled`). Counted with critical. Pods, Health and Overview's Needs attention use it, from core's `PodIssue::died` where a page reads the summary. The 10 dp skull is the simplified drawing B: K1 with three teeth and no nose, which hold at 10 px where K1's nose and thin teeth blur. K1 itself is kept for a larger size, if one ever appears |
 | Critical / can't run | Coral disc with a bar cut out: an image that won't pull, a node down, an etcd alarm |
 | Pending / unknown | Dashed grey ring |
-| Waiting | Grey ring with a clock's hands, `Tone::Waiting` (`waiting.svg`): not reached yet, and nothing is wrong, such as a Stage whose Freight isn't promoted yet. It is not a problem: `StatusChips` count it in its own chip, never with warnings or unknowns, and it never reads as a failure. It is a Pending hop's tone on the change page |
+| Waiting | Grey ring with a clock's hands, `Tone::Waiting` (`waiting.svg`): not reached yet, and nothing is wrong, such as a Stage whose Freight isn't promoted yet. It is not a problem: `StatusChips` count it in its own chip, never with warnings or unknowns, and it never reads as a failure. On the change page only a Waiting cause draws it; a Pending hop without one keeps the dashed ring |
 | Completed | Grey tick in a faint ring (not drawn yet: Pods shows a tick icon) |
 | Integration required | Lavender ring with a plus |
 | Information, such as an application's log errors in Observability | Small blue dot, `Tone::Info`: something to know that isn't a fault |

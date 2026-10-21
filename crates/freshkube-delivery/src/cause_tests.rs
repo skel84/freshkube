@@ -258,3 +258,74 @@ async fn only_an_unknown_link_has_a_cause() {
         }
     }
 }
+
+/// The Role a refused kind's link names.
+fn role_of(link: &crate::join::Link) -> Role {
+    match &link.cause {
+        Some(Cause::CantRead {
+            role: Some(role), ..
+        }) => role.clone(),
+        other => panic!("a refusal names its Role, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn refused_applications_ask_for_a_role_in_the_argo_cd_namespace() {
+    let mut world = healthy();
+    world.argocd = world.argocd.refusing("applications");
+    let trail = run(&world, &ENV).await;
+    assert_eq!(
+        role_of(one(&trail, Hop::Stage, Hop::Application)),
+        Role::new("argoproj.io", "applications", Some("argocd"))
+    );
+}
+
+#[tokio::test]
+async fn refused_pipeline_runs_ask_in_the_build_namespace_and_cluster_wide_without_one() {
+    let mut world = healthy();
+    world.tekton = world.tekton.refusing("pipelineruns");
+    let trail = run(&world, &ENV).await;
+    assert_eq!(
+        role_of(one(&trail, Hop::Commit, Hop::PipelineRun)),
+        Role::new("tekton.dev", "pipelineruns", Some("acme-builds"))
+    );
+    // With no build namespace the builds are read across all of them, so
+    // only a ClusterRole reads them.
+    let trail = run_configured(&world, &ENV, &Default::default(), None, |plan| {
+        plan.build_namespace = None;
+    })
+    .await;
+    let role = role_of(one(&trail, Hop::Commit, Hop::PipelineRun));
+    assert_eq!(role.namespace, None);
+    assert!(role.manifest().contains("kind: ClusterRole"));
+}
+
+#[tokio::test]
+async fn refused_rollouts_ask_in_the_applications_namespace() {
+    let mut world = healthy();
+    world.environment = world.environment.refusing("rollouts");
+    let trail = run(&world, &ENV).await;
+    let role = role_of(one(&trail, Hop::Application, Hop::Rollout));
+    assert_eq!(
+        (role.group.as_str(), role.resource.as_str()),
+        ("argoproj.io", "rollouts")
+    );
+    assert!(role.namespace.is_some());
+}
+
+#[tokio::test]
+async fn a_sha_256_commit_can_not_be_a_label_so_reading_again_cannot_help() {
+    let world = healthy();
+    let trail = run_configured(&world, &ENV, &Default::default(), None, |plan| {
+        plan.sha = "a".repeat(64);
+    })
+    .await;
+    let link = one(&trail, Hop::Commit, Hop::PipelineRun);
+    assert_eq!(link.confidence, Confidence::Unknown);
+    let cause = link.cause.as_ref().expect("a cause");
+    assert!(
+        matches!(cause, Cause::CantRead { retry: false, .. }),
+        "{cause:?}"
+    );
+    assert_eq!(cause.next(), Vec::<Next>::new());
+}

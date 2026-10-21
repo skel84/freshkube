@@ -569,7 +569,7 @@ async fn without_supply_chain_or_results_derives_exactly_as_main() {
         (
             "refused",
             reader(vec![], vec![]).refusing("pipelineruns"),
-            "7aae90acee9f88afa202a9de1629ecae1ef22a6ffb980805cedcdf0e605fcbaa",
+            "93b55bceb0e45cad84e501117c6a8ecfb14f9afe96cc3656a871ee87f144de42",
         ),
     ] {
         let pool = Pool::new(

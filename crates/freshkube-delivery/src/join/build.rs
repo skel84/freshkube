@@ -157,7 +157,7 @@ fn head_build_links(
                 .because(cause::unread(
                     other,
                     cause::PIPELINE_RUNS,
-                    None,
+                    evidence.build_namespace.as_deref(),
                     "the CI/CD cluster's PipelineRuns, to find a build of the pull request",
                 )),
             ];

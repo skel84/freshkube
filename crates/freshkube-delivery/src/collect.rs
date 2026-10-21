@@ -290,6 +290,8 @@ pub(crate) async fn upstream_with_history<K: Reader, A: Reader, T: Reader, G: Gi
         log,
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
+        argocd_namespace: plan.argocd_namespace.clone(),
+        build_namespace: plan.build_namespace.clone(),
         map_hint: plan.map_hint.clone(),
         names: plan.names.clone(),
         builds,

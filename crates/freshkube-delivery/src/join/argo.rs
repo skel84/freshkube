@@ -26,7 +26,7 @@ pub(super) fn application_links(
             .because(cause::unread(
                 &evidence.applications,
                 cause::APPLICATIONS,
-                None,
+                Some(&evidence.argocd_namespace),
                 "Argo CD's Applications, to find the one that syncs this Stage",
             )),
         ];
