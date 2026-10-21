@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{Value, json};
 
+use super::discover::ClusterSecrets;
 use super::github::{GitHub, PullRequest};
 use super::read::{ListRequest, Listing, Reader, Resource, Scope, ServedGroup};
 use super::source::Truncation;
@@ -46,6 +47,8 @@ pub struct FixtureReader {
     /// Answers carry an invented `uid` and `resourceVersion` where an item
     /// has none; off, so a world can exercise objects without them.
     stamp_meta: bool,
+    /// Argo CD's cluster Secrets by namespace, as the cluster answers them.
+    cluster_secrets: HashMap<String, Result<ClusterSecrets, Failure>>,
     /// Every request, as a path-like description.
     pub requests: RefCell<Vec<String>>,
 }
@@ -63,6 +66,16 @@ impl FixtureReader {
             (group.into(), version.into()),
             plurals.iter().map(|p| (*p).to_owned()).collect(),
         );
+        self
+    }
+
+    /// What listing the cluster Secrets of `namespace` answers.
+    pub fn with_cluster_secrets(
+        mut self,
+        namespace: &str,
+        answer: Result<ClusterSecrets, Failure>,
+    ) -> Self {
+        self.cluster_secrets.insert(namespace.into(), answer);
         self
     }
 
@@ -272,6 +285,16 @@ impl Reader for FixtureReader {
             .contains(&request.resource.plural)
             .then_some(Truncation { read: items.len() });
         Ok(Listing { items, truncated })
+    }
+
+    async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {
+        self.requests
+            .borrow_mut()
+            .push(format!("LIST cluster secrets ns={namespace}"));
+        self.cluster_secrets
+            .get(namespace)
+            .cloned()
+            .unwrap_or_else(|| Ok(ClusterSecrets::default()))
     }
 
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {

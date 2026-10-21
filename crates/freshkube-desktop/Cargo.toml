@@ -70,6 +70,7 @@ libc = "0.2"
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 rustls.workspace = true
 tempfile = "3"
+base64.workspace = true
 # Render probes count in tests (`probe::count`).
 freshkube-probe = { workspace = true, features = ["counting"] }
 # The shell tests read the terminal's screen (`screen_text`, `ended`).
