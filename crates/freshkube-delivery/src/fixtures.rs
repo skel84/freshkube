@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Value, json};
 
 use super::discover::ClusterSecrets;
+use super::discover::NamespaceCounts;
 use super::github::{GitHub, PullRequest};
 use super::read::{ListRequest, Listing, Reader, Resource, Scope, ServedGroup};
 use super::source::Truncation;
@@ -285,6 +286,34 @@ impl Reader for FixtureReader {
             .contains(&request.resource.plural)
             .then_some(Truncation { read: items.len() });
         Ok(Listing { items, truncated })
+    }
+
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        self.requests
+            .borrow_mut()
+            .push(format!("COUNT {}", resource.plural));
+        let items = match self.lists.get(&resource.plural) {
+            Some(Ok(items)) => items.clone(),
+            Some(Err(failure)) => return Err(failure.clone()),
+            None => Vec::new(),
+        };
+        let mut counts = crate::discover::count_namespaces(&json!({ "items": items }));
+        counts.capped |= self.capped.contains(&resource.plural);
+        Ok(counts)
+    }
+
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        self.requests
+            .borrow_mut()
+            .push(format!("ANY {} ns={namespace}", resource.plural));
+        let items = match self.lists.get(&resource.plural) {
+            Some(Ok(items)) => items.clone(),
+            Some(Err(failure)) => return Err(failure.clone()),
+            None => Vec::new(),
+        };
+        Ok(items.iter().any(|item| {
+            item.pointer("/metadata/namespace").and_then(Value::as_str) == Some(namespace)
+        }))
     }
 
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {

@@ -10,11 +10,18 @@
 //! matches their servers to the contexts of the kubeconfig. It reads
 //! Secrets, so it is shaped to hold nothing but `metadata.name`,
 //! `data.server` and `data.name`: see [`destinations::parse_secret_list`].
+mod builds;
+#[cfg(test)]
+mod builds_tests;
 mod destinations;
 pub mod example;
 #[cfg(test)]
 mod tests;
 
+pub use builds::{
+    BuildFindings, BuildItem, BuildRead, BuildSuggestions, BuildVerdict, MAX_LISTED, MAX_PROBED,
+    NamespaceCounts, Probe, Projects, count_namespaces, find_builds, suggest_build_namespace,
+};
 pub(crate) use destinations::parse_secret_list;
 pub use destinations::{
     ClusterSecret, ClusterSecrets, DestinationFindings, Field, Found, Item, NamespaceRead, Note,
