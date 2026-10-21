@@ -1,0 +1,1 @@
+- **Settings:** Delivery sources can find the build namespace: Find counts PipelineRuns by namespace (names only) and suggests `delivery.build_namespace` when every run is in one. Nothing is written until Accept.
