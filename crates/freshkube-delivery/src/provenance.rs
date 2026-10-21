@@ -44,10 +44,13 @@ fn kinds(hop: Hop) -> &'static [&'static str] {
     }
 }
 
-fn key_text(key: &Key) -> String {
-    match key {
+fn key_text(link: &Link) -> String {
+    match &link.key {
         Key::Sha(sha) => sha.clone(),
         Key::Digest(digest) => digest.to_string(),
+        // Kargo's own record of what a Stage runs, the newest entry of its
+        // Freight history, names the Freight; no other name confirms.
+        Key::Name(name) if (link.from, link.to) == (Hop::Freight, Hop::Stage) => name.clone(),
         other => panic!("a confirmed link joins on a SHA or a digest, not {other}"),
     }
 }
@@ -56,7 +59,7 @@ fn key_text(key: &Key) -> String {
 /// that is reported, never declared or derived, and carries the link's key.
 /// A Rollout's side stands on its own pods.
 pub(crate) fn stands_on(link: &Link, hop: Hop) -> bool {
-    let key = key_text(&link.key);
+    let key = key_text(link);
     if hop == Hop::Rollout && rollout_stands_on_its_pods(link, &key) {
         return true;
     }
@@ -1079,7 +1082,10 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
 // Each fixture's one Freight gained a Freight -> Warehouse link, Confirmed: the
 // fixture Warehouse lists the Freight's digest among its discoveries. That is
 // the one more Confirmed in each.
-const COUNTS: [[usize; 3]; 4] = [[3, 6, 0], [6, 3, 0], [12, 1, 0], [4, 9, 0]];
+const COUNTS: [[usize; 3]; 4] = [[4, 5, 0], [6, 3, 0], [12, 1, 0], [5, 8, 0]];
+// Kargo's Freight history names the Freight on healthy's and squash's Stage, with
+// no image digest on it to join on: Freight -> Stage is Confirmed by name there, one
+// more Confirmed and one less Claimed in each (#823).
 // healthy: Commit -> PipelineRun (declared label and parameter) and PipelineRun -> supply chain.
 // promoted: the same two links.
 // confirmed: only PipelineRun -> supply chain; the clone TaskRun's `commit` result keeps
@@ -1101,6 +1107,7 @@ fn the_rule_fails_on_a_side_with_nothing_read() {
         |kind: &str| ObjectRef::new("argoproj.io", kind, Some("shop"), "api", &Meta::default());
     let key = Key::Digest(crate::digest::Digest::parse(digest).unwrap());
     let link = |evidence: Vec<Observation>| Link {
+        cause: None,
         from: Hop::Application,
         to: Hop::Rollout,
         subject: "shop/api".into(),

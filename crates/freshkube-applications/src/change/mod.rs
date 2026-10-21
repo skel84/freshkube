@@ -15,6 +15,8 @@
 //! application's page.
 //! An action that leads into Resources goes through the shell, as every
 //! object link does; the page never approves, promotes or syncs.
+#[cfg(test)]
+mod cause_tests;
 mod chain;
 mod changes;
 mod detail;
@@ -37,7 +39,9 @@ use chrono::{DateTime, Local, Utc};
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
 use freshkube_delivery::applications::SessionKey;
-use freshkube_delivery::change::{Change, Destination, Object, Phase, Reach, Shows, Stage, Target};
+use freshkube_delivery::change::{
+    Cause, Change, Destination, Hop, Next, Object, Phase, Reach, Shows, Stage, Target,
+};
 use freshkube_delivery::join::Confidence;
 use freshkube_reads::Loader;
 use freshkube_ui::inspector::{self, InspectorSplit, Pane, Stacked};
@@ -110,15 +114,18 @@ const STACKED: Stacked = Stacked {
 };
 
 /// The status chips, failing first, and what each counts.
-const TONES: [(Tone, &str, &str); 4] = [
+const TONES: [(Tone, &str, &str); 5] = [
     (Tone::Crit, "failing", "failing"),
     (Tone::Warn, "warning", "warning"),
-    (Tone::Unknown, "waiting", "waiting or unknown"),
+    (Tone::Unknown, "unknown", "unknown"),
+    (Tone::Waiting, "waiting", "waiting"),
     (Tone::Good, "ok", "ok"),
 ];
 
-/// A hop's state as a glyph's tone: waiting and unknown share the dashed
-/// ring, and a hand approval is the blue dot.
+/// A hop's state as a glyph's tone: pending and unknown are the dashed ring
+/// (a build that runs, a Rollout that progresses and pods that aren't all
+/// ready are not waiting), and a hand approval is the blue dot. Only a cause
+/// draws the clock ([`hop_tone`]).
 pub(super) fn tone(state: HealthIndicator) -> Tone {
     match state {
         HealthIndicator::Healthy => Tone::Good,
@@ -143,9 +150,12 @@ fn status(tone: Tone) -> Tone {
 /// How bad a tone is, for a group's worst row.
 fn rank(tone: Tone) -> u8 {
     match tone {
-        Tone::Crit | Tone::Died => 4,
-        Tone::Warn => 3,
-        Tone::Unknown => 2,
+        Tone::Crit | Tone::Died => 5,
+        Tone::Warn => 4,
+        Tone::Unknown => 3,
+        // Waiting is no problem, but a Stage that waits is not one that is
+        // fine: it ranks above ok, so its group says so and never folds.
+        Tone::Waiting => 2,
         _ => 1,
     }
 }
@@ -207,6 +217,64 @@ pub fn link_word(confidence: Confidence) -> &'static str {
     super::page::link_word(confidence)
 }
 
+/// A link's word: its cause's, when it is Unknown and the cause is known
+/// (Waiting, Can't read, Not set up, Not found), else the confidence's.
+pub(super) fn cause_word(confidence: Confidence, cause: Option<&Cause>) -> &'static str {
+    match (confidence, cause) {
+        (Confidence::Unknown, Some(cause)) => cause.word(),
+        _ => link_word(confidence),
+    }
+}
+
+/// A hop's state as a glyph's tone; a hop that waits for something that
+/// hasn't happened yet is Waiting whatever its state says.
+pub(super) fn hop_tone(hop: &Hop) -> Tone {
+    match &hop.cause {
+        Some(cause) if !cause.is_problem() => Tone::Waiting,
+        _ => tone(hop.state),
+    }
+}
+
+/// A Settings section's name on screen, from its page slug.
+fn settings_title(slug: &str) -> &'static str {
+    match slug {
+        "settings-sources" => "Delivery sources",
+        "settings-destinations" => "Argo CD destinations",
+        _ => "Settings",
+    }
+}
+
+/// The step a cause offers, in words. The page never changes anything: the
+/// buttons for these come with the Why / Needs / Fix block.
+pub(super) fn next_words(next: &Next) -> String {
+    match next {
+        Next::OpenInKargo => "Open the Freight in Kargo; this page never promotes.".into(),
+        Next::CopyAccessRequest(role) => format!(
+            "Ask for read access to {}{}{}.",
+            role.resource,
+            if role.group.is_empty() {
+                String::new()
+            } else {
+                format!(".{}", role.group)
+            },
+            role.namespace
+                .as_deref()
+                .map(|namespace| format!(" in {namespace}"))
+                .unwrap_or_default()
+        ),
+        Next::Retry => "Read it again.".into(),
+        Next::OpenSettings(field) => format!(
+            "Set {} in Settings › {}.",
+            field.field,
+            settings_title(field.section)
+        ),
+        Next::CheckSources => format!(
+            "Check sources in Settings › {}.",
+            settings_title("settings-sources")
+        ),
+    }
+}
+
 /// The glyph a link shows, if any: Confirmed is the usual case and shows
 /// none, so the other two stand out.
 pub fn link_glyph(confidence: Confidence) -> Option<Tone> {
@@ -228,6 +296,9 @@ pub struct HopRow {
     pub from: SharedString,
     pub time: SharedString,
     pub link: Option<Confidence>,
+    /// Why the hop is Unknown or pending, in words, when its cause is known:
+    /// the Link column says it in place of Unknown.
+    pub cause: Option<Cause>,
     /// An unread or missing hop, derived from state and confidence.
     pub ghost: bool,
     /// Coroot's verdict on the revision, once the outcome was read. It is
@@ -438,18 +509,19 @@ impl ChangePage {
                 let time = hop.at.map(clock).unwrap_or_default();
                 let link = hop
                     .link
-                    .map(|link| format!(" · link {}", link_word(link)))
+                    .map(|link| format!(" · link {}", cause_word(link, hop.cause.as_ref())))
                     .unwrap_or_default();
                 HopRow {
                     key: hop.key.clone().into(),
                     group: hop.group,
-                    tone: tone(hop.state),
+                    tone: hop_tone(hop),
                     name: hop.name.clone().into(),
                     detail: hop.detail.clone().into(),
                     from: hop.from.clone().into(),
                     label: format!("{}: {}{link}", hop.name, hop.detail).into(),
                     time: time.into(),
                     link: hop.link,
+                    cause: hop.cause.clone(),
                     ghost: hop.state == HealthIndicator::Unknown
                         && hop.link == Some(Confidence::Unknown),
                     coroot: None,

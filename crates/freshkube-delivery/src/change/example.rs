@@ -104,6 +104,7 @@ fn link(
     why: &str,
 ) -> Option<LinkDetail> {
     Some(LinkDetail {
+        cause: None,
         confidence,
         by: by.into(),
         before: before.into(),
@@ -393,6 +394,7 @@ fn gates(
         .iter()
         .zip(rows)
         .map(|(gate, (state, detail, at))| Hop {
+            cause: None,
             key: format!("{name}-{}", gate.to_lowercase()),
             group,
             state,
@@ -421,6 +423,7 @@ fn deployed(
     let app = format!("{PROJECT}-{stage}");
     let mut hops = vec![
         Hop {
+            cause: None,
             key: format!("{stage}-argocd"),
             group,
             state: Healthy,
@@ -458,6 +461,7 @@ fn deployed(
             })),
         },
         Hop {
+            cause: None,
             key: format!("{stage}-deployment"),
             group,
             state: Healthy,
@@ -494,6 +498,7 @@ fn deployed(
             })),
         },
         Hop {
+            cause: None,
             key: format!("{stage}-pods"),
             group,
             state: Healthy,
@@ -540,6 +545,7 @@ fn deployed(
 
 fn build(now: DateTime<Utc>) -> Vec<Hop> {
     let pull_request = Hop {
+        cause: None,
         key: "pr".into(),
         group: 0,
         state: Healthy,
@@ -576,6 +582,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let pruned = Hop {
+        cause: None,
         key: "pr-run".into(),
         group: 0,
         state: Unknown,
@@ -618,6 +625,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let push = Hop {
+        cause: None,
         key: "push-run".into(),
         group: 0,
         state: Healthy,
@@ -668,6 +676,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let signature = Hop {
+        cause: None,
         key: "signature".into(),
         group: 0,
         state: Healthy,
@@ -707,6 +716,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let policy = Hop {
+        cause: None,
         key: "policy".into(),
         group: 0,
         state: Healthy,
@@ -761,6 +771,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let image = Hop {
+        cause: None,
         key: "image".into(),
         group: 0,
         state: Warning,
@@ -798,6 +809,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         })),
     };
     let freight = Hop {
+        cause: None,
         key: "freight".into(),
         group: 1,
         state: Healthy,
@@ -854,6 +866,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
     let app = "checkout-prod-ams";
     vec![
         Hop {
+            cause: None,
             key: "prod-ams-argocd".into(),
             group,
             state: Healthy,
@@ -887,6 +900,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
             })),
         },
         Hop {
+            cause: None,
             key: "prod-ams-pods".into(),
             group,
             state: Unknown,
@@ -935,6 +949,92 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
             })),
         },
     ]
+}
+
+/// The causes of the example's hops that are Unknown or pending: the
+/// Stage that waits for someone to promote it, the pods a user may not list,
+/// and the run Tekton pruned.
+fn name_causes(hops: &mut [Hop]) {
+    let cause_of = |key: &str| -> Option<Cause> {
+        Some(match key {
+            "prod-ams-promotion" => Cause::waiting("a Promotion of the Freight to prod-ams"),
+            "prod-ams-verification" => {
+                Cause::waiting("the Freight promoted to prod-ams, which starts its verification")
+            }
+            "prod-ams-pods" => Cause::cant_read(
+                "the pods of checkout-api on prod-ams, to see which image they run",
+                Some(Role::new("", "pods", Some(PROJECT))),
+                true,
+            ),
+            "pr-run" => Cause::not_found("the PipelineRun, which Tekton pruned"),
+            _ => return None,
+        })
+    };
+    for hop in hops {
+        let Some(cause) = cause_of(&hop.key) else {
+            continue;
+        };
+        if let Shows::Hop(detail) = &mut hop.shows
+            && let Some(link) = &mut detail.link
+            && link.confidence == Confidence::Unknown
+        {
+            link.cause = Some(cause.clone());
+        }
+        hop.cause = Some(cause);
+    }
+}
+
+/// [`Shape::Causes`]: the whole change, with its policy result missing and
+/// the Application of `stage` unfound, beside the waiting Stage and the
+/// forbidden pods it already has, so one change shows every cause.
+fn all_causes(change: &mut Change) {
+    let unknown = |hop: &mut Hop, before: &str, detail: &str, cause: Cause, body: &str| {
+        hop.state = Unknown;
+        hop.detail = detail.into();
+        hop.link = Some(Confidence::Unknown);
+        hop.cause = Some(cause.clone());
+        if let Shows::Hop(shown) = &mut hop.shows {
+            shown.state = "Unknown".into();
+            shown.notice = Some(Notice {
+                state: Warning,
+                lead: "Not joined.".into(),
+                body: body.into(),
+            });
+            shown.fields.clear();
+            shown.link = Some(LinkDetail {
+                cause: Some(cause),
+                confidence: Confidence::Unknown,
+                by: "nothing".into(),
+                before: before.into(),
+                key: None,
+                before_says: String::new(),
+                here_says: "not found".into(),
+                why: body.into(),
+            });
+        }
+    };
+    for hop in &mut change.hops {
+        match hop.key.as_str() {
+            "policy" => unknown(
+                hop,
+                "Pipeline run",
+                "No policy result on the image",
+                Cause::not_found("a Conforma result that names the image digest"),
+                "No policy result names this image.",
+            ),
+            "stage-argocd" => unknown(
+                hop,
+                "Stage",
+                "No Application names this Stage",
+                Cause::not_set_up(
+                    "an Application whose name follows a template the setup gives",
+                    SettingsField::STAGE_NAMING,
+                ),
+                "No Application names this Stage, and the setup has no naming template for one.",
+            ),
+            _ => {}
+        }
+    }
 }
 
 /// The whole invented change, its times counted back from `now`.
@@ -1029,6 +1129,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
         at(now, 53),
         "6 of 6 run the digest",
     ));
+    name_causes(&mut hops);
     Change {
         project: PROJECT.into(),
         freight: FREIGHT.into(),
@@ -1076,6 +1177,10 @@ pub enum Shape {
     /// GitHub didn't answer: the pull requests read before are kept,
     /// marked stale.
     GitHubOffline,
+    /// One change with all four causes of an Unknown: a Stage waiting for
+    /// promotion, pods a user may not list, a policy result that isn't
+    /// there, and an Application the setup never told how to find.
+    Causes,
 }
 
 impl Shape {
@@ -1103,6 +1208,7 @@ impl Shape {
             Self::Whole
             | Self::Spread
             | Self::ImageOnly
+            | Self::Causes
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline => None,
@@ -1136,6 +1242,10 @@ impl Shape {
             image_only(&mut change);
             return Ok(change);
         }
+        if self == Self::Causes {
+            all_causes(&mut change);
+            return Ok(change);
+        }
         if let Some(trouble) = self.github() {
             github(&mut change, trouble);
             return Ok(change);
@@ -1147,6 +1257,7 @@ impl Shape {
             Self::Whole
             | Self::Spread
             | Self::ImageOnly
+            | Self::Causes
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline => {}
@@ -1213,7 +1324,7 @@ impl Shape {
                     if let Some(at) = change.hops.iter().position(read_there) {
                         change.hops.retain(|hop| !read_there(hop));
                         let workload = reported(name, cluster, group, &why);
-                        let pods = super::unread::pods(&workload, cluster, &why);
+                        let pods = super::unread::pods(&workload, cluster, &why, false);
                         change.hops.splice(at..at, [workload, pods]);
                     }
                 }
@@ -1364,7 +1475,14 @@ fn is_gate(hop: &Hop) -> bool {
 
 /// In place of what Argo CD's Applications would have said of a Stage.
 fn refused_application(project: &str, stage: &str, group: usize, why: &str) -> Hop {
-    Hop {
+    // The list was refused, so only access to Applications reads it again.
+    let cause = Cause::cant_read(
+        "Argo CD's Applications, to find the one that syncs this Stage",
+        Some(Role::new(argocd::GROUP, "applications", Some("argocd"))),
+        true,
+    );
+    let mut hop = Hop {
+        cause: Some(cause.clone()),
         key: format!("{stage}-argocd"),
         group,
         state: Unknown,
@@ -1401,7 +1519,13 @@ fn refused_application(project: &str, stage: &str, group: usize, why: &str) -> H
             unlinked: None,
             actions: Vec::new(),
         })),
+    };
+    if let Shows::Hop(detail) = &mut hop.shows
+        && let Some(link) = &mut detail.link
+    {
+        link.cause = Some(cause);
     }
+    hop
 }
 
 /// What Argo CD reports of a Stage's Deployment on an entry that couldn't
@@ -1410,6 +1534,7 @@ fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
     let mut target = deployment(cluster);
     target.cluster = String::new();
     Hop {
+        cause: None,
         key: format!("{stage}-reported-{PROJECT}-{stage}-0"),
         group,
         state: Info,
@@ -1435,6 +1560,7 @@ fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
                 mono("Read from", &format!("Argo CD on {CORE}")),
             ],
             link: Some(LinkDetail {
+                cause: None,
                 confidence: Confidence::Claimed,
                 by: "name".into(),
                 before: "Application".into(),

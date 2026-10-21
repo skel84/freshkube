@@ -1,6 +1,7 @@
 use crate::argocd::{Application, DestinationMatch, IN_CLUSTER_NAME, ManagedObject, StageClaim};
 use crate::kargo::{Freight, Promotion, Stage};
 use crate::source::cap_note;
+use freshkube_core::resources::FailureKind;
 
 use super::observe::{application_claim, application_revision, pushed_and_synced};
 use super::workload::rollout_links;
@@ -13,14 +14,22 @@ pub(super) fn application_links(
 ) -> Vec<Link> {
     let stage_id = id(&stage.project, &stage.name);
     let Some(apps) = evidence.applications.read() else {
-        return vec![Link::new(
-            Hop::Stage,
-            Hop::Application,
-            stage_id,
-            Key::None,
-            Confidence::Unknown,
-            evidence.applications.why_not_read().unwrap_or_default(),
-        )];
+        return vec![
+            Link::new(
+                Hop::Stage,
+                Hop::Application,
+                stage_id,
+                Key::None,
+                Confidence::Unknown,
+                evidence.applications.why_not_read().unwrap_or_default(),
+            )
+            .because(cause::unread(
+                &evidence.applications,
+                cause::APPLICATIONS,
+                Some(&evidence.argocd_namespace),
+                "Argo CD's Applications, to find the one that syncs this Stage",
+            )),
+        ];
     };
     let owned: Vec<&Application> = apps
         .iter()
@@ -31,18 +40,33 @@ pub(super) fn application_links(
         return links;
     }
     if owned.is_empty() {
-        return vec![Link::new(
-            Hop::Stage,
-            Hop::Application,
-            stage_id,
-            Key::None,
-            Confidence::Unknown,
-            format!(
-                "no Application names this Stage (read {}){}",
-                apps.len(),
-                cap_note(evidence.applications.capped())
-            ),
-        )];
+        // With no naming template only an annotation can name a Stage, and
+        // the setup was never told how else to look.
+        let missing = match evidence.stage_naming {
+            None => Some(Cause::not_set_up(
+                "an Application whose name follows a template the setup gives",
+                SettingsField::STAGE_NAMING,
+            )),
+            Some(_) if evidence.applications.capped().is_none() => Some(Cause::not_found(
+                "an Application that names this Stage by annotation or by the naming template",
+            )),
+            Some(_) => None,
+        };
+        return vec![
+            Link::new(
+                Hop::Stage,
+                Hop::Application,
+                stage_id,
+                Key::None,
+                Confidence::Unknown,
+                format!(
+                    "no Application names this Stage (read {}){}",
+                    apps.len(),
+                    cap_note(evidence.applications.capped())
+                ),
+            )
+            .because(missing),
+        ];
     }
     for app in owned {
         let app_id = id(&app.namespace, &app.name);
@@ -312,6 +336,35 @@ pub(super) fn workloads<'a>(evidence: &'a Evidence, app_id: &str) -> Result<&'a 
         Some(Ok(workloads)) => Ok(workloads),
         Some(Err(why)) => Err(why.to_owned()),
         None => Err(not_the_environment(evidence, app_id)),
+    }
+}
+
+/// Why an Application's workloads aren't known, when [`workloads`] can't
+/// give them: its destination's read failed, or the app was never told which
+/// workspace cluster the destination is. Any other way it isn't matched
+/// needs a person to choose, which no cause names.
+pub(super) fn workloads_cause(evidence: &Evidence, app_id: &str) -> Option<Cause> {
+    let needs = "the destination cluster's workloads, to see what runs there";
+    match evidence.workloads_of(app_id) {
+        Some(Ok(_)) => None,
+        Some(Err(_)) => {
+            let failure = evidence
+                .destination_of(app_id)
+                .and_then(|context| evidence.environments.get(context))
+                .and_then(|read| read.as_ref().err())?;
+            let refused = matches!(
+                failure.kind,
+                FailureKind::Forbidden | FailureKind::Unauthorized
+            );
+            Some(Cause::cant_read(needs, None, refused))
+        }
+        None => match (&evidence.map_hint, evidence.destinations.get(app_id)) {
+            (
+                MapHint::Settings { .. },
+                Some(DestinationMatch::ByName(_) | DestinationMatch::None),
+            ) => Some(Cause::not_set_up(needs, SettingsField::DESTINATIONS)),
+            _ => None,
+        },
     }
 }
 
