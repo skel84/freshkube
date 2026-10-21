@@ -950,6 +950,7 @@ mod sources {
                     entry.id.clone()
                 }
                 Chosen::Gone(id) => format!("gone {id}"),
+                Chosen::Skipped(row) => row.label(),
                 Chosen::Open => "open".into(),
                 Chosen::NoEntry(_) => "none".into(),
             })

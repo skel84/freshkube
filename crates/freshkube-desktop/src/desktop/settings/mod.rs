@@ -20,6 +20,8 @@ mod form;
 mod kubeconfig_row;
 mod metrics_tokens;
 mod monitoring;
+#[cfg(test)]
+mod recovery_tests;
 mod sections;
 #[cfg(test)]
 mod small_window_tests;
@@ -128,6 +130,8 @@ pub(crate) struct SettingsPage {
     setup_file: Option<Entity<crate::setup_file::SetupFile>>,
     metrics_secrets: Option<freshkube_core::secrets::Secrets>,
     setup_refusal: bool,
+    setup_skips: bool,
+    pub(in crate::desktop) source_recovery: workspace::SourceRecovery,
     pending_setup: bool,
     uses_setup: bool,
     /// `freshkube.yaml`; none without a preferences folder.
@@ -197,7 +201,9 @@ impl SettingsPage {
     ) {
         let model = file.read(cx);
         let setup = model.setup.clone();
-        let problem = model.problem.clone();
+        let problem = model.notice();
+        let source_recovery = model.source_recovery.clone();
+        self.setup_skips = !model.warnings.is_empty();
         let seen = if model.is_missing() {
             workspace::Seen::Missing
         } else {
@@ -218,7 +224,11 @@ impl SettingsPage {
                     .and_then(|delivery| delivery.stage_naming.clone());
                 self.sources
                     .update(cx, |sources, cx| sources.set_stage_naming(naming, cx));
-                if !self.uses_setup || self.workspace != setup.workspace {
+                if !self.uses_setup
+                    || self.workspace != setup.workspace
+                    || self.source_recovery != source_recovery
+                {
+                    self.source_recovery = source_recovery;
                     self.uses_setup = true;
                     self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);
                 }
@@ -236,17 +246,18 @@ impl SettingsPage {
         let legacy_banner = (!self.uses_setup && matches!(self.origin, Origin::Refused(_)))
             .then(|| self.banner.clone())
             .flatten();
-        self.banner = problem
-            .clone()
-            .map(Into::into)
-            .or_else(|| {
-                self.pending_setup.then(|| {
-                    "freshkube.yaml changed on disk. Reload to drop the unsaved changes.".into()
-                })
-            })
-            .or(legacy_banner);
-        self.sources
-            .update(cx, |sources, cx| sources.set_setup_problem(problem, cx));
+        let pending = self
+            .pending_setup
+            .then_some("freshkube.yaml changed on disk. Reload to drop the unsaved changes.");
+        self.banner = match (problem.as_deref(), pending) {
+            (Some(problem), Some(pending)) => Some(format!("{problem} {pending}").into()),
+            (Some(problem), None) => Some(problem.to_owned().into()),
+            (None, Some(pending)) => Some(pending.into()),
+            (None, None) => legacy_banner,
+        };
+        self.sources.update(cx, |sources, cx| {
+            sources.set_setup_notice(problem, self.setup_skips, cx)
+        });
         cx.notify();
     }
 
@@ -324,6 +335,8 @@ impl SettingsPage {
             setup_file: None,
             metrics_secrets,
             setup_refusal: false,
+            setup_skips: false,
+            source_recovery: Default::default(),
             pending_setup: false,
             uses_setup: false,
             file: None,
@@ -433,8 +446,9 @@ impl SettingsPage {
         };
         (self.columns, self.width) = source::columns(&self.rows);
         let example = origin == Origin::Example;
-        self.sources
-            .update(cx, |list, cx| list.set_workspace(&workspace, example, cx));
+        self.sources.update(cx, |list, cx| {
+            list.set_recovered_workspace(&workspace, &self.source_recovery, example, cx)
+        });
         self.origin = origin;
         let kubeconfig = match &workspace.kubeconfig {
             Some(path) => format!("Kubeconfig: {}", path.display()),
@@ -648,13 +662,12 @@ impl SettingsPage {
                 .test_support()
                 .role(Role::Alert)
                 .aria_label(body.clone())
-                .child(ui::banner(
-                    tone,
-                    Some(lead.to_owned().into()),
-                    body,
-                    None,
-                    cx,
-                ))
+                .child(
+                    ui::banner(tone, Some(lead.to_owned().into()), body, None, cx)
+                        .id(SharedString::from(format!("{id}-content")))
+                        .test_support()
+                        .aria_label(lead.to_owned()),
+                )
                 .into_any_element()
         };
         let mut banners = Vec::new();
@@ -667,6 +680,8 @@ impl SettingsPage {
                     .is_some_and(|file| file.read(cx).problem.is_some())
                 {
                     "Setup file"
+                } else if self.setup_skips {
+                    "Some rows in freshkube.yaml skipped"
                 } else if self.pending_setup {
                     "Unsaved edit is stale"
                 } else {
@@ -806,13 +821,35 @@ impl SettingsPage {
         } else {
             format!("{label}: select a cluster first")
         };
+        let tooltip: SharedString = tooltip.into();
+        let tooltip_action = action.boxed_clone();
         let button = Button::new(SharedString::from(format!("settings-{id}")))
             .outline()
             .small()
             .h(dp(ui::CONTROL_HEIGHT))
             .label(label)
             .disabled(!enabled)
-            .tooltip_with_action(tooltip, &action, Some(CONTEXT))
+            .map(|mut button| {
+                button.interactivity().tooltip(move |window, cx| {
+                    let text = tooltip.clone();
+                    gpui_kit::component::tooltip::Tooltip::element(move |window, _| {
+                        div()
+                            .id("settings-action-tooltip")
+                            .test_support()
+                            .aria_label(text.clone())
+                            .min_w_0()
+                            .max_w(
+                                ui::dp_px(360., window)
+                                    .min(window.viewport_size().width - ui::dp_px(128., window)),
+                            )
+                            .whitespace_normal()
+                            .child(text.clone())
+                    })
+                    .action(tooltip_action.as_ref(), Some(CONTEXT))
+                    .build(window, cx)
+                });
+                button
+            })
             .on_click(move |_, window, cx| handler(window, cx));
         let fold = page::action_entry(
             menu::MenuAction::new(label, action).enabled(enabled),

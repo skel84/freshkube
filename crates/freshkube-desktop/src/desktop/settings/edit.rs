@@ -21,6 +21,8 @@ impl SettingsPage {
     pub(super) fn why_not_editable(&self) -> &'static str {
         if self.pending_setup {
             "freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is."
+        } else if self.setup_skips {
+            crate::setup_file::SKIPPED_SAVE
         } else if self.setup_refusal {
             "freshkube.yaml isn't usable. Nothing was written; fix the file and reload."
         } else if self.origin == Origin::Example {
