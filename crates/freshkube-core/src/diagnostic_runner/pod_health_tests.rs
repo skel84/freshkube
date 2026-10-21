@@ -5,7 +5,7 @@ use crate::{
     resources::{Severity, builtin, object_from_yaml},
     workloads::HealthState,
 };
-use kube::{client::Body, runtime::watcher::Event};
+use kube::runtime::watcher::Event;
 use serde_json::{Value, json};
 
 fn container(state: Value) -> Value {
@@ -47,23 +47,14 @@ async fn check(
         "metadata":{"resourceVersion":"1"},"items":[object]}))
     .unwrap();
     // In-process transport only: no socket, configuration or cluster access.
-    let client = Client::new(
-        tower::service_fn(move |request: http::Request<Body>| {
-            assert_eq!(request.method(), http::Method::GET);
-            assert_eq!(request.uri().path(), "/api/v1/pods");
-            let response = response.clone();
-            async move {
-                Ok::<_, std::convert::Infallible>(
-                    http::Response::builder()
-                        .header("content-type", "application/json")
-                        .body(Body::from(response))
-                        .unwrap(),
-                )
-            }
-        }),
-        "example",
-    );
+    let body = String::from_utf8(response).unwrap();
+    let (client, recorder) = crate::fake_api::client(move |request| {
+        (request.path == "/api/v1/pods" && request.method == http::Method::GET)
+            .then(|| crate::fake_api::json(200, &body))
+    });
     let health = collect_pod_health(&client).await.unwrap();
+    // Exactly one pod list. Anything else the fake answers 500 and records here.
+    recorder.assert_lines(&["GET /api/v1/pods"]);
     let serialized = serde_json::to_value(&health).unwrap();
     let observed_diagnostics: Vec<_> = ["crashing", "image_pull_errors", "not_ready"]
         .into_iter()
