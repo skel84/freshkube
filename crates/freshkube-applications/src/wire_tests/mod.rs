@@ -546,7 +546,7 @@ async fn setup_github_client_reaches_every_delivery_read_and_follows_its_entry(
     let store = Arc::new(MemoryStore::default());
     let secrets: Secrets = store.clone();
     let mut configured = setup(None, None, false);
-    let (window, app) = mount(
+    let (window, app, _reads) = mount(
         cx,
         &runtime,
         &configured,
@@ -680,7 +680,7 @@ async fn the_changes_list_banner_says_why_github_is_not_set_up(cx: &mut TestAppC
     let store = Arc::new(MemoryStore::default());
     let secrets: Secrets = store.clone();
     let mut configured = setup(None, None, false);
-    let (window, app) = mount(
+    let (window, app, _reads) = mount(
         cx,
         &runtime,
         &configured,
