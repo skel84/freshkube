@@ -15,6 +15,7 @@ use freshkube_core::resources::{Failure, FailureKind};
 
 use super::*;
 use crate::applications::example::{CICD, CORE};
+use crate::github::example::Trouble;
 use crate::{argocd, deployments, kargo, words};
 use freshkube_core::indicators::HealthIndicator::{self, *};
 
@@ -1038,6 +1039,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
             pull_request: Some(PULL_REQUEST),
             commit: Some(COMMIT.into()),
             title: Some(TITLE.into()),
+            pull: crate::github::example::pull(PULL_REQUEST),
         },
         missing: Vec::new(),
         groups,
@@ -1066,6 +1068,26 @@ pub enum Shape {
     /// The Freight names an image and no commit, so the build is joined to
     /// it by the image digest a result of the build reports.
     ImageOnly,
+    /// GitHub's rate limit is reached: the pull requests read before are
+    /// kept, marked stale.
+    GitHubLimited,
+    /// GitHub refused the token: no pull request was read.
+    GitHubRefused,
+    /// GitHub didn't answer: the pull requests read before are kept,
+    /// marked stale.
+    GitHubOffline,
+}
+
+impl Shape {
+    /// What is wrong with the example's GitHub in this shape.
+    fn github(self) -> Option<Trouble> {
+        match self {
+            Self::GitHubLimited => Some(Trouble::Limited),
+            Self::GitHubRefused => Some(Trouble::Refused),
+            Self::GitHubOffline => Some(Trouble::Offline),
+            _ => None,
+        }
+    }
 }
 
 /// Why the example's unreachable entry wasn't read.
@@ -1078,7 +1100,12 @@ impl Shape {
     /// The words of what wasn't read, as a live read says it.
     fn words(self) -> Option<String> {
         match self {
-            Self::Whole | Self::Spread | Self::ImageOnly => None,
+            Self::Whole
+            | Self::Spread
+            | Self::ImageOnly
+            | Self::GitHubLimited
+            | Self::GitHubRefused
+            | Self::GitHubOffline => None,
             Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
@@ -1109,11 +1136,20 @@ impl Shape {
             image_only(&mut change);
             return Ok(change);
         }
+        if let Some(trouble) = self.github() {
+            github(&mut change, trouble);
+            return Ok(change);
+        }
         let Some(why) = self.words() else {
             return Ok(change);
         };
         match self {
-            Self::Whole | Self::Spread | Self::ImageOnly => {}
+            Self::Whole
+            | Self::Spread
+            | Self::ImageOnly
+            | Self::GitHubLimited
+            | Self::GitHubRefused
+            | Self::GitHubOffline => {}
             Self::KargoUnreachable => {
                 return Err(Failure::new(
                     FailureKind::Unreachable,
@@ -1192,6 +1228,25 @@ impl Shape {
     }
 }
 
+/// The change as GitHub leaves it in `trouble`: its pull request kept and
+/// stale, or none, and what the read couldn't do among what may be missing.
+fn github(change: &mut Change, trouble: Trouble) {
+    change.origin.pull = trouble.leaves(change.origin.pull.take());
+    let (gap, words) = match (trouble, change.origin.pull.as_ref().and_then(|p| p.stale.as_ref())) {
+        (Trouble::Refused, _) => (Gap::Refused, trouble.words().to_owned()),
+        (_, Some(stale)) => (
+            Gap::Unreadable,
+            format!(
+                "{}; showing what was read at {}",
+                stale.why,
+                stale.read_at.format("%H:%M UTC")
+            ),
+        ),
+        (_, None) => (Gap::Unreadable, trouble.words().to_owned()),
+    };
+    change.missing.push(Missing::new(gap, words));
+}
+
 /// The example's Freight as a Warehouse that subscribes to an image alone
 /// makes it: no commit, so no pull request or commit hop, and the build is
 /// joined to the Freight on the image digest.
@@ -1200,6 +1255,7 @@ fn image_only(change: &mut Change) {
         pull_request: None,
         commit: None,
         title: None,
+        pull: None,
     };
     change
         .hops
@@ -1751,7 +1807,10 @@ mod tests {
 
     #[test]
     fn addresses_are_invented() {
-        let change = change(now());
+        let mut change = change(now());
+        // The pull request's page and avatars are GitHub's own addresses,
+        // with invented names in them.
+        change.origin.pull = None;
         let text = format!("{change:?}");
         // API groups end in `.io`; hosts are all under example.test.
         for host in ["github", "harbor", ".com", "://"] {
