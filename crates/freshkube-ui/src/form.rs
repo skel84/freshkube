@@ -191,15 +191,23 @@ impl Row {
             .id(self.id.clone())
             .test_support()
             .flex()
+            .when(narrow, |this| this.flex_col())
+            .relative()
             .when(selected, |this| {
                 this.bg(p.accent_soft)
-                    .border_1()
-                    .border_color(p.accent)
                     .rounded(gpui_kit::px(4.))
                     .px(dp(6.))
                     .mx(dp(-6.))
+                    // The border is drawn over the row, so it moves nothing.
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .rounded(gpui_kit::px(4.))
+                            .border_1()
+                            .border_color(p.accent),
+                    )
             })
-            .when(narrow, |this| this.flex_col())
             .gap(dp(if narrow { 4. } else { 12. }))
             .child(
                 h_flex()
@@ -556,6 +564,7 @@ mod tests {
         chosen: bool,
         typing: bool,
         store_name: Option<SharedString>,
+        selected: bool,
     }
 
     impl Render for Form {
@@ -599,7 +608,10 @@ mod tests {
                         .dirty(true)
                         .narrow(self.narrow)
                         .row(field)
-                        .row(row("next-field", "Namespace", div().h(dp(CONTROL_HEIGHT))))
+                        .row(
+                            row("next-field", "Namespace", div().h(dp(CONTROL_HEIGHT)))
+                                .selected(self.selected),
+                        )
                         .saved_in(SavedIn::file("workspace.json"))
                         .render(cx),
                 )
@@ -650,6 +662,7 @@ mod tests {
                 chosen: false,
                 typing: false,
                 store_name: None,
+                selected: false,
             });
             view = Some(form.clone());
             Root::new(form, window, cx)
@@ -663,6 +676,37 @@ mod tests {
             (actual - px(expected)).abs() < px(1.),
             "{actual:?} != {expected}"
         );
+    }
+
+    #[gpui_kit::test]
+    fn selecting_a_row_moves_nothing(cx: &mut TestAppContext) {
+        let (handle, form) = open(cx);
+        for narrow in [false, true] {
+            let mut seen = Vec::new();
+            for selected in [false, true] {
+                cx.update_window(handle, |_, window, cx| {
+                    form.update(cx, |form, cx| {
+                        form.narrow = narrow;
+                        form.selected = selected;
+                        cx.notify();
+                    });
+                    window.render_frame(cx);
+                    seen.push((
+                        window.find("next-field-label").bounds(),
+                        window.find("next-field").bounds().size.height,
+                        window.find("group").bounds().size.height,
+                    ));
+                })
+                .unwrap();
+            }
+            let [(label, row, group), (chosen, selected_row, selected_group)] = seen[..] else {
+                unreachable!()
+            };
+            close(chosen.left() - label.left(), 0.);
+            close(chosen.top() - label.top(), 0.);
+            close(selected_row - row, 0.);
+            close(selected_group - group, 0.);
+        }
     }
 
     #[gpui_kit::test]
