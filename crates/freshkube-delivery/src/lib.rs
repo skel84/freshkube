@@ -25,7 +25,7 @@ pub(crate) mod collect;
 pub(crate) mod deployments;
 pub(crate) mod digest;
 pub mod entry;
-pub(crate) mod github;
+pub mod github;
 pub mod join;
 pub mod kargo;
 pub(crate) mod observation;

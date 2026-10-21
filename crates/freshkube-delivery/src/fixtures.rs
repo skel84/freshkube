@@ -820,6 +820,7 @@ pub fn pull_request(number: u64, head: &str, merge: Option<&str>) -> PullRequest
         head_sha: head.into(),
         merge_sha: merge.map(str::to_owned),
         base_branch: Some("main".into()),
+        summary: None,
     }
 }
 
