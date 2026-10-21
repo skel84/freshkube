@@ -10,7 +10,7 @@ It follows the owner's decisions on #268 (16 October): trust is a public key fil
 - `join/build.rs` (`supply_chain_links`) matches the verifier's result exhaustively. A verified signature with a matching subject digest can confirm the supply-chain link, supported by a reported `Attestation` observation. Chains' annotation alone remains Claimed at most.
 - A PipelineRun the cluster pruned can be read from the build entry's configured Tekton Results address, with its recorded tasks and attestations. Without Results, an absent run keeps the existing no-run statement and says history isn't set up; it is never assumed to be pruned.
 - The app hands top-level `supply_chain.public_key_file` and `supply_chain.evidence` to both the change page and the Changes list. Each read opens the public key off the UI thread, and the evidence result name and commit/digest JSON pointers feed the existing join. A signature that verifies and names the build's digest can now show Confirmed; an evidence record alone cannot.
-- The existing setup owner advances a read revision for an accepted changed setup or a successful explicit Reload, including identical bytes. Applications receives each revision once, so unrelated Settings notifications keep its reads. A new revision cancels delivery reads made with the previous setup, including hidden pages, and the next read opens the key file and address-specific Results store again. Reloading the same key path also rereads its contents. The app still leaves transparency lookup off; slice 4 and its caller wiring remain separate.
+- The existing setup owner advances a read revision for an accepted changed setup or a successful explicit Reload, including identical bytes. Applications receives each revision once, so unrelated Settings notifications keep its reads. A new revision cancels delivery reads made with the previous setup, including hidden pages, and the next read opens the key file and address-specific Results store again. Reloading the same key path also rereads its contents. Both delivery reads also receive the log switch and optional HTTPS URL from the setup, with the switch off by default; reloading either setting follows the same setup revision.
 
 ## The rule
 
@@ -123,15 +123,15 @@ Both routes the owner chose, per workspace entry (`results:` in the setup file):
 | Route | Setup | What the app does |
 | --- | --- | --- |
 | **Address** | `results.address: https://results.example.com` | GETs it directly. `https://` or `http://`; plain `http://` is allowed only for a loopback address and says so. |
-| **Port forward** | `results.forward: {namespace, service, port}` | Does nothing until the person presses **Forward** on the entry. Then it starts a port forward ([PORT_FORWARD.md](PORT_FORWARD.md)) to the Service's pod and reads `http://127.0.0.1:<port>` as an address. The forward is the app's `ForwardList`'s, owned and stopped like any other, and it is the second exception to read-only in [AGENTS.md](../AGENTS.md#cluster-safety)'s terms: it creates a `pods/portforward` and nothing else. |
+| **Port forward** | `results.forward: {namespace, service, port}` | Does nothing until the person presses **Forward** on the entry. The app integration will start a port forward ([PORT_FORWARD.md](PORT_FORWARD.md)) to the Service's pod and pass its local port to the Results client. The client reads `https://<service>.<namespace>.svc/`, pins that hostname to `127.0.0.1:<local port>` and disables proxies. The URL deliberately has no port, so reqwest preserves the resolved local port; TLS verifies the Service name. The forward is the app's `ForwardList`'s, owned and stopped like any other, and it is the second exception to read-only in [AGENTS.md](../AGENTS.md#cluster-safety)'s terms: it creates a `pods/portforward` and nothing else. |
 
-Delivery sees only an address. The shell turns a started forward into one (as the central metrics store's hosting entry hands Monitoring a source), so `freshkube-delivery` names no forward and no UI type.
+Delivery accepts an address or a caller-supplied `Route::Forward` with a local port. It never starts a forward and has no Resources or UI dependency. The caller must match the configured triple and replace the client on a new forward epoch. An ended route reports `Error::ForwardEnded(reason)` without falling back. The client transport is implemented; wiring the app's Forward control is the next slice.
 
-**TLS and credentials.** The Results API normally serves TLS with its own certificate and wants a bearer token for the Kubernetes API's authorisation. Two rules:
+**TLS and credentials.** The Results API normally serves TLS with its own certificate and wants a bearer token for the Kubernetes API's authorisation. The rules:
 
 - **The cluster's credentials are never sent to an address the person typed.** A token for the address route is `results.token: keys.json`, the key [#707](https://github.com/skel84/freshkube/issues/707)'s store keeps for that address, exactly as a metrics URL's. Without one the request goes without a token and a refusal says so.
-- **The forward route may use the entry's own credentials,** since the forward ends at that cluster's own pod, through that cluster's API server. This is the only place a cluster credential reaches Results, and it is a bearer token read from the client the entry already has (Q4 asks whether to go further and prefer the API server's service proxy).
-- **Certificate verification is never skipped by default.** A self-signed Results certificate needs `results.ca_file`, a PEM the person names; the Check sources row says `certificate not trusted` otherwise. There is no "insecure" switch in this step.
+- **The forward route also uses only its saved Results token.** `results.token: keys.json` selects the account `Tekton Results forward://<namespace>/<service>:<configured port>`, independent of the local port. No cluster credential is sent to Results. Both routes allow `results.ca_file`.
+- **Certificate verification is never skipped.** A self-signed Results certificate needs `results.ca_file`, a PEM the person names; the Check sources row says `certificate not trusted` otherwise. There is no "insecure" switch in this step.
 
 ### Which API and which records
 
@@ -267,9 +267,9 @@ Results         cluster-b    setup file  Not forwarded               Forward…
 
 The Inspector of each holds its form group (`Save`/`Revert`, `Saved in freshkube.yaml`). The Clusters Inspector's **Build history** group holds the route per entry: Off / Address (with its token as a secret field, `Kept in the Keychain`, and an optional CA file) / Port forward (namespace, service, port), and a **Forward** / **Stop** button. Evidence result: the result's name and two JSON pointers, validated as pointers at the field.
 
-### Proposed additions to the setup file
+### Supply-chain and Results setup
 
-[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), `supply_chain.public_key_file`, `transparency_log` and `evidence`. This design adds, as the owner decided ([Decisions](#decisions), 2 to 4), three optional keys, each backward compatible and ignored by an older build as an unknown key:
+[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), including its optional token and CA file, and `supply_chain.public_key_file`, `transparency_log`, `transparency_url` and `evidence`. Both delivery reads receive the supply-chain settings under their setup revision. The optional log URL is HTTPS without credentials, query or fragment; without it Chains names the log. For example, to enable transparency-log reads with an explicit URL:
 
 ```yaml
 clusters:

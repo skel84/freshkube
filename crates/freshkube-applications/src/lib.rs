@@ -289,6 +289,8 @@ pub struct ApplicationsPage {
     runtime: tokio::runtime::Handle,
     secrets: Option<freshkube_core::secrets::Secrets>,
     public_key_file: Option<std::path::PathBuf>,
+    transparency_log: bool,
+    transparency_url: Option<String>,
     evidence_result: Option<freshkube_core::setup::Evidence>,
     build_namespace: Option<String>,
     stage_naming: Option<freshkube_core::setup::StageNaming>,
@@ -414,6 +416,8 @@ impl ApplicationsPage {
             runtime,
             secrets,
             public_key_file: None,
+            transparency_log: false,
+            transparency_url: None,
             evidence_result: None,
             build_namespace: None,
             stage_naming: None,
@@ -535,11 +539,11 @@ impl ApplicationsPage {
 
     /// The setup owner's safe warning text; no setup bytes reach a banner.
     pub fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
-        freshkube_probe::probe::hit("applications.setup_handoff");
         let problem = problem.map(SharedString::from);
         if self.setup_problem == problem {
             return;
         }
+        freshkube_probe::probe::hit("applications.setup_handoff");
         self.setup_problem = problem.clone();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));
@@ -555,6 +559,14 @@ impl ApplicationsPage {
             .supply_chain
             .as_ref()
             .and_then(|chain| chain.public_key_file.clone());
+        self.transparency_log = setup
+            .supply_chain
+            .as_ref()
+            .is_some_and(|chain| chain.transparency_log);
+        self.transparency_url = setup
+            .supply_chain
+            .as_ref()
+            .and_then(|chain| chain.transparency_url.clone());
         self.evidence_result = setup
             .supply_chain
             .as_ref()
@@ -569,26 +581,12 @@ impl ApplicationsPage {
             .and_then(|delivery| delivery.stage_naming.clone());
         let naming_changed = naming != self.stage_naming;
         self.stage_naming = naming;
+        let across = self.across();
         if let Some((change, _)) = &self.change {
-            change.update(cx, |page, cx| {
-                page.reload_setup(
-                    self.public_key_file.clone(),
-                    self.evidence_result.clone(),
-                    self.build_namespace.clone(),
-                    self.stage_naming.clone(),
-                    cx,
-                )
-            });
+            change.update(cx, |page, cx| page.reload_setup(&across, cx));
         }
-        self.changes.update(cx, |page, cx| {
-            page.reload_setup(
-                self.public_key_file.clone(),
-                self.evidence_result.clone(),
-                self.build_namespace.clone(),
-                self.stage_naming.clone(),
-                cx,
-            )
-        });
+        self.changes
+            .update(cx, |page, cx| page.reload_setup(&across, cx));
         // The list derives its Applications' projects from the naming.
         let live = self
             .source
@@ -648,6 +646,8 @@ impl ApplicationsPage {
             sources: self.clusters.sources.clone(),
             kubeconfig: self.clusters.kubeconfig.clone(),
             public_key_file: self.public_key_file.clone(),
+            transparency_log: self.transparency_log,
+            transparency_url: self.transparency_url.clone(),
             evidence_result: self.evidence_result.clone(),
             build_namespace: self.build_namespace.clone(),
             stage_naming: self.stage_naming.clone(),

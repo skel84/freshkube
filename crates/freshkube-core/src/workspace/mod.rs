@@ -26,12 +26,13 @@ use serde::{Deserialize, Serialize};
 use crate::{BoundedReadError, read_bounded_regular_file};
 
 mod destinations;
+pub(crate) use destinations::has_userinfo;
 mod sources;
 
 pub use destinations::{
     Destination, Fault, IN_CLUSTER_NAME, IN_CLUSTER_SERVER, Key, MAX_DESTINATIONS, normalize_server,
 };
-pub use sources::{Chosen, Part, Pins, Sources, Why};
+pub use sources::{Chosen, Part, Pins, SkippedRow, SourceRecovery, Sources, Why};
 
 /// The file format this version reads.
 pub const VERSION: u32 = 1;

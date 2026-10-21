@@ -121,6 +121,7 @@ pub(crate) struct SourcesList {
     loading: table::LoadingRows,
     checked_at: Option<SharedString>,
     setup_problem: Option<String>,
+    setup_skips: bool,
     /// `delivery.stage_naming` of the setup, shown and never edited here.
     stage_naming: Option<freshkube_core::setup::StageNaming>,
     columns: Vec<Column>,
@@ -162,6 +163,7 @@ impl SourcesList {
             loading: table::LoadingRows::new(PREFIX),
             checked_at: None,
             setup_problem: None,
+            setup_skips: false,
             stage_naming: None,
             columns: Vec::new(),
             width: 0.,
@@ -183,8 +185,19 @@ impl SourcesList {
         list
     }
 
+    #[cfg(test)]
     pub(super) fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
-        if self.setup_problem != problem {
+        self.set_setup_notice(problem, false, cx);
+    }
+
+    pub(super) fn set_setup_notice(
+        &mut self,
+        problem: Option<String>,
+        skips: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.setup_problem != problem || self.setup_skips != skips {
+            self.setup_skips = skips;
             self.setup_problem = problem;
             self.derive_rows();
             self.publish_status(cx);
@@ -206,13 +219,14 @@ impl SourcesList {
 
     /// Takes a new workspace from the page: resolves where each part is
     /// read, and forgets a check of the old one.
-    pub(super) fn set_workspace(
+    pub(super) fn set_recovered_workspace(
         &mut self,
         workspace: &freshkube_core::workspace::Workspace,
+        recovery: &freshkube_core::workspace::SourceRecovery,
         example: bool,
         cx: &mut Context<Self>,
     ) {
-        self.sources = Sources::of(workspace);
+        self.sources = Sources::of_recovered(workspace, recovery);
         self.checked_at = None;
         self.kubeconfig = workspace.kubeconfig.clone();
         self.example = example;
@@ -380,7 +394,7 @@ impl SourcesList {
     /// otherwise for an entry.
     fn example_check(&self) -> Checked {
         let reach = |chosen: &Chosen, read: Read| match chosen {
-            Chosen::NoEntry(_) | Chosen::Gone(_) => {
+            Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => {
                 Reach::missing(chosen.missing().unwrap_or_default())
             }
             Chosen::Open => Reach::Readable,

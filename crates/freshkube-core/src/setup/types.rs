@@ -60,10 +60,10 @@ pub struct Results {
     /// An `https://` or `http://` URL the person enters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
-    /// The address's bearer token, kept separately in `keys.json`.
+    /// The address's or configured forward's bearer token, kept in `keys.json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<KeysJson>,
-    /// Additional certificate authorities, PEM, for the address's TLS.
+    /// Additional certificate authorities, PEM, for Results' TLS on either route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ca_file: Option<PathBuf>,
     /// A Service and port in the entry's cluster, forwarded only when the
@@ -345,6 +345,9 @@ pub struct SupplyChain {
     /// Read the transparency log's entries.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub transparency_log: bool,
+    /// The log's HTTPS address; absent means Chains' configured address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transparency_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Evidence>,
     #[serde(flatten)]

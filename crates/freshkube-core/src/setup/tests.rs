@@ -931,38 +931,46 @@ fn the_example_links_are_distinct_and_survive_a_save() {
 }
 
 #[test]
-fn results_address_credentials_are_typed_and_round_trip() {
-    let text = with_cluster(
-        "    results:\n      address: https://results.example.test\n      token: keys.json\n      ca_file: /home/acme/results-ca.pem\n      future: kept\n",
-    );
-    let setup = ok(&text);
-    let results = setup.workspace.clusters[0].results.as_ref().unwrap();
-    assert_eq!(results.token, Some(KeysJson));
-    assert_eq!(results.ca_file, Some(home("/home/acme/results-ca.pem")));
-    assert_eq!(setup.unknown_keys(), vec!["cluster-a.results.future"]);
-    assert_eq!(ok(&to_text(&setup)), setup);
-    let invalid = refused(&text.replace("token: keys.json", "token: invented-secret"));
-    assert!(matches!(invalid, Invalid::KeyValue(_)));
-    assert!(!invalid.to_string().contains("invented-secret"));
-    assert_eq!(
-        rule(&text.replace("/home/acme/results-ca.pem", "relative.pem")),
-        "the cluster “cluster-a” results.ca_file isn’t an absolute path"
-    );
+fn results_credentials_are_typed_and_round_trip_on_both_routes() {
+    for route in [
+        "address: https://results.example.test",
+        "forward: {namespace: acme, service: results, port: 8080}",
+    ] {
+        let text = with_cluster(&format!(
+            "    results:\n      {route}\n      token: keys.json\n      ca_file: /home/acme/results-ca.pem\n      future: kept\n"
+        ));
+        let setup = ok(&text);
+        let results = setup.workspace.clusters[0].results.as_ref().unwrap();
+        assert_eq!(results.token, Some(KeysJson));
+        assert_eq!(results.ca_file, Some(home("/home/acme/results-ca.pem")));
+        assert_eq!(setup.unknown_keys(), vec!["cluster-a.results.future"]);
+        assert_eq!(ok(&to_text(&setup)), setup);
+        let invalid = refused(&text.replace("token: keys.json", "token: invented-secret"));
+        assert!(matches!(invalid, Invalid::KeyValue(_)));
+        assert!(!invalid.to_string().contains("invented-secret"));
+        assert_eq!(
+            rule(&text.replace("/home/acme/results-ca.pem", "relative.pem")),
+            "the cluster “cluster-a” results.ca_file isn’t an absolute path"
+        );
+    }
 }
 
 #[test]
-fn results_address_settings_do_not_go_with_a_forward() {
-    for (extra, field) in [
-        ("      token: keys.json\n", "token"),
-        ("      ca_file: /home/acme/ca.pem\n", "ca_file"),
+fn results_credentials_still_need_exactly_one_route() {
+    for extra in [
+        "      token: keys.json\n",
+        "      ca_file: /home/acme/ca.pem\n",
     ] {
-        let text = with_cluster(&format!(
-            "    results:\n      forward: {{namespace: acme, service: results, port: 8080}}\n{extra}"
-        ));
-        assert_eq!(
-            rule(&text),
-            format!("the cluster “cluster-a” results.{field} only goes with address")
-        );
+        for route in [
+            "",
+            "      address: https://results.example.test\n      forward: {namespace: acme, service: results, port: 8080}\n",
+        ] {
+            let text = with_cluster(&format!("    results:\n{route}{extra}"));
+            assert_eq!(
+                rule(&text),
+                "the cluster “cluster-a” results must set exactly one of address or forward"
+            );
+        }
     }
 }
 
@@ -988,6 +996,42 @@ fn results_plain_http_is_only_saved_for_literal_loopback() {
         ok(&with_cluster(&format!(
             "    results: {{address: '{address}'}}\n"
         )));
+    }
+}
+
+#[test]
+fn destination_url_credentials_are_refused_by_strict_parse_and_save_without_echoing() {
+    use crate::workspace::{Destination, Key};
+    for address in [
+        "https://invented-private-marker@example.test",
+        "https://user:invented-private-marker@example.test",
+        "https://user:invented-private-marker@[invalid",
+    ] {
+        let text = format!(
+            "version: 1\nclusters: []\ndestinations: [{{server: '{address}', entry: cluster-a}}]\n"
+        );
+        let invalid = parse(text.as_bytes()).unwrap_err();
+        assert!(!invalid.to_string().contains("invented-private-marker"));
+        assert!(!format!("{invalid:?}").contains("invented-private-marker"));
+        assert!(matches!(
+            invalid,
+            Invalid::Workspace(workspace::Invalid::Destination {
+                fault: workspace::Fault::Userinfo,
+                ..
+            })
+        ));
+        let mut setup = Setup::default();
+        setup
+            .workspace
+            .destinations
+            .push(Destination::new(Key::Server(address.into()), "cluster-a"));
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("freshkube.yaml");
+        std::fs::write(&file, "version: 1\n").unwrap();
+        let before = std::fs::read(&file).unwrap();
+        let error = commit(&file, &Seen::Bytes(before.clone()), &setup).unwrap_err();
+        assert!(!format!("{error:?}").contains("invented-private-marker"));
+        assert_eq!(std::fs::read(&file).unwrap(), before);
     }
 }
 
@@ -1123,5 +1167,39 @@ fn the_build_namespace_must_be_a_namespace_name_and_is_never_repeated() {
         ok(&format!(
             "version: 1\ndelivery:\n  build_namespace: {good}\n"
         ));
+    }
+}
+
+#[test]
+fn transparency_url_is_optional_https_and_round_trips_without_repeating_bad_values() {
+    let text = |url: &str| format!("version: 1\nsupply_chain:\n  transparency_url: '{url}'\n");
+    let empty = ok("version: 1\nsupply_chain: {}\n");
+    assert_eq!(empty.supply_chain.unwrap().transparency_url, None);
+    for url in [
+        "https://rekor.example.test",
+        "https://rekor.example.test:443/log/",
+    ] {
+        let setup = ok(&text(url));
+        let chain = setup.supply_chain.as_ref().unwrap();
+        assert_eq!(chain.transparency_url.as_deref(), Some(url));
+        assert!(!chain.transparency_log);
+        assert_eq!(ok(&to_text(&setup)), setup);
+        assert!(setup.unknown_keys().is_empty());
+    }
+    for url in [
+        "",
+        "not-a-url",
+        "http://127.0.0.1:8080",
+        "http://rekor.example.test",
+        "ftp://rekor.example.test",
+        "https://invented-token@rekor.example.test",
+        "https://user:invented-token@rekor.example.test",
+        "https://rekor.example.test/?token=invented-token",
+        "https://rekor.example.test/#entry",
+    ] {
+        assert_eq!(
+            rule(&text(url)),
+            "supply_chain.transparency_url must be an https:// URL without credentials, query or fragment"
+        );
     }
 }

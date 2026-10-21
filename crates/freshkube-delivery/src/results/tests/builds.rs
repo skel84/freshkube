@@ -59,6 +59,8 @@ fn place() -> Place {
         mapping: Mapping::default(),
         sources: Default::default(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,
@@ -414,6 +416,23 @@ async fn missing_runs_keep_the_no_run_statement_with_results_why() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ended_forward_reason_names_the_forward_and_its_entry() {
+    let answer = evidence(&reader(vec![], vec![]), Err(Error::ForwardEnded("stopped"))).await;
+    let change = change(&answer);
+    let row = change
+        .hops
+        .iter()
+        .find(|row| row.name == "PipelineRun")
+        .unwrap();
+    assert!(
+        row.detail
+            .contains("the Tekton Results forward on cluster-b ended: stopped"),
+        "{}",
+        row.detail
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn capped_history_keeps_the_cap_in_read_from_and_missing() {
     let replies = (0..5)
         .map(|n| {
@@ -514,6 +533,8 @@ async fn the_pool_opens_one_address_client_and_counts_a_two_change_refresh() {
         },
         sources: sources.clone(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: None,
         build_namespace: None,
         stage_naming: None,

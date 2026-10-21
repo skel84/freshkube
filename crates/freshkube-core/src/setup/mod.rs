@@ -29,10 +29,12 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::{self, Destination, Entry, MAX_BYTES, Pins, Seen, VERSION, Workspace};
 
 mod migrate;
+mod recovery;
 mod types;
 mod validate;
 
 pub use migrate::{Kept, Outcome, migrate};
+pub use recovery::{Recovered, Row, RowReason, Warning, read, warning_words};
 pub use types::{
     Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson,
     Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming, Store, SupplyChain,
@@ -96,6 +98,7 @@ impl std::fmt::Display for Place {
 pub enum Fault {
     Empty(String),
     NotUrl(String),
+    NotHttpsUrl(String),
     /// Not a Kubernetes namespace name; the value is never repeated.
     NotNamespace(String),
     NonLoopbackHttp(String),
@@ -137,6 +140,12 @@ impl std::fmt::Display for Fault {
             Fault::Empty(at) => write!(f, "{at} is empty"),
             Fault::NotNamespace(at) => write!(f, "{at} isn’t a Kubernetes namespace name"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
+            Fault::NotHttpsUrl(at) => {
+                write!(
+                    f,
+                    "{at} must be an https:// URL without credentials, query or fragment"
+                )
+            }
             Fault::NonLoopbackHttp(at) => write!(f, "{at}: plain HTTP is allowed only on loopback"),
             Fault::RelativePath(at) => write!(f, "{at} isn’t an absolute path"),
             Fault::ZeroPort(at) => write!(f, "{at} isn’t a port"),
@@ -360,15 +369,16 @@ fn named(keys: &mut Vec<String>, prefix: &str, extra: &Extra) {
 /// parser's place is the value's own; only what no field names goes to
 /// `extra`.
 #[derive(Deserialize)]
-struct Read {
+#[serde(bound(deserialize = "C: Deserialize<'de>, D: Deserialize<'de>"))]
+struct Read<C = Entry, D = Destination> {
     #[allow(dead_code)] // checked by pass one, and written fresh
     version: u64,
     #[serde(default)]
     kubeconfig: Option<std::path::PathBuf>,
     #[serde(default)]
-    clusters: Vec<Entry>,
+    clusters: Vec<C>,
     #[serde(default)]
-    destinations: Vec<Destination>,
+    destinations: Vec<D>,
     #[serde(default)]
     sources: Pins,
     #[serde(default)]
@@ -413,13 +423,7 @@ fn place(error: &serde_yaml::Error) -> Option<Place> {
     })
 }
 
-/// Parses the file's bytes in two passes, then validates what they say.
-pub fn parse(bytes: &[u8]) -> Result<Setup, Invalid> {
-    if bytes.len() as u64 > MAX_BYTES {
-        return Err(Invalid::TooLarge);
-    }
-    let value: serde_yaml::Value =
-        serde_yaml::from_slice(bytes).map_err(|error| Invalid::NotYaml(place(&error)))?;
+fn check_version(value: &serde_yaml::Value) -> Result<(), Invalid> {
     match value.get("version") {
         None => return Err(Invalid::MissingVersion),
         Some(version) => match version.as_u64() {
@@ -430,6 +434,17 @@ pub fn parse(bytes: &[u8]) -> Result<Setup, Invalid> {
             Some(_) => {}
         },
     }
+    Ok(())
+}
+
+/// Parses the file's bytes in two passes, then validates what they say.
+pub fn parse(bytes: &[u8]) -> Result<Setup, Invalid> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(Invalid::TooLarge);
+    }
+    let value: serde_yaml::Value =
+        serde_yaml::from_slice(bytes).map_err(|error| Invalid::NotYaml(place(&error)))?;
+    check_version(&value)?;
     let read: Read = serde_yaml::from_slice(bytes).map_err(|error| {
         if error.to_string().contains(types::REFUSED) {
             Invalid::KeyValue(place(&error))
