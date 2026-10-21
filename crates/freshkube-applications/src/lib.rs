@@ -80,7 +80,9 @@ use freshkube_probe::perf;
 use freshkube_resources as resources;
 use freshkube_ui::ui;
 
+use freshkube_core::job::OwnedJob;
 use freshkube_delivery::change::live::Mapping;
+use freshkube_delivery::github::{Error as GitHubError, Handle as GitHubHandle};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -125,6 +127,8 @@ pub const FRESH_FOR: Duration = Duration::from_secs(30);
 const ON_SHOW: OnShow = OnShow::ReadIfOlder(FRESH_FOR);
 /// How long one cluster's read may take: up to a few hundred lists.
 const DEADLINE: Duration = Duration::from_secs(60);
+/// How long the key store may take to give GitHub's token.
+const GITHUB_OPEN_DEADLINE: Duration = Duration::from_secs(10);
 
 gpui_kit::actions!(
     applications,
@@ -292,6 +296,15 @@ pub struct ApplicationsPage {
     evidence_result: Option<freshkube_core::setup::Evidence>,
     build_namespace: Option<String>,
     stage_naming: Option<freshkube_core::setup::StageNaming>,
+    /// GitHub's client for the setup now loaded, replaced with each reload
+    /// and so with its memo, ETags and budget. `None` while a token is
+    /// being read, and when it could not be: never an anonymous client in
+    /// its place.
+    github: Option<GitHubHandle>,
+    /// Which reload's client `github` is; a late open for an older one is
+    /// dropped.
+    github_revision: u64,
+    github_open: Option<(OwnedJob, Task<()>)>,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
@@ -417,6 +430,9 @@ impl ApplicationsPage {
             evidence_result: None,
             build_namespace: None,
             stage_naming: None,
+            github: None,
+            github_revision: 0,
+            github_open: None,
             source: None,
             visible: false,
             variant,
@@ -569,6 +585,7 @@ impl ApplicationsPage {
             .and_then(|delivery| delivery.stage_naming.clone());
         let naming_changed = naming != self.stage_naming;
         self.stage_naming = naming;
+        self.open_github(setup, cx);
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| {
                 page.reload_setup(
@@ -576,6 +593,7 @@ impl ApplicationsPage {
                     self.evidence_result.clone(),
                     self.build_namespace.clone(),
                     self.stage_naming.clone(),
+                    self.github.clone(),
                     cx,
                 )
             });
@@ -586,6 +604,7 @@ impl ApplicationsPage {
                 self.evidence_result.clone(),
                 self.build_namespace.clone(),
                 self.stage_naming.clone(),
+                self.github.clone(),
                 cx,
             )
         });
@@ -600,6 +619,56 @@ impl ApplicationsPage {
                 self.read(cx);
             }
         }
+    }
+
+    /// A new GitHub client for the setup just loaded. Without a token it
+    /// exists at once; with one, the key store is read off the UI thread and
+    /// the pages read without GitHub until it answers. A token that can't be
+    /// used leaves no client: it is never replaced by an anonymous one.
+    fn open_github(&mut self, setup: &freshkube_core::setup::Setup, cx: &mut Context<Self>) {
+        self.github_revision += 1;
+        let revision = self.github_revision;
+        self.github_open = None;
+        let token = setup
+            .delivery
+            .as_ref()
+            .and_then(|delivery| delivery.github.as_ref())
+            .is_some_and(|github| github.token.is_some());
+        if !token {
+            self.github = GitHubHandle::anonymous(revision).ok();
+            return;
+        }
+        self.github = None;
+        let secrets = self.secrets.clone();
+        let (job, receiver) = backend::spawn_job(
+            &self.runtime,
+            GITHUB_OPEN_DEADLINE,
+            GitHubError::Token("the key store did not answer in time"),
+            GitHubHandle::open(secrets, revision),
+        );
+        let task = cx.spawn(async move |this, cx| {
+            let opened = receiver
+                .await
+                .unwrap_or(Err(GitHubError::Token("the key store was not read")));
+            _ = this.update(cx, |page, cx| page.github_opened(revision, opened, cx));
+        });
+        self.github_open = Some((job, task));
+    }
+
+    /// The client a token's read opened, when it is still the one wanted.
+    fn github_opened(
+        &mut self,
+        revision: u64,
+        opened: Result<GitHubHandle, GitHubError>,
+        cx: &mut Context<Self>,
+    ) {
+        if revision != self.github_revision {
+            return;
+        }
+        self.github_open = None;
+        self.github = opened.ok();
+        self.update_change(cx);
+        self.update_changes(cx);
     }
 
     /// Where the change pages get what Coroot found after a deploy: the
@@ -651,6 +720,7 @@ impl ApplicationsPage {
             evidence_result: self.evidence_result.clone(),
             build_namespace: self.build_namespace.clone(),
             stage_naming: self.stage_naming.clone(),
+            github: self.github.clone(),
         }
     }
 

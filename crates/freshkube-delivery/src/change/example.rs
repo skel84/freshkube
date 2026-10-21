@@ -1232,7 +1232,10 @@ impl Shape {
 /// stale, or none, and what the read couldn't do among what may be missing.
 fn github(change: &mut Change, trouble: Trouble) {
     change.origin.pull = trouble.leaves(change.origin.pull.take());
-    let (gap, words) = match (trouble, change.origin.pull.as_ref().and_then(|p| p.stale.as_ref())) {
+    let (gap, words) = match (
+        trouble,
+        change.origin.pull.as_ref().and_then(|p| p.stale.as_ref()),
+    ) {
         (Trouble::Refused, _) => (Gap::Refused, trouble.words().to_owned()),
         (_, Some(stale)) => (
             Gap::Unreadable,

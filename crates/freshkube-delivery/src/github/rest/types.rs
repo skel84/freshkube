@@ -227,7 +227,10 @@ mod tests {
                 "requested_reviewers": [{"login": "ken"}],
                 "requested_teams": [{"slug": "core", "name": "Core"}],
             });
-            value.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
             summary("acme/shop", &value).unwrap()
         };
         let open = base(json!({}));
@@ -237,11 +240,17 @@ mod tests {
         assert!(open.page.is_some());
         assert_eq!(base(json!({"draft": true})).state, PullState::Draft);
         assert_eq!(base(json!({"state": "closed"})).state, PullState::Closed);
-        let merged = base(json!({"state": "closed", "merged_at": "2026-10-01T10:00:00Z",
-            "merged_by": {"login": "ken"}}));
+        let merged = base(
+            json!({"state": "closed", "merged_at": "2026-10-01T10:00:00Z",
+            "merged_by": {"login": "ken"}}),
+        );
         assert_eq!(merged.state, PullState::Merged);
         assert_eq!(merged.merged_by.unwrap().login, "ken");
         // A page off github.com is dropped, not opened.
-        assert!(base(json!({"html_url": "https://evil.example/x"})).page.is_none());
+        assert!(
+            base(json!({"html_url": "https://evil.example/x"}))
+                .page
+                .is_none()
+        );
     }
 }

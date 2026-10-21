@@ -293,6 +293,12 @@ impl ChangesPage {
         }
     }
 
+    /// GitHub's client the list reads through, for tests.
+    #[cfg(test)]
+    pub(crate) fn github(&self) -> Option<&freshkube_delivery::github::Handle> {
+        self.across.github.as_ref()
+    }
+
     pub(crate) fn set_setup_problem(
         &mut self,
         problem: Option<SharedString>,
@@ -316,9 +322,11 @@ impl ChangesPage {
         evidence_result: Option<freshkube_core::setup::Evidence>,
         build_namespace: Option<String>,
         stage_naming: Option<freshkube_core::setup::StageNaming>,
+        github: Option<freshkube_delivery::github::Handle>,
         cx: &mut Context<Self>,
     ) {
         self.setup_revision += 1;
+        self.across.github = github.clone();
         self.across.public_key_file = public_key_file.clone();
         self.across.evidence_result = evidence_result.clone();
         self.across.build_namespace = build_namespace.clone();
@@ -330,6 +338,7 @@ impl ChangesPage {
                     evidence_result,
                     build_namespace,
                     stage_naming,
+                    github,
                     cx,
                 )
             });
@@ -471,6 +480,7 @@ impl ChangesPage {
                     evidence_result: self.across.evidence_result.clone(),
                     build_namespace: self.across.build_namespace.clone(),
                     stage_naming: self.across.stage_naming.clone(),
+                    github: self.across.github.clone(),
                 };
                 let across = self.across.clone();
                 let secrets = self.secrets.clone();
@@ -780,6 +790,7 @@ impl ChangesPage {
                     evidence_result: self.across.evidence_result.clone(),
                     build_namespace: self.across.build_namespace.clone(),
                     stage_naming: self.across.stage_naming.clone(),
+                    github: self.across.github.clone(),
                 }),
                 kubeconfig: self.across.kubeconfig.clone(),
             },

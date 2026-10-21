@@ -32,6 +32,8 @@ pub struct Across {
     pub stage_naming: Option<freshkube_core::setup::StageNaming>,
     /// The workspace's kubeconfig, `None` for the automatic one.
     pub kubeconfig: Option<PathBuf>,
+    /// GitHub's client for this setup revision, once opened.
+    pub github: Option<freshkube_delivery::github::Handle>,
 }
 
 impl Across {

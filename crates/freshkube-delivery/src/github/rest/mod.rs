@@ -17,9 +17,9 @@
 
 mod budget;
 mod error;
-mod memo;
 #[cfg(test)]
 pub(crate) mod fake;
+mod memo;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -129,6 +129,12 @@ impl Client {
         };
         let api = Url::parse(API).map_err(|_| Error::Unreadable("the API address"))?;
         Self::build(reqwest::Client::builder(), api, token, setup_revision)
+    }
+
+    /// A client that asks anonymously: no I/O, so it exists at once.
+    pub fn anonymous(setup_revision: u64) -> Result<Self, Error> {
+        let api = Url::parse(API).map_err(|_| Error::Unreadable("the API address"))?;
+        Self::build(reqwest::Client::builder(), api, None, setup_revision)
     }
 
     fn build(
@@ -317,7 +323,12 @@ impl Client {
     /// A 403 or 429 is a limit when the budget says none is left or a
     /// `retry-after` names a time; a 429 with neither blocks for a minute;
     /// a 403 with neither is a refusal.
-    fn limit_or_refusal(&self, status: u16, headers: &http::HeaderMap, now: chrono::DateTime<Utc>) -> Error {
+    fn limit_or_refusal(
+        &self,
+        status: u16,
+        headers: &http::HeaderMap,
+        now: chrono::DateTime<Utc>,
+    ) -> Error {
         let mut state = self.state.lock().unwrap();
         if let Some(blocked) = state.budget.blocked(now) {
             return Error::Limited {
@@ -345,11 +356,7 @@ impl Client {
     /// What the memo kept, in place of an answer that couldn't be asked
     /// for: the rate limit and a host that doesn't answer leave the last
     /// read standing, marked with why it's old.
-    fn or_kept(
-        &self,
-        path: &str,
-        error: Error,
-    ) -> Result<(Arc<Value>, Option<Stale>), Error> {
+    fn or_kept(&self, path: &str, error: Error) -> Result<(Arc<Value>, Option<Stale>), Error> {
         let spent = matches!(
             error,
             Error::Limited { .. } | Error::Low { .. } | Error::Unreachable(_)
@@ -435,7 +442,20 @@ pub struct Handle {
 }
 
 impl Handle {
-    pub fn new(client: Client) -> Self {
+    /// An anonymous client; see [`Client::anonymous`].
+    pub fn anonymous(setup_revision: u64) -> Result<Self, Error> {
+        Client::anonymous(setup_revision).map(Self::new)
+    }
+
+    /// A client that reads its token from the key store, off the calling
+    /// thread; see [`Client::open`].
+    pub async fn open(secrets: Option<Secrets>, setup_revision: u64) -> Result<Self, Error> {
+        Client::open(true, secrets, setup_revision)
+            .await
+            .map(Self::new)
+    }
+
+    fn new(client: Client) -> Self {
         Self {
             client: Arc::new(client),
             spare: false,

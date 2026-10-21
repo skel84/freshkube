@@ -53,6 +53,14 @@ pub struct ChangeRow {
     pub state: SharedString,
     /// `#418`, or the commit.
     pub named: SharedString,
+    /// Where its pull request stands on GitHub (`Merged`), when GitHub
+    /// named one.
+    pub pull: Option<SharedString>,
+    /// What the PR cell's tooltip says: the pull request's state, and why
+    /// it is not the latest when GitHub couldn't be asked.
+    pub pull_note: Option<SharedString>,
+    /// The pull request is what was kept, not read now.
+    pub pull_stale: bool,
     pub by_commit: bool,
     pub title: SharedString,
     /// The Change cell's line, `title · project`; the project, from the
@@ -354,6 +362,11 @@ fn row(row: &Row, now: DateTime<Utc>) -> ChangeRow {
         Named::Commit(commit) => (commit.chars().take(7).collect(), true),
         Named::Nothing => ("–".to_owned(), false),
     };
+    let pull = row.pull_state.map(|state| state.label());
+    let pull_note = pull.map(|state| match &row.pull_note {
+        Some(note) => format!("{named}: {state}. {note}"),
+        None => format!("{named}: {state}"),
+    });
     let title = row.title.clone().unwrap_or_else(|| row.freight.clone());
     let cells: Vec<Cell> = row
         .stages
@@ -377,8 +390,12 @@ fn row(row: &Row, now: DateTime<Utc>) -> ChangeRow {
         .filter(|cell| cell.tone.is_some())
         .map(|cell| format!("{} {}", cell.stage, cell.word))
         .collect();
+    let named_label = match pull {
+        Some(state) => format!("{named} {state}"),
+        None => named.clone(),
+    };
     let label = format!(
-        "{named} {title} · {} · {}",
+        "{named_label} {title} · {} · {}",
         row.project,
         if reached.is_empty() {
             state.clone()
@@ -394,6 +411,9 @@ fn row(row: &Row, now: DateTime<Utc>) -> ChangeRow {
         tone: reach_tone(&row.state),
         state: state.into(),
         named: named.into(),
+        pull: pull.map(Into::into),
+        pull_note: pull_note.map(Into::into),
+        pull_stale: row.pull_note.is_some(),
         by_commit,
         title: title.clone().into(),
         change: format!("{title} · {}", row.project).into(),
@@ -430,6 +450,8 @@ mod tests {
             freight: "wonky-otter".into(),
             alias: None,
             named: Named::Nothing,
+            pull_state: None,
+            pull_note: None,
             title: None,
             created: None,
             stages: Vec::new(),
@@ -437,6 +459,28 @@ mod tests {
             fold: Fold::NotConfirmed,
             trail: Err(failure),
         }
+    }
+
+    #[test]
+    fn the_pr_cell_says_where_the_pull_request_stands_and_when_it_is_old() {
+        use freshkube_delivery::github::PullState;
+        let mut fresh = unread_row(Failure::new(FailureKind::Other, "unread"));
+        fresh.named = Named::PullRequest(418);
+        let plain = row(&fresh, Utc::now());
+        assert_eq!((plain.pull.clone(), plain.pull_note.clone()), (None, None));
+        fresh.pull_state = Some(PullState::Merged);
+        let read = row(&fresh, Utc::now());
+        assert_eq!(read.pull.as_deref(), Some("Merged"));
+        assert_eq!(read.pull_note.as_deref(), Some("#418: Merged"));
+        assert!(!read.pull_stale);
+        assert!(read.label.starts_with("#418 Merged "), "{}", read.label);
+        fresh.pull_note = Some("GitHub didn't answer: could not connect".into());
+        let kept = row(&fresh, Utc::now());
+        assert!(kept.pull_stale);
+        assert_eq!(
+            kept.pull_note.as_deref(),
+            Some("#418: Merged. GitHub didn't answer: could not connect")
+        );
     }
 
     #[test]

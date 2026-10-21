@@ -129,6 +129,7 @@ impl Changes {
                     evidence_result: across.evidence_result,
                     build_namespace: across.build_namespace,
                     stage_naming: across.stage_naming,
+                    github: across.github,
                 }),
                 kubeconfig: across.kubeconfig,
             }),

@@ -36,7 +36,13 @@ fn in_an_hour() -> i64 {
 }
 
 fn ok(pulls: Vec<Value>) -> impl Fn(&Request) -> Reply + Send + Sync + 'static {
-    move |_| Reply::json(200, &limit_headers(4000, in_an_hour()), &Value::Array(pulls.clone()))
+    move |_| {
+        Reply::json(
+            200,
+            &limit_headers(4000, in_an_hour()),
+            &Value::Array(pulls.clone()),
+        )
+    }
 }
 
 async fn ask(handle: &Handle) -> Result<Vec<PullRequest>, Failure> {
@@ -55,7 +61,11 @@ async fn every_request_carries_the_headers_and_only_a_token_adds_authorization()
     let seen = api.seen();
     let request = &seen[0];
     assert!(request.head().starts_with("GET /repos/acme/shop/commits/"));
-    assert!(request.path.ends_with("/pulls?per_page=100"), "{}", request.path);
+    assert!(
+        request.path.ends_with("/pulls?per_page=100"),
+        "{}",
+        request.path
+    );
     assert_eq!(
         request.header("accept").as_deref(),
         Some("application/vnd.github+json")
@@ -124,7 +134,10 @@ async fn a_redirect_is_an_answer_and_is_not_followed() {
     let failure = ask(&handle).await.unwrap_err();
     assert_eq!(failure.message, "GitHub says the repository moved (301)");
     assert_eq!(api.seen().len(), 1);
-    assert!(avatars.seen().is_empty(), "the redirect's target saw nothing");
+    assert!(
+        avatars.seen().is_empty(),
+        "the redirect's target saw nothing"
+    );
     assert_eq!(
         Error::Moved.words("acme/shop"),
         "GitHub says acme/shop moved"
@@ -145,9 +158,11 @@ async fn a_refused_token_never_falls_back_to_an_anonymous_request() {
         .unwrap_err();
     let seen = api.seen();
     assert_eq!(seen.len(), 2);
-    assert!(seen.iter().all(|request| request
-        .header("authorization")
-        .is_some_and(|value| value == format!("Bearer {TOKEN}"))));
+    assert!(seen.iter().all(|request| {
+        request
+            .header("authorization")
+            .is_some_and(|value| value == format!("Bearer {TOKEN}"))
+    }));
     assert_eq!(
         Error::Unauthorized.words("acme/shop"),
         "GitHub refused the token: it may have expired. It is the keys.json entry GitHub https://api.github.com/"
@@ -278,15 +293,19 @@ async fn a_commit_in_a_merged_pull_request_is_kept_for_the_clients_life() {
 
 #[tokio::test]
 async fn no_requests_are_left_until_the_reset_when_none_remain() {
-    let api = Server::new(|_| {
-        Reply::json(200, &limit_headers(0, in_an_hour()), &json!([pull(418)]))
-    });
+    let api =
+        Server::new(|_| Reply::json(200, &limit_headers(0, in_an_hour()), &json!([pull(418)])));
     let handle = client(&api, Some(TOKEN));
     ask(&handle).await.unwrap();
     let other = "b".repeat(40);
-    let failure = handle.pulls_for_commit("acme/shop", &other).await.unwrap_err();
+    let failure = handle
+        .pulls_for_commit("acme/shop", &other)
+        .await
+        .unwrap_err();
     assert!(
-        failure.message.starts_with("GitHub's rate limit is reached until "),
+        failure
+            .message
+            .starts_with("GitHub's rate limit is reached until "),
         "{}",
         failure.message
     );
@@ -305,13 +324,21 @@ async fn a_403_with_nothing_left_blocks_until_the_reset() {
     let reset = in_an_hour();
     let api = Server::new(move |_| Reply::empty(403, &limit_headers(0, reset)));
     let handle = client(&api, None);
-    let error = handle.client.pulls("acme/shop", SHA, false).await.unwrap_err();
+    let error = handle
+        .client
+        .pulls("acme/shop", SHA, false)
+        .await
+        .unwrap_err();
     let Error::Limited { until, secondary } = error else {
         panic!("{error:?}")
     };
     assert_eq!(until.timestamp(), reset);
     assert!(!secondary);
-    handle.client.pulls("acme/shop", SHA, false).await.unwrap_err();
+    handle
+        .client
+        .pulls("acme/shop", SHA, false)
+        .await
+        .unwrap_err();
     assert_eq!(api.seen().len(), 1);
 }
 
@@ -325,34 +352,52 @@ async fn retry_after_blocks_for_that_long_and_a_429_without_it_for_a_minute() {
         let api = Server::new(move |_| Reply::empty(status, headers));
         let handle = client(&api, Some(TOKEN));
         let before = Utc::now();
-        let error = handle.client.pulls("acme/shop", SHA, false).await.unwrap_err();
+        let error = handle
+            .client
+            .pulls("acme/shop", SHA, false)
+            .await
+            .unwrap_err();
         let Error::Limited { until, secondary } = error else {
             panic!("{error:?}")
         };
         assert!(secondary);
         let wait = (until - before).num_seconds();
-        assert!((seconds - 1..=seconds + 2).contains(&wait), "{wait} for {seconds}");
-        handle.client.pulls("acme/shop", SHA, false).await.unwrap_err();
+        assert!(
+            (seconds - 1..=seconds + 2).contains(&wait),
+            "{wait} for {seconds}"
+        );
+        handle
+            .client
+            .pulls("acme/shop", SHA, false)
+            .await
+            .unwrap_err();
         assert_eq!(api.seen().len(), 1, "nothing was sent while blocked");
     }
     // A 403 with neither header is a refusal, not a limit.
     let api = Server::new(|_| Reply::empty(403, ""));
-    let error = client(&api, None).client.pulls("acme/shop", SHA, false).await;
+    let error = client(&api, None)
+        .client
+        .pulls("acme/shop", SHA, false)
+        .await;
     assert_eq!(error.unwrap_err(), Error::Forbidden);
 }
 
 #[tokio::test]
 async fn the_list_stops_looking_when_the_limit_is_low_and_the_page_still_asks() {
-    let api = Server::new(|_| {
-        Reply::json(200, &limit_headers(8, in_an_hour()), &json!([pull(418)]))
-    });
+    let api =
+        Server::new(|_| Reply::json(200, &limit_headers(8, in_an_hour()), &json!([pull(418)])));
     let page = client(&api, None);
     ask(&page).await.unwrap();
     let list = page.sparing();
     let other = "c".repeat(40);
-    let failure = list.pulls_for_commit("acme/shop", &other).await.unwrap_err();
+    let failure = list
+        .pulls_for_commit("acme/shop", &other)
+        .await
+        .unwrap_err();
     assert!(
-        failure.message.starts_with("GitHub's limit is low: 8 left until "),
+        failure
+            .message
+            .starts_with("GitHub's limit is low: 8 left until "),
         "{}",
         failure.message
     );
@@ -381,7 +426,14 @@ async fn a_limit_or_a_silent_host_leaves_the_last_answer_marked_stale() {
         }
     });
     let handle = client(&api, Some(TOKEN));
-    assert!(ask(&handle).await.unwrap()[0].summary.as_ref().unwrap().stale.is_none());
+    assert!(
+        ask(&handle).await.unwrap()[0]
+            .summary
+            .as_ref()
+            .unwrap()
+            .stale
+            .is_none()
+    );
     handle
         .client
         .state
@@ -391,7 +443,11 @@ async fn a_limit_or_a_silent_host_leaves_the_last_answer_marked_stale() {
         .age(Duration::from_secs(120));
     let pulls = ask(&handle).await.unwrap();
     let stale = pulls[0].summary.as_ref().unwrap().stale.as_ref().unwrap();
-    assert!(stale.why.starts_with("GitHub's secondary rate limit is reached until "));
+    assert!(
+        stale
+            .why
+            .starts_with("GitHub's secondary rate limit is reached until ")
+    );
     // What was never read is an error, not a guess.
     let other = "d".repeat(40);
     assert!(handle.pulls_for_commit("acme/shop", &other).await.is_err());
@@ -399,11 +455,24 @@ async fn a_limit_or_a_silent_host_leaves_the_last_answer_marked_stale() {
     let dead = Server::new(ok(vec![pull(418)]));
     let handle = client(&dead, Some(TOKEN));
     ask(&handle).await.unwrap();
-    handle.client.state.lock().unwrap().memo.age(Duration::from_secs(120));
+    handle
+        .client
+        .state
+        .lock()
+        .unwrap()
+        .memo
+        .age(Duration::from_secs(120));
     drop(dead);
     let pulls = ask(&handle).await.unwrap();
     assert_eq!(
-        pulls[0].summary.as_ref().unwrap().stale.as_ref().unwrap().why,
+        pulls[0]
+            .summary
+            .as_ref()
+            .unwrap()
+            .stale
+            .as_ref()
+            .unwrap()
+            .why,
         "GitHub didn't answer: could not connect"
     );
 }
@@ -431,7 +500,14 @@ async fn an_unreachable_host_is_worded_without_its_address() {
 fn a_stored_token_must_be_a_bearer_token() {
     assert!(token_header(TOKEN).is_ok());
     assert!(token_header("github_pat_11AAAA_bbbb").is_ok());
-    for bad in ["", "  ", "has space", "new\nline", "a\"b", &"a".repeat(8193)] {
+    for bad in [
+        "",
+        "  ",
+        "has space",
+        "new\nline",
+        "a\"b",
+        &"a".repeat(8193),
+    ] {
         assert!(token_header(bad).is_err(), "{bad:?}");
     }
     assert!(token_header(TOKEN).unwrap().is_sensitive());
@@ -449,7 +525,11 @@ fn a_handle_prints_whose_it_is_and_never_the_token() {
     .unwrap();
     assert_eq!(client.identity().account.as_deref(), Some(ACCOUNT));
     assert_eq!(client.identity().setup_revision, 3);
-    let printed = format!("{:?} {:?}", Handle::new(client).sparing(), client_identity());
+    let printed = format!(
+        "{:?} {:?}",
+        Handle::new(client).sparing(),
+        client_identity()
+    );
     assert!(!printed.contains(TOKEN), "{printed}");
 }
 
@@ -493,5 +573,8 @@ async fn open_reads_the_token_from_the_key_store_by_its_account() {
     assert!(matches!(missing, Err(Error::Token(_))));
     // A stored key that isn't a token is refused.
     let bad: Secrets = Arc::new(Keys(Mutex::default(), Some("bad token".into())));
-    assert!(matches!(Client::open(true, Some(bad), 5).await, Err(Error::Token(_))));
+    assert!(matches!(
+        Client::open(true, Some(bad), 5).await,
+        Err(Error::Token(_))
+    ));
 }

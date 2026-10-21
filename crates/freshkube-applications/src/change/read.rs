@@ -149,6 +149,7 @@ impl ChangePage {
                     evidence_result: place.evidence_result.clone(),
                     build_namespace: place.build_namespace.clone(),
                     stage_naming: place.stage_naming.clone(),
+                    github: place.github.clone(),
                 };
                 let (job, receiver) = backend::spawn_job(
                     &runtime,
@@ -285,16 +286,31 @@ impl ChangePage {
         if let Fetch::Live {
             place, kubeconfig, ..
         } = &mut self.fetch
-            && (&place.mapping, &place.sources, &*kubeconfig)
-                != (&across.mapping, &across.sources, &across.kubeconfig)
+            && (&place.mapping, &place.sources, &*kubeconfig, &place.github)
+                != (
+                    &across.mapping,
+                    &across.sources,
+                    &across.kubeconfig,
+                    &across.github,
+                )
         {
             place.mapping = across.mapping;
             place.sources = across.sources;
             *kubeconfig = across.kubeconfig;
+            place.github = across.github;
             self.loader.expire();
             self.refresh(cx);
         }
         cx.notify();
+    }
+
+    /// GitHub's client a live read asks, for tests.
+    #[cfg(test)]
+    pub(crate) fn github(&self) -> Option<&freshkube_delivery::github::Handle> {
+        match &self.fetch {
+            Fetch::Live { place, .. } => place.github.as_ref(),
+            Fetch::Example { .. } => None,
+        }
     }
 
     /// The build namespace a live read searches, for tests.
@@ -314,6 +330,7 @@ impl ChangePage {
         evidence_result: Option<freshkube_core::setup::Evidence>,
         build_namespace: Option<String>,
         stage_naming: Option<freshkube_core::setup::StageNaming>,
+        github: Option<freshkube_delivery::github::Handle>,
         cx: &mut Context<Self>,
     ) {
         if let Fetch::Live {
@@ -327,6 +344,7 @@ impl ChangePage {
             place.evidence_result = evidence_result;
             place.build_namespace = build_namespace;
             place.stage_naming = stage_naming;
+            place.github = github;
             self.loader.reset();
             self.stale = None;
             self.hide_outcomes();

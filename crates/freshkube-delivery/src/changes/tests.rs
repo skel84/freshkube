@@ -5,6 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::change::Phase;
+use crate::change::example::Shape;
 use crate::fixtures::FixtureReader;
 use crate::kargo::{GROUP, parse_freight, parse_stage};
 use crate::source::Truncation;
@@ -121,6 +122,65 @@ fn a_change_is_its_pull_request_else_its_commit() {
         badger.created,
         Some(now() - Duration::minutes(6)),
         "its age"
+    );
+}
+
+#[test]
+fn a_followed_row_says_where_its_pull_request_stands() {
+    let changes = example();
+    let wonky = row(&changes, "wonky-otter");
+    assert_eq!(wonky.pull_state, Some(PullState::Merged));
+    assert_eq!(wonky.pull_note, None);
+    // Not followed: GitHub wasn't asked about it.
+    assert_eq!(row(&changes, "tidy-badger").pull_state, None);
+}
+
+#[test]
+fn github_that_cannot_be_asked_leaves_the_kept_state_stale_or_none_and_says_why() {
+    let list = |shape| derive(&example::read_shaped(now(), shape));
+    for (shape, words) in [
+        (
+            Shape::GitHubLimited,
+            "GitHub's rate limit is reached until 14:05 UTC",
+        ),
+        (
+            Shape::GitHubOffline,
+            "GitHub didn't answer: could not connect",
+        ),
+    ] {
+        let changes = list(shape);
+        let wonky = row(&changes, "wonky-otter");
+        assert_eq!(wonky.pull_state, Some(PullState::Merged), "{words}");
+        let note = wonky.pull_note.as_deref().unwrap();
+        assert!(note.starts_with(words), "{note}");
+        assert!(
+            note.ends_with("showing what was read at 13:12 UTC"),
+            "{note}"
+        );
+        assert!(
+            changes
+                .notes
+                .iter()
+                .any(|note| note.text.starts_with(words)),
+            "the status bar says it: {:?}",
+            changes.notes
+        );
+    }
+    let refused = list(Shape::GitHubRefused);
+    let wonky = row(&refused, "wonky-otter");
+    assert_eq!(wonky.pull_state, None, "nothing was ever read");
+    assert_eq!(
+        wonky.named,
+        Named::PullRequest(418),
+        "the build still names it"
+    );
+    assert!(
+        refused
+            .notes
+            .iter()
+            .any(|note| note.gap == Gap::Refused && note.text == "GitHub refused the token (401)"),
+        "{:?}",
+        refused.notes
     );
 }
 

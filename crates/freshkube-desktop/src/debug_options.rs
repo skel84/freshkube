@@ -340,6 +340,9 @@ mod tests {
             ("argo-refused", Variant::ArgoRefused),
             ("destination", Variant::Destination),
             ("image-only", Variant::ImageOnly),
+            ("github-limited", Variant::GitHubLimited),
+            ("github-refused", Variant::GitHubRefused),
+            ("github-offline", Variant::GitHubOffline),
         ] {
             assert_eq!(
                 parse(&[("FRESHKUBE_APPLICATIONS", value)]).applications,

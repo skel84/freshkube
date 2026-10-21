@@ -47,7 +47,9 @@ use crate::applications::read::{
 use crate::argocd::MapHint;
 use crate::collect::{Plan, Upstream, read_environment, upstream_with_history};
 use crate::entry::pool::{Open, Pool, PoolReader, Read, Unread, Until};
-use crate::github::{GitHub, Handle, PullRequest, repo_of};
+#[cfg(test)]
+use crate::github::{GitHub, PullRequest};
+use crate::github::{Handle, repo_of};
 use crate::join::{Evidence, candidate_applications, candidate_deployments, candidate_rollouts};
 use crate::kargo::{Freight, read_freight};
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
@@ -237,9 +239,11 @@ impl Mapping {
     }
 }
 
-/// No pull requests are read: GitHub is never called from the app.
+/// No pull requests are read; [`pull::Pulls::Off`] is this for the app.
+#[cfg(test)]
 struct NoGitHub;
 
+#[cfg(test)]
 impl GitHub for NoGitHub {
     async fn pulls_for_commit(&self, _: &str, _: &str) -> Result<Vec<PullRequest>, Failure> {
         Err(Failure::new(

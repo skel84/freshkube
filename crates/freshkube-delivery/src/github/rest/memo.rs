@@ -126,10 +126,17 @@ mod tests {
         // Stale, it still labels a conditional request and can be reused.
         assert_eq!(memo.etag("a"), Some("\"e\""));
         assert!(memo.kept("a").is_some());
-        memo.renew("a", Some(Duration::from_secs(60)), start + Duration::from_secs(61));
+        memo.renew(
+            "a",
+            Some(Duration::from_secs(60)),
+            start + Duration::from_secs(61),
+        );
         assert!(memo.fresh("a", start + Duration::from_secs(100)).is_some());
         memo.store("b", None, Arc::new(json!(2)), None, start);
-        assert!(memo.fresh("b", start + Duration::from_secs(10_000)).is_some());
+        assert!(
+            memo.fresh("b", start + Duration::from_secs(10_000))
+                .is_some()
+        );
     }
 
     #[test]

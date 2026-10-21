@@ -35,8 +35,8 @@ mod validate;
 pub use migrate::{Kept, Outcome, migrate};
 pub use types::{
     Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, GitHub,
-    KeysJson,
-    Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming, Store, SupplyChain,
+    KeysJson, Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming, Store,
+    SupplyChain,
 };
 
 /// The comment every written file starts with.

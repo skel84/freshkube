@@ -24,11 +24,36 @@ fn person(login: &str, id: u64) -> Person {
 /// invented Freight is named by.
 pub fn pull(number: u64) -> Option<PullSummary> {
     let (title, state, author, merged_by) = match number {
-        421 => ("Show the delivery estimate at checkout", PullState::Open, "mira", None),
-        418 => ("Retry idempotency keys", PullState::Merged, "ken", Some("mira")),
-        409 => ("Round totals in the shop-api currency", PullState::Merged, "ken", Some("mira")),
-        402 => ("Log the payment provider's reply", PullState::Merged, "mira", Some("ken")),
-        77 => ("Keep the basket when signing in", PullState::Closed, "ken", None),
+        421 => (
+            "Show the delivery estimate at checkout",
+            PullState::Open,
+            "mira",
+            None,
+        ),
+        418 => (
+            "Retry idempotency keys",
+            PullState::Merged,
+            "ken",
+            Some("mira"),
+        ),
+        409 => (
+            "Round totals in the shop-api currency",
+            PullState::Merged,
+            "ken",
+            Some("mira"),
+        ),
+        402 => (
+            "Log the payment provider's reply",
+            PullState::Merged,
+            "mira",
+            Some("ken"),
+        ),
+        77 => (
+            "Keep the basket when signing in",
+            PullState::Closed,
+            "ken",
+            None,
+        ),
         _ => return None,
     };
     Some(PullSummary {

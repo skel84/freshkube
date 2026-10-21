@@ -151,7 +151,10 @@ mod tests {
             };
             world.kargo = std::mem::take(&mut world.kargo).with(
                 "freights",
-                vec![on_github("f-new", NEW, SHA), on_github("f-old", OLD, OTHER_SHA)],
+                vec![
+                    on_github("f-new", NEW, SHA),
+                    on_github("f-old", OLD, OTHER_SHA),
+                ],
             );
         });
         let place = Place {
@@ -175,7 +178,9 @@ mod tests {
     async fn a_followed_change_names_its_pull_request_and_where_it_stands() {
         let api = Server::new(|request| {
             assert!(
-                request.path.starts_with(&format!("/repos/acme/shop/commits/{SHA}/pulls")),
+                request
+                    .path
+                    .starts_with(&format!("/repos/acme/shop/commits/{SHA}/pulls")),
                 "{}",
                 request.path
             );
