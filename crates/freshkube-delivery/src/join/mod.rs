@@ -19,7 +19,7 @@ mod render;
 mod workload;
 
 use argo::rollout_namespace;
-use build::{commit_link, pull_request_links, supply_chain_links};
+use build::{commit_link, digest_links, pull_request_links, supply_chain_links};
 #[cfg(test)]
 pub(crate) use conflict::BuiltDigest;
 pub(crate) use conflict::DigestConflict;
@@ -31,17 +31,19 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use super::argocd::{Application, DestinationMatch, ManagedObject, MapHint, StageNaming};
+use super::argocd::{
+    Application, DestinationMatch, ManagedObject, MapHint, StageClaim, StageNaming,
+};
 use super::deployments::{Deployment, DeploymentSet};
 use super::digest::Digest;
 use super::github::PullRequest;
-use super::kargo::{Freight, KargoRead};
+use super::kargo::{Freight, KargoRead, Stage};
 use super::observation::{Fact, Observation};
 use super::pods::RunningImage;
 use super::rekor::LogRead;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
-use super::tekton::{Build, CommitNames, EvidenceResult};
+use super::tekton::{Build, CommitNames, EvidenceResult, FoundBy};
 use super::verify::Trust;
 use freshkube_core::resources::Failure;
 
@@ -70,6 +72,9 @@ impl Confidence {
 pub enum Hop {
     PullRequest,
     Commit,
+    /// A Freight's image, named by its digest: the start of a build found
+    /// by that digest when no commit is known.
+    Image,
     PipelineRun,
     SupplyChain,
     Freight,
@@ -87,6 +92,7 @@ impl Hop {
         match self {
             Self::PullRequest => "pull request",
             Self::Commit => "commit",
+            Self::Image => "image",
             Self::PipelineRun => "PipelineRun",
             Self::SupplyChain => "supply chain",
             Self::Freight => "Freight",
@@ -182,6 +188,49 @@ impl Link {
     }
 }
 
+/// The search of the build namespace for builds whose results report the
+/// Freight's image digests, and how it went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DigestSearch {
+    pub digests: Vec<Digest>,
+    pub outcome: DigestOutcome,
+    /// What the archive read of the same search came back as; `None` when it
+    /// wasn't asked.
+    pub archive: Option<Result<crate::results::History, crate::results::Error>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DigestOutcome {
+    /// No build namespace is set, so nothing was listed.
+    NoNamespace,
+    Read(crate::tekton::Searched),
+    Failed(String),
+}
+
+impl DigestSearch {
+    /// Why no build was found by digest, or none was looked for.
+    pub(crate) fn why_none(&self) -> String {
+        let digests = self
+            .digests
+            .iter()
+            .map(Digest::short)
+            .collect::<Vec<_>>()
+            .join(", ");
+        match &self.outcome {
+            DigestOutcome::NoNamespace => {
+                "no build namespace is set (delivery.build_namespace in freshkube.yaml), so builds can't be searched by image digest".to_owned()
+            }
+            DigestOutcome::Failed(why) => {
+                format!("builds couldn't be searched by image digest ({digests}): {why}")
+            }
+            DigestOutcome::Read(searched) => format!(
+                "no PipelineRun or TaskRun result reports image digest {digests} ({})",
+                searched.words()
+            ),
+        }
+    }
+}
+
 /// What a signature is checked against, and what the transparency log said:
 /// the evidence's, handed to the links that can confirm.
 pub(crate) struct Proof<'a> {
@@ -230,6 +279,8 @@ pub struct Evidence {
     /// The words for a context, by its key, where they differ ([`Evidence::name`]).
     pub names: BTreeMap<String, String>,
     pub builds: Source<Vec<Build>>,
+    /// What the search of builds by image digest read, when one was asked.
+    pub(crate) digest_search: Option<DigestSearch>,
     pub(crate) build_history: Result<crate::results::History, crate::results::Error>,
     pub kargo: KargoRead,
     pub applications: Source<Vec<Application>>,
@@ -248,6 +299,26 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// How the Application claims the Stage. A claim by name only that more
+    /// than one Application makes for the Stage is no claim: the name can't
+    /// say which is the Stage's.
+    pub(crate) fn claims_stage(&self, app: &Application, stage: &Stage) -> Option<StageClaim> {
+        let claim = app.claims_stage(&stage.project, &stage.name, self.stage_naming.as_ref())?;
+        (claim != StageClaim::NamedOnly || self.name_only_claimants(stage) <= 1).then_some(claim)
+    }
+
+    /// How many Applications read claim the Stage by name only.
+    pub(crate) fn name_only_claimants(&self, stage: &Stage) -> usize {
+        self.applications.read().map_or(0, |apps| {
+            apps.iter()
+                .filter(|app| {
+                    app.claims_stage(&stage.project, &stage.name, self.stage_naming.as_ref())
+                        == Some(StageClaim::NamedOnly)
+                })
+                .count()
+        })
+    }
+
     /// What signatures are checked against, for the links that can confirm.
     pub(super) fn proof(&self) -> Proof<'_> {
         Proof {
@@ -457,10 +528,11 @@ fn matching_freight<'a>(
             .find(|digest| built.contains(digest));
         if let Some(digest) = by_digest {
             found.push((item, Key::Digest(digest.clone())));
-        } else if item
-            .commits
-            .iter()
-            .any(|commit| commit.id.eq_ignore_ascii_case(sha))
+        } else if !sha.is_empty()
+            && item
+                .commits
+                .iter()
+                .any(|commit| commit.id.eq_ignore_ascii_case(sha))
         {
             found.push((item, Key::Sha(sha.to_owned())));
         }
@@ -510,17 +582,33 @@ fn build_freight(
     Vec<DigestConflict>,
 ) {
     let summary = freight_summary(freight, sha);
-    let mut seen = observe::builds_side(builds, names, key);
-    if matches!(key, Key::Digest(_)) {
+    if let Key::Digest(digest) = key {
+        let mut seen = observe::builds_side(builds, names, key);
         seen.extend(observe::freight_side(freight, key));
-        return (
-            Hop::PipelineRun,
-            Confidence::Confirmed,
+        return digest_freight(
+            builds,
+            names,
+            sha,
+            freight,
+            digest,
+            builds_capped,
             summary,
             seen,
-            Vec::new(),
         );
     }
+    // A build found by an image digest says nothing of the commit's builds.
+    let of_commit: Vec<Build>;
+    let builds = if builds.iter().all(|b| b.found_by == FoundBy::Commit) {
+        builds
+    } else {
+        of_commit = builds
+            .iter()
+            .filter(|b| b.found_by == FoundBy::Commit)
+            .cloned()
+            .collect();
+        &of_commit
+    };
+    let mut seen = observe::builds_side(builds, names, key);
     if builds.is_empty() {
         let mut seen = vec![observe::change(sha)];
         seen.extend(observe::freight_side(freight, key));
@@ -534,7 +622,13 @@ fn build_freight(
     }
     let reported = seen.iter().any(|seen| seen.fact == Fact::Reported);
     seen.extend(observe::freight_side(freight, key));
-    let conflicts = digest_conflicts(builds, names, sha, freight, builds_capped);
+    let conflicts = digest_conflicts(
+        &builds.iter().collect::<Vec<_>>(),
+        names,
+        sha,
+        freight,
+        builds_capped,
+    );
     if !conflicts.is_empty() {
         seen.retain(|seen| seen.fact == Fact::Reported);
         seen.extend(observe::conflict_sides(builds, freight, &conflicts));
@@ -578,6 +672,92 @@ fn build_freight(
             Vec::new(),
         )
     }
+}
+
+/// The link into a Freight joined on a digest a build reported.
+///
+/// Confirmed, unless only builds found by that digest report it while the
+/// change names a commit and the read finds the two apart: a build of the
+/// commit reports another digest for the Freight's image, or the build
+/// found by the digest reports another commit. The digest still joins, and
+/// the link says the commit does not agree, as a claim.
+#[allow(clippy::too_many_arguments)]
+fn digest_freight(
+    builds: &[Build],
+    names: &CommitNames,
+    sha: &str,
+    freight: &Freight,
+    digest: &Digest,
+    builds_capped: bool,
+    summary: String,
+    mut seen: Vec<Observation>,
+) -> (
+    Hop,
+    Confidence,
+    String,
+    Vec<Observation>,
+    Vec<DigestConflict>,
+) {
+    let reporting: Vec<&Build> = builds
+        .iter()
+        .filter(|build| build.images().iter().any(|image| &image.digest == digest))
+        .collect();
+    let only_by_digest = !reporting.is_empty()
+        && reporting
+            .iter()
+            .all(|build| build.found_by == crate::tekton::FoundBy::Digest);
+    if sha.is_empty() || !only_by_digest {
+        return (
+            Hop::PipelineRun,
+            Confidence::Confirmed,
+            summary,
+            seen,
+            Vec::new(),
+        );
+    }
+    let of_commit: Vec<&Build> = builds
+        .iter()
+        .filter(|build| build.found_by == crate::tekton::FoundBy::Commit)
+        .collect();
+    let conflicts = digest_conflicts(&of_commit, names, sha, freight, builds_capped);
+    let other_commits: Vec<String> = reporting
+        .iter()
+        .flat_map(|build| build.reported_witnesses(names))
+        .map(|witness| witness.commit)
+        .filter(|commit| !commit.eq_ignore_ascii_case(sha))
+        .map(|commit| argo::short_commit(&commit))
+        .collect();
+    if conflicts.is_empty() && other_commits.is_empty() {
+        return (
+            Hop::PipelineRun,
+            Confidence::Confirmed,
+            summary,
+            seen,
+            Vec::new(),
+        );
+    }
+    let mut why = Vec::new();
+    if !other_commits.is_empty() {
+        why.push(format!(
+            "the build that reports the digest reports commit {}, not {}",
+            other_commits.join(", "),
+            argo::short_commit(sha)
+        ));
+    }
+    if !conflicts.is_empty() {
+        why.push(conflict_reason(sha, &conflicts));
+        seen.extend(observe::conflict_sides(builds, freight, &conflicts));
+    }
+    (
+        Hop::PipelineRun,
+        Confidence::Claimed,
+        format!(
+            "joined on the digest, but the commit does not agree: {}; {summary}",
+            why.join("; ")
+        ),
+        seen,
+        conflicts,
+    )
 }
 
 /// The Rollouts whose pods should be read in the environment `context`:
@@ -638,8 +818,7 @@ fn candidate_workloads(
             .filter(|stage| stage.current_freight.contains(&item.name))
         {
             for app in apps.iter().filter(|app| {
-                app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                    .is_some()
+                evidence.claims_stage(app, stage).is_some()
                     && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
             }) {
                 for managed in app.managed.iter().filter(|m| controller.is(m)) {
@@ -696,8 +875,7 @@ pub(crate) fn candidate_applications(
             .filter(|stage| stage.current_freight.contains(&item.name))
         {
             for app in apps.iter().filter(|app| {
-                app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                    .is_some()
+                evidence.claims_stage(app, stage).is_some()
                     && !manages_rollout(app)
                     && !deployment::speaks_for_in(read, item, app)
                     && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
@@ -729,11 +907,13 @@ pub fn join(evidence: &Evidence) -> Trail {
     let mut links = Vec::new();
     let sha = &evidence.sha;
 
-    // Commit -> PipelineRun, and the supply-chain facts of each build.
+    // Commit -> PipelineRun, and the supply-chain facts of each build. A
+    // build found only by an image digest starts at the image instead.
     let names = &evidence.commit_names;
+    let by_commit = !sha.is_empty();
     let builds: &[Build] = match evidence.builds.read() {
         Some(builds) => {
-            if builds.is_empty() {
+            if by_commit && !builds.iter().any(|b| b.found_by == FoundBy::Commit) {
                 links.push(Link::new(
                     Hop::Commit,
                     Hop::PipelineRun,
@@ -746,8 +926,31 @@ pub fn join(evidence: &Evidence) -> Trail {
                     ),
                 ));
             }
+            // With a commit, the digest search only adds builds; it speaks
+            // of itself when it is the only way a build could be found.
+            if let Some(search) = evidence.digest_search.as_ref().filter(|_| !by_commit)
+                && !builds.iter().any(|b| b.found_by == FoundBy::Digest)
+            {
+                links.push(Link::new(
+                    Hop::Image,
+                    Hop::PipelineRun,
+                    "-",
+                    search
+                        .digests
+                        .first()
+                        .cloned()
+                        .map_or(Key::None, Key::Digest),
+                    Confidence::Unknown,
+                    search.why_none(),
+                ));
+            }
             for build in builds {
-                links.push(commit_link(sha, build, names, &evidence.proof()));
+                match build.found_by {
+                    FoundBy::Commit => {
+                        links.push(commit_link(sha, build, names, &evidence.proof()))
+                    }
+                    FoundBy::Digest => links.extend(digest_links(build, evidence)),
+                }
                 links.extend(supply_chain_links(
                     build,
                     evidence.evidence_result.as_ref(),
@@ -759,10 +962,14 @@ pub fn join(evidence: &Evidence) -> Trail {
         }
         None => {
             links.push(Link::new(
-                Hop::Commit,
+                if by_commit { Hop::Commit } else { Hop::Image },
                 Hop::PipelineRun,
                 "-",
-                Key::Sha(sha.clone()),
+                if by_commit {
+                    Key::Sha(sha.clone())
+                } else {
+                    Key::None
+                },
                 Confidence::Unknown,
                 evidence.builds.why_not_read().unwrap_or_default(),
             ));
@@ -772,7 +979,9 @@ pub fn join(evidence: &Evidence) -> Trail {
 
     // PullRequest -> commit and builds.
     let freight_for_prs: &[Freight] = evidence.kargo.freight.read().map_or(&[], Vec::as_slice);
-    links.extend(pull_request_links(evidence, builds, freight_for_prs));
+    if by_commit {
+        links.extend(pull_request_links(evidence, builds, freight_for_prs));
+    }
 
     // PipelineRun -> Freight.
     let freight_all: &[Freight] = match evidence.kargo.freight.read() {

@@ -1,1 +1,0 @@
-- **Clusters:** the first right-click on an unselected row opens its menu.

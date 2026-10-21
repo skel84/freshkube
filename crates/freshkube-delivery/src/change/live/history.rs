@@ -73,8 +73,15 @@ pub(super) fn reason(evidence: &Evidence, entry: &str) -> Option<String> {
         Err(Error::Http(status)) => format!("{prefix} returned HTTP {status}"),
         Err(Error::Unreadable(why)) => format!("{prefix} could not be read: {why}"),
         Ok(history) => capped(history).unwrap_or_else(|| {
-            if history.runs == 0 {
+            if history.runs == 0 && evidence.sha.is_empty() {
+                format!("{prefix} has no run to search for the image digest")
+            } else if history.runs == 0 {
                 "Tekton Results has no run for this commit".into()
+            } else if evidence.sha.is_empty() {
+                format!(
+                    "{prefix} was searched for the image digest in the first {} it returned, so a build outside them isn't found",
+                    runs(history.runs)
+                )
             } else {
                 format!("{prefix} read {}", runs(history.runs))
             }

@@ -1,1 +1,0 @@
-- **Observability:** ordinary connections no longer start while the page is hidden; an explicit Connect in Settings still works.

@@ -133,8 +133,20 @@ impl ChangesPage {
         };
         Some(
             page::inset()
+                .id("changes-state-scroll")
+                .test_support()
                 .flex_1()
-                .child(state.id(id).test_support().role(Role::Status))
+                .min_h_0()
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
+                .child(
+                    state
+                        .h_auto()
+                        .flex_none()
+                        .id(id)
+                        .test_support()
+                        .role(Role::Status),
+                )
                 .into_any_element(),
         )
     }
@@ -398,11 +410,14 @@ impl Render for ChangesPage {
                 .child(change.clone());
         }
         let header = self.render_header(window, cx);
-        let (body, least) = match self.render_state(cx) {
+        let state = self.render_state(cx);
+        // A state scrolls its full content beneath the fixed toolbar and
+        // notes. Only a table needs the short window's minimum list height.
+        let short = state.is_none() && page::is_short(window);
+        let (body, least) = match state {
             Some(state) => (state, page::SHORT_LIST_HEIGHT),
             None => self.render_table(window, cx),
         };
-        let short = page::is_short(window);
         // The keys live on a wrapper drawn in every state.
         div()
             .key_context(CONTEXT)

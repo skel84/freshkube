@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::*;
-use crate::argocd::{parse_application, parse_application_set};
+use crate::argocd::{StageNaming, parse_application, parse_application_set};
 use crate::kargo::{parse_stage, parse_warehouse};
 
 fn key(name: &str) -> SessionKey {
@@ -1510,4 +1510,73 @@ fn a_workloads_tracking_annotation_and_instance_label_are_read() {
     )
     .unwrap();
     assert_eq!((bare.instance, bare.tracking_id), (None, None));
+}
+
+fn derived_named(sessions: Vec<SessionInputs>, template: &str) -> Derived {
+    derive(
+        &Inputs {
+            sessions,
+            stage_naming: Some(StageNaming {
+                project_key: None,
+                name_template: template.into(),
+            }),
+            destinations: Vec::new(),
+        },
+        &Override::default(),
+    )
+}
+
+fn member_of<'a>(found: &'a Derived, project: &str, application: &str) -> Option<&'a Member> {
+    found
+        .find(&id(Rule::Kargo, project))?
+        .members
+        .iter()
+        .find(|m| m.at.kind == MemberKind::ArgoApplication && m.at.name == application)
+}
+
+#[test]
+fn a_name_only_template_puts_an_application_in_the_project_of_its_stage() {
+    let mut core = session("core-fra");
+    core.kargo = Source::Read(vec![project("checkout", &["dev", "prod"])]);
+    core.argo_applications = Source::Read(vec![argo("dev-checkout", json!({}))]);
+    let found = derived_named(vec![core], "{stage}-{project}");
+    let member = member_of(&found, "checkout", "dev-checkout").expect("a member of checkout");
+    assert_eq!(member.basis, Basis::NamedByTemplate);
+}
+
+#[test]
+fn a_name_only_template_needs_the_whole_name() {
+    let mut core = session("core-fra");
+    core.kargo = Source::Read(vec![project("checkout", &["dev"])]);
+    core.argo_applications = Source::Read(vec![argo("dev-checkout-extra", json!({}))]);
+    let found = derived_named(vec![core], "{stage}-{project}");
+    assert!(member_of(&found, "checkout", "dev-checkout-extra").is_none());
+}
+
+#[test]
+fn a_name_that_fits_stages_of_two_projects_claims_none() {
+    // `a-b` in project `c` and `a` in project `b-c` both make "a-b-c".
+    let mut core = session("core-fra");
+    core.kargo = Source::Read(vec![project("c", &["a-b"]), project("b-c", &["a"])]);
+    core.argo_applications = Source::Read(vec![argo("a-b-c", json!({}))]);
+    let found = derived_named(vec![core], "{stage}-{project}");
+    assert!(member_of(&found, "c", "a-b-c").is_none());
+    assert!(member_of(&found, "b-c", "a-b-c").is_none());
+    assert!(found.find(&app_id("a-b-c")).is_some());
+    let own = found.find(&app_id("a-b-c")).unwrap();
+    assert!(own.notes.iter().any(|note| matches!(
+        note,
+        Note::NameFitsSeveralStages { stages, .. } if stages == &["b-c/a", "c/a-b"]
+    )));
+}
+
+#[test]
+fn the_same_stage_read_through_two_sessions_is_not_ambiguous() {
+    let mut first = session("core-fra");
+    first.kargo = Source::Read(vec![project("checkout", &["dev"])]);
+    first.argo_applications = Source::Read(vec![argo("dev-checkout", json!({}))]);
+    let mut second = session("cicd-fra");
+    second.kargo = Source::Read(vec![project("checkout", &["dev"])]);
+    let found = derived_named(vec![first, second], "{stage}-{project}");
+    assert!(member_of(&found, "checkout", "dev-checkout").is_some());
 }

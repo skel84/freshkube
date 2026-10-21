@@ -60,6 +60,8 @@ fn place() -> Place {
         sources: Default::default(),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
+        stage_naming: None,
     }
 }
 
@@ -513,6 +515,8 @@ async fn the_pool_opens_one_address_client_and_counts_a_two_change_refresh() {
         sources: sources.clone(),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
+        stage_naming: None,
     };
     let read = within(crate::changes::live::read_in(
         &pool,

@@ -36,8 +36,8 @@ mod validate;
 pub use migrate::{Kept, Outcome, migrate};
 pub use recovery::{Recovered, Row, RowReason, Warning, read, warning_words};
 pub use types::{
-    Coroot, DEFAULT_LABEL, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson, Metrics,
-    MetricsService, Mode, Results, SignIn, Source, Store, SupplyChain,
+    Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson,
+    Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming, Store, SupplyChain,
 };
 
 /// The comment every written file starts with.
@@ -71,6 +71,9 @@ pub struct Setup {
     pub coroot: Option<Coroot>,
     /// The supply chain's trust; `None` verifies no signature.
     pub supply_chain: Option<SupplyChain>,
+    /// How delivery reads builds and ties Applications to Stages; `None` is the
+    /// defaults.
+    pub delivery: Option<Delivery>,
     /// Keys this version doesn't know, written back as they were read.
     extra: Extra,
 }
@@ -95,6 +98,8 @@ impl std::fmt::Display for Place {
 pub enum Fault {
     Empty(String),
     NotUrl(String),
+    /// Not a Kubernetes namespace name; the value is never repeated.
+    NotNamespace(String),
     NonLoopbackHttp(String),
     RelativePath(String),
     ZeroPort(String),
@@ -110,6 +115,8 @@ pub enum Fault {
     },
     LabelName(String),
     Pointer(String),
+    /// A name template that has no `{stage}` in it, so it names no Stage.
+    TemplateWithoutStage(String),
     CentralWithoutStore,
     /// `coroot` sets both `key` and `api_key_file`.
     KeyTwice,
@@ -130,6 +137,7 @@ impl std::fmt::Display for Fault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Fault::Empty(at) => write!(f, "{at} is empty"),
+            Fault::NotNamespace(at) => write!(f, "{at} isn’t a Kubernetes namespace name"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
             Fault::NonLoopbackHttp(at) => write!(f, "{at}: plain HTTP is allowed only on loopback"),
             Fault::RelativePath(at) => write!(f, "{at} isn’t an absolute path"),
@@ -138,6 +146,9 @@ impl std::fmt::Display for Fault {
             Fault::Only { at, with } => write!(f, "{at} only goes with {with}"),
             Fault::LabelName(at) => write!(f, "{at} isn’t a Prometheus label name"),
             Fault::Pointer(at) => write!(f, "{at} isn’t a JSON pointer, which starts with /"),
+            Fault::TemplateWithoutStage(at) => {
+                write!(f, "{at} has no {{stage}} in it, so it names no Stage")
+            }
             Fault::CentralWithoutStore => {
                 f.write_str("metrics.mode is central, and metrics.store is missing")
             }
@@ -239,6 +250,9 @@ impl Setup {
         if let Some(chain) = &self.supply_chain {
             rule(validate::supply_chain(chain))?;
         }
+        if let Some(delivery) = &self.delivery {
+            rule(validate::delivery(delivery))?;
+        }
         Ok(())
     }
 
@@ -263,6 +277,7 @@ impl Setup {
                     | "metrics"
                     | "coroot"
                     | "supply_chain"
+                    | "delivery"
             )
         }) {
             return Err(Invalid::WrongShape(None));
@@ -291,6 +306,12 @@ impl Setup {
             named(&mut keys, "supply_chain", &chain.extra);
             if let Some(evidence) = &chain.evidence {
                 named(&mut keys, "supply_chain.evidence", &evidence.extra);
+            }
+        }
+        if let Some(delivery) = &self.delivery {
+            named(&mut keys, "delivery", &delivery.extra);
+            if let Some(naming) = &delivery.stage_naming {
+                named(&mut keys, "delivery.stage_naming", &naming.extra);
             }
         }
         for entry in &self.workspace.clusters {
@@ -359,6 +380,8 @@ struct Read<C = Entry, D = Destination> {
     coroot: Option<Coroot>,
     #[serde(default)]
     supply_chain: Option<SupplyChain>,
+    #[serde(default)]
+    delivery: Option<Delivery>,
     #[serde(flatten)]
     extra: Extra,
 }
@@ -380,6 +403,8 @@ struct Write<'a> {
     coroot: &'a Option<Coroot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     supply_chain: &'a Option<SupplyChain>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery: &'a Option<Delivery>,
     #[serde(flatten)]
     extra: &'a Extra,
 }
@@ -429,6 +454,7 @@ pub fn parse(bytes: &[u8]) -> Result<Setup, Invalid> {
         metrics: read.metrics,
         coroot: read.coroot,
         supply_chain: read.supply_chain,
+        delivery: read.delivery,
         extra: read.extra,
     };
     setup.validate()?;
@@ -447,6 +473,7 @@ pub fn to_text(setup: &Setup) -> String {
         metrics: &setup.metrics,
         coroot: &setup.coroot,
         supply_chain: &setup.supply_chain,
+        delivery: &setup.delivery,
         extra: &setup.extra,
     };
     let body = serde_yaml::to_string(&write).expect("a setup serializes");

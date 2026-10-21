@@ -22,6 +22,9 @@ fn kinds(hop: Hop) -> &'static [&'static str] {
         // The change itself, or the Freight's commit it was joined to.
         Hop::Commit => &["Commit"],
         Hop::PipelineRun => &["PipelineRun", "TaskRun"],
+        // The image is named by the digest a build's result reports; the
+        // Freight's own holding of it is the link into the Freight.
+        Hop::Image => &["PipelineRun", "TaskRun"],
         // Only a signature that verified is reported: the attestation it
         // covers. Chains' annotation says a build was signed and is declared.
         Hop::SupplyChain => &["Attestation"],

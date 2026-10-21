@@ -1,1 +1,0 @@
-- **Changes:** the Changes list and change page warn when `freshkube.yaml` isn't used, with the same reason as Settings; a successful reload or save clears the warning.

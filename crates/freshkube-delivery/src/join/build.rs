@@ -5,7 +5,7 @@ use crate::kargo::Freight;
 use crate::observation::ObjectRef;
 use crate::rekor::{Standing as LogStanding, entry_key};
 use crate::source::{Source, cap_note};
-use crate::tekton::{Build, CommitNames, EvidenceResult, WitnessSource};
+use crate::tekton::{Build, CommitNames, EvidenceResult, WitnessSource, built_images};
 use crate::verify::{NotRead, Trust, Verification, Verified, verify};
 
 use super::argo::short_commit;
@@ -436,7 +436,11 @@ pub(super) fn supply_chain_links(
                 standing.confidence,
                 format!(
                     "{} {}; {}; {verdict}",
-                    written_repository(&image.url),
+                    if image.url.is_empty() {
+                        format!("image {}", image.digest.short())
+                    } else {
+                        written_repository(&image.url)
+                    },
                     tag(&image.url)
                         .map(|t| format!("(tag {t})"))
                         .unwrap_or_default(),
@@ -689,4 +693,61 @@ fn run_results(build: &Build) -> String {
         ),
         _ => format!(" (the run's results: {})", names.join(", ")),
     }
+}
+
+/// The link from an image to a build found by its digest: a result of the
+/// run, or of one of its TaskRuns, reports it, so the link is confirmed. The
+/// build's own commit, if any, is shown beside it and joins nothing.
+pub(super) fn digest_links(build: &Build, evidence: &Evidence) -> Vec<Link> {
+    let wanted: Vec<&Digest> = evidence
+        .digest_search
+        .iter()
+        .flat_map(|search| &search.digests)
+        .collect();
+    let subject = id(&build.run.namespace, &build.run.name);
+    let outcome = match (&build.run.succeeded, &build.run.reason) {
+        (Some(status), Some(reason)) => format!("Succeeded={status} ({reason})"),
+        _ => "no Succeeded condition".to_owned(),
+    };
+    let outcome = match &build.tasks_unread {
+        Some(why) => format!("{outcome}; its TaskRuns were not read ({why})"),
+        None => outcome,
+    };
+    let stored = match build.origin {
+        crate::tekton::Origin::Results => ", read from the archive",
+        crate::tekton::Origin::Cluster => "",
+    };
+    build
+        .images()
+        .into_iter()
+        .filter(|image| wanted.contains(&&image.digest))
+        .map(|image| {
+            let by_run = built_images(&build.run.results)
+                .iter()
+                .any(|built| built.digest == image.digest);
+            let from = if by_run {
+                "a result of the PipelineRun"
+            } else {
+                "a result of one of its TaskRuns"
+            };
+            let mut seen: Vec<Observation> =
+                built_image(build, &image.digest).into_iter().collect();
+            seen.push(concluded(
+                "a build's IMAGE_DIGEST result == the Freight's image",
+                image.digest.as_str(),
+            ));
+            Link::new(
+                Hop::Image,
+                Hop::PipelineRun,
+                subject.clone(),
+                Key::Digest(image.digest.clone()),
+                Confidence::Confirmed,
+                format!(
+                    "{from} reports image digest {}{stored}; no commit joins it; {outcome}",
+                    image.digest.short()
+                ),
+            )
+            .observed(seen)
+        })
+        .collect()
 }

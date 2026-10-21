@@ -468,6 +468,7 @@ fn chain_and_inspector_keep_the_wide_frame(cx: &mut TestAppContext) {
         chain(&page, window, cx);
         page.update(cx, |page, cx| page.select("freight", window, cx));
         window.render_frame(cx);
+        settle_chain(window, cx);
         layout_check::settle_header(window, cx);
         layout_check::assert_edge_frame_from(
             window,
@@ -581,6 +582,7 @@ fn narrow_chain_at_text_20_reveals_a_far_card_and_stacks_the_inspector(cx: &mut 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.render_frame(cx);
+        settle_chain(window, cx);
         layout_check::settle_header(window, cx);
         layout_check::assert_inspector(
             window,
@@ -891,9 +893,260 @@ fn the_first_switch_to_chain_reveals_the_list_selection_after_layout(cx: &mut Te
     .unwrap();
 }
 
+fn settle_chain(window: &mut Window, cx: &mut App) {
+    assert!(
+        window.simulate_next_frame(cx) > 0,
+        "reveal requests a frame"
+    );
+    window.render_frame(cx);
+    // The stacked Inspector can change the canvas's height after it opens.
+    for _ in 0..6 {
+        if window.simulate_next_frame(cx) == 0 {
+            break;
+        }
+        window.render_frame(cx);
+    }
+}
+
+fn assert_card_in_canvas(key: &str, window: &Window) {
+    let horizontal = window.find("change-chain-scroll").bounds();
+    let vertical = window.find("change-chain-canvas").bounds();
+    let card = window
+        .find(SharedString::from(format!("change-card-{key}")))
+        .bounds();
+    assert!(
+        card.left() >= horizontal.left() - px(1.),
+        "{key}: {card:?} in {horizontal:?}"
+    );
+    assert!(
+        card.right() <= horizontal.right() + px(1.),
+        "{key}: {card:?} in {horizontal:?}"
+    );
+    assert!(
+        card.top() >= vertical.top() - px(1.),
+        "{key}: {card:?} in {vertical:?}"
+    );
+    assert!(
+        card.bottom() <= vertical.bottom() + px(1.),
+        "{key}: {card:?} in {vertical:?}"
+    );
+}
+
+fn assert_stacked_chain_reveal(cx: &mut TestAppContext, width: f32, height: f32, text: f32) {
+    let (handle, page) = open(cx, width, height, Shape::Whole, Duration::ZERO, text);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("prod-ams-eligible", window, cx));
+        page.update(cx, |page, cx| page.focus(window, cx));
+        // The header folds the toggle into its menu at narrow widths.
+        window.press("v", cx);
+        settle_chain(window, cx);
+        assert_card_in_canvas("prod-ams-eligible", window);
+        assert!(
+            window.find("change-detail").bounds().top()
+                >= window.find("change-chain").bounds().bottom() - px(1.)
+        );
+
+        // Selection in Chain and keyboard navigation also reveal both axes.
+        page.update(cx, |page, cx| page.select("prod-lon-eligible", window, cx));
+        window.render_frame(cx);
+        settle_chain(window, cx);
+        assert_card_in_canvas("prod-lon-eligible", window);
+        page.update(cx, |page, cx| page.focus(window, cx));
+        window.press("up", cx);
+        settle_chain(window, cx);
+        assert_eq!(
+            page.read(cx).cursor(),
+            Some(Cursor::Node("prod-ams-eligible".into()))
+        );
+        assert_card_in_canvas("prod-ams-eligible", window);
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
-fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppContext) {
-    let (handle, page) = open(cx, 1600., 1000., Shape::Whole, Duration::ZERO, 13.);
+fn narrow_chain_reveals_both_axes_after_layout(cx: &mut TestAppContext) {
+    assert_stacked_chain_reveal(cx, 760., 560., 13.);
+}
+
+#[gpui_kit::test]
+fn narrow_chain_at_text_20_reveals_both_axes_after_layout(cx: &mut TestAppContext) {
+    assert_stacked_chain_reveal(cx, 760., 560., 20.);
+}
+
+#[gpui_kit::test]
+fn wide_chain_at_text_20_reveals_both_axes_after_layout(cx: &mut TestAppContext) {
+    assert_stacked_chain_reveal(cx, 1280., 880., 20.);
+}
+
+#[gpui_kit::test]
+fn chain_reveals_again_when_the_stacked_canvas_shrinks_on_a_later_frame(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 880., Shape::Whole, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        chain(&page, window, cx);
+        page.update(cx, |page, cx| page.select("prod-lon-eligible", window, cx));
+        window.render_frame(cx);
+        assert!(window.simulate_next_frame(cx) > 0);
+        window.render_frame(cx);
+        let before = window.find("change-chain-canvas").bounds().size.height;
+        // Model the split applying a smaller height after the first reveal.
+        let state = page.read(cx).split.stacked_state().clone();
+        state.update(cx, |state, cx| state.resize_panel(0, px(180.), window, cx));
+        window.render_frame(cx);
+        settle_chain(window, cx);
+        assert!(window.find("change-chain-canvas").bounds().size.height < before);
+        assert_card_in_canvas("prod-lon-eligible", window);
+        assert_eq!(
+            window.simulate_next_frame(cx),
+            0,
+            "settled reveal stops requesting frames"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn remembered_chain_reveals_its_initial_stage_on_both_axes(cx: &mut TestAppContext) {
+    let (first, a) = fixture(cx);
+    cx.update_window(first, |_, window, cx| chain(&a, window, cx))
+        .unwrap();
+    for (width, height) in [(760., 560.), (1280., 880.)] {
+        let (handle, page) = open_stage(
+            cx,
+            width,
+            height,
+            Shape::Whole,
+            Duration::ZERO,
+            20.,
+            Some("prod-ams"),
+        );
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            settle_chain(window, cx);
+            assert_eq!(page.read(cx).view, ChangeView::Chain);
+            assert_card_in_canvas("prod-ams-eligible", window);
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn every_example_change_keeps_list_order_within_each_chain_column(cx: &mut TestAppContext) {
+    use freshkube_delivery::{changes::example, source::Source};
+    let (handle, page) = fixture(cx);
+    let now = DateTime::from_timestamp(1_760_000_000, 0).unwrap();
+    let Source::Read(projects) = example::read(now).projects else {
+        panic!("example projects")
+    };
+    for project in projects {
+        let Source::Read(freight) = project.freight else {
+            panic!("example Freight")
+        };
+        for freight in freight {
+            let change = example::change_of(&project.name, &freight.name, now).unwrap();
+            cx.update_window(handle, |_, window, cx| {
+                page.update(cx, |page, cx| page.read_answer(change, window, cx));
+                let p = page.read(cx);
+                let mut columns = std::collections::BTreeMap::<i32, Vec<_>>::new();
+                for (node, x, y) in p.graph.placed() {
+                    columns
+                        .entry(x.round() as i32)
+                        .or_default()
+                        .push((node.key.clone(), y));
+                }
+                for column in columns.values_mut() {
+                    let mut expected = vec![];
+                    for row in &p.rows {
+                        let card = &p.trail.cards[&row.key];
+                        if column.iter().any(|(key, _)| key == card) && !expected.contains(card) {
+                            expected.push(card.clone());
+                        }
+                    }
+                    column.sort_by(|a, b| a.1.total_cmp(&b.1));
+                    let actual: Vec<_> = column.iter().map(|(key, _)| key.clone()).collect();
+                    assert_eq!(actual, expected, "{} / {}", project.name, freight.name);
+                }
+            })
+            .unwrap();
+        }
+    }
+}
+
+fn has_cursor_ring(key: &str, window: &Window) -> bool {
+    let bounds = window
+        .find(SharedString::from(format!("change-card-{key}")))
+        .bounds()
+        .scale(window.scale_factor());
+    window.painted_quads().iter().any(|quad| {
+        quad.bounds == bounds && quad.border_widths.left.0 >= 2. * window.scale_factor()
+    })
+}
+
+#[gpui_kit::test]
+fn mouse_selection_keeps_the_selected_border_and_only_keyboard_navigation_rings_it(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.activate_window();
+        chain(&page, window, cx);
+        window.click("change-card-pr", cx);
+        settle_chain(window, cx);
+        assert_eq!(page.read(cx).selected().map(|key| key.as_ref()), Some("pr"));
+        assert!(page.read(cx).focus_handle().is_focused(window));
+        assert!(
+            !has_cursor_ring("pr", window),
+            "mouse selection has no keyboard ring"
+        );
+        let bounds = window
+            .find("change-card-pr")
+            .bounds()
+            .scale(window.scale_factor());
+        let accent = freshkube_ui::palette::palette(cx).accent_line;
+        assert!(
+            window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == bounds && q.border_color == accent)
+        );
+        window.press("down", cx);
+        settle_chain(window, cx);
+        assert!(
+            has_cursor_ring("pr-run", window),
+            "keyboard navigation rings its card"
+        );
+        window.click("change-card-pr", cx);
+        settle_chain(window, cx);
+        assert!(
+            !has_cursor_ring("pr", window),
+            "mouse selection clears the ring"
+        );
+        window.press("down", cx);
+        settle_chain(window, cx);
+        assert!(has_cursor_ring("pr-run", window));
+    })
+    .unwrap();
+    // Focus subscriptions become active after the render's update ends.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.blur(cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        assert!(!has_cursor_ring("pr-run", window), "blur clears the ring");
+        page.update(cx, |page, cx| page.focus(window, cx));
+        window.render_frame(cx);
+        assert!(
+            !has_cursor_ring("pr-run", window),
+            "focus alone does not restore the ring"
+        );
+    })
+    .unwrap();
+}
+
+fn assert_crossing_pill_clearance(cx: &mut TestAppContext, width: f32, height: f32, text: f32) {
+    let (handle, page) = open(cx, width, height, Shape::Whole, Duration::ZERO, text);
     cx.update_window(handle, |_, window, cx| {
         chain(&page, window, cx);
         let ams = window.find("change-link-prod-ams-eligible").bounds();
@@ -909,8 +1162,52 @@ fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppCont
                 < (lon.center().y - ams_card.center().y).abs()
         );
         assert!(ams.bottom() < lon.top() || lon.bottom() < ams.top());
+        assert!((ams.center().y - ams_card.center().y).abs() < px(1.));
+        assert!((lon.center().y - lon_card.center().y).abs() < px(1.));
+        let origin = window.find("change-chain-graph").bounds().origin;
+        let unit = freshkube_ui::ui::dp_px(1., window);
+        let p = page.read(cx);
+        for (key, pill) in [("prod-ams-eligible", lon), ("prod-lon-eligible", ams)] {
+        let (_, route) = p.graph.shown().find(|(edge, _)| edge.to == key).unwrap();
+        // Both curves, including their strokes, clear the other pill.
+        for segment in &route.segments {
+            for step in 0..=1000 {
+                let t = step as f32 / 1000.;
+                let u = 1. - t;
+                let weights = [u * u * u, 3. * u * u * t, 3. * u * t * t, t * t * t];
+                let (x, y) = weights
+                    .iter()
+                    .zip(segment)
+                    .fold((0., 0.), |(x, y), (w, p)| (x + w * p.0, y + w * p.1));
+                let at = origin + point(unit * x, unit * y);
+                let margin = unit * 4.;
+                assert!(
+                    at.x < pill.left() - margin
+                        || at.x > pill.right() + margin
+                        || at.y < pill.top() - margin
+                        || at.y > pill.bottom() + margin,
+                    "{key} at {at:?} needs clearance from the other pill {pill:?}; route {route:?}"
+                );
+            }
+        }
+        }
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppContext) {
+    assert_crossing_pill_clearance(cx, 1600., 1000., 13.);
+}
+
+#[gpui_kit::test]
+fn narrow_chain_clears_pills_in_both_directions(cx: &mut TestAppContext) {
+    assert_crossing_pill_clearance(cx, 760., 560., 13.);
+}
+
+#[gpui_kit::test]
+fn narrow_chain_at_text_20_clears_pills_in_both_directions(cx: &mut TestAppContext) {
+    assert_crossing_pill_clearance(cx, 760., 560., 20.);
 }
 
 #[gpui_kit::test]

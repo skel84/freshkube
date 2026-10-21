@@ -1,1 +1,0 @@
-- **Argo CD destinations:** the setup file and Settings accept `https://kubernetes.default.svc` and `in-cluster` as aliases for the selected Argo CD source entry. A conflicting alias names the entry to use.

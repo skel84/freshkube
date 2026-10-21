@@ -63,6 +63,9 @@ impl SourcesList {
             .map(|(part, chosen)| self.part_row(part, chosen))
             .collect();
         rows.push(self.workloads_row());
+        if let Some(naming) = &self.stage_naming {
+            rows.push(self.stage_naming_row(naming));
+        }
         if let Some(problem) = &self.setup_problem {
             rows.push(
                 self.row(
@@ -271,6 +274,35 @@ impl SourcesList {
             !chosen.is_empty(),
             (state, tone),
             WORKLOADS_READ.to_owned(),
+            tooltip,
+        )
+    }
+
+    /// Stage naming: how an Application with no authorized-stage annotation
+    /// names its Stage, as `freshkube.yaml` says. Read from the file, so it
+    /// needs no check.
+    fn stage_naming_row(&self, naming: &freshkube_core::setup::StageNaming) -> SourceRow {
+        let (state, how) = match &naming.project_key {
+            Some(key) => (
+                "By project key",
+                format!("the project under {key}, and a name matching the template"),
+            ),
+            None => (
+                "By name only",
+                "a name matching the template alone, a weaker claim".to_owned(),
+            ),
+        };
+        let tooltip = format!(
+            "Stage naming: how an Application with no authorized-stage annotation names its Stage\n{}: {how}\nReads freshkube.yaml, delivery.stage_naming",
+            naming.name_template
+        );
+        self.row(
+            Read::StageNaming,
+            naming.name_template.clone(),
+            "freshkube.yaml".into(),
+            false,
+            (state.into(), None),
+            "delivery.stage_naming".into(),
             tooltip,
         )
     }

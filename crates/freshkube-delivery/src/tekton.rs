@@ -265,16 +265,20 @@ pub(crate) fn parse_task_run(value: &Value) -> Option<TaskRun> {
     })
 }
 
-/// The images a set of results names: a `IMAGE_URL` result paired with the
-/// `IMAGE_DIGEST` that has the same prefix, as Chains' type hinting does.
+/// The images a set of results names, as Chains' type hinting does: each
+/// `IMAGE_DIGEST` (or `<prefix>IMAGE_DIGEST`), with the `IMAGE_URL` that has
+/// the same prefix when there is one. A digest alone counts; its `url` is then
+/// empty.
 pub(crate) fn built_images(results: &BTreeMap<String, String>) -> Vec<BuiltImage> {
     results
         .iter()
-        .filter_map(|(name, url)| {
-            let prefix = name.strip_suffix("IMAGE_URL")?;
-            let digest = results.get(&format!("{prefix}IMAGE_DIGEST"))?;
+        .filter_map(|(name, digest)| {
+            let prefix = name.strip_suffix("IMAGE_DIGEST")?;
+            let url = results
+                .get(&format!("{prefix}IMAGE_URL"))
+                .map_or("", |url| url.trim());
             Some(BuiltImage {
-                url: url.trim().to_owned(),
+                url: url.to_owned(),
                 digest: Digest::parse(digest)?,
             })
         })
@@ -392,10 +396,19 @@ pub enum Origin {
     Results,
 }
 
+/// The key a build was found by: the commit on its PaC label, or an image
+/// digest one of its results reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FoundBy {
+    Commit,
+    Digest,
+}
+
 /// A PipelineRun with the TaskRuns that belong to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Build {
     pub origin: Origin,
+    pub found_by: FoundBy,
     pub(crate) archive: Option<crate::results::Archive>,
     pub run: PipelineRun,
     pub tasks: Vec<TaskRun>,
@@ -633,6 +646,7 @@ pub(crate) async fn read_builds<R: Reader>(
             };
             builds.push(Build {
                 origin: Origin::Cluster,
+                found_by: FoundBy::Commit,
                 archive: None,
                 run,
                 tasks,
@@ -642,4 +656,147 @@ pub(crate) async fn read_builds<R: Reader>(
         Ok((builds, truncated))
     }
     Source::from_listing(run(reader, namespace, sha).await)
+}
+
+/// How far a digest search looked, for saying so when it finds nothing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Searched {
+    /// PipelineRuns listed in the namespace.
+    pub runs: usize,
+    /// TaskRuns listed in the namespace.
+    pub task_runs: usize,
+    /// Where a listing stopped at the page cap, if one did.
+    pub cap: Option<Truncation>,
+}
+
+impl Searched {
+    /// "read 12 PipelineRuns and 40 TaskRuns", with the cap when there was one.
+    pub(crate) fn words(&self) -> String {
+        format!(
+            "read {} PipelineRuns and {} TaskRuns{}",
+            self.runs,
+            self.task_runs,
+            cap_words(self.cap)
+        )
+    }
+}
+
+fn cap_words(cap: Option<Truncation>) -> String {
+    cap.map_or_else(String::new, |cap| {
+        format!(
+            ", stopping at the page cap after {} objects, so the build may be among those not read",
+            cap.read
+        )
+    })
+}
+
+/// The builds of one namespace whose results report one of `digests`, found
+/// by listing the namespace's PipelineRuns and TaskRuns (each a bounded read
+/// of at most `MAX_PAGES` pages) and comparing their `IMAGE_DIGEST` results in
+/// memory. A result cannot be selected on, so there is no narrower request,
+/// and a namespace is always named: nothing lists every namespace.
+///
+/// A TaskRun that reports a digest brings in the PipelineRun that owns it,
+/// read by name when the listing did not hold it (at most
+/// [`MOST_TASK_READS`] such reads). Every build's TaskRuns come from the one
+/// listing, so a capped listing leaves them as not fully read.
+pub(crate) async fn read_builds_by_digest<R: Reader>(
+    reader: &R,
+    namespace: &str,
+    digests: &[Digest],
+) -> Result<(Vec<Build>, Searched), Failure> {
+    let [pipeline_runs, task_runs] = resolve_each(
+        reader,
+        TEKTON_GROUP,
+        ["pipelineruns", "taskruns"],
+        TEKTON_VERSIONS,
+        true,
+    )
+    .await?;
+    let pipeline_runs = pipeline_runs?;
+    let (mut runs, runs_cap) = list_scoped(
+        reader,
+        &pipeline_runs,
+        Scope::Namespace(namespace.to_owned()),
+        parse_pipeline_run,
+    )
+    .await?;
+    let listed = runs.len();
+    let tasks = match task_runs {
+        Ok(task_runs) => list_scoped(
+            reader,
+            &task_runs,
+            Scope::Namespace(namespace.to_owned()),
+            parse_task_run,
+        )
+        .await
+        .map_err(|failure| printable(&failure)),
+        Err(failure) => Err(printable(&failure)),
+    };
+    let (tasks, tasks_cap, tasks_unread) = match tasks {
+        Ok((tasks, cap)) => {
+            let unread = cap.map(|_| {
+                "the namespace's TaskRun listing stopped at the page cap, so some may not be read"
+                    .to_owned()
+            });
+            (tasks, cap, unread)
+        }
+        Err(why) => (Vec::new(), None, Some(why)),
+    };
+    let reports = |results: &BTreeMap<String, String>| {
+        built_images(results)
+            .iter()
+            .any(|i| digests.contains(&i.digest))
+    };
+    // A run found by a TaskRun, listed or not, is a build of the digest.
+    let owners: Vec<&str> = tasks
+        .iter()
+        .filter(|task| task.namespace == namespace && reports(&task.results))
+        .filter_map(|task| task.pipeline_run.as_deref())
+        .collect();
+    let mut asked = std::collections::BTreeSet::new();
+    for owner in owners {
+        // Each run is asked for once, however many of its tasks report.
+        if runs.iter().any(|run| run.name == owner)
+            || asked.len() >= MOST_TASK_READS
+            || !asked.insert(owner)
+        {
+            continue;
+        }
+        if let Ok(value) = reader.get(&pipeline_runs, Some(namespace), owner).await
+            && let Some(run) = parse_pipeline_run(&value)
+            && run.namespace == namespace
+        {
+            runs.push(run);
+        }
+    }
+    let builds = runs
+        .into_iter()
+        .filter_map(|run| {
+            let own: Vec<TaskRun> = tasks
+                .iter()
+                .filter(|task| {
+                    task.namespace == run.namespace
+                        && task.pipeline_run.as_deref() == Some(run.name.as_str())
+                })
+                .cloned()
+                .collect();
+            (reports(&run.results) || own.iter().any(|task| reports(&task.results))).then(|| {
+                Build {
+                    origin: Origin::Cluster,
+                    found_by: FoundBy::Digest,
+                    archive: None,
+                    run,
+                    tasks: own,
+                    tasks_unread: tasks_unread.clone(),
+                }
+            })
+        })
+        .collect();
+    let searched = Searched {
+        runs: listed,
+        task_runs: tasks.len(),
+        cap: runs_cap.or(tasks_cap),
+    };
+    Ok((builds, searched))
 }

@@ -153,6 +153,7 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
         metrics: shared.metrics,
         coroot: shared.coroot,
         supply_chain: shared.supply_chain,
+        delivery: shared.delivery,
         extra: shared.extra,
     };
     setup.validate()?;

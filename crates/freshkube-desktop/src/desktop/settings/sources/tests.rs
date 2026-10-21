@@ -1258,3 +1258,43 @@ fn recovered_setup_file_is_used_with_warnings_and_all_skipped_sources_are_unavai
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_stage_naming_of_the_setup_is_a_row_of_its_own_and_goes_when_removed(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        open(window, cx, &view);
+        settle_sources(window, cx);
+        let sources = list(&view, cx);
+        let named = |cx: &gpui_kit::App| {
+            sources
+                .read(cx)
+                .rows
+                .iter()
+                .find(|row| row.read == Read::StageNaming)
+                .map(|row| (row.entry.to_string(), row.state.to_string()))
+        };
+        assert_eq!(named(cx), None);
+        let mut naming = freshkube_core::setup::StageNaming::new("{stage}-{project}");
+        sources.update(cx, |list, cx| {
+            list.set_stage_naming(Some(naming.clone()), cx)
+        });
+        settle_sources(window, cx);
+        assert_eq!(
+            named(cx),
+            Some(("{stage}-{project}".into(), "By name only".into()))
+        );
+        assert!(window.find("settings-source-stage-naming").visible());
+        naming.project_key = Some("example.test/project".into());
+        sources.update(cx, |list, cx| list.set_stage_naming(Some(naming), cx));
+        assert_eq!(
+            named(cx).map(|(_, state)| state).as_deref(),
+            Some("By project key")
+        );
+        sources.update(cx, |list, cx| list.set_stage_naming(None, cx));
+        assert_eq!(named(cx), None);
+    })
+    .unwrap();
+}
