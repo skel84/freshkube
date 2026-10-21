@@ -58,7 +58,6 @@ pub(crate) struct Client {
     http: reqwest::Client,
     base: url::Url,
     token: Option<http::HeaderValue>,
-    forwarded: bool,
     #[cfg_attr(
         not(test),
         allow(dead_code, reason = "slice 9 consumes Results identity and freshness")
@@ -380,7 +379,6 @@ impl Client {
             http,
             base,
             token,
-            forwarded: pin.is_some(),
             id: NEXT.fetch_add(1, Ordering::Relaxed),
         })
     }

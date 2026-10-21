@@ -137,7 +137,7 @@ impl Client {
             let mut response = request
                 .send()
                 .await
-                .map_err(|error| self.request_error(error))?;
+                .map_err(super::transport::request_error)?;
             match response.status().as_u16() {
                 200 => {}
                 404 => return Err(Error::LogMissing),
@@ -164,7 +164,7 @@ impl Client {
             while let Some(chunk) = response
                 .chunk()
                 .await
-                .map_err(|error| self.request_error(error))?
+                .map_err(super::transport::request_error)?
             {
                 let take = chunk.len().min(MOST_LOG_BYTES + 1 - bytes.len());
                 bytes.extend_from_slice(&chunk[..take]);

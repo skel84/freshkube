@@ -74,7 +74,7 @@ fn forward_ignores_environment_proxies() {
     command.env("NO_PROXY", "").env("no_proxy", "");
     let output = command.output().unwrap();
     assert!(
-        output.status.success(),
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
         "{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
@@ -178,10 +178,15 @@ async fn an_ended_route_does_no_io_and_never_falls_back() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_closed_local_route_reports_forward_ended_without_fallback() {
+async fn a_closed_local_connection_keeps_its_transport_error_without_fallback() {
     let configured = Server::with_certificate(Some(SERVICE_CERT), vec![]);
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let local_port = closed.local_addr().unwrap().port().try_into().unwrap();
+    // Keep the listener until connect, then close the socket we accepted.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_port = listener.local_addr().unwrap().port().try_into().unwrap();
+    let refuse = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        drop(stream);
+    });
     let mut settings = Results::default();
     settings.forward = Some(Forward::new(
         "acme",
@@ -195,10 +200,51 @@ async fn a_closed_local_route_reports_forward_ended_without_fallback() {
     ))
     .await
     .unwrap_or_else(|error| panic!("{error}"));
-    drop(closed);
+    assert_eq!(runs(&client).await, Err(Error::Unreachable(Cause::Connect)));
+    within(refuse).await.unwrap();
+    assert!(configured.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plain_http_forward_keeps_its_transport_error() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_port = listener.local_addr().unwrap().port().try_into().unwrap();
+    let response = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+            .await
+            .unwrap();
+        stream.shutdown().await.unwrap();
+    });
+    let mut settings = Results::default();
+    settings.forward = Some(Forward::new("acme", "results", 8080));
+    let client = within(Client::open_routed(
+        Some(&settings),
+        None,
+        Route::Forward { local_port },
+    ))
+    .await
+    .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(runs(&client).await, Err(Error::Unreachable(Cause::Connect)));
+    within(response).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_broken_forward_response_keeps_its_transport_error() {
+    let mut reply = page(vec![]);
+    reply.truncate = true;
+    let server = Server::with_certificate(Some(SERVICE_CERT), vec![reply]);
+    let dir = tempfile::tempdir().unwrap();
+    let ca = dir.path().join("service-ca.pem");
+    std::fs::write(&ca, SERVICE_CERT).unwrap();
+    let settings = forward_settings(8080, &ca);
+    let client = routed(&settings, &server, Arc::default()).await;
     assert_eq!(
         runs(&client).await,
-        Err(Error::ForwardEnded("the connection failed"))
+        Err(Error::Unreachable(Cause::Transport))
     );
-    assert!(configured.requests.lock().unwrap().is_empty());
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
 }

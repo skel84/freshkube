@@ -17,6 +17,7 @@ pub(super) struct Reply {
     pub headers: String,
     pub chunked: bool,
     pub hold: bool,
+    pub truncate: bool,
     matching: Option<String>,
 }
 
@@ -31,6 +32,7 @@ impl Reply {
             headers: String::new(),
             chunked: false,
             hold: false,
+            truncate: false,
             matching: None,
         }
     }
@@ -175,6 +177,10 @@ async fn serve(
     }
     if reply.hold {
         std::future::pending::<()>().await;
+    }
+    if reply.truncate {
+        _ = stream.shutdown().await;
+        return;
     }
     if reply.chunked {
         for chunk in reply.body.chunks(16 * 1024) {
