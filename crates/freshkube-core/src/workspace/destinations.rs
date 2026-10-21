@@ -147,6 +147,10 @@ impl Destination {
     /// Checks the row against the same source selection delivery uses.
     /// Neither an alias nor its target selects where Argo CD is read.
     pub fn fault_in(&self, workspace: &Workspace) -> Option<Fault> {
+        self.fault_for(&super::sources::choose(workspace, Part::ArgoCd))
+    }
+
+    pub(crate) fn fault_for(&self, argocd: &Chosen) -> Option<Fault> {
         if let Some(fault) = self.fault() {
             return Some(fault);
         }
@@ -157,17 +161,22 @@ impl Destination {
         if !own {
             return None;
         }
-        match super::sources::choose(workspace, Part::ArgoCd) {
+        match argocd {
             Chosen::Entry { entry, .. } => {
-                (entry.id != self.entry).then_some(Fault::ArgoCdOther(entry.id))
+                (entry.id != self.entry).then_some(Fault::ArgoCdOther(entry.id.clone()))
             }
-            Chosen::Open | Chosen::NoEntry(_) | Chosen::Gone(_) => Some(Fault::ArgoCdUnknown),
+            Chosen::Open | Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => {
+                Some(Fault::ArgoCdUnknown)
+            }
         }
     }
 
     /// The row as an error names it: `destinations[2] (server https://…)`,
     /// counting from 0 as the file's array does.
     fn named(&self, index: usize) -> String {
+        if self.server.as_deref().is_some_and(has_userinfo) {
+            return format!("destinations[{index}].server");
+        }
         let what = match (&self.server, &self.name) {
             (Some(server), _) if !server.trim().is_empty() => format!(" (server {server})"),
             (_, Some(name)) if !name.trim().is_empty() => format!(" (name {name})"),
@@ -184,8 +193,21 @@ impl Destination {
     }
 }
 
+/// Check the authority even when the remainder of the URL is malformed.
+pub(crate) fn has_userinfo(server: &str) -> bool {
+    server.split_once("://").is_some_and(|(_, rest)| {
+        rest.split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .contains('@')
+    })
+}
+
 /// Why a server can't be mapped: it isn't an http or https address.
 fn server_fault(server: &str) -> Option<Fault> {
+    if has_userinfo(server) {
+        return Some(Fault::Userinfo);
+    }
     let lower = server.to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
         Some(Fault::NotHttp)
@@ -204,6 +226,8 @@ pub enum Fault {
     /// A server or name with spaces around it.
     Spaces,
     NotHttp,
+    /// URL credentials are forbidden even on strict Settings writes.
+    Userinfo,
     /// An in-cluster alias maps to a different entry than this selected
     /// Argo CD source entry id.
     ArgoCdOther(String),
@@ -222,6 +246,7 @@ impl Fault {
             Fault::EmptyServer => "names an empty server",
             Fault::EmptyName => "names an empty name",
             Fault::Spaces => "names a server or name with spaces around it",
+            Fault::Userinfo => "contains URL credentials; keys never go in this file",
             Fault::NotHttp => "names a server that isn’t an http or https address",
             Fault::ArgoCdOther(entry) => {
                 return format!(
@@ -274,7 +299,11 @@ pub(super) fn validate(workspace: &Workspace) -> Result<(), Invalid> {
     for (index, row) in rows.iter().enumerate() {
         if let Some(fault) = row.fault_in(workspace) {
             return Err(Invalid::Destination {
-                row: row.named(index),
+                row: if fault == Fault::Userinfo {
+                    format!("destinations[{index}].server")
+                } else {
+                    row.named(index)
+                },
                 fault,
             });
         }

@@ -992,6 +992,42 @@ fn results_plain_http_is_only_saved_for_literal_loopback() {
 }
 
 #[test]
+fn destination_url_credentials_are_refused_by_strict_parse_and_save_without_echoing() {
+    use crate::workspace::{Destination, Key};
+    for address in [
+        "https://invented-private-marker@example.test",
+        "https://user:invented-private-marker@example.test",
+        "https://user:invented-private-marker@[invalid",
+    ] {
+        let text = format!(
+            "version: 1\nclusters: []\ndestinations: [{{server: '{address}', entry: cluster-a}}]\n"
+        );
+        let invalid = parse(text.as_bytes()).unwrap_err();
+        assert!(!invalid.to_string().contains("invented-private-marker"));
+        assert!(!format!("{invalid:?}").contains("invented-private-marker"));
+        assert!(matches!(
+            invalid,
+            Invalid::Workspace(workspace::Invalid::Destination {
+                fault: workspace::Fault::Userinfo,
+                ..
+            })
+        ));
+        let mut setup = Setup::default();
+        setup
+            .workspace
+            .destinations
+            .push(Destination::new(Key::Server(address.into()), "cluster-a"));
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("freshkube.yaml");
+        std::fs::write(&file, "version: 1\n").unwrap();
+        let before = std::fs::read(&file).unwrap();
+        let error = commit(&file, &Seen::Bytes(before.clone()), &setup).unwrap_err();
+        assert!(!format!("{error:?}").contains("invented-private-marker"));
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+}
+
+#[test]
 fn stage_naming_is_a_template_with_an_optional_project_key() {
     let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
     // Off when absent.
