@@ -50,7 +50,10 @@ impl ChangePage {
                                 .aria_label(self.headline.clone())
                                 .w_full()
                                 .min_w_0()
-                                .overflow_hidden()
+                                // GPUI wraps every line but the last at the
+                                // width; the ellipsis makes the last one
+                                // wrap and end there too.
+                                .text_ellipsis()
                                 .line_clamp(2)
                                 .text_size(dp(12.5))
                                 .text_color(p.ink_2)

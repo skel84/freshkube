@@ -19,9 +19,9 @@ use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
 /// A character of a chip's text, in dp.
-const CHAR: f32 = 5.9;
+const CHAR: f32 = 5.;
 /// A chip's glyph, padding and gap, in dp, beside its text.
-const CHIP_PAD: f32 = 30.;
+const CHIP_PAD: f32 = 20.;
 /// The gap between the bar's parts, in dp.
 const GAP: f32 = 6.;
 
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(visible(&list, 10.), 1);
     }
 
-    /// `n` chips of 20 characters each: 148 dp wide.
+    /// `n` chips of 20 characters each: 120 dp wide.
     fn same(n: usize) -> Vec<FixItem> {
         (0..n)
             .map(|ix| FixItem::new(format!("k{ix}"), "Not found: signature"))
@@ -201,24 +201,23 @@ mod tests {
 
     #[test]
     fn a_known_room_shows_an_exact_number_of_chips() {
-        // "12 to fix" 53.1 and a gap, then 154 (148 and a gap) for each
-        // chip, and the "+7" button (26.8 and a gap) while any are left
-        // out: five chips take 829.1 and the button 32.8, so 861.9.
-        assert_eq!(visible(&same(12), 1000.), 5);
-        assert_eq!(visible(&same(12), 862.), 5);
-        assert_eq!(visible(&same(12), 861.), 4);
+        // "12 to fix" 45 and a gap, then 126 (120 and a gap) for each
+        // chip, and the "+7" button (20 and a gap) while any are left
+        // out: five chips take 681 and the button 26, so 707.
+        assert_eq!(visible(&same(12), 1000.), 7);
+        assert_eq!(visible(&same(12), 707.), 5);
+        assert_eq!(visible(&same(12), 706.), 4);
         // Room for everything needs no button.
         assert_eq!(visible(&same(3), 600.), 3);
     }
 
     #[test]
     fn a_two_digit_rest_takes_the_wider_button() {
-        // Eleven left out is "+11" (38.7 with its gap, against 32.8 for
-        // "+7"): five chips and it take 867.8, which 865 does not hold.
-        assert_eq!(visible(&same(16), 1000.), 5);
-        assert_eq!(visible(&same(16), 868.), 5);
-        assert_eq!(visible(&same(16), 865.), 4);
-        assert_eq!(visible(&same(12), 865.), 5);
+        // Eleven left out is "+11" (31 with its gap, against 26 for "+7"):
+        // five chips and it take 712, which 711 does not hold.
+        assert_eq!(visible(&same(16), 712.), 5);
+        assert_eq!(visible(&same(16), 711.), 4);
+        assert_eq!(visible(&same(12), 708.), 5);
         assert_eq!(more_width(11), more_width(10));
         assert!(more_width(11) > more_width(9));
     }

@@ -138,11 +138,12 @@ fn a_failing_change_leads_with_what_failed(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn chips_that_do_not_fit_fold_into_a_menu_that_selects_the_rest(cx: &mut TestAppContext) {
-    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 13.);
+    // A larger text size leaves less room in dp, as a narrower window would.
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("change-fixbar-pr-run").visible());
-        // Not every chip fits 760 dp: the rest is behind +N.
+        // Not every chip fits: the rest is behind +N.
         let more = window.find("change-fixbar-more");
         assert!(more.visible());
         assert!(window.try_find("change-fixbar-prod-ams-pods").is_none());
@@ -492,4 +493,21 @@ fn open_in_kargo_opens_the_address_and_is_greyed_out_without_one(cx: &mut TestAp
         .unwrap();
     cx.run_until_parked();
     assert_eq!(cx.opened_url(), before);
+}
+
+#[gpui_kit::test]
+fn another_hop_opens_its_inspector_at_the_top(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("policy", window, cx));
+        window.render_frame(cx);
+        page.update(cx, |page, _| {
+            page.detail_scroll
+                .set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-40.)));
+        });
+        page.update(cx, |page, cx| page.select("prod-ams-pods", window, cx));
+        assert_eq!(page.read(cx).detail_scroll.offset().y, gpui_kit::px(0.));
+    })
+    .unwrap();
 }

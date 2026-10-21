@@ -700,6 +700,10 @@ impl ChangePage {
             return;
         };
         let group = row.group;
+        // Another hop starts at the top of the Inspector.
+        if self.selected.as_ref() != Some(&row.key) {
+            self.detail_scroll.set_offset(point(px(0.), px(0.)));
+        }
         self.selected = Some(row.key.clone());
         self.link_selected = false;
         self.graph.clear_selection();
