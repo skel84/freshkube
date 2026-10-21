@@ -56,9 +56,10 @@ impl ConditionLine {
 
 /// How a condition reads. Most are good when `True`; a few report a problem
 /// when `True`. Types this doesn't know stay neutral rather than guess.
-fn condition_tone(kind: &str, status: &str) -> Tone {
-    const GOOD_WHEN_TRUE: [&str; 9] = [
+pub(super) fn condition_tone(kind: &str, status: &str) -> Tone {
+    const GOOD_WHEN_TRUE: [&str; 10] = [
         "Ready",
+        "SecretSynced",
         "Available",
         "Initialized",
         "ContainersReady",
@@ -146,7 +147,15 @@ impl Summary {
                     )
                 })
                 .collect(),
-            conditions: overview.conditions.iter().map(ConditionLine::new).collect(),
+            conditions: overview
+                .conditions
+                .iter()
+                .filter(|condition| {
+                    overview.external_secret.is_none()
+                        || !matches!(condition.kind.as_str(), "Ready" | "SecretSynced")
+                })
+                .map(ConditionLine::new)
+                .collect(),
             labels: overview
                 .labels
                 .iter()

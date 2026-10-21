@@ -43,6 +43,8 @@ pub struct ObjectDocument {
 /// What every kind has in common, for a summary above the raw document.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Overview {
+    /// Cause-first ExternalSecret status; never contains a target Secret.
+    pub external_secret: Option<super::external_secrets::ExternalSecret>,
     pub created: Option<DateTime<Utc>>,
     /// Set once deletion was requested; finalizers may still hold the object.
     pub deleting: Option<DateTime<Utc>>,
@@ -156,6 +158,8 @@ pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectD
     }
     let secret = kind.is_secret().then(|| hide_secret(&mut object));
     let mut overview = overview(&object);
+    overview.external_secret =
+        super::external_secrets::summary(kind, &object, &overview.conditions);
     overview.secret = secret;
     overview.pod = kind.is_pod().then(|| pod_containers(&object));
     overview.pod_status = kind.is_pod().then(|| PodStatus::new(&object));
@@ -338,6 +342,7 @@ fn overview(object: &Value) -> Overview {
     let field = |name: &str| metadata.and_then(|metadata| metadata.get(name));
     let status = object.get("status");
     Overview {
+        external_secret: None,
         created: time(field("creationTimestamp")),
         deleting: time(field("deletionTimestamp")),
         generation: field("generation").and_then(Value::as_i64),
