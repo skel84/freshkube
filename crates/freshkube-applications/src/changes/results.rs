@@ -32,13 +32,20 @@ impl ChangesPage {
     }
 
     fn results_changed(&mut self, cx: &mut Context<Self>) {
+        let before = (self.results.route(), self.results.epoch());
         self.results.sync(cx);
-        self.loader.reset();
-        self.stale = None;
-        self.show_read(cx);
-        if self.visible {
-            self.read(cx);
+        if before != (self.results.route(), self.results.epoch()) {
+            let identity = (
+                self.source.as_ref().unwrap().id.clone(),
+                self.setup_revision,
+                self.results.epoch(),
+            );
+            self.loader.retain_stale(identity);
+            if self.visible {
+                self.read(cx);
+            }
         }
+        self.show_read(cx);
         cx.notify();
     }
 

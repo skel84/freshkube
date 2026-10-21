@@ -33,8 +33,8 @@ impl ForwardList {
         self.items.iter().any(|item| item.read(cx).id == id)
     }
 
-    /// The newest matching Service forward entry, including ended
-    /// ones. A caller retains its selected entity rather than falling back
+    /// The newest active matching Service forward, else the newest ended
+    /// entry. A caller retains its selected entity rather than falling back
     /// to another forward after Stop or removal.
     pub fn find(
         &self,
@@ -44,13 +44,21 @@ impl ForwardList {
         port: u16,
         cx: &App,
     ) -> Option<Entity<ForwardView>> {
-        self.items
-            .iter()
-            .rev()
-            .find(|item| {
-                item.read(cx)
-                    .matches_service(connection, namespace, service, port)
-            })
-            .cloned()
+        let mut ended = None;
+        for item in self.items.iter().rev() {
+            if !item
+                .read(cx)
+                .matches_service(connection, namespace, service, port)
+            {
+                continue;
+            }
+            if !matches!(item.read(cx).snapshot().state, State::Ended(_)) {
+                return Some(item.clone());
+            }
+            if ended.is_none() {
+                ended = Some(item.clone());
+            }
+        }
+        ended
     }
 }

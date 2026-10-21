@@ -34,8 +34,8 @@ use tokio::time::Instant;
 
 use super::{MAX_AT_ONCE, OPEN};
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
-pub use crate::results::Route as ResultsRoute;
 use crate::results::{self, Client as ResultsClient};
+pub use crate::results::{Route as ResultsRoute, Wait as ResultsWait};
 use crate::shared::SharedReader;
 use crate::words;
 use freshkube_core::resources::{Failure, FailureKind};

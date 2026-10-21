@@ -69,7 +69,7 @@ async fn service_matching_uses_the_whole_target_and_keeps_the_ended_owner(cx: &m
                 .unwrap()
                 .read(cx)
                 .id,
-            second
+            first
         );
         assert_ne!(second, first);
     });

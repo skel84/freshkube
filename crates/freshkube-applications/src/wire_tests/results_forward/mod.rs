@@ -1,4 +1,5 @@
 mod fake;
+mod review;
 use super::*;
 
 // These cases share the automatic port candidates; keep another case from
@@ -818,8 +819,12 @@ async fn a_forward_restarted_while_hidden_is_read_only_when_the_page_shows(
     assert!(cx.read(|cx| owner.read(cx).snapshot().epoch.start) > before.start);
     cx.update(|cx| app.update(cx, |page, cx| page.set_visible(true, cx)));
     cx.run_until_parked();
-    cx.wait_for_io(window, |_, cx| archived(change.read(cx)))
-        .await;
+    cx.wait_for_io(window, |_, cx| {
+        archived(change.read(cx))
+            && !change.read(cx).is_reading()
+            && server.results.load(Ordering::SeqCst) > reads
+    })
+    .await;
     assert!(server.results.load(Ordering::SeqCst) > reads);
     cx.update(|cx| {
         freshkube_resources::forwards::list(cx).update(cx, |list, cx| list.stop(before.id, cx))

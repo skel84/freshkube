@@ -43,6 +43,9 @@ impl KubeClientSource for Client {
 
 pub(super) struct Server {
     pub access: ClusterAccess,
+    pub hold_start: Arc<AtomicBool>,
+    pub release_start: Arc<tokio::sync::Notify>,
+    pub ready: tokio::sync::watch::Sender<bool>,
     pub forwards: Arc<AtomicUsize>,
     pub results: Arc<AtomicUsize>,
     pub hold: Arc<AtomicBool>,
@@ -118,15 +121,23 @@ impl Server {
         let address = listener.local_addr().unwrap();
         let forwards = Arc::new(AtomicUsize::new(0));
         let count = forwards.clone();
+        let hold_start = Arc::new(AtomicBool::new(false));
+        let release_start = Arc::new(tokio::sync::Notify::new());
+        let (ready, _) = tokio::sync::watch::channel(true);
+        let (start_held, start_released, pod_ready) =
+            (hold_start.clone(), release_start.clone(), ready.clone());
         let api = runtime.spawn(async move {
             let listener = TcpListener::from_std(listener).unwrap();
             let mut clients = tokio::task::JoinSet::new();
             loop { tokio::select! {
                 accepted = listener.accept() => {
                     let (stream, _) = accepted.unwrap(); let count = count.clone();
+                    let (start_held, start_released, pod_ready) = (start_held.clone(), start_released.clone(), pod_ready.clone());
                     clients.spawn(async move {
                         let service = hyper::service::service_fn(move |mut request: Request<Incoming>| {
                             let path = request.uri().path().to_owned(); let query = request.uri().query().unwrap_or_default().to_owned();
+                            let wait_start = path.ends_with("/services/results") && start_held.load(Ordering::SeqCst);
+                            let start_released = start_released.clone();
                             let response = if path.ends_with("/portforward") {
                                 count.fetch_add(1, Ordering::SeqCst);
                                 assert!(query.split('&').any(|part| part == "ports=8080"));
@@ -159,13 +170,24 @@ impl Server {
                                     .body(Full::new(Bytes::new()).boxed()).unwrap()
                             } else {
                                 assert_eq!(request.method(), http::Method::GET);
-                                if query.split('&').any(|part| part == "watch=true") {
+                                if query.split('&').any(|part| part == "watch=true") && path.ends_with("/pods") {
+                                    let receiver = pod_ready.subscribe();
+                                    let stream = futures::stream::unfold((receiver, 1u64), |(mut receiver, version)| async move {
+                                        receiver.changed().await.ok()?;
+                                        let ready = *receiver.borrow_and_update();
+                                        let mut object = pod(ready);
+                                        object["metadata"]["resourceVersion"] = (version + 1).to_string().into();
+                                        let frame = Frame::data(Bytes::from(format!("{}\n", json!({"type":"MODIFIED","object":object}))));
+                                        Some((Ok::<_,Infallible>(frame), (receiver, version + 1)))
+                                    });
+                                    Response::new(BodyExt::boxed(StreamBody::new(stream)))
+                                } else if query.split('&').any(|part| part == "watch=true") {
                                     Response::new(BodyExt::boxed(StreamBody::new(futures::stream::pending::<Result<Frame<Bytes>, Infallible>>())))
                                 } else {
-                                    reply(api_answer(&path))
+                                    reply(api_answer(&path, *pod_ready.borrow()))
                                 }
                             };
-                            std::future::ready(Ok::<_, Infallible>(response))
+                            async move { if wait_start { start_released.notified().await; } Ok::<_, Infallible>(response) }
                         });
                         _ = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(stream), service).with_upgrades().await;
                     });
@@ -177,6 +199,9 @@ impl Server {
         let client = kube::Client::try_from(config).unwrap();
         Self {
             access: ClusterAccess::Live(Arc::new(Client(client))),
+            hold_start,
+            release_start,
+            ready,
             forwards,
             results,
             hold,
@@ -204,12 +229,10 @@ fn reply(value: Value) -> Response<Body> {
         .body(Full::new(Bytes::from(value.to_string())).boxed())
         .unwrap()
 }
-fn api_answer(path: &str) -> Value {
+fn api_answer(path: &str, ready: bool) -> Value {
     let service = json!({"apiVersion":"v1", "kind":"Service", "metadata":{"name":"results","namespace":"acme","uid":"service-a","resourceVersion":"1"},
         "spec":{"selector":{"app":"results"}, "ports":[{"port":8443, "targetPort":8080}]}});
-    let pod = json!({"apiVersion":"v1", "kind":"Pod", "metadata":{"name":"results-pod","namespace":"acme","uid":"pod-a","resourceVersion":"1","labels":{"app":"results"}},
-        "spec":{"containers":[{"name":"results","ports":[{"containerPort":8080}]}]},
-        "status":{"phase":"Running","conditions":[{"type":"Ready","status":"True","lastTransitionTime":"2026-01-01T00:00:00Z"}]}});
+    let pod = pod(ready);
     if path.contains("/services/") {
         return service;
     }
@@ -220,4 +243,10 @@ fn api_answer(path: &str) -> Value {
         return json!({"kind":"List", "apiVersion":"v1", "metadata":{"resourceVersion":"1"},"items":[if path.ends_with("/services") {service} else {pod}]});
     }
     super::super::fake::route(path, false)
+}
+
+fn pod(ready: bool) -> Value {
+    json!({"apiVersion":"v1", "kind":"Pod", "metadata":{"name":"results-pod","namespace":"acme","uid":"pod-a","resourceVersion":"1","labels":{"app":"results"}},
+        "spec":{"containers":[{"name":"results","ports":[{"containerPort":8080}]}]},
+        "status":{"phase":"Running","conditions":[{"type":"Ready","status":if ready {"True"} else {"False"},"lastTransitionTime":"2026-01-01T00:00:00Z"}]}})
 }

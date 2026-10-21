@@ -22,6 +22,7 @@ mod changes;
 mod detail;
 mod outcome;
 pub(crate) mod read;
+mod results;
 pub(crate) mod table;
 #[cfg(test)]
 mod tests;

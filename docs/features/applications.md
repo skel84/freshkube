@@ -38,12 +38,14 @@ share the explicit Forward action; its status bar supplies the next step. The
 change page offers the same action in the Builds/PipelineRun Inspector. An entry
 that is not open offers Switch to its Service's Ports through the guarded switch
 path; switching never forwards. Rows have no buttons. Both read pools receive
-the matching app-owned forward's typed Results route. Each page owns only its
-subscription, and reads only while shown; the forward survives navigation and
+the matching app-owned forward's typed Results route. The list and change page share the selected owner through a weak session
+registry; their subscriptions and commands are in `changes/results.rs` and
+`change/results.rs`. Each page reads only while shown; the forward survives navigation and
 source replacement in `ForwardList`. Exact target matching, retained owner,
-restart epoch, read invalidation and failure distinctions are described in
+restart epoch, retained rows and Inspector during route refresh, read invalidation
+and failure distinctions are described in
 [PORT_FORWARD.md](../PORT_FORWARD.md#tekton-results). The headless fake Kubernetes
-and loopback TLS tests are in `wire_tests/results_forward/{mod.rs,fake.rs}`;
+and loopback TLS tests are in `wire_tests/results_forward/{mod.rs,review.rs,fake.rs}`;
 Resources' matching and owner-state tests are in
 `crates/freshkube-resources/src/forwards/matching_tests.rs`. Existing address-only
 Results and no-Results delivery tests continue to cover those routes.

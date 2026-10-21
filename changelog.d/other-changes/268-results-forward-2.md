@@ -1,1 +1,1 @@
-- **Tekton Results:** start a configured Service forward explicitly from Changes or the build Inspector, and read archived builds through the app-owned forward with verified TLS.
+- **Tekton Results:** start a configured Service forward explicitly from Changes or the build Inspector, and read archived builds through the app-owned forward with verified TLS. Keep the shown rows and open Inspector through route changes; list and detail share the selected forward.

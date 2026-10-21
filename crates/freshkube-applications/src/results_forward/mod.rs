@@ -2,11 +2,12 @@
 use freshkube_core::resources::{ForwardEnd, ForwardTarget};
 use freshkube_core::setup::Forward;
 use freshkube_core::workspace::{Part, Sources};
-use freshkube_delivery::entry::pool::ResultsRoute;
+use freshkube_delivery::entry::pool::{ResultsRoute, ResultsWait};
 use freshkube_resources::forwards::{
     self, Epoch, ForwardList, ForwardSpec, ForwardView, Snapshot, State,
 };
 use gpui_kit::*;
+use std::collections::HashMap;
 use tokio::runtime::Handle;
 
 use crate::resources::{
@@ -23,7 +24,31 @@ pub(crate) struct Target {
     here: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Key {
+    entry: String,
+    connection: String,
+    namespace: String,
+    service: String,
+    port: u16,
+    here: bool,
+}
+#[derive(Default)]
+struct Sessions(HashMap<Key, WeakEntity<Session>>);
+impl Global for Sessions {}
+
 impl Target {
+    fn key(&self) -> Key {
+        Key {
+            entry: self.entry.clone(),
+            connection: self.connection.clone(),
+            namespace: self.forward.namespace.clone(),
+            service: self.forward.service.clone(),
+            port: self.forward.port,
+            here: self.here,
+        }
+    }
+
     pub(crate) fn of(
         sources: &Sources,
         open: Option<&str>,
@@ -91,25 +116,43 @@ impl Binding {
         let Some(target) = target else {
             return true;
         };
-        let list = forwards::list(cx);
-        let access = source.access.clone();
-        let session = cx.new(|cx| {
-            let observer = cx.observe(&list, |this: &mut Session, _, cx| this.sync(cx));
-            Session {
-                target,
-                runtime,
-                access,
-                list,
-                owner: None,
-                snapshot: None,
-                label: "Forward".into(),
-                words: "".into(),
-                enabled: true,
-                _list: observer,
-                _owner: None,
-            }
+        let key = target.key();
+        if cx.try_global::<Sessions>().is_none() {
+            cx.set_global(Sessions::default());
+        }
+        let existing = cx
+            .global::<Sessions>()
+            .0
+            .get(&key)
+            .and_then(WeakEntity::upgrade);
+        let session = existing.unwrap_or_else(|| {
+            let list = forwards::list(cx);
+            let access = source.access.clone();
+            let session = cx.new(|cx| {
+                let observer = cx.observe(&list, |this: &mut Session, _, cx| this.sync(cx));
+                Session {
+                    target,
+                    runtime,
+                    access,
+                    list,
+                    owner: None,
+                    snapshot: None,
+                    label: "Forward".into(),
+                    words: "".into(),
+                    enabled: true,
+                    _list: observer,
+                    _owner: None,
+                }
+            });
+            session.update(cx, |this, cx| this.sync(cx));
+            cx.global_mut::<Sessions>()
+                .0
+                .retain(|_, session| session.upgrade().is_some());
+            cx.global_mut::<Sessions>()
+                .0
+                .insert(key, session.downgrade());
+            session
         });
-        session.update(cx, |this, cx| this.sync(cx));
         self.snapshot = session.read(cx).snapshot.clone();
         self.words = Some(session.read(cx).words.clone());
         self._subscription = Some(cx.observe(&session, move |this, _, cx| changed(this, cx)));
@@ -137,6 +180,8 @@ impl Binding {
             Some(State::Listening(local_port)) => ResultsRoute::Forward {
                 local_port: *local_port,
             },
+            Some(State::Starting) => ResultsRoute::Waiting(ResultsWait::Starting),
+            Some(State::NoReadyPod) => ResultsRoute::Waiting(ResultsWait::NoReadyPod),
             Some(State::Ended(end)) => ResultsRoute::Ended(match end {
                 ForwardEnd::Stopped => "stopped",
                 ForwardEnd::PodGone(_) => "the pod went away",
@@ -194,29 +239,12 @@ impl Session {
             self.enabled = true;
             return;
         }
-        let (label, words, enabled) = match self.snapshot.as_ref().map(|snapshot| &snapshot.state) {
-            None => (
-                "Forward",
-                "Tekton Results isn't forwarded yet".to_owned(),
-                true,
-            ),
-            Some(State::Starting) => (
-                "Starting…",
-                "Tekton Results forward is starting".into(),
-                false,
-            ),
-            Some(State::Listening(_)) => (
-                "Listening",
-                "Tekton Results forward is listening".into(),
-                false,
-            ),
-            Some(State::NoReadyPod) => (
-                "No ready pod",
-                "Tekton Results forward has no ready pod".into(),
-                false,
-            ),
+        let (words, enabled) = match self.snapshot.as_ref().map(|snapshot| &snapshot.state) {
+            None => ("Tekton Results isn't forwarded yet".to_owned(), true),
+            Some(State::Starting) => (ResultsWait::Starting.words().into(), false),
+            Some(State::Listening(_)) => ("Tekton Results forward is listening".into(), false),
+            Some(State::NoReadyPod) => (ResultsWait::NoReadyPod.words().into(), false),
             Some(State::Ended(end)) => (
-                "Forward",
                 match end {
                     ForwardEnd::Stopped => "Tekton Results forward ended: stopped".into(),
                     ForwardEnd::PodGone(why) | ForwardEnd::TargetDeleted(why) => {
@@ -227,7 +255,7 @@ impl Session {
                 true,
             ),
         };
-        self.label = label.into();
+        self.label = "Forward".into();
         self.words = if enabled {
             format!("{words} · Forward (F)").into()
         } else {

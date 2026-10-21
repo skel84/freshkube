@@ -107,7 +107,9 @@ There are no row buttons. If that entry is not open, **Switch to ⟨entry⟩** u
 the guarded switch/link path to the Service's Ports section. Switching starts
 nothing: Forward is still an explicit action.
 
-`freshkube-applications/src/results_forward/` keeps each page's route subscription.
+`freshkube-applications/src/results_forward/` shares the selected owner between
+the list and change page through a weak session registry. Their route subscriptions
+and explicit commands live in `changes/results.rs` and `change/results.rs`.
 Only its explicit action calls the app's `ForwardList`; opening, showing,
 refreshing or reloading a page never starts or restarts a forward. The list owns
 the listener and guard, so hiding or closing the page and replacing its source
@@ -115,16 +117,23 @@ leave the forward running in Ports.
 
 `freshkube-resources/src/forwards/matching.rs` matches the full connection identity,
 namespace, Service name and Service port, including the Service target kind.
-A consumer retains the selected owner through Stop or Remove; another matching
+The initial match prefers a running owner to a newer ended one. Both pages
+retain the selected owner through Stop or Remove; another matching
 forward cannot silently replace it. Its read identity includes the owner's
 `(id, start_count)` epoch, alongside the page's source/setup/change identity and
 request generation. Restart changes the epoch even if it reuses the local port.
-Owner changes cancel old reads and reject late replies. Hidden pages invalidate
+Only route or epoch changes cancel old reads and reject late replies. They
+retain the shown data, selection and open Inspector while reading again; the
+last read is marked stale. Other forward notifications update status without
+reading again. Hidden pages invalidate
 work without starting a new read. A changed setup triple selects a different
 route and leaves the old forward alive; Reload rebuilds the Results client with
 current token and CA inputs.
 
-Starting and No ready pod are nonterminal next steps. Listening supplies the
+Starting and No ready pod are nonterminal next steps, with the same words in
+the read and status bar. The disabled action stays **Forward**, with state in
+its tooltip and the status bar. An unconfigured Results entry adds no forward
+status or action. Listening supplies the
 owner's actual nonzero local port. Only the owner's terminal state becomes
 `Route::Ended`; the next-step text retains its concrete reason. TLS failures,
 HTTP refusals and broken Results responses remain ordinary Results errors while
@@ -139,7 +148,8 @@ owner states, restart epochs and removal. The focused headless tests in
 Kubernetes portforward websocket and a loopback TLS Results server with invented
 certificates and temporary files. They exercise both explicit actions, archived
 reads, Stop/restart, owner retention, setup/source changes, hidden pages, late
-replies and ordinary transport failures. No cluster or smoke session was used
+replies, retained rows and Inspector during Starting/Listening and pod rollout,
+shared ownership through Remove without duplicate starts, and ordinary transport failures. No cluster or smoke session was used
 for this slice.
 
 ## Build order

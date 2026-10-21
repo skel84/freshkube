@@ -34,13 +34,14 @@ impl ChangePage {
     }
 
     fn results_changed(&mut self, cx: &mut Context<Self>) {
+        let before = (self.results.route(), self.results.epoch());
         self.results.sync(cx);
-        self.loader.reset();
-        self.stale = None;
-        self.hide_outcomes();
-        self.show(self.fetch.unread());
-        if self.visible {
-            self.read(None, cx);
+        if before != (self.results.route(), self.results.epoch()) {
+            self.loader.retain_stale(self.results_identity());
+            self.stale = None;
+            if self.visible {
+                self.read(None, cx);
+            }
         }
         cx.notify();
     }
@@ -67,12 +68,21 @@ impl ChangePage {
             return None;
         }
         let session = self.results.session.as_ref()?.read(cx);
+        let words = if self.loader.is_stale() {
+            format!(
+                "{} · Showing the last read while reading again",
+                session.words
+            )
+            .into()
+        } else {
+            session.words.clone()
+        };
         Some(
             Button::new("change-forward-results")
                 .outline()
                 .xsmall()
                 .label(session.label.clone())
-                .tooltip(session.words.clone())
+                .tooltip(words)
                 .disabled(!session.enabled)
                 .on_click(cx.listener(|this, _, _, cx| this.forward_results(cx))),
         )

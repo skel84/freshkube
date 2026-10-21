@@ -7,9 +7,6 @@
 //! refresh keeps the last answer, marked stale.
 use std::time::Duration;
 
-#[path = "../results_forward/change.rs"]
-mod results_forward;
-
 use chrono::{DateTime, Utc};
 use freshkube_core::snapshot::Request;
 use freshkube_delivery::change::Change;

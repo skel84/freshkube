@@ -13,8 +13,7 @@
 //! drops the read in flight. Another connection drops what was read.
 pub(crate) mod display;
 pub(crate) mod outcome;
-#[path = "../results_forward/changes.rs"]
-mod results_forward;
+mod results;
 mod table;
 mod view;
 
