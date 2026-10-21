@@ -26,7 +26,7 @@ Each cluster entry in `freshkube.yaml` has a level ([SETUP_FILE.md](SETUP_FILE.m
 | `open` | reversible actions skip their confirmation |
 
 - **Never inferred.** No code reads a context's name, an entry's id or its role to choose a level.
-- **A skipped entry stays closed.** An entry skipped because its `protection` value is unknown does not become `guarded` through its context: that context is `read-only` until the file is fixed.
+- **A skipped entry stays closed.** An entry skipped because its `protection` value is unknown does not become `guarded` through its context: that context is `read-only` until the file is fixed. A row skipped for another fault keeps a `read-only` or `protected` level of its own the same way.
 - **Two entries on one context:** the stricter level wins, in the order `read-only`, `protected`, `guarded`, `open`.
 - A person sets the level, in Settings' Clusters Inspector or in the file. No action changes it, and an agent's checks never do.
 
