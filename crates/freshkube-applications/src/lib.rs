@@ -80,7 +80,9 @@ use freshkube_probe::perf;
 use freshkube_resources as resources;
 use freshkube_ui::ui;
 
+use freshkube_core::job::OwnedJob;
 use freshkube_delivery::change::live::Mapping;
+use freshkube_delivery::github::{Error as GitHubError, Handle as GitHubHandle, OPEN_DEADLINE};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -294,6 +296,22 @@ pub struct ApplicationsPage {
     evidence_result: Option<freshkube_core::setup::Evidence>,
     build_namespace: Option<String>,
     stage_naming: Option<freshkube_core::setup::StageNaming>,
+    /// GitHub's client for the setup now loaded, replaced with each reload
+    /// and so with its memo, ETags and budget. `None` while a token is
+    /// being read, and when it could not be: never an anonymous client in
+    /// its place.
+    github: Option<GitHubHandle>,
+    /// Which reload's client `github` is; a late open for an older one is
+    /// dropped.
+    github_revision: u64,
+    github_open: Option<(OwnedJob, Task<()>)>,
+    /// The GitHub entry of the setup `github` was made for: a reload that
+    /// leaves it as it was keeps the client, and with it what the client
+    /// knows of the rate limit.
+    github_entry: Option<freshkube_core::setup::GitHub>,
+    /// Why GitHub can't be read though the setup names a token, in words
+    /// with their next step; shown beside the setup file's problem.
+    github_problem: Option<SharedString>,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
@@ -421,6 +439,11 @@ impl ApplicationsPage {
             evidence_result: None,
             build_namespace: None,
             stage_naming: None,
+            github: None,
+            github_revision: 0,
+            github_open: None,
+            github_entry: None,
+            github_problem: None,
             source: None,
             visible: false,
             variant,
@@ -544,7 +567,24 @@ impl ApplicationsPage {
             return;
         }
         freshkube_probe::probe::hit("applications.setup_handoff");
-        self.setup_problem = problem.clone();
+        self.setup_problem = problem;
+        self.push_problem(cx);
+    }
+
+    /// What the pages warn of: the setup file's problem, then why GitHub
+    /// isn't set up.
+    fn problem(&self) -> Option<SharedString> {
+        match (&self.setup_problem, &self.github_problem) {
+            (Some(file), Some(github)) => {
+                Some(format!("{}. {github}", file.trim_end_matches('.')).into())
+            }
+            (Some(only), None) | (None, Some(only)) => Some(only.clone()),
+            (None, None) => None,
+        }
+    }
+
+    fn push_problem(&mut self, cx: &mut Context<Self>) {
+        let problem = self.problem();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));
         }
@@ -581,6 +621,8 @@ impl ApplicationsPage {
             .and_then(|delivery| delivery.stage_naming.clone());
         let naming_changed = naming != self.stage_naming;
         self.stage_naming = naming;
+        self.open_github(setup, cx);
+        self.push_problem(cx);
         let across = self.across();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.reload_setup(&across, cx));
@@ -598,6 +640,76 @@ impl ApplicationsPage {
                 self.read(cx);
             }
         }
+    }
+
+    /// A GitHub client for the setup just loaded, unless its GitHub entry is
+    /// as it was and a client was made for it. Without a token it exists at
+    /// once; with one, the token is had off the UI thread (the key store, or
+    /// `gh`) and the pages read without GitHub until it is. A token that
+    /// can't be had leaves no client, never an anonymous one, and says why.
+    fn open_github(&mut self, setup: &freshkube_core::setup::Setup, cx: &mut Context<Self>) {
+        let entry = setup
+            .delivery
+            .as_ref()
+            .and_then(|delivery| delivery.github.clone());
+        let made = self.github.is_some() || self.github_open.is_some();
+        if made && self.github_entry == entry {
+            return;
+        }
+        self.github_entry = entry;
+        self.github_revision += 1;
+        let revision = self.github_revision;
+        self.github_open = None;
+        self.set_github_problem(None);
+        let source = self.github_entry.as_ref().and_then(|github| github.token);
+        let Some(source) = source else {
+            self.github = GitHubHandle::anonymous(revision).ok();
+            return;
+        };
+        self.github = None;
+        let secrets = self.secrets.clone();
+        // Longer than `gh`'s own deadline, so a `gh` that hangs is stopped
+        // by that and worded as gh being slow; this only backs it up.
+        let gave_up = GitHubError::not_had(source);
+        let (job, receiver) = backend::spawn_job(
+            &self.runtime,
+            OPEN_DEADLINE,
+            gave_up.clone(),
+            GitHubHandle::open(source, secrets, revision),
+        );
+        let task = cx.spawn(async move |this, cx| {
+            let opened = receiver.await.unwrap_or(Err(gave_up));
+            _ = this.update(cx, |page, cx| page.github_opened(revision, opened, cx));
+        });
+        self.github_open = Some((job, task));
+    }
+
+    fn set_github_problem(&mut self, problem: Option<SharedString>) {
+        self.github_problem = problem;
+    }
+
+    /// The client a token's read opened, when it is still the one wanted;
+    /// or why there is none.
+    fn github_opened(
+        &mut self,
+        revision: u64,
+        opened: Result<GitHubHandle, GitHubError>,
+        cx: &mut Context<Self>,
+    ) {
+        if revision != self.github_revision {
+            return;
+        }
+        self.github_open = None;
+        match opened {
+            Ok(handle) => self.github = Some(handle),
+            Err(error) => {
+                self.github = None;
+                self.set_github_problem(Some(error.to_string().into()));
+            }
+        }
+        self.push_problem(cx);
+        self.update_change(cx);
+        self.update_changes(cx);
     }
 
     /// Where the change pages get what Coroot found after a deploy: the
@@ -651,6 +763,7 @@ impl ApplicationsPage {
             evidence_result: self.evidence_result.clone(),
             build_namespace: self.build_namespace.clone(),
             stage_naming: self.stage_naming.clone(),
+            github: self.github.clone(),
         }
     }
 
@@ -1028,7 +1141,7 @@ impl ApplicationsPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
             page.set_coroot(coroot, cx);
-            page.set_setup_problem(self.setup_problem.clone(), cx);
+            page.set_setup_problem(self.problem(), cx);
             page
         });
         let subscription =
