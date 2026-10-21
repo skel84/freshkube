@@ -283,6 +283,7 @@ struct Linked<'a> {
 impl Linked<'_> {
     fn hop(self, after: Option<String>) -> Hop {
         Hop {
+            cause: None,
             key: self.key,
             group: self.group,
             state: self.state,
@@ -299,6 +300,7 @@ impl Linked<'_> {
                 notice: None,
                 fields: vec![mono("Read from", self.from)],
                 link: Some(LinkDetail {
+                    cause: None,
                     confidence: self.confidence,
                     by: self.by.into(),
                     before: self.before,
@@ -540,6 +542,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             ("Verification", if runs { "Passed" } else { "Not run" }),
         ] {
             hops.push(Hop {
+                cause: None,
                 key: format!("{name}-{}", gate.to_lowercase()),
                 group,
                 state,

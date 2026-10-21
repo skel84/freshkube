@@ -340,6 +340,7 @@ mod tests {
             ("argo-refused", Variant::ArgoRefused),
             ("destination", Variant::Destination),
             ("image-only", Variant::ImageOnly),
+            ("causes", Variant::Causes),
         ] {
             assert_eq!(
                 parse(&[("FRESHKUBE_APPLICATIONS", value)]).applications,

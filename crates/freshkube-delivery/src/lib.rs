@@ -24,6 +24,7 @@ pub mod changes;
 pub(crate) mod collect;
 pub(crate) mod deployments;
 pub(crate) mod digest;
+pub mod discover;
 pub mod entry;
 pub(crate) mod github;
 pub mod join;
@@ -43,6 +44,8 @@ pub mod words;
 
 #[cfg(test)]
 mod attested;
+#[cfg(test)]
+mod cause_tests;
 #[cfg(test)]
 mod deployment_tests;
 #[cfg(test)]

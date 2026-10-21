@@ -71,7 +71,7 @@ fn every_cluster_fault_skips_one_whole_row_with_original_indexes() {
         ),
         (
             "{id: bad, role: core, context: bad, results: {token: keys.json}}",
-            "results.token",
+            "results",
         ),
         (
             "{id: bad, role: core, context: bad, results: {ca_file: relative}}",

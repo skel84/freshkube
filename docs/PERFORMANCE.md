@@ -765,3 +765,26 @@ second session the window lost the front 13 s into the second baseline run and
 the Table stopped drawing, so that pair is discarded too. An earlier start was
 refused because another copy of the app was open, and measured nothing. Raw
 reports and the runner's records stay local.
+
+### Pod-log startup and HTTP/1 watches (#637)
+
+Hyper 1.8.1 could report an HTTP/1 connection ready while its watch response
+was still open. The pool could then assign the dock's pod list or metadata GET
+to that busy connection. A deferred connection snapshot caught the pod list
+assigned to an open PersistentVolume watch; socket tracing showed no pod-list
+request written during the stalled run.
+
+Hyper 1.12.0 [withdraws stale readiness when taking a request](https://github.com/hyperium/hyper/pull/4208).
+The regression `a_watch_connection_is_busy_until_its_response_body_ends` in
+[`kube_client.rs`](../crates/freshkube-core/src/kube_client.rs) forces the race
+with Tokio's cooperative budget and an in-memory transport. It fails with the
+original dependencies and passes with the update. Its paused clock advances a
+minute during a quiet watch, then the body ends and readiness returns.
+
+Twelve-second `pod-logs 10000` probes on Intel macOS, reusing one saved release
+binary per revision, without temporary diagnostics:
+
+| Binary | Stalled / total |
+| --- | ---: |
+| Main `004b3e5e`, Hyper 1.8.1 | 2 / 40 |
+| Fixed, Hyper 1.12.0 | 0 / 40 |

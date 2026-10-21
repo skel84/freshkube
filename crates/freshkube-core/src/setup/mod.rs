@@ -40,6 +40,7 @@ pub use types::{
     Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson,
     Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming, Store, SupplyChain,
 };
+pub use validate::resolve_build_namespace;
 
 /// The comment every written file starts with.
 const HEADER: &str = "\
