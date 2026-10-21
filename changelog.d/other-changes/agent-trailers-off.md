@@ -1,0 +1,1 @@
+- Development: agent sessions no longer add tool trailers or footers to commits and pull requests.
