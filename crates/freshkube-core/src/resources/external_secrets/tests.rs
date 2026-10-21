@@ -84,23 +84,22 @@ fn missing_unknown_and_unsupported_sources_never_become_healthy() {
     assert!(summary.stores_omitted > 0);
 }
 
+use crate::fake_api::{Recorded, json as reply};
+
 /// Closed allowlist: any mutation, Secret, credential, generator, provider or
-/// other unexpected URL fails synchronously inside the fake API service.
-fn allowed(request: &http::Request<kube::client::Body>) {
-    assert_eq!(request.method(), http::Method::GET, "mutation request");
-    assert!(
-        matches!(
-            request.uri().path(),
+/// other unexpected URL is answered 500 by the fake and fails the test when
+/// it asserts on the recorded requests after the read.
+fn allowed(request: &Recorded) -> bool {
+    request.method == http::Method::GET
+        && matches!(
+            request.path.as_str(),
             "/apis"
                 | "/apis/external-secrets.io/v1"
                 | "/apis/external-secrets.io/v1beta1"
                 | "/apis/external-secrets.io/v1beta1/namespaces/paper-kites/externalsecrets/lantern-api"
                 | "/apis/external-secrets.io/v1/namespaces/paper-kites/secretstores/meadow-store"
                 | "/apis/external-secrets.io/v1/clustersecretstores/shared-meadow"
-        ),
-        "unexpected read: {}",
-        request.uri()
-    );
+        )
 }
 
 #[test]
@@ -111,59 +110,52 @@ fn fake_api_guard_rejects_secrets_credentials_and_all_mutation_verbs() {
             "GET",
             "/api/v1/namespaces/paper-kites/secrets/provider-auth",
         ),
-        ("GET", "https://provider.example.invalid/credentials"),
+        ("GET", "/credentials"),
         ("POST", "/apis"),
         ("PUT", "/apis"),
         ("PATCH", "/apis"),
         ("DELETE", "/apis"),
     ] {
+        let recorder = crate::fake_api::Recorder::default();
+        recorder.record(
+            &http::Request::builder()
+                .method(method)
+                .uri(path)
+                .body(())
+                .unwrap(),
+        );
         assert!(
-            std::panic::catch_unwind(|| allowed(
-                &http::Request::builder()
-                    .method(method)
-                    .uri(path)
-                    .body(kube::client::Body::empty())
-                    .unwrap()
-            ))
-            .is_err()
+            std::panic::catch_unwind(|| recorder.assert_all("the allowlist", allowed)).is_err(),
+            "{method} {path}"
         );
     }
 }
 
 #[tokio::test]
 async fn fake_api_allows_only_external_secret_and_status_reads() {
-    use http::{Request, Response};
-    use kube::client::Body;
-    use std::{
-        convert::Infallible,
-        sync::{Arc, Mutex},
-    };
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let sink = seen.clone();
-    let api = tower::service_fn(move |request: Request<Body>| {
-        let path = request.uri().path().to_owned();
-        sink.lock()
-            .unwrap()
-            .push((request.method().to_string(), path.clone()));
-        allowed(&request);
-        let response = match path.as_str() {
-            "/apis" => {
-                json!({"groups":[{"name":"external-secrets.io","preferredVersion":{"version":"v1"},"versions":[{"version":"v1"},{"version":"v1beta1"}]}]})
-            }
-            "/apis/external-secrets.io/v1" => {
-                json!({"resources":[{"name":"secretstores","kind":"SecretStore","namespaced":true,"verbs":["get","list","watch"]},{"name":"clustersecretstores","kind":"ClusterSecretStore","namespaced":false,"verbs":["get","list","watch"]}]})
-            }
-            "/apis/external-secrets.io/v1beta1" => json!({"resources":[]}),
-            "/apis/external-secrets.io/v1beta1/namespaces/paper-kites/externalsecrets/lantern-api" => {
-                object()
-            }
-            _ => {
-                json!({"metadata":{"name":"not-retained"},"spec":{"provider":{"fake":{"auth":{"secretRef":{"name":"provider-auth"}},"password":"invented-sensitive-sentinel"}}},"status":{"conditions":[{"type":"Ready","status":"True","reason":"Valid","message":"Store validated"}]}})
-            }
-        };
-        async move { Ok::<_, Infallible>(Response::new(Body::from(response.to_string().into_bytes()))) }
+    let (client, recorder) = crate::fake_api::client(|request| {
+        if !allowed(request) {
+            return None;
+        }
+        Some(reply(
+            200,
+            match request.path.as_str() {
+                "/apis" => {
+                    json!({"groups":[{"name":"external-secrets.io","preferredVersion":{"version":"v1"},"versions":[{"version":"v1"},{"version":"v1beta1"}]}]})
+                }
+                "/apis/external-secrets.io/v1" => {
+                    json!({"resources":[{"name":"secretstores","kind":"SecretStore","namespaced":true,"verbs":["get","list","watch"]},{"name":"clustersecretstores","kind":"ClusterSecretStore","namespaced":false,"verbs":["get","list","watch"]}]})
+                }
+                "/apis/external-secrets.io/v1beta1" => json!({"resources":[]}),
+                "/apis/external-secrets.io/v1beta1/namespaces/paper-kites/externalsecrets/lantern-api" => {
+                    object()
+                }
+                _ => {
+                    json!({"metadata":{"name":"not-retained"},"spec":{"provider":{"fake":{"auth":{"secretRef":{"name":"provider-auth"}},"password":"invented-sensitive-sentinel"}}},"status":{"conditions":[{"type":"Ready","status":"True","reason":"Valid","message":"Store validated"}]}})
+                }
+            },
+        ))
     });
-    let client = Client::new(api, "paper-kites");
     let document = get_object(&client, &kind(), Some("paper-kites"), "lantern-api")
         .await
         .unwrap();
@@ -176,7 +168,7 @@ async fn fake_api_allows_only_external_secret_and_status_reads() {
             "True"
         );
     }
-    let mut actual = seen.lock().unwrap().clone();
+    let mut actual = recorder.lines();
     actual.sort();
     let mut expected = [
         "/apis",
@@ -186,7 +178,7 @@ async fn fake_api_allows_only_external_secret_and_status_reads() {
         "/apis/external-secrets.io/v1/namespaces/paper-kites/secretstores/meadow-store",
         "/apis/external-secrets.io/v1/clustersecretstores/shared-meadow",
     ]
-    .map(|path| ("GET".to_owned(), path.to_owned()));
+    .map(|path| format!("GET {path}"));
     expected.sort();
     assert_eq!(actual, expected);
     let projected = format!("{reads:?}");
@@ -203,23 +195,23 @@ async fn fake_api_allows_only_external_secret_and_status_reads() {
 
 #[tokio::test]
 async fn refused_missing_and_unknown_store_status_are_distinct() {
-    use http::{Request, Response};
-    use kube::client::Body;
     for code in [200, 403, 404, 500, 0, 1] {
-        let api = tower::service_fn(move |request: Request<Body>| {
-            allowed(&request);
-            let (status, body) = match request.uri().path() {
-                "/apis" if code == 0 => (200, json!({"groups":[]})),
-                "/apis/external-secrets.io/v1" if code == 1 => (200, json!({"resources":[]})),
-                "/apis" => (
+        let (client, recorder) = crate::fake_api::client(move |request| {
+            if !allowed(request) {
+                return None;
+            }
+            Some(match request.path.as_str() {
+                "/apis" if code == 0 => reply(200, json!({"groups":[]})),
+                "/apis/external-secrets.io/v1" if code == 1 => reply(200, json!({"resources":[]})),
+                "/apis" => reply(
                     200,
                     json!({"groups":[{"name":"external-secrets.io","versions":[{"version":"v1"}]}]}),
                 ),
-                "/apis/external-secrets.io/v1" => (
+                "/apis/external-secrets.io/v1" => reply(
                     200,
                     json!({"resources":[{"name":"secretstores","kind":"SecretStore","namespaced":true,"verbs":["get","list","watch"]},{"name":"clustersecretstores","kind":"ClusterSecretStore","namespaced":false,"verbs":["get","list","watch"]}]}),
                 ),
-                _ => (
+                _ => reply(
                     code,
                     if code == 200 {
                         json!({"status":{"conditions":null}})
@@ -227,18 +219,9 @@ async fn refused_missing_and_unknown_store_status_are_distinct() {
                         json!({"kind":"Status","status":"Failure","reason":"Synthetic","message":"Invented store read failed","code":code})
                     },
                 ),
-            };
-            async move {
-                Ok::<_, std::convert::Infallible>(
-                    Response::builder()
-                        .status(status)
-                        .body(Body::from(body.to_string().into_bytes()))
-                        .unwrap(),
-                )
-            }
+            })
         });
-        let reads =
-            read_external_secret_stores(&Client::new(api, "paper-kites"), &project(object())).await;
+        let reads = read_external_secret_stores(&client, &project(object())).await;
         for read in reads {
             assert_eq!(read.api_absent, code <= 1);
             match code {
@@ -249,38 +232,32 @@ async fn refused_missing_and_unknown_store_status_are_distinct() {
                 _ => assert!(read.status.is_err()),
             }
         }
+        recorder.assert_all("the external-secrets allowlist", allowed);
     }
 }
 
 #[tokio::test]
 async fn incomplete_store_discovery_does_not_claim_the_api_is_absent() {
-    use http::{Request, Response};
-    use kube::client::Body;
-    let api = tower::service_fn(|request: Request<Body>| {
-        allowed(&request);
-        let (code, body) = match request.uri().path() {
-            "/apis" => (
+    let (client, recorder) = crate::fake_api::client(|request| {
+        if !allowed(request) {
+            return None;
+        }
+        match request.path.as_str() {
+            "/apis" => Some(reply(
                 200,
                 json!({"groups":[{"name":"external-secrets.io","versions":[{"version":"v1"},{"version":"v1beta1"}]}]}),
-            ),
-            "/apis/external-secrets.io/v1" => (200, json!({"resources":[]})),
-            "/apis/external-secrets.io/v1beta1" => (
+            )),
+            "/apis/external-secrets.io/v1" => Some(reply(200, json!({"resources":[]}))),
+            "/apis/external-secrets.io/v1beta1" => Some(reply(
                 403,
                 json!({"kind":"Status","status":"Failure","code":403,"reason":"Forbidden","message":"Invented discovery refusal"}),
-            ),
-            _ => panic!("no store is known to be served"),
-        };
-        async move {
-            Ok::<_, std::convert::Infallible>(
-                Response::builder()
-                    .status(code)
-                    .body(Body::from(body.to_string().into_bytes()))
-                    .unwrap(),
-            )
+            )),
+            // No store is known to be served, so no store read is allowed: the 500 and the
+            // recorded line fail the assertion below.
+            _ => None,
         }
     });
-    let reads =
-        read_external_secret_stores(&Client::new(api, "paper-kites"), &project(object())).await;
+    let reads = read_external_secret_stores(&client, &project(object())).await;
     for read in reads {
         assert!(!read.api_absent);
         let error = read.status.unwrap_err();
@@ -288,4 +265,7 @@ async fn incomplete_store_discovery_does_not_claim_the_api_is_absent() {
         assert!(error.message.contains("discovery refusal"));
         assert!(!error.message.contains("not served"));
     }
+    recorder.assert_all("discovery only, no store read", |request| {
+        allowed(request) && request.path.split('/').count() <= 4
+    });
 }
