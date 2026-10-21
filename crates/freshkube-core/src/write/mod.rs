@@ -4,4 +4,4 @@
 
 mod protection;
 
-pub use protection::Protection;
+pub use protection::{Protection, READ_ONLY_REASON};

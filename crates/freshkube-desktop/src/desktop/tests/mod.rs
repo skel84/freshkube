@@ -12,6 +12,7 @@ mod motion;
 mod observability;
 mod operations;
 mod overview;
+mod protection;
 mod rail;
 mod screens;
 mod services;

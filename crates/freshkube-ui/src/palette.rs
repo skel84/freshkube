@@ -360,4 +360,32 @@ mod tests {
             assert!(ground >= 3., "delta {delta}: on the light card at {ground}");
         }
     }
+
+    /// A protection level's tag reads at 4.5:1 in both themes, wherever it
+    /// sits: on the header's switcher (`surface_2`), on a card and on the
+    /// page.
+    #[test]
+    fn every_protection_tag_reads_in_both_themes() {
+        use crate::level::Mark;
+        for (theme, p) in [("light", light()), ("dark", dark())] {
+            for (under, background) in [
+                ("surface", p.surface),
+                ("surface_2", p.surface_2),
+                ("content", content(theme)),
+            ] {
+                for mark in Mark::ALL {
+                    let (fill, ink) = mark.inks(&p);
+                    let ground = over_hsla(fill, background);
+                    let read = contrast(over(ink, ground), over(ground, ground));
+                    assert!(read >= 4.5, "{theme} {mark:?} on {under}: {read}");
+                }
+            }
+        }
+    }
+
+    /// `top` over the opaque `under`, as an opaque colour.
+    fn over_hsla(top: Hsla, under: Hsla) -> Hsla {
+        let [r, g, b] = over(top, under);
+        gpui_kit::Rgba { r, g, b, a: 1. }.into()
+    }
 }

@@ -37,6 +37,7 @@ impl Pilot {
                     if *setup_changed {
                         this.rebuild_switcher(cx);
                     }
+                    this.prepare_protection(cx);
                     this.sync_setup_connection(window, cx);
                     cx.notify();
                 }

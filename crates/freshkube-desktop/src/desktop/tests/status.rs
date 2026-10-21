@@ -227,9 +227,9 @@ fn etcd_and_security_fill_the_status_bar(cx: &mut TestAppContext) {
 
 /// In the narrowest window, a page's segment drops its minor parts and
 /// then its other parts before its warnings. Example mode's bar is about
-/// 200 px narrower than a live one, for Simulate failure and Example data:
-/// at the largest text the first part goes there, and even the warnings
-/// are cut, but the first one still leads.
+/// 200 px narrower than a live one, for Simulate failure and Example data.
+/// The protection level's tag keeps its word (#852), so at the largest text
+/// the segment is only what is left beside it.
 #[gpui_kit::test]
 fn a_narrow_status_bar_drops_minor_parts_and_keeps_the_toned_ones(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 760., 560.);
@@ -265,22 +265,27 @@ fn a_narrow_status_bar_drops_minor_parts_and_keeps_the_toned_ones(cx: &mut TestA
                 assert!(!shown.contains("example data"), "{room}");
                 assert!(!shown.contains("updated"), "{room}");
                 assert!(!shown.contains("no alerts"), "a count of none goes: {room}");
+                if text_size == 20. {
+                    // The protection level's tag keeps its word whole (#852),
+                    // so here the segment is what is left beside it: it gives
+                    // way first, and can be cut to its first characters.
+                    assert!(!shown.is_empty(), "{room}");
+                    let tag = window.find("status-protection").bounds();
+                    assert!(
+                        tag.right() <= window.find("status-bar").bounds().right(),
+                        "{room}"
+                    );
+                    return;
+                }
                 let Some(first) = warnings.first() else {
                     assert!(shown.starts_with(lead), "{room}");
                     return;
                 };
                 assert!(shown.contains(first), "{room}");
-                if text_size == 13. {
-                    // Room for the first part beside the warnings.
-                    assert!(shown.contains(lead), "{room}");
-                    assert!(warnings.iter().all(|part| shown.contains(part)), "{room}");
-                    assert!(!shown.ends_with('…'), "the warnings fit whole: {room}");
-                } else {
-                    assert!(
-                        !shown.contains(lead),
-                        "warnings outrank the first part: {room}"
-                    );
-                }
+                // Room for the first part beside the warnings.
+                assert!(shown.contains(lead), "{room}");
+                assert!(warnings.iter().all(|part| shown.contains(part)), "{room}");
+                assert!(!shown.ends_with('…'), "the warnings fit whole: {room}");
             })
             .unwrap();
         }

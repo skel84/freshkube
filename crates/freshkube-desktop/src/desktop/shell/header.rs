@@ -11,6 +11,10 @@ const SEARCH_KEY: &str = match Platform::current() {
     Platform::Windows | Platform::Linux => "Ctrl+K",
 };
 
+/// Below this window width, in dp, the protection level's tag in the
+/// switcher keeps its glyph and leaves the word to the tooltip.
+const LEVEL_WORD_MIN_WIDTH: f32 = 900.;
+
 /// Below this window width, in dp, Search everything shrinks to its icon.
 /// Every page uses the same width: none adds controls to the header.
 const SEARCH_FIELD_MIN_WIDTH: f32 = 1180.;
@@ -21,7 +25,9 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let minimal = window.viewport_size().width / ui::dp_px(1., window) < 680.;
+        let width = window.viewport_size().width / ui::dp_px(1., window);
+        let minimal = width < 680.;
+        let glyph_only_level = width < LEVEL_WORD_MIN_WIDTH;
         // Clear of the window's controls: macOS's traffic lights keep their
         // size in points.
         let insets = freshkube_ui::platform::header_insets();
@@ -37,7 +43,7 @@ impl Pilot {
                         h_flex()
                             .gap(dp(8.))
                             .children(self.render_menu_button(cx))
-                            .child(self.render_context_switcher(minimal, cx)),
+                            .child(self.render_context_switcher(minimal, glyph_only_level, cx)),
                     )
                     .child(self.render_section_tabs(window, cx))
                     .child(
@@ -198,8 +204,15 @@ impl Pilot {
             .into_any_element()
     }
 
-    fn render_context_switcher(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn render_context_switcher(
+        &self,
+        compact: bool,
+        glyph_only_level: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette(cx);
+        let level = self.context_display.level;
+        let level_words = level_words(level);
         let pilot = cx.entity().downgrade();
         let full = self.context_display.full.clone();
         let open_pilot = pilot.clone();
@@ -230,7 +243,7 @@ impl Pilot {
                     .bg(p.surface_2)
                     .accessibility_label(full.clone())
                     // The connection's detail doesn't fit the one line.
-                    .tooltip(format!("{full}\n{detail}"))
+                    .tooltip(format!("{full}\n{detail}\n{level_words}"))
                     .dropdown_caret(true)
                     .child(
                         h_flex()
@@ -266,6 +279,12 @@ impl Pilot {
                                             .truncate()
                                             .child(label),
                                     ),
+                            )
+                            .child(
+                                freshkube_ui::level::tag(mark(level), glyph_only_level, cx)
+                                    .id("header-protection")
+                                    .test_support()
+                                    .aria_label(level_words.clone()),
                             ),
                     ),
             )

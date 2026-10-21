@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// The reason a control gives when a `read-only` cluster refuses a write.
+pub const READ_ONLY_REASON: &str = "This cluster is read-only.";
+
 /// How much the app asks before it writes to a cluster. A person sets it on a
 /// cluster entry; it is never inferred from a context's name, an id or a
 /// role. The order is from the strictest to the loosest.
@@ -61,6 +64,12 @@ impl Protection {
         self == Protection::ReadOnly
     }
 
+    /// Why a write is refused, when this level refuses it: what a disabled
+    /// control says.
+    pub fn refusal(self) -> Option<&'static str> {
+        self.is_read_only().then_some(READ_ONLY_REASON)
+    }
+
     /// The stricter of two levels.
     pub fn stricter(self, other: Protection) -> Protection {
         self.min(other)
@@ -117,6 +126,10 @@ mod tests {
     fn only_read_only_refuses_every_write() {
         for level in Protection::ALL {
             assert_eq!(level.is_read_only(), level == Protection::ReadOnly);
+            assert_eq!(
+                level.refusal(),
+                level.is_read_only().then_some("This cluster is read-only.")
+            );
         }
     }
 }

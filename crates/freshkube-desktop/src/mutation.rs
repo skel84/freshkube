@@ -5,6 +5,7 @@
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use freshkube_core::operations::{AuditLog, default_audit_path};
+use freshkube_core::write::Protection;
 use freshkube_ui::form::{self, Action};
 use gpui_kit::component::{Root, WindowExt, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -63,6 +64,26 @@ impl OperationTicket {
 struct GlobalOperations(Entity<Operations>);
 
 impl Global for GlobalOperations {}
+
+/// The protection level of the context the window shows, which the shell
+/// keeps current (#852). A control that writes asks it, as it asks the
+/// operation slot: one level at a time, like the one slot.
+#[derive(Default)]
+pub(crate) struct GlobalProtection(Protection);
+
+impl Global for GlobalProtection {}
+
+/// Sets the level the window's context has.
+pub(crate) fn set_protection(level: Protection, cx: &mut App) {
+    cx.set_global(GlobalProtection(level));
+}
+
+/// Why a write is refused on the context shown, if it is: the reason a
+/// disabled control gives, and the guard that makes pressing it do nothing.
+pub(crate) fn refusal(cx: &App) -> Option<&'static str> {
+    cx.try_global::<GlobalProtection>()
+        .and_then(|global| global.0.refusal())
+}
 
 impl Operations {
     /// The app-wide slot, created on first use.
