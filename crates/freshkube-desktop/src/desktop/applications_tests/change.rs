@@ -216,7 +216,7 @@ fn hops_come_in_travel_order_with_fine_stages_folded(cx: &mut TestAppContext) {
         );
         assert_eq!(
             window.find("change-hop-prod-ams-pods-link").label(),
-            Some("Unknown")
+            Some("Can't read")
         );
         // A gate has no link: it isn't joined to anything.
         assert!(
@@ -517,7 +517,7 @@ fn a_hop_shows_its_link_and_a_gate_its_stage(cx: &mut TestAppContext) {
             .label()
             .unwrap()
             .to_owned();
-        assert!(link.starts_with("Unknown"), "{link}");
+        assert!(link.starts_with("Can't read"), "{link}");
     })
     .unwrap();
 }
