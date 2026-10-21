@@ -73,3 +73,5 @@ pub use types::*;
 // Use freshkube_core::network::* explicitly
 
 pub mod kubernetes_summary;
+
+pub mod databases;
