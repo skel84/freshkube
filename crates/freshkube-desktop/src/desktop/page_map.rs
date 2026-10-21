@@ -167,6 +167,9 @@ impl Pages {
             )
         });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
+        settings_page.update(cx, |page, _| {
+            page.set_example_labels_capped(options.debug.metrics_labels_capped)
+        });
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(

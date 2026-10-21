@@ -16,7 +16,7 @@ use super::*;
 use crate::failure::{Failure, FailureKind};
 
 /// Every request the fake API saw, as `METHOD path?query`.
-type Seen = Arc<Mutex<Vec<String>>>;
+pub(super) type Seen = Arc<Mutex<Vec<String>>>;
 
 /// A fake API server. `route` gets the method, path and query and returns
 /// a status and body; status 0 never answers.
