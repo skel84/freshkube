@@ -358,7 +358,11 @@ fn a_confirmation_cannot_retarget_changed_access_selection_or_deleted_objects(
         cx.update_window(handle, |_, window, cx| {
             pane.update(cx, |pane, cx| match change {
                 0 => pane.set_active(false, cx),
-                1 => pane.set_access(ClusterAccess::EXAMPLE, cx),
+                1 => {
+                    let mut changed = target();
+                    changed.identity.connection = "changed-access".into();
+                    pane.open(changed, ClusterAccess::EXAMPLE, "2", Duration::ZERO, cx);
+                }
                 2 => pane.gone(None, cx),
                 3 => {
                     let mut replacement = target();
@@ -391,6 +395,25 @@ fn shift_r_does_not_open_refresh_from_yaml_search(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.try_find("external-refresh-confirmation").is_none());
         assert!(pane.read(cx).external_refresh.read(cx).attempt.is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn same_identity_client_handle_renewal_keeps_an_open_confirmation_valid(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    cx.update(|cx| open(&pane, ClusterAccess::EXAMPLE, cx));
+    dialog(&pane, handle, cx);
+    cx.executor().advance_clock(Duration::from_secs(16));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        pane.update(cx, |pane, cx| pane.set_access(ClusterAccess::EXAMPLE, cx));
+        window.render_frame(cx);
+        window.click("external-refresh-confirm", cx);
+        assert!(
+            pane.read(cx).external_refresh.read(cx).attempt.is_some(),
+            "fresh handles for unchanged access must preserve confirmation"
+        );
     })
     .unwrap();
 }

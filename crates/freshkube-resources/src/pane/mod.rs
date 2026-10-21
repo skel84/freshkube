@@ -358,7 +358,6 @@ impl DetailPane {
 
     /// Fresh handles for the same connection.
     pub(crate) fn set_access(&mut self, access: ClusterAccess, cx: &mut Context<Self>) {
-        self.refresh_epoch = self.refresh_epoch.wrapping_add(1);
         self.ports
             .update(cx, |ports, _| ports.set_access(access.clone()));
         self.access = Some(access);
