@@ -1,0 +1,1 @@
+- **Settings:** in Check entries, clicking an entry's name selects it, not only its text.

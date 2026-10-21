@@ -401,23 +401,23 @@ impl SettingsPage {
                 .min_w_0()
                 .gap(dp(6.))
                 .items_start()
-                .cursor_pointer()
                 .children(
                     line.tone
                         .and_then(|tone| ui::status_glyph(tone, cx))
                         .map(|glyph| div().flex_none().mt(dp(3.)).child(glyph)),
                 )
-                .child(div().flex_1().min_w_0().whitespace_normal().child(words))
-                .on_click(
-                    cx.listener(move |page, _, window, cx| page.select_label(&entry, window, cx)),
-                );
+                .child(div().flex_1().min_w_0().whitespace_normal().child(words));
             group = group.row(
                 form::row(
                     SharedString::from(format!("entries-row-{}", line.entry)),
                     line.entry.clone(),
                     content,
                 )
-                .selected(chosen),
+                .selected(chosen)
+                // The whole row selects, its label included.
+                .on_click(
+                    cx.listener(move |page, _, window, cx| page.select_label(&entry, window, cx)),
+                ),
             );
         }
         if labels.ignored > 0 {

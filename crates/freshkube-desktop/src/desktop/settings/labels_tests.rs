@@ -521,3 +521,28 @@ fn the_capped_example_says_not_read_and_suggests_nothing(cx: &mut TestAppContext
         "{shown:?}"
     );
 }
+
+#[gpui_kit::test]
+fn a_click_on_an_entrys_label_selects_it(cx: &mut TestAppContext) {
+    use crate::desktop::testing::fixture;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 1600.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Monitoring, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-check-entries", cx);
+        window.render_frame(cx);
+        window.click("entries-row-cluster-b-label", cx);
+    })
+    .unwrap();
+    let page = cx.read(|cx| pilot.read(cx).settings_page.clone());
+    cx.read(|cx| {
+        let monitoring = page.read(cx).monitoring.as_ref().unwrap();
+        assert_eq!(monitoring.labels.selected.as_deref(), Some("cluster-b"));
+    });
+}
