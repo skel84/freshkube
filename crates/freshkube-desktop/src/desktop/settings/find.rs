@@ -20,4 +20,6 @@ pub(super) struct FindIdentity {
 pub(super) enum Ignored {
     /// A destination, by the key that identifies its item.
     Destination(Key),
+    /// A metrics value suggested for an entry.
+    MetricsValue { entry: String, value: String },
 }

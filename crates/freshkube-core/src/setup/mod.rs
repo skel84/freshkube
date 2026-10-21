@@ -32,6 +32,7 @@ mod migrate;
 mod recovery;
 mod types;
 mod validate;
+pub(crate) use validate::is_label_name;
 
 pub use migrate::{Kept, Outcome, migrate};
 pub use recovery::{Recovered, Row, RowReason, Warning, read, warning_words};

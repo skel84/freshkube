@@ -265,5 +265,11 @@ async fn series(store: &Prometheus, matcher: &Matcher) -> Verdict {
     }
 }
 
+mod labels;
+pub use labels::{
+    EntryLabel, EntryLabels, LabelCounts, LabelState, MAX_UNCLAIMED, entry_labels,
+    example_label_counts, label_counts,
+};
+
 #[cfg(test)]
 mod tests;

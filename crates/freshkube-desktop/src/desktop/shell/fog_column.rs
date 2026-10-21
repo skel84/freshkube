@@ -33,18 +33,23 @@ impl Pilot {
         let mut column = self.compact_column().child(self.expand_toggle(cx));
         match self.navigation.area {
             Area::Group(slug) => {
-                if slug == "workloads" {
+                let extra = match slug {
+                    "workloads" => Some((Page::Health, "Health · ⌘5")),
+                    "storage" => Some((Page::Databases, "Databases")),
+                    _ => None,
+                };
+                if let Some((page, tooltip)) = extra {
                     column = column.child(
-                        Button::new("nav-health")
+                        Button::new(SharedString::from(format!("nav-{}", page.slug())))
                             .ghost()
                             .size(dp(36.))
-                            .icon(super::column::page_icon(Page::Health))
-                            .toggled(self.navigation.page == Page::Health)
-                            .selected(self.navigation.page == Page::Health)
-                            .tooltip("Health · ⌘5")
+                            .icon(super::column::page_icon(page))
+                            .toggled(self.navigation.page == page)
+                            .selected(self.navigation.page == page)
+                            .tooltip(tooltip)
                             .tooltip_placement(Placement::Right)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.navigate_from_keyboard(Page::Health, window, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.navigate_from_keyboard(page, window, cx)
                             })),
                     );
                 }

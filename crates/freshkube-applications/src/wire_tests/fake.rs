@@ -8,6 +8,7 @@ use std::sync::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use freshkube_core::cluster_source::{ClusterAccess, KubeClientSource};
+use freshkube_core::fake_api::{Recorded, Recorder, response, unknown};
 use freshkube_core::resources::Failure;
 use futures::future::BoxFuture;
 use kube::client::Body;
@@ -57,12 +58,58 @@ impl KubeClientSource for Client {
     }
 }
 
-pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> ClusterAccess {
+/// What the test keeps beside the access: on drop it fails if the service saw
+/// anything but a GET. The check is here, not in the
+/// service, because a panic in the service only kills the client's worker.
+pub(super) struct Reads(Recorder);
+
+impl Drop for Reads {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        self.0
+            .assert_all("an allowed GET: no Secret, no other verb", allowed);
+    }
+}
+
+/// The reads the delivery chain makes of this fake, and no other: GETs of
+/// discovery, Tekton and Kargo kinds and the Kargo API ConfigMap. No Secret.
+fn allowed(request: &Recorded) -> bool {
+    request.method == http::Method::GET
+        && matches!(
+            request.path.as_str(),
+            "/apis"
+                | "/apis/kargo.akuity.io/v1alpha1"
+                | "/apis/tekton.dev/v1"
+                | "/api/v1/namespaces/kargo/configmaps/kargo-api"
+                | "/apis/kargo.akuity.io/v1alpha1/projects"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/freights"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/freights/freight-a"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/promotions"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/stages"
+                | "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/warehouses"
+                | "/apis/tekton.dev/v1/pipelineruns"
+                | "/apis/tekton.dev/v1/namespaces/acme/taskruns"
+                | "/apis/tekton.dev/v1/namespaces/acme-builds/pipelineruns"
+                | "/apis/tekton.dev/v1/namespaces/acme-builds/taskruns"
+        )
+}
+
+pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> (ClusterAccess, Reads) {
+    let recorder = Recorder::default();
+    let log = recorder.clone();
     let service = tower::service_fn(move |request: http::Request<Body>| {
-        assert_eq!(request.method(), http::Method::GET);
-        let path = request.uri().path();
+        let recorded = log.record(&request);
+        let path = recorded.path.as_str();
         let runs = path.ends_with("/pipelineruns");
-        let body = route(path, live_runs);
+        // An allowed read gets `route`'s answer (an empty list for a kind with no
+        // items, as before); anything else is recorded and answered 500, and the
+        // test's `Reads` fails on it.
+        let answer = match allowed(&recorded) {
+            true => (200, route(path, live_runs).to_string()),
+            false => unknown(&recorded),
+        };
         let gate = gate.clone();
         let hold = runs && gate.hold.load(Ordering::SeqCst);
         if runs {
@@ -72,15 +119,11 @@ pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> ClusterAccess {
             if hold {
                 gate.release.notified().await;
             }
-            Ok::<_, Infallible>(
-                http::Response::builder()
-                    .header("content-type", "application/json")
-                    .body(Body::from(body.to_string().into_bytes()))
-                    .unwrap(),
-            )
+            Ok::<_, Infallible>(response(answer))
         }
     });
-    ClusterAccess::Live(Arc::new(Client(kube::Client::new(service, "acme"))))
+    let client = Client(kube::Client::new(service, "acme"));
+    (ClusterAccess::Live(Arc::new(client)), Reads(recorder))
 }
 
 fn route(path: &str, live_runs: bool) -> Value {
