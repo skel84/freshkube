@@ -700,3 +700,174 @@ fn the_cron_expression_is_the_tooltip_of_the_when_cell(cx: &mut TestAppContext) 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_default_fixture_groups_rows_that_need_a_look_before_the_healthy_ones(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.find("databases-group-needs-a-look");
+        window.find("databases-group-healthy");
+        let labels: Vec<_> = page
+            .read(cx)
+            .display
+            .groups
+            .iter()
+            .map(|group| (group.label, group.count))
+            .collect();
+        assert_eq!(labels, [("Needs a look", 1), ("Healthy", 1)]);
+        // Coroot sees the slow MariaDB the operator calls ready.
+        let rows = &page.read(cx).display.rows;
+        assert_eq!(rows[0].identity.name, "ledger-db");
+        assert_eq!(rows[0].chip, Some("Coroot"));
+        assert_eq!(rows[1].identity.name, "orders-db");
+        assert_eq!(rows[1].chip, Some("Both"));
+        assert_eq!(
+            rows[0].cells.iter().map(|c| c.as_ref()).collect::<Vec<_>>()[..2],
+            ["ledger-db", "MariaDB 11.4"]
+        );
+        assert_eq!(rows[0].cells[4], "Warning");
+        assert_eq!(rows[1].cells[4], "Healthy");
+        window.find("databases-row-MariaDB-shop-invented-ledger-db-text-5-chip");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn every_coroot_state_keeps_the_operators_answer_and_says_so(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    for (shape, words) in [
+        ("coroot-none", "names no Coroot cluster"),
+        ("coroot-not-found", "Coroot lists no application"),
+        ("coroot-unreachable", "The last answer is dimmed and not used"),
+    ] {
+        cx.update_window(window.into(), |_, window, cx| {
+            page.update(cx, |page, cx| {
+                page.shape = shape.into();
+                page.loader.reset();
+                page.read(cx);
+            });
+            window.render_frame(cx);
+            let rows = &page.read(cx).display.rows;
+            // The operator calls both databases ready, and nothing worsens that.
+            assert!(
+                rows.iter().all(|row| row.cells[4] == "Healthy"),
+                "{shape}: {:?}",
+                rows.iter().map(|r| r.cells[4].clone()).collect::<Vec<_>>()
+            );
+            assert!(rows.iter().all(|row| row.chip == Some("Operator") || row.chip == Some("Both")));
+            let coroot = rows[0].sections.iter().find(|s| s.id == "coroot").unwrap();
+            assert!(coroot.fields[0].value.contains(words), "{shape}: {}", coroot.fields[0].value);
+            if shape == "coroot-unreachable" {
+                // What it said before is shown, dimmed, and not used.
+                assert!(coroot.fields.iter().skip(1).all(|f| f.dim));
+                assert!(coroot.fields.len() > 1);
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn the_engine_moves_into_the_inspector_header_when_the_table_has_no_room(
+    cx: &mut TestAppContext,
+) {
+    for (width, in_table) in [(1280., false), (1800., true)] {
+        let (_runtime, page, window) = mount(cx, width);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            // Without a selection the table has the room and shows it.
+            assert!(page.read(cx).display.engine_shown());
+            let id = row_id(&page, "orders-db", cx);
+            window.click(id, cx);
+            window.render_frame(cx);
+            assert_eq!(page.read(cx).display.engine_shown(), in_table, "{width}");
+            let columns = &page.read(cx).display.columns.0;
+            assert_eq!(columns.iter().any(|c| c.label_text() == "Engine"), in_table);
+            assert_eq!(window.try_find("databases-detail-engine").is_some(), !in_table);
+            if !in_table {
+                assert_eq!(
+                    window.find("databases-detail-engine").label(),
+                    Some("PostgreSQL 16")
+                );
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn the_filter_finds_rows_by_namespace_primary_and_engine(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        for (text, found) in [
+            ("shop", 2),
+            ("ledger-db-0", 1),
+            ("orders-db-1", 1),
+            ("mariadb", 1),
+            ("postgres", 1),
+            ("warning", 1),
+            ("nothing-here", 0),
+            ("", 2),
+        ] {
+            window.click("databases-filter", cx);
+            page.update(cx, |page, cx| {
+                page.filter_input.update(cx, |input, cx| {
+                    input.set_value(text.to_owned(), window, cx);
+                });
+                page.display.set_filter(text);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            let rows = page
+                .read(cx)
+                .display
+                .lines
+                .iter()
+                .filter(|line| matches!(line, super::display::Entry::Row(_)))
+                .count();
+            assert_eq!(rows, found, "{text}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn counts_and_the_namespace_label_read_naturally(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, _, cx| {
+        let text = page.update(cx, |page, cx| page.status(cx).unwrap().text(None).to_string());
+        assert!(text.contains("2 clusters"), "{text}");
+        assert!(text.contains("1 need a look"), "{text}");
+        assert!(text.contains("All namespaces"), "{text}");
+        assert!(!text.contains("read-only"), "{text}");
+        assert!(!text.contains("/ "), "{text}");
+        assert_eq!(super::NAMESPACE_PLACEHOLDER, "Namespace · all");
+    })
+    .unwrap();
+    let inv = databases::example::shaped(at(), "mariadb");
+    let one = display_of(&inv, Mode::Clusters);
+    assert!(one.summary.starts_with("1 cluster"), "{}", one.summary);
+    let schedules = display_of(&inv, Mode::Schedules);
+    assert!(schedules.summary.starts_with("1 schedule"), "{}", schedules.summary);
+    let backups = display_of(&inv, Mode::Backups);
+    assert!(backups.summary.starts_with("1 backup"), "{}", backups.summary);
+}
+
+#[test]
+fn both_operators_failing_differently_say_one_line_each() {
+    let mut inv = databases::example::inventory(at());
+    inv.engines = vec![
+        (databases::Engine::CloudNativePg, Coverage::Complete),
+        (databases::Engine::MariaDb, Coverage::Refused),
+    ];
+    inv.backups.coverage = Coverage::Partial;
+    let display = display_of(&inv, Mode::Clusters);
+    let notice = display.notice.unwrap();
+    assert!(notice.contains("MariaDB · MariaDB operator: Not permitted"), "{notice}");
+    assert!(notice.contains("Backups: Partial / capped"), "{notice}");
+    assert!(!notice.contains("PostgreSQL"), "{notice}");
+}

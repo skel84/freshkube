@@ -127,7 +127,7 @@ impl Cron {
             (Any, Any, Any, Any) => Some("Every minute".into()),
             (Every(n), Any, Any, Any) => Some(format!("Every {n} minutes")),
             (At(m), Any, Any, Any) => Some(format!("Hourly at :{m:02}")),
-            (At(m), Every(n), Any, Any) if m == 0 => Some(format!("Every {n} hours")),
+            (At(0), Every(n), Any, Any) => Some(format!("Every {n} hours")),
             (At(m), Every(n), Any, Any) => Some(format!("Every {n} hours at :{m:02}")),
             (At(m), At(h), Any, Any) => Some(format!("Daily at {}", time(h, m))),
             (At(m), At(h), Any, At(d)) => {

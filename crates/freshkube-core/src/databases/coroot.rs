@@ -169,7 +169,7 @@ fn judge(report: &AppReport) -> (Vec<Fired>, Vec<String>, Vec<String>) {
             Status::Unknown => unused.push(check.title.clone()),
         }
     }
-    fired.sort_by(|a, b| b.status.cmp(&a.status));
+    fired.sort_by_key(|f| std::cmp::Reverse(f.status));
     (fired, ok, unused)
 }
 fn fire(check: &Check) -> Fired {

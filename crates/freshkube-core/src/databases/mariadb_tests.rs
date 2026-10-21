@@ -585,16 +585,18 @@ fn coroots_database_report_folds_ok_and_unused_checks_and_leads_with_fired_ones(
 
 #[test]
 fn a_report_with_only_unknown_checks_is_unknown_never_a_failure() {
-    let mut view = AppView::default();
-    view.reports = vec![report(
-        "Mysql",
-        vec![check(
-            "MysqlAvailability",
-            "Mysql availability",
-            Status::Unknown,
-            "",
+    let view = AppView {
+        reports: vec![report(
+            "Mysql",
+            vec![check(
+                "MysqlAvailability",
+                "Mysql availability",
+                Status::Unknown,
+                "",
+            )],
         )],
-    )];
+        ..AppView::default()
+    };
     let found = evidence::project(&view, Engine::MariaDb, now()).unwrap();
     assert!(found.fired.is_empty());
     assert_eq!(found.unused, ["Mysql availability"]);

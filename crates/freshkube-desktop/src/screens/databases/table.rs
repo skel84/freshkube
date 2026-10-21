@@ -17,6 +17,12 @@ pub(crate) struct Column {
     flexible: bool,
     pinned: bool,
 }
+impl Column {
+    #[cfg(test)]
+    pub(super) fn label_text(&self) -> &str {
+        &self.label
+    }
+}
 impl TableColumn for Column {
     fn label(&self) -> &SharedString {
         &self.label

@@ -23,7 +23,7 @@ impl Engine {
 }
 
 /// Unknown is distinct from a reported zero, false or empty collection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fact<T> {
     Known(T),
     Unknown,

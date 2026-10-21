@@ -31,7 +31,7 @@ fn backup(backup: &Backup, inv: &Inventory) -> Row {
         .map_or("Unknown", |r| r.engine.label());
     let (key, id) = identity_key(&backup.identity);
     let mut tone = tone_of(freshkube_core::HasHealth::health(&backup.state));
-    let mut headline = format!("{}", backup.state.label());
+    let mut headline = backup.state.label().to_string();
     let mut why = Vec::new();
     let mut next = Vec::new();
     if let Some(finding) = &orphan {

@@ -5,6 +5,8 @@ mod table;
 mod tests;
 mod view;
 #[cfg(test)]
+mod coroot_tests;
+#[cfg(test)]
 mod wire_tests;
 use super::{PageEventFn, PageSource, ScreenEvent, ScreenPanel, ScreenSource, TableLoading};
 use crate::{
@@ -34,6 +36,7 @@ use gpui_kit::*;
 use std::time::Duration;
 use tokio::runtime::Handle;
 const CONTEXT: &str = "Databases";
+const NAMESPACE_PLACEHOLDER: &str = "Namespace · all";
 const PREFIX: &str = "databases";
 const ON_SHOW: OnShow = OnShow::ReadIfOlder(Duration::from_secs(30));
 actions!(
@@ -103,7 +106,7 @@ impl DatabasesScreen {
             KeyBinding::new("/", Find, Some(CONTEXT)),
         ]);
         let namespace_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Namespace · all"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(NAMESPACE_PLACEHOLDER));
         let input = cx.subscribe_in(&namespace_input, window, |this, _, event, window, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 let value = this.namespace_input.read(cx).value().trim().to_owned();

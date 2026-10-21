@@ -74,11 +74,11 @@ fn row(
     };
     let engine = db.engine_label();
     let sections = vec![
-        instances(db, inv, report, now),
-        backups(db, inv, &found, archiving, window, now),
+        instances(db, report, now),
+        backups(db, inv, &found, archiving, window),
         proxy(db),
         certificates(db, now),
-        from_coroot(db, coroot, now),
+        from_coroot(db, coroot),
         conditions(db),
         sources(db, inv, coroot),
     ];
@@ -209,7 +209,6 @@ fn lag_cell(db: &Database, report: Option<&DatabaseReport>) -> (String, Option<S
 
 fn instances(
     db: &Database,
-    inv: &Inventory,
     report: Option<&DatabaseReport>,
     now: chrono::DateTime<Utc>,
 ) -> Section {
@@ -285,7 +284,6 @@ fn instances(
             "Not reported by the operator's status; a node needs a Pods read",
         ));
     }
-    let _ = inv;
     Section::new("instances", "Instances", fields)
 }
 
@@ -295,7 +293,6 @@ fn backups(
     found: &databases::BackupCoverage,
     archiving: Archiving,
     window: Option<databases::RestoreWindow>,
-    now: chrono::DateTime<Utc>,
 ) -> Section {
     let mut fields = vec![
         Field::prose(
@@ -378,7 +375,6 @@ fn backups(
             Fact::Unknown => "Unknown",
         },
     ));
-    let _ = now;
     Section::new("backups", "Backups", fields)
 }
 
@@ -446,8 +442,7 @@ fn certificates(db: &Database, now: chrono::DateTime<Utc>) -> Section {
     Section::new("certificates", "Certificates", fields)
 }
 
-fn from_coroot(db: &Database, coroot: &CorootState, now: chrono::DateTime<Utc>) -> Section {
-    use freshkube_core::coroot::Status;
+fn from_coroot(db: &Database, coroot: &CorootState) -> Section {
     let fields = match coroot {
         CorootState::NoCoroot(why) => vec![Field::prose(
             "Coroot",
@@ -473,13 +468,12 @@ fn from_coroot(db: &Database, coroot: &CorootState, now: chrono::DateTime<Utc>) 
                 .tone(ui::Tone::Warn),
             ];
             if let Some(last) = last {
-                fields.extend(report_fields(last, now).into_iter().map(Field::dimmed));
+                fields.extend(report_fields(last).into_iter().map(Field::dimmed));
             }
             fields
         }
         CorootState::Read(report) => {
-            let mut fields = report_fields(report, now);
-            let _ = Status::Ok;
+            let mut fields = report_fields(report);
             fields.push(Field::time("Read", Some(report.read_at)));
             fields
         }
@@ -488,9 +482,8 @@ fn from_coroot(db: &Database, coroot: &CorootState, now: chrono::DateTime<Utc>) 
 }
 
 /// Coroot's report: what fired first, in its words, then the folded rest.
-fn report_fields(report: &DatabaseReport, now: chrono::DateTime<Utc>) -> Vec<Field> {
+fn report_fields(report: &DatabaseReport) -> Vec<Field> {
     use freshkube_core::coroot::Status;
-    let _ = now;
     let mut fields: Vec<Field> = report
         .fired
         .iter()

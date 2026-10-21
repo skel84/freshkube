@@ -357,7 +357,7 @@ pub(super) fn proxy(
             kind: ProxyKind::MaxScale,
             running: *running,
             desired: *desired,
-            ready: ready.clone(),
+            ready: *ready,
         })),
         _ => Fact::Unknown,
     }

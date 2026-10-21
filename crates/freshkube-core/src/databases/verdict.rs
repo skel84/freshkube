@@ -110,10 +110,7 @@ pub fn lag_of(instance: &Instance, coroot: Option<&DatabaseReport>) -> Fact<Lag>
     if let Some(lag) = coroot.and_then(|report| report.lag.get(&instance.name)) {
         return Fact::Known(*lag);
     }
-    match instance.lag {
-        Fact::Known(lag) => Fact::Known(lag),
-        Fact::Unknown => Fact::Unknown,
-    }
+    instance.lag
 }
 
 fn days(duration: Duration) -> String {

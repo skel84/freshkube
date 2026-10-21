@@ -47,12 +47,7 @@ pub fn worse_of(operator: HealthIndicator, coroot: HealthIndicator) -> RowState 
             health: operator,
             source: Source::Operator,
         }
-    } else if o == 0 {
-        RowState {
-            health: coroot,
-            source: Source::Coroot,
-        }
-    } else if c > o {
+    } else if o == 0 || c > o {
         RowState {
             health: coroot,
             source: Source::Coroot,
