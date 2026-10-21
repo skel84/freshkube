@@ -127,7 +127,7 @@ async fn every_links_confidence_is_the_joins() {
 
     let mut plan = plan(&[]);
     plan.followed = Some("f-new".into());
-    plan.build_namespace = None;
+    plan.build_namespace = Ok(None);
     plan.argocd = "cluster-key".into();
     plan.environment = "cluster-key".into();
     let clusters = crate::collect::Clusters {
