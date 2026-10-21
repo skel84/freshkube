@@ -448,6 +448,12 @@ impl Destinations {
 impl Render for Destinations {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let short = page::is_short(window);
+        if self.finder.shows_group() {
+            self.width = source::fit_columns(
+                &mut self.columns,
+                (crate::screens::page_width(window) - 2.).max(0.),
+            );
+        }
         let header = self.render_header(window, cx);
         let banners = self
             .page

@@ -1,5 +1,6 @@
 //! The destinations table as a `TableSource`.
 use super::*;
+use freshkube_ui::tooltip::FollowTooltip as _;
 use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -15,6 +16,8 @@ pub(crate) struct Column {
     field: Field,
     label: SharedString,
     width: f32,
+    /// The width the texts ask for; the table's room may take some back.
+    fitted: f32,
 }
 
 impl TableColumn for Column {
@@ -51,6 +54,7 @@ pub(super) fn columns(rows: &[DestinationRow], suggested: &[DestinationRow]) -> 
         field,
         label: label.to_owned().into(),
         width,
+        fitted: width,
     };
     let all = || rows.iter().chain(suggested);
     let mut columns = vec![
@@ -83,6 +87,38 @@ pub(super) fn columns(rows: &[DestinationRow], suggested: &[DestinationRow]) -> 
     }
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
+}
+
+/// The least a column that gives room back may be.
+fn least(field: Field) -> f32 {
+    match field {
+        Field::Found => 140.,
+        Field::Destination => 160.,
+        _ => 64.,
+    }
+}
+
+/// Fits the columns to the table's own `room`: each at the width its texts
+/// ask for, and when they don't all fit, Found from gives room back first
+/// and then Destination, down to a least width each, so the last column ends
+/// inside the frame with an ellipsis. Only a narrower window than that
+/// scrolls sideways. Returns the table's width.
+pub(super) fn fit_columns(columns: &mut [Column], room: f32) -> f32 {
+    for column in columns.iter_mut() {
+        column.width = column.fitted;
+    }
+    let mut over = columns.iter().map(|column| column.width).sum::<f32>() - room;
+    for field in [Field::Found, Field::Destination] {
+        if over <= 0. {
+            break;
+        }
+        if let Some(column) = columns.iter_mut().find(|column| column.field == field) {
+            let give = (column.width - least(field)).clamp(0., over);
+            column.width -= give;
+            over -= give;
+        }
+    }
+    columns.iter().map(|column| column.width).sum()
 }
 
 impl TableSource for Destinations {
@@ -151,8 +187,19 @@ impl TableSource for Destinations {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row = line.data;
+        // A suggestion's cells carry the row's lines (its destination, what
+        // it says and where it was found) rather than only their own text.
         let text_cell = |field: &str, text: &SharedString| {
-            table::word_cell(column, format!("{}-{field}", row.id), text.clone()).test_support()
+            let id = format!("{}-{field}", row.id);
+            let tip = match row.suggested {
+                Some(_) => row.tooltip.clone(),
+                None => text.clone(),
+            };
+            table::cell(column)
+                .id(SharedString::from(format!("{id}-cell")))
+                .follow_tooltip(tip)
+                .child(table::word_cut(id, text.clone()))
+                .test_support()
         };
         let suggested = row.suggested.as_ref();
         // A suggestion that can't be accepted is marked, and says why.

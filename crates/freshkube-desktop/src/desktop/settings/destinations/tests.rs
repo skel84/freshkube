@@ -1843,4 +1843,38 @@ mod suggestions {
             assert!(!note.contains(MARKER));
         }
     }
+
+    #[gpui_kit::test]
+    fn found_from_ends_inside_the_default_window_and_cells_carry_the_rows_lines(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::desktop::tests::fixture;
+        let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.show_settings(SettingsSection::Destinations, window, cx)
+            });
+            window.render_frame(cx);
+            window.click("settings-destinations-find", cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let list = list(&view, cx);
+            let list = list.read(cx);
+            let room = crate::screens::page_width(window);
+            assert!(
+                list.width <= room,
+                "the table is {} wide in a page {room} wide",
+                list.width
+            );
+            // A row's tooltip is its destination, what it says and where it
+            // was found; its cells carry the same lines.
+            let row = &list.finder.rows[1];
+            let lines: Vec<&str> = row.tooltip.lines().collect();
+            assert_eq!(lines.len(), 3, "{lines:?}");
+            assert!(lines[0].starts_with("server https://prod-fra"));
+            assert_eq!(lines[1], "Accept to map server https://prod-fra.example.test:6443 and name prod-fra to prod-fra");
+            assert!(lines[2].starts_with("Found from: Secret cluster-prod-fra in argocd on core-fra"));
+        })
+        .unwrap();
+    }
 }
