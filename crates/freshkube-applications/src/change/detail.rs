@@ -427,6 +427,7 @@ impl ChangePage {
             .gap(dp(6.))
             .flex_wrap()
             .children(buttons)
+            .children(self.results_action(cx))
             .into_any_element()
     }
 }

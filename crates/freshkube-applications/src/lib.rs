@@ -33,6 +33,7 @@ mod display;
 mod example;
 mod links;
 mod page;
+mod results_forward;
 mod table;
 mod view;
 

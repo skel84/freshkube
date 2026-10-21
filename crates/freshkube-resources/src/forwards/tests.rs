@@ -631,3 +631,6 @@ async fn closing_the_window_asks_then_stops_every_forward(cx: &mut TestAppContex
     assert_eq!(cx.read(running), 0);
     assert!(freed(port), "the port is free once it closes");
 }
+
+#[path = "matching_tests.rs"]
+mod matching;

@@ -35,20 +35,13 @@ const MOST_RESULT_TASKS: usize = PAGE_LIMIT as usize * MAX_PAGES as usize;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Supplied by the forward's owner; this client never starts or replaces one.
-#[derive(Clone, Copy)]
-pub(crate) enum Route {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Route {
+    #[default]
     Address,
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "forward slice 2 supplies the route")
-    )]
     Forward {
         local_port: NonZeroU16,
     },
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "forward slice 2 supplies the route")
-    )]
     Ended(&'static str),
 }
 

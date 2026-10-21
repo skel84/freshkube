@@ -2428,6 +2428,7 @@ name = "freshkube-applications"
 version = "0.17.0"
 dependencies = [
  "base64",
+ "bytes",
  "chrono",
  "freshkube-core",
  "freshkube-delivery",
@@ -2441,6 +2442,9 @@ dependencies = [
  "futures",
  "gpui-kit",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "k8s-openapi",
  "kube",
  "rustls",
@@ -2448,6 +2452,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
  "tower 0.5.2",
  "tracing",
 ]

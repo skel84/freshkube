@@ -48,3 +48,10 @@ base64.workspace = true
 http.workspace = true
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }

@@ -125,6 +125,45 @@ pub struct ForwardView {
 }
 
 impl ForwardView {
+    pub(super) fn matches_service(
+        &self,
+        connection: &str,
+        namespace: &str,
+        service: &str,
+        port: u16,
+    ) -> bool {
+        self.spec.identity.resource == "services"
+            && self.spec.identity.name == service
+            && self.spec.identity.connection == connection
+            && self.spec.identity.namespace == namespace
+            && self.spec.port == port
+            && matches!(&self.spec.target, ForwardTarget::Service { name } if name == service)
+    }
+
+    pub fn snapshot(&self) -> super::Snapshot {
+        use super::State;
+        let state = match self.phase {
+            Phase::Starting => State::Starting,
+            Phase::Ended => State::Ended(self.end.clone().expect("an ended forward has a reason")),
+            Phase::Running => match self.status.as_ref().map(|status| &status.state) {
+                Some(ForwardState::Listening { .. }) => State::Listening(
+                    std::num::NonZeroU16::new(
+                        self.local_port.expect("a running forward has a port"),
+                    )
+                    .expect("a bound port is nonzero"),
+                ),
+                _ => State::NoReadyPod,
+            },
+        };
+        super::Snapshot {
+            epoch: super::Epoch {
+                id: self.id,
+                start: self.seq,
+            },
+            state,
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn run_with_status(
         &mut self,

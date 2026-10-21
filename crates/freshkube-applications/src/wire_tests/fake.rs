@@ -83,7 +83,7 @@ pub(super) fn access(live_runs: bool, gate: Arc<Gate>) -> ClusterAccess {
     ClusterAccess::Live(Arc::new(Client(kube::Client::new(service, "acme"))))
 }
 
-fn route(path: &str, live_runs: bool) -> Value {
+pub(super) fn route(path: &str, live_runs: bool) -> Value {
     if path == "/apis" {
         return json!({"groups":[
             {"name":"tekton.dev","versions":[{"version":"v1"}]},
