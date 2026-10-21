@@ -168,6 +168,29 @@ pub fn load(sources: &[PathBuf]) -> (KubeconfigReport, Option<Kubeconfig>) {
     (report, merged)
 }
 
+/// Each context of a merged kubeconfig and the server its cluster names, in
+/// the file's order. A context whose cluster is missing, or names no server,
+/// is left out. Only the address is read: no credential is loaded.
+pub fn context_servers(kubeconfig: &Kubeconfig) -> Vec<(String, String)> {
+    kubeconfig
+        .contexts
+        .iter()
+        .filter_map(|named| {
+            let wanted = &named.context.as_ref()?.cluster;
+            let server = kubeconfig
+                .clusters
+                .iter()
+                .find(|cluster| &cluster.name == wanted)?
+                .cluster
+                .as_ref()?
+                .server
+                .as_ref()
+                .filter(|server| !server.trim().is_empty())?;
+            Some((named.name.clone(), server.clone()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +356,16 @@ mod tests {
     #[test]
     fn nothing_installed_reads_no_kubeconfig() {
         assert!(kubeconfig_sources_in(&Ambient::default(), None).is_empty());
+    }
+
+    #[test]
+    fn a_context_is_listed_with_its_clusters_server_and_nothing_else() {
+        let text = "apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: https://c.example.test:6443\n    certificate-authority-data: Zm9v\n- name: bare\n  cluster: {}\ncontexts:\n- name: a\n  context:\n    cluster: c\n    user: u\n- name: b\n  context:\n    cluster: bare\n- name: c\n  context:\n    cluster: missing\nusers:\n- name: u\n  user:\n    token: marker-token\n";
+        let config: Kubeconfig = serde_yaml::from_str(text).unwrap();
+        let servers = context_servers(&config);
+        assert_eq!(
+            servers,
+            [("a".to_owned(), "https://c.example.test:6443".to_owned())]
+        );
     }
 }
