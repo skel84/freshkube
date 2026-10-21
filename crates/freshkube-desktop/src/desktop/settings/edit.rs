@@ -300,6 +300,45 @@ impl SettingsPage {
         );
     }
 
+    /// Accepts the build namespace suggestion: sets only
+    /// `delivery.build_namespace`, keeping the rest of the setup, through the
+    /// setup file's save. Refused as any save is; the banner says why.
+    pub(super) fn set_build_namespace(&mut self, namespace: String, cx: &mut Context<Self>) {
+        let refuse = |this: &mut Self, why: String, cx: &mut Context<Self>| {
+            this.notice = Some(Notice::Failed(capitalized(&why).into()));
+            cx.notify();
+        };
+        if !self.editable() {
+            let why = self.why_not_editable().to_owned();
+            return refuse(self, why, cx);
+        }
+        // A namespace, or a template that resolves to one for any project.
+        let valid = freshkube_core::setup::resolve_build_namespace(&namespace, "p").is_ok();
+        let Some(file) = self.setup_file.clone().filter(|_| valid) else {
+            return refuse(self, "that isn't a namespace name".to_owned(), cx);
+        };
+        let what = format!("Set delivery.build_namespace to {namespace}.");
+        let seen = self.seen.clone();
+        let save = file.update(cx, |file, cx| {
+            file.save_with(
+                seen,
+                move |setup| {
+                    setup
+                        .delivery
+                        .get_or_insert_with(Default::default)
+                        .build_namespace = Some(namespace);
+                },
+                cx,
+            )
+        });
+        self.notice = None;
+        self.saving = Some(cx.spawn(async move |this, cx| {
+            let outcome = save.await;
+            _ = this.update(cx, |this, cx| this.saved(what, outcome, cx));
+        }));
+        cx.notify();
+    }
+
     /// Chooses the workspace's own kubeconfig, or `None` for automatic. It
     /// stands alone, so it saves at once.
     pub(super) fn set_kubeconfig(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
