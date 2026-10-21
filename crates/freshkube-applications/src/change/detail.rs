@@ -60,7 +60,7 @@ impl Detail {
 
     /// The block's cause in words and what would confirm it, for the
     /// page's tests.
-    #[cfg(any(test, feature = "testing"))]
+    #[cfg(test)]
     pub(super) fn fix_words(&self) -> Option<(String, String)> {
         self.fix
             .as_ref()

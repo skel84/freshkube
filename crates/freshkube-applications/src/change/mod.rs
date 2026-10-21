@@ -619,10 +619,8 @@ impl ChangePage {
         let mut counts = [0; TONES.len()];
         let mut start_counted = false;
         for group in &groups {
-            if !group.folds {
-                if std::mem::replace(&mut start_counted, true) {
-                    continue;
-                }
+            if !group.folds && std::mem::replace(&mut start_counted, true) {
+                continue;
             }
             if let Some(ix) = TONES.iter().position(|(tone, ..)| *tone == group.counts_as) {
                 counts[ix] += 1;
