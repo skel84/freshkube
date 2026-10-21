@@ -70,7 +70,7 @@ fn the_link_column_says_the_cause_in_place_of_unknown(cx: &mut TestAppContext) {
             let label = row.label().unwrap();
             assert!(label.contains(&format!("link {word}")), "{key}: {label}");
             let cell = window.find(format!("change-hop-{key}-link"));
-            assert_eq!(cell.label().as_deref(), Some(word), "{key}");
+            assert_eq!(cell.label(), Some(word), "{key}");
         }
     })
     .unwrap();
