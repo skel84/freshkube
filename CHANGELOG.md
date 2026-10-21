@@ -4,6 +4,24 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.17.1 (2026-10-21)
+
+### Other changes
+
+- **Tekton Results:** the client accepts an existing forward route with verified Service-name TLS and a token account keyed by the configured Service and port; setup files allow a token and CA file with either route. Connection and response failures retain their transport reason; only an explicitly ended route reports that the forward ended. The Forward control is a separate follow-up.
+- **Supply chain:** the Changes list and change page read the transparency log when enabled in the setup file, using its optional HTTPS URL or Chains' configured address; reloads apply changed log settings and the log receives no tokens.
+- **Tests:** split the delivery chain's and Coroot client's tests by scenario, with shared helpers in each directory's `mod.rs`; test bodies and behavior are unchanged.
+- **Tests:** the Observability page's test file is split by scenario into a directory; no test changed.
+- **Pod logs:** fix an intermittent startup stall where a request waited behind another open watch.
+- **Setup file:** skip invalid cluster and destination rows with indexed warnings while keeping healthy entries in use and skipped role sources unavailable; shared configuration and credential faults still refuse the file. Settings preserves skipped rows until repaired, distinguishes recovery warnings and all-skipped clusters, names unknown roles safely, and wraps action explanations inside the window.
+- **Build namespaces:** `delivery.build_namespace` accepts `{project}` templates for each change's Kargo project; invalid resolved names refuse only that change's build reads, with a reason.
+- **Settings:** Argo CD destinations can find suggestions: Find reads Argo CD's cluster Secrets (their name, server and cluster name only), matches each server to the kubeconfig's contexts, and lists mappings to accept or ignore. Nothing is written until Accept.
+- **GitHub pull requests:** the Changes list shows where each followed change's pull request stands (open, draft, merged or closed), read from GitHub's REST API for Freight whose commit is on github.com. Anonymous by default; `delivery.github.token: gh` uses the GitHub CLI's token and `keys.json` the one saved there. The token goes to `api.github.com` only, and the pages say when GitHub is not set up, its rate limit is reached, or it did not answer.
+- **Change page:** a hop or link that can't be confirmed says why in the Link column and the Inspector (Waiting, Can't read, Not set up or Not found), with what would confirm it and the step to take; Waiting shows a clock and counts apart from warnings and unknowns, and a Stage's Freight named in Kargo's own history is now Confirmed ([#823](https://github.com/skel84/freshkube/issues/823)).
+- **Change page:** an Application's Pods card shows the pods' destination namespace instead of the Application's namespace and name.
+- **ExternalSecrets:** Resources details lead with reported sync errors, refresh information and referenced store health, without requesting the target Secret or changing the cluster.
+- **Development:** agent sessions in this repository no longer add tool trailers to commits or footers to pull requests.
+
 ## 0.17.0 (2026-10-20)
 
 ### Coroot
