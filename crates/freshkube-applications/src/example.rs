@@ -58,6 +58,9 @@ pub enum Variant {
     /// `checkout`'s Freight names an image and no commit, so its build is
     /// joined to it by the image digest.
     ImageOnly,
+    /// One change shows all four causes of an Unknown: Waiting, Can't read,
+    /// Not set up and Not found.
+    Causes,
     /// Every Deployment hop of a change shows one outcome of what Coroot
     /// found after its deploy, so a capture can show each.
     Outcome(crate::change::OutcomeKind),
@@ -66,7 +69,7 @@ pub enum Variant {
 impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
     /// `spread`, `not-found`, `unlabelled`, `stages`, `workloads`,
-    /// `unreachable`, `argo-refused`, `destination`, `image-only` or `outcome-<name>`
+    /// `unreachable`, `argo-refused`, `destination`, `image-only`, `causes` or `outcome-<name>`
     /// (`OutcomeKind::ALL` names them) from
     /// `FRESHKUBE_APPLICATIONS`, parsed into `DebugOptions` (debug and
     /// stress builds only); anything else is `Acme`.
@@ -87,6 +90,7 @@ impl Variant {
             Some("argo-refused") => Self::ArgoRefused,
             Some("destination") => Self::Destination,
             Some("image-only") => Self::ImageOnly,
+            Some("causes") => Self::Causes,
             Some(other) => other
                 .strip_prefix("outcome-")
                 .and_then(crate::change::OutcomeKind::parse)
@@ -114,6 +118,7 @@ impl Variant {
             Self::ArgoRefused => Shape::ArgoRefused,
             Self::Destination => Shape::DestinationUnreachable,
             Self::ImageOnly => Shape::ImageOnly,
+            Self::Causes => Shape::Causes,
             _ => Shape::Whole,
         }
     }
@@ -150,7 +155,7 @@ pub fn inputs(variant: Variant) -> Inputs {
         }
     }
     match variant {
-        Variant::Acme | Variant::ImageOnly | Variant::Outcome(_) => {}
+        Variant::Acme | Variant::ImageOnly | Variant::Causes | Variant::Outcome(_) => {}
         Variant::Single => {
             let kargo = cicd(&mut inputs).kargo.clone();
             inputs.sessions.retain(|s| s.key.0 == acme::CORE);

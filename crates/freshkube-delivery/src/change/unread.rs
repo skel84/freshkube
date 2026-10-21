@@ -3,9 +3,17 @@
 
 use super::*;
 
-pub(super) fn pods(workload: &Hop, cluster: &str, why: &str) -> Hop {
+pub(super) fn pods(workload: &Hop, cluster: &str, why: &str, refused: bool) -> Hop {
     let reason = format!("Pods couldn't be read: {why}");
+    // Which kind a refusing entry would refuse is not known, so no Role;
+    // a refusal offers no retry.
+    let cause = Cause::cant_read(
+        "the destination cluster's pods, to see which image they run",
+        None,
+        refused,
+    );
     Hop {
+        cause: Some(cause.clone()),
         key: format!("{}-pods", workload.key),
         group: workload.group,
         state: HealthIndicator::Unknown,
@@ -29,6 +37,7 @@ pub(super) fn pods(workload: &Hop, cluster: &str, why: &str) -> Hop {
                 value: Value::Mono(cluster.into()),
             }],
             link: Some(LinkDetail {
+                cause: Some(cause),
                 confidence: Confidence::Unknown,
                 by: "nothing".into(),
                 before: workload.name.clone(),

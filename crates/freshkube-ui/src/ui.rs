@@ -107,6 +107,9 @@ pub enum Tone {
     Died,
     #[default]
     Unknown,
+    /// Not reached yet, and nothing is wrong: drawn as a clock, counted with
+    /// neither warnings nor unknowns (docs/DESIGN.md, "Status and links").
+    Waiting,
     /// Needs an integration before it can say more (docs/DESIGN.md).
     Integration,
     /// Something to know that isn't a fault, such as errors in an
@@ -125,7 +128,7 @@ pub fn tag(tone: Tone, icon: Option<IconName>, text: impl Into<SharedString>, cx
         Tone::Good => (p.good_soft, p.good_ink),
         Tone::Warn => (p.warn_soft, p.warn_ink),
         Tone::Crit | Tone::Died => (p.crit_soft, p.crit_ink),
-        Tone::Unknown => (p.unk_soft, p.unk_ink),
+        Tone::Unknown | Tone::Waiting => (p.unk_soft, p.unk_ink),
         Tone::Integration => (p.integration.opacity(0.14), p.integration),
         Tone::Info | Tone::Accent => (p.accent_soft, p.accent),
         Tone::Outline => (transparent_black(), p.muted),
@@ -178,7 +181,8 @@ pub fn segment(button: Button, selected: bool, cx: &App) -> Button {
 /// The status language of docs/DESIGN.md, the G6 Round set: one round
 /// silhouette whose inside carries the meaning. A dot in a halo is OK, a
 /// half-filled ring a warning, a disc with a bar cut out critical, the
-/// skull a container that died, a dashed ring pending or unknown, a ring
+/// skull a container that died, a dashed ring pending or unknown, a clock
+/// waiting (not reached yet, nothing wrong), a ring
 /// with a plus integration required, and a small blue dot information. Accent and Outline carry no
 /// status and have no glyph. The glyph is decorative: whatever holds it
 /// names the state, as a tag's text, a chip's label or [`status_mark`]'s
@@ -228,7 +232,7 @@ pub fn badge_dot(tone: Tone, ring: Option<Hsla>, cx: &App) -> Div {
         Tone::Warn => p.warn,
         Tone::Good => p.good,
         Tone::Info | Tone::Accent => p.accent,
-        Tone::Unknown | Tone::Integration | Tone::Outline => p.muted,
+        Tone::Unknown | Tone::Waiting | Tone::Integration | Tone::Outline => p.muted,
     };
     let dot = div().flex_none().rounded_full().bg(color);
     match ring {
@@ -250,7 +254,7 @@ pub fn glyph_color(tone: Tone, p: &Palette) -> Option<Hsla> {
         Tone::Good => p.good,
         Tone::Warn => p.warn_ink,
         Tone::Crit | Tone::Died => p.crit,
-        Tone::Unknown => p.unk_ink,
+        Tone::Unknown | Tone::Waiting => p.unk_ink,
         Tone::Integration => p.integration,
         Tone::Info => p.accent,
         Tone::Accent | Tone::Outline => return None,
@@ -269,6 +273,7 @@ fn drawing(tone: Tone) -> Option<&'static [u8]> {
         Tone::Crit => include_bytes!("../assets/glyphs/critical.svg"),
         Tone::Died => include_bytes!("../assets/glyphs/died.svg"),
         Tone::Unknown => include_bytes!("../assets/glyphs/pending.svg"),
+        Tone::Waiting => include_bytes!("../assets/glyphs/waiting.svg"),
         Tone::Integration => include_bytes!("../assets/glyphs/integration.svg"),
         Tone::Info => include_bytes!("../assets/glyphs/info.svg"),
         Tone::Accent | Tone::Outline => return None,
@@ -626,12 +631,13 @@ mod tests {
 
     use super::*;
 
-    const STATUS: [(Tone, &str); 7] = [
+    const STATUS: [(Tone, &str); 8] = [
         (Tone::Good, "Running"),
         (Tone::Warn, "Not ready"),
         (Tone::Crit, "ImagePullBackOff"),
         (Tone::Died, "CrashLoopBackOff"),
         (Tone::Unknown, "Pending"),
+        (Tone::Waiting, "Waiting for promotion"),
         (Tone::Integration, "Needs metrics-server"),
         (Tone::Info, "3 errors in the logs"),
     ];
@@ -701,6 +707,11 @@ mod tests {
         assert_eq!(at(&died, 8., 3.), 255);
         // Pending: a ring, open in the middle.
         assert_eq!(at(&alpha(Tone::Unknown), 8., 8.), 0);
+        // Waiting: a solid ring with a clock's hands, not the dashed ring.
+        let waiting = alpha(Tone::Waiting);
+        assert_eq!(at(&waiting, 8., 6.), 255);
+        assert_eq!(at(&waiting, 5.5, 5.5), 0);
+        assert_eq!(at(&waiting, 8., 2.5), 255);
         // Integration required: a ring with a plus.
         assert_eq!(at(&alpha(Tone::Integration), 8., 8.), 255);
         // Information: a small dot, nothing around it.

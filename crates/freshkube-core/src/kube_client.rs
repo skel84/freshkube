@@ -242,6 +242,94 @@ fn in_block(ip: IpAddr, network: IpAddr, bits: u8) -> bool {
 mod tests {
     use super::*;
 
+    /// A live watch must keep its HTTP/1 connection out of the client's pool.
+    /// Force the cooperative-budget interleaving behind hyperium/hyper#4208.
+    #[tokio::test(start_paused = true)]
+    async fn a_watch_connection_is_busy_until_its_response_body_ends() {
+        use std::future::{Future, poll_fn};
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+
+        use bytes::Bytes;
+        use http_body_util::{BodyExt, Empty};
+        use hyper::client::conn::http1::{self, Connection};
+        use hyper_util::rt::TokioIo;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+        use tokio::time::timeout;
+
+        let deadline = std::time::Duration::from_secs(1);
+
+        // Drive one connection poll explicitly, so no thread or socket timing
+        // decides when its request queue runs out of cooperative budget.
+        fn drive(
+            connection: &mut Connection<TokioIo<DuplexStream>, Empty<Bytes>>,
+            cx: &mut Context<'_>,
+        ) -> Poll<()> {
+            assert!(Pin::new(connection).poll(cx).is_pending());
+            Poll::Ready(())
+        }
+
+        let (transport, mut api) = tokio::io::duplex(4096);
+        let (mut sender, mut connection) = http1::handshake(TokioIo::new(transport)).await.unwrap();
+        poll_fn(|cx| drive(&mut connection, cx)).await;
+        assert!(sender.is_ready());
+
+        let request = http::Request::get("/api/v1/pods?watch=true")
+            .body(Empty::new())
+            .unwrap();
+        let response = sender.send_request(request);
+        assert!(!sender.is_ready());
+
+        // The queued request is present, but Tokio makes poll_recv return
+        // Pending. Hyper signals readiness again before taking that request.
+        poll_fn(|cx| {
+            while let Poll::Ready(budget) = tokio::task::coop::poll_proceed(cx) {
+                budget.made_progress();
+            }
+            drive(&mut connection, cx)
+        })
+        .await;
+        tokio::task::yield_now().await;
+        poll_fn(|cx| drive(&mut connection, cx)).await;
+
+        let mut head = [0; 1024];
+        let read = timeout(deadline, api.read(&mut head))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&head[..read]).contains("watch=true"));
+        api.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n\n\r\n")
+            .await
+            .unwrap();
+        poll_fn(|cx| drive(&mut connection, cx)).await;
+        let response = timeout(deadline, response).await.unwrap().unwrap();
+        assert!(
+            !sender.is_ready(),
+            "a busy watch connection must not be reused for the pod list or GET"
+        );
+
+        // Silence is normal for a watch; elapsed time cannot make it idle.
+        tokio::time::advance(std::time::Duration::from_secs(60)).await;
+        poll_fn(|cx| drive(&mut connection, cx)).await;
+        assert!(!sender.is_ready());
+
+        api.write_all(b"0\r\n\r\n").await.unwrap();
+        let mut body = std::pin::pin!(response.into_body().collect());
+        let body = timeout(
+            deadline,
+            poll_fn(|cx| {
+                _ = drive(&mut connection, cx);
+                body.as_mut().poll(cx)
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(body.to_bytes(), "\n");
+        poll_fn(|cx| drive(&mut connection, cx)).await;
+        assert!(sender.is_ready());
+    }
+
     const PROXY: &str = "http://proxy.invalid:3128";
 
     fn config(server: &str, proxy: Option<&str>) -> Config {
