@@ -71,11 +71,25 @@ pub async fn drive(
     host: Option<ClusterAccess>,
     scope: Scope,
     remembered: Remembered,
+    publish: impl FnMut(State),
+) {
+    drive_from(State::Reading, access, host, scope, remembered, publish).await
+}
+
+/// [`drive`] that starts from what an earlier read of the same source
+/// knew, so a refresh that fails leaves that as stale evidence rather than
+/// forgetting it.
+pub async fn drive_from(
+    previous: State,
+    access: ClusterAccess,
+    host: Option<ClusterAccess>,
+    scope: Scope,
+    remembered: Remembered,
     mut publish: impl FnMut(State),
 ) {
-    let mut state = State::Reading;
+    let mut ever_found = previous.evidence().is_some();
+    let mut state = previous;
     let mut found: Option<Found> = None;
-    let mut ever_found = false;
     let mut failures = 0;
     loop {
         if found.is_none() {

@@ -703,7 +703,9 @@ fn rules(data: &RulesData, filter: &Filter, now: DateTime<Utc>) -> Display {
             key: format!("rules-{group_ix}").into(),
             tone: if broken > 0 {
                 Tone::Crit
-            } else if data.evaluated {
+            } else if data.evaluated && group.rules.iter().all(|rule| rule.health == RuleHealth::Ok)
+            {
+                // Good only when every rule is known to be OK.
                 Tone::Good
             } else {
                 Tone::Unknown

@@ -310,3 +310,15 @@ fn leaving_monitoring_hides_the_alert_page_and_an_overview_row_opens_it(cx: &mut
         );
     });
 }
+
+#[gpui_kit::test]
+fn a_refresh_keeps_the_last_read_on_show(cx: &mut TestAppContext) {
+    let (_runtime, _handle, pilot) = shell(cx, Shape::Firing);
+    let before = state(cx, &pilot).unwrap();
+    cx.update(|cx| pilot.update(cx, |pilot, cx| pilot.refresh_alerts(cx)));
+    let after = state(cx, &pilot).expect("never dropped to nothing");
+    assert!(!matches!(*after, State::Reading), "not back to Reading");
+    assert_eq!(after.health(), before.health());
+    assert_eq!(rows(cx, &pilot).len(), 5, "Overview keeps its rows");
+    assert_eq!(rail(cx, &pilot), Some(Tone::Crit));
+}

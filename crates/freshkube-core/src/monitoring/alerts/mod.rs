@@ -25,7 +25,7 @@ mod state;
 mod tests;
 
 pub use discover::{Candidate, Found, LOOKED_FOR, Rank, Remembered, find, rank, rank_all};
-pub use drive::{connect, drive};
+pub use drive::{connect, drive, drive_from};
 pub use model::{
     Alert, AlertState, Kind, Rule, RuleGroup, RuleHealth, RuleKind, Severity, Silence,
     SilenceMatcher, SilenceState,

@@ -15,7 +15,7 @@ pub const POLL: Duration = Duration::from_secs(60);
 pub enum Unknown {
     /// No Alertmanager or vmalert answered; `LOOKED_FOR` says what was tried.
     NotFound(String),
-    /// The identity may not reach it (`create` on `services/proxy`, or a
+    /// The identity may not reach it (`get` on `services/proxy`, or a
     /// URL's token).
     Refused(String),
     /// It was found but didn't answer.

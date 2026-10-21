@@ -563,6 +563,7 @@ fn a_central_store_without_the_cluster_label_shows_nothing(cx: &mut TestAppConte
     let scope = || Scope::Central {
         namespace: "monitoring".into(),
         matcher: Matcher::new("cluster", "prod-fra"),
+        host: None,
     };
     let (source, _recorder, _cluster) = cluster(Arc::new(AtomicU16::new(200)), false);
     let (_runtime, handle, page) = mount(cx, Which::Alerts, Some(source), Shape::Firing);
@@ -632,4 +633,62 @@ fn each_page_keeps_the_table_page_frame(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+#[test]
+fn a_rule_group_is_good_only_when_every_rule_is_known_to_be_ok() {
+    use freshkube_core::monitoring::alerts::{
+        Kind, Rule, RuleGroup, RuleHealth, RuleKind, RulesData,
+    };
+    let rule = |name: &str, health| Rule {
+        name: name.into(),
+        kind: RuleKind::Alerting,
+        health,
+        last_error: None,
+        last_evaluation: None,
+        query: String::new(),
+        alerts: 0,
+        firing: false,
+        source: Kind::Vmalert,
+    };
+    let group = |rules| RuleGroup {
+        name: "g".into(),
+        origin: None,
+        interval_seconds: None,
+        last_evaluation: None,
+        rules,
+    };
+    let tone = |rules| {
+        let data = RulesData {
+            groups: vec![group(rules)],
+            evaluated: true,
+            read: Vec::new(),
+            note: None,
+        };
+        super::display::derive(
+            Which::Rules,
+            Some(&super::Answer::Read(super::Data::Rules(data))),
+            None,
+            &Default::default(),
+            None,
+            now(),
+        )
+        .groups[0]
+            .tone
+    };
+    assert_eq!(tone(vec![rule("a", RuleHealth::Ok)]), Tone::Good);
+    assert_eq!(
+        tone(vec![
+            rule("a", RuleHealth::Ok),
+            rule("b", RuleHealth::Unknown)
+        ]),
+        Tone::Unknown
+    );
+    assert_eq!(
+        tone(vec![
+            rule("a", RuleHealth::Unknown),
+            rule("b", RuleHealth::Error)
+        ]),
+        Tone::Crit
+    );
 }

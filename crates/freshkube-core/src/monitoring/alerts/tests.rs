@@ -504,6 +504,7 @@ async fn a_central_read_keeps_only_the_clusters_alerts_and_says_what_it_read() {
     let scope = Scope::Central {
         namespace: "monitoring".into(),
         matcher: Matcher::new("cluster", "cluster-a"),
+        host: None,
     };
     let read = active(&found.sources, &[], &scope).await.unwrap();
     assert!(
@@ -518,6 +519,7 @@ async fn a_central_read_keeps_only_the_clusters_alerts_and_says_what_it_read() {
     let other = Scope::Central {
         namespace: "monitoring".into(),
         matcher: Matcher::new("cluster", "cluster-z"),
+        host: None,
     };
     let none = active(&found.sources, &[], &other).await.unwrap();
     assert!(none.alerts.is_empty());
@@ -871,4 +873,50 @@ async fn a_service_that_looks_right_and_doesnt_answer_is_unread_not_missing() {
         .err()
         .unwrap();
     assert!(matches!(unknown, Unknown::Unread(why) if why.contains("alertmanager-operated")));
+}
+
+#[test]
+fn another_host_for_the_central_store_is_another_scope() {
+    use crate::monitoring::scope::{Place, Resolved};
+    let central = |host: &str| Resolved::Central {
+        place: Place::Service(crate::monitoring::PrometheusService::new(
+            "metrics", "vmselect", 8481,
+        )),
+        host: Some(host.into()),
+        matcher: Matcher::new("cluster", "cluster-a"),
+    };
+    assert_eq!(Scope::of(&central("hub")), Scope::of(&central("hub")));
+    assert_ne!(
+        Scope::of(&central("hub")),
+        Scope::of(&central("other-hub")),
+        "a read against the old host must not carry on"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refresh_that_fails_leaves_the_last_read_as_stale_evidence() {
+    let (client, _) = fake(|_, path, _| {
+        if path == "/api/v1/services" {
+            (200, services_list(Vec::new()))
+        } else {
+            (503, status(503, "down"))
+        }
+    });
+    let access = ClusterAccess::Live(std::sync::Arc::new(OneClient(client)));
+    let previous = example::state(example::Shape::Firing, now());
+    let states = std::sync::Arc::new(std::sync::Mutex::new(Vec::<State>::new()));
+    let sink = states.clone();
+    let job = tokio::spawn(drive_from(
+        previous,
+        access,
+        None,
+        Scope::Cluster,
+        Remembered::default(),
+        move |state| sink.lock().unwrap().push(state),
+    ));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    job.abort();
+    let first = states.lock().unwrap()[0].clone();
+    assert!(matches!(first, State::Stale { .. }), "{first:?}");
+    assert!(first.evidence().is_some());
 }

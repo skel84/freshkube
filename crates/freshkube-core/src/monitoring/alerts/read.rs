@@ -28,6 +28,9 @@ pub enum Scope {
         /// The namespace of the store's Service.
         namespace: String,
         matcher: Matcher,
+        /// The workspace entry whose cluster hosts the store's Service,
+        /// when it isn't the open one: another host is another read.
+        host: Option<String>,
     },
     /// No source can be looked for, and why.
     Unsupported(String),
@@ -41,10 +44,11 @@ impl Scope {
             Resolved::Central {
                 place: Place::Service(service),
                 matcher,
-                ..
+                host,
             } => Self::Central {
                 namespace: service.namespace.clone(),
                 matcher: matcher.clone(),
+                host: host.clone(),
             },
             Resolved::Central {
                 place: Place::Url { .. },

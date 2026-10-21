@@ -64,6 +64,16 @@ impl Pilot {
     /// leaves the one running when it is already for them. Another
     /// identity stops the old read first.
     pub(super) fn ensure_alerts(&mut self, cx: &mut Context<Self>) {
+        self.start_alerts_if(false, cx);
+    }
+
+    /// Reads again now, as Refresh asks. The last read stays on show until
+    /// the new one answers, and a failed one leaves it as stale evidence.
+    pub(super) fn refresh_alerts(&mut self, cx: &mut Context<Self>) {
+        self.start_alerts_if(true, cx);
+    }
+
+    fn start_alerts_if(&mut self, refresh: bool, cx: &mut Context<Self>) {
         let Some(source) = self.source().kube else {
             return;
         };
@@ -72,21 +82,31 @@ impl Pilot {
         let host = monitoring.scope().host.clone();
         let remembered = monitoring.remembered_alerts();
         let identity = (source.context.clone(), source.id.clone(), scope.clone());
-        if self
+        let known = self
             .switch
             .registry
             .active()
             .alerts
             .as_ref()
-            .is_some_and(|read| read.identity == identity)
-        {
-            return;
-        }
-        self.stop_alerts(cx);
-        self.switch.registry.active_mut().alerts = Some(AlertRead {
-            identity: identity.clone(),
-            state: Arc::new(State::Reading),
-        });
+            .filter(|read| read.identity == identity)
+            .map(|read| read.state.clone());
+        let previous = match known {
+            Some(_) if !refresh => return,
+            // The same identity: only the stream starts again.
+            Some(state) => {
+                self.switch.registry.alerts_watch.stop();
+                state
+            }
+            None => {
+                self.stop_alerts(cx);
+                let state = Arc::new(State::Reading);
+                self.switch.registry.active_mut().alerts = Some(AlertRead {
+                    identity: identity.clone(),
+                    state: state.clone(),
+                });
+                state
+            }
+        };
         match source.access.clone() {
             ClusterAccess::Example(hold) => {
                 // Held, it stays unread; otherwise example data answers at
@@ -96,11 +116,15 @@ impl Pilot {
                     self.apply_alerts(identity, example::state(shape, chrono::Utc::now()), cx);
                 }
             }
-            access => self.start_alerts(identity, access, host, scope, remembered, cx),
+            access => {
+                let previous = (*previous).clone();
+                self.start_alerts(identity, access, host, scope, remembered, previous, cx)
+            }
         }
         self.rebuild_joined_nodes(cx);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_alerts(
         &mut self,
         identity: AlertIdentity,
@@ -108,6 +132,7 @@ impl Pilot {
         host: Option<ClusterAccess>,
         scope: Scope,
         remembered: Remembered,
+        previous: State,
         cx: &mut Context<Self>,
     ) {
         let runtime = self.runtime.clone();
@@ -115,7 +140,7 @@ impl Pilot {
             identity,
             &runtime,
             ALERTS_PACE,
-            move |sender| run_alerts(access, host, scope, remembered, sender),
+            move |sender| run_alerts(previous, access, host, scope, remembered, sender),
             |view: &mut Self| &mut view.switch.registry.alerts_watch,
             Self::deliver_alerts,
             cx,
@@ -126,13 +151,6 @@ impl Pilot {
     pub(super) fn stop_alerts(&mut self, _: &mut Context<Self>) {
         self.switch.registry.alerts_watch.stop();
         self.switch.registry.active_mut().alerts = None;
-    }
-
-    /// Reads again now, as Refresh asks: a new request for the same
-    /// identity, whose answer replaces the last.
-    pub(super) fn refresh_alerts(&mut self, cx: &mut Context<Self>) {
-        self.stop_alerts(cx);
-        self.ensure_alerts(cx);
     }
 
     /// The latest state of a batch, taken only for the identity the watch
@@ -176,6 +194,7 @@ impl Pilot {
 
 /// Runs the session's read on Tokio and sends each state down the channel.
 async fn run_alerts(
+    previous: State,
     access: ClusterAccess,
     host: Option<ClusterAccess>,
     scope: Scope,
@@ -183,7 +202,7 @@ async fn run_alerts(
     sender: tokio::sync::mpsc::Sender<AlertFeed>,
 ) {
     let (latest, feed) = tokio::sync::watch::channel(None);
-    alerts::drive(access, host, scope, remembered, move |state| {
+    alerts::drive_from(previous, access, host, scope, remembered, move |state| {
         latest.send_replace(Some(Arc::new(state)));
         // A full channel already points at this latest value.
         _ = sender.try_send(feed.clone());
