@@ -27,6 +27,8 @@ mod across_tests;
 mod after_tests;
 #[cfg(test)]
 mod build_namespace_tests;
+#[cfg(test)]
+mod cause_tests;
 mod derive;
 mod gates;
 mod history;
