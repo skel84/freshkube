@@ -1,4 +1,5 @@
 mod drawer;
+mod external_secrets;
 mod flash;
 mod keys;
 mod list;

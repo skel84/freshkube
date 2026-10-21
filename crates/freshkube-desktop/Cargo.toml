@@ -41,7 +41,7 @@ dirs.workspace = true
 keyring = "4"
 bytes = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
-hyper = { version = "1", features = ["server", "http1"], optional = true }
+hyper = { version = "1.12", features = ["server", "http1"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 
 [features]
@@ -70,6 +70,7 @@ libc = "0.2"
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 rustls.workspace = true
 tempfile = "3"
+base64.workspace = true
 # Render probes count in tests (`probe::count`).
 freshkube-probe = { workspace = true, features = ["counting"] }
 # The shell tests read the terminal's screen (`screen_text`, `ended`).

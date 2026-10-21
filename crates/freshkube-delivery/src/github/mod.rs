@@ -1,14 +1,23 @@
-//! GitHub pull requests, read through the `gh` CLI with GET requests only.
+//! GitHub pull requests, read with GET requests only: through the REST API
+//! ([`rest`]), which the app uses, or through the `gh` CLI, which only the
+//! delivery spike uses.
 //!
 //! A pull request joins the rest of the chain on commit SHAs: its head
 //! commit is what a pull-request build ran on, its merge commit is what a
 //! push build on the target branch ran on. Nothing here comments, reviews,
 //! merges or otherwise writes, and no token is read or printed: `gh` holds
-//! its own credentials.
+//! its own credentials, and the REST client's is never part of anything it
+//! displays.
+
+pub(crate) mod example;
+mod rest;
+#[cfg(test)]
+pub(crate) use rest::fake;
 
 use serde_json::Value;
 
 use super::digest::{is_full_sha, text};
+use super::kargo::Freight;
 use super::observation::{Meta, ObjectRef};
 use freshkube_core::resources::{Failure, FailureKind};
 
@@ -25,9 +34,20 @@ pub struct PullRequest {
     /// rebase merge it is not the head commit.
     pub merge_sha: Option<String>,
     pub base_branch: Option<String>,
+    /// What the list column and the card's header show; `None` when the
+    /// answer lacked what a summary needs.
+    pub summary: Option<PullSummary>,
 }
 
 impl PullRequest {
+    /// This pull request, read from what was kept when `stale` says so.
+    pub(crate) fn stale(mut self, stale: Option<&Stale>) -> Self {
+        if let (Some(summary), Some(stale)) = (&mut self.summary, stale) {
+            summary.stale = Some(stale.clone());
+        }
+        self
+    }
+
     /// The pull request as an object. GitHub's answer has no Kubernetes
     /// `uid` or `resourceVersion`, so it carries neither; the repository
     /// stands where a namespace would.
@@ -58,7 +78,39 @@ pub(crate) fn parse_pull_request(repo: &str, value: &Value) -> Option<PullReques
         // GitHub fills this for an open PR too, with a throwaway test merge.
         merge_sha: text(value, "/merge_commit_sha").filter(|_| merged),
         base_branch: text(value, "/base/ref"),
+        summary: rest::summary(repo, value),
     })
+}
+
+pub use rest::{ACCOUNT, Error, Handle, NotSetUp, OPEN_DEADLINE, PullState};
+pub(crate) use rest::{PullSummary, Stale, cause_of};
+
+/// `owner/name` of the GitHub repository a Freight's first commit is on:
+/// `https://github.com/owner/name`, with an optional `.git` and trailing
+/// slash. Any other host, a deeper path or anything else is no repository,
+/// and nothing is read.
+pub(crate) fn repo_of(freight: &Freight) -> Option<String> {
+    let url = url::Url::parse(freight.commits.first()?.repo_url.trim()).ok()?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("github.com")
+        || url.port().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    let mut parts = url.path_segments()?;
+    let owner = parts.next()?;
+    let name = parts.next()?;
+    let name = name.strip_suffix(".git").unwrap_or(name);
+    if !matches!(parts.next(), None | Some("")) || parts.next().is_some() {
+        return None;
+    }
+    let repo = format!("{owner}/{name}");
+    check_repo(&repo).ok()?;
+    Some(repo)
 }
 
 /// Where pull requests come from.
@@ -239,6 +291,54 @@ mod tests {
         assert_eq!(merged.merge_sha, Some("2".repeat(40)));
         assert_eq!(merged.base_branch.as_deref(), Some("main"));
         assert!(parse_pull_request("r/r", &json!({"number": 1})).is_none());
+    }
+
+    fn freight_of(repo_url: &str) -> Freight {
+        Freight {
+            project: "shop".into(),
+            name: "wonky-otter".into(),
+            meta: Meta::default(),
+            created: None,
+            alias: None,
+            warehouse: None,
+            commits: vec![crate::kargo::FreightCommit {
+                repo_url: repo_url.into(),
+                id: "a".repeat(40),
+                message: None,
+            }],
+            images: Vec::new(),
+            contents_at: "",
+            verified_in: Vec::new(),
+            approved_for: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_repository_is_only_a_commit_url_on_github_com() {
+        for (url, repo) in [
+            ("https://github.com/acme/shop", Some("acme/shop")),
+            ("https://github.com/acme/shop.git", Some("acme/shop")),
+            ("https://github.com/acme/shop/", Some("acme/shop")),
+            ("https://github.com/acme/shop.git/", Some("acme/shop")),
+            ("https://github.com/acme/shop/tree/main", None),
+            ("https://github.com/acme", None),
+            ("http://github.com/acme/shop", None),
+            ("https://gitlab.com/acme/shop", None),
+            ("https://github.com.evil.example/acme/shop", None),
+            ("https://token@github.com/acme/shop", None),
+            ("https://github.com:8443/acme/shop", None),
+            ("https://github.com/acme/shop?x=1", None),
+            ("https://github.com/acme/../shop", None),
+            ("https://github.com/acme/sh op", None),
+            ("git@github.com:acme/shop.git", None),
+            ("oci://registry.example.test/shop", None),
+            ("", None),
+        ] {
+            assert_eq!(repo_of(&freight_of(url)).as_deref(), repo, "{url}");
+        }
+        let mut none = freight_of("https://github.com/acme/shop");
+        none.commits.clear();
+        assert_eq!(repo_of(&none), None);
     }
 
     #[test]
