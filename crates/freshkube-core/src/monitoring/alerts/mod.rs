@@ -24,7 +24,10 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use discover::{Candidate, Found, LOOKED_FOR, Rank, Remembered, find, rank, rank_all};
+pub use discover::{
+    Candidate, Found, LOOKED_FOR, LOOKED_FOR_ALERTMANAGER, LOOKED_FOR_RULES, Rank, Remembered,
+    find, rank, rank_all,
+};
 pub use drive::{connect, drive, drive_from};
 pub use model::{
     Alert, AlertState, Kind, Rule, RuleGroup, RuleHealth, RuleKind, Severity, Silence,

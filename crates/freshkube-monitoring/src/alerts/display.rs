@@ -3,8 +3,9 @@
 //! that replaces it. Plain data, so a test reads it without drawing.
 use chrono::{DateTime, Utc};
 use freshkube_core::monitoring::alerts::{
-    Alert, AlertState, AlertsData, Kind, LOOKED_FOR, Rule, RuleGroup, RuleHealth, RuleKind,
-    RulesData, Severity, Silence, SilenceState, SilencesData, Unknown,
+    Alert, AlertState, AlertsData, Kind, LOOKED_FOR, LOOKED_FOR_ALERTMANAGER, LOOKED_FOR_RULES,
+    Rule, RuleGroup, RuleHealth, RuleKind, RulesData, Severity, Silence, SilenceState,
+    SilencesData, Unknown,
 };
 use freshkube_ui::ui::Tone;
 use gpui_kit::SharedString;
@@ -244,21 +245,29 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
                 Which::Silences => "No Alertmanager found".into(),
             },
             description: format!(
-                "Looked for {LOOKED_FOR}. Nothing answered, so nothing is known of {what}: \
-                 this isn't an empty list."
+                "Looked for {}. Nothing answered, so nothing is known of {what}: this isn't \
+                 an empty list.",
+                match which {
+                    Which::Alerts => LOOKED_FOR,
+                    Which::Rules => LOOKED_FOR_RULES,
+                    Which::Silences => LOOKED_FOR_ALERTMANAGER,
+                }
             )
             .into(),
-            detail: Some(reason.clone().into()),
+            detail: Some(reason.clone())
+                .filter(|reason| !reason.is_empty())
+                .map(Into::into),
             retry: true,
         },
         Unknown::Refused(reason) => State {
             id: "alerts-refused",
             icon: StateIcon::Refused,
             title: format!("Can't read {what}").into(),
-            description: "Alertmanager and vmalert are reached through the Kubernetes API's \
-                          service proxy, and it refused this one. A refused read isn't an \
-                          empty one."
-                .into(),
+            description: format!(
+                "A refused read isn't an empty one: nothing is known of {what} until it is \
+                 allowed."
+            )
+            .into(),
             detail: Some(reason.clone().into()),
             retry: true,
         },
@@ -275,7 +284,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             icon: StateIcon::Missing,
             title: "The central store's alerts have no cluster label".into(),
             description: format!(
-                "Its alerts carry no `{label}` label, so none can be told to be this \
+                "Its alerts carry no \"{label}\" label, so none can be told to be this \
                  cluster's, and none are shown. Add the label to the alerts, or name the \
                  one they carry as metrics.label in the setup file."
             )

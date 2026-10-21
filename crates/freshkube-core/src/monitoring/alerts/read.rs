@@ -261,11 +261,25 @@ impl ReadFrom {
 /// An error read from a source as the state that says it.
 pub(super) fn unknown(error: QueryError) -> Unknown {
     if error.is_refused() {
-        Unknown::Refused(error.message)
+        Unknown::Refused(refusal(error))
     } else {
         Unknown::Unread(error.message)
     }
 }
+
+/// Why a read was refused, in the alert sources' words, not Prometheus's: a
+/// token a URL refused keeps its own.
+fn refusal(error: QueryError) -> String {
+    if error.message == QueryError::token_refused().message {
+        error.message
+    } else {
+        NOT_ALLOWED.into()
+    }
+}
+
+/// What a refusal by the service proxy says.
+pub(super) const NOT_ALLOWED: &str = "Not allowed to reach Alertmanager or vmalert through the \
+    Kubernetes API's service proxy (get on services/proxy)";
 
 /// Keeps the alerts of the matcher's cluster. A store whose alerts carry no
 /// such label at all can't say whose they are, so nothing is kept and the
@@ -416,9 +430,7 @@ pub struct SilencesData {
 /// left to their matchers, which are shown as written.
 pub async fn silences_page(sources: &Sources, scope: &Scope) -> Result<SilencesData, Unknown> {
     let Some(manager) = &sources.alertmanager else {
-        return Err(Unknown::NotFound(
-            "No Alertmanager was found, and only it holds silences".into(),
-        ));
+        return Err(Unknown::NotFound(String::new()));
     };
     let silences = manager.silences().await.map_err(unknown)?;
     let alerts = scoped(

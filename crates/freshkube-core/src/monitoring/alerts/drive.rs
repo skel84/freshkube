@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use super::super::{ErrorKind, cluster_client, forget_after};
-use super::discover::{Found, LOOKED_FOR, Remembered, find};
+use super::discover::{Found, Remembered, find};
 use super::read::{Scope, active, unknown};
 use super::rules;
 use super::state::{POLL, State, Unknown};
@@ -50,8 +50,8 @@ pub async fn connect(
         Unknown::RulesOnly
     } else {
         Unknown::NotFound(match found.tried.first() {
-            Some((label, error)) => format!("{LOOKED_FOR}; {label} said: {}", error.message),
-            None => LOOKED_FOR.to_owned(),
+            Some((label, error)) => format!("{label} said: {}", error.message),
+            None => String::new(),
         })
     })
 }

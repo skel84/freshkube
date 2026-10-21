@@ -60,6 +60,12 @@ gpui_kit::assets::icon_assets!(
         Flame,
         // The Applications column's Changes.
         GitCommitHorizontal,
+        // Monitoring's Alerts, Rules and Silences, and their states.
+        BellRing,
+        BellOff,
+        ListChecks,
+        ShieldX,
+        CircleDashed,
     ]
 );
 

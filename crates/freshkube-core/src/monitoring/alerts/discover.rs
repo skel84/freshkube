@@ -16,6 +16,14 @@ pub const LOOKED_FOR: &str = "a Service named alertmanager-operated, labelled \
 app.kubernetes.io/name=alertmanager, or named like Alertmanager with a web or 9093 port, \
 and a vmalert Service on port 8880";
 
+/// What discovery looks for in an Alertmanager, for the Silences page.
+pub const LOOKED_FOR_ALERTMANAGER: &str = "a Service named alertmanager-operated, labelled \
+app.kubernetes.io/name=alertmanager, or named like Alertmanager with a web or 9093 port";
+
+/// What the Rules page looks for.
+pub const LOOKED_FOR_RULES: &str = "a vmalert Service on port 8880 and PrometheusRule objects \
+in the cluster";
+
 /// Candidates confirmed at most per kind.
 const MAX_CONFIRMED: usize = 3;
 

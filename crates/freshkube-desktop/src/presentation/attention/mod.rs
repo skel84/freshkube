@@ -316,11 +316,8 @@ fn append_alerts(state: &AlertState, rows: &mut Vec<AttentionRow>) {
             since: alert.since,
         });
     }
-    if let AlertState::Unknown(
-        unknown @ (AlertUnknown::Refused(_)
-        | AlertUnknown::Unread(_)
-        | AlertUnknown::NoClusterLabel(_)),
-    ) = state
+    if let AlertState::Unknown(unknown) = state
+        && !matches!(unknown, AlertUnknown::NotFound(_))
     {
         rows.push(AttentionRow {
             id: "attention-alerts-unknown".into(),

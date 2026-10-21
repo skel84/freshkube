@@ -286,34 +286,35 @@ impl AlertsPage {
                         let chip_id = SharedString::from(format!("{id}-label-{name}"));
                         let object = object_of(name, value, &detail.labels);
                         let (name, value) = (name.to_string(), value.to_string());
+                        // One chip, whether it opens an object or not.
+                        let chip = div()
+                            .id(chip_id)
+                            .test_support()
+                            .h(dp(20.))
+                            .px(dp(6.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(p.line)
+                            .bg(p.surface_2)
+                            .text_size(dp(11.5))
+                            .font_family(MONO_FONT)
+                            .text_color(p.ink_2)
+                            .aria_label(text.clone())
+                            .child(text.clone());
                         match object {
-                            Some(object) => Button::new(chip_id)
-                                .outline()
-                                .xsmall()
-                                .font_family(MONO_FONT)
-                                .label(text.clone())
-                                .tooltip(format!("Open {} {}", object.kind, object.name))
-                                .accessibility_label(format!("Open the object {text} names"))
+                            Some(object) => chip
+                                .role(Role::Button)
+                                .cursor_pointer()
+                                .text_color(p.accent)
+                                .hover(|style| style.bg(p.hover))
+                                .follow_tooltip(format!("Open {} {}", object.kind, object.name))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.open_label(&name, &value, cx)
                                 }))
                                 .into_any_element(),
-                            None => div()
-                                .id(chip_id)
-                                .test_support()
-                                .h(dp(20.))
-                                .px(dp(6.))
-                                .flex()
-                                .items_center()
-                                .rounded(px(3.))
-                                .border_1()
-                                .border_color(p.line)
-                                .bg(p.surface_2)
-                                .text_size(dp(11.5))
-                                .font_family(MONO_FONT)
-                                .text_color(p.ink_2)
-                                .child(text)
-                                .into_any_element(),
+                            None => chip.into_any_element(),
                         }
                     })),
             )

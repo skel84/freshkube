@@ -107,9 +107,7 @@ pub async fn page(
         groups = defined;
     }
     if groups.is_empty() && !evaluated {
-        return Err(Unknown::NotFound(
-            "No vmalert was found and the cluster holds no PrometheusRule".into(),
-        ));
+        return Err(Unknown::NotFound(String::new()));
     }
     if !evaluated {
         debug_assert!(
@@ -118,9 +116,6 @@ pub async fn page(
                 .flat_map(|group| &group.rules)
                 .all(|rule| rule.health == RuleHealth::Unknown)
         );
-        note.get_or_insert_with(|| {
-            "No vmalert evaluates these rules here, so their health is Unknown".to_owned()
-        });
     }
     Ok(RulesData {
         groups,

@@ -90,20 +90,19 @@ fn an_unread_stale_or_refused_source_is_unknown_never_quiet(cx: &mut TestAppCont
     assert!(rows(cx, &pilot).is_empty());
     assert_eq!(rail(cx, &pilot), None);
 
-    // No source found, or only definitions: not a problem, and not quiet.
-    for shape in [Shape::NotFound, Shape::RulesOnly] {
-        let (_runtime, _handle, pilot) = shell(cx, shape);
-        assert!(
-            matches!(state(cx, &pilot).unwrap().health(), Health::Unknown(_)),
-            "{shape:?}"
-        );
-        assert!(rows(cx, &pilot).is_empty(), "{shape:?} marks no row");
-        assert_eq!(rail(cx, &pilot), None, "{shape:?}");
-    }
+    // No source found: not a problem, and not quiet.
+    let (_runtime, _handle, pilot) = shell(cx, Shape::NotFound);
+    assert!(matches!(
+        state(cx, &pilot).unwrap().health(),
+        Health::Unknown(_)
+    ));
+    assert!(rows(cx, &pilot).is_empty());
+    assert_eq!(rail(cx, &pilot), None);
 
     // A source that was refused, lacks the label, or was last read before
     // a failure: Unknown, on the rail and as one Unknown row.
-    for shape in [Shape::Refused, Shape::NoLabel] {
+    // Only definitions are unknown too: the state is Unknown, so it says so.
+    for shape in [Shape::Refused, Shape::NoLabel, Shape::RulesOnly] {
         let (_runtime, _handle, pilot) = shell(cx, shape);
         assert_eq!(rail(cx, &pilot), Some(Tone::Unknown), "{shape:?}");
         let rows = rows(cx, &pilot);

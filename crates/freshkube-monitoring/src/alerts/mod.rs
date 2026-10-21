@@ -666,9 +666,7 @@ async fn live(
             tried: Vec::new(),
         },
         (Err(Unknown::RulesOnly), Which::Silences) => {
-            return Ok(Answer::Unknown(Unknown::NotFound(
-                "No Alertmanager was found, and only it holds silences".into(),
-            )));
+            return Ok(Answer::Unknown(Unknown::NotFound(String::new())));
         }
         (Err(unknown), _) => return Ok(Answer::Unknown(unknown.clone())),
     };

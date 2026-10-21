@@ -533,7 +533,10 @@ async fn a_refused_proxy_is_unknown_with_the_refusal_not_no_alerts() {
         .err()
         .unwrap();
     assert!(error.is_refused());
-    assert!(matches!(unknown_of(error), Unknown::Refused(_)));
+    assert!(
+        matches!(unknown_of(error), Unknown::Refused(why) if why.contains("Alertmanager or vmalert") && !why.contains("Prometheus")),
+        "a refusal says what was refused"
+    );
 }
 
 fn unknown_of(error: crate::monitoring::QueryError) -> Unknown {

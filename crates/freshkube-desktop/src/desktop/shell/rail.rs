@@ -97,14 +97,11 @@ impl RailMarks {
             (_, State::Stale { why, .. }) => {
                 Some((Tone::Unknown, format!("Alerts: last read is stale ({why})")))
             }
-            (
-                _,
-                State::Unknown(
-                    unknown @ (Unknown::Refused(_)
-                    | Unknown::Unread(_)
-                    | Unknown::NoClusterLabel(_)),
-                ),
-            ) => Some((Tone::Unknown, unknown.words())),
+            // Everything but a cluster with no alert source at all is a
+            // source whose alerts aren't known.
+            (_, State::Unknown(unknown)) if !matches!(unknown, Unknown::NotFound(_)) => {
+                Some((Tone::Unknown, unknown.words()))
+            }
             _ => None,
         };
         let Some((tone, why)) = mark else {
@@ -259,10 +256,11 @@ impl Pilot {
         let mark = self.navigation.rail_marks.areas.get(&area).cloned();
         let why = mark.as_ref().map(|(_, why)| why.clone());
         let tone = mark.map(|(tone, _)| {
-            if tone == Tone::Crit {
-                Tone::Crit
-            } else {
-                Tone::Warn
+            match tone {
+                Tone::Crit => Tone::Crit,
+                // What isn't known is neither a warning nor fine.
+                Tone::Unknown => Tone::Unknown,
+                _ => Tone::Warn,
             }
         });
         h_flex()

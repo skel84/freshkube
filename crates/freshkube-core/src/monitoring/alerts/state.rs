@@ -31,11 +31,12 @@ impl Unknown {
     /// The words for the state, as the page shows them.
     pub fn words(&self) -> String {
         match self {
-            Self::NotFound(looked) => format!("No Alertmanager or vmalert found: {looked}"),
+            Self::NotFound(why) if why.is_empty() => "No Alertmanager or vmalert found".into(),
+            Self::NotFound(why) => format!("No Alertmanager or vmalert found: {why}"),
             Self::Refused(why) => format!("Can't read alerts: {why}"),
             Self::Unread(why) => format!("Couldn't read alerts: {why}"),
             Self::NoClusterLabel(label) => format!(
-                "The central store's alerts have no `{label}` label, so none can be \
+                "The central store's alerts have no \"{label}\" label, so none can be \
                  shown for this cluster"
             ),
             Self::RulesOnly => "Only PrometheusRule objects were found, which say nothing \

@@ -107,7 +107,8 @@ fn chips(prefix: &str, key: &str, chips: &Chips, cx: &App) -> AnyElement {
         .overflow_hidden()
         .children(chips.shown.iter().map(|chip| {
             div()
-                .flex_none()
+                .min_w_0()
+                .truncate()
                 .h(dp(18.))
                 .px(dp(5.))
                 .flex()

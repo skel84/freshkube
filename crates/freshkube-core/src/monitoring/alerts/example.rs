@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Duration, Utc};
 
-use super::discover::LOOKED_FOR;
 use super::model::{
     Alert, AlertState, Kind, Rule, RuleGroup, RuleHealth, RuleKind, Severity, Silence,
     SilenceMatcher, SilenceState,
@@ -238,10 +237,8 @@ pub fn state(shape: Shape, now: DateTime<Utc>) -> State {
             read: read(),
             others: Vec::new(),
         }),
-        Shape::NotFound => State::Unknown(Unknown::NotFound(LOOKED_FOR.into())),
-        Shape::Refused => State::Unknown(Unknown::Refused(
-            crate::monitoring::QueryError::refused().message,
-        )),
+        Shape::NotFound => State::Unknown(Unknown::NotFound(String::new())),
+        Shape::Refused => State::Unknown(Unknown::Refused(super::read::NOT_ALLOWED.to_owned())),
         Shape::Several => State::Known(Active {
             others: vec!["monitoring/alertmanager-staging:9093".into()],
             ..active(now)
@@ -375,12 +372,8 @@ pub fn rule_groups(now: DateTime<Utc>, evaluated: bool) -> Vec<RuleGroup> {
 /// The Rules page under `shape`.
 pub fn rules_page(shape: Shape, now: DateTime<Utc>) -> Result<RulesData, Unknown> {
     match shape {
-        Shape::NotFound => Err(Unknown::NotFound(
-            "No vmalert was found and the cluster holds no PrometheusRule".into(),
-        )),
-        Shape::Refused => Err(Unknown::Refused(
-            crate::monitoring::QueryError::refused().message,
-        )),
+        Shape::NotFound => Err(Unknown::NotFound(String::new())),
+        Shape::Refused => Err(Unknown::Refused(super::read::NOT_ALLOWED.to_owned())),
         Shape::NoLabel => Ok(RulesData {
             groups: rule_groups(now, false),
             evaluated: false,
@@ -395,7 +388,7 @@ pub fn rules_page(shape: Shape, now: DateTime<Utc>) -> Result<RulesData, Unknown
             groups: rule_groups(now, false),
             evaluated: false,
             read: Vec::new(),
-            note: Some("No vmalert evaluates these rules here, so their health is Unknown".into()),
+            note: None,
         }),
         _ => Ok(RulesData {
             groups: rule_groups(now, true),
@@ -460,9 +453,7 @@ pub fn silences_page(shape: Shape, now: DateTime<Utc>) -> Result<SilencesData, U
             },
             read: active.read,
         }),
-        State::Unknown(Unknown::RulesOnly) => Err(Unknown::NotFound(
-            "No Alertmanager was found, and only it holds silences".into(),
-        )),
+        State::Unknown(Unknown::RulesOnly) => Err(Unknown::NotFound(String::new())),
         State::Unknown(unknown) => Err(unknown),
         State::Reading => Err(Unknown::Unread("Not read yet".into())),
     }
