@@ -269,7 +269,7 @@ The Inspector of each holds its form group (`Save`/`Revert`, `Saved in freshkube
 
 ### Supply-chain and Results setup
 
-[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), including its optional token and CA file, and `supply_chain.public_key_file`, `transparency_log`, `transparency_url` and `evidence`. Both delivery reads receive the supply-chain settings under their setup revision. The optional log URL is HTTPS without credentials, query or fragment; without it Chains names the log. Older builds keep unknown keys when saving:
+[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), including its optional token and CA file, and `supply_chain.public_key_file`, `transparency_log`, `transparency_url` and `evidence`. Both delivery reads receive the supply-chain settings under their setup revision. The optional log URL is HTTPS without credentials, query or fragment; without it Chains names the log. For example, to enable transparency-log reads with an explicit URL:
 
 ```yaml
 clusters:
