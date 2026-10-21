@@ -1,0 +1,1 @@
+- **Change page:** a hop that is not reached yet shows a clock, Waiting, which counts in its own chip and never as a problem or unknown ([#823](https://github.com/skel84/freshkube/issues/823)).

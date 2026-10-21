@@ -107,20 +107,23 @@ const STACKED: Stacked = Stacked {
 };
 
 /// The status chips, failing first, and what each counts.
-const TONES: [(Tone, &str, &str); 4] = [
+const TONES: [(Tone, &str, &str); 5] = [
     (Tone::Crit, "failing", "failing"),
     (Tone::Warn, "warning", "warning"),
-    (Tone::Unknown, "waiting", "waiting or unknown"),
+    (Tone::Unknown, "unknown", "unknown"),
+    (Tone::Waiting, "waiting", "waiting"),
     (Tone::Good, "ok", "ok"),
 ];
 
-/// A hop's state as a glyph's tone: waiting and unknown share the dashed
-/// ring, and a hand approval is the blue dot.
+/// A hop's state as a glyph's tone: waiting is the clock, which counts with
+/// neither warnings nor unknowns, unknown is the dashed ring, and a hand
+/// approval is the blue dot.
 pub(super) fn tone(state: HealthIndicator) -> Tone {
     match state {
         HealthIndicator::Healthy => Tone::Good,
         HealthIndicator::Info => Tone::Info,
-        HealthIndicator::Pending | HealthIndicator::Unknown => Tone::Unknown,
+        HealthIndicator::Pending => Tone::Waiting,
+        HealthIndicator::Unknown => Tone::Unknown,
         HealthIndicator::Warning => Tone::Warn,
         HealthIndicator::Error => Tone::Crit,
     }
@@ -143,6 +146,7 @@ fn rank(tone: Tone) -> u8 {
         Tone::Crit | Tone::Died => 4,
         Tone::Warn => 3,
         Tone::Unknown => 2,
+        // Waiting is no problem: it ranks with the rest that are fine.
         _ => 1,
     }
 }

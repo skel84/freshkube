@@ -536,7 +536,7 @@ fn eligible(eligible: &Eligible) -> GateLine {
             }),
         ),
         Eligible::NotYet { upstream } => gate_line(
-            Tone::Unknown,
+            Tone::Waiting,
             match upstream.as_slice() {
                 [] => "Not eligible yet.".into(),
                 upstream => format!(
@@ -571,12 +571,12 @@ fn promotion(promotion: &Promotion) -> GateLine {
             None,
         ),
         Promotion::Waiting => gate_line(
-            Tone::Unknown,
+            Tone::Waiting,
             "Waiting for promotion: auto-promotion off.".into(),
             Some("Nothing has failed: it waits for someone who may promote.".into()),
         ),
         Promotion::NotYet => gate_line(
-            Tone::Unknown,
+            Tone::Waiting,
             "Not promoted to this Stage yet.".into(),
             None,
         ),
