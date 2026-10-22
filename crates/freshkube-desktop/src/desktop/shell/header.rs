@@ -20,7 +20,7 @@ const SEARCH_FIELD_WIDTH: f32 = 320.;
 
 /// Below this window width, in dp, Search everything shrinks to its icon.
 /// Above it the field gives up width before anything overlaps.
-const SEARCH_FIELD_MIN_WIDTH: f32 = 680.;
+const SEARCH_FIELD_MIN_WIDTH: f32 = 520.;
 
 impl Pilot {
     pub(in crate::desktop) fn render_header(
@@ -33,12 +33,12 @@ impl Pilot {
         let glyph_only_level = width < LEVEL_WORD_MIN_WIDTH;
         // Clear of the window's controls: macOS's traffic lights keep their
         // size in points.
-        let insets = freshkube_ui::platform::header_insets();
+        let insets = freshkube_ui::platform::header_insets_in(window);
+        let centring = freshkube_ui::platform::centring_padding(insets, window.rem_size());
         // Three parts on a row: the sides share what the search leaves, so
-        // the search sits in the middle. The bar runs from the leading inset
-        // to the trailing one; each side pads its inner edge by the other
-        // side's inset, so the two differ by as much as the insets do and the
-        // search is centred on the window, not on the bar. Each side keeps its content's
+        // the search sits in the middle. Each side pads its inner edge so the
+        // two differ by as much as the window's edges do, and the search is
+        // centred on the window, not on the bar (`centring_padding`). Each side keeps its content's
         // width, so the search gives way first. The bar behind them is the
         // window's drag region.
         TitleBar::new()
@@ -54,7 +54,7 @@ impl Pilot {
                     .child(
                         h_flex()
                             .flex_1()
-                            .pr(insets.trailing)
+                            .pr(centring.leading_side)
                             .gap(dp(if minimal { 6. } else { 8. }))
                             .children(self.render_menu_button(cx))
                             .child(self.render_context_switcher(minimal, glyph_only_level, cx))
@@ -72,7 +72,7 @@ impl Pilot {
                         h_flex()
                             .flex_1()
                             .justify_end()
-                            .pl(insets.leading)
+                            .pl(centring.trailing_side)
                             .gap(dp(6.))
                             .when(!minimal, |this| {
                                 this.child(self.render_refresh(cx))
@@ -328,8 +328,11 @@ impl Pilot {
                 this.w(dp(APP_HEADER_CONTROL)).justify_center()
             })
             .when(!narrow, |this| {
-                this.w(dp(SEARCH_FIELD_WIDTH))
+                // A basis, not a width: a width counts whole towards the
+                // bar's minimum, so the bar would outgrow a narrow window.
+                this.flex_basis(dp(SEARCH_FIELD_WIDTH))
                     .min_w(dp(APP_HEADER_CONTROL))
+                    .flex_grow_0()
                     .flex_shrink_1()
                     .px(dp(10.))
             })

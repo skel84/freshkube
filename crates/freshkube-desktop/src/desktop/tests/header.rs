@@ -255,21 +255,70 @@ fn header_has_no_section_tabs_and_centres_a_320_search(cx: &mut TestAppContext) 
     .unwrap();
 }
 
-/// At the narrowest window and the largest text, the search gives way
-/// before anything overlaps.
+/// At the narrowest window and the largest text (494 dp), Search everything
+/// is its icon, and nothing overlaps.
 #[gpui_kit::test]
-fn narrow_header_shrinks_the_search_before_anything_overlaps(cx: &mut TestAppContext) {
+fn narrowest_header_is_an_icon_search_with_nothing_overlapping(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 760., 560.);
     cx.update(|cx| crate::text_size::set(20., cx));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let search = window.find("search-everything").bounds();
+        let dp = |n| crate::ui::dp_px(n, window);
+        assert!(
+            (search.size.width - dp(28.)).abs() < px(0.5),
+            "search is {:?} wide, not its icon",
+            search.size.width
+        );
         let switcher = window.find("context-switcher").bounds();
         let settings = window.find("settings").bounds();
         assert!(switcher.right() <= search.left(), "{switcher:?} {search:?}");
         assert!(search.right() <= settings.left(), "{search:?} {settings:?}");
         assert!(settings.right() <= px(760.));
+    })
+    .unwrap();
+}
+
+/// With the room for neither the full field nor its icon yet (760 px at text
+/// size 18 is 548 dp, over the 520 dp where it becomes the icon), the field
+/// gives up width before anything overlaps: narrower than 320 dp, and the
+/// controls that remain at this width (the switcher and Settings) whole.
+#[gpui_kit::test]
+fn header_at_548_dp_shrinks_the_search_field_before_anything_overlaps(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    cx.update(|cx| crate::text_size::set(18., cx));
+    let full = "talos-production-frankfurt-equinix-fr5-baremetal-b7";
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.select_context(full.into(), window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let dp = |n| crate::ui::dp_px(n, window);
+        let search = window.find("search-everything").bounds();
+        assert!(
+            search.size.width > dp(28.) && search.size.width < dp(320.) - px(1.),
+            "search is {:?} wide: the field should be shrunk, not an icon or 320 dp",
+            search.size.width
+        );
+        let ids = ["context-switcher", "search-everything", "settings"];
+        let bounds: Vec<_> = ids.iter().map(|id| window.find(*id).bounds()).collect();
+        for (pair, id) in bounds.windows(2).zip(ids.windows(2)) {
+            assert!(
+                pair[0].right() <= pair[1].left(),
+                "{} overlaps {}: {:?} {:?}",
+                id[0],
+                id[1],
+                pair[0],
+                pair[1]
+            );
+        }
+        for (id, bounds) in ids.iter().zip(&bounds) {
+            assert!(window.find(*id).visible(), "{id} is missing");
+            assert!(bounds.right() <= px(760.), "{id} runs past the window");
+        }
     })
     .unwrap();
 }
