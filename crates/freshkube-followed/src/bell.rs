@@ -87,9 +87,16 @@ impl Render for FollowedBell {
         let this = cx.entity().downgrade();
         let panel = self.panel.clone();
         let list = self.followed.clone();
-        // The status bar's right side keeps its room, so a narrow bar gets
-        // the bell's icon and count, not its word.
-        let narrow = window.viewport_size().width < ui::dp_px(1080., window);
+        // The status bar's right side keeps its room: narrow, the bell is
+        // its icon and a count, and at the narrowest the icon alone, with
+        // the words in its tooltip.
+        let width = window.viewport_size().width;
+        let narrow = width < ui::dp_px(1080., window);
+        let narrowest = width < ui::dp_px(800., window);
+        let tooltip = SharedString::from(format!(
+            "{}. What you follow, and what it told you",
+            self.label
+        ));
         Popover::new("followed-popover")
             .anchor(Anchor::BottomRight)
             .open(self.open)
@@ -109,12 +116,14 @@ impl Render for FollowedBell {
                     .ghost()
                     .xsmall()
                     .when(narrow, |this| this.icon(IconName::BellRing).compact())
-                    .label(if narrow {
-                        self.short.clone()
-                    } else {
-                        self.label.clone()
+                    .when(!narrowest, |this| {
+                        this.label(if narrow {
+                            self.short.clone()
+                        } else {
+                            self.label.clone()
+                        })
                     })
-                    .tooltip("What you follow, and what it told you"),
+                    .tooltip(tooltip),
             )
             .content(move |_, _, _| panel.clone())
             .into_any_element()

@@ -312,58 +312,87 @@ fn follows_take_their_own_clusters_level_across_switches(cx: &mut TestAppContext
     }
 }
 
-/// At the narrowest window and the largest text the bell shrinks to its icon
-/// and count, and the page's segment and the level's pill stay whole inside
-/// the bar beside it.
-#[gpui_kit::test]
-fn the_bell_never_pushes_the_pages_segment_or_the_level_out_of_the_bar(cx: &mut TestAppContext) {
+/// What each page's segment and the level's pill draw, and their bounds, in
+/// a 760 x 560 window at the largest text.
+fn bar_of(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    pilot: &Entity<Pilot>,
+    text_size: f32,
+) -> Vec<(String, gpui_kit::Bounds<gpui_kit::Pixels>)> {
     use super::pages::Page;
-    let f = following_at(cx, Shape::Bell, 760., 560.);
-    cx.update_window(f.handle, |_, _, cx| crate::text_size::set(20., cx))
+    cx.update_window(handle, |_, _, cx| crate::text_size::set(text_size, cx))
         .unwrap();
+    let mut bar = Vec::new();
     for (page, id) in [
         (Page::Resources, "resource-scope"),
         (Page::Settings, "settings-scope"),
     ] {
-        cx.update_window(f.handle, |_, window, cx| {
-            f.pilot
-                .update(cx, |pilot, cx| pilot.navigate(page, window, cx));
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| pilot.navigate(page, window, cx));
             window.render_frame(cx);
         })
         .unwrap();
         cx.run_until_parked();
-        cx.update_window(f.handle, |_, window, cx| {
+        cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            // The bar's left side, where the level and the segment sit, ends
-            // before the bell, and the bell inside the window.
-            let left = window.find("status-bar").bounds();
-            let shown = format!("{page:?} in a {:?} left side", left.size.width);
-            let bell = window.find("followed").bounds();
-            let level = window.find("status-protection").bounds();
-            let segment = window.find(id).bounds();
-            assert!(
-                bell.size.width > gpui_kit::px(0.),
-                "the bell is drawn: {shown}"
-            );
-            assert!(
-                bell.size.width < crate::ui::dp_px(30., window),
-                "the bell is its icon and count: {:?}, {shown}",
-                bell.size.width
-            );
-            assert!(left.right() <= bell.left(), "{shown}");
-            assert!(bell.right() <= window.viewport_size().width, "{shown}");
-            for (name, bounds) in [("level", level), ("segment", segment)] {
-                assert!(bounds.size.width > gpui_kit::px(0.), "{name}: {shown}");
-                assert!(bounds.left() >= left.left(), "{name} left: {shown}");
-                assert!(bounds.right() <= left.right(), "{name} right: {shown}");
-            }
-            assert!(
-                level.right() <= segment.left() || segment.right() <= level.left(),
-                "{shown}"
-            );
+            let drawn = freshkube_ui::status::shown(id).map(|s| s.to_string());
+            bar.push((drawn.unwrap_or_default(), window.find(id).bounds()));
+            bar.push((String::new(), window.find("status-protection").bounds()));
         })
         .unwrap();
     }
+    bar
+}
+
+/// At the narrowest window the bell is its icon alone, and the page's
+/// segment draws whole, as it does without a bell, with the level's pill
+/// beside it inside the bar. At the largest text neither fits whole even
+/// without a bell (the example bar carries Simulate failure and Example
+/// data), so there the segment keeps what the bell leaves it.
+#[gpui_kit::test]
+fn the_bell_never_pushes_the_pages_segment_or_the_level_out_of_the_bar(cx: &mut TestAppContext) {
+    // The bar before any follow is made: no bell.
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    let without = [13., 20.].map(|size| bar_of(cx, handle, &pilot, size));
+    let f = following_at(cx, Shape::Bell, 760., 560.);
+    let with = [13., 20.].map(|size| bar_of(cx, f.handle, &f.pilot, size));
+    // The first part of a line: its clock changes between two windows.
+    let first = |line: &str| line.split(" · ").next().unwrap_or_default().to_owned();
+    for ((drawn, bounds), (plain, _)) in with[0].iter().zip(&without[0]) {
+        assert!(!drawn.ends_with('…'), "whole at 13: {drawn:?}");
+        assert_eq!(first(drawn), first(plain), "as without a bell at 13");
+        assert!(bounds.size.width > gpui_kit::px(0.));
+    }
+    for (drawn, bounds) in &with[1] {
+        assert!(bounds.size.width > gpui_kit::px(0.), "{drawn:?} has room");
+    }
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The bar's left side, where the level and the segment sit, ends
+        // before the bell, and the bell is inside the window.
+        let left = window.find("status-bar").bounds();
+        let shown = format!("a {:?} left side", left.size.width);
+        let bell = window.find("followed").bounds();
+        let level = window.find("status-protection").bounds();
+        assert!(
+            bell.size.width > gpui_kit::px(0.),
+            "the bell is drawn: {shown}"
+        );
+        // Its count is in its tooltip, and no number beside the icon.
+        assert!(
+            bell.size.width < crate::ui::dp_px(22., window),
+            "the bell is its icon alone: {:?}, {shown}",
+            bell.size.width
+        );
+        assert!(left.right() <= bell.left(), "{shown}");
+        assert!(bell.right() <= window.viewport_size().width, "{shown}");
+        assert!(
+            level.left() >= left.left() && level.right() <= left.right(),
+            "the level is whole: {shown}"
+        );
+    })
+    .unwrap();
 }
 
 /// The bell says the cap before the next follow is refused, and the
