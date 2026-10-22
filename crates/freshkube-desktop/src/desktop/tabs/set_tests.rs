@@ -170,10 +170,10 @@ fn history_keeps_the_newest_steps() {
 
 #[test]
 fn restoring_keeps_the_selection_and_the_cap() {
-    let views: Vec<_> = (0..MAX_TABS + 4).map(|_| page(LinkPage::Nodes)).collect();
+    let views: Vec<_> = (0..SAVED_TABS + 4).map(|_| page(LinkPage::Nodes)).collect();
     let set = TabSet::restored(views, 99, page(LinkPage::Overview));
-    assert_eq!(set.len(), MAX_TABS);
-    assert_eq!(set.selected(), MAX_TABS - 1);
+    assert_eq!(set.len(), 8);
+    assert_eq!(set.selected(), 7);
     let empty = TabSet::restored(Vec::new(), 3, page(LinkPage::Overview));
     assert_eq!(empty.views(), [page(LinkPage::Overview)]);
 }

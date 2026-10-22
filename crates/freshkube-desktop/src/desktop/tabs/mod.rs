@@ -15,6 +15,8 @@ use freshkube_nav::ViewState;
 use std::time::Duration;
 
 mod commands;
+#[cfg(test)]
+mod guard_tests;
 mod restore;
 mod set;
 #[cfg(test)]
@@ -80,9 +82,9 @@ pub(super) struct Tabs {
 }
 
 impl Tabs {
-    pub(super) fn new<A: 'static, B: 'static>(
-        resources: &Entity<A>,
-        nodes: &Entity<B>,
+    pub(super) fn new(
+        resources: &Entity<crate::resources::ResourcesScreen>,
+        nodes: &Entity<crate::desktop::nodes::Nodes>,
         cx: &mut Context<Pilot>,
     ) -> Self {
         let restore = restore::Saved::read(cx);

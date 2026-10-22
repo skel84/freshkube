@@ -71,6 +71,24 @@ fn frozen_rows_show_muted_until_the_list_answers_and_then_flash_what_changed(
     })
     .unwrap();
 
+    // The banner's words are derived when the rows freeze and as the age
+    // clock ticks, not in render.
+    let words = |cx: &mut TestAppContext| {
+        cx.read(|cx| screen.read(cx).frozen.as_ref().unwrap().text.to_string())
+    };
+    assert!(
+        words(cx).contains("last known moments ago"),
+        "{}",
+        words(cx)
+    );
+    cx.update(|cx| {
+        screen.update(cx, |screen, cx| {
+            screen.now += 300;
+            screen.tick_frozen(cx);
+        })
+    });
+    assert!(words(cx).contains("last known 5 min ago"), "{}", words(cx));
+
     // The list answers: one object changed meanwhile.
     rows[0].resource_version = "2".into();
     let changed = rows[0].identity.clone();

@@ -16,15 +16,15 @@ Tests that prove it: `tabs/set_tests.rs` (the rules), `tabs/tests.rs` (the windo
 
 A `TabSet` is on `Pilot` and belongs to the cluster that is open: a tab is one cluster's, and a context or workspace switch leaves one tab at the view shown. At most 16 tabs; a tab remembers 64 steps back and 64 forward. A background tab opens right after the shown one and changes nothing on screen; a front tab is shown at once. The last tab does not close. Closing the shown tab shows its right neighbour, else the left; the last ten closed tabs can be reopened.
 
-The shown tab follows the window: whenever the shell or the Resources or Nodes page changes, the tab records the view the window shows (`Pilot::current_view`), pushing the old view onto its history. A tab just shown waits for its page to arrive (two seconds at most) before it follows the page again. Pages a link cannot name (Settings, Operations) leave the tab where it was.
+The shown tab follows the window: whenever the shell changes, or the Resources page's namespace, drawer object or drawer tab, or the Nodes page's node or tab, change, the tab records the view the window shows (the pages notify with every watch event and metric, so `ViewTabs` compares those few fields first and asks only on a change; the probe `tabs.sync` counts the asks) (`Pilot::current_view`), pushing the old view onto its history. A tab just shown waits for its page to arrive (two seconds at most) before it follows the page again. Pages a link cannot name (Settings, Operations) leave the tab where it was.
 
 ## Opening links
 
 `Pilot::open_object` still opens here. `open_object_in` takes an `OpenIn` and runs the cluster guard (`divert_link`) first, so a link made in another cluster is sent to it or refused, with the question about a running shell, whatever the click says; only then does it open a tab.
 
-- Command-click opens a background tab, Shift-Command-click a tab in front. The shell notes how the last press or release was modified (`capture_any_mouse_down` and `capture_any_mouse_up` on its root, since some links act on the press) and the link that click makes, which arrives once the click's update ends, takes it (`take_gesture`, for half a second). Every link that reaches `resource_link` takes it, so a new kind of link needs no code of its own.
+- Command-click opens a background tab, Shift-Command-click a tab in front, and neither skips the guard. The shell notes how the last press or release was modified (`capture_any_mouse_down` and `capture_any_mouse_up` on its root, since some links act on the press) and the link that click makes, which arrives once the click's update ends, takes it (`take_gesture`, for half a second). Every link that reaches `resource_link` takes it, so a new kind of link needs no code of its own.
 - A middle-click does the same where the link takes it: today the Resources list's Owner and Node cells. The other links (the pane's relation buttons, the Applications page's) act on a left click only, so Command-click is what reaches them all.
-- In ⌘K, Command-Return opens the result in a new tab in front.
+- In ⌘K, Command-Return opens the result in a new tab in front. A page, a kind or a node opens as a tab at once; an object goes through `open_object_in` like any link, so the guard sees it first.
 - A link whose names do not fit the link's closed types opens here.
 
 ## Keys
@@ -36,7 +36,7 @@ The shown tab follows the window: whenever the shell or the Resources or Nodes p
 | Shift-Command-T | reopens the last closed tab |
 | Command-Shift-] and [ | the next and previous tab, everywhere (bound as `secondary-}` and `secondary-{`, which is what macOS reports) |
 | Control-Tab and Control-Shift-Tab | the same, once there are two tabs; with one they still step the screens. A focused terminal gets them first |
-| Command-[ and ] | the shown tab's previous and next view |
+| Command-[ and ] | the shown tab's previous and next view; in a text field the input's own Indent and Outdent win, as they should, and these keys act everywhere else |
 | Option-Command-] and [ | the tabs of a Resources pane or a node, which were Command-Shift-] and [ |
 
 Command-1 to 9 stay pages. Each action's handler is on the shell's root only while it can act, so the menus grey it and its key goes on to whatever else binds it. Option-Command-[ is bound as `secondary-alt-[`; the headless test presses it, and the macOS keystroke is the same one Zed binds as `cmd-alt-[`. The running app on macOS is the check that cannot be made headless.
@@ -49,7 +49,7 @@ A tab's menu is the dock's: Close, Close others, Close to the right, Close all (
 
 ## Saving
 
-The views are saved in `navigation.json` under `tabs` (`selected`, and `views` as each view's query text, at most eight), shortly after the last change. Nothing else: no title, history, rows or cluster. The first cluster to open in a run takes them back, each as loading rows until its first list; a view that no longer parses is dropped, and the selection follows the rest.
+The views are saved in `navigation.json` under `tabs` shortly after the last change: `selected`, `views` as each view's query text, and `cluster`, the workspace entry they were made in (`entry:<id>`), or for a window that is no entry's a one-way token of the session's identity, never the identity. At most eight views are saved; with more tabs open, the eight ending at the shown one, so it is among them. Nothing else is saved: no title, history or rows. The first cluster to open in a run takes them back only if it is the cluster named; any other, or a file with no cluster, starts with one tab and applies no view. Each comes back as loading rows until its first list. A view that no longer parses is dropped, the selection follows the rest, and at most eight are read.
 
 ## Frozen rows
 

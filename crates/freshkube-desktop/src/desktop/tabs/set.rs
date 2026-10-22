@@ -9,6 +9,8 @@ use freshkube_nav::ViewState;
 pub(crate) const MAX_TABS: usize = 16;
 /// How many steps each tab remembers, back and forward each.
 pub(crate) const HISTORY: usize = 64;
+/// The most tabs `navigation.json` holds, and the most read back.
+pub(crate) const SAVED_TABS: usize = 8;
 /// How many closed tabs ⇧⌘T can bring back.
 pub(crate) const REOPEN: usize = 10;
 
@@ -86,10 +88,10 @@ impl TabSet {
     }
 
     /// Tabs at `views`, the one at `selected` shown (the last when it is
-    /// out of range). Views past the cap are dropped; none makes one tab at
-    /// `fallback`.
+    /// out of range). Views past [`SAVED_TABS`] are dropped; none makes one
+    /// tab at `fallback`.
     pub fn restored(views: Vec<ViewState>, selected: usize, fallback: ViewState) -> Self {
-        let mut views: Vec<_> = views.into_iter().take(MAX_TABS).collect();
+        let mut views: Vec<_> = views.into_iter().take(SAVED_TABS).collect();
         if views.is_empty() {
             views.push(fallback);
         }

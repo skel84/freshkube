@@ -145,16 +145,18 @@ impl Pilot {
         let command = self.pages.search.read(cx).command.clone();
         command.update(cx, |state, cx| state.focus(window, cx));
     }
-    fn search_destination(
+    pub(in crate::desktop) fn search_destination(
         &mut self,
         destination: Destination,
         open_in: super::tabs::OpenIn,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // A new tab holds what a link can name: a page, a kind, a node or
-        // an object. Anything else opens here.
+        // A new tab holds what a link can name: a page, a kind or a node.
+        // An object goes through `open_object_in` below, so the cluster
+        // guard sees it before any tab does. Anything else opens here.
         if open_in != super::tabs::OpenIn::Here
+            && !matches!(destination, Destination::Object(..))
             && let Some(view) = super::tabs::destination_view(&destination)
         {
             self.open_view_tab(view, open_in, window, cx);

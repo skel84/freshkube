@@ -7,7 +7,7 @@ use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
 use super::set::{MAX_TABS, Shown, TabId};
 use super::strip::Entry;
 use super::*;
-use crate::desktop::deep_link;
+use crate::desktop::{deep_link, probe};
 
 /// The longest a tab's title is, in characters.
 const TITLE_CHARS: usize = 28;
@@ -114,6 +114,7 @@ impl Pilot {
     /// the shell or a page it reads changes; a view that did not change is
     /// no work, and a tab just shown waits for its page to arrive.
     pub(super) fn sync_tabs(&mut self, cx: &mut Context<Self>) {
+        probe::hit("tabs.sync");
         let Some(view) = self.current_view(cx) else {
             return;
         };
@@ -241,6 +242,10 @@ impl Pilot {
         let Some(saved) = self.tabs.restore.take() else {
             return;
         };
+        // Tabs of another cluster are not this one's to open: one tab.
+        if saved.cluster.is_none() || saved.cluster != self.tabs_cluster() {
+            return;
+        }
         let (views, selected) = saved.views();
         if views.is_empty() {
             return;
@@ -465,9 +470,7 @@ pub(in crate::desktop) fn destination_view(
             Some(view)
         }
         Destination::Node(name) => node_view(name, freshkube_nav::NodeTab::Overview),
-        Destination::Object(kind, object) => {
-            object_view(kind, object, freshkube_nav::Tab::Overview)
-        }
-        Destination::Link(_) => None,
+        // Objects open through `open_object_in`, which runs the cluster guard.
+        Destination::Object(..) | Destination::Link(_) => None,
     }
 }

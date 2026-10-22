@@ -17,11 +17,44 @@ pub(super) struct Thawed {
     kept: usize,
     total: usize,
     captured: SystemTime,
+    /// The banner's words, derived when the rows freeze and again as the
+    /// age clock ticks, so render only draws them.
+    pub(super) text: SharedString,
     /// Each row's version when it froze.
     versions: HashMap<ResourceIdentity, String>,
 }
 
+impl Thawed {
+    /// "200 of 1,204 kept · last known 4 min ago. …", at `now`.
+    fn derive_text(&mut self, now: i64) {
+        let age = now.saturating_sub(
+            self.captured
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs() as i64),
+        );
+        let kept = if self.kept == self.total {
+            format!("{} kept", count(self.kept))
+        } else {
+            format!("{} of {} kept", count(self.kept), count(self.total))
+        };
+        self.text = format!(
+            "{kept} · last known {} ago. Listing again; changed rows flash when it answers.",
+            ago(age)
+        )
+        .into();
+    }
+}
+
 impl ResourcesScreen {
+    /// The age clock ticked: the banner's words again.
+    pub(super) fn tick_frozen(&mut self, cx: &mut Context<Self>) {
+        let now = self.now;
+        if let Some(thawed) = &mut self.frozen {
+            thawed.derive_text(now);
+            cx.notify();
+        }
+    }
+
     /// The rows on screen, frozen, if they are the kind and namespace asked
     /// for. Nothing for a page with no rows to keep: still loading, refused,
     /// over [`crate::frozen::MAX_ROWS`] rows, or the node pane's list.
@@ -106,12 +139,14 @@ impl ResourcesScreen {
         let Some((frozen, _)) = self.pending_frozen.take() else {
             return;
         };
-        let thawed = Thawed {
+        let mut thawed = Thawed {
             kept: frozen.kept(),
             total: frozen.total,
             captured: frozen.captured,
+            text: SharedString::default(),
             versions: frozen.versions(),
         };
+        thawed.derive_text(self.now);
         let reset = ResourceEvent::reset(frozen.columns, frozen.rows);
         if self.store.apply(epoch, vec![vec![reset]], 0).is_none() {
             return;
@@ -159,17 +194,6 @@ impl ResourcesScreen {
         if matches!(self.store.read_state(), ReadState::Stale(_)) {
             return None;
         }
-        let age = self.now.saturating_sub(
-            thawed
-                .captured
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |since| since.as_secs() as i64),
-        );
-        let kept = if thawed.kept == thawed.total {
-            format!("{} kept", count(thawed.kept))
-        } else {
-            format!("{} of {} kept", count(thawed.kept), count(thawed.total))
-        };
         Some(
             div()
                 .id("resource-frozen")
@@ -178,11 +202,7 @@ impl ResourcesScreen {
                 .child(ui::banner(
                     ui::Tone::Info,
                     None,
-                    format!(
-                        "{kept} · last known {} ago. Listing again; changed rows flash when it \
-                         answers.",
-                        ago(age)
-                    ),
+                    thawed.text.clone(),
                     None,
                     cx,
                 ))

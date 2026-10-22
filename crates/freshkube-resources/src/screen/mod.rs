@@ -1097,6 +1097,7 @@ impl ResourcesScreen {
 
     fn tick(&mut self, cx: &mut Context<Self>) {
         self.now = live::now();
+        self.tick_frozen(cx);
         let ages = self
             .layout
             .columns

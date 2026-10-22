@@ -425,16 +425,37 @@ fn tabs_are_saved_as_views_and_restored(cx: &mut TestAppContext) {
     assert_eq!(shown(cx, &pilot), Page::Etcd);
 }
 
+/// The cluster key the fixture window saves its tabs under.
+fn cluster_of(cx: &mut TestAppContext, directory: &std::path::Path) -> String {
+    let options =
+        crate::GpuiOptions::fixture().with_preferences(Some(directory.join("preferences.json")));
+    let (_runtime, _handle, pilot) = mount(cx, options, 1280., 880.);
+    cx.run_until_parked();
+    cx.read(|cx| pilot.read(cx).tabs_cluster().expect("a cluster"))
+}
+
+fn write_tabs(directory: &std::path::Path, tabs: serde_json::Value) {
+    std::fs::write(
+        directory.join("navigation.json"),
+        serde_json::json!({ "tabs": tabs }).to_string(),
+    )
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_view_that_no_longer_parses_is_dropped_on_reading(cx: &mut TestAppContext) {
     let directory = scratch("dropped");
-    std::fs::write(
-        directory.join("navigation.json"),
-        r#"{"tabs":{"selected":2,"views":["page=nodes","page=nowhere","page=etcd",7]}}"#,
-    )
-    .unwrap();
-    let preferences = directory.join("preferences.json");
-    let options = crate::GpuiOptions::fixture().with_preferences(Some(preferences));
+    let cluster = cluster_of(cx, &directory);
+    write_tabs(
+        &directory,
+        serde_json::json!({
+            "selected": 2,
+            "cluster": cluster,
+            "views": ["page=nodes", "page=nowhere", "page=etcd", 7],
+        }),
+    );
+    let options =
+        crate::GpuiOptions::fixture().with_preferences(Some(directory.join("preferences.json")));
     let (_runtime, _handle, pilot) = mount(cx, options, 1280., 880.);
     cx.run_until_parked();
     assert_eq!(
@@ -442,6 +463,73 @@ fn a_view_that_no_longer_parses_is_dropped_on_reading(cx: &mut TestAppContext) {
         [page(LinkPage::Nodes), page(LinkPage::Etcd)]
     );
     assert_eq!(selected(cx, &pilot), 1);
+}
+
+/// Tabs made in one cluster are not applied in another: the window starts
+/// with one tab and the saved views are not opened.
+#[gpui_kit::test]
+fn tabs_of_another_cluster_or_of_no_cluster_are_not_restored(cx: &mut TestAppContext) {
+    for (name, cluster) in [("other", Some("entry:someone-else")), ("older", None)] {
+        let directory = scratch(name);
+        let mut tabs = serde_json::json!({"selected": 1, "views": ["page=nodes", "page=etcd"]});
+        if let Some(cluster) = cluster {
+            tabs["cluster"] = cluster.into();
+        }
+        write_tabs(&directory, tabs);
+        let options = crate::GpuiOptions::fixture()
+            .with_preferences(Some(directory.join("preferences.json")));
+        let (_runtime, _handle, pilot) = mount(cx, options, 1280., 880.);
+        cx.run_until_parked();
+        assert_eq!(views(cx, &pilot), [page(LinkPage::Overview)], "{name}");
+        assert_eq!(shown(cx, &pilot), Page::Overview, "{name}");
+    }
+}
+
+/// The file holds eight tabs at most and keeps the shown one among them.
+#[gpui_kit::test]
+fn the_file_holds_eight_tabs_at_most_and_the_shown_one_is_among_them(cx: &mut TestAppContext) {
+    let directory = scratch("eight");
+    let preferences = directory.join("preferences.json");
+    let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
+    let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
+    for link in LinkPage::ALL
+        .into_iter()
+        .filter(|link| *link != LinkPage::Overview)
+    {
+        open(cx, handle, &pilot, page(link), OpenIn::Background);
+    }
+    assert_eq!(views(cx, &pilot).len(), 12);
+    // Show the last: it is past the first eight.
+    let last = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[11].id);
+    let wanted = views(cx, &pilot)[11].clone();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.select_tab(last, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(super::restore::SAVE_DELAY * 2);
+    cx.run_until_parked();
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(directory.join("navigation.json")).unwrap())
+            .unwrap();
+    let saved = file["tabs"]["views"].as_array().unwrap();
+    assert_eq!(saved.len(), 8);
+    assert_eq!(file["tabs"]["selected"], 7);
+    assert_eq!(saved[7], serde_json::to_value(&wanted).unwrap());
+
+    // A file written with more is read back as eight, the selection kept.
+    write_tabs(
+        &directory,
+        serde_json::json!({
+            "selected": 11,
+            "cluster": file["tabs"]["cluster"],
+            "views": vec!["page=nodes"; 12],
+        }),
+    );
+    let (_runtime, _handle, pilot) = mount(cx, options(), 1280., 880.);
+    cx.run_until_parked();
+    assert_eq!(views(cx, &pilot).len(), 8);
+    assert_eq!(selected(cx, &pilot), 7);
 }
 
 /// A page redraws without the strip; the strip's hover redraws only it.
@@ -709,39 +797,53 @@ fn a_click_says_where_its_link_opens() {
     assert_eq!(open_in(MouseButton::Right, command), OpenIn::Here);
 }
 
-/// The file holds eight tabs at most, whatever is open or was written.
+/// The Resources page notifies with every watch event; the tabs ask whether
+/// the view moved only when what is part of a view changed.
 #[gpui_kit::test]
-fn the_file_holds_eight_tabs_at_most(cx: &mut TestAppContext) {
-    let directory = scratch("eight");
-    let preferences = directory.join("preferences.json");
-    let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
-    let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
-    for _ in 0..11 {
-        open(
-            cx,
-            handle,
-            &pilot,
-            page(LinkPage::Nodes),
-            OpenIn::Background,
-        );
-    }
-    assert_eq!(views(cx, &pilot).len(), 12);
-    cx.executor().advance_clock(super::restore::SAVE_DELAY * 2);
-    cx.run_until_parked();
-    let file: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(directory.join("navigation.json")).unwrap())
-            .unwrap();
-    assert_eq!(file["tabs"]["views"].as_array().unwrap().len(), 8);
-
-    // A file written with more is read back as eight.
-    let many = vec!["page=nodes"; 12];
-    std::fs::write(
-        directory.join("navigation.json"),
-        serde_json::json!({"tabs": {"selected": 11, "views": many}}).to_string(),
-    )
+fn a_watch_burst_does_not_ask_whether_the_view_moved(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx))
+    })
     .unwrap();
-    let (_runtime, _handle, pilot) = mount(cx, options(), 1280., 880.);
     cx.run_until_parked();
-    assert_eq!(views(cx, &pilot).len(), 8);
-    assert_eq!(selected(cx, &pilot), 7);
+    let resources = cx.read(|cx| pilot.read(cx).pages.resources.clone());
+    let asked = || probe::count("tabs.sync");
+    // Settled: the namespace, drawer and tab it showed are what the strip
+    // last saw.
+    cx.update(|cx| resources.update(cx, |_, cx| cx.notify()));
+    cx.run_until_parked();
+    let before = asked();
+    for _ in 0..50 {
+        cx.update(|cx| resources.update(cx, |_, cx| cx.notify()));
+    }
+    cx.run_until_parked();
+    assert_eq!(asked(), before, "fifty notifies asked nothing");
+    // A namespace is part of a view: that asks.
+    cx.update_window(handle, |_, window, cx| {
+        resources.update(cx, |resources, cx| {
+            resources.set_namespace(Some("payments".into()), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(asked() > before);
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).current_view(cx))
+            .and_then(|view| view.ns.map(|ns| ns.as_str().to_owned())),
+        Some("payments".to_owned())
+    );
+    assert_eq!(
+        cx.read(|cx| pilot
+            .read(cx)
+            .tabs
+            .set
+            .current()
+            .view
+            .ns
+            .as_ref()
+            .map(|ns| ns.as_str().to_owned())),
+        Some("payments".to_owned()),
+        "and the tab followed"
+    );
 }

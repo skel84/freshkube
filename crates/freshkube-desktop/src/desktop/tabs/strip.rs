@@ -13,7 +13,9 @@ use gpui_kit::component::tooltip::Tooltip;
 
 use super::set::TabId;
 use super::*;
+use crate::desktop::nodes::{NodeKey, NodeTab, Nodes};
 use crate::desktop::probe;
+use crate::resources::ResourcesScreen;
 
 /// One tab as the strip draws it: derived from its view, never stored in
 /// the set.
@@ -25,8 +27,25 @@ pub(super) struct Entry {
     pub full: SharedString,
 }
 
+/// What of the Resources page is part of a view: the namespace, the object
+/// in the drawer and its tab. The kind is the shell's.
+type ResourcesSeen = (
+    Option<String>,
+    Option<crate::resources::model::ResourceIdentity>,
+    crate::resources::Tab,
+);
+
+/// What of the Nodes page is part of a view: the node, whether its pane is
+/// open and its tab.
+type NodesSeen = (Option<NodeKey>, bool, NodeTab);
+
 pub(crate) struct ViewTabs {
     pilot: WeakEntity<Pilot>,
+    /// What the pages showed when they last asked whether the view moved.
+    /// They notify with every watch event and metric; only a change of
+    /// these asks.
+    resources: Option<ResourcesSeen>,
+    nodes: Option<NodesSeen>,
     strip: TabStrip,
     entries: Vec<Entry>,
     active: usize,
@@ -39,19 +58,42 @@ impl ViewTabs {
     /// A strip that asks the shell to keep the shown tab's view current when
     /// the shell, or `watched` (the pages whose own state is part of a view),
     /// change.
-    pub(super) fn new<A: 'static, B: 'static>(
+    pub(super) fn new(
         pilot: &Entity<Pilot>,
-        resources: &Entity<A>,
-        nodes: &Entity<B>,
+        resources: &Entity<ResourcesScreen>,
+        nodes: &Entity<Nodes>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(pilot, |this, _, cx| this.follow(cx)),
-            cx.observe(resources, |this, _, cx| this.follow(cx)),
-            cx.observe(nodes, |this, _, cx| this.follow(cx)),
+            cx.observe(resources, |this, page, cx| {
+                let page = page.read(cx);
+                let seen = (
+                    page.namespace(),
+                    page.detail_identity(cx),
+                    page.detail_tab(cx),
+                );
+                let same = this.resources.as_ref().is_some_and(|(ns, object, tab)| {
+                    (ns.as_deref(), object.as_ref(), *tab) == seen
+                });
+                if !same {
+                    this.resources = Some((seen.0.map(str::to_owned), seen.1.cloned(), seen.2));
+                    this.follow(cx);
+                }
+            }),
+            cx.observe(nodes, |this, page, cx| {
+                let page = page.read(cx);
+                let seen = (page.selected.clone(), page.open, page.tab);
+                if this.nodes.as_ref() != Some(&seen) {
+                    this.nodes = Some(seen);
+                    this.follow(cx);
+                }
+            }),
         ];
         Self {
             pilot: pilot.downgrade(),
+            resources: None,
+            nodes: None,
             strip: TabStrip::default(),
             entries: Vec::new(),
             active: 0,
