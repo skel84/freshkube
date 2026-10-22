@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, DirectAccess};
+use freshkube_core::cluster_source::{
+    ClusterAccess, ClusterSource, DirectAccess, SIGN_IN_DEADLINE,
+};
 use freshkube_core::resources::{kubeconfig_sources, load_kubeconfigs};
 use freshkube_core::workspace::MAX_BYTES;
 use freshkube_core::{ConfigurationRevision, read_bounded_regular_file, setup};
@@ -111,6 +113,17 @@ pub struct Kubeconfig;
 impl Connector for Kubeconfig {
     fn open(&self, request: &Request, allow_login: bool) -> Result<Target, Stop> {
         let (report, merged) = load_kubeconfigs(&request.sources);
+        if report.contexts.is_empty() && !report.errors.is_empty() {
+            let files: Vec<String> = report
+                .errors
+                .iter()
+                .map(|(path, error)| format!("{}: {error}", path.display()))
+                .collect();
+            return Err(Stop::Usage(format!(
+                "the kubeconfig couldn't be read: {}",
+                files.join("; ")
+            )));
+        }
         let Some(context) = report.context(&request.context) else {
             let names: Vec<_> = report.contexts.iter().map(|c| c.name.as_str()).collect();
             return Err(Stop::Usage(format!(
@@ -134,15 +147,20 @@ impl Connector for Kubeconfig {
         if signs_in && !allow_login {
             return Err(Stop::SignIn(format!(
                 "context \"{}\" signs in with a credential plugin, which may open a browser. \
-                 Run it again with --allow-login.",
+                 Run it again with --allow-login; in CI it is also the switch for a plugin that \
+                 needs no browser, such as one that prints a token.",
                 request.context
             )));
         }
-        let access = DirectAccess::new(
+        let mut access = DirectAccess::new(
             request.sources.clone(),
             request.context.clone(),
             ConfigurationRevision::from_kubeconfig_sources(&request.sources),
         );
+        if signs_in {
+            // Only reached with --allow-login: a browser sign-in takes a person's time.
+            access = access.with_connect_deadline(SIGN_IN_DEADLINE);
+        }
         Ok(Target {
             entry: request.entry.clone(),
             context: request.context.clone(),
