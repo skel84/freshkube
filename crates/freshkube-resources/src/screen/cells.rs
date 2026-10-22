@@ -24,13 +24,17 @@ const SUFFIX_SHRINK: f32 = 1000.;
 
 /// The glyph's tone for a pod's state: a skull where a container ran and
 /// stopped, the critical disc where the pod can't run. A pod on a node
-/// that isn't ready can't be confirmed, so it warns.
+/// that isn't ready can't be confirmed, so it warns. Only a Pending pod
+/// with a regular init container executing gets the Waiting clock.
 pub(super) fn pod_tone(pod: &PodRow, node_ready: bool) -> ui::Tone {
     match freshkube_core::resources::pod_verdict(pod.state, &pod.status, node_ready) {
         PodVerdict::Good => ui::Tone::Good,
         PodVerdict::Warn => ui::Tone::Warn,
         PodVerdict::Crit => ui::Tone::Crit,
         PodVerdict::Died => ui::Tone::Died,
+        PodVerdict::Unknown if pod.state == PodState::Pending && pod.initializing => {
+            ui::Tone::Waiting
+        }
         PodVerdict::Unknown => ui::Tone::Unknown,
     }
 }
