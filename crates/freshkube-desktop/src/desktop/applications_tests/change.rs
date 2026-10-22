@@ -2045,7 +2045,8 @@ fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext)
             let notes = window.find("change-notes").bounds();
             let table = window.find("change-table-scroll").bounds();
             if stale {
-                // The failed refresh leads the block, its reason whole in view.
+                // The failed refresh leads the block, its reason's first line
+                // in view wherever the trail leaves room, the rest a wheel away.
                 let banner = window.find("change-stale");
                 assert!(banner.label().is_some_and(|words| words.contains(WHY)));
                 let at = banner.bounds();
@@ -2054,7 +2055,10 @@ fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext)
                     pad >= gpui_kit::px(0.) && pad <= gpui_kit::px(24.),
                     "{at:?} leads {notes:?}"
                 );
-                assert!(at.bottom() <= notes.bottom(), "{at:?} cut by {notes:?}");
+                assert!(
+                    notes.bottom() - at.top() >= gpui_kit::px(30.),
+                    "{at:?} has no line in {notes:?}"
+                );
             }
             // Nothing overlaps: the banners end where the trail begins.
             assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
@@ -2070,12 +2074,12 @@ fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext)
                 table.size.height >= row * 3.,
                 "table {table:?} for rows of {row:?}"
             );
-            // And the first of them is in view before any scrolling, the
-            // banners having left it room under the fix bar.
-            let page = window.find("change-page").bounds();
+            // And the header with two rows sit above the status bar before
+            // any scrolling, the banners having given way to them.
+            let status = window.find("status-bar").bounds();
             assert!(
-                table.top() + row <= page.bottom(),
-                "table {table:?} starts below the page {page:?}"
+                table.top() + row * 3. <= status.top(),
+                "table {table:?} for rows of {row:?} under the status bar {status:?}"
             );
             // A wheel over the block scrolls the block and leaves the page.
             let banner = window.find("change-missing").bounds().top();

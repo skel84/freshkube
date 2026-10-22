@@ -15,6 +15,9 @@ use gpui_kit::component::{
 
 /// The tallest the banners under the fix bar grow, in dp, before they scroll.
 const NOTES_MAX_HEIGHT: f32 = 100.;
+/// The least a capped block keeps, in dp: a banner's first line, so the
+/// banners stay on the page when the trail needs the room.
+const NOTES_MIN_HEIGHT: f32 = 40.;
 
 impl ChangePage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -192,7 +195,11 @@ impl ChangePage {
             // its room; any other shows every banner whole.
             .when(short, |this| {
                 let scroll = self.notes_scroll.clone();
+                // Up to the cap, and less when the page's room is short: the
+                // trail keeps its least height first, so rows always show.
                 this.max_h(dp(NOTES_MAX_HEIGHT))
+                    .min_h(dp(NOTES_MIN_HEIGHT))
+                    .flex_shrink(1.)
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
                     .track_scroll(&self.notes_scroll)
@@ -218,9 +225,17 @@ impl ChangePage {
         // scrolling can't move, so a clipped banner reads as scrollable.
         Some(
             v_flex()
+                .min_h(dp(NOTES_MIN_HEIGHT))
+                .flex_shrink(1.)
                 .child(notes)
                 .when(short, |this| {
-                    this.child(div().h(gpui_kit::px(1.)).w_full().bg(palette(cx).line))
+                    this.child(
+                        div()
+                            .flex_none()
+                            .h(gpui_kit::px(1.))
+                            .w_full()
+                            .bg(palette(cx).line),
+                    )
                 })
                 .into_any_element(),
         )
