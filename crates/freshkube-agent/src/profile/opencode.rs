@@ -323,12 +323,27 @@ pub fn organisation_sources(data_home: &Path) -> Sources {
 fn organisation_sources_within(data_home: &Path, limit: u64) -> Sources {
     use std::io::Read;
     let dir = data_home.join("opencode");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
         // No directory: opencode never ran there, so nothing is saved.
-        return Sources::None;
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Sources::None,
+        // A directory that can't be listed can still hold a database that
+        // opencode opens by name.
+        Err(_) => return Sources::Unknown,
     };
     let mut unknown = false;
-    for entry in entries.flatten() {
+    // A 1.x organisation login is in `auth.json` until opencode 2 opens its
+    // database, which copies it into the sources key after this scan.
+    match legacy_login(&dir.join("auth.json")) {
+        Sources::Seen => return Sources::Seen,
+        Sources::Unknown => unknown = true,
+        Sources::None => {}
+    }
+    for entry in entries {
+        let Ok(entry) = entry else {
+            unknown = true;
+            continue;
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.starts_with("opencode") || !(name.contains(".db")) {
             continue;
@@ -369,6 +384,45 @@ fn organisation_sources_within(data_home: &Path, limit: u64) -> Sources {
         Sources::Unknown
     } else {
         Sources::None
+    }
+}
+
+/// opencode 1.x's login file: a JSON object of logins, an organisation's
+/// with `"type": "wellknown"`. Opencode 2 imports those into its sources on
+/// the first run (`import_legacy_credentials`).
+fn legacy_login(path: &Path) -> Sources {
+    use std::io::Read;
+    // A login file is small.
+    const MAX_AUTH_BYTES: u64 = 4 * 1024 * 1024;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Sources::None,
+        Err(_) => return Sources::Unknown,
+    };
+    let mut text = Vec::new();
+    if file
+        .take(MAX_AUTH_BYTES + 1)
+        .read_to_end(&mut text)
+        .is_err()
+        || text.len() as u64 > MAX_AUTH_BYTES
+    {
+        return Sources::Unknown;
+    }
+    match serde_json::from_slice::<serde_json::Value>(&text) {
+        Ok(serde_json::Value::Object(logins)) => {
+            let wellknown = logins.values().any(|login| {
+                login.get("type").and_then(serde_json::Value::as_str) == Some("wellknown")
+            });
+            if wellknown {
+                Sources::Seen
+            } else {
+                Sources::None
+            }
+        }
+        // Not a login file we understand: the word anywhere is enough to
+        // refuse, and nothing else is a reason to.
+        _ if text.windows(9).any(|w| w == b"wellknown") => Sources::Seen,
+        _ => Sources::Unknown,
     }
 }
 
@@ -757,5 +811,111 @@ mod tests {
         };
         assert!(data.check_sources(&host).is_err());
         assert!(Data::Shared.check_sources(&host).is_ok());
+    }
+
+    #[test]
+    fn a_legacy_organisation_login_is_a_source() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("opencode");
+        std::fs::create_dir_all(&dir).unwrap();
+        let login = |text: &str| std::fs::write(dir.join("auth.json"), text).unwrap();
+        // An ordinary key login is not.
+        login(r#"{"anthropic": {"type": "api", "key": "k"}}"#);
+        assert_eq!(organisation_sources(root.path()), Sources::None);
+        // An organisation's is, however it is spaced.
+        login(
+            r#"{"anthropic": {"type": "api", "key": "k"}, "https://config.example.test": {"type":"wellknown","key":"k","token":"t"}}"#,
+        );
+        assert_eq!(organisation_sources(root.path()), Sources::Seen);
+        login("{\"https://config.example.test\": {\n  \"type\" : \"wellknown\"\n}}");
+        assert_eq!(organisation_sources(root.path()), Sources::Seen);
+        // A file that isn't JSON: refused if it names the type, otherwise unknown.
+        login("not json but wellknown somewhere");
+        assert_eq!(organisation_sources(root.path()), Sources::Seen);
+        login("not json");
+        assert_eq!(organisation_sources(root.path()), Sources::Unknown);
+        // A directory in its place can't be read.
+        std::fs::remove_file(dir.join("auth.json")).unwrap();
+        std::fs::create_dir(dir.join("auth.json")).unwrap();
+        assert_eq!(organisation_sources(root.path()), Sources::Unknown);
+    }
+
+    #[test]
+    fn a_data_directory_that_cannot_be_listed_is_unknown_not_none() {
+        let root = tempfile::tempdir().unwrap();
+        // `opencode` is a file, not a directory: listing it fails, and not
+        // with "not found".
+        std::fs::write(root.path().join("opencode"), "x").unwrap();
+        assert_eq!(organisation_sources(root.path()), Sources::Unknown);
+        // Only a directory that isn't there reads as nothing saved.
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(organisation_sources(empty.path()), Sources::None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_without_read_permission_is_unknown() {
+        use std::os::unix::fs::PermissionsExt;
+        // Root lists any directory; the case needs an ordinary user.
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("opencode");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("opencode.db"), b"wellknown:sources").unwrap();
+        // Write and search, no read: it can't be listed, but the database can be opened by name.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o300)).unwrap();
+        let found = organisation_sources(root.path());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(found, Sources::Unknown);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_start_through_spawn_is_refused_for_a_source_in_either_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("opencode-bin");
+        std::fs::write(&binary, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // The owned directory, with an organisation login saved inside it.
+        let own_dir = root.path().join("own");
+        let own = Profile::opencode(&binary, Data::Own(own_dir.clone()));
+        database(
+            &own_dir.join("data"),
+            "opencode.db",
+            b"..wellknown:sources..",
+        );
+        let error = own
+            .spawn(&Host::default(), &fake_proof(&own))
+            .err()
+            .expect("refused");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            error.to_string().contains("Freshkube's own opencode data"),
+            "{error}"
+        );
+
+        // The shared directory, with only a 1.x login file.
+        let share = root.path().join("share");
+        std::fs::create_dir_all(share.join("opencode")).unwrap();
+        std::fs::write(
+            share.join("opencode/auth.json"),
+            r#"{"https://config.example.test": {"type": "wellknown"}}"#,
+        )
+        .unwrap();
+        let host = Host {
+            data_home: Some(share),
+            ..Host::default()
+        };
+        let shared = Profile::opencode(&binary, Data::Shared);
+        let error = shared
+            .spawn(&host, &fake_proof(&shared))
+            .err()
+            .expect("refused");
+        assert!(error.to_string().contains("opencode's own data"), "{error}");
     }
 }

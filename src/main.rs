@@ -297,9 +297,10 @@ fn options(
     }
 }
 
-/// Resolve the log file path, falling back to the platform temp directory.
 /// Whether a log target belongs to the agent libraries: the ACP client and
-/// the MCP client.
+/// the MCP client. This must match `freshkube_agent::is_agent_library_target`
+/// (this crate does not depend on the agent crate; each has a test of the
+/// clamp built on it).
 fn is_agent_library(target: &str) -> bool {
     let crate_name = target.split("::").next().unwrap_or(target);
     crate_name == "rmcp" || crate_name.starts_with("agent_client_protocol")
@@ -337,6 +338,7 @@ fn log_filter(debug: bool) -> EnvFilter {
         .add_directive("rmcp=info".parse().unwrap())
 }
 
+/// Resolve the log file path, falling back to the platform temp directory.
 fn resolve_log_path(log_file: Option<String>) -> PathBuf {
     match log_file {
         Some(path) => PathBuf::from(path),
