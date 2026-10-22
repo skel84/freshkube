@@ -214,7 +214,8 @@ impl Pilot {
                     ..ViewState::page(LinkPage::Resources)
                 }
             }
-            Destination::CopyLink(_) => return None,
+            // Alerts has no place in a link yet: Copy link says so.
+            Destination::Alerts | Destination::CopyLink(_) => return None,
         };
         view.check().ok()?;
         Some(view)

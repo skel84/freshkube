@@ -153,6 +153,12 @@ fn a_page_without_a_place_to_link_has_no_view(cx: &mut TestAppContext) {
     assert_eq!(notices.borrow().as_slice(), ["This page can’t be linked."]);
 }
 
+#[test]
+fn an_attention_row_that_opens_alerts_has_no_view() {
+    use crate::presentation::attention::Destination;
+    assert_eq!(Pilot::view_of(&Destination::Alerts), None);
+}
+
 #[gpui_kit::test]
 fn the_view_names_the_page_the_kind_the_object_and_its_tab(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
