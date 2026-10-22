@@ -33,16 +33,12 @@ fn open(
     (handle, pilot, runtime)
 }
 
-fn rows(cx: &mut TestAppContext, handle: gpui_kit::AnyWindowHandle, sources: &[&str]) -> usize {
+fn rows(cx: &mut TestAppContext, handle: gpui_kit::AnyWindowHandle) -> usize {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         (0..200usize)
             .filter(|ix| window.try_find(("audit-row", *ix)).is_some())
             .count()
-    })
-    .map(|count| {
-        let _ = sources;
-        count
     })
     .unwrap()
 }
@@ -70,13 +66,13 @@ fn the_audit_log_is_a_section_with_its_own_page_slug() {
 #[gpui_kit::test]
 fn example_data_shows_both_sources_and_the_filter_narrows_them(cx: &mut TestAppContext) {
     let (handle, _pilot, _runtime) = open(cx, 1280., 880.);
-    assert_eq!(rows(cx, handle, &[]), 5);
+    assert_eq!(rows(cx, handle), 5);
     click(cx, handle, 1);
-    assert_eq!(rows(cx, handle, &[]), 4);
+    assert_eq!(rows(cx, handle), 4);
     click(cx, handle, 2);
-    assert_eq!(rows(cx, handle, &[]), 1);
+    assert_eq!(rows(cx, handle), 1);
     click(cx, handle, 0);
-    assert_eq!(rows(cx, handle, &[]), 5);
+    assert_eq!(rows(cx, handle), 5);
 }
 
 #[gpui_kit::test]
@@ -160,7 +156,7 @@ fn real_files_are_read_across_contexts_and_carry_field_paths_only(cx: &mut TestA
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(rows(cx, handle, &[]), 3);
+    assert_eq!(rows(cx, handle), 3);
     let line = cx
         .update_window(handle, |_, window, cx| {
             window.render_frame(cx);
