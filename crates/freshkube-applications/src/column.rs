@@ -151,7 +151,7 @@ impl ApplicationsPage {
 
     /// The application whose page shows in the list's place.
     pub fn shown_application(&self, cx: &App) -> Option<SharedString> {
-        if self.changes_shown {
+        if self.changes_shown || self.waiting_shown {
             return None;
         }
         let (page, _) = self.open.as_ref()?;
@@ -225,6 +225,7 @@ impl ApplicationsPage {
                 .update(cx, |changes, cx| changes.close_change(window, cx));
             return;
         }
+        self.hide_waiting(cx);
         self.changes_shown = true;
         self.column_revision += 1;
         let visible = self.visible;
@@ -233,6 +234,36 @@ impl ApplicationsPage {
             changes.focus_shown(window, cx);
         });
         cx.notify();
+    }
+
+    /// Waiting to ship: the page in the list's place, which reads while it
+    /// shows. Another press keeps it.
+    pub fn show_waiting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.waiting_shown {
+            self.waiting
+                .update(cx, |waiting, cx| waiting.focus(window, cx));
+            return;
+        }
+        self.hide_changes_only(cx);
+        self.waiting_shown = true;
+        self.column_revision += 1;
+        let visible = self.visible;
+        self.waiting.update(cx, |waiting, cx| {
+            waiting.set_visible(visible, cx);
+            waiting.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Whether Waiting to ship shows in the list's place.
+    pub fn waiting_shown(&self) -> bool {
+        self.waiting_shown
+    }
+
+    /// Waiting to ship, shown or not.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn waiting_page(&self) -> &Entity<WaitingPage> {
+        &self.waiting
     }
 
     /// Whether the Changes list shows in the list's place.
@@ -249,6 +280,23 @@ impl ApplicationsPage {
     /// The list or an application's page again: the Changes list stops
     /// reading.
     fn hide_changes(&mut self, cx: &mut Context<Self>) {
+        self.hide_waiting(cx);
+        self.hide_changes_only(cx);
+    }
+
+    /// Waiting to ship stops reading.
+    fn hide_waiting(&mut self, cx: &mut Context<Self>) {
+        if !self.waiting_shown {
+            return;
+        }
+        self.waiting_shown = false;
+        self.column_revision += 1;
+        self.waiting
+            .update(cx, |waiting, cx| waiting.set_visible(false, cx));
+        cx.notify();
+    }
+
+    fn hide_changes_only(&mut self, cx: &mut Context<Self>) {
         if !self.changes_shown {
             return;
         }

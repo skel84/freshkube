@@ -84,10 +84,10 @@ impl Inks {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Form {
     /// The 20 dp pill with the glyph and the word: the status bar, and the
-    /// header from 900 dp.
+    /// header from 1000 dp.
     Word,
     /// A 20 dp square with the glyph alone, filled and inked as the tag is,
-    /// never bare: the header under 900 dp. The word is in its tooltip and
+    /// never bare: the header under 1000 dp. The word is in its tooltip and
     /// its accessibility label.
     Square,
     /// The pill at a table row's size (18 dp, 11 px).
