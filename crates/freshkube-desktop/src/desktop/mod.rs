@@ -696,6 +696,10 @@ impl Pilot {
         if let Some(notice) = options.setup_notice.take() {
             self.tell(notice, window, cx);
         }
+        // Before the first source is opened: opening it offers the follows
+        // their connection, and an example seeds notices the toast shows.
+        let followed = self.watch_followed(window, cx);
+        self._subscriptions.extend(followed);
         self.load_workspace(cx);
         self.rebuild_switcher(cx);
         // The followed-items example `hidden` is a protected cluster, so
@@ -751,8 +755,6 @@ impl Pilot {
                 }
             },
         ));
-        let followed = self.watch_followed(window, cx);
-        self._subscriptions.extend(followed);
         self.watch_menus(window, cx);
         self.publish_reading(cx);
         self.chrome.parts.watch(self, cx);

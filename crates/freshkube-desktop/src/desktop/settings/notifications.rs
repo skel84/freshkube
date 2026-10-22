@@ -239,7 +239,12 @@ impl SettingsPage {
                         this.pb(dp(10.)).border_b_1().border_color(p.line)
                     })
                     .child(div().truncate().child(row.title.clone()))
-                    .child(div().text_color(p.muted).child(row.reads.clone()))
+                    .child(
+                        div()
+                            .truncate()
+                            .text_color(p.muted)
+                            .child(row.reads.clone()),
+                    )
                     .child(div().text_color(p.muted).child(row.ends))
                     .when_some(row.reason.clone(), |this, why| {
                         this.child(div().text_color(p.muted).child(why))

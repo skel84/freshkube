@@ -108,7 +108,7 @@ impl Render for FollowedBell {
                 Button::new("followed")
                     .ghost()
                     .xsmall()
-                    .when(narrow, |this| this.icon(IconName::BellRing))
+                    .when(narrow, |this| this.icon(IconName::BellRing).compact())
                     .label(if narrow {
                         self.short.clone()
                     } else {
@@ -222,10 +222,15 @@ impl BellPanel {
 
 fn notice_line(notice: &Notice, settings: &Settings, cx: &mut Context<BellPanel>) -> NoticeLine {
     // The bell is in the app: it lists what a banner would hide.
+    let words = notice.words(settings);
+    // A single update whose headline is the heading says only its detail.
     let lines = notice
         .updates
         .iter()
-        .map(|u| format!("{} · {}", u.headline, u.detail))
+        .map(|u| match words.body.is_some() {
+            true => u.detail.clone(),
+            false => format!("{} · {}", u.headline, u.detail),
+        })
         .collect();
     let at = notice.at;
     NoticeLine {
@@ -243,7 +248,7 @@ fn notice_line(notice: &Notice, settings: &Settings, cx: &mut Context<BellPanel>
             "Update"
         },
         // The headline when its details show, the summary when they hide.
-        summary: notice.words(settings).title,
+        summary: words.title,
         lines,
         held: notice.held,
         age: cx.new(|cx| Age::new(at, cx)),

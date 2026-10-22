@@ -45,7 +45,8 @@ impl FollowMenu {
         let followed = crate::owner::followed(cx)?;
         let prefix = prefix.into();
         Some(cx.new(|cx| {
-            let panel = cx.new(|cx| Panel::new(prefix.clone(), followed, cx));
+            let menu = cx.entity().downgrade();
+            let panel = cx.new(|cx| Panel::new(prefix.clone(), followed, menu, cx));
             Self {
                 prefix,
                 panel,
@@ -101,6 +102,9 @@ impl Render for FollowMenu {
 struct Panel {
     prefix: SharedString,
     followed: Entity<Followed>,
+    /// The menu whose popover this is, closed once a choice is made so its
+    /// confirmation toast isn't drawn under it.
+    menu: WeakEntity<FollowMenu>,
     offers: Vec<Offer>,
     /// Why the last choice was refused.
     refused: Option<String>,
@@ -108,11 +112,17 @@ struct Panel {
 }
 
 impl Panel {
-    fn new(prefix: SharedString, followed: Entity<Followed>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        prefix: SharedString,
+        followed: Entity<Followed>,
+        menu: WeakEntity<FollowMenu>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let subscription = cx.observe(&followed, |_, _, cx| cx.notify());
         Self {
             prefix,
             followed,
+            menu,
             offers: Vec::new(),
             refused: None,
             _subscription: subscription,
@@ -137,6 +147,7 @@ impl Render for Panel {
                 let context = offer.context.clone();
                 let this = cx.entity().downgrade();
                 let followed = self.followed.clone();
+                let menu = self.menu.clone();
                 let label = offer.label.clone();
                 h_flex()
                     .id(SharedString::from(format!("{}-offer-{ix}", self.prefix)))
@@ -178,6 +189,11 @@ impl Render for Panel {
                                     }
                                 });
                                 if let Some(words) = started {
+                                    // The popover goes first: a toast is drawn under it.
+                                    _ = menu.update(cx, |menu, cx| {
+                                        menu.open = false;
+                                        cx.notify();
+                                    });
                                     gpui_kit::component::WindowExt::push_notification(window, words, cx);
                                 }
                                 _ = this.update(cx, |panel, cx| {

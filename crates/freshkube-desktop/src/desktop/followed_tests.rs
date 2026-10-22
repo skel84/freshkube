@@ -346,7 +346,7 @@ fn the_bell_never_pushes_the_pages_segment_or_the_level_out_of_the_bar(cx: &mut 
                 "the bell is drawn: {shown}"
             );
             assert!(
-                bell.size.width < crate::ui::dp_px(60., window),
+                bell.size.width < crate::ui::dp_px(30., window),
                 "the bell is its icon and count: {:?}, {shown}",
                 bell.size.width
             );
@@ -395,6 +395,23 @@ fn the_bell_names_the_cap_and_settings_say_saved_in_only_when_saved(cx: &mut Tes
         assert!(
             !present(cx, f.handle, &format!("{group}-saved-in")),
             "{group}"
+        );
+    }
+}
+
+/// The first notice of an example shape is told as the window comes up:
+/// the shell listens for toasts before the follows are seeded.
+#[gpui_kit::test]
+fn the_hidden_and_grouped_examples_toast_their_first_notice_at_launch(cx: &mut TestAppContext) {
+    // The bell example seeds its notices straight into the inbox.
+    let control = following(cx, Shape::Bell);
+    assert_eq!(notices(cx, control.handle), 0);
+    for shape in [Shape::Hidden, Shape::Grouped] {
+        let f = following(cx, shape);
+        assert_eq!(
+            notices(cx, f.handle),
+            1,
+            "{shape:?} toasts its first notice"
         );
     }
 }
