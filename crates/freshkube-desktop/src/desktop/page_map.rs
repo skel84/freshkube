@@ -144,6 +144,9 @@ impl Pages {
                 cx,
             )
         });
+        monitoring.update(cx, |page, cx| {
+            page.set_alerts_shape(options.debug.alerts, cx)
+        });
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
                 runtime.clone(),

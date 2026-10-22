@@ -493,7 +493,7 @@ impl Pilot {
             self.settings_page
                 .update(cx, |settings, cx| settings.focus(window, cx));
         } else if self.navigation.page == Page::Monitoring {
-            let focus = self.pages.monitoring.read(cx).focus_handle().clone();
+            let focus = self.pages.monitoring.read(cx).shown_focus(cx);
             window.focus(&focus, cx);
         } else if self.navigation.page == Page::Nodes
             && self.pages.node_workspace.read(cx).shows_logs()

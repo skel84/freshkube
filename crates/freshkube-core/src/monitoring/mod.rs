@@ -10,6 +10,7 @@
 //! here changes the cluster: the proxy only ever sees GET, which needs `get`
 //! on `services/proxy` and nothing more.
 
+pub mod alerts;
 pub mod builtin;
 pub mod catalog;
 mod discovery;

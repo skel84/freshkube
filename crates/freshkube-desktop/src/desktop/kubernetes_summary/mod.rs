@@ -77,6 +77,7 @@ impl Pilot {
     /// Manual Refresh relists every source. The automatic Talos cycle calls
     /// ensure_summary instead, which leaves an existing session alone.
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_alerts(cx);
         if let Some(session) = &self.switch.registry.active().summary_session {
             session.core.relist();
             if self.mode().is_example() && !self.mode().holds_talos() {
@@ -127,6 +128,8 @@ impl Pilot {
             applied_revision: 0,
         });
         self.sync_unread_health(cx);
+        // The alert read starts beside it, for the same connection.
+        self.ensure_alerts(cx);
         if matches!(source.access, ClusterAccess::Example(_)) {
             self.start_fixture_summary(window, cx);
             return;
