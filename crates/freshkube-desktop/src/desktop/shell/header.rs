@@ -86,8 +86,24 @@ impl Pilot {
             } else {
                 SEARCH_FIELD_LEAST_WIDTH
             },
+            search_floor: APP_HEADER_CONTROL,
         };
         let share = row.centred_share();
+        // Once the search has given up the middle the sides pad nothing: the
+        // padding only adds to their minimum, and centres nothing.
+        let centring = if share.is_some() {
+            centring
+        } else {
+            freshkube_ui::platform::CentringPadding {
+                leading_side: px(0.),
+                trailing_side: px(0.),
+            }
+        };
+        let search_least = if share.is_some() {
+            row.search_least
+        } else {
+            row.search_floor
+        };
         // Three parts on a row: the sides share what the search leaves, so
         // the search sits in the middle. Each side pads its inner edge so the
         // two differ by as much as the window's edges do, and the search is
@@ -127,7 +143,7 @@ impl Pilot {
                                     .child(self.render_location(cx)),
                             ),
                     )
-                    .child(self.render_search_field(window, cx))
+                    .child(self.render_search_field(window, search_least, cx))
                     .child(
                         h_flex()
                             .flex_1()
@@ -377,7 +393,12 @@ impl Pilot {
     }
 
     /// Opens Search everything; it shrinks to its icon in a narrow window.
-    fn render_search_field(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_search_field(
+        &self,
+        window: &Window,
+        least: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette(cx);
         let narrow = window.viewport_size().width / ui::dp_px(1., window) < SEARCH_FIELD_MIN_WIDTH;
         h_flex()
@@ -394,7 +415,7 @@ impl Pilot {
                 // A basis, not a width: a width counts whole towards the
                 // bar's minimum, so the bar would outgrow a narrow window.
                 this.flex_basis(dp(SEARCH_FIELD_WIDTH))
-                    .min_w(dp(SEARCH_FIELD_LEAST_WIDTH))
+                    .min_w(dp(least))
                     .flex_grow_0()
                     .flex_shrink_1()
                     .px(dp(10.))

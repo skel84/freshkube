@@ -266,8 +266,11 @@ pub struct HeaderRow {
     pub trailing_pad: f32,
     /// Between the three parts.
     pub gap: f32,
-    /// The least the search may shrink to.
+    /// The least the search may shrink to while it stays centred.
     pub search_least: f32,
+    /// The least it may shrink to once it has given up the middle: its
+    /// icon.
+    pub search_floor: f32,
 }
 
 impl HeaderRow {
@@ -289,6 +292,21 @@ impl HeaderRow {
     pub fn centred_search(self, share: f32, widest: f32) -> f32 {
         let room = self.bar - 2. * share - self.leading_pad - self.trailing_pad - 2. * self.gap;
         room.min(widest)
+    }
+
+    /// The search's width, centred or not. Once it has given up the middle,
+    /// the sides keep their content's width without padding (the controls
+    /// after the bar are outside it, so padding for them would only add to the
+    /// sides' minimum), and the search takes what is left, down to its
+    /// floor, so the row fits the bar for as long as the floor allows.
+    pub fn search_width(self, widest: f32) -> f32 {
+        match self.centred_share() {
+            Some(share) => self.centred_search(share, widest),
+            None => {
+                let room = self.bar - self.leading - self.trailing - 2. * self.gap;
+                room.clamp(self.search_floor, widest)
+            }
+        }
     }
 }
 
@@ -622,6 +640,7 @@ mod tests {
             trailing_pad,
             gap: 6.,
             search_least: 200.,
+            search_floor: 28.,
         }
     }
 
@@ -655,6 +674,37 @@ mod tests {
         // traffic lights, Windows' caption buttons) need more room.
         assert!(row(212., 88., 12., 12.).centred_share().is_some());
         assert_eq!(row(212., 88., 114., 80.).centred_share(), None);
+    }
+
+    /// Once the search has given up the middle the row fits the bar, with
+    /// Windows' insets too: its padding is dropped, not counted, and the
+    /// search takes what the sides leave, down to its floor.
+    #[test]
+    fn a_row_that_gave_up_the_middle_fits_the_bar_with_windows_insets() {
+        // 760 px at text size 16 is 585 dp; less 12 dp each side and three
+        // caption buttons (102 px, 82.8 dp).
+        let bar = 585. - 24. - 102. * 13. / 16.;
+        let row = HeaderRow {
+            bar,
+            leading: 212.,
+            trailing: 88.,
+            leading_pad: 12. + 82.8,
+            trailing_pad: 12.,
+            gap: 6.,
+            search_least: 200.,
+            search_floor: 28.,
+        };
+        assert_eq!(row.centred_share(), None);
+        let search = row.search_width(320.);
+        assert!(search >= 28.);
+        assert!(
+            row.leading + search + row.trailing + 2. * row.gap <= bar + 0.01,
+            "{search} wide in a bar of {bar}"
+        );
+        // A bar too short even for the floor is the icon's problem, not the
+        // padding's: the row overruns by exactly what the floor needs.
+        let short = HeaderRow { bar: 300., ..row };
+        assert_eq!(short.search_width(320.), 28.);
     }
 
     /// Every key the module names parses, and each platform's keys and

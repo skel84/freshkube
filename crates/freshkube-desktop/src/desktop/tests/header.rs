@@ -329,7 +329,14 @@ fn header_at_548_dp_shrinks_the_search_field_before_anything_overlaps(cx: &mut T
 /// centred.
 #[gpui_kit::test]
 fn a_wide_switcher_shrinks_the_search_around_the_middle_at_760(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    // A long name is cut inside the switcher, which keeps its width.
+    let full = "talos-production-frankfurt-equinix-fr5-baremetal-b7";
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.select_context(full.into(), window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let dp = |n| crate::ui::dp_px(n, window);
@@ -344,7 +351,13 @@ fn a_wide_switcher_shrinks_the_search_around_the_middle_at_760(cx: &mut TestAppC
             "search is centred at {:?}",
             search.center().x
         );
-        assert!(window.find("context-switcher").bounds().right() <= search.left());
+        let switcher = window.find("context-switcher").bounds();
+        assert!(
+            (switcher.size.width - dp(180.)).abs() < px(0.5),
+            "the switcher is {:?} wide, not 180 dp",
+            switcher.size.width
+        );
+        assert!(switcher.right() <= search.left());
         assert!(search.right() <= window.find("refresh").bounds().left());
     })
     .unwrap();
