@@ -180,7 +180,7 @@ impl WorkloadsScreen {
     pub(super) fn render_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let detail = self.detail.as_ref()?;
         let p = palette(cx);
-        let inspector = Inspector::new("workload-detail");
+        let inspector = Inspector::new("workload-detail").selection(format!("{:?}", detail.key));
         let Some(item) = &detail.item else {
             // Health lists a pod only while it needs attention, so one that
             // recovered leaves the list as one that was removed does.

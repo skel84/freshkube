@@ -169,6 +169,7 @@ impl DatabasesScreen {
         let Some(row) = self.display.rows.iter().find(|row| &row.key == selected) else {
             return Some(
                 Inspector::new("databases-detail")
+                    .selection(format!("{selected:?}"))
                     .child("No longer listed here.")
                     .render(cx)
                     .into_any_element(),
@@ -208,6 +209,7 @@ impl DatabasesScreen {
         });
         Some(
             Inspector::new("databases-detail")
+                .selection(format!("{selected:?}"))
                 .heading(heading)
                 .child(self.verdict(row, cx))
                 .children(row.sections.iter().map(|section| self.section(section, cx)))

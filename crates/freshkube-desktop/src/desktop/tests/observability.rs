@@ -100,3 +100,52 @@ fn coroot_links_open_without_asking_while_a_shell_runs(cx: &mut TestAppContext) 
         );
     });
 }
+
+/// At 760 by 560 with text size 20 the stacked Incidents Inspector's body is
+/// short and its first line under "Service level objectives" starts at the
+/// fold. The wheel over the body brings that line up, whole, while the page
+/// stays where it is.
+#[gpui_kit::test]
+fn the_first_objective_shows_whole_in_a_short_inspector(cx: &mut TestAppContext) {
+    use crate::observability::Destination;
+    use gpui_kit::{ScrollDelta, point, px};
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        view.update(cx, |view, cx| {
+            view.navigate(Page::Observability, window, cx);
+            view.pages
+                .observability
+                .update(cx, |page, cx| page.open(Destination::Incidents, cx));
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let body = window.find("obs-incident-detail-body").bounds();
+        let first = window.find("obs-incident-slo-0-name").bounds();
+        let table = window.find("obs-incidents-table").bounds().top();
+        assert!(
+            first.bottom() > body.bottom(),
+            "the line starts below the fold: {first:?} in {body:?}"
+        );
+        window.scroll(
+            "obs-incident-detail-body",
+            ScrollDelta::Pixels(point(px(0.), -(first.bottom() - body.bottom()) - px(8.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let first = window.find("obs-incident-slo-0-name").bounds();
+        assert!(
+            first.top() >= body.top() && first.bottom() <= body.bottom(),
+            "the first line is whole in the body: {first:?} in {body:?}"
+        );
+        assert_eq!(
+            window.find("obs-incidents-table").bounds().top(),
+            table,
+            "the page stays while the body scrolls"
+        );
+    })
+    .unwrap();
+}

@@ -9,7 +9,6 @@ pub(crate) use tabs::bare_strip;
 pub use tabs::{Edges, TAB_HEIGHT, TabStrip, tab};
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -21,8 +20,8 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, AppContext, DispatchPhase, Div, Entity, HitboxBehavior, MouseDownEvent,
-    Pixels, ScrollHandle, ScrollWheelEvent, SharedString, Stateful, Subscription, TestSupportExt,
-    Window, canvas, div,
+    Pixels, RenderOnce, ScrollHandle, ScrollWheelEvent, SharedString, Stateful, Subscription,
+    TestSupportExt, TouchPhase, Window, canvas, div,
 };
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
@@ -73,6 +72,7 @@ pub struct Inspector {
     tabs: Option<(TabStrip, AnyElement)>,
     body: Vec<AnyElement>,
     scroll: Option<ScrollHandle>,
+    selection: Option<SharedString>,
     content: Option<AnyElement>,
     footer: Option<AnyElement>,
 }
@@ -86,6 +86,7 @@ impl Inspector {
             tabs: None,
             body: vec![],
             scroll: None,
+            selection: None,
             content: None,
             footer: None,
         }
@@ -130,6 +131,17 @@ impl Inspector {
         self
     }
 
+    /// What the body shows, as a key: when it changes, the body goes back
+    /// to the top. For a page that doesn't [`track_scroll`] to reset it
+    /// itself. The position is forgotten anyway once the inspector is no
+    /// longer drawn.
+    ///
+    /// [`track_scroll`]: Self::track_scroll
+    pub fn selection(mut self, key: impl Into<SharedString>) -> Self {
+        self.selection = Some(key.into());
+        self
+    }
+
     /// In place of a body: one element that fills the rest and lays itself
     /// out, unpadded and unscrolled, for a view that scrolls itself (a
     /// virtual list, a log, a terminal). The parts given to [`child`] are
@@ -150,7 +162,6 @@ impl Inspector {
     pub fn render(self, cx: &App) -> Observed<Stateful<Div>> {
         let line = palette(cx).line;
         let part = |part: &str| SharedString::from(format!("{}-{part}", self.id));
-        let scroll = self.scroll.unwrap_or_else(|| body_scroll(&self.id));
         let body = match self.content {
             Some(content) => div()
                 .id(part("content"))
@@ -160,28 +171,15 @@ impl Inspector {
                 .flex_1()
                 .min_h_0()
                 .min_w_0()
-                .child(content),
-            None => v_flex()
-                .id(part("body-frame"))
-                .test_support()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .p(dp(PANE_PADDING))
-                .child(wheel_first(scroll.clone()))
-                .child(
-                    v_flex()
-                        .id(part("body"))
-                        .test_support()
-                        .size_full()
-                        .min_h_0()
-                        .min_w_0()
-                        .overflow_y_scroll()
-                        .restrict_scroll_to_axis()
-                        .track_scroll(&scroll)
-                        .gap(dp(GAP))
-                        .children(self.body),
-                ),
+                .child(content)
+                .into_any_element(),
+            None => Body {
+                id: self.id.clone(),
+                parts: self.body,
+                scroll: self.scroll,
+                selection: self.selection,
+            }
+            .into_any_element(),
         };
         v_flex()
             .id(self.id.clone())
@@ -470,14 +468,73 @@ fn press_width(pressed: Rc<Cell<Option<f32>>>) -> impl IntoElement {
     .size_full()
 }
 
-thread_local! {
-    /// The scroll position of each inspector whose page doesn't track it,
-    /// by id, kept across frames the way Kit keeps an element's own.
-    static BODY_SCROLLS: RefCell<HashMap<SharedString, ScrollHandle>> = RefCell::default();
+/// The scrolling body: the parts padded, in a column that scrolls. It
+/// remembers its position for as long as it is drawn from one frame to the
+/// next, so closing the inspector forgets it.
+#[derive(IntoElement)]
+struct Body {
+    id: SharedString,
+    parts: Vec<AnyElement>,
+    scroll: Option<ScrollHandle>,
+    selection: Option<SharedString>,
 }
 
-fn body_scroll(id: &SharedString) -> ScrollHandle {
-    BODY_SCROLLS.with(|scrolls| scrolls.borrow_mut().entry(id.clone()).or_default().clone())
+/// What a body remembers between frames.
+#[derive(Default)]
+struct Remembered {
+    scroll: ScrollHandle,
+    selection: Option<SharedString>,
+    gesture: Rc<Cell<Gesture>>,
+}
+
+impl RenderOnce for Body {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let part = |part: &str| SharedString::from(format!("{}-{part}", self.id));
+        let state = window.use_keyed_state(part("scroll"), cx, |_, _| Remembered::default());
+        let (scroll, gesture) = state.update(cx, |state, _| {
+            let scroll = self.scroll.unwrap_or_else(|| state.scroll.clone());
+            if state.selection != self.selection {
+                state.selection = self.selection;
+                scroll.set_offset(gpui_kit::point(Pixels::ZERO, Pixels::ZERO));
+            }
+            (scroll, state.gesture.clone())
+        });
+        v_flex()
+            .id(part("body-frame"))
+            .test_support()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .p(dp(PANE_PADDING))
+            .child(wheel_first(scroll.clone(), gesture))
+            .child(
+                v_flex()
+                    .id(part("body"))
+                    .test_support()
+                    .size_full()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .track_scroll(&scroll)
+                    .gap(dp(GAP))
+                    .children(self.parts),
+            )
+    }
+}
+
+/// Who a trackpad gesture belongs to, decided by its first movement: a
+/// flick that starts on the body stays on it, to its end and through the
+/// momentum after, and one that starts anywhere else is the page's.
+#[derive(Clone, Copy, Default, PartialEq)]
+enum Gesture {
+    /// No gesture is known: a mouse wheel, or a trackpad that has not begun.
+    #[default]
+    Idle,
+    /// A gesture has begun and has not moved yet.
+    Begun,
+    Body,
+    Page,
 }
 
 /// Gives the wheel to the body first. Kit hands a wheel event to every
@@ -485,16 +542,22 @@ fn body_scroll(id: &SharedString) -> ScrollHandle {
 /// scrolls too, both would move. This listens before them: while the body
 /// can still move the way the wheel turns, it moves the body itself and the
 /// page behind never hears of the event; once the body is at that end, the
-/// event goes on and the page scrolls. It covers the body's frame, which
-/// it sits in, and takes no mouse input of its own.
-fn wheel_first(scroll: ScrollHandle) -> impl IntoElement {
+/// event goes on and the page scrolls. A trackpad gesture keeps to whoever
+/// it began on (see [`Gesture`]). It covers the body's frame, which it sits
+/// in, and takes no mouse input of its own.
+fn wheel_first(scroll: ScrollHandle, gesture: Rc<Cell<Gesture>>) -> impl IntoElement {
     canvas(
         |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
         move |_, hitbox, window, _| {
-            let (scroll, view) = (scroll.clone(), window.current_view());
+            let (scroll, gesture, view) = (scroll.clone(), gesture.clone(), window.current_view());
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase != DispatchPhase::Capture || !hitbox.should_handle_scroll(window) {
+                if phase != DispatchPhase::Capture {
                     return;
+                }
+                match event.touch_phase {
+                    TouchPhase::Started => gesture.set(Gesture::Begun),
+                    TouchPhase::Cancelled => gesture.set(Gesture::Idle),
+                    _ => {}
                 }
                 let delta = event.delta.pixel_delta(window.line_height());
                 if delta.y == Pixels::ZERO || delta.x.abs() > delta.y.abs() {
@@ -502,11 +565,25 @@ fn wheel_first(scroll: ScrollHandle) -> impl IntoElement {
                 }
                 let (offset, most) = (scroll.offset(), scroll.max_offset().y);
                 let to = (offset.y + delta.y).clamp(-most, Pixels::ZERO);
-                if (to - offset.y).abs() < Pixels::from(0.5) {
+                let moves = (to - offset.y).abs() >= Pixels::from(0.5);
+                let begins = || hitbox.should_handle_scroll(window) && moves;
+                let ours = match gesture.get() {
+                    Gesture::Body => true,
+                    Gesture::Page => false,
+                    Gesture::Begun => {
+                        let ours = begins();
+                        gesture.set(if ours { Gesture::Body } else { Gesture::Page });
+                        ours
+                    }
+                    Gesture::Idle => begins(),
+                };
+                if !ours {
                     return;
                 }
-                scroll.set_offset(gpui_kit::point(offset.x, to));
-                cx.notify(view);
+                if moves {
+                    scroll.set_offset(gpui_kit::point(offset.x, to));
+                    cx.notify(view);
+                }
                 cx.stop_propagation();
             });
         },

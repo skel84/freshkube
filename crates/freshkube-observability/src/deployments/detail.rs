@@ -163,6 +163,7 @@ impl ObservabilityPage {
         let revision = &row.revision;
         Some(
             Inspector::new("obs-revision-detail")
+                .selection(format!("{:?}", row.revision))
                 .heading(self.revision_heading(row, cx))
                 .child(
                     part()

@@ -199,7 +199,9 @@ impl ObservabilityPage {
                         .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                 )
         });
+        let selected = state.selected().map(|(key, _)| key.clone());
         let inspector = Inspector::new("obs-incident-detail")
+            .selection(selected.unwrap_or_default())
             .heading(self.incident_heading(state.detail.as_ref(), read_tag, cx))
             .children(failed);
         let Some(d) = &state.detail else {
