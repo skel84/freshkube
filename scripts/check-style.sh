@@ -23,7 +23,8 @@
 #   motion  animate with with_animation(s) or with_spring: animations take their
 #           timing from ui::motion's tokens and draw through its helpers.
 #
-# Outside the domain crates (core, talos-rs) and tests, the shared components
+# Outside the domain crates (core, talos-rs, and the agent crate, which starts
+# and ends a child process) and tests, the shared components
 # included, nothing but freshkube-ui's platform module may
 #   platform  name the target (target_os, target_family, target_vendor,
 #             consts::OS, consts::FAMILY) or put windows in a cfg, cfg! or
@@ -182,6 +183,7 @@ motion_offences() {
 # Every Rust file the platform rule reads.
 platform_files() {
   find crates $(test -d src && echo src) \( -path 'src/*' -o -path '*/src/*' -o -name build.rs \) -name '*.rs' \
+    -not -path 'crates/freshkube-agent/*' \
     -not -path 'crates/freshkube-core/*' \
     -not -path 'crates/freshkube-delivery/*' \
     -not -path 'crates/talos-rs/*' \
