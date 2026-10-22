@@ -486,3 +486,34 @@ fn a_bell_notice_is_headed_by_its_headline_unless_details_hide(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+/// A followed item's second line truncates; it never wraps at a slash.
+#[gpui_kit::test]
+fn a_long_followed_name_truncates_in_settings_instead_of_wrapping(cx: &mut TestAppContext) {
+    let f = following_at(cx, Shape::States, 760., 560.);
+    let id = cx.update(|cx| {
+        f.followed.update(cx, |followed, cx| {
+            let context = followed.items()[0].follow.context.clone();
+            let subject = freshkube_followed::Subject::CrashLoop {
+                namespace: "payments".into(),
+                pod: "worker-6c4f8da0-bbbbh-with-a-very-long-generated-suffix".into(),
+            };
+            followed.follow_in(subject, &context, cx).unwrap()
+        })
+    });
+    cx.update_window(f.handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        f.pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Notifications, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let reads = window.find(format!("notifications-reads-{id}")).bounds();
+        let ends = window.find(format!("notifications-ends-{id}")).bounds();
+        assert_eq!(reads.size.height, ends.size.height, "one line: {reads:?}");
+    })
+    .unwrap();
+}

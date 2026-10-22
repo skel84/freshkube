@@ -241,11 +241,22 @@ impl SettingsPage {
                     .child(div().truncate().child(row.title.clone()))
                     .child(
                         div()
+                            .id(SharedString::from(format!("notifications-reads-{id}")))
+                            .test_support()
+                            .min_w_0()
                             .truncate()
                             .text_color(p.muted)
                             .child(row.reads.clone()),
                     )
-                    .child(div().text_color(p.muted).child(row.ends))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("notifications-ends-{id}")))
+                            .test_support()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(p.muted)
+                            .child(row.ends),
+                    )
                     .when_some(row.reason.clone(), |this, why| {
                         this.child(div().text_color(p.muted).child(why))
                     })
