@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use super::*;
 use crate::navigation_file::NavigationFile;
 
+/// The most tabs the file holds. More tabs may be open; the first of them
+/// are saved, and the same count is read back.
+pub(super) const SAVED_TABS: usize = 8;
+
 /// The file's `tabs` object.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Saved {
@@ -26,10 +30,11 @@ impl Saved {
 
     pub(super) fn of(set: &TabSet) -> Self {
         Self {
-            selected: set.selected(),
+            selected: set.selected().min(SAVED_TABS - 1),
             views: set
                 .views()
                 .iter()
+                .take(SAVED_TABS)
                 .filter_map(|view| serde_json::to_value(view).ok())
                 .collect(),
         }
@@ -39,7 +44,7 @@ impl Saved {
     pub(super) fn views(&self) -> (Vec<ViewState>, usize) {
         let mut selected = 0;
         let mut views = Vec::new();
-        for (at, value) in self.views.iter().enumerate() {
+        for (at, value) in self.views.iter().take(SAVED_TABS).enumerate() {
             if let Ok(view) = serde_json::from_value::<ViewState>(value.clone()) {
                 if at <= self.selected {
                     selected = views.len();

@@ -708,3 +708,40 @@ fn a_click_says_where_its_link_opens() {
     );
     assert_eq!(open_in(MouseButton::Right, command), OpenIn::Here);
 }
+
+/// The file holds eight tabs at most, whatever is open or was written.
+#[gpui_kit::test]
+fn the_file_holds_eight_tabs_at_most(cx: &mut TestAppContext) {
+    let directory = scratch("eight");
+    let preferences = directory.join("preferences.json");
+    let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
+    let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
+    for _ in 0..11 {
+        open(
+            cx,
+            handle,
+            &pilot,
+            page(LinkPage::Nodes),
+            OpenIn::Background,
+        );
+    }
+    assert_eq!(views(cx, &pilot).len(), 12);
+    cx.executor().advance_clock(super::restore::SAVE_DELAY * 2);
+    cx.run_until_parked();
+    let file: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(directory.join("navigation.json")).unwrap())
+            .unwrap();
+    assert_eq!(file["tabs"]["views"].as_array().unwrap().len(), 8);
+
+    // A file written with more is read back as eight.
+    let many = vec!["page=nodes"; 12];
+    std::fs::write(
+        directory.join("navigation.json"),
+        serde_json::json!({"tabs": {"selected": 11, "views": many}}).to_string(),
+    )
+    .unwrap();
+    let (_runtime, _handle, pilot) = mount(cx, options(), 1280., 880.);
+    cx.run_until_parked();
+    assert_eq!(views(cx, &pilot).len(), 8);
+    assert_eq!(selected(cx, &pilot), 7);
+}

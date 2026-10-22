@@ -49,7 +49,7 @@ A tab's menu is the dock's: Close, Close others, Close to the right, Close all (
 
 ## Saving
 
-The views are saved in `navigation.json` under `tabs` (`selected`, and `views` as each view's query text), shortly after the last change. Nothing else: no title, history, rows or cluster. The first cluster to open in a run takes them back, each as loading rows until its first list; a view that no longer parses is dropped, and the selection follows the rest.
+The views are saved in `navigation.json` under `tabs` (`selected`, and `views` as each view's query text, at most eight), shortly after the last change. Nothing else: no title, history, rows or cluster. The first cluster to open in a run takes them back, each as loading rows until its first list; a view that no longer parses is dropped, and the selection follows the rest.
 
 ## Frozen rows
 
