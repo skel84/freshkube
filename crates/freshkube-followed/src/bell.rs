@@ -137,6 +137,7 @@ impl Render for BellPanel {
         let section = |id: &'static str, title: &str, empty: &str, rows: Vec<AnyElement>| {
             v_flex()
                 .id(id)
+                .test_support()
                 .gap_1()
                 .child(ui::caption(title, cx))
                 .when(rows.is_empty(), |this| {
