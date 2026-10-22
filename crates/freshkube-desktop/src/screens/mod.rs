@@ -18,7 +18,7 @@ mod security;
 mod storage;
 mod workloads;
 
-pub(crate) use databases::DatabasesScreen;
+pub(crate) use databases::{CorootInput, DatabasesScreen};
 pub(crate) use diagnostics::DiagnosticsScreen;
 pub(crate) use etcd::EtcdScreen;
 pub(crate) use lifecycle::LifecycleScreen;

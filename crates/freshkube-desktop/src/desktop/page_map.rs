@@ -38,6 +38,7 @@ pub(super) struct Pages {
     pub(super) node_workspace: Entity<nodes::Nodes>,
     pub(super) health: Entity<WorkloadsScreen>,
     pub(super) lifecycle: Entity<LifecycleScreen>,
+    pub(super) databases: Entity<DatabasesScreen>,
     pub(super) resources: Entity<ResourcesScreen>,
     pub(super) dock: Entity<dock::Dock>,
     pub(super) custom: Entity<CustomResources>,
@@ -70,22 +71,16 @@ impl Pages {
         });
         let health = cx.new(|cx| WorkloadsScreen::new(runtime.clone(), window, cx));
         let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
+        let databases = {
+            let shape = options.debug.databases.clone();
+            cx.new(|cx| DatabasesScreen::new(runtime.clone(), window, cx).with_example(shape))
+        };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
-                    PageId::Databases => {
-                        let shape = options.debug.databases.clone();
-                        screen(
-                            move |runtime, window, cx| {
-                                DatabasesScreen::new(runtime, window, cx).with_example(shape)
-                            },
-                            runtime,
-                            window,
-                            cx,
-                        )
-                    }
+                    PageId::Databases => ScreenHandle::new(databases.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
                     PageId::Network => screen(NetworkScreen::new, runtime, window, cx),
@@ -194,6 +189,7 @@ impl Pages {
             node_workspace,
             health,
             lifecycle,
+            databases,
             resources,
             dock,
             custom,

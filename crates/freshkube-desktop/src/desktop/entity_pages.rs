@@ -413,6 +413,7 @@ impl Pilot {
             PageEvent::Screen(event) => self.screen_event(event, window, cx),
             PageEvent::Link(link) => self.resource_link(link.clone(), window, cx),
             PageEvent::Revision(link) => self.open_revision(link.clone(), window, cx),
+            PageEvent::Application(link) => self.open_application(link, window, cx),
             // One in another workspace entry's cluster, after a switch.
             PageEvent::Switch(link) => {
                 self.open_on_entry(link.entry.to_string(), link.link.clone(), window, cx)

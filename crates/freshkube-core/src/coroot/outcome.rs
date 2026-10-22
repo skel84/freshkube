@@ -79,6 +79,14 @@ impl Link {
     }
 }
 
+impl Provider {
+    /// The source of the project a workspace entry's link names, which is
+    /// not one a person selected from [`projects`](Self::projects).
+    pub fn link_source(&self, link: &Link) -> Source {
+        self.linked_source(&link.project)
+    }
+}
+
 /// What kind of workload the hop is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Workload {

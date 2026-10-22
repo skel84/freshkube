@@ -7,8 +7,8 @@ chooses the identity, deadline, visibility scope and refresh policy. Domain
 queries belong in core or the domain crate; presentation belongs in the view.
 Start reads from lifecycle methods or explicit actions, never from `render`.
 
-There are exactly [two exception classes](#exceptions): Operations mutations
-and user-started sessions. The remaining counters outside the primitives
+There are exactly [two exception classes](#exceptions): mutations (Operations
+and [Kubernetes writes](#kubernetes-writes)) and user-started sessions. The remaining counters outside the primitives
 are the [allowed list](#allowed-counters) from
 [#582](https://github.com/skel84/freshkube/issues/582), each with its specific
 reason to remain.
@@ -102,6 +102,7 @@ generation used inside `Loader`.
 | `SetupFile.setup_revision` (`freshkube-desktop/src/setup_file/mod.rs`) | Advances for effective setup/source-availability changes and successful explicit Reload, including identical bytes whose referenced key files may have changed. Changed warnings/refusals publish independently through owner events and the diagnostic setter; quiet polls publish nothing. |
 | `Pages.delivery_revision` (`freshkube-desktop/src/desktop/page_map.rs`) | Remembers `SetupFile.setup_revision`, which advances only for effective configuration/source-availability changes or successful explicit Reload. Sanitized diagnostics publish independently and deduplicate against Applications’ current text, preserving reads across warning-only or refusal-only edits. |
 | `Fetch::Live.setup_revision` and `ChangesPage.setup_revision` (`freshkube-applications/src/change/read.rs` and `changes/mod.rs`) | Identify the setup used by each delivery read owner. Reloading trust advances them before resetting the Loader, so an old completion cannot match a new setup even when its request generation repeats. A workspace remap keeps the setup identity and expires the retained read. |
+| Databases' `evidence` Loader (`freshkube-desktop/src/screens/databases/mod.rs`) | Owns the Coroot read for the inventory's databases. Its identity is the inventory's revision, the Coroot connection and the entry's link; the inventory landing starts it, a changed connection or link restarts it, and a late answer for an older identity or request is rejected. Hiding drops its job and task (`set_visible(false)`), showing reads again after 30 s; with no link or connection it asks nothing and resolves at once. |
 | `Memory.setup_generation` (`freshkube-observability/src/remember.rs`) | Rejects obsolete inspection of the app's local setup file. |
 | Log streams' `StreamSet.next_generation`, copied `Stream.generation` and `Fed.generation`, and example `Stream.sequence` (`freshkube-desktop/src/logs/streams.rs`) | Distinguish retries and number example lines within user-started log sessions. |
 | `Maintenance.generation` (`freshkube-desktop/src/maintenance/mod.rs`) | Guards a mixed read/run workflow under the mutation exception until its own migration. |
@@ -274,6 +275,42 @@ Await a submitted patch, eviction or Talos mutation; never put the confirmed
 run inside `Loader`, `Watch`, `spawn_job` or a receiver-closed abort branch.
 Maintenance mutations use the same operation slot. This guarantee lasts while
 the application/runtime lives, not across process termination.
+
+### Kubernetes writes
+
+A change to a Kubernetes object goes through core's `write` module
+([WRITE_MODEL.md](WRITE_MODEL.md)) and has Operations' lifetime, with its own
+owner in [`write_flow/`](../crates/freshkube-desktop/src/write_flow/mod.rs).
+
+- **Checking is an ordinary read.** Preflight (the access review, the UID and
+  resourceVersion, the server-side dry run) runs under `spawn_job` and belongs to
+  the dialog: closing the dialog, or replacing the check with "Review the new
+  version", drops it. It sends no write and changes nothing.
+- **Confirming takes the app-wide operation slot** (`Operations::begin`, which
+  refuses a `read-only` cluster and a busy slot) and only then consumes the
+  prepared action: core's `Runner::execute` takes `Prepared` by value, so a
+  confirmed action cannot be sent twice, a second press finds nothing to send,
+  and a new attempt is a new preflight with a new run id.
+- **The runner has no owner.** It is spawned on Tokio and never aborted. A
+  detached GPUI task owns the ticket and frees the slot once, when the runner has
+  ended, whatever became of the page, the dialog or the toast. Hiding or closing
+  the page, or letting go of the flow, stops nothing. The window's close guard
+  (`mutation::may_close`) covers it like any other operation.
+- **Cancel is cooperative and early.** A destructive action waits 5 s after
+  confirming with its Cancel in the dialog (the status bar's cancel is the same
+  flag); after the `sending` line is written, nothing cancels it.
+- **Never replayed.** A request that got no answer is reported as unknown and is
+  not sent again; a conflict is shown, never retried, and there is no force.
+- **Counted once.** One run id links a write's audit lines; the log is the count.
+  The `sending` line is written before the first request, and if it cannot be
+  written nothing is sent.
+- **The level is read again at the send.** The runner follows the window's level
+  cell and, if it got stricter since the dialog opened, sends nothing and the
+  flow goes back to its dialog under the new requirement.
+- **Observing and Undo are part of the write.** Looking for the new state
+  (30 s by default, 2 min at most) is the runner's, on Tokio's clock; the toast
+  and Undo's 30 s are the report entity's, and Undo is its own flow and run, asking what
+  its level asks, through the same preflight and slot.
 
 ### User-started sessions
 
