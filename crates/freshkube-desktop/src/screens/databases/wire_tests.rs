@@ -9,10 +9,10 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU16, Ordering},
 };
-struct Fake {
-    client: kube::Client,
-    calls: Arc<Mutex<Vec<String>>>,
-    backup_status: Arc<AtomicU16>,
+pub(super) struct Fake {
+    pub(super) client: kube::Client,
+    pub(super) calls: Arc<Mutex<Vec<String>>>,
+    pub(super) backup_status: Arc<AtomicU16>,
 }
 impl KubeClientSource for Fake {
     fn client(
@@ -24,12 +24,13 @@ impl KubeClientSource for Fake {
     }
 }
 impl Fake {
-    fn assert_read(&self, namespace: Option<&str>) {
+    pub(super) fn assert_read(&self, namespace: Option<&str>) {
         let mut expected = vec![
             "GET /apis/postgresql.cnpg.io".to_owned(),
             "GET /apis/postgresql.cnpg.io/v1".into(),
+            "GET /apis/k8s.mariadb.com".into(),
         ];
-        for kind in ["clusters", "backups", "scheduledbackups"] {
+        for kind in ["clusters", "backups", "scheduledbackups", "poolers"] {
             let scope = namespace
                 .map(|ns| format!("/namespaces/{ns}"))
                 .unwrap_or_default();
@@ -39,13 +40,13 @@ impl Fake {
         }
         self.assert_requests(expected);
     }
-    fn assert_requests(&self, mut expected: Vec<String>) {
+    pub(super) fn assert_requests(&self, mut expected: Vec<String>) {
         let mut actual = std::mem::take(&mut *self.calls.lock().unwrap());
         actual.sort();
         expected.sort();
         assert_eq!(actual, expected);
     }
-    fn new() -> Arc<Self> {
+    pub(super) fn new() -> Arc<Self> {
         let calls = Arc::new(Mutex::new(Vec::new()));
         let seen = calls.clone();
         let backup_status = Arc::new(AtomicU16::new(200));
@@ -57,9 +58,14 @@ impl Fake {
             let path = request.uri().path();
             let mut code = 200;
             let data = match path {
+                // The MariaDB operator is not installed.
+                "/apis/k8s.mariadb.com" => {
+                    code = 404;
+                    json!({"kind":"Status","status":"Failure","reason":"NotFound","code":404})
+                }
                 "/apis/postgresql.cnpg.io" => json!({"versions":[{"version":"v1"}]}),
                 "/apis/postgresql.cnpg.io/v1" => {
-                    json!({"resources":[{"name":"clusters","kind":"Cluster","namespaced":true,"verbs":["list"]},{"name":"backups","kind":"Backup","namespaced":true,"verbs":["list"]},{"name":"scheduledbackups","kind":"ScheduledBackup","namespaced":true,"verbs":["list"]}]})
+                    json!({"resources":[{"name":"clusters","kind":"Cluster","namespaced":true,"verbs":["list"]},{"name":"backups","kind":"Backup","namespaced":true,"verbs":["list"]},{"name":"scheduledbackups","kind":"ScheduledBackup","namespaced":true,"verbs":["list"]},{"name":"poolers","kind":"Pooler","namespaced":true,"verbs":["list"]}]})
                 }
                 "/apis/postgresql.cnpg.io/v1/clusters"
                 | "/apis/postgresql.cnpg.io/v1/namespaces/shop/clusters" => {
@@ -75,7 +81,9 @@ impl Fake {
                     }
                 }
                 "/apis/postgresql.cnpg.io/v1/scheduledbackups"
-                | "/apis/postgresql.cnpg.io/v1/namespaces/shop/scheduledbackups" => {
+                | "/apis/postgresql.cnpg.io/v1/namespaces/shop/scheduledbackups"
+                | "/apis/postgresql.cnpg.io/v1/poolers"
+                | "/apis/postgresql.cnpg.io/v1/namespaces/shop/poolers" => {
                     json!({"items":[]})
                 }
                 _ => {
