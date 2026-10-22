@@ -71,6 +71,20 @@ impl DetailPane {
                                     .tooltip("Copy the name")
                                     .accessibility_label("Copy the name")
                                     .on_click(cx.listener(|pane, _, _, cx| pane.copy_name(cx))),
+                            )
+                            .child(
+                                Button::new("detail-copy-link")
+                                    .ghost()
+                                    .xsmall()
+                                    .flex_none()
+                                    .icon(IconName::Link)
+                                    .tooltip(freshkube_ui::platform::copy_link_tooltip())
+                                    .accessibility_label("Copy link to this object")
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(DetailEvent::Link(
+                                            super::super::ResourceLink::CopyLink,
+                                        ))
+                                    })),
                             ),
                     ),
             )

@@ -11,6 +11,7 @@ use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
     h_flex,
+    menu::{ContextMenuExt as _, PopupMenuItem},
     tooltip::Tooltip,
     v_flex,
 };
@@ -42,6 +43,7 @@ impl Pilot {
                     self.open_object(kind, object, tab, window, cx);
                 }
             }
+            Destination::CopyLink(inner) => self.copy_link_to(&inner, window, cx),
             Destination::Service {
                 node,
                 service,
@@ -182,7 +184,6 @@ fn attention_row(row: &AttentionRow, on_open: &OnOpen, cx: &App) -> AnyElement {
         .border_b_1()
         .border_color(p.line)
         .text_size(dp(12.5))
-        .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
         .child(table::glyph_slot(row.tone, cx))
         .child(
             div()
@@ -204,11 +205,15 @@ fn attention_row(row: &AttentionRow, on_open: &OnOpen, cx: &App) -> AnyElement {
         )
         .child(
             div()
+                .id("attention-reason")
                 .flex_1()
                 // Room for the reason before the name takes it all.
                 .min_w(dp(56.))
                 .truncate()
                 .text_color(p.muted)
+                // On the reason, not the row: the row's context menu is its
+                // child, and the row's tooltip would draw over the menu.
+                .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
                 .child(row.reason.clone()),
         )
         .child(
@@ -246,5 +251,16 @@ fn attention_row(row: &AttentionRow, on_open: &OnOpen, cx: &App) -> AnyElement {
                         })
                 })),
         )
+        .context_menu({
+            let on_open = on_open.clone();
+            let copy = Destination::CopyLink(Box::new(row.open.clone()));
+            move |menu, _, _| {
+                let (on_open, copy) = (on_open.clone(), copy.clone());
+                menu.item(
+                    PopupMenuItem::new("Copy link")
+                        .on_click(move |_, window, cx| on_open(copy.clone(), window, cx)),
+                )
+            }
+        })
         .into_any_element()
 }

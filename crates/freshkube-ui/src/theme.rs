@@ -60,6 +60,9 @@ gpui_kit::assets::icon_assets!(
         Flame,
         // The Applications column's Changes.
         GitCommitHorizontal,
+        // Deep links: Copy link, and the cards for a link that can't open.
+        Link,
+        SearchX,
         // Monitoring's Alerts, Rules and Silences, and their states.
         BellRing,
         BellOff,
@@ -120,4 +123,21 @@ pub fn install(cx: &mut App) {
         }
     }
     Theme::change(ThemeMode::from(cx.window_appearance()), None, cx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_deep_link_icons_are_embedded() {
+        use gpui_kit::assets::IconName;
+        for icon in [IconName::Link, IconName::ShieldX, IconName::SearchX] {
+            let path = icon.path();
+            assert!(
+                AppAssets.load(&path).unwrap().is_some(),
+                "{path} isn't embedded"
+            );
+        }
+    }
 }

@@ -3,8 +3,10 @@
 //! (DESIGN.md, The Settings page). A group's fields are drafts the page
 //! keeps until Save writes them through `commit`, which changes only that
 //! entry's keys and keeps the rest of the setup.
+mod fingerprint;
 mod identity;
 mod metrics;
+pub(crate) use fingerprint::Line as FingerprintLine;
 mod protection;
 #[cfg(test)]
 mod protection_tests;
@@ -735,7 +737,8 @@ impl SettingsPage {
                 draft
                     .metrics
                     .render(editable, draft.dirty(Group::Metrics), cx),
-            );
+            )
+            .child(self.render_fingerprint(&draft.id, cx));
         Some(
             Inspector::new("settings-detail")
                 .heading(title)

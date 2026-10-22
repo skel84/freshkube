@@ -388,6 +388,10 @@ shell's `PATH` and the same kubeconfig works. Finding
 user-installed auth tools from a Finder launch is planned with kubeconfig auth
 plugins ([roadmap](ROADMAP.md#8-later)).
 
+## Opening freshkube:// links
+
+The bundle's `Info.plist` registers the `freshkube` scheme (`CFBundleURLTypes`, with the bundle identifier as its name), so a link clicked in a browser or chat opens Freshkube. macOS hands the URL to the running app, or to the one it starts, through GPUI's `on_open_urls`; the shell opens it once the window has a cluster to read ([deep links](features/deep-links.md#opening-from-the-system)). `package-macos.py` refuses a bundle that registers anything but that scheme, and `scripts/package-urls.test.sh` checks the script without building. Launch Services learns the scheme when the app is first opened from its final location.
+
 ## Local Network privacy
 
 The roadmap records a bundle launch failing to reach a LAN cluster while the

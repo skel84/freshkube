@@ -31,6 +31,9 @@ pub(crate) enum Destination {
         service: String,
         logs: bool,
     },
+    /// Not a place to go: the row's menu asks to copy the link to this
+    /// destination instead of opening it (#873).
+    CopyLink(Box<Destination>),
 }
 
 /// Needs attention's severity groups, in the order they show.
