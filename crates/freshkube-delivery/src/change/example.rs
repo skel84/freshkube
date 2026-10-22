@@ -375,6 +375,16 @@ pub fn example_acts(name: &str) -> crate::acts::StageActs {
         warehouse: Some(handle("warehouse", "checkout-images")),
         promoting: Vec::new(),
         verification: (name != "prod-ams").then(|| format!("ver-{name}-1")),
+        // Kargo's newest history entry maps each origin to the Freight.
+        current: vec![(
+            "/status/freightHistory/0/items/Warehouse~1checkout-images/name".into(),
+            if name == "prod-ams" {
+                PREVIOUS
+            } else {
+                FREIGHT
+            }
+            .into(),
+        )],
         would_run: vec![
             format!("Image {REGISTRY}/acme/checkout-api:1.14.2 @ {DIGEST}"),
             format!("Commit {COMMIT}: {TITLE}"),
@@ -1041,6 +1051,12 @@ fn promoting(change: &mut Change) {
             },
             freight: FREIGHT.into(),
             phase: "Running".into(),
+            ran: vec![
+                "git-clone: Succeeded".into(),
+                "kustomize-set-image: Succeeded".into(),
+                "git-push: Running".into(),
+            ],
+            pushed: vec![],
         }];
     }
     for check in &mut stage.steps {

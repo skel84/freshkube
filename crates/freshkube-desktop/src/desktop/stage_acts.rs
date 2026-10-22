@@ -111,7 +111,7 @@ impl Pilot {
             ActKind::RefreshWarehouse => acts::refresh_warehouse(stage_acts, &token)?,
             ActKind::Reverify => acts::reverify(stage_acts)?,
             ActKind::Abort => match stage_acts.slot() {
-                Slot::Abort(running) => acts::abort(stage_acts, running, &act.change),
+                Slot::Abort(running) => acts::abort(stage_acts, running),
                 _ => return None,
             },
             ActKind::Promote => {

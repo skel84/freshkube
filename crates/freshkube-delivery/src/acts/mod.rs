@@ -25,8 +25,8 @@ mod tests;
 use serde_json::{Value, json};
 
 use freshkube_core::write::{
-    ActionDescription, Change, Destination, ObjectChange, Observation, Preview, Protection, Target,
-    Tier,
+    ActionDescription, Change, Depends, Destination, ObjectChange, Observation, Preview,
+    Protection, Target, Tier,
 };
 
 use crate::{change, digest::Digest, kargo};
@@ -65,6 +65,10 @@ pub struct Promoting {
     pub freight: String,
     /// Kargo's word for its phase.
     pub phase: String,
+    /// The steps it has run, one line each, from the Promotion itself.
+    pub ran: Vec<String>,
+    /// The commits its steps pushed (shortened), which stay if it is aborted.
+    pub pushed: Vec<String>,
 }
 
 /// What the Stage Inspector needs to describe a Stage's actions, taken from
@@ -81,8 +85,12 @@ pub struct StageActs {
     pub warehouse: Option<Handle>,
     /// Promotions in progress on the Stage, newest first.
     pub promoting: Vec<Promoting>,
-    /// The id of the verification Reverify would repeat.
+    /// The id of the verification Reverify would repeat: the Stage's current
+    /// Freight's, the only one Kargo repeats.
     pub verification: Option<String>,
+    /// Where the Stage names the Freight it runs, and what it names there,
+    /// as the page showed them. A Promote checks they still hold.
+    pub current: Vec<(String, String)>,
     /// What the Freight holds, one line each (image and commit).
     pub would_run: Vec<String>,
 }
@@ -179,6 +187,11 @@ fn refresh(kind: &str, sentence: String, target: Target, token: &str) -> ActionD
 /// Reverify: asks Kargo to run the Stage's verification again. Offered only
 /// when the verification to repeat was read.
 pub fn reverify(acts: &StageActs) -> Option<ActionDescription> {
+    // Kargo repeats only the verification of the Stage's current Freight, by
+    // its current id; for any other the press would do nothing.
+    if !acts.holds {
+        return None;
+    }
     let id = acts.verification.as_deref()?;
     Some(ActionDescription {
         kind: "reverify-stage".into(),
@@ -211,7 +224,7 @@ pub const ABORT_VALUE: &str = r#"{"action":"terminate"}"#;
 
 /// Abort: marks the running Promotion to be aborted. What it has already
 /// done stays done.
-pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> ActionDescription {
+pub fn abort(acts: &StageActs, running: &Promoting) -> ActionDescription {
     let stage = &acts.stage.name;
     let mut impact = vec![format!(
         "Promotion {} of Freight {} to {stage} is {}.",
@@ -219,22 +232,10 @@ pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> 
         short(&running.freight),
         running.phase.to_lowercase()
     )];
-    let done: Vec<String> = change
-        .stages
-        .iter()
-        .find(|s| &s.name == stage)
-        .map(|s| {
-            s.steps
-                .iter()
-                .filter(|step| step.found != "not started")
-                .map(|step| format!("{}: {}", step.name, step.found))
-                .collect()
-        })
-        .unwrap_or_default();
-    let ran = if done.is_empty() {
-        vec!["No step is recorded as run.".to_owned()]
+    let ran = if running.ran.is_empty() {
+        vec!["No step of this Promotion is recorded as run.".to_owned()]
     } else {
-        done
+        running.ran.clone()
     };
     impact.push(
         "Aborting stops the Promotion at the step it is on. Steps that already ran are not undone."
@@ -273,7 +274,15 @@ pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> 
             Preview {
                 title: "After it".into(),
                 lines: vec![
-                    "A commit a step already pushed stays, and the next sync deploys it.".into(),
+                    if running.pushed.is_empty() {
+                        "A commit a step already pushed stays, and the next sync deploys it."
+                            .to_owned()
+                    } else {
+                        format!(
+                            "The pushed commit {} stays, and the next sync deploys it.",
+                            running.pushed.join(", ")
+                        )
+                    },
                     "To go back, promote the previous Freight again.".into(),
                 ],
             },
@@ -355,7 +364,32 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
             let stage = &pick.acts.stage.name;
             let name = format!("{stage}.{ulid}.{}", short(freight).to_lowercase());
             ObjectChange {
-                depends: vec![],
+                // The Stage must still be the one the page showed, running
+                // the Freight the page said it runs, and the person must be
+                // allowed to promote to it (Kargo's own verb on a Stage).
+                depends: vec![Depends {
+                    target: target(&pick.acts.project, "Stage", "stages", &pick.acts.stage),
+                    verb: Some("promote"),
+                    holds: pick
+                        .acts
+                        .current
+                        .iter()
+                        .map(|(path, name)| (path.clone(), json!(name)))
+                        .chain(
+                            pick.acts
+                                .current
+                                .is_empty()
+                                .then(|| {
+                                    [
+                                        ("/status/freightHistory/0".to_owned(), Value::Null),
+                                        ("/status/currentFreight".to_owned(), Value::Null),
+                                    ]
+                                })
+                                .into_iter()
+                                .flatten(),
+                        )
+                        .collect(),
+                }],
                 target: Target {
                     group: kargo::GROUP.into(),
                     version: VERSION.into(),

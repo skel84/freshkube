@@ -111,14 +111,17 @@ The change page's Stage Inspector offers four actions on today's Kargo, through 
 | Action | Writes | Tier | Asked |
 |--------|--------|------|-------|
 | Refresh (a Stage or its Warehouse) | merge patch: `kargo.akuity.io/refresh` annotation, a time as the token | reversible, no confirmation | nothing at any writable level |
-| Reverify (a Stage) | merge patch: `kargo.akuity.io/reverify` annotation, the id of the verification to repeat | reversible, no confirmation | nothing at any writable level |
-| Promote (a Freight to a Stage) | creates a `Promotion` whose `spec` names the `stage` and the `freight` | spec change | the preview; `protected` adds the target Stage's name |
-| Abort (a running Promotion) | merge patch: `kargo.akuity.io/abort` annotation on the Promotion, `{"action":"terminate"}` | destructive | the impact, what already ran, `protected` adds the Stage's name, then 5 s to cancel |
+| Reverify (a Stage) | merge patch: `kargo.akuity.io/reverify` annotation, the id of the verification to repeat | reversible, no confirmation | nothing at any writable level; offered only for the Stage's current Freight, by its current verification id |
+| Promote (a Freight to a Stage) | creates a `Promotion` named `<stage>.<lowercase ULID>.<freight prefix>`, whose `spec` names the `stage` and the `freight` | spec change | the preview; `protected` adds the target Stage's name |
+| Abort (a running Promotion) | merge patch: `kargo.akuity.io/abort` annotation on the Promotion, `{"action":"terminate"}` (the only action Kargo's `AbortPromotionRequest` acts on) | destructive | the impact, what already ran, `protected` adds the Stage's name, then 5 s to cancel |
 
 - **The level is the stricter of the Kargo cluster's and the destination cluster's** (the cluster the Stage deploys to, when the workspace knows it); the dialog names the destination. A destination the workspace doesn't know counts as `guarded`, the level an entry with none gets, so it is held to the stricter of Kargo's cluster's level and `guarded`, never to nothing; the preview says so. Each destination has its own level cell, which the runner follows as it follows Kargo's cluster's, so a level changed in Settings reaches a dialog already open.
 - **Promote shows a preview** at every writable level: what the Stage runs now against what it would run (the Freight's image and commit), the Stage's steps and checks, the pull request and commit of the change, and that there is no Undo (going back is promoting the previous Freight again, [#845](https://github.com/skel84/freshkube/issues/845)). The commits between the two Freights are not read yet; the preview says so. On `protected` the Stage's name is typed under it; several Stages are typed once.
 - **Promote becomes Abort** while any Promotion of the Stage is Pending or Running, someone else's included. A Stage that already runs the Freight offers no Promote. Approvals stay in Kargo.
 - **No Undo for Promote or Abort.** Abort stops the Promotion at the step it is on; what already ran is not undone (a commit a step pushed stays, and the next sync deploys it).
+- **Promote checks the Stage first** (`ObjectChange::depends`): preflight asks whether the person may `promote` on the Stage (Kargo's verb, beside `create` on Promotions), reads the Stage, and finds it with the UID the page showed and still naming the Freight the page said it runs. A Stage that moved on, or was recreated, blocks the Promotion ("It is no longer as the page showed it") with only Close: a stale page can't quietly roll a Stage back.
+- **Promotion names sort by time, as Kargo's do.** Kargo orders Promotions by name; ours carry a lowercase ULID (`acts::new_ulid`), so a Promotion made later never reads as older than one Kargo made before it.
+- **What aborting stops** is the running Promotion's own steps and pushed commits (`status.stepExecutionMetadata`), not the change's.
 - **Handles:** a Stage action is offered only when the Stage's UID and resourceVersion were read, so the version check can hold; otherwise its button is greyed out with why.
 
 ### The audit log

@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use freshkube_core::write::testing::Cluster;
 use freshkube_core::write::{
-    ANNOTATION_NOTICE, ActionDescription, AuditStore, Block, Confirmation, Destination, Dialog,
-    Headline, NotSent, Phase, Protection, Runner, Status, Tier, Verdict, Who,
+    ANNOTATION_NOTICE, ActionDescription, AuditStore, Block, ChangedWhat, Confirmation,
+    Destination, Dialog, Headline, NotSent, Phase, Protection, Runner, Status, Tier, Verdict, Who,
 };
 use serde_json::{Value, json};
 
@@ -20,11 +20,25 @@ fn kargo() -> Cluster {
     let object = |kind: &str, name: &str| {
         json!({"apiVersion": "kargo.akuity.io/v1alpha1", "kind": kind,
             "metadata": {"name": name, "namespace": PROJECT,
-                "uid": format!("uid-{}-{name}", kind.to_lowercase()), "resourceVersion": "100"},
+                "uid": format!("uid-{}-{name}", kind.to_lowercase()), "resourceVersion": "100",
+                "managedFields": []},
             "status": {}})
     };
     Cluster::with(vec![
-        (format!("{NS}/stages/prod-ams"), object("Stage", "prod-ams")),
+        (format!("{NS}/stages/prod-ams"), {
+            let mut stage = object("Stage", "prod-ams");
+            stage["status"] = json!({"freightHistory": [
+                {"items": {"Warehouse/checkout-images": {"name": "brave-lynx"}}}
+            ]});
+            stage
+        }),
+        (format!("{NS}/stages/dev"), {
+            let mut stage = object("Stage", "dev");
+            stage["status"] = json!({"freightHistory": [
+                {"items": {"Warehouse/checkout-images": {"name": "wonky-otter"}}}
+            ]});
+            stage
+        }),
         (
             format!("{NS}/warehouses/checkout-images"),
             object("Warehouse", "checkout-images"),
@@ -76,6 +90,12 @@ fn running() -> Promoting {
         },
         freight: FREIGHT.into(),
         phase: "Running".into(),
+        // This Promotion's own steps, not the change's.
+        ran: vec![
+            "git-clone: Succeeded".into(),
+            "render-manifests: Running".into(),
+        ],
+        pushed: vec!["9b1e5c2".into()],
     }
 }
 
@@ -149,6 +169,7 @@ async fn refresh_of_the_warehouse_and_reverify_go_on_their_own_objects() {
     let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let mut stage = acts();
     stage.verification = Some("ver-prod-ams-1".into());
+    stage.holds = true;
     for (action, path, key, value) in [
         (
             refresh_warehouse(&stage, "t1").unwrap(),
@@ -190,7 +211,7 @@ async fn read_only_blocks_every_stage_action_and_asks_the_cluster_nothing() {
         refresh_warehouse(&stage, "t").unwrap(),
         reverify(&example_acts("dev")).unwrap(),
         promote_action(Protection::Guarded),
-        abort(&stage, &running(), &change()),
+        abort(&stage, &running()),
     ];
     for action in all {
         let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
@@ -225,8 +246,11 @@ async fn promote_creates_a_promotion_and_the_dialog_names_the_destination_and_th
     let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let verdict = runner.preflight(promote_action(Protection::Guarded)).await;
     // No GET of the Promotion that doesn't exist yet; nothing written.
+    // The Promotion has nothing to read; the Stage it is for is read.
     cluster.recorder.assert_lines(&[
         "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+        "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+        &format!("GET {NS}/stages/prod-ams"),
         &format!("POST {NS}/promotions?&dryRun=All&fieldManager=freshkube"),
     ]);
     let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
@@ -310,8 +334,7 @@ async fn a_protected_destination_asks_for_the_stage_s_name_though_kargo_s_cluste
 
 #[tokio::test(start_paused = true)]
 async fn several_stages_type_once_and_the_dialog_names_the_protected_ones() {
-    // A create reads nothing, so the cluster needs no objects.
-    let (cluster, dir) = (Cluster::with(vec![]), tempfile::tempdir().unwrap());
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
     let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let (dev, prod) = (example_acts("dev"), example_acts("prod-ams"));
     let action = promote(
@@ -358,7 +381,7 @@ fn promote_becomes_abort_while_any_promotion_runs_whoever_made_it() {
 #[tokio::test(start_paused = true)]
 async fn abort_marks_the_promotion_counts_down_and_says_what_already_ran() {
     let stage = acts();
-    let action = abort(&stage, &running(), &change());
+    let action = abort(&stage, &running());
     assert_eq!(action.tier, Tier::Destructive);
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
     let runner = kargo_runner(&cluster, dir.path(), Protection::Protected);
@@ -477,4 +500,111 @@ async fn an_unknown_destination_counts_as_guarded_and_never_as_nothing() {
         panic!("asks");
     };
     assert_eq!(ask.type_name.as_deref(), Some("prod-ams"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn promote_reads_the_stage_and_asks_whether_the_person_may_promote_to_it() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    let _ = runner.preflight(promote_action(Protection::Guarded)).await;
+    let lines = cluster.recorder.lines();
+    assert_eq!(
+        lines,
+        [
+            "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews".to_owned(),
+            "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews".to_owned(),
+            format!("GET {NS}/stages/prod-ams"),
+            format!("POST {NS}/promotions?&dryRun=All&fieldManager=freshkube"),
+        ]
+    );
+    let review = &cluster.recorder.requests()[1].body;
+    assert!(review.contains(r#""verb":"promote""#), "{review}");
+    assert!(review.contains(r#""resource":"stages""#) && review.contains(r#""name":"prod-ams""#));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stage_that_runs_other_freight_now_blocks_a_promotion_from_a_stale_page() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    // Someone promoted other Freight since the page was read.
+    cluster.foreign_write(
+        &format!("{NS}/stages/prod-ams"),
+        "kargo-controller",
+        &json!({"status": {"freightHistory": [
+            {"items": {"Warehouse/checkout-images": {"name": "pale-heron"}}}
+        ]}}),
+    );
+    let verdict = runner.preflight(promote_action(Protection::Guarded)).await;
+    assert!(
+        matches!(
+            verdict,
+            Verdict::Blocked(Block::Changed {
+                what: ChangedWhat::Moved,
+                ..
+            })
+        ),
+        "{verdict:?}"
+    );
+    assert!(writes(&cluster).is_empty());
+    // A Stage deleted and created again is another Stage.
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    cluster.recreate(&format!("{NS}/stages/prod-ams"));
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    assert!(matches!(
+        runner.preflight(promote_action(Protection::Guarded)).await,
+        Verdict::Blocked(Block::Changed {
+            what: ChangedWhat::Recreated,
+            ..
+        })
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_promote_verb_on_the_stage_is_what_is_checked_not_only_create_on_promotions() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    cluster.deny_verb("promote");
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Open);
+    match runner.preflight(promote_action(Protection::Open)).await {
+        Verdict::Blocked(Block::AccessDenied { verb, object, .. }) => {
+            assert_eq!((verb, object.as_str()), ("promote", "Stage/prod-ams"));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(writes(&cluster).is_empty());
+}
+
+#[test]
+fn reverify_is_offered_only_for_a_stage_that_runs_the_freight() {
+    // prod-ams runs other Freight: nothing of it to repeat.
+    let mut stage = acts();
+    stage.verification = Some("ver-prod-ams-1".into());
+    stage.holds = false;
+    assert!(reverify(&stage).is_none());
+    stage.holds = true;
+    assert!(reverify(&stage).is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn what_already_ran_is_the_running_promotion_s_own_steps_and_commits() {
+    let action = abort(&acts(), &running());
+    let text: String = action
+        .preview
+        .iter()
+        .flat_map(|p| p.lines.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The running Promotion's, not the change's (git-push, argocd-update...).
+    assert!(text.contains("render-manifests: Running"), "{text}");
+    assert!(text.contains("git-clone: Succeeded"));
+    assert!(!text.contains("kustomize-set-image"), "{text}");
+    assert!(text.contains("The pushed commit 9b1e5c2 stays"), "{text}");
+    let mut none = running();
+    none.ran.clear();
+    none.pushed.clear();
+    let text: String = abort(&acts(), &none)
+        .preview
+        .iter()
+        .flat_map(|p| p.lines.clone())
+        .collect();
+    assert!(text.contains("No step of this Promotion is recorded as run."));
 }

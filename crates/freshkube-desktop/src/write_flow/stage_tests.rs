@@ -22,11 +22,25 @@ fn kargo() -> Cluster {
     let object = |kind: &str, name: &str| {
         json!({"apiVersion": "kargo.akuity.io/v1alpha1", "kind": kind,
             "metadata": {"name": name, "namespace": "checkout",
-                "uid": format!("uid-{}-{name}", kind.to_lowercase()), "resourceVersion": "100"},
+                "uid": format!("uid-{}-{name}", kind.to_lowercase()), "resourceVersion": "100",
+                "managedFields": []},
             "status": {}})
     };
     Cluster::with(vec![
-        (format!("{NS}/stages/prod-ams"), object("Stage", "prod-ams")),
+        (format!("{NS}/stages/prod-ams"), {
+            let mut stage = object("Stage", "prod-ams");
+            stage["status"] = json!({"freightHistory": [
+                {"items": {"Warehouse/checkout-images": {"name": "brave-lynx"}}}
+            ]});
+            stage
+        }),
+        (format!("{NS}/stages/dev"), {
+            let mut stage = object("Stage", "dev");
+            stage["status"] = json!({"freightHistory": [
+                {"items": {"Warehouse/checkout-images": {"name": "wonky-otter"}}}
+            ]});
+            stage
+        }),
         (
             format!("{NS}/promotions/prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"),
             object("Promotion", "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"),
@@ -68,6 +82,12 @@ fn running() -> acts::Promoting {
         },
         freight: "wonky-otter".into(),
         phase: "Running".into(),
+        // This Promotion's own steps, not the change's.
+        ran: vec![
+            "git-clone: Succeeded".into(),
+            "render-manifests: Running".into(),
+        ],
+        pushed: vec!["9b1e5c2".into()],
     }
 }
 
@@ -168,7 +188,7 @@ fn a_read_only_destination_blocks_a_promotion_and_asks_the_cluster_nothing(
 #[gpui_kit::test]
 fn several_stages_are_typed_once_and_the_dialog_names_the_protected_one(cx: &mut TestAppContext) {
     // Two Stages' previews are long; the dialog's body scrolls, so the window is tall.
-    let h = harness_sized(cx, Protection::Guarded, 1800., || Cluster::with(vec![]));
+    let h = harness_sized(cx, Protection::Guarded, 1800., kargo);
     let (dev, prod): (StageActs, StageActs) = (example_acts("dev"), example_acts("prod-ams"));
     let action = acts::promote(
         &change(),
@@ -257,10 +277,7 @@ fn a_level_changed_in_settings_reaches_a_promote_dialog_already_open(cx: &mut Te
 #[gpui_kit::test]
 fn abort_names_what_already_ran_counts_down_and_then_marks_the_promotion(cx: &mut TestAppContext) {
     let h = harness_on(cx, Protection::Protected, kargo);
-    h.begin(
-        cx,
-        acts::abort(&example_acts("prod-ams"), &running(), &change()),
-    );
+    h.begin(cx, acts::abort(&example_acts("prod-ams"), &running()));
     assert_eq!(h.label(cx, "write-type-prompt"), "Type prod-ams to confirm");
     assert!(h.present(cx, "write-impact"));
     let mut text = String::new();
@@ -332,4 +349,25 @@ fn the_destination_s_level_is_followed_live_while_a_promote_dialog_is_open(
     h.drive(cx, Duration::from_secs(2));
     h.cluster.assert_nothing_written();
     assert!(h.slot_free(cx));
+}
+
+#[gpui_kit::test]
+fn a_stage_that_moved_on_blocks_a_promotion_from_a_stale_page_and_offers_only_to_close(
+    cx: &mut TestAppContext,
+) {
+    let h = harness_on(cx, Protection::Guarded, kargo);
+    h.cluster.foreign_write(
+        &format!("{NS}/stages/prod-ams"),
+        "kargo-controller",
+        &json!({"status": {"freightHistory": [
+            {"items": {"Warehouse/checkout-images": {"name": "pale-heron"}}}
+        ]}}),
+    );
+    h.begin(cx, promote(Protection::Guarded));
+    assert!(
+        h.label(cx, "write-changed")
+            .contains("no longer as the page showed it")
+    );
+    assert!(!h.present(cx, "write-confirm") && !h.present(cx, "write-review"));
+    h.cluster.assert_nothing_written();
 }

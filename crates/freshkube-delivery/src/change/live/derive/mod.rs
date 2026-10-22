@@ -302,6 +302,16 @@ fn stage_acts(
                         promotion: Handle::read(&p.name, &p.meta)?,
                         freight: p.freight.clone()?,
                         phase: p.phase.clone()?,
+                        ran: p
+                            .ran_steps
+                            .iter()
+                            .map(|(alias, status)| format!("{alias}: {status}"))
+                            .collect(),
+                        pushed: p
+                            .pushed_commits
+                            .iter()
+                            .map(|commit| commit.chars().take(7).collect())
+                            .collect(),
                     })
                 })
                 .collect();
@@ -316,11 +326,7 @@ fn stage_acts(
         let found = warehouses.iter().find(|w| &w.name == name)?;
         Handle::read(&found.name, &found.meta)
     });
-    let verification = stage
-        .verifications
-        .iter()
-        .find(|run| run.freight.contains(&freight.name))
-        .and_then(|run| run.id.clone());
+    let verification = verification_id(stage, freight, holds);
     Some(StageActs {
         project: stage.project.clone(),
         stage: Handle::read(&stage.name, &stage.meta)?,
@@ -329,8 +335,29 @@ fn stage_acts(
         warehouse,
         promoting,
         verification,
+        current: stage
+            .current_freight_paths
+            .iter()
+            .cloned()
+            .zip(stage.current_freight.iter().cloned())
+            .collect(),
         would_run: crate::acts::freight_lines(freight),
     })
+}
+
+/// The id of the verification Reverify would repeat. Kargo repeats only the
+/// verification of the Stage's current Freight (the newest history entry),
+/// by its current id; for any other the press would do nothing, so none is
+/// offered.
+fn verification_id(stage: &KargoStage, freight: &Freight, holds: bool) -> Option<String> {
+    if !holds {
+        return None;
+    }
+    stage
+        .verifications
+        .iter()
+        .find(|run| run.collection == 0 && run.freight.contains(&freight.name))
+        .and_then(|run| run.id.clone())
 }
 
 /// The Stages the Freight can reach, in promotion order: those that take
@@ -1510,3 +1537,46 @@ const WORKLOADS: [(&str, &str); 4] = [
     ("apps", "StatefulSet"),
     ("apps", "DaemonSet"),
 ];
+
+#[cfg(test)]
+mod verification_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn freight(name: &str) -> Freight {
+        kargo::parse_freight(&json!({
+            "metadata": {"name": name, "namespace": "checkout", "uid": "u", "resourceVersion": "1"}
+        }))
+        .expect("a Freight")
+    }
+
+    fn stage() -> KargoStage {
+        kargo::parse_stage(&json!({
+            "metadata": {"name": "prod", "namespace": "checkout", "uid": "s", "resourceVersion": "1"},
+            "status": {"freightHistory": [
+                {"items": {"Warehouse/w": {"name": "now"}},
+                 "verificationHistory": [{"id": "v-now-2", "phase": "Successful"},
+                                         {"id": "v-now-1", "phase": "Failed"}]},
+                {"items": {"Warehouse/w": {"name": "before"}},
+                 "verificationHistory": [{"id": "v-before-1", "phase": "Successful"}]}
+            ]}
+        }))
+        .expect("a Stage")
+    }
+
+    #[test]
+    fn only_the_current_freight_s_newest_verification_can_be_repeated() {
+        let stage = stage();
+        assert_eq!(
+            verification_id(&stage, &freight("now"), true).as_deref(),
+            Some("v-now-2")
+        );
+        // The Freight that ran before is not the Stage's current one.
+        assert_eq!(verification_id(&stage, &freight("before"), false), None);
+        // Even if the page claims it holds, an older history entry has no
+        // verification Kargo would repeat.
+        assert_eq!(verification_id(&stage, &freight("before"), true), None);
+        // A Freight the Stage doesn't run has none.
+        assert_eq!(verification_id(&stage, &freight("now"), false), None);
+    }
+}
