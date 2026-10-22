@@ -1,7 +1,7 @@
 # The command line
 
-Code: `freshkube-cli` (`crates/freshkube-cli/src/`): `args.rs` the subcommands, `cluster.rs` the cluster choice and the sign-in rule, `exit.rs` the exit codes, `read.rs` the one read and its problems, `check.rs` and `get.rs` the commands, `lib.rs` the JSON envelope. `src/main.rs` hands a subcommand to it before it opens the window or the log file. Core's `resources/state.rs` holds the status tones the Resources page and `get` share.
-Tests: `freshkube-cli`'s `tests.rs` runs every command against a fake API (`freshkube_core::fake_api`), and `exit.rs` pins the order of the codes. Paths above are under `crates/`.
+Code: `freshkube-cli` (`crates/freshkube-cli/src/`): `args.rs` the subcommands, `cluster.rs` the cluster choice and the sign-in rule, `exit.rs` the exit codes, `read.rs` the one read and its problems, `check.rs` and `get.rs` the commands, `lib.rs` the JSON envelope. `src/main.rs` hands a subcommand to it before it opens the window or the log file. Core's `resources/state.rs` holds the status tones and `resources/pod_state.rs` a pod's state and verdict, which the Resources page and the commands both draw from. `tests/cli_startup.rs` runs the real binary.
+Tests: `freshkube-cli`'s `tests.rs` runs every command against a fake API (`freshkube_core::fake_api`) and, for the named-context rule, a local server; `exit.rs` pins the order of the codes; `tests/cli_startup.rs` proves a command starts no window, log file or preferences. Paths above are under `crates/`.
 
 The read commands are subcommands of the `freshkube` binary. They never start the window, call the functions the pages call (`list_table` for a kind's rows) and change nothing: every request is a GET of a collection. There are no write verbs; writes stay in the app, behind its write model. In this version the commands are `check` and `get`. `changes <app>`, an application's stages under `get`, and `waiting-to-ship` follow. The commands read the Kubernetes side of a cluster; Talos checks are not in this version.
 
@@ -17,13 +17,13 @@ The cluster is always named. The current kubeconfig or talosconfig context is ne
 
 `--cluster` without `--setup` reads the app's own freshkube.yaml. Giving none, an unknown entry, a context the kubeconfig lacks or half of a pair is a usage error (exit 2) that lists the entries or contexts.
 
-A context whose user signs in with a credential plugin is not opened unless you pass `--allow-login`, since the plugin may open a browser. Without it the command exits 5 before running the plugin. A server that rejects the credentials (401) exits 5 as well.
+A context whose user signs in with a credential plugin is not opened unless you pass `--allow-login`, since the plugin may open a browser. Without it the command exits 5 before running the plugin; in CI, `--allow-login` is also the switch for a plugin that needs no browser, such as one that prints a token. With it, connecting waits up to five minutes for a browser sign-in instead of 30 seconds. A server that rejects the credentials (401) exits 5 as well. A kubeconfig file that can't be read is a usage error that names the file.
 
 ## Commands
 
-`freshkube check` runs the cluster's health checks: nodes ready, pods healthy, Deployments and StatefulSets with their replicas. A failure comes with its fix. `--namespace` limits the pod and workload checks. Warnings exit 0 unless `--fail-on warn`.
+`freshkube check` runs the cluster's health checks: nodes ready, pods healthy, Deployments and StatefulSets with their replicas. A failure comes with its fix. The reads go out together, so an unresponsive cluster costs one deadline. `--namespace` limits the pod and workload checks. Warnings exit 0 unless `--fail-on warn`.
 
-`freshkube get <kind> [name]` lists a kind with the columns the Resources page shows (`-o wide` adds kubectl's wide columns) and each row's state: `+` good, `!` warning, `x` failing, `?` unknown. The state comes from the printed Status or Phase, else a Ready ratio, as in the page; a running pod that is not fully ready is a warning. `kind/name` reads one object; a missing one exits 1. Without `-n`, every namespace.
+`freshkube get <kind> [name]` lists a kind with the columns the Resources page shows (`-o wide` adds kubectl's wide columns) and each row's state: `+` good, `!` warning, `x` failing, `?` unknown. The state comes from the printed Status or Phase, else a Ready ratio, as in the page; a pod takes its state from core's `pod_state` and `pod_verdict`, as the page does: a running pod that is not fully ready, or that runs on a node that is not ready, is a warning. `kind/name` reads one object; a missing one exits 1 and is a `not-found` problem. Without `-n`, every namespace.
 
 Kinds are the built-in ones, by kubectl key (`deployments.apps`), plural or kind. A name two groups share is not guessed.
 
@@ -65,7 +65,7 @@ When several apply, the first in this list wins:
 }
 ```
 
-Each object carries its derived `state` (`good`, `warn`, `crit`, `unknown`, or null where the kind prints no status) and a `view` location a terminal route can open. A read that did not return rows is a `problems` entry: `{"state": "refused|failed|sign-in|unknown", "verb", "kind", "namespace", "context", "message"}`.
+Each object carries its derived `state` (`good`, `warn`, `crit`, `unknown`, or null where the kind prints no status) and a `view` location a terminal route can open. A read that did not return rows is a `problems` entry: `{"state": "refused|failed|not-found|sign-in|unknown", "verb", "kind", "namespace", "context", "message"}`.
 
 `check` has `checks` instead: each `{"id", "title", "state": "pass|warn|fail|unknown|refused|sign-in", "summary", "items", "problem"?}`, where `items` lists only the objects that are not fine, each with `state`, `reason`, `fix` and `view`; and `summary`, a count of checks by state.
 
