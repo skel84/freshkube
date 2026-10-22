@@ -569,26 +569,28 @@ async fn without_supply_chain_or_results_derives_exactly_as_main() {
     // Moved by #823: the hops and links gained a `cause`, and Kargo's newest
     // Freight history entry confirms the Freight -> Stage link by name. Without
     // the `cause` fields, the Debug output differs from main's only there.
+    // Moved by #846: `Change` names the Kubernetes context Kargo runs in
+    // (`kargo_context`), which main's Debug output doesn't have.
     for (name, reader, expected) in [
         (
             "live",
             reader(vec![pipeline("live-uid")], vec![]),
-            "5d8517f930dabf36a1111ae7cf3b403035a403c4ea9d2203fb4ee73bd75ab3cc",
+            "68582f288fc79ee8bffc75a993ebf384fe0e6048f1e8ff727870693c239ff913",
         ),
         (
             "empty",
             reader(vec![], vec![]),
-            "3a1502f9defd0f9e6e7e8697e9a7d84a6cfe74d98ad89ba89becc3303951ffb6",
+            "621803be1f0aaac4e63a8c2923b98f96b33569395ba6d8d648d8e529091dd3a9",
         ),
         (
             "capped",
             reader(vec![pipeline("live-uid")], vec![]).capped("pipelineruns"),
-            "5d8517f930dabf36a1111ae7cf3b403035a403c4ea9d2203fb4ee73bd75ab3cc",
+            "68582f288fc79ee8bffc75a993ebf384fe0e6048f1e8ff727870693c239ff913",
         ),
         (
             "refused",
             reader(vec![], vec![]).refusing("pipelineruns"),
-            "93b55bceb0e45cad84e501117c6a8ecfb14f9afe96cc3656a871ee87f144de42",
+            "924db154754d349be7f615e256a267c6dca763987d9ced084a4c4bfdff99f0bd",
         ),
     ] {
         let pool = Pool::new(

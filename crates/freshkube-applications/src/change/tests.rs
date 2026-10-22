@@ -1302,7 +1302,7 @@ fn the_follows_a_change_offers_name_the_cluster_kargo_runs_in(cx: &mut TestAppCo
     let (kargo, offers) = cx.read(|cx| {
         let page = page.read(cx);
         (
-            page.change.kargo_cluster.clone(),
+            page.change.kargo_context.clone(),
             page.follow
                 .as_ref()
                 .expect("the app can follow")

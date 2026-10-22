@@ -31,7 +31,7 @@ The shell offers the follows the connection of the cluster the window is on, wit
 
 ## Known limits in this slice
 
-- A change page's "reaches a Stage" and "verification fails" follows are about the cluster Kargo runs in (`Change.kargo_cluster`), not the one the window is on, and are saved with that context. When that cluster isn't open they show "Not watching" and read once the shell offers its connection. The incident follow is about the window's cluster, whose Coroot project the shell offers.
+- A change page's "reaches a Stage" and "verification fails" follows are about the cluster Kargo runs in (`Change.kargo_context`), not the one the window is on, and are saved with that context: the Kubernetes context of the workspace entry Kargo was read from (`At.context`), never the entry's id or the page's label, which differ from it. When that cluster isn't open they show "Not watching" and read once the shell offers its connection. The incident follow is about the window's cluster, whose Coroot project the shell offers.
 - A saved follow of a cluster that is not open stays "Not watching" until it is.
 - The rules' state (what was last told, a crash loop's re-arm, the incidents seen) is not saved. After a launch a follow can tell what it told before once more; that is accepted for now.
 - Clicking a toast does not open the item yet; that comes with banners.

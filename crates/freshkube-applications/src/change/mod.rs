@@ -1062,7 +1062,7 @@ impl ChangePage {
             let (project, freight) = (self.change.project.clone(), self.change.freight.clone());
             // Kargo's objects are in the cluster Kargo runs in, not
             // necessarily the one the window is on.
-            let kargo = Some(self.change.kargo_cluster.clone()).filter(|c| !c.is_empty());
+            let kargo = Some(self.change.kargo_context.clone()).filter(|c| !c.is_empty());
             offers.push(freshkube_followed::Offer {
                 context: kargo.clone(),
                 label: format!("Freight {freight} reaches {}", stage.name),

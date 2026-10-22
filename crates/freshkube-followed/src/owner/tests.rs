@@ -580,3 +580,112 @@ fn another_access_replaces_a_running_read_and_the_same_one_keeps_it(cx: &mut Tes
     assert_ne!(epoch(cx), first, "a rotated credential restarts it");
     assert_eq!(cx.read(|cx| h.followed.read(cx).reads_running()), 1);
 }
+
+fn coroot(project: &str) -> crate::live::Coroot {
+    use freshkube_core::coroot as api;
+    let provider = api::Provider::new("https://coroot.example.com", api::Credentials::None)
+        .expect("a provider");
+    let source = provider.source(&api::ProjectInfo {
+        id: project.into(),
+        name: project.into(),
+    });
+    crate::live::Coroot { provider, source }
+}
+
+#[gpui_kit::test]
+fn another_coroot_project_restarts_the_incident_read_and_the_same_one_does_not(
+    cx: &mut TestAppContext,
+) {
+    let h = harness(cx, None);
+    let mut first = connection("dev-fra", false);
+    first.coroot = Some(coroot("shop"));
+    h.follow(cx, Subject::Incident { application: None }, first)
+        .unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
+    let epoch =
+        |cx: &mut TestAppContext, key: &FeedKey| cx.read(|cx| h.followed.read(cx).feeds[key].epoch);
+    let incidents = key("dev-fra", WatchKey::Coroot);
+    let (incidents_at, pod_at) = (epoch(cx, &incidents), epoch(cx, &pod_key("api")));
+    let offer = |cx: &mut TestAppContext, project: Option<&str>| {
+        let mut c = connection("dev-fra", false);
+        c.coroot = project.map(coroot);
+        cx.update(|cx| h.followed.update(cx, |f, cx| f.offer(c, cx)));
+    };
+    // The project the follow started with, offered again: its provider is
+    // another value but the source it reads is the same project.
+    offer(cx, Some("shop"));
+    assert_ne!(
+        epoch(cx, &incidents),
+        incidents_at,
+        "another provider is another source"
+    );
+    let incidents_at = epoch(cx, &incidents);
+    // The very same source: the offer carries what was offered before.
+    let same = cx.read(|cx| h.followed.read(cx).connections["dev-fra"].clone());
+    cx.update(|cx| h.followed.update(cx, |f, cx| f.offer(same, cx)));
+    assert_eq!(epoch(cx, &incidents), incidents_at, "the same one stays");
+    offer(cx, Some("payments"));
+    assert_ne!(
+        epoch(cx, &incidents),
+        incidents_at,
+        "another project restarts"
+    );
+    assert_eq!(
+        epoch(cx, &pod_key("api")),
+        pod_at,
+        "the pod's read is not Coroot's"
+    );
+    assert_eq!(cx.read(|cx| h.followed.read(cx).reads_running()), 2);
+}
+
+#[gpui_kit::test]
+fn a_level_change_on_one_context_reaches_the_follows_made_under_the_old_one(
+    cx: &mut TestAppContext,
+) {
+    let h = harness(cx, None);
+    let sensitive = |cx: &mut TestAppContext| -> Vec<bool> {
+        cx.read(|cx| {
+            h.followed
+                .read(cx)
+                .items()
+                .iter()
+                .map(|i| i.follow.sensitive)
+                .collect()
+        })
+    };
+    let offer = |cx: &mut TestAppContext, sensitive: bool| {
+        cx.update(|cx| {
+            h.followed
+                .update(cx, |f, cx| f.offer(connection("dev-fra", sensitive), cx))
+        });
+    };
+    h.follow(cx, pod("api"), connection("dev-fra", true))
+        .unwrap();
+    assert_eq!(sensitive(cx), [true], "made while protected");
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    assert_eq!(h.toasts()[0].0, "Freshkube · 1 update");
+    assert_eq!(h.toasts()[0].1, None, "details hide under protected");
+
+    // The level the shell last knew is offered again: nothing changes.
+    offer(cx, true);
+    assert_eq!(sensitive(cx), [true]);
+
+    // The cluster is raised to open: the next notice takes the new level,
+    // whether the follow was made before or after.
+    offer(cx, false);
+    h.follow(cx, pod("web"), connection("dev-fra", false))
+        .unwrap();
+    assert_eq!(sensitive(cx), [false, false]);
+    h.deliver(cx, &pod_key("api"), crash(true, false));
+    cx.executor().advance_clock(Duration::from_secs(5 * 60 + 1));
+    h.deliver(cx, &pod_key("api"), crash(true, false));
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    assert_eq!(h.toasts().len(), 2);
+    let toast = h.toasts().pop().unwrap();
+    assert_eq!(toast.0, "api keeps crash-looping");
+    assert!(
+        toast.1.is_some(),
+        "a notice of a follow made under protected shows its details once open"
+    );
+}

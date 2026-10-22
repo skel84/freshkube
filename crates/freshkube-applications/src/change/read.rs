@@ -93,7 +93,7 @@ impl Fetch {
         Change {
             project,
             freight,
-            kargo_cluster: cluster,
+            kargo_context: cluster,
             observed_at: DateTime::<Utc>::MIN_UTC,
             page: Err("Nothing is read yet".into()),
             origin: Default::default(),
