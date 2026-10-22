@@ -643,12 +643,14 @@ async fn a_project_late_past_the_budget_is_not_read_never_dropped() {
     assert_eq!(app(&waiting, "fine").fold(), Fold::Waiting);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test]
 async fn a_pull_request_late_past_the_budget_is_unread_never_dropped() {
-    let api = Server::new(|_| {
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        Reply::json(200, "", &json!([]))
-    });
+    // A socket that is listening and never accepts: the connection waits
+    // for a handshake that never comes, as a server that hangs does, and
+    // nothing blocks the runtime's threads, so the budget's timer is the one
+    // that ends the wait. The client's own deadline is 5 s.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = format!("https://127.0.0.1:{}", silent.local_addr().unwrap().port());
     let mut world = projects_world(&["shop"]);
     world = world.with(
         "freights",
@@ -660,8 +662,7 @@ async fn a_pull_request_late_past_the_budget_is_unread_never_dropped() {
             "commits": [{"repoURL": "https://github.com/acme/shop", "id": format!("{:040x}", 1)}],
         })],
     );
-    let at = at(Some(Handle::trusting(&api.address, None)));
-    // The client's own deadline is 5 s, so the budget's is the one that ends it.
+    let at = at(Some(Handle::trusting(&address, None)));
     let budget = std::time::Duration::from_secs(1);
     let waiting = derive(&live::read(&world, &at, now(), budget).await);
     let item = &app(&waiting, "shop").items[0];
