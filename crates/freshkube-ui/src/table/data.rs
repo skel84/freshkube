@@ -627,7 +627,11 @@ fn header_cell<S: TableSource>(
             .aria_label(label.clone())
             .flex()
             .items_center()
-            .child(ui::column_label(label, cx))
+            .follow_tooltip(label.clone())
+            .child(ui::column_label_style(cx).min_w_0().child(super::word_cut(
+                SharedString::from(format!("{sort_id}-{ix}-label")),
+                label.clone(),
+            )))
             .into_any_element();
     };
     let order = order.map(|order| match order {
@@ -646,7 +650,11 @@ fn header_cell<S: TableSource>(
         .items_center()
         .gap_1()
         .cursor_pointer()
-        .child(ui::column_label(label, cx))
+        .follow_tooltip(label.clone())
+        .child(ui::column_label_style(cx).min_w_0().child(super::word_cut(
+            SharedString::from(format!("{sort_id}-{ix}-label")),
+            label.clone(),
+        )))
         .children(order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)))
         .on_click(cx.listener(move |view, _, _, cx| {
             // A sort is no click beside the rows for a page around it.

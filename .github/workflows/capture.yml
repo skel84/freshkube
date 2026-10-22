@@ -8,10 +8,11 @@ on:
     types: [labeled, synchronize]
   workflow_dispatch:
     inputs:
-      debug_binary:
-        description: Build an Intel macOS debug binary for local captures
-        type: boolean
-        default: false
+      architecture:
+        description: macOS debug binary to build for local captures
+        type: choice
+        options: [both, aarch64, x86_64]
+        default: both
 
 permissions:
   contents: read
@@ -21,16 +22,17 @@ env:
   MACOSX_DEPLOYMENT_TARGET: '15.0'
 
 jobs:
-  debug_binary:
+  debug_binary_x86_64:
     name: Debug binary (Intel macOS)
     if: >-
       (github.event_name == 'pull_request' &&
        contains(github.event.pull_request.labels.*.name, 'capture') &&
        (github.event.action != 'labeled' || github.event.label.name == 'capture')) ||
-      (github.event_name == 'workflow_dispatch' && inputs.debug_binary)
+      (github.event_name == 'workflow_dispatch' &&
+       contains(fromJSON('["both", "x86_64"]'), inputs.architecture))
     # A skipped job for an unrelated label never enters this concurrency group.
     concurrency:
-      group: capture-${{ github.event.pull_request.number || github.ref }}
+      group: capture-x86_64-${{ github.event.pull_request.number || github.ref }}
       # New PR heads replace old ones; manual builds finish even if another starts.
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: macos-15-intel
@@ -61,6 +63,51 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: freshkube-debug-x86_64-apple-darwin-${{ steps.source.outputs.sha }}
+          path: target/debug/freshkube
+          if-no-files-found: error
+          retention-days: 3
+
+  debug_binary_aarch64:
+    name: Debug binary (Apple silicon macOS)
+    if: >-
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'capture') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'capture')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       contains(fromJSON('["both", "aarch64"]'), inputs.architecture))
+    # A skipped job for an unrelated label never enters this concurrency group.
+    concurrency:
+      group: capture-aarch64-${{ github.event.pull_request.number || github.ref }}
+      # New PR heads replace old ones; manual builds finish even if another starts.
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Name the artifact for the source head, rather than a PR merge ref.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Confirm native architecture and identify source
+        id: source
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
+          echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Install build tools
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Seed main by hand; PRs restore it without filling the shared cache.
+          key: capture-debug-aarch64
+          save-if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+      - name: Build the debug executable
+        run: cargo build --locked --bin freshkube --features capture-embed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freshkube-debug-aarch64-apple-darwin-${{ steps.source.outputs.sha }}
           path: target/debug/freshkube
           if-no-files-found: error
           retention-days: 3

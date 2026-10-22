@@ -162,6 +162,7 @@ impl Pilot {
             Destination::Object(kind, object) => {
                 self.open_object(kind, object, resources::Tab::Overview, window, cx)
             }
+            Destination::Link(text) => self.open_link_text(&text, window, cx),
         }
     }
 }

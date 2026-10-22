@@ -21,7 +21,8 @@ use crate::desktop::probe;
 use crate::forwards::ForwardsIndicator;
 use freshkube_prefs::{Document, Layout};
 use freshkube_ui::platform::{
-    About, AppMenu, OpenAppMenu, OpenClustersSettings, OpenCorootSettings, OpenSettings,
+    About, AppMenu, OpenAppMenu, OpenClustersSettings, OpenCorootSettings,
+    OpenDestinationsSettings, OpenSettings, OpenSourcesSettings,
 };
 use gpui_kit::component::{Theme, ThemeMode};
 use std::path::{Path, PathBuf};
@@ -135,6 +136,8 @@ pub(in crate::desktop) struct Chrome {
     pub(in crate::desktop) fps: Entity<super::fps::Fps>,
     /// The status bar's port forwards, which redraw on their own.
     pub(super) forwards: Entity<ForwardsIndicator>,
+    /// The status bar's "Notifying · n", once the app's follows are made.
+    pub(super) followed: Option<Entity<freshkube_followed::FollowedBell>>,
     /// The theme the user chose: the system's, light or dark.
     pub(in crate::desktop) appearance: Appearance,
     /// The platform whose menu the window has: the one it runs on, but a
@@ -180,6 +183,8 @@ impl Chrome {
             elapsed: Duration::ZERO,
             fps: cx.new(super::fps::Fps::new),
             forwards: cx.new(ForwardsIndicator::new),
+            followed: freshkube_followed::owner::followed(cx)
+                .map(|followed| cx.new(|cx| freshkube_followed::FollowedBell::new(followed, cx))),
             appearance,
             menu_platform,
             app_menu_popup: None,
@@ -237,6 +242,14 @@ impl Chrome {
         .on_action(cx.listener(|view, _: &OpenClustersSettings, window, cx| {
             view.show_settings(SettingsSection::Clusters, window, cx)
         }))
+        .on_action(cx.listener(|view, _: &OpenSourcesSettings, window, cx| {
+            view.show_settings(SettingsSection::Sources, window, cx)
+        }))
+        .on_action(
+            cx.listener(|view, _: &OpenDestinationsSettings, window, cx| {
+                view.show_settings(SettingsSection::Destinations, window, cx)
+            }),
+        )
         .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
         .on_action(cx.listener(|view, _: &UseSystemAppearance, window, cx| {
             view.choose_appearance(Appearance::System, window, cx)

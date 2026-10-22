@@ -301,6 +301,8 @@ impl MonitoringPage {
 
     /// Opens a dashboard from the column.
     pub fn open(&mut self, entry: EntryId, cx: &mut Context<Self>) {
+        // A dashboard opened from the column takes an alert page's place.
+        self.show_dashboards(cx);
         if self.chosen == entry
             && self
                 .board

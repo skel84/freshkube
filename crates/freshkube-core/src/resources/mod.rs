@@ -30,6 +30,8 @@ mod object;
 mod pod_links;
 mod pod_logs;
 mod pod_row;
+mod pod_state;
+mod state;
 mod table;
 mod watch;
 mod workload_pods;
@@ -39,7 +41,7 @@ pub use contexts::{
     KubeContext, KubeconfigReport, context_servers, discover_contexts, kubeconfig_sources,
     load as load_kubeconfigs,
 };
-pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds};
+pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds, resolve_kind_key};
 pub use events::{EventScope, EventUpdate, ObjectEvent, watch_object_events};
 pub use exec::{
     BATCH_BYTES, BATCH_TIME, ExecEnd, ExecFailure, ExecFailureKind, ExecGuard, ExecInput,
@@ -52,7 +54,7 @@ pub use forward::{
     WorkloadKind, candidates, declared_ports, listen_blocking, listen_local, preferred_port,
     start_forward,
 };
-pub use kinds::{ResourceKind, builtin, builtin_by_gvk};
+pub use kinds::{ResourceKind, builtin, builtin_by_gvk, find as find_kind};
 pub use node_usage::{NodeUsage, list_node_usage};
 pub use object::{
     Condition, ContainerStatus, Diagnosis, Instance, ObjectDocument, Overview, Owner, PodStatus,
@@ -66,6 +68,8 @@ pub use pod_logs::{
 pub use pod_row::{
     Amounts, ContainerFacts, PodFacts, PodUsage, RunState, cpu_millis, list_pod_usage, quantity,
 };
+pub use pod_state::{PodState, PodVerdict, died, pod_state, pod_verdict};
+pub use state::{StatusTone, ready_tone, row_tone, status_tone, tone_column};
 pub use table::{OwnerReference, RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};
 pub use workload_pods::{

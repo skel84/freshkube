@@ -66,6 +66,9 @@ impl SourcesList {
         if let Some(naming) = &self.stage_naming {
             rows.push(self.stage_naming_row(naming));
         }
+        if let Some(namespace) = &self.build_namespace {
+            rows.push(self.build_namespace_row(namespace));
+        }
         if let Some(problem) = &self.setup_problem {
             rows.push(
                 self.row(
@@ -88,7 +91,7 @@ impl SourcesList {
             );
         }
         self.rows = rows;
-        (self.columns, self.width) = source::columns(&self.rows);
+        (self.columns, self.width) = source::columns(&self.rows, self.finder.row.as_ref());
     }
 
     fn checked(&self) -> Option<&Checked> {
@@ -307,8 +310,27 @@ impl SourcesList {
         )
     }
 
+    /// Build namespace: where a build is searched for by its image digest, as
+    /// `freshkube.yaml` says. Read from the file, so it needs no check.
+    fn build_namespace_row(&self, namespace: &str) -> SourceRow {
+        let tooltip = format!(
+            "Build namespace: where a build is searched for by its image digest
+{namespace}:              builds are found there by digest; elsewhere only a commit finds one
+Reads              freshkube.yaml, delivery.build_namespace"
+        );
+        self.row(
+            Read::BuildNamespace,
+            namespace.to_owned(),
+            "freshkube.yaml".into(),
+            false,
+            ("Set".into(), None),
+            "delivery.build_namespace".into(),
+            tooltip,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn row(
+    pub(super) fn row(
         &self,
         read: Read,
         entry: String,

@@ -1,0 +1,1 @@
+- **Notifications:** follow a pod that keeps crash-looping, or a change reaching a Stage, failing its verification or opening an incident; each follow only reads, the updates show as toasts and in a bell in the status bar, and Settings › Notifications sets grouping, quiet hours and Hide details.

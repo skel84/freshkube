@@ -17,6 +17,8 @@ pub enum ResourceLink {
     /// A shell in a pod's container, which starts in a dock tab: the
     /// user's pick from the pane's Shell menu.
     Shell(ShellRequest),
+    /// Copy a link to the view the shell shows, which the shell makes (#873).
+    CopyLink,
 }
 
 /// Which pod's container to run a shell in.

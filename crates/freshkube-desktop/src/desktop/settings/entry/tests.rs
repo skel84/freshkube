@@ -16,7 +16,7 @@ const TWO: &str = r#"{"version":1,"clusters":[
 
 /// Two entries, each with keys this build doesn't know, and every other
 /// part of the setup: a save of one entry's group must keep all of them.
-fn rich() -> String {
+pub(super) fn rich() -> String {
     serde_json::json!({
         "version": 1,
         "kubeconfig": abs("kube.yaml"),
@@ -47,7 +47,7 @@ fn abs(name: &str) -> String {
 
 type Pilot = Entity<crate::desktop::Pilot>;
 
-fn select(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &str) {
+pub(super) fn select(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &str) {
     cx.update_window(handle, |_, window, cx| {
         window.click(format!("settings-cluster-{id}"), cx);
         window.render_frame(cx);
@@ -81,22 +81,34 @@ fn values(
     .unwrap()
 }
 
-/// Scrolls the Inspector's body to its end, where the Metrics group is.
+/// Scrolls the Inspector's body down until the Metrics group's Save is in
+/// view: the read-only Fingerprint group is below it.
 fn to_metrics(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.scroll(
-            "settings-detail-body",
-            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-4000.))),
-            cx,
-        );
-        window.render_frame(cx);
+        for _ in 0..40 {
+            if window
+                .try_find("settings-metrics-save")
+                .is_some_and(|save| save.visible())
+            {
+                break;
+            }
+            window.scroll(
+                "settings-detail-body",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-60.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+        }
     })
     .unwrap();
 }
 
 /// Scrolls the Inspector's body back to its start.
-fn to_top(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+pub(super) fn to_top(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.scroll(
@@ -173,7 +185,7 @@ async fn a_first_right_click_can_edit_without_bypassing_unsaved_changes(cx: &mut
 }
 
 #[gpui_kit::test]
-async fn selecting_a_cluster_fills_both_groups(cx: &mut TestAppContext) {
+async fn selecting_a_cluster_fills_its_groups(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), &rich());
@@ -196,7 +208,9 @@ async fn selecting_a_cluster_fills_both_groups(cx: &mut TestAppContext) {
         assert_eq!(window.find("settings-detail-title").label(), Some("prod"));
         for id in [
             "settings-identity",
-            "settings-metrics",
+            // Protection sits between Identity and Metrics (#852), so Metrics
+            // is below the fold until the Inspector scrolls to it.
+            "settings-protection",
             "settings-identity-save",
             "settings-identity-revert",
             "settings-identity-saved-in",

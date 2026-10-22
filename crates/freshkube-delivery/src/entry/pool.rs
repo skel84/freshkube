@@ -34,6 +34,7 @@ use tokio::time::Instant;
 
 use super::{MAX_AT_ONCE, OPEN};
 use crate::discover::ClusterSecrets;
+use crate::discover::NamespaceCounts;
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use crate::results::{self, Client as ResultsClient};
 pub use crate::results::{Route as ResultsRoute, Wait as ResultsWait};
@@ -264,6 +265,18 @@ impl<O: Reader, E: Reader> Reader for Via<O, E> {
         match self {
             Via::Open(reader) => reader.probe(request).await,
             Via::Entry(reader) => reader.probe(request).await,
+        }
+    }
+    async fn namespace_counts(&self, resource: &Resource) -> Result<NamespaceCounts, Failure> {
+        match self {
+            Via::Open(reader) => reader.namespace_counts(resource).await,
+            Via::Entry(reader) => reader.namespace_counts(resource).await,
+        }
+    }
+    async fn any_in(&self, resource: &Resource, namespace: &str) -> Result<bool, Failure> {
+        match self {
+            Via::Open(reader) => reader.any_in(resource, namespace).await,
+            Via::Entry(reader) => reader.any_in(resource, namespace).await,
         }
     }
     async fn cluster_secrets(&self, namespace: &str) -> Result<ClusterSecrets, Failure> {

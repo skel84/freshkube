@@ -33,6 +33,9 @@ pub mod diagnostics;
 pub mod errors;
 pub mod example;
 pub mod failure;
+#[cfg(any(test, feature = "testing"))]
+pub mod fake_api;
+pub mod fingerprint;
 pub mod formatting;
 pub mod indicators;
 pub mod inspection;
@@ -57,6 +60,7 @@ pub mod talos_nodes;
 pub mod types;
 pub mod workloads;
 pub mod workspace;
+pub mod write;
 
 // Re-export commonly used items at crate root
 pub use client_cache::{
@@ -73,3 +77,5 @@ pub use types::*;
 // Use freshkube_core::network::* explicitly
 
 pub mod kubernetes_summary;
+
+pub mod databases;

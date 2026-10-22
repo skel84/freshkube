@@ -15,6 +15,7 @@ gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-applications.workspace = true
 freshkube-delivery.workspace = true
+freshkube-followed.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
 freshkube-nav.workspace = true
@@ -67,6 +68,8 @@ required-features = ["stress"]
 libc = "0.2"
 
 [dev-dependencies]
+http.workspace = true
+tower = { version = "0.5", features = ["util"] }
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 rustls.workspace = true
 tempfile = "3"
@@ -79,6 +82,7 @@ freshkube-terminal = { workspace = true, features = ["testing"] }
 freshkube-core = { workspace = true, features = ["testing"] }
 freshkube-applications = { workspace = true, features = ["testing"] }
 freshkube-delivery = { workspace = true, features = ["testing"] }
+freshkube-followed = { workspace = true, features = ["testing"] }
 # The log tests read the view's state (`applied_and_held`, `retained`, …).
 freshkube-logs = { workspace = true, features = ["testing"] }
 # The startup and Observability tests read the charts (`reading`, `marker_labels`).

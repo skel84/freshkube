@@ -69,6 +69,7 @@ impl Pilot {
                             .when(compact && page.is_none(), |this| this.max_w(dp(160.)))
                             .child(left),
                     )
+                    .child(self.render_level_status(cx))
                     .children(page.map(|page| {
                         h_flex()
                             .flex_auto()
@@ -102,6 +103,23 @@ impl Pilot {
                     })),
             )
             .right(right.child(self.chrome.fps.clone()))
+            .into_any_element()
+    }
+
+    /// The protection level of the context shown (#852), glyph and word at
+    /// every width: the header's tag is the glyph alone in a narrow window,
+    /// so this is where the word is always readable. It keeps its room and
+    /// the page's segment gives way first.
+    fn render_level_status(&self, cx: &App) -> AnyElement {
+        let level = self.context_display.level;
+        let words = self.context_display.level_words.clone();
+        freshkube_ui::level::tag(mark(level), freshkube_ui::level::Form::Word, cx)
+            .id("status-protection")
+            .test_support()
+            .role(Role::Status)
+            .aria_label(words.clone())
+            .max_w(dp(96.))
+            .tooltip(move |window, cx| Tooltip::new(words.clone()).build(window, cx))
             .into_any_element()
     }
 
@@ -230,7 +248,15 @@ impl Pilot {
                 .flex_none()
                 .gap_3()
                 .children(self.render_dock_button(cx))
-                .child(self.chrome.forwards.clone())
+                .child(
+                    // Two indicators that draw nothing until there is
+                    // something to say; a tight gap, so the empty one costs
+                    // the page's segment almost no room.
+                    h_flex()
+                        .gap_1()
+                        .child(self.chrome.forwards.clone())
+                        .children(self.chrome.followed.clone()),
+                )
                 .child(
                     div()
                         .id("kubernetes-only")
@@ -247,7 +273,15 @@ impl Pilot {
                 .gap_3()
                 .flex_none()
                 .children(self.render_dock_button(cx))
-                .child(self.chrome.forwards.clone())
+                .child(
+                    // Two indicators that draw nothing until there is
+                    // something to say; a tight gap, so the empty one costs
+                    // the page's segment almost no room.
+                    h_flex()
+                        .gap_1()
+                        .child(self.chrome.forwards.clone())
+                        .children(self.chrome.followed.clone()),
+                )
                 .children(
                     self.overview
                         .last_successful()

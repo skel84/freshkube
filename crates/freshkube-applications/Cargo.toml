@@ -14,6 +14,7 @@ doctest = false
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-delivery.workspace = true
+freshkube-followed.workspace = true
 freshkube-monitoring.workspace = true
 freshkube-nav.workspace = true
 freshkube-observability.workspace = true

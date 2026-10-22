@@ -177,6 +177,16 @@ impl ScreenPanel for MonitoringPage {
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         MonitoringPage::refresh(self, cx)
     }
+
+    /// On an alert page, its line: the alerts, rules or silences counted.
+    fn status(&mut self, cx: &App) -> Option<Segment> {
+        self.alerts_status(cx)
+    }
+
+    /// The motion over an alert page's loading rows.
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.alerts_loading_motion(cx)
+    }
 }
 
 /// Hands Monitoring the setup file's `metrics` choice for the open entry.
@@ -403,6 +413,7 @@ impl Pilot {
             PageEvent::Screen(event) => self.screen_event(event, window, cx),
             PageEvent::Link(link) => self.resource_link(link.clone(), window, cx),
             PageEvent::Revision(link) => self.open_revision(link.clone(), window, cx),
+            PageEvent::Application(link) => self.open_application(link, window, cx),
             // One in another workspace entry's cluster, after a switch.
             PageEvent::Switch(link) => {
                 self.open_on_entry(link.entry.to_string(), link.link.clone(), window, cx)
@@ -429,6 +440,25 @@ impl Pilot {
             PageEvent::Observability(event) => self.observability_event(event, window, cx),
             PageEvent::Monitoring(event) => match event {
                 MonitoringEvent::Catalog => cx.notify(),
+                // Which page of the column shows: its rows follow.
+                MonitoringEvent::Section => {
+                    self.navigation.column_changed();
+                    cx.notify();
+                }
+                // The alert read follows how the metrics are found.
+                MonitoringEvent::Scope => self.ensure_alerts(cx),
+                // A label of an alert names an object: open it.
+                MonitoringEvent::OpenObject(object) => {
+                    if let Some(kind) = builtin(object.kind) {
+                        let target = crate::resources::model::ObjectRef {
+                            namespace: object.namespace.clone(),
+                            name: object.name.clone(),
+                            uid: String::new(),
+                            connection: None,
+                        };
+                        self.open_object(kind, target, resources::Tab::Overview, window, cx);
+                    }
+                }
                 MonitoringEvent::History => self.push_history(cx),
                 // The column lists the dashboards; an open one stays open.
                 MonitoringEvent::Dashboards => {

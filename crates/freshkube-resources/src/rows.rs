@@ -12,7 +12,7 @@ use freshkube_ui::squares::{Square, Squares};
 use freshkube_ui::ui::Tone;
 use gpui_kit::SharedString;
 
-use super::model::{ResourceColumn, ResourceRow, StatusTone, status_tone};
+use super::model::{ResourceColumn, ResourceRow};
 
 /// The object that manages a row's, as the Owner column shows it:
 /// `deploy/` and the Deployment's name for a pod of one of its ReplicaSets.
@@ -76,31 +76,8 @@ pub(crate) fn generated_suffix(name: &str, owner: Option<&RowOwner>) -> Option<u
         .map(|_| owner.name.len())
 }
 
-/// How a pod is doing, from its printed status and readiness.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PodState {
-    /// Crashing, failing to pull, evicted or errored.
-    Failing,
-    /// Running, but not every container is ready.
-    NotReady,
-    /// Scheduled or starting: Pending, ContainerCreating, Init.
-    Pending,
-    Terminating,
-    Running,
-    Completed,
-    /// A status this table doesn't know the meaning of.
-    Unknown,
-}
-
-/// Whether a printed status says a container ran and stopped:
-/// `CrashLoopBackOff`, `Error` or `OOMKilled`, in an init container too.
-/// A pod that couldn't start, such as `ImagePullBackOff` or an
-/// unschedulable one, has nothing that died.
-pub fn died(status: &str) -> bool {
-    let status = status.strip_prefix("Init:").unwrap_or(status);
-    let reason = status.split([' ', '(']).next().unwrap_or_default();
-    matches!(reason, "CrashLoopBackOff" | "Error" | "OOMKilled")
-}
+pub(crate) use freshkube_core::resources::PodState;
+pub use freshkube_core::resources::died;
 
 /// A pod's row, beyond the printed cells.
 #[derive(Clone, Debug, PartialEq)]
@@ -309,7 +286,7 @@ pub(crate) fn pod_row(
         "" | "<none>" => facts.node.clone(),
         printed => printed.to_owned(),
     };
-    let state = state(&status, &ready);
+    let state = freshkube_core::resources::pod_state(&status, &ready);
     let exit = facts
         .containers
         .iter()
@@ -365,23 +342,6 @@ pub(crate) fn pod_row(
         logs_label: SharedString::default(),
         containers: facts.containers,
         init_containers: facts.init_containers,
-    }
-}
-
-fn state(status: &str, ready: &str) -> PodState {
-    if status == "Terminating" {
-        return PodState::Terminating;
-    }
-    match (status, status_tone(status)) {
-        ("Completed" | "Succeeded", _) => PodState::Completed,
-        ("Running", _) => match ready.split_once('/') {
-            Some((up, all)) if up != all => PodState::NotReady,
-            _ => PodState::Running,
-        },
-        (_, StatusTone::Danger) => PodState::Failing,
-        ("Unknown", _) => PodState::Unknown,
-        (_, StatusTone::Warning) => PodState::Pending,
-        _ => PodState::Unknown,
     }
 }
 

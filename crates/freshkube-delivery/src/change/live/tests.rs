@@ -69,7 +69,7 @@ async fn a_change_reads_from_its_freight_to_the_pods_in_one_cluster() {
         .expect("the Freight is read");
 
     assert_eq!(change.freight, "wonky-otter");
-    assert_eq!(change.kargo_cluster, "core");
+    assert_eq!(change.kargo_context, "core");
     let phases: Vec<Phase> = change.groups.iter().map(|g| g.phase.clone()).collect();
     assert_eq!(phases, [Phase::Build, Phase::Freight, Phase::Stage(0)]);
 

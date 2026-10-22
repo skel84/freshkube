@@ -3,7 +3,8 @@
 //! reads them, and what opening each row does.
 use super::rail::RowTarget;
 use super::*;
-use crate::monitoring::page::EntryId;
+use crate::monitoring::alerts::Which;
+use crate::monitoring::page::{EntryId, Section as Shown};
 use crate::observability::Destination;
 use freshkube_delivery::applications::Rule;
 use freshkube_ui::source_list::{Line, Menu, Note, Prose, Row, Section, SourceListHost};
@@ -22,6 +23,8 @@ pub(crate) enum ColumnKey {
     Dashboard(EntryId),
     ReadFolder,
     MonitoringFolder,
+    /// Monitoring's Alerts, Rules or Silences page.
+    Alerts(freshkube_monitoring::alerts::Which),
     /// The header's Settings menu, for a talosconfig or a dashboards folder.
     Settings,
     /// A section of the Settings area.
@@ -137,6 +140,9 @@ impl Pilot {
         let mut lines = Vec::new();
         if slug == "workloads" {
             lines.push(self.page_line(Page::Health, Some("5")).into());
+        }
+        if slug == "storage" {
+            lines.push(self.page_line(Page::Databases, None).into());
         }
         let first_kind = lines.len();
         lines.extend(group.items.iter().map(|(label, key)| {
@@ -352,7 +358,9 @@ impl Pilot {
     /// The built-in dashboards, then the user's folder or how to add one.
     fn monitoring_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
         let monitoring = self.pages.monitoring.read(cx);
-        let open = (self.navigation.page == Page::Monitoring).then(|| monitoring.chosen());
+        let on_monitoring = self.navigation.page == Page::Monitoring;
+        let open = (on_monitoring && monitoring.section() == Shown::Dashboards)
+            .then(|| monitoring.chosen());
         let entry = |entry: &Entry| -> Line<ColumnKey> {
             let mut row = Row::new(
                 ColumnKey::Dashboard(entry.id.clone()),
@@ -367,7 +375,22 @@ impl Pilot {
             row.into()
         };
         let catalog = monitoring.catalog();
-        let mut lines = vec![Section::new("monitoring-builtin", "Built in").into()];
+        // Alerts, Rules and Silences first, the dashboards after.
+        let mut lines: Vec<Line<ColumnKey>> = Which::ALL
+            .into_iter()
+            .map(|which| {
+                let row = Row::new(
+                    ColumnKey::Alerts(which),
+                    format!("nav-monitoring-{}", which.slug()),
+                    which.title(),
+                )
+                .icon(which.icon())
+                .tooltip(which.tooltip())
+                .current(on_monitoring && monitoring.section() == Shown::Alerts(which));
+                self.marked(row, RowTarget::Alerts(which)).into()
+            })
+            .collect();
+        lines.push(Section::new("monitoring-builtin", "Built in").into());
         lines.extend(catalog.builtins.iter().map(entry));
         let folder = |name: &SharedString| Section::new("monitoring-folder", name.clone()).into();
         match &catalog.folder {
@@ -712,6 +735,12 @@ impl SourceListHost for Pilot {
                 self.pages
                     .monitoring
                     .update(cx, |monitoring, cx| monitoring.open(id, cx));
+                self.navigate_from_keyboard(Page::Monitoring, window, cx);
+            }
+            ColumnKey::Alerts(which) => {
+                self.pages
+                    .monitoring
+                    .update(cx, |monitoring, cx| monitoring.show_alerts(which, cx));
                 self.navigate_from_keyboard(Page::Monitoring, window, cx);
             }
             ColumnKey::ReadFolder => self

@@ -20,8 +20,9 @@ use crate::{
     monitoring::page::MonitoringPage,
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
-        DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen, OperationsScreen,
-        ProcessesScreen, ScreenHandle, ScreenPanel, SecurityScreen, StorageScreen, WorkloadsScreen,
+        DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen,
+        OperationsScreen, ProcessesScreen, ScreenHandle, ScreenPanel, SecurityScreen,
+        StorageScreen, WorkloadsScreen,
     },
 };
 
@@ -37,6 +38,7 @@ pub(super) struct Pages {
     pub(super) node_workspace: Entity<nodes::Nodes>,
     pub(super) health: Entity<WorkloadsScreen>,
     pub(super) lifecycle: Entity<LifecycleScreen>,
+    pub(super) databases: Entity<DatabasesScreen>,
     pub(super) resources: Entity<ResourcesScreen>,
     pub(super) dock: Entity<dock::Dock>,
     pub(super) custom: Entity<CustomResources>,
@@ -69,11 +71,16 @@ impl Pages {
         });
         let health = cx.new(|cx| WorkloadsScreen::new(runtime.clone(), window, cx));
         let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
+        let databases = {
+            let shape = options.debug.databases.clone();
+            cx.new(|cx| DatabasesScreen::new(runtime.clone(), window, cx).with_example(shape))
+        };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
+                    PageId::Databases => ScreenHandle::new(databases.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
                     PageId::Network => screen(NetworkScreen::new, runtime, window, cx),
@@ -93,7 +100,7 @@ impl Pages {
                     PageId::Security => screen(SecurityScreen::new, runtime, window, cx),
                     PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
                     PageId::Operations => screen(OperationsScreen::new, runtime, window, cx),
-                    _ => unreachable!("SCREENS holds the Talos screens alone"),
+                    _ => unreachable!("SCREENS holds the retained inspection screens"),
                 };
                 (page, handle)
             })
@@ -132,6 +139,9 @@ impl Pages {
                 cx,
             )
         });
+        monitoring.update(cx, |page, cx| {
+            page.set_alerts_shape(options.debug.alerts, cx)
+        });
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
                 runtime.clone(),
@@ -155,6 +165,9 @@ impl Pages {
             )
         });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
+        settings_page.update(cx, |page, _| {
+            page.set_example_labels_capped(options.debug.metrics_labels_capped)
+        });
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(
@@ -176,6 +189,7 @@ impl Pages {
             node_workspace,
             health,
             lifecycle,
+            databases,
             resources,
             dock,
             custom,

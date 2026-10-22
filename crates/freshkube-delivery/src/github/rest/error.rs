@@ -91,6 +91,24 @@ fn at(time: &DateTime<Utc>) -> String {
 impl std::fmt::Display for Error {
     /// The words of the status bar and the list.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.write_at(f, Utc::now())
+    }
+}
+
+impl Error {
+    /// The words as of `now`, which only a limit's reset can change.
+    #[cfg(test)]
+    pub(crate) fn words_at(&self, now: DateTime<Utc>) -> String {
+        struct At<'a>(&'a Error, DateTime<Utc>);
+        impl std::fmt::Display for At<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.write_at(f, self.1)
+            }
+        }
+        At(self, now).to_string()
+    }
+
+    fn write_at(&self, f: &mut std::fmt::Formatter<'_>, now: DateTime<Utc>) -> std::fmt::Result {
         match self {
             Self::NotSetUp(cause) => write!(f, "GitHub isn't set up: {cause}"),
             Self::Unreachable(cause) => write!(f, "GitHub didn't answer: {cause}"),
@@ -98,12 +116,23 @@ impl std::fmt::Display for Error {
             Self::Forbidden => f.write_str("GitHub refused the request (403)"),
             Self::NotFound { .. } => f.write_str("GitHub didn't find it (404)"),
             Self::Moved => f.write_str("GitHub says the repository moved (301)"),
-            Self::Limited { until, secondary } => write!(
-                f,
-                "GitHub's {}rate limit is reached until {}",
-                if *secondary { "secondary " } else { "" },
-                at(until)
-            ),
+            Self::Limited { until, secondary } => {
+                let kind = if *secondary { "secondary " } else { "" };
+                // A reset that has passed is not a wait: the next read asks.
+                if *until <= now {
+                    write!(
+                        f,
+                        "GitHub's {kind}rate limit was reached until {}; asking again",
+                        at(until)
+                    )
+                } else {
+                    write!(
+                        f,
+                        "GitHub's {kind}rate limit is reached until {}",
+                        at(until)
+                    )
+                }
+            }
             Self::Low { left, until } => {
                 write!(f, "GitHub's limit is low: {left} left until {}", at(until))
             }

@@ -5,6 +5,7 @@
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use freshkube_core::operations::{AuditLog, default_audit_path};
+use freshkube_core::write::{LevelCell, Protection};
 use freshkube_ui::form::{self, Action};
 use gpui_kit::component::{Root, WindowExt, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -44,6 +45,14 @@ impl Running {
     }
 }
 
+/// Why [`Operations::begin`] gave no ticket.
+pub(crate) enum Refused {
+    /// Another operation holds the slot.
+    Busy(Running),
+    /// The cluster's level refuses writes.
+    ReadOnly(&'static str),
+}
+
 /// Proof of holding the operation slot. Hand [`Self::cancellation`] to core
 /// runners and return the ticket through [`Operations::finish`].
 pub(crate) struct OperationTicket {
@@ -63,6 +72,40 @@ impl OperationTicket {
 struct GlobalOperations(Entity<Operations>);
 
 impl Global for GlobalOperations {}
+
+/// The protection level of the context the window shows, which the shell
+/// keeps current (#852). A control that writes asks it, as it asks the
+/// operation slot: one level at a time, like the one slot. It is a shared
+/// cell, so a write's runner follows it and reads it again just before it
+/// sends (#853).
+pub(crate) struct GlobalProtection(LevelCell);
+
+impl Default for GlobalProtection {
+    fn default() -> Self {
+        Self(LevelCell::new(Protection::default()))
+    }
+}
+
+impl Global for GlobalProtection {}
+
+/// Sets the level the window's context has.
+pub(crate) fn set_protection(level: Protection, cx: &mut App) {
+    cx.default_global::<GlobalProtection>().0.set(level);
+}
+
+/// The window's level as a cell a runner can follow. The first page action
+/// that builds a runner uses it; until then only the tests do.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn level_cell(cx: &mut App) -> LevelCell {
+    cx.default_global::<GlobalProtection>().0.clone()
+}
+
+/// Why a write is refused on the context shown, if it is: the reason a
+/// disabled control gives, and the guard that makes pressing it do nothing.
+pub(crate) fn refusal(cx: &App) -> Option<&'static str> {
+    cx.try_global::<GlobalProtection>()
+        .and_then(|global| global.0.get().refusal())
+}
 
 impl Operations {
     /// The app-wide slot, created on first use.
@@ -88,8 +131,35 @@ impl Operations {
             .filter(|running| running.alive.upgrade().is_some())
     }
 
-    /// Takes the slot, or returns what already holds it.
+    /// Takes the slot for a write to the cluster the window shows, or says
+    /// why not: something else holds it, or the cluster is read-only. Every
+    /// Talos write goes through here, so a control that forgot to ask the
+    /// level still starts nothing (#852).
     pub(crate) fn begin(
+        &mut self,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Result<OperationTicket, Refused> {
+        if let Some(why) = refusal(cx) {
+            return Err(Refused::ReadOnly(why));
+        }
+        self.take(label, cx).map_err(Refused::Busy)
+    }
+
+    /// Takes the slot for maintenance mode, which the level does not govern:
+    /// it is not tied to a workspace entry, and it works on a node the
+    /// maintainer reached over the Talos maintenance API. WRITE_MODEL.md says
+    /// so; this is the one exemption from [`Self::begin`].
+    pub(crate) fn begin_maintenance(
+        &mut self,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Result<OperationTicket, Running> {
+        self.take(label, cx)
+    }
+
+    /// Takes the slot, or returns what already holds it.
+    fn take(
         &mut self,
         label: impl Into<SharedString>,
         cx: &mut Context<Self>,
@@ -142,6 +212,14 @@ impl Operations {
             cx.notify();
         }
     }
+}
+
+/// The writes audit log (`<preferences>/audit/writes.jsonl`, #853): one for the
+/// app, across contexts.
+pub(crate) fn write_audit_store() -> Option<freshkube_core::write::AuditStore> {
+    crate::preferences_path()
+        .and_then(|path| path.parent().map(|dir| dir.join("audit")))
+        .map(freshkube_core::write::AuditStore::new)
 }
 
 /// The audit store for `context`, shared with the other frontends.

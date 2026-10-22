@@ -5,6 +5,7 @@
 //! changes, activates a screen when it becomes visible, and forwards refreshes
 //! to the visible screen only. A screen owns its requests, its data and its
 //! example data; hidden screens never contact the cluster.
+mod databases;
 mod diagnostics;
 mod etcd;
 mod lifecycle;
@@ -17,6 +18,7 @@ mod security;
 mod storage;
 mod workloads;
 
+pub(crate) use databases::{CorootInput, DatabasesScreen};
 pub(crate) use diagnostics::DiagnosticsScreen;
 pub(crate) use etcd::EtcdScreen;
 pub(crate) use lifecycle::LifecycleScreen;

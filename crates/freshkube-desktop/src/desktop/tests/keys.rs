@@ -223,7 +223,7 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
 
 /// The shell's keys on macOS, where `secondary` is Command.
 #[cfg(target_os = "macos")]
-const SHELL_KEYS: [&str; 26] = [
+const SHELL_KEYS: [&str; 28] = [
     "alt-cmd-i inspector::ToggleInspector ",
     "cmd-+ text_size::LargerText ",
     "cmd-= text_size::LargerText ",
@@ -235,6 +235,7 @@ const SHELL_KEYS: [&str; 26] = [
     "cmd-2 pilot::ShowNodes Freshkube",
     "cmd-3 pilot::ShowNamespaces Freshkube",
     "cmd-4 pilot::ShowEvents Freshkube",
+    "cmd-shift-d pilot::ShowDatabases Freshkube",
     "cmd-5 pilot::ShowHealth Freshkube",
     "cmd-6 pilot::ShowEtcd Freshkube",
     "cmd-7 pilot::ShowSystemServices Freshkube",
@@ -248,6 +249,7 @@ const SHELL_KEYS: [&str; 26] = [
     "alt-up pilot::PreviousContext Freshkube",
     "alt-down pilot::NextContext Freshkube",
     "cmd-k pilot::GoToKind Freshkube",
+    "cmd-shift-c pilot::CopyLink Freshkube",
     "ctrl-. dock::NextDockTab Freshkube",
     "ctrl-, dock::PreviousDockTab Freshkube",
     "shift-escape dock::MinimizeDock Freshkube",
@@ -256,7 +258,7 @@ const SHELL_KEYS: [&str; 26] = [
 /// The shell's keys on Linux and Windows, where `secondary` is Control
 /// and Kit's inspector takes Control-Shift-I.
 #[cfg(not(target_os = "macos"))]
-const SHELL_KEYS: [&str; 26] = [
+const SHELL_KEYS: [&str; 28] = [
     "ctrl-shift-i inspector::ToggleInspector ",
     "ctrl-+ text_size::LargerText ",
     "ctrl-= text_size::LargerText ",
@@ -268,6 +270,7 @@ const SHELL_KEYS: [&str; 26] = [
     "ctrl-2 pilot::ShowNodes Freshkube",
     "ctrl-3 pilot::ShowNamespaces Freshkube",
     "ctrl-4 pilot::ShowEvents Freshkube",
+    "ctrl-shift-d pilot::ShowDatabases Freshkube",
     "ctrl-5 pilot::ShowHealth Freshkube",
     "ctrl-6 pilot::ShowEtcd Freshkube",
     "ctrl-7 pilot::ShowSystemServices Freshkube",
@@ -281,6 +284,7 @@ const SHELL_KEYS: [&str; 26] = [
     "alt-up pilot::PreviousContext Freshkube",
     "alt-down pilot::NextContext Freshkube",
     "ctrl-k pilot::GoToKind Freshkube",
+    "ctrl-shift-c pilot::CopyLink Freshkube",
     "ctrl-. dock::NextDockTab Freshkube",
     "ctrl-, dock::PreviousDockTab Freshkube",
     "shift-escape dock::MinimizeDock Freshkube",
@@ -350,15 +354,19 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
         "app::About",
         "app::OpenClustersSettings",
         "app::OpenCorootSettings",
+        "app::OpenDestinationsSettings",
         "app::OpenSettings",
+        "app::OpenSourcesSettings",
         "input::Copy",
         "inspector::ToggleInspector",
+        "pilot::CopyLink",
         "pilot::GoToKind",
         "pilot::NextContext",
         "pilot::NextScreen",
         "pilot::PreviousContext",
         "pilot::PreviousScreen",
         "pilot::Refresh",
+        "pilot::ShowDatabases",
         "pilot::ShowEtcd",
         "pilot::ShowEvents",
         "pilot::ShowHealth",

@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 authors = ["Ken Udovic", "Francesco Cislaghi"]
 license = "MIT"
@@ -73,6 +73,9 @@ tokio-tungstenite = { version = "0.26", default-features = false, features = ["h
 # Certificate parsing
 x509-parser = "0.16"
 
+# Hashing
+sha2 = "0.10"
+
 # Prometheus dashboards: grafaui's model and query crates (MIT, the user's
 # own), pinned by revision; Freshkube draws its own panels (docs/MONITORING.md).
 grafaui-model = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95" }
@@ -83,6 +86,7 @@ coroot-rs = { git = "https://github.com/skel84/corust", rev = "5312f1efc4e68a286
 talos-rs = { path = "crates/talos-rs" }
 freshkube-core = { path = "crates/freshkube-core" }
 freshkube-delivery = { path = "crates/freshkube-delivery" }
+freshkube-followed = { path = "crates/freshkube-followed" }
 freshkube-graph = { path = "crates/freshkube-graph" }
 freshkube-logs = { path = "crates/freshkube-logs" }
 freshkube-monitoring = { path = "crates/freshkube-monitoring" }
@@ -92,6 +96,7 @@ freshkube-prefs = { path = "crates/freshkube-prefs" }
 freshkube-probe = { path = "crates/freshkube-probe" }
 freshkube-reads = { path = "crates/freshkube-reads" }
 freshkube-resources = { path = "crates/freshkube-resources" }
+freshkube-cli = { path = "crates/freshkube-cli" }
 freshkube-applications = { path = "crates/freshkube-applications" }
 freshkube-terminal = { path = "crates/freshkube-terminal" }
 freshkube-desktop = { path = "crates/freshkube-desktop" }
@@ -114,6 +119,7 @@ capture-embed = ["dep:rust-embed"]
 
 [dependencies]
 freshkube-desktop.workspace = true
+freshkube-cli.workspace = true
 freshkube-probe.workspace = true
 clap.workspace = true
 tokio.workspace = true
@@ -122,6 +128,9 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 # Match gpui-kit-assets' resolved version so debug-embed unifies with its assets.
 rust-embed = { version = "=8.12.0", optional = true, features = ["debug-embed"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 # AttachConsole, for a release build's output in the terminal that started it.

@@ -12,6 +12,7 @@ use freshkube_ui::motion::Choice;
 
 use crate::applications::Variant;
 use crate::fixture::Hold;
+use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
 
 /// `FRESHKUBE_THEME`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,11 +39,35 @@ pub(crate) enum EtcdExample {
     Alarms,
 }
 
+/// `FRESHKUBE_LINKS`: the outcome every example link is forced to, or how
+/// the example clusters identify themselves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkShape {
+    /// The reader's access refuses the read.
+    Refused,
+    /// No object by that name.
+    NotFound,
+    /// The cluster doesn't serve the kind.
+    NotServed,
+    /// The name belongs to another object now.
+    Replaced,
+    /// Two of the example clusters are one cluster to a link.
+    Several,
+    /// None of the example clusters is the one a link was made in.
+    Unmatched,
+    /// The example clusters answer on their CA alone.
+    CaOnly,
+    /// Nothing is checked, not even the open cluster.
+    Unchecked,
+}
+
 /// What the launch asks for beyond its source: where to open and how to look.
 /// A value that names nothing known is kept as given and ignored where it is
 /// used, as before.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DebugOptions {
+    /// Invented database inventory shape, parsed once with the other knobs.
+    pub(crate) databases: String,
     /// `FRESHKUBE_PAGE`: a page slug or a fixture check's name.
     pub(crate) page: Option<String>,
     /// `FRESHKUBE_KIND`: a Kubernetes kind's kubectl key.
@@ -68,14 +93,28 @@ pub struct DebugOptions {
     /// `FRESHKUBE_APPLICATIONS`: the Applications example's shape; anything
     /// else is `acme`.
     pub(crate) applications: Variant,
+    /// `FRESHKUBE_ALERTS`: the Alerts, Rules and Silences example's shape
+    /// (`firing`, `quiet`, `not-found`, `refused`, `several`, `no-label`,
+    /// `stale`, `rules-only`); anything else is `firing`.
+    pub(crate) alerts: AlertsShape,
+    /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
+    /// entries is cut at its cap.
+    pub(crate) metrics_labels_capped: bool,
     /// `FRESHKUBE_FIXTURE_HOLD`: what example data never answers.
     pub(crate) hold: Hold,
     /// `FRESHKUBE_APP_MENU=button`: the Linux menu button on any platform.
     /// Debug builds only.
     pub(crate) app_menu_button: bool,
+    /// `FRESHKUBE_LINKS`: the outcome example links are forced to; anything
+    /// else lets them resolve against the example data.
+    pub(crate) links: Option<LinkShape>,
     /// `FRESHKUBE_TEXT_SIZE`: a step of `text_size::STEPS`, not saved; anything
     /// else is ignored. Debug builds only.
     pub(crate) text_size: Option<f32>,
+    /// `FRESHKUBE_FOLLOWS`: the shape of the followed items and the bell's
+    /// example (`freshkube_followed::example::Shape`); anything else plays
+    /// the example story. Needs `--fixture`.
+    pub(crate) follows: Option<freshkube_followed::example::Shape>,
 }
 
 impl DebugOptions {
@@ -109,6 +148,7 @@ impl DebugOptions {
     pub(crate) fn parse(var: impl Fn(&str) -> Option<OsString>) -> Self {
         let text = |name: &str| var(name).and_then(|value| value.into_string().ok());
         Self {
+            databases: text("FRESHKUBE_DATABASES").unwrap_or_default(),
             page: text("FRESHKUBE_PAGE"),
             kind: text("FRESHKUBE_KIND"),
             theme: match text("FRESHKUBE_THEME").as_deref() {
@@ -136,10 +176,28 @@ impl DebugOptions {
                 _ => None,
             },
             applications: Variant::parse(text("FRESHKUBE_APPLICATIONS").as_deref()),
+            alerts: text("FRESHKUBE_ALERTS")
+                .and_then(|shape| AlertsShape::parse(&shape))
+                .unwrap_or_default(),
+            metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
             app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
+            links: match text("FRESHKUBE_LINKS").as_deref() {
+                Some("refused") => Some(LinkShape::Refused),
+                Some("not-found") => Some(LinkShape::NotFound),
+                Some("not-served") => Some(LinkShape::NotServed),
+                Some("replaced") => Some(LinkShape::Replaced),
+                Some("several") => Some(LinkShape::Several),
+                Some("none") => Some(LinkShape::Unmatched),
+                Some("ca-only") => Some(LinkShape::CaOnly),
+                Some("unchecked") => Some(LinkShape::Unchecked),
+                _ => None,
+            },
             text_size: text("FRESHKUBE_TEXT_SIZE")
                 .and_then(|size| freshkube_ui::text_size::parse(&size)),
+            follows: text("FRESHKUBE_FOLLOWS")
+                .as_deref()
+                .and_then(freshkube_followed::example::Shape::parse),
         }
     }
 
@@ -186,6 +244,29 @@ mod tests {
             documented_knobs(),
             "AGENTS.md's knob table and DebugOptions::parse disagree"
         );
+    }
+
+    #[test]
+    fn follows_names_the_shape_of_the_bell_and_ignores_anything_else() {
+        use freshkube_followed::example::Shape;
+        for (value, shape) in [
+            ("bell", Shape::Bell),
+            ("states", Shape::States),
+            ("quiet", Shape::Quiet),
+            ("hidden", Shape::Hidden),
+            ("full", Shape::Full),
+            ("unwatched", Shape::Unwatched),
+            ("grouped", Shape::Grouped),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_FOLLOWS", value)]).follows, Some(shape));
+        }
+        for bad in ["", "Bell", "nothing"] {
+            assert_eq!(
+                parse(&[("FRESHKUBE_FOLLOWS", bad)]).follows,
+                None,
+                "{bad:?}"
+            );
+        }
     }
 
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
@@ -361,6 +442,28 @@ mod tests {
     }
 
     #[test]
+    fn alerts_takes_each_shape_and_falls_back_to_firing() {
+        for name in AlertsShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_ALERTS", name)]).alerts,
+                AlertsShape::parse(name).unwrap(),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_ALERTS", "quiet")]).alerts,
+            AlertsShape::Quiet
+        );
+        for bad in ["Quiet", "", "firing ", "nope"] {
+            assert_eq!(
+                parse(&[("FRESHKUBE_ALERTS", bad)]).alerts,
+                AlertsShape::Firing,
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn fixture_hold_names_one_hold_or_all() {
         let hold = |value| parse(&[("FRESHKUBE_FIXTURE_HOLD", value)]).hold;
         assert_eq!(
@@ -406,6 +509,17 @@ mod tests {
     }
 
     #[test]
+    fn metrics_labels_are_capped_only_for_capped() {
+        assert!(parse(&[("FRESHKUBE_METRICS_LABELS", "capped")]).metrics_labels_capped);
+        for bad in ["Capped", "", "cut"] {
+            assert!(
+                !parse(&[("FRESHKUBE_METRICS_LABELS", bad)]).metrics_labels_capped,
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn app_menu_is_on_only_for_button() {
         assert!(parse(&[("FRESHKUBE_APP_MENU", "button")]).app_menu_button);
         for bad in ["Button", "", "native", "1"] {
@@ -447,6 +561,7 @@ mod tests {
                     | "FRESHKUBE_DASHBOARD"
                     | "FRESHKUBE_FIXTURE_HOLD"
                     | "FRESHKUBE_APPLICATIONS"
+                    | "FRESHKUBE_ALERTS"
             )
             .then(bad)
         });
@@ -454,6 +569,7 @@ mod tests {
         assert_eq!(options.theme, None);
         assert_eq!(options.hold, Hold::default());
         assert_eq!(options.applications, Variant::Acme);
+        assert_eq!(options.alerts, AlertsShape::Firing);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }

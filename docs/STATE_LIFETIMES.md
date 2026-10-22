@@ -7,8 +7,9 @@ chooses the identity, deadline, visibility scope and refresh policy. Domain
 queries belong in core or the domain crate; presentation belongs in the view.
 Start reads from lifecycle methods or explicit actions, never from `render`.
 
-There are exactly [two exception classes](#exceptions): Operations mutations
-and user-started sessions. The remaining counters outside the primitives
+There are exactly [two exception classes](#exceptions): mutations (Operations
+and [Kubernetes writes](#kubernetes-writes)) and user-started sessions (logs,
+shells, forwards, packet capture and [followed items](#followed-items)). The remaining counters outside the primitives
 are the [allowed list](#allowed-counters) from
 [#582](https://github.com/skel84/freshkube/issues/582), each with its specific
 reason to remain.
@@ -102,6 +103,7 @@ generation used inside `Loader`.
 | `SetupFile.setup_revision` (`freshkube-desktop/src/setup_file/mod.rs`) | Advances for effective setup/source-availability changes and successful explicit Reload, including identical bytes whose referenced key files may have changed. Changed warnings/refusals publish independently through owner events and the diagnostic setter; quiet polls publish nothing. |
 | `Pages.delivery_revision` (`freshkube-desktop/src/desktop/page_map.rs`) | Remembers `SetupFile.setup_revision`, which advances only for effective configuration/source-availability changes or successful explicit Reload. Sanitized diagnostics publish independently and deduplicate against Applications’ current text, preserving reads across warning-only or refusal-only edits. |
 | `Fetch::Live.setup_revision` and `ChangesPage.setup_revision` (`freshkube-applications/src/change/read.rs` and `changes/mod.rs`) | Identify the setup used by each delivery read owner. Reloading trust advances them before resetting the Loader, so an old completion cannot match a new setup even when its request generation repeats. A workspace remap keeps the setup identity and expires the retained read. |
+| Databases' `evidence` Loader (`freshkube-desktop/src/screens/databases/mod.rs`) | Owns the Coroot read for the inventory's databases. Its identity is the inventory's revision, the Coroot connection and the entry's link; the inventory landing starts it, a changed connection or link restarts it, and a late answer for an older identity or request is rejected. Hiding drops its job and task (`set_visible(false)`), showing reads again after 30 s; with no link or connection it asks nothing and resolves at once. |
 | `Memory.setup_generation` (`freshkube-observability/src/remember.rs`) | Rejects obsolete inspection of the app's local setup file. |
 | Log streams' `StreamSet.next_generation`, copied `Stream.generation` and `Fed.generation`, and example `Stream.sequence` (`freshkube-desktop/src/logs/streams.rs`) | Distinguish retries and number example lines within user-started log sessions. |
 | `Maintenance.generation` (`freshkube-desktop/src/maintenance/mod.rs`) | Guards a mixed read/run workflow under the mutation exception until its own migration. |
@@ -200,6 +202,22 @@ coverage rules remain separate. Monitoring's
 still receive a hide and retain recovery requested by visible history while
 the dashboard is hidden. See [Monitoring](features/monitoring.md).
 
+### The session alert read
+
+The active alerts of the open cluster
+([`desktop/alerts/`](../crates/freshkube-desktop/src/desktop/alerts/mod.rs),
+core's [`monitoring/alerts/`](../crates/freshkube-core/src/monitoring/alerts/mod.rs))
+are a session-owned read beside the Kubernetes summary, not a page's: it feeds
+Overview's attention rows and the rail's Monitoring mark, so it runs on every
+page.
+
+| Boundary | Owner and lifetime |
+| --- | --- |
+| The read | One [`Watch`](../crates/freshkube-reads/src/watch/mod.rs) per live session, `Registry.alerts_watch`, keyed by the context, the connection id and the alert `Scope` (how the setup's metrics mode says the entry's alerts are found). Starting replaces it; `stop_summary`, a parked or replaced session and `reset_active` stop it, and a delivery for another identity or an older generation never lands. `Pilot::apply_alerts` checks the identity again against the session's own before it publishes. |
+| What it reads | Core's `drive`: it looks for the Alertmanager and vmalert once, and starts polling only when one answered; it then reads the active alerts every 60 s, bounded (answers 8 MiB, 500 alerts kept, the rest counted). With none found, or after a refusal, it publishes that and ends; after a source was once found nothing ends it, and a source that stops answering is looked for again after three failed reads. |
+| What it knows | `ClusterSession.alerts`: its identity and the last `State`. Unread, stale, refused or without the central store's cluster label is Unknown, never "no alerts"; only a current read with nothing active is quiet, and PrometheusRule objects alone say nothing of health. A failed read keeps the one before it as stale evidence. |
+| Sharing | One read per live session and one per source. #846's Followed owner reads `Pilot::alert_state` instead of polling. The Alerts, Rules and Silences pages are not part of it: each is an ordinary `Loader` owner that reads only while shown (`OnShow::ReadIfOlder(30 s)`), and Refresh reads again. |
+
 ### The change page's outcome read
 
 What Coroot found after a deploy
@@ -222,6 +240,16 @@ delivery task, and a late answer fails `land`. Findings that landed are kept
 and the suggestions are derived from them again whenever the setup changes; a
 changed source, kubeconfig or example mode resets the loader. Ignored
 suggestions live on the settings page for the session and are never saved.
+The Delivery sources list owns a second one, a `Loader<BuildFindings,
+FindIdentity>`, with the same rules: it counts PipelineRuns and lists Kargo's
+Projects only on press, hiding drops it, and the item is derived from the kept
+findings and the setup's `delivery.build_namespace`. Its keys (`f`, `a`, Enter,
+Backspace) act only when there is something to start, accept or ignore, and
+otherwise let the key through to the focused control.
+
+### Deep links' reads
+
+The fingerprint reads of [deep links](features/deep-links.md#which-cluster) are ordinary reads owned by `deep_link::cluster::Identities` on `Pilot`: each `OwnedJob` and its delivery `Task` stay there. The open cluster's read belongs to the source it started under and is ignored when the window moved to another; a Check is one job per context, started only by the reader's click, replaced by none and dropped with the window; the kubeconfig read (server and CA hashes) completes into whoever waited for it. `fingerprints.json` is a cache, never an identity: a record counts only while the kubeconfig still names the same server and CA.
 
 ## Exceptions
 
@@ -248,6 +276,42 @@ Await a submitted patch, eviction or Talos mutation; never put the confirmed
 run inside `Loader`, `Watch`, `spawn_job` or a receiver-closed abort branch.
 Maintenance mutations use the same operation slot. This guarantee lasts while
 the application/runtime lives, not across process termination.
+
+### Kubernetes writes
+
+A change to a Kubernetes object goes through core's `write` module
+([WRITE_MODEL.md](WRITE_MODEL.md)) and has Operations' lifetime, with its own
+owner in [`write_flow/`](../crates/freshkube-desktop/src/write_flow/mod.rs).
+
+- **Checking is an ordinary read.** Preflight (the access review, the UID and
+  resourceVersion, the server-side dry run) runs under `spawn_job` and belongs to
+  the dialog: closing the dialog, or replacing the check with "Review the new
+  version", drops it. It sends no write and changes nothing.
+- **Confirming takes the app-wide operation slot** (`Operations::begin`, which
+  refuses a `read-only` cluster and a busy slot) and only then consumes the
+  prepared action: core's `Runner::execute` takes `Prepared` by value, so a
+  confirmed action cannot be sent twice, a second press finds nothing to send,
+  and a new attempt is a new preflight with a new run id.
+- **The runner has no owner.** It is spawned on Tokio and never aborted. A
+  detached GPUI task owns the ticket and frees the slot once, when the runner has
+  ended, whatever became of the page, the dialog or the toast. Hiding or closing
+  the page, or letting go of the flow, stops nothing. The window's close guard
+  (`mutation::may_close`) covers it like any other operation.
+- **Cancel is cooperative and early.** A destructive action waits 5 s after
+  confirming with its Cancel in the dialog (the status bar's cancel is the same
+  flag); after the `sending` line is written, nothing cancels it.
+- **Never replayed.** A request that got no answer is reported as unknown and is
+  not sent again; a conflict is shown, never retried, and there is no force.
+- **Counted once.** One run id links a write's audit lines; the log is the count.
+  The `sending` line is written before the first request, and if it cannot be
+  written nothing is sent.
+- **The level is read again at the send.** The runner follows the window's level
+  cell and, if it got stricter since the dialog opened, sends nothing and the
+  flow goes back to its dialog under the new requirement.
+- **Observing and Undo are part of the write.** Looking for the new state
+  (30 s by default, 2 min at most) is the runner's, on Tokio's clock; the toast
+  and Undo's 30 s are the report entity's, and Undo is its own flow and run, asking what
+  its level asks, through the same preflight and slot.
 
 ### User-started sessions
 
@@ -295,3 +359,21 @@ forwarding the page's hide to `Watch::set_visible`.
   [`pcap.rs`](../crates/freshkube-core/src/pcap.rs) owns capture/save state.
   Leaving the Network tab does not cancel it. Stop, capture completion,
   target replacement or owner drop ends its work.
+- **Followed items:** [`Followed`](../crates/freshkube-followed/src/owner/mod.rs)
+  is the app's follows, made once at startup like `ForwardList` and kept as
+  a global. See [Followed items](#followed-items).
+
+### Followed items
+
+A follow is something the user turned on to be told about: a pod that keeps
+crash-looping, a Freight that reaches a Stage, a verification that fails, a
+Coroot incident that opens (issue #846). It is a user-started session, not
+a page's read, so page visibility is not its stop signal.
+
+| Boundary | Owner and lifetime |
+| --- | --- |
+| The follows | `Followed` ([`owner/`](../crates/freshkube-followed/src/owner/mod.rs)), an app-wide entity. A follow lives from the user's choice until Stop, through page and context changes and with the window closed. They are saved in `follows.json` beside `preferences.json` ([`saved.rs`](../crates/freshkube-followed/src/saved.rs)) and come back at the next launch reading nothing: each shows "Not watching" until the shell offers its context's connection. |
+| The reads | One `Watch<Seen, u64>` per object or Kargo project of a context ([`owner/feeds.rs`](../crates/freshkube-followed/src/owner/feeds.rs)), shared by every follow that needs it, and Coroot's incidents read once a minute. The watch's job and delivery drop together when its last follow stops. Reads are the user's own, through a read-only client; nothing writes. |
+| The bounds | At most 20 follows, refused beyond that; a repeat of one follow is refused. A listing or watch that fails retries with a growing wait and says "Not watching" once, never as a failure. |
+| Quit | `⌘Q` calls `stop_all` before the app ends: every feed is dropped and nothing starts again. The follows stay saved. |
+| What they tell | Pure [`rules`](../crates/freshkube-followed/src/rules/mod.rs) turn a read into updates: the same state never repeats, a crash loop fires once and again only after 5 minutes Ready. [`notice`](../crates/freshkube-followed/src/notice/mod.rs) groups updates within 2 minutes and holds all but failures in quiet hours. The owner emits an event for each notice that shows; the shell, which has the window, pushes it as a toast. The bell lists every notice. |

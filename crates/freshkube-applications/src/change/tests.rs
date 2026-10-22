@@ -285,11 +285,10 @@ fn missing_policy_and_an_anchored_unserved_source_are_unknown_in_both_views(
             Missing::new(Gap::NotServed, "Signature results not served on cluster-a")
                 .after("push-run"),
         );
-        let waiting = page.read(cx).counts[2];
         page.update(cx, |page, cx| page.read_answer(change, window, cx));
         chain(&page, window, cx);
         let p = page.read(cx);
-        assert_eq!(p.counts[2], waiting + 1);
+        assert!(p.counts[3] >= 1, "the start can't be confirmed");
         assert!(
             p.graph
                 .nodes()
@@ -1284,4 +1283,39 @@ fn unread_applications_and_pods_are_drawn_as_parented_ghost_cards(cx: &mut TestA
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn the_follows_a_change_offers_name_the_cluster_kargo_runs_in(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        );
+    });
+    let (_handle, page) = fixture(cx);
+    let (kargo, offers) = cx.read(|cx| {
+        let page = page.read(cx);
+        (
+            page.change.kargo_context.clone(),
+            page.follow
+                .as_ref()
+                .expect("the app can follow")
+                .read(cx)
+                .offers(cx),
+        )
+    });
+    assert!(!kargo.is_empty(), "the example names Kargo's cluster");
+    assert_eq!(offers.len(), 3);
+    // Landing and Verification read Kargo's objects, where Kargo runs; the
+    // window's cluster is not necessarily that one.
+    assert_eq!(offers[0].context.as_deref(), Some(kargo.as_str()));
+    assert_eq!(offers[1].context.as_deref(), Some(kargo.as_str()));
+    // Coroot is the window's.
+    assert_eq!(offers[2].context, None);
 }

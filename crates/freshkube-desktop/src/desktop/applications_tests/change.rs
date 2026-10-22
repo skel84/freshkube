@@ -455,23 +455,36 @@ fn a_fold_opens_and_closes_its_stage(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_chip_shows_only_its_hops_in_every_stage(cx: &mut TestAppContext) {
+fn a_chip_shows_the_groups_it_counts_with_every_row_in_them(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         let page = change(&view, cx).unwrap();
         window.click("change-tally-failing", cx);
         window.render_frame(cx);
+        // The failing group, with every row in it: a chip counts groups.
         assert_eq!(
             page.read(cx).lines_text(),
-            ["# Stage prod-lon", "prod-lon-verification"]
+            [
+                "# Stage prod-lon",
+                "prod-lon-eligible",
+                "prod-lon-promotion",
+                "prod-lon-verification",
+                "prod-lon-argocd",
+                "prod-lon-deployment",
+                "prod-lon-pods"
+            ]
         );
         window.click("change-tally-ok", cx);
         window.render_frame(cx);
         let lines = page.read(cx).lines_text();
-        // Folded Stages show their ok rows under a filter, and the hand
-        // approval's blue dot counts as ok.
+        // Folded Stages show their rows under a filter; the Stages that
+        // are ok count, and the failing Stage, whose hand approval is ok
+        // in itself, does not.
         assert!(lines.contains(&"dev-pods".to_owned()), "{lines:?}");
-        assert!(lines.contains(&"prod-lon-eligible".to_owned()), "{lines:?}");
+        assert!(
+            !lines.contains(&"prod-lon-eligible".to_owned()),
+            "{lines:?}"
+        );
         assert!(
             !lines.contains(&"prod-ams-promotion".to_owned()),
             "{lines:?}"
@@ -490,7 +503,9 @@ fn a_chip_shows_only_its_hops_in_every_stage(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_hop_shows_its_link_and_a_gate_its_stage(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    // Tall enough for the headline, the fix bar and the pull request's
+    // banner above the trail, so these far rows are drawn.
+    let (_runtime, handle, _view) = open(cx, 1280., 1000.);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("pr-run"), cx);
         window.render_frame(cx);
@@ -708,7 +723,9 @@ fn o_opens_the_freight_in_resources(cx: &mut TestAppContext) {
 /// opens: the button is greyed out and the menu item too.
 #[gpui_kit::test]
 fn a_hop_on_a_cluster_that_is_not_open_does_not_open(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    // Tall enough for the headline, the fix bar and the pull request's
+    // banner above the trail, so these far rows are drawn.
+    let (_runtime, handle, view) = open(cx, 1280., 1000.);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("prod-lon-pods"), cx);
         window.render_frame(cx);
@@ -1912,6 +1929,78 @@ fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppC
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("change-chain").is_some());
+    })
+    .unwrap();
+}
+
+/// "Notify me" opens below its button, so it never covers the page header,
+/// the search or the button itself.
+#[gpui_kit::test]
+fn the_notify_me_popover_opens_below_its_button(cx: &mut TestAppContext) {
+    let followed_runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: followed_runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("change-follow-trigger", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let trigger = window.find("change-follow-trigger").bounds();
+        let panel = window.find("change-follow-panel").bounds();
+        assert!(
+            panel.top() >= trigger.bottom(),
+            "the panel {panel:?} opens below its button {trigger:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// A toast draws under an open popover, so turning a switch on closes the
+/// popover before its confirmation shows.
+#[gpui_kit::test]
+fn turning_a_notify_me_switch_on_closes_the_popover_and_toasts(cx: &mut TestAppContext) {
+    let followed_runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: followed_runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::component::WindowExt as _;
+        window.render_frame(cx);
+        window.click("change-follow-trigger", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("change-follow-panel").is_some(), "open");
+        let toasts = window.notifications(cx).len();
+        window.click("change-follow-switch-0", cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("change-follow-panel").is_none(),
+            "the popover closed"
+        );
+        assert_eq!(
+            window.notifications(cx).len(),
+            toasts + 1,
+            "the confirmation"
+        );
     })
     .unwrap();
 }

@@ -32,6 +32,7 @@ mod migrate;
 mod recovery;
 mod types;
 mod validate;
+pub(crate) use validate::is_label_name;
 
 pub use migrate::{Kept, Outcome, migrate};
 pub use recovery::{Recovered, Row, RowReason, Warning, read, warning_words};
@@ -121,6 +122,9 @@ pub enum Fault {
     /// A name template that has no `{stage}` in it, so it names no Stage.
     TemplateWithoutStage(String),
     CentralWithoutStore,
+    /// A `fingerprint` that isn't 1 to 128 characters without whitespace; the
+    /// value is never repeated.
+    Fingerprint(String),
     /// `coroot` sets both `key` and `api_key_file`.
     KeyTwice,
     /// An entry names a Coroot cluster, and neither it nor `coroot` names a
@@ -161,6 +165,10 @@ impl std::fmt::Display for Fault {
             Fault::CentralWithoutStore => {
                 f.write_str("metrics.mode is central, and metrics.store is missing")
             }
+            Fault::Fingerprint(at) => write!(
+                f,
+                "{at} isn’t a fingerprint: use 1 to 128 characters with no spaces"
+            ),
             Fault::KeyTwice => f.write_str("coroot sets both key and api_key_file"),
             Fault::CorootWithoutProject(id) => write!(
                 f,

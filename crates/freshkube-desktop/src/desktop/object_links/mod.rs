@@ -19,6 +19,25 @@ impl Pilot {
         self.navigate_from_keyboard(Page::Observability, window, cx);
     }
 
+    /// A Coroot application on Observability's page, on the report the link
+    /// names. A link made in another entry is refused, never opened on this
+    /// entry's Coroot.
+    pub(super) fn open_application(
+        &mut self,
+        link: &freshkube_nav::ObservabilityLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(message) = self.route_observability(link) {
+            self.tell(message, window, cx);
+            return;
+        }
+        self.pages.observability.update(cx, |page, cx| {
+            page.open_application(link.app.clone(), link.tab.report(), cx)
+        });
+        self.navigate_from_keyboard(Page::Observability, window, cx);
+    }
+
     pub(super) fn resource_link(
         &mut self,
         intent: ResourceLink,
@@ -37,6 +56,7 @@ impl Pilot {
                 .pages
                 .dock
                 .update(cx, |dock, cx| dock.open_shell(request, window, cx)),
+            ResourceLink::CopyLink => self.copy_link(window, cx),
             ResourceLink::Node(name, tab) => {
                 self.pages
                     .resources

@@ -212,6 +212,15 @@ impl Segment {
         &self.ladder(named)[0].text
     }
 
+    /// Every line a narrower bar may show, longest first.
+    #[cfg(feature = "testing")]
+    pub fn lines(&self, named: Option<&str>) -> Vec<SharedString> {
+        self.ladder(named)
+            .iter()
+            .map(|line| line.text.clone())
+            .collect()
+    }
+
     fn ladder(&self, named: Option<&str>) -> &Rc<[Line]> {
         match (&self.context, named) {
             (Some(context), Some(named)) if context == named => &self.rest,

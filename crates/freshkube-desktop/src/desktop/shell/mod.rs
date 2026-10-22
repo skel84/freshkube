@@ -201,7 +201,7 @@ pub(super) use column::Room;
 #[cfg(test)]
 pub(super) use column::cut_edges;
 mod context;
-pub(super) use context::{Connection, ContextDisplay};
+pub(super) use context::{Connection, ContextDisplay, mark};
 pub(super) mod fps;
 mod frame;
 use frame::settings_content;
@@ -210,6 +210,8 @@ mod header;
 mod rail;
 mod refresh_tip;
 pub(super) use rail::RailMarks;
+#[cfg(test)]
+pub(super) use rail::RowTarget;
 
 mod column_state;
 pub(super) use column_state::ColumnState;

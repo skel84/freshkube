@@ -33,7 +33,7 @@ async fn only_the_toolbar_press_starts_a_forward_and_results_use_its_listener(
         )
         .unwrap();
     configured.workspace.clusters[0].results = Some(Box::new(settings));
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &configured,
@@ -132,7 +132,7 @@ async fn the_builds_inspector_starts_the_owner_and_hiding_does_not_stop_it(
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -198,7 +198,7 @@ async fn refresh_reload_and_show_do_not_start_a_forward_but_f_does(cx: &mut Test
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -308,7 +308,7 @@ fn the_other_build_entry_offers_only_a_switch_and_never_starts(cx: &mut TestAppC
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -376,7 +376,7 @@ async fn a_refused_results_request_does_not_end_the_listening_forward(cx: &mut T
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
     server.status.store(403, Ordering::SeqCst);
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -429,7 +429,7 @@ async fn stop_invalidates_a_late_results_response_and_never_publishes_its_build(
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -512,7 +512,7 @@ async fn the_wrong_tls_name_is_a_request_failure_while_the_forward_listens(
         .service = "other-results".into();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -565,7 +565,7 @@ async fn a_broken_results_response_does_not_become_an_ended_route(cx: &mut TestA
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
     server.truncate.store(true, Ordering::SeqCst);
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -618,7 +618,7 @@ async fn closing_a_change_releases_its_subscription_but_leaves_the_owner_listeni
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -676,7 +676,7 @@ async fn a_selected_owner_ending_does_not_fall_back_to_another_matching_forward(
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -765,7 +765,7 @@ async fn a_forward_restarted_while_hidden_is_read_only_when_the_page_shows(
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,

@@ -213,6 +213,9 @@ fn inspector_forward(
         let notice = window.find("change-detail-notice");
         assert!(notice.label().unwrap().contains("Forward"));
         assert!(!notice.label().unwrap().contains("isn't installed"));
+        let why = window.find("change-fix-why");
+        assert!(why.label().unwrap().contains("Forward"));
+        assert!(!why.label().unwrap().contains("isn't installed"));
         let source = view.read(cx).source().kube.unwrap().id;
         assert!(
             forwards::list(cx)

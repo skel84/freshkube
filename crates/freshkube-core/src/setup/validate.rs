@@ -20,6 +20,11 @@ pub(super) fn entry_fields(entry: &Entry) -> Result<(), Fault> {
 }
 
 fn entry_at(entry: &Entry, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
+    if let Some(fingerprint) = &entry.fingerprint
+        && !crate::fingerprint::valid_override(fingerprint)
+    {
+        return Err(Fault::Fingerprint(at("fingerprint")));
+    }
     if let Some(results) = &entry.results {
         results_of(results, at)?;
     }
@@ -174,7 +179,7 @@ fn service_of(service: &MetricsService, at: &str) -> Result<(), Fault> {
 }
 
 /// A Prometheus label name: `[a-zA-Z_][a-zA-Z0-9_]*`.
-fn is_label_name(name: &str) -> bool {
+pub(crate) fn is_label_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
         .next()

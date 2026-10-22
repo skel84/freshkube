@@ -20,7 +20,7 @@ async fn forwarding_keeps_the_builds_selection_inspector_and_list_rows(cx: &mut 
     let server = fake::Server::new(runtime.handle());
     server.hold_start.store(true, Ordering::SeqCst);
     server.hold.store(true, Ordering::SeqCst);
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -126,7 +126,7 @@ async fn list_forwarding_keeps_rows_and_uses_an_action_label(cx: &mut TestAppCon
     let server = fake::Server::new(runtime.handle());
     server.hold_start.store(true, Ordering::SeqCst);
     server.hold.store(true, Ordering::SeqCst);
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -176,7 +176,7 @@ async fn two_pages_share_the_removed_owner_and_a_second_press_starts_nothing(
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let server = fake::Server::new(runtime.handle());
-    let (window, app) = mount_access(
+    let (window, app, _reads) = mount_access(
         cx,
         &runtime,
         &setup,
@@ -268,7 +268,7 @@ async fn two_pages_share_the_removed_owner_and_a_second_press_starts_nothing(
 async fn unconfigured_results_adds_no_forward_action_or_status(cx: &mut TestAppContext) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let setup = setup(None, None, false);
-    let (window, app) = mount(cx, &runtime, &setup, None, false, Arc::default());
+    let (window, app, _reads) = mount(cx, &runtime, &setup, None, false, Arc::default());
     wait_list(cx, window, &app).await;
     cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);

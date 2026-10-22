@@ -9,9 +9,10 @@
 //! its own credentials, and the REST client's is never part of anything it
 //! displays.
 
+pub mod avatars;
 pub(crate) mod example;
 mod rest;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 pub(crate) use rest::fake;
 
 use serde_json::Value;
@@ -82,7 +83,11 @@ pub(crate) fn parse_pull_request(repo: &str, value: &Value) -> Option<PullReques
     })
 }
 
-pub use rest::{ACCOUNT, Error, Handle, NotSetUp, OPEN_DEADLINE, PullState};
+pub use example::{detail as example_detail, identity as example_identity};
+pub use rest::{
+    ACCOUNT, Capped, ChecksState, DetailKey, Error, Handle, NotSetUp, OPEN_DEADLINE, PullDetail,
+    PullState, Review, ReviewState,
+};
 pub(crate) use rest::{PullSummary, Stale, cause_of};
 
 /// `owner/name` of the GitHub repository a Freight's first commit is on:

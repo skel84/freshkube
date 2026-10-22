@@ -7,6 +7,9 @@
 //! which entry each part of the delivery chain is read from, and check them
 //! (`sources/`). Example data and a window without a preferences folder
 //! show the lists and change nothing.
+mod audit;
+#[cfg(test)]
+mod audit_tests;
 mod connection;
 mod coroot;
 #[cfg(test)]
@@ -16,11 +19,14 @@ mod edit;
 #[cfg(test)]
 mod edit_tests;
 mod entry;
+pub(crate) use entry::FingerprintLine;
 mod find;
 mod form;
 mod kubeconfig_row;
+mod labels;
 mod metrics_tokens;
 mod monitoring;
+mod notifications;
 #[cfg(test)]
 mod recovery_tests;
 mod sections;
@@ -86,6 +92,8 @@ pub(crate) struct ClusterRow {
     role: SharedString,
     context: SharedString,
     talosconfig: SharedString,
+    /// What the file sets; `None` reads as guarded, by default.
+    protection: Option<freshkube_core::write::Protection>,
     /// The row's tooltip: the cluster, the talosconfig path in full and the
     /// note about how it opened, if there is one.
     tooltip: SharedString,
@@ -126,6 +134,9 @@ pub(crate) struct SettingsPage {
     width: f32,
     table: table::TableState,
     origin: Origin,
+    /// `FRESHKUBE_METRICS_LABELS=capped`: example data answers Check entries
+    /// cut at its cap.
+    example_labels_capped: bool,
     /// The workspace as the file holds it, with the keys this version
     /// doesn't know; every save writes a changed copy of it.
     workspace: Workspace,
@@ -151,6 +162,8 @@ pub(crate) struct SettingsPage {
     saving: Option<Task<()>>,
     /// How an entry opened when it did not open as defined, by entry id.
     notes: std::collections::BTreeMap<String, SharedString>,
+    /// What each entry's link fingerprint is, pushed by the shell (#873).
+    fingerprints: std::collections::BTreeMap<String, entry::FingerprintLine>,
     /// Advances each time the workspace is replaced, so a reader of the page
     /// can tell a new workspace from a redraw.
     revision: u64,
@@ -199,6 +212,11 @@ pub(crate) struct SettingsPage {
     sources_status: Segment,
     /// Suggestions the person ignored, for the session.
     ignored: HashSet<find::Ignored>,
+    /// The followed items as Notifications lists them, worded when the
+    /// follows change.
+    follow_rows: Vec<notifications::FollowRow>,
+    /// Settings › Audit log: what was read from both logs, and the filter.
+    audit: audit::AuditView,
 }
 
 impl SettingsPage {
@@ -232,8 +250,14 @@ impl SettingsPage {
                     .delivery
                     .as_ref()
                     .and_then(|delivery| delivery.stage_naming.clone());
-                self.sources
-                    .update(cx, |sources, cx| sources.set_stage_naming(naming, cx));
+                let build_namespace = setup
+                    .delivery
+                    .as_ref()
+                    .and_then(|delivery| delivery.build_namespace.clone());
+                self.sources.update(cx, |sources, cx| {
+                    sources.set_stage_naming(naming, cx);
+                    sources.set_build_namespace(build_namespace, cx);
+                });
                 if !self.uses_setup
                     || self.workspace != setup.workspace
                     || self.source_recovery != source_recovery
@@ -268,6 +292,7 @@ impl SettingsPage {
         self.sources.update(cx, |sources, cx| {
             sources.set_setup_notice(problem, self.setup_skips, cx)
         });
+        self.derive_labels(cx);
         cx.notify();
     }
 
@@ -331,7 +356,15 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> Self {
         let (columns, width) = source::columns(&[]);
-        Self {
+        // Followed items and the notice settings draw from the app's owner.
+        if let Some(followed) = freshkube_followed::owner::followed(cx) {
+            cx.observe(&followed, |this, _, cx| {
+                this.derive_follows(cx);
+                cx.notify();
+            })
+            .detach();
+        }
+        let mut page = Self {
             connection: None,
             coroot: None,
             coroot_state: crate::observability::ConnectionState::Disconnected,
@@ -341,6 +374,7 @@ impl SettingsPage {
             width,
             table: table::TableState::new(PREFIX),
             origin: Origin::Alone,
+            example_labels_capped: false,
             workspace: Workspace::default(),
             setup_file: None,
             metrics_secrets,
@@ -356,6 +390,7 @@ impl SettingsPage {
             notice: None,
             saving: None,
             notes: Default::default(),
+            fingerprints: Default::default(),
             revision: 0,
             select_on_save: None,
             deselect_on_save: false,
@@ -395,7 +430,11 @@ impl SettingsPage {
             destinations_status: Segment::default(),
             sources_status: Segment::default(),
             ignored: HashSet::new(),
-        }
+            follow_rows: Vec::new(),
+            audit: audit::AuditView::new(),
+        };
+        page.derive_follows(cx);
+        page
     }
 
     /// Takes what the workspace file held, and derives the page's lines
@@ -446,6 +485,7 @@ impl SettingsPage {
                     role: entry.role.label().into(),
                     context: entry.context.clone().into(),
                     talosconfig: talosconfig.into(),
+                    protection: entry.protection,
                     tooltip: tooltip.into(),
                 }
             })
@@ -601,6 +641,7 @@ impl SettingsPage {
             }
             self.section = section;
             self.sync_sources(cx);
+            self.sync_audit(cx);
             cx.notify();
         }
     }
@@ -609,6 +650,14 @@ impl SettingsPage {
     pub(in crate::desktop) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.visible = visible;
         self.sync_sources(cx);
+        self.sync_audit(cx);
+    }
+
+    /// The audit log is read when its section shows, and not while hidden.
+    fn sync_audit(&mut self, cx: &mut Context<Self>) {
+        if self.visible && self.section == SettingsSection::AuditLog {
+            self.load_audit(cx);
+        }
     }
 
     fn sync_sources(&mut self, cx: &mut Context<Self>) {
@@ -895,6 +944,8 @@ impl Render for SettingsPage {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
             SettingsSection::Coroot => self.render_coroot(window, cx),
+            SettingsSection::Notifications => self.render_notifications(window, cx),
+            SettingsSection::AuditLog => self.render_audit_log(window, cx),
             SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self

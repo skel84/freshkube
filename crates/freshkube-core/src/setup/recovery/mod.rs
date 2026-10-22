@@ -8,6 +8,7 @@ use crate::workspace::{
     self, Destination, Entry, MAX_BYTES, MAX_DESTINATIONS, MAX_ENTRIES, Part, Role, SkippedRow,
     SourceRecovery, Sources, Workspace,
 };
+use crate::write::Protection;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recovered {
@@ -27,11 +28,18 @@ pub enum Row {
 pub enum RowReason {
     Shape,
     UnknownRole,
+    /// `protection` is not one of the four levels. `locked`: the row names a
+    /// context, which stays read-only while the row is skipped.
+    UnknownProtection {
+        locked: bool,
+    },
     Workspace(workspace::Invalid),
     Rule(Fault),
     Destination(workspace::Fault),
     CorootWithoutProject,
-    CorootTwice { first: String },
+    CorootTwice {
+        first: String,
+    },
 }
 
 /// Only row identities and typed, safe reasons survive decoding. Never store
@@ -61,6 +69,13 @@ impl std::fmt::Display for Warning {
                 f.write_str("a required value is missing or has the wrong type or shape")
             }
             RowReason::UnknownRole => f.write_str("is unknown; use core, cicd or environment"),
+            RowReason::UnknownProtection { locked } => {
+                f.write_str("is unknown; use read-only, protected, guarded or open")?;
+                if *locked {
+                    f.write_str("; its context is read-only until fixed")?;
+                }
+                Ok(())
+            }
             RowReason::Workspace(why) => match why {
                 workspace::Invalid::EmptyId
                 | workspace::Invalid::EmptyContext(_)
@@ -196,6 +211,13 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
             );
         }
     }
+    for warning in &warnings {
+        if warning.row == Row::Cluster
+            && let Some((context, level)) = locked_level(&clusters[warning.index])
+        {
+            source_recovery.lock_context(context, level);
+        }
+    }
     let sources = Sources::of_recovered(&setup.workspace, &source_recovery);
     for (index, row) in destinations.into_iter().enumerate() {
         let id = safe_id(&row, "entry");
@@ -245,6 +267,23 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
         warnings,
         source_recovery,
     })
+}
+
+/// What a skipped row's context keeps: the level it set when that is stricter
+/// than guarded, read-only when its value isn't a level. A row that names no
+/// context, or sets nothing stricter, locks nothing.
+fn locked_level(row: &Value) -> Option<(String, Protection)> {
+    let context = row
+        .get("context")
+        .and_then(Value::as_str)
+        .filter(|context| !context.trim().is_empty())?;
+    let level = match row.get("protection") {
+        None | Some(Value::Null) => return None,
+        Some(value) => {
+            serde_yaml::from_value::<Protection>(value.clone()).unwrap_or(Protection::ReadOnly)
+        }
+    };
+    (level < Protection::Guarded).then(|| (context.to_owned(), level))
 }
 
 fn safe_id(row: &Value, key: &str) -> Option<String> {
@@ -365,6 +404,10 @@ fn decode_cluster(row: &Value) -> Result<Entry, RowFault> {
         let field = cluster_shape_field(row);
         let reason = if field == "role" && row.get("role").is_some_and(Value::is_string) {
             RowReason::UnknownRole
+        } else if field == "protection" {
+            RowReason::UnknownProtection {
+                locked: locked_level(row).is_some(),
+            }
         } else {
             RowReason::Shape
         };
@@ -385,6 +428,9 @@ fn cluster_shape_field(row: &Value) -> String {
         if wrong::<String>(row, key, false) {
             return key.into();
         }
+    }
+    if wrong::<Protection>(row, "protection", false) {
+        return "protection".into();
     }
     if wrong::<super::Results>(row, "results", false) {
         return block_field(

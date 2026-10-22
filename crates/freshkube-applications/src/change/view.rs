@@ -25,18 +25,25 @@ impl ChangePage {
         );
         let chips = kit::status_chips(
             header.id("tally"),
-            TONES.iter().enumerate().map(|(ix, (tone, id, what))| {
-                let tone = *tone;
-                kit::status_chip(
-                    header.id(&format!("tally-{id}")),
-                    tone,
-                    self.counts[ix],
-                    what,
-                    self.filter == Some(tone),
-                    cx,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_filter(tone, cx)))
-            }),
+            TONES
+                .iter()
+                .enumerate()
+                .filter(|(ix, (tone, ..))| {
+                    // A chip shows only what it counts, and while it filters.
+                    self.counts[*ix] > 0 || self.filter == Some(*tone)
+                })
+                .map(|(ix, (tone, id, what))| {
+                    let tone = *tone;
+                    kit::status_chip(
+                        header.id(&format!("tally-{id}")),
+                        tone,
+                        self.counts[ix],
+                        what,
+                        self.filter == Some(tone),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_filter(tone, cx)))
+                }),
             cx,
         );
         let reading = self.loader.is_loading();
@@ -58,10 +65,14 @@ impl ChangePage {
         let (kargo, kargo_fold) = self.render_open_in_kargo(&header, cx);
         let (copy, copy_fold) = self.render_copy_link(&header, cx);
         let (view, view_fold) = self.view_control(cx);
-        header
+        let mut header = header
             .chips(Some(chips))
             .foldable(kargo, kargo_fold)
-            .foldable(copy, copy_fold)
+            .foldable(copy, copy_fold);
+        if let Some(menu) = self.follow.clone() {
+            header = header.control(menu);
+        }
+        header
             .control(refresh)
             .foldable(view, view_fold)
             .render(window, cx)
@@ -95,7 +106,7 @@ impl ChangePage {
         header: &PageHeader,
         cx: &mut Context<Self>,
     ) -> (Button, page::MenuItems) {
-        let label = "Copy link";
+        let label = "Copy Kargo link";
         let copy = page::handler(cx, |this: &mut Self, _, cx| this.copy_link(cx));
         let (icon, shown, said) = if self.copied {
             (
@@ -154,7 +165,16 @@ impl ChangePage {
                 .test_support()
                 .role(Role::Status)
         });
-        if refresh.is_none() && missing.is_none() {
+        // The placeholder for the pull request card: a plain banner, in the
+        // shared look, until the card is designed.
+        let pull = self.pull.line().map(|line| {
+            ui::banner(line.tone, None, line.text.clone(), None, cx)
+                .id("change-pull")
+                .aria_label(line.text.clone())
+                .test_support()
+                .role(Role::Status)
+        });
+        if refresh.is_none() && missing.is_none() && pull.is_none() {
             return None;
         }
         Some(
@@ -165,6 +185,7 @@ impl ChangePage {
                 .gap(dp(page::PANE_PADDING_Y))
                 .children(refresh)
                 .children(missing)
+                .children(pull)
                 .into_any_element(),
         )
     }
@@ -220,6 +241,7 @@ impl Render for ChangePage {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
         let notes = self.render_notes(cx);
+        let summary = self.render_summary(window, cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,
             None if self.view == ChangeView::Chain
@@ -255,13 +277,17 @@ impl Render for ChangePage {
             .flex_col()
             .size_full()
             .min_h_0()
+            .min_w_0()
             .child(
                 page::page("change-page")
+                    .min_w_0()
+                    .w_full()
                     .track_scroll(&self.page_scroll)
                     .when(short, |this| {
                         this.overflow_y_scroll().restrict_scroll_to_axis()
                     })
                     .child(page::toolbar(cx).child(header))
+                    .children(summary)
                     .children(notes)
                     .child(
                         div()

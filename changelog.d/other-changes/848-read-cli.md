@@ -1,0 +1,1 @@
+- **Command line:** `freshkube check` and `freshkube get` read a cluster you name from a terminal or CI, with `--json` output and exit codes for gating; they only read, and never print Secret values. See [the command line](docs/features/cli.md).

@@ -1133,7 +1133,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
     Change {
         project: PROJECT.into(),
         freight: FREIGHT.into(),
-        kargo_cluster: CICD.into(),
+        kargo_context: CICD.into(),
         observed_at: now,
         page: Ok(kargo_page()),
         origin: Origin {
@@ -1185,7 +1185,7 @@ pub enum Shape {
 
 impl Shape {
     /// What is wrong with the example's GitHub in this shape.
-    fn github(self) -> Option<Trouble> {
+    pub fn github(self) -> Option<Trouble> {
         match self {
             Self::GitHubLimited => Some(Trouble::Limited),
             Self::GitHubRefused => Some(Trouble::Refused),

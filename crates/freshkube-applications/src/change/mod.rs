@@ -20,7 +20,13 @@ mod cause_tests;
 mod chain;
 mod changes;
 mod detail;
+mod fixbar;
+#[cfg(test)]
+mod fixbar_tests;
 mod outcome;
+mod pull;
+#[cfg(test)]
+mod pull_tests;
 pub(crate) mod read;
 mod results;
 pub(crate) mod table;
@@ -38,7 +44,7 @@ use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
 use freshkube_delivery::applications::SessionKey;
 use freshkube_delivery::change::{
-    Cause, Change, Destination, Hop, Next, Object, Phase, Reach, Shows, Stage, Target,
+    Cause, Change, Destination, Fix, Hop, Next, Object, Phase, Reach, Shows, Stage, Target,
 };
 use freshkube_delivery::join::Confidence;
 use freshkube_reads::Loader;
@@ -111,12 +117,14 @@ const STACKED: Stacked = Stacked {
     trail: Pane::new(280.).least(inspector::MIN_HEIGHT),
 };
 
-/// The status chips, failing first, and what each counts.
+/// The status chips, failing first, and what each counts: groups, not
+/// hops. A group is the start (the pull request, the Build and the
+/// Freight) or one Stage, and it counts at its weakest state.
 const TONES: [(Tone, &str, &str); 5] = [
     (Tone::Crit, "failing", "failing"),
     (Tone::Warn, "warning", "warning"),
-    (Tone::Unknown, "unknown", "unknown"),
     (Tone::Waiting, "waiting", "waiting"),
+    (Tone::Unknown, "unknown", "can't confirm"),
     (Tone::Good, "ok", "ok"),
 ];
 
@@ -319,6 +327,9 @@ pub struct GroupLine {
     /// though its chevron still folds it.
     pub read_there: bool,
     pub rows: usize,
+    /// The state the chips count it at: a Stage's own, and the weakest of
+    /// the start's groups for the Build and the Freight, which count as one.
+    pub counts_as: Tone,
 }
 
 /// One line of the table: a group header, or a row by index.
@@ -345,6 +356,9 @@ pub struct ChangePage {
     /// A refresh that failed over an earlier answer, and its label for
     /// assistive technology, derived with it.
     stale: Option<(SharedString, SharedString)>,
+    /// The pull request card's read, which only a placeholder row shows
+    /// yet.
+    pull: pull::Card,
     /// What the change may be missing, one sentence each that names the
     /// entry, and its words for assistive technology, derived with the
     /// change.
@@ -361,13 +375,20 @@ pub struct ChangePage {
     /// Copy link has copied the address shown, so it says Copied until the
     /// address changes.
     copied: bool,
+    /// The hop whose access request Copy access request has copied.
+    copied_request: Option<SharedString>,
     connections: Connections,
     pub rows: Vec<HopRow>,
     pub groups: Vec<GroupLine>,
     /// Derived from the rows, the folds and the filter.
     lines: Vec<Entry>,
-    /// How many rows each chip's tone has, folded or not.
+    /// How many groups each chip's tone has, folded or not.
     counts: [usize; TONES.len()],
+    /// The headline sentence and what can't be confirmed, derived with
+    /// the change.
+    headline: SharedString,
+    fixes: Vec<Fix>,
+    fix_items: Vec<kit::FixItem>,
     /// The Stage groups folded.
     folded: BTreeSet<usize>,
     filter: Option<Tone>,
@@ -392,6 +413,8 @@ pub struct ChangePage {
     outcomes: outcome::Outcomes,
     /// What the breadcrumb goes back to, when it isn't the project's page.
     parent: Option<SharedString>,
+    /// "Notify me": what the page offers to follow, when the app can.
+    follow: Option<Entity<freshkube_followed::FollowMenu>>,
 }
 
 impl EventEmitter<ChangeEvent> for ChangePage {}
@@ -416,6 +439,7 @@ impl ChangePage {
         let mut page = Self {
             page_link: page_link(&change),
             copied: false,
+            copied_request: None,
             change,
             fetch,
             loader,
@@ -424,6 +448,7 @@ impl ChangePage {
             window: window.window_handle(),
             stage: stage.map(str::to_owned),
             stale: None,
+            pull: pull::Card::default(),
             missing: None,
             setup_problem: None,
             loading,
@@ -433,6 +458,9 @@ impl ChangePage {
             groups: Vec::new(),
             lines: Vec::new(),
             counts: [0; TONES.len()],
+            headline: SharedString::default(),
+            fixes: Vec::new(),
+            fix_items: Vec::new(),
             folded: BTreeSet::new(),
             filter: None,
             columns: table::columns(),
@@ -451,6 +479,7 @@ impl ChangePage {
             detail_scroll: ScrollHandle::new(),
             outcomes: outcome::Outcomes::default(),
             parent: None,
+            follow: freshkube_followed::FollowMenu::create(format!("{PREFIX}-follow"), cx),
         };
         if visible {
             page.read(Some(window), cx);
@@ -569,9 +598,20 @@ impl ChangePage {
                     folds,
                     read_there,
                     rows: of.len(),
+                    counts_as: status(tone),
                 }
             })
             .collect();
+        let mut groups = groups;
+        // The start counts as one group, at its weakest.
+        let start = groups
+            .iter()
+            .filter(|group| !group.folds)
+            .map(|group| group.counts_as)
+            .max_by_key(|tone| rank(*tone));
+        for group in groups.iter_mut().filter(|group| !group.folds) {
+            group.counts_as = start.unwrap_or(Tone::Good);
+        }
         if first {
             // A Stage whose every row is fine folds while anything else on
             // the page needs a look; a waiting or failing one, or one whose
@@ -590,14 +630,18 @@ impl ChangePage {
                 .retain(|&ix| groups.get(ix).is_some_and(|g| g.folds));
         }
         let mut counts = [0; TONES.len()];
-        for row in &rows {
-            if let Some(ix) = TONES
-                .iter()
-                .position(|(tone, ..)| *tone == status(row.tone))
-            {
+        let mut start_counted = false;
+        for group in &groups {
+            if !group.folds && std::mem::replace(&mut start_counted, true) {
+                continue;
+            }
+            if let Some(ix) = TONES.iter().position(|(tone, ..)| *tone == group.counts_as) {
                 counts[ix] += 1;
             }
         }
+        self.headline = freshkube_delivery::change::headline(&change).into();
+        self.fixes = freshkube_delivery::change::fixes(&change);
+        self.fix_items = self.fixes.iter().map(fixbar::item).collect();
         let link = page_link(&change);
         self.copied &= link == self.page_link;
         self.page_link = link;
@@ -627,9 +671,9 @@ impl ChangePage {
         for group in 0..self.groups.len() {
             let rows: Vec<usize> = (0..self.rows.len())
                 .filter(|&ix| self.rows[ix].group == group)
-                .filter(|&ix| {
+                .filter(|_| {
                     self.filter
-                        .is_none_or(|tone| tone == status(self.rows[ix].tone))
+                        .is_none_or(|tone| tone == self.groups[group].counts_as)
                 })
                 .collect();
             if rows.is_empty() {
@@ -669,12 +713,25 @@ impl ChangePage {
             return;
         };
         let group = row.group;
+        // Another hop starts at the top of the Inspector.
+        if self.selected.as_ref() != Some(&row.key) {
+            self.detail_scroll.set_offset(point(px(0.), px(0.)));
+        }
         self.selected = Some(row.key.clone());
         self.link_selected = false;
         self.graph.clear_selection();
         self.detail = self.derive_detail();
+        self.offer_follows(cx);
         self.read_outcome(false, cx);
-        if self.folded.remove(&group) {
+        // A filter that hides the row gives way: the selection is shown.
+        let hidden = self
+            .filter
+            .is_some_and(|tone| tone != self.groups[group].counts_as);
+        if hidden {
+            self.filter = None;
+            self.dim_chain();
+        }
+        if self.folded.remove(&group) || hidden {
             self.derive();
         }
         if self.view == ChangeView::Chain {
@@ -975,5 +1032,68 @@ pub(super) fn on_entry(entry: &str, object: &Object) -> Object {
     Object {
         cluster: entry.to_owned(),
         ..object.clone()
+    }
+}
+
+impl ChangePage {
+    /// The Stage a follow is about: the selected one, else the last in the
+    /// chain, which is where a change ends.
+    fn followed_stage(&self) -> Option<&Stage> {
+        let selected = self
+            .selected
+            .as_ref()
+            .and_then(|key| self.change.hop(key))
+            .and_then(|hop| match hop.shows {
+                Shows::Stage(ix) => self.change.stages.get(ix),
+                Shows::Hop(_) => None,
+            });
+        selected.or(self.change.stages.last())
+    }
+
+    /// What the page offers to follow: it lands in the Stage, its
+    /// verification fails there, an incident opens. Derived when the change
+    /// or the selection changes, never while drawing.
+    pub(super) fn offer_follows(&self, cx: &mut Context<Self>) {
+        let Some(menu) = &self.follow else {
+            return;
+        };
+        let mut offers = Vec::new();
+        if let Some(stage) = self
+            .followed_stage()
+            .filter(|_| !self.change.project.is_empty())
+        {
+            let (project, freight) = (self.change.project.clone(), self.change.freight.clone());
+            // Kargo's objects are in the cluster Kargo runs in, not
+            // necessarily the one the window is on.
+            let kargo = Some(self.change.kargo_context.clone()).filter(|c| !c.is_empty());
+            offers.push(freshkube_followed::Offer {
+                context: kargo.clone(),
+                label: format!("Freight {freight} reaches {}", stage.name),
+                subject: freshkube_followed::Subject::Landing {
+                    project: project.clone(),
+                    stage: stage.name.clone(),
+                    freight: freight.clone(),
+                },
+            });
+            offers.push(freshkube_followed::Offer {
+                context: kargo,
+                label: format!("Its verification fails in {}", stage.name),
+                subject: freshkube_followed::Subject::Verification {
+                    project,
+                    stage: stage.name.clone(),
+                    freight,
+                },
+            });
+            let application = self.parent.as_ref().map(ToString::to_string);
+            offers.push(freshkube_followed::Offer {
+                context: None,
+                label: match &application {
+                    Some(app) => format!("An incident opens in {app}"),
+                    None => "An incident opens".to_owned(),
+                },
+                subject: freshkube_followed::Subject::Incident { application },
+            });
+        }
+        menu.update(cx, |menu, cx| menu.offer(offers, cx));
     }
 }
