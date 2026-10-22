@@ -345,7 +345,15 @@ forwarding the page's hide to `Watch::set_visible`.
   the session independently of pages or context changes; replacement must
   not retarget a running forward. Stop ends it; Remove discards its ended
   entry. Quit/window close asks about shells and forwards together. See
-  [port forwarding](PORT_FORWARD.md).
+  [port forwarding](PORT_FORWARD.md). Applications' `results_forward::Binding`
+  lives on the Changes list/change page. A weak session registry shares their
+  selected owner without holding its guard. Reads include the owner's `(id, start_count)` epoch;
+  route/epoch changes cancel old work, including while hidden.
+  `Loader::retain_stale` preserves shown evidence across that route replacement
+  and rejects old completions; it never applies to source/access/setup changes,
+  which reset the loader. Status-only notifications do not read again. Stop
+  or Remove cannot silently select another matching forward. Only an explicit
+  Forward action starts or restarts one.
 - **Packet capture:** [`screens/network/capture.rs`](../crates/freshkube-desktop/src/screens/network/capture.rs)
   owns the explicit capture and its delivery; core's
   [`pcap.rs`](../crates/freshkube-core/src/pcap.rs) owns capture/save state.

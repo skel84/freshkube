@@ -1,4 +1,5 @@
-//! Example mode's forwards: a real loopback listener, bound by the same
+//! Ordinary example forwards (Results uses `example_results` in memory):
+//! a real loopback listener, bound by the same
 //! rule as a live forward, that answers each connection with a short fixed
 //! HTTP page naming the example pod and port. The example pods listen on
 //! 8080 only, so any other pod port answers like a refused connection. An
@@ -98,13 +99,17 @@ pub(super) struct ExampleForward {
 }
 
 pub(super) struct ExampleGuard {
-    stop: Option<oneshot::Sender<()>>,
-    task: Option<JoinHandle<()>>,
+    pub(super) stop: Option<oneshot::Sender<()>>,
+    pub(super) task: Option<JoinHandle<()>>,
+    pub(super) memory: Option<watch::Sender<ForwardStatus>>,
 }
 
 impl ExampleGuard {
     /// Stops listening; the handle completes once the port is free.
     pub(super) fn stop(mut self) -> JoinHandle<()> {
+        if let Some(status) = self.memory.take() {
+            status.send_modify(|status| status.state = ForwardState::Ended(ForwardEnd::Stopped));
+        }
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
@@ -149,6 +154,7 @@ pub(super) fn serve_on(
         guard: ExampleGuard {
             stop: Some(stop),
             task: Some(task),
+            memory: None,
         },
     }
 }

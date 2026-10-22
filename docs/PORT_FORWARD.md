@@ -1,6 +1,6 @@
 # Port forwarding
 
-A forward makes a port of a pod reachable on the Mac's loopback, the way `kubectl port-forward` does. It starts from the Ports section of the pane of a pod, Service or workload, lives until the user stops it, and every running forward shows in the status bar. This file records what the source review found, the decisions taken with the user, and the design the build follows. The [roadmap](ROADMAP.md) tracks its progress.
+A forward makes a port of a pod reachable on the Mac's loopback, the way `kubectl port-forward` does. It starts from an explicit Forward in the Ports section of a pod, Service or workload, or Applications' Results next step, lives until the user stops it, and every running forward shows in the status bar. This file records what the source review found, the decisions taken with the user, and the design the build follows. The [roadmap](ROADMAP.md) tracks its progress.
 
 ## Feasibility
 
@@ -96,6 +96,81 @@ Taken with the user on 2 October 2026.
 | Quitting the app or closing the window | Ask, then stop every forward |
 
 Closing releases both sides, unlike exec. The live check counted the pod's TCP connections on the forwarded port by reading `/proc/net/tcp`: one while a local connection was open, none after closing it and none after Stop. The websocket for a connection carries only that connection, so when it closes, the kubelet closes its socket to the pod.
+
+## Tekton Results
+
+An entry's `results.forward` names a Service namespace, name and port. Applications
+uses the entry selected for Builds. In the Changes list, **Forward** is a toolbar
+action, the `F` key and a row-menu action; the status bar keeps the current
+Results state ahead of secondary counts when space is short. Its measured
+segment uses the full intrinsic line before fitting to the allocated width.
+On the change page it is the Builds/PipelineRun Inspector's next-step action.
+There are no row buttons. If that entry is not open, **Switch to ⟨entry⟩** uses
+the guarded switch/link path to the Service's Ports section. Switching starts
+nothing: Forward is still an explicit action.
+
+The fixture workspace configures `acme/results:8443` on its Builds entry,
+`cicd-fra`. Both change-opening routes hand their example source to the same
+forward binding as the list. Opening or refreshing keeps the reads synthetic;
+only Forward enters Resources' example forward path. For this exact invented
+Service it models a one-second **Starting** interval, **Listening** on the
+invented `results-example-0` pod and explicit **Stop**. The transport is entirely
+in memory: its route number is synthetic, no socket is bound, no Kubernetes or
+Results client is contacted, and Ports says **Example transport (no socket)**
+with no browser/copy address. Other example forwards keep their existing local
+HTTP listener behavior. The pruned example run's callout points to the configured
+Forward (or guarded Switch), without claiming Results is absent.
+`desktop/applications_tests/results_forward.rs` checks Switch without starting,
+the list and both Inspector routes, the visible status at default size,
+Starting/Listening, disabled duplicate starts, Stop in Ports and a reachable
+stacked action at text size 20. A Resources test installs a recording socket
+binder that fails if invoked, then proves Listening, Stop and cancellation
+without a bind. The maintainer re-runs the visual smoke on this fixture.
+
+`freshkube-applications/src/results_forward/` shares the selected owner between
+the list and change page through a weak session registry. Their route subscriptions
+and explicit commands live in `changes/results.rs` and `change/results.rs`.
+Only its explicit action calls the app's `ForwardList`; opening, showing,
+refreshing or reloading a page never starts or restarts a forward. The list owns
+the listener and guard, so hiding or closing the page and replacing its source
+leave the forward running in Ports.
+
+`freshkube-resources/src/forwards/matching.rs` matches the full connection identity,
+namespace, Service name and Service port, including the Service target kind.
+The initial match prefers a running owner to a newer ended one. Both pages
+retain the selected owner through Stop or Remove; another matching
+forward cannot silently replace it. Its read identity includes the owner's
+`(id, start_count)` epoch, alongside the page's source/setup/change identity and
+request generation. Restart changes the epoch even if it reuses the local port.
+Only route or epoch changes cancel old reads and reject late replies. They
+retain the shown data, selection and open Inspector while reading again; the
+last read is marked stale. Other forward notifications update status without
+reading again. Hidden pages invalidate
+work without starting a new read. A changed setup triple selects a different
+route and leaves the old forward alive; Reload rebuilds the Results client with
+current token and CA inputs.
+
+Starting and No ready pod are nonterminal next steps, with the same words in
+the read and status bar. The disabled action stays **Forward**, with state in
+its tooltip and the status bar. An unconfigured Results entry adds no forward
+status or action. Listening supplies the
+owner's actual nonzero local port. Only the owner's terminal state becomes
+`Route::Ended`; the next-step text retains its concrete reason. TLS failures,
+HTTP refusals and broken Results responses remain ordinary Results errors while
+the owner listens. Delivery's per-read pool receives the typed route and never
+starts a forward. The transport remains slice 1's verified Service-name HTTPS
+with no URL port, loopback resolution, no proxies or redirects, and the token
+account for the configured triple.
+
+`crates/freshkube-resources/src/forwards/matching_tests.rs` proves exact matching,
+owner states, restart epochs and removal. The focused headless tests in
+`crates/freshkube-applications/src/wire_tests/results_forward/` use a fake
+Kubernetes portforward websocket and a loopback TLS Results server with invented
+certificates and temporary files. They exercise both explicit actions, archived
+reads, Stop/restart, owner retention, setup/source changes, hidden pages, late
+replies, retained rows and Inspector during Starting/Listening and pod rollout,
+shared ownership through Remove without duplicate starts, and ordinary transport failures. No cluster or smoke session was used
+for this slice.
 
 ## Build order
 

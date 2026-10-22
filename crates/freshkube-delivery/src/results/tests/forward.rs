@@ -248,3 +248,26 @@ async fn a_broken_forward_response_keeps_its_transport_error() {
     );
     assert_eq!(server.requests.lock().unwrap().len(), 1);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn waiting_owner_states_have_canonical_words_and_do_no_io() {
+    let server = Server::with_certificate(Some(SERVICE_CERT), vec![]);
+    let store = Arc::new(MemoryStore::default());
+    store.unavailable.store(true, Ordering::SeqCst);
+    let dir = tempfile::tempdir().unwrap();
+    let mut settings = forward_settings(server_port(&server).get(), &dir.path().join("absent.pem"));
+    settings.token = Some(KeysJson);
+    for wait in [super::super::Wait::Starting, super::super::Wait::NoReadyPod] {
+        let error = within(Client::open_routed(
+            Some(&settings),
+            Some(store.clone()),
+            Route::Waiting(wait),
+        ))
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.state(), State::ForwardWaiting);
+        assert_eq!(error.to_string(), wait.words());
+        assert!(server.requests.lock().unwrap().is_empty());
+    }
+}

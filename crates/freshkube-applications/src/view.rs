@@ -312,6 +312,14 @@ impl Render for ApplicationsPage {
                 .min_h_0()
                 .child(self.changes.clone());
         }
+        if self.waiting_shown {
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .min_h_0()
+                .child(self.waiting.clone());
+        }
         if let Some((change, _)) = &self.change {
             return div()
                 .flex()

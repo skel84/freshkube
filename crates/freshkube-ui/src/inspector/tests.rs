@@ -1123,6 +1123,65 @@ fn a_chevron_pages_the_strip(cx: &mut TestAppContext) {
     }
 }
 
+struct TallBanner(InspectorSplit, Rc<Cell<usize>>);
+impl Render for TallBanner {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let clicks = self.1.clone();
+        div().size_full().flex().child(split(
+            "banner-split",
+            &self.0,
+            false,
+            div().size_full().into_any_element(),
+            Some(
+                Inspector::new("banner-inspector")
+                    .heading("Pruned PipelineRun")
+                    .banner(Some(
+                        div().h(dp(500.)).child("Not found; retained evidence"),
+                    ))
+                    .child("Retained fields")
+                    .footer(Some(
+                        gpui_kit::component::button::Button::new("banner-forward")
+                            .label("Forward")
+                            .on_click(move |_, _, _| clicks.set(clicks.get() + 1)),
+                    ))
+                    .render(cx)
+                    .into_any_element(),
+            ),
+            window,
+        ))
+    }
+}
+
+#[gpui_kit::test]
+fn stacked_inspector_with_tall_banner_keeps_footer_reachable_at_text_twenty(
+    cx: &mut TestAppContext,
+) {
+    install(cx);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    let clicked = Rc::new(Cell::new(0));
+    let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+        let view = cx.new(|cx| {
+            TallBanner(
+                InspectorSplit::new("banner-regression", cx),
+                clicked.clone(),
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        settle(window, cx);
+        let inspector = window.find("banner-inspector").bounds();
+        let action = window.find("banner-forward").bounds();
+        assert!(
+            action.bottom() <= inspector.bottom(),
+            "footer {action:?}, inspector {inspector:?}"
+        );
+        window.click("banner-forward", cx);
+        assert_eq!(clicked.get(), 1);
+    })
+    .unwrap();
+}
+
 /// The short page at 760 by 560 and text size 20, where the frame scrolls
 /// around a stacked split.
 fn short_page(cx: &mut TestAppContext, tall: f32) -> (AnyWindowHandle, Entity<ShortPage>) {

@@ -94,7 +94,11 @@ impl Platform {
     /// The room the header leaves at its edges: on macOS, the traffic
     /// lights' at its leading edge. Kit's `TitleBar` draws Windows' caption
     /// buttons, and Linux's when the compositor asks the app to, after the
-    /// header's content, so they need no room here.
+    /// header's content, so the header's content needs no padding for them;
+    /// they still take width from the bar, which `controls` counts so that
+    /// the centred search lands on the window's middle. Windows has all
+    /// three buttons here; [`header_insets_in`] counts the ones a window
+    /// draws.
     pub fn header_insets(self) -> HeaderInsets {
         let leading = match self {
             Platform::MacOs => px(TRAFFIC_LIGHT_INSET).into(),
@@ -103,6 +107,10 @@ impl Platform {
         HeaderInsets {
             leading,
             trailing: dp(PANE_PADDING).into(),
+            controls: match self {
+                Platform::Windows => caption_buttons_width(3),
+                Platform::MacOs | Platform::Linux => px(0.),
+            },
         }
     }
 
@@ -237,6 +245,108 @@ pub enum SystemMenu {
 pub struct HeaderInsets {
     pub leading: DefiniteLength,
     pub trailing: DefiniteLength,
+    /// The caption buttons Kit's `TitleBar` draws after the header's
+    /// content: room the bar loses at its trailing edge, which the content
+    /// does not pad for.
+    pub controls: Pixels,
+}
+
+/// What the header's row is made of, in dp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeaderRow {
+    /// Between the leading inset and the trailing controls less the
+    /// trailing inset: the room the three parts share.
+    pub bar: f32,
+    /// What the leading side's content needs.
+    pub leading: f32,
+    /// What the trailing side's content needs.
+    pub trailing: f32,
+    /// The inner-edge paddings from `platform::centring_padding`.
+    pub leading_pad: f32,
+    pub trailing_pad: f32,
+    /// Between the three parts.
+    pub gap: f32,
+    /// The least the search may shrink to while it stays centred.
+    pub search_least: f32,
+    /// The least it may shrink to once it has given up the middle: its
+    /// icon.
+    pub search_floor: f32,
+}
+
+impl HeaderRow {
+    /// The width each side's content box must at least keep so that the
+    /// search is centred on the window, or `None` when the sides need so
+    /// much that even the search at its least width would not be: then it
+    /// moves right of the middle rather than shrink further. Both sides keep
+    /// this much, so the search takes what remains: the bar less twice the
+    /// share, the paddings and the gaps. Its centre is the window's middle
+    /// whatever the paddings, since they differ by what the window's edges
+    /// take (`platform::centring_padding`).
+    pub fn centred_share(self) -> Option<f32> {
+        let share = self.leading.max(self.trailing);
+        let used = 2. * share + self.leading_pad + self.trailing_pad + 2. * self.gap;
+        (used + self.search_least <= self.bar).then_some(share)
+    }
+
+    /// The search's width then: the room left, up to its own width.
+    pub fn centred_search(self, share: f32, widest: f32) -> f32 {
+        let room = self.bar - 2. * share - self.leading_pad - self.trailing_pad - 2. * self.gap;
+        room.min(widest)
+    }
+
+    /// Whether the sides keep the padding that centres the search. Where the
+    /// switcher is not a fixed width there is plenty of room and they do; where
+    /// it is, they do only while the search can still be centred.
+    pub fn keeps_centring_padding(self, fixed_switcher: bool) -> bool {
+        !fixed_switcher || self.centred_share().is_some()
+    }
+
+    /// The search's width, centred or not. Once it has given up the middle,
+    /// the sides keep their content's width without padding (the controls
+    /// after the bar are outside it, so padding for them would only add to the
+    /// sides' minimum), and the search takes what is left, down to its
+    /// floor, so the row fits the bar for as long as the floor allows.
+    pub fn search_width(self, widest: f32) -> f32 {
+        match self.centred_share() {
+            Some(share) => self.centred_search(share, widest),
+            None => {
+                let room = self.bar - self.leading - self.trailing - 2. * self.gap;
+                room.clamp(self.search_floor, widest)
+            }
+        }
+    }
+}
+
+/// One of Kit's caption buttons is as wide as its title bar is high, in
+/// pixels whatever the text size.
+const CAPTION_BUTTON_WIDTH: f32 = 34.;
+
+/// The width of `count` caption buttons.
+pub fn caption_buttons_width(count: usize) -> Pixels {
+    px(CAPTION_BUTTON_WIDTH * count as f32)
+}
+
+/// What the header's two sides pad on their inner edges so the search
+/// between them is centred on the window, not on the bar.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CentringPadding {
+    /// The leading side's padding on its trailing edge.
+    pub leading_side: Pixels,
+    /// The trailing side's padding on its leading edge.
+    pub trailing_side: Pixels,
+}
+
+/// The bar runs from the leading inset to the trailing controls, and the
+/// content stops a trailing inset short of those. The sides share what the
+/// search leaves, so they must differ in width by the room the insets and
+/// controls take unequally: the leading side pads by the trailing inset and
+/// the controls, the trailing side by the leading inset.
+pub fn centring_padding(insets: HeaderInsets, rem_size: Pixels) -> CentringPadding {
+    let length = |length: DefiniteLength| length.to_pixels(px(0.).into(), rem_size);
+    CentringPadding {
+        leading_side: length(insets.trailing) + insets.controls,
+        trailing_side: length(insets.leading),
+    }
 }
 
 /// The terminal's copy, paste and leave keystrokes, the label of leave, and
@@ -279,6 +389,29 @@ pub const fn credential_store() -> &'static str {
 /// The header's insets on this platform ([`Platform::header_insets`]).
 pub fn header_insets() -> HeaderInsets {
     Platform::current().header_insets()
+}
+
+/// The header's insets in this window: where the platform draws caption
+/// buttons, the ones the window shows. Linux draws them only when the
+/// window is client-side decorated, and a window manager may not honour
+/// minimize or maximize; Close is always drawn.
+pub fn header_insets_in(window: &Window) -> HeaderInsets {
+    let platform = Platform::current();
+    let mut insets = platform.header_insets();
+    let drawn = match platform {
+        Platform::MacOs => false,
+        Platform::Windows => true,
+        Platform::Linux => matches!(
+            window.window_decorations(),
+            gpui_kit::Decorations::Client { .. }
+        ),
+    };
+    if drawn {
+        let supported = window.window_controls();
+        let count = 1 + usize::from(supported.minimize) + usize::from(supported.maximize);
+        insets.controls = caption_buttons_width(count);
+    }
+    insets
 }
 
 /// The primary modifier's label on this platform
@@ -448,6 +581,164 @@ mod tests {
             };
             assert_eq!(insets.leading, leading, "{platform:?}");
         }
+    }
+
+    /// The sides' padding follows the insets: equal where they are, and
+    /// unequal with the traffic lights, with Windows' caption buttons and
+    /// with both, so the centred search lands on the window's middle on every
+    /// platform, not only the one a test runs on.
+    #[test]
+    fn the_sides_pad_by_the_other_edges_room() {
+        let rem = px(16.);
+        let pad = |leading: f32, trailing: f32, controls: f32| {
+            centring_padding(
+                HeaderInsets {
+                    leading: px(leading).into(),
+                    trailing: px(trailing).into(),
+                    controls: px(controls),
+                },
+                rem,
+            )
+        };
+        // Equal insets, nothing after the bar: both sides pad 12.
+        assert_eq!(pad(12., 12., 0.).leading_side, px(12.));
+        assert_eq!(pad(12., 12., 0.).trailing_side, px(12.));
+        // macOS: 80 pt leading, so the trailing side pads 80 and the
+        // leading side 12.
+        assert_eq!(pad(80., 12., 0.).leading_side, px(12.));
+        assert_eq!(pad(80., 12., 0.).trailing_side, px(80.));
+        // Windows: three caption buttons after the bar.
+        assert_eq!(pad(12., 12., 102.).leading_side, px(114.));
+        assert_eq!(pad(12., 12., 102.).trailing_side, px(12.));
+        // Both.
+        assert_eq!(pad(80., 12., 102.).leading_side, px(114.));
+        assert_eq!(pad(80., 12., 102.).trailing_side, px(80.));
+        // The sides' widths differ by what the edges take, and the search
+        // is the window's middle: a 1000 px window, a 320 search, no gaps.
+        for (leading, trailing, controls) in [(12., 12., 0.), (80., 12., 0.), (12., 12., 102.)] {
+            let pad = pad(leading, trailing, controls);
+            let bar = 1000. - leading - controls - trailing;
+            let share =
+                (bar - 320. - f32::from(pad.leading_side) - f32::from(pad.trailing_side)) / 2.;
+            let left = leading + share + f32::from(pad.leading_side);
+            assert!(
+                (left + 160. - 500.).abs() < 0.01,
+                "{leading} {trailing} {controls}: the search is centred at {}",
+                left + 160.
+            );
+        }
+    }
+
+    /// Windows has the three caption buttons, as wide as Kit's title bar is
+    /// high; macOS and Linux have none before a window says otherwise.
+    #[test]
+    fn only_windows_counts_caption_buttons_before_a_window_says() {
+        assert_eq!(Platform::Windows.header_insets().controls, px(102.));
+        assert_eq!(Platform::MacOs.header_insets().controls, px(0.));
+        assert_eq!(Platform::Linux.header_insets().controls, px(0.));
+    }
+
+    fn row(leading: f32, trailing: f32, leading_pad: f32, trailing_pad: f32) -> HeaderRow {
+        HeaderRow {
+            bar: 736.,
+            leading,
+            trailing,
+            leading_pad,
+            trailing_pad,
+            gap: 6.,
+            search_least: 200.,
+            search_floor: 28.,
+        }
+    }
+
+    /// A leading side wider than half of what the search leaves makes the
+    /// search shrink around the middle, not slide: both sides keep the
+    /// wider one's share.
+    #[test]
+    fn a_wide_leading_side_shrinks_the_search_around_the_middle() {
+        let row = row(212., 88., 12., 12.);
+        let share = row.centred_share().expect("there is room to centre");
+        assert_eq!(share, 212.);
+        let width = row.centred_search(share, 320.);
+        assert_eq!(width, 736. - 424. - 24. - 12.);
+        assert!((200. ..320.).contains(&width));
+    }
+
+    /// With room to spare the search keeps its own width.
+    #[test]
+    fn a_narrow_leading_side_leaves_the_search_its_width() {
+        let row = row(100., 88., 12., 12.);
+        let share = row.centred_share().unwrap();
+        assert_eq!(row.centred_search(share, 320.), 320.);
+    }
+
+    /// Past its least width the search moves rather than shrink: there is
+    /// no share to keep, and the sides keep their content's width.
+    #[test]
+    fn past_its_least_width_the_search_gives_up_the_middle() {
+        assert_eq!(row(300., 88., 12., 12.).centred_share(), None);
+        // The edges count: the same sides with unequal paddings (macOS's
+        // traffic lights, Windows' caption buttons) need more room.
+        assert!(row(212., 88., 12., 12.).centred_share().is_some());
+        assert_eq!(row(212., 88., 114., 80.).centred_share(), None);
+    }
+
+    /// Once the search has given up the middle the row fits the bar, with
+    /// Windows' insets too: its padding is dropped, not counted, and the
+    /// search takes what the sides leave, down to its floor.
+    #[test]
+    fn a_row_that_gave_up_the_middle_fits_the_bar_with_windows_insets() {
+        // 760 px at text size 16 is 585 dp; less 12 dp each side and three
+        // caption buttons (102 px, 82.8 dp).
+        let bar = 585. - 24. - 102. * 13. / 16.;
+        let row = HeaderRow {
+            bar,
+            leading: 212.,
+            trailing: 88.,
+            leading_pad: 12. + 82.8,
+            trailing_pad: 12.,
+            gap: 6.,
+            search_least: 200.,
+            search_floor: 28.,
+        };
+        assert_eq!(row.centred_share(), None);
+        let search = row.search_width(320.);
+        assert!(search >= 28.);
+        assert!(
+            row.leading + search + row.trailing + 2. * row.gap <= bar + 0.01,
+            "{search} wide in a bar of {bar}"
+        );
+        // A bar too short even for the floor is the icon's problem, not the
+        // padding's: the row overruns by exactly what the floor needs.
+        let short = HeaderRow { bar: 300., ..row };
+        assert_eq!(short.search_width(320.), 28.);
+    }
+
+    /// Where the switcher is not a fixed width the sides keep the padding
+    /// that centres the search, whatever the insets: a leading side of
+    /// unknown width is not a reason to drop it (it was, on macOS and
+    /// Windows, at 1280).
+    #[test]
+    fn a_free_switcher_keeps_the_centring_padding() {
+        let row = HeaderRow {
+            bar: 1100.,
+            leading: f32::INFINITY,
+            trailing: 88.,
+            leading_pad: 12.,
+            trailing_pad: 80.,
+            gap: 6.,
+            search_least: 200.,
+            search_floor: 28.,
+        };
+        assert_eq!(row.centred_share(), None);
+        assert!(row.keeps_centring_padding(false));
+        // A fixed switcher keeps it only while the search can be centred.
+        assert!(!row.keeps_centring_padding(true));
+        let fixed = HeaderRow {
+            leading: 212.,
+            ..row
+        };
+        assert!(fixed.keeps_centring_padding(true));
     }
 
     /// Every key the module names parses, and each platform's keys and

@@ -37,6 +37,7 @@ use crate::discover::ClusterSecrets;
 use crate::discover::NamespaceCounts;
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use crate::results::{self, Client as ResultsClient};
+pub use crate::results::{Route as ResultsRoute, Wait as ResultsWait};
 use crate::shared::SharedReader;
 use crate::words;
 use freshkube_core::resources::{Failure, FailureKind};
@@ -391,6 +392,7 @@ pub struct Pool<'a, R, C, F> {
     budget: Duration,
     secrets: Option<Secrets>,
     results: OnceCell<Result<ResultsClient, results::Error>>,
+    results_route: ResultsRoute,
 }
 
 impl<'a, R, C, F, Fut> Pool<'a, R, C, F>
@@ -428,12 +430,20 @@ where
             budget,
             secrets: None,
             results: OnceCell::new(),
+            results_route: ResultsRoute::Address,
         }
     }
 
     /// The address-specific store supplied by the app, never a cluster credential.
     pub fn with_secrets(mut self, secrets: Option<Secrets>) -> Self {
         self.secrets = secrets;
+        self
+    }
+
+    /// The app matched this route to the Builds entry's configured Service.
+    /// It owns the forward and replaces the pool on an epoch change.
+    pub fn with_results_route(mut self, route: ResultsRoute) -> Self {
+        self.results_route = route;
         self
     }
 
@@ -449,8 +459,16 @@ where
             .and_then(|entry| entry.results.as_deref());
         tokio::time::timeout_at(
             until,
-            self.results
-                .get_or_init(|| ResultsClient::open(settings, self.secrets.clone())),
+            self.results.get_or_init(|| async {
+                match self.results_route {
+                    ResultsRoute::Address => {
+                        ResultsClient::open(settings, self.secrets.clone()).await
+                    }
+                    route => {
+                        ResultsClient::open_routed(settings, self.secrets.clone(), route).await
+                    }
+                }
+            }),
         )
         .await
         .map_err(|_| results::Error::Unreachable(results::Cause::TimedOut))?
