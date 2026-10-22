@@ -200,6 +200,14 @@ impl Operations {
     }
 }
 
+/// The writes audit log (`<preferences>/audit/writes.jsonl`, #853): one for the
+/// app, across contexts.
+pub(crate) fn write_audit_store() -> Option<freshkube_core::write::AuditStore> {
+    crate::preferences_path()
+        .and_then(|path| path.parent().map(|dir| dir.join("audit")))
+        .map(freshkube_core::write::AuditStore::new)
+}
+
 /// The audit store for `context`, shared with the other frontends.
 pub(crate) fn audit_log(context: &str) -> AuditLog {
     AuditLog::new(default_audit_path(context), context)

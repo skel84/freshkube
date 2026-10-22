@@ -7,6 +7,9 @@
 //! which entry each part of the delivery chain is read from, and check them
 //! (`sources/`). Example data and a window without a preferences folder
 //! show the lists and change nothing.
+mod audit;
+#[cfg(test)]
+mod audit_tests;
 mod connection;
 mod coroot;
 #[cfg(test)]
@@ -205,6 +208,8 @@ pub(crate) struct SettingsPage {
     sources_status: Segment,
     /// Suggestions the person ignored, for the session.
     ignored: HashSet<find::Ignored>,
+    /// Settings › Audit log: what was read from both logs, and the filter.
+    audit: audit::AuditView,
 }
 
 impl SettingsPage {
@@ -409,6 +414,7 @@ impl SettingsPage {
             destinations_status: Segment::default(),
             sources_status: Segment::default(),
             ignored: HashSet::new(),
+            audit: audit::AuditView::new(),
         }
     }
 
@@ -616,6 +622,7 @@ impl SettingsPage {
             }
             self.section = section;
             self.sync_sources(cx);
+            self.sync_audit(cx);
             cx.notify();
         }
     }
@@ -624,6 +631,14 @@ impl SettingsPage {
     pub(in crate::desktop) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.visible = visible;
         self.sync_sources(cx);
+        self.sync_audit(cx);
+    }
+
+    /// The audit log is read when its section shows, and not while hidden.
+    fn sync_audit(&mut self, cx: &mut Context<Self>) {
+        if self.visible && self.section == SettingsSection::AuditLog {
+            self.load_audit(cx);
+        }
     }
 
     fn sync_sources(&mut self, cx: &mut Context<Self>) {
@@ -910,6 +925,7 @@ impl Render for SettingsPage {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
             SettingsSection::Coroot => self.render_coroot(window, cx),
+            SettingsSection::AuditLog => self.render_audit_log(window, cx),
             SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self
