@@ -110,11 +110,14 @@ fn by_tone(row: &Row, fix: &'static str) -> (Severity, Option<&'static str>) {
     }
 }
 
+/// A row with how bad it is and what to do about it.
+type Judged = (Row, Severity, Option<&'static str>);
+
 struct Outcome {
     id: &'static str,
     title: &'static str,
     kind: ResourceKind,
-    result: Result<(Listing, Vec<(Row, Severity, Option<&'static str>)>), Problem>,
+    result: Result<(Listing, Vec<Judged>), Problem>,
     state: String,
     severity: Option<Severity>,
 }
@@ -235,7 +238,7 @@ fn label(row: &Row) -> String {
     }
 }
 
-fn shown(outcome: &Outcome) -> Vec<(Row, Severity, Option<&'static str>)> {
+fn shown(outcome: &Outcome) -> Vec<Judged> {
     match &outcome.result {
         Ok((_, judged)) => judged
             .iter()
