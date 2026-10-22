@@ -140,10 +140,6 @@ impl Pilot {
             return;
         };
         let kargo = self.kargo_cluster(act, cx);
-        let Some(audit) = write_audit_store() else {
-            window.push_notification("The audit log can't be located, so nothing was sent.", cx);
-            return;
-        };
         let who = Who {
             entry: kargo.entry.id.clone(),
             context: kargo.entry.context.clone(),
@@ -165,6 +161,10 @@ impl Pilot {
             self.start_stage_write(Arc::new(runner), action, window, cx);
             return;
         }
+        let Some(audit) = write_audit_store() else {
+            window.push_notification("The audit log can't be located, so nothing was sent.", cx);
+            return;
+        };
         let kubeconfigs = freshkube_core::resources::kubeconfig_sources(act.kubeconfig.as_deref());
         let name = kargo.entry.id.clone();
         let (job, receiver) = spawn_job(

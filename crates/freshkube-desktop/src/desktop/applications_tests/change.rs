@@ -1932,3 +1932,84 @@ fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+/// Stage actions on example data: the dialog at each level, with a runner
+/// that sends nothing because there is no cluster.
+fn stage_action(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    view: &Entity<Pilot>,
+    hop_key: &str,
+    button: &'static str,
+) {
+    let page = cx.update(|cx| change(view, cx)).expect("the change page");
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| page.select(hop_key, window, cx));
+        window.render_frame(cx);
+        window.click(button, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+fn found(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> Option<String> {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window
+            .try_find(id)
+            .map(|found| found.label().unwrap_or_default().to_owned())
+    })
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn promote_to_a_protected_destination_asks_for_the_stage_name_and_sends_nothing_in_example_data(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = open(cx, 1280., 1200.);
+    stage_action(cx, handle, &view, "prod-ams-promotion", "change-action-4");
+    // prod-ams is protected in the example workspace; cicd-fra is guarded.
+    assert_eq!(
+        found(cx, handle, "write-type-prompt").as_deref(),
+        Some("Type prod-ams to confirm")
+    );
+    let destinations = found(cx, handle, "write-destinations").unwrap();
+    assert!(
+        destinations.contains("prod-ams (Protected)"),
+        "{destinations}"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.click("write-type-name", cx);
+        window.render_frame(cx);
+        window.input("prod-ams", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("write-confirm", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let status = found(cx, handle, "write-toast-status").unwrap_or_default();
+    let shown: Vec<_> = [
+        "write-dialog",
+        "write-refused",
+        "write-disabled",
+        "write-confirm",
+    ]
+    .into_iter()
+    .map(|id| (id, found(cx, handle, id)))
+    .collect();
+    assert!(status.contains("Example data"), "{status} {shown:?}");
+}
+
+#[gpui_kit::test]
+fn refresh_on_example_data_asks_nothing_and_says_there_is_no_cluster(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    stage_action(cx, handle, &view, "prod-ams-promotion", "change-action-1");
+    assert!(found(cx, handle, "write-dialog").is_none());
+    let status = found(cx, handle, "write-toast-status").unwrap_or_default();
+    assert!(status.contains("Example data"), "{status}");
+}
