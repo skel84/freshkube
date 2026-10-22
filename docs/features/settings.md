@@ -22,7 +22,7 @@ Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit
 
 ## The page and its sections
 
-Settings is one `Page::Settings` with one `SettingsPage`, which shows one `SettingsSection` at a time. The rail has a Settings button, and its column (`shell/source.rs`, `settings_lines`) lists the sections in two groups: *App* (General, Connection, Monitoring, Coroot) and *Workspace* (Clusters, Argo CD destinations, Delivery sources). Each row is `nav-settings-<slug>` and is current while its section shows. Each section is also a page slug, `settings-<slug>`, for `FRESHKUBE_PAGE`; a bare `settings` opens Clusters, the default. `OpenSettings` (⌘, on macOS; Windows and Linux bind no key, since Control-, is the dock's) and the gear's "All settings…" open the section shown last, which the page holds for the session and doesn't save.
+Settings is one `Page::Settings` with one `SettingsPage`, which shows one `SettingsSection` at a time. The rail has a Settings button, and its column (`shell/source.rs`, `settings_lines`) lists the sections in two groups: *App* (General, Connection, Monitoring, Coroot, Audit log) and *Workspace* (Clusters, Argo CD destinations, Delivery sources). Each row is `nav-settings-<slug>` and is current while its section shows. Each section is also a page slug, `settings-<slug>`, for `FRESHKUBE_PAGE`; a bare `settings` opens Clusters, the default. `OpenSettings` (⌘, on macOS; Windows and Linux bind no key, since Control-, is the dock's) and the gear's "All settings…" open the section shown last, which the page holds for the session and doesn't save.
 
 The header's gear keeps only "Quick controls": Talos auto-refresh, Appearance and Text size, the same preferences as General. Below them, "All settings…" closes the popover and opens the area.
 
@@ -101,6 +101,10 @@ One *Connection* group: the server, how to sign in (API key, Session, Anonymous)
 - **Example data** shows the example connection with every control off and saves nothing; a window without preferences has nowhere to save.
 
 Observability no longer holds the connection: with none, its card is one line, "Coroot isn't connected · Open Settings", which opens this section (`ObservabilityEvent::OpenSettings`). The header's Coroot button opens this section when nothing is connected, and the link panel, with Open Settings, when connected. The link panel also says which Coroot cluster the open entry's Kubernetes links read, or why it has none; that is `clusters[].coroot` in the setup file (`freshkube-observability`'s `entry.rs`), edited by hand until the Clusters Inspector's Observability group exists.
+
+## Audit log
+
+A read-only page (`desktop/settings/audit.rs`) over the app's two audit logs, across contexts, newest first: the writes the app sent to Kubernetes objects (`<preferences>/audit/writes.jsonl`, [WRITE_MODEL.md](../WRITE_MODEL.md#the-audit-log)) and Talos Operations' files (`~/.freshkube/operations-*.yaml`). A **Source** filter (All, Writes, Operations) narrows the rows. Each row has the time, the source, the context, the action, the object and the phase, and under it the result and, for a write, the field paths it changed. It records field paths only; no value, credential or Secret value is in either log, and none is shown. At most the newest 200 rows are drawn and the rest are counted. A line or file that cannot be read is said (`audit-unreadable`), never hidden. The files are read off the UI thread when the section shows and not while the page is hidden; example data shows invented rows and reads nothing. Nothing on the page writes. Tests: `desktop/settings/audit_tests.rs`.
 
 ## Argo CD destinations
 
