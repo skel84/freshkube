@@ -7,6 +7,7 @@ mod applications_tests;
 mod connection;
 pub(crate) mod dock;
 mod entity_pages;
+mod followed;
 #[cfg(test)]
 mod gate_tests;
 mod kubeconfig;
@@ -160,6 +161,12 @@ pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
     });
 }
 
+/// ⌘Q: every follow's read stops first, then the app ends.
+fn quit_app(cx: &mut App) {
+    freshkube_followed::stop_all(cx);
+    cx.quit();
+}
+
 pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
     // Before anything reads the workspace.
     options.setup_notice = migrate_startup::migrate_setup(&options);
@@ -182,7 +189,18 @@ pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Resu
                 freshkube_ui::platform::Platform::current(),
                 &app_menu::MenuState::default(),
             ));
-            on_quit(cx, |cx| cx.quit());
+            let follows = options.debug.follows;
+            freshkube_followed::owner::install(
+                freshkube_followed::owner::Options {
+                    runtime: runtime.clone(),
+                    preferences: options.preferences.clone(),
+                    script: options
+                        .starts_with_examples()
+                        .then_some(freshkube_followed::example::Script { shape: follows }),
+                },
+                cx,
+            );
+            on_quit(cx, quit_app);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -286,6 +304,8 @@ pub(crate) struct Pilot {
     /// Node counts for contexts that loaded at least once this session.
     context_nodes: BTreeMap<String, usize>,
     context_display: shell::ContextDisplay,
+    /// What the app's follows were last offered (`followed.rs`).
+    followed_offer: Option<followed::Offered>,
     config_error: Option<String>,
     config_loading: bool,
     configuration_read: Loader<(), Option<ConfigurationRead>>,
@@ -703,6 +723,8 @@ impl Pilot {
                 }
             },
         ));
+        let followed = self.watch_followed(window, cx);
+        self._subscriptions.extend(followed);
         self.watch_menus(window, cx);
         self.publish_reading(cx);
         self.chrome.parts.watch(self, cx);
@@ -751,6 +773,7 @@ impl Pilot {
             contexts: Vec::new(),
             context_nodes: BTreeMap::new(),
             context_display: shell::ContextDisplay::default(),
+            followed_offer: None,
             config_error: None,
             config_loading: false,
             configuration_read: Loader::default(),
@@ -1039,6 +1062,7 @@ impl Pilot {
         for (_, page) in self.pages.map.iter().filter(|(id, _)| !id.is_screen()) {
             page.set_page_source(source.clone(), window, cx);
         }
+        self.offer_followed(cx);
     }
 
     /// Hands pod and node history the Monitoring page's Prometheus.

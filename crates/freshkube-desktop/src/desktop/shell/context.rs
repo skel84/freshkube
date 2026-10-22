@@ -110,6 +110,8 @@ impl Pilot {
         self.pages
             .dock
             .update(cx, |dock, cx| dock.set_read_only(level.is_read_only(), cx));
+        // Hide details defaults on for a protected or read-only cluster.
+        self.offer_followed(cx);
         true
     }
 

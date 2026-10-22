@@ -81,6 +81,10 @@ pub struct DebugOptions {
     /// `FRESHKUBE_TEXT_SIZE`: a step of `text_size::STEPS`, not saved; anything
     /// else is ignored. Debug builds only.
     pub(crate) text_size: Option<f32>,
+    /// `FRESHKUBE_FOLLOWS`: the shape of the followed items and the bell's
+    /// example (`freshkube_followed::example::Shape`); anything else plays
+    /// the example story. Needs `--fixture`.
+    pub(crate) follows: Option<freshkube_followed::example::Shape>,
 }
 
 impl DebugOptions {
@@ -147,6 +151,9 @@ impl DebugOptions {
             app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
             text_size: text("FRESHKUBE_TEXT_SIZE")
                 .and_then(|size| freshkube_ui::text_size::parse(&size)),
+            follows: text("FRESHKUBE_FOLLOWS")
+                .as_deref()
+                .and_then(freshkube_followed::example::Shape::parse),
         }
     }
 

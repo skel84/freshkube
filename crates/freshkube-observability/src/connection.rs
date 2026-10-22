@@ -470,6 +470,15 @@ impl ObservabilityPage {
         }
         self.disconnect(window, cx);
     }
+    /// The provider and project Coroot is read through, once connected to
+    /// a project, for the app's follows to read incidents with (the user's
+    /// own access, once a minute). `None` until then.
+    pub fn follow_reader(&self) -> Option<(api::Provider, api::Source)> {
+        if self.live.provider_only {
+            return None;
+        }
+        Some((self.live.provider.clone()?, self.live.source.clone()?))
+    }
     /// Where the connection stands.
     pub fn connection_state(&self) -> ConnectionState {
         if self.live.connecting {

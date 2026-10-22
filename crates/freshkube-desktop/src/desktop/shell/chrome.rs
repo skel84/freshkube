@@ -135,6 +135,8 @@ pub(in crate::desktop) struct Chrome {
     pub(in crate::desktop) fps: Entity<super::fps::Fps>,
     /// The status bar's port forwards, which redraw on their own.
     pub(super) forwards: Entity<ForwardsIndicator>,
+    /// The status bar's "Notifying · n", once the app's follows are made.
+    pub(super) followed: Option<Entity<freshkube_followed::FollowedBell>>,
     /// The theme the user chose: the system's, light or dark.
     pub(in crate::desktop) appearance: Appearance,
     /// The platform whose menu the window has: the one it runs on, but a
@@ -180,6 +182,8 @@ impl Chrome {
             elapsed: Duration::ZERO,
             fps: cx.new(super::fps::Fps::new),
             forwards: cx.new(ForwardsIndicator::new),
+            followed: freshkube_followed::owner::followed(cx)
+                .map(|followed| cx.new(|cx| freshkube_followed::FollowedBell::new(followed, cx))),
             appearance,
             menu_platform,
             app_menu_popup: None,

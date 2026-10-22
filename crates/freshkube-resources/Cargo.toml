@@ -15,6 +15,7 @@ gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 # The example Applications' objects (`example/acme.rs`).
 freshkube-delivery.workspace = true
+freshkube-followed.workspace = true
 # A pod's CPU and memory history on its Overview.
 freshkube-monitoring.workspace = true
 freshkube-nav.workspace = true

@@ -299,7 +299,7 @@ pub(crate) fn parse_freight(value: &Value) -> Option<Freight> {
 /// The newest entry of a Stage's Freight history: what Kargo records it runs.
 const NEWEST_HISTORY: &str = "/status/freightHistory/0/items";
 
-pub(crate) fn parse_stage(value: &Value) -> Option<Stage> {
+pub fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
     let mut current_at: Vec<&'static str> = Vec::new();
     let mut digests: Vec<(Digest, &'static str)> = Vec::new();

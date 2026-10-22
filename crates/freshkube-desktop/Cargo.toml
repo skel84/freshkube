@@ -15,6 +15,7 @@ gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-applications.workspace = true
 freshkube-delivery.workspace = true
+freshkube-followed.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
 freshkube-nav.workspace = true
