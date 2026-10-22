@@ -2025,6 +2025,15 @@ fn stage_action(
     cx.run_until_parked();
 }
 
+/// The write toast's status, once the runner on the real runtime has answered:
+/// the test clock can pass before real work does, so this waits in real time.
+fn toast(cx: &mut TestAppContext, handle: AnyWindowHandle) -> String {
+    freshkube_ui::real_io::until_io(cx, "the write toast", |cx| {
+        found(cx, handle, "write-toast-status").is_some()
+    });
+    found(cx, handle, "write-toast-status").unwrap_or_default()
+}
+
 fn found(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> Option<String> {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -2064,7 +2073,7 @@ fn promote_to_a_protected_destination_asks_for_the_stage_name_and_sends_nothing_
     })
     .unwrap();
     cx.run_until_parked();
-    let status = found(cx, handle, "write-toast-status").unwrap_or_default();
+    let status = toast(cx, handle);
     let shown: Vec<_> = [
         "write-dialog",
         "write-refused",
@@ -2082,7 +2091,7 @@ fn refresh_on_example_data_asks_nothing_and_says_there_is_no_cluster(cx: &mut Te
     let (_runtime, handle, view) = open(cx, 1280., 880.);
     stage_action(cx, handle, &view, "prod-ams-promotion", "change-action-1");
     assert!(found(cx, handle, "write-dialog").is_none());
-    let status = found(cx, handle, "write-toast-status").unwrap_or_default();
+    let status = toast(cx, handle);
     assert!(status.contains("Example data"), "{status}");
 }
 
@@ -2118,7 +2127,7 @@ fn a_destination_changed_in_settings_reaches_a_promote_dialog_the_shell_built(
     .unwrap();
     cx.run_until_parked();
     // Refused for the level, not "Example data": the runner followed the cell.
-    let status = found(cx, handle, "write-toast-status").unwrap_or_default();
+    let status = toast(cx, handle);
     assert!(status.contains("read-only"), "{status}");
     assert!(!status.contains("Example data"), "{status}");
 }
