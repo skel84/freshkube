@@ -63,7 +63,7 @@ struct KubeletEntry {
 }
 
 /// A selectable thing: a node row or an alert.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Item {
     Node(String),
     /// By the alert's key, so a refresh that reorders the alerts keeps it.

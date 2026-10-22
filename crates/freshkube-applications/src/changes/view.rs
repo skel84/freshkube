@@ -36,6 +36,10 @@ impl ChangesPage {
             .disabled(reading || self.source.is_none())
             // The button and ⌘R are one action, which the shell runs.
             .on_click(page::dispatch(page::Refresh, &self.focus));
+        let header = match self.results_button(cx) {
+            Some(button) => header.control(button),
+            None => header,
+        };
         header.control(refresh).render(window, cx)
     }
 
@@ -223,6 +227,7 @@ impl ChangesPage {
             .on_click(cx.listener(|this, _, window, cx| this.open_selected(window, cx)));
         Some(
             Inspector::new("changes-detail")
+                .selection(&row.key)
                 .heading(heading)
                 .children(fields)
                 .child(stages)
@@ -426,6 +431,7 @@ impl Render for ChangesPage {
             .on_action(
                 cx.listener(|this, _: &PreviousChange, window, cx| this.step(-1, window, cx)),
             )
+            .on_action(cx.listener(|this, _: &ForwardResults, _, cx| this.forward_results(cx)))
             .on_action(cx.listener(|this, _: &ClearChange, _, cx| this.clear_selection(cx)))
             .on_action(cx.listener(|this, _: &OpenChange, window, cx| {
                 if this.focus.is_focused(window) {

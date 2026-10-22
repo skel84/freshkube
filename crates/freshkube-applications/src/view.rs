@@ -257,6 +257,7 @@ impl ApplicationsPage {
         });
         Some(
             Inspector::new("applications-detail")
+                .selection(&row.key)
                 .heading(heading)
                 .children(row.fields.iter().map(|(label, value)| {
                     field(label, mono(value.clone()).whitespace_normal(), cx)
@@ -310,6 +311,14 @@ impl Render for ApplicationsPage {
                 .size_full()
                 .min_h_0()
                 .child(self.changes.clone());
+        }
+        if self.waiting_shown {
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .min_h_0()
+                .child(self.waiting.clone());
         }
         if let Some((change, _)) = &self.change {
             return div()

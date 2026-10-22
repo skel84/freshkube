@@ -141,12 +141,6 @@ fn header_is_one_row_of_controls_at_every_text_size(cx: &mut TestAppContext) {
                 close(id, bounds.size.height, dp(height));
                 close(id, bounds.center().y, middle);
             }
-            // The selected tab's underline sits on the hairline.
-            close(
-                "the tab's bottom",
-                window.find("section-dashboard").bounds().bottom(),
-                dp(44.) - px(1.),
-            );
         })
         .unwrap();
     }
@@ -221,4 +215,162 @@ fn long_context_names_keep_both_ends_and_wrap_in_the_popover(cx: &mut TestAppCon
         })
         .unwrap();
     }
+}
+
+/// The header has no section tabs (the rail covers navigation); Search
+/// everything is centred at 320 dp, and the switcher, Refresh and Settings
+/// stay.
+#[gpui_kit::test]
+fn header_has_no_section_tabs_and_centres_a_320_search(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for id in [
+            "section-dashboard",
+            "section-nodes",
+            "section-workloads",
+            "section-events",
+            "section-observability",
+        ] {
+            assert!(window.try_find(id).is_none(), "{id} is still drawn");
+        }
+        let dp = |n| crate::ui::dp_px(n, window);
+        let search = window.find("search-everything").bounds();
+        assert!(
+            (search.size.width - dp(320.)).abs() < px(0.5),
+            "search is {:?} wide",
+            search.size.width
+        );
+        assert!(
+            (search.center().x - px(1280.) / 2.).abs() < dp(2.),
+            "search is centred at {:?}",
+            search.center().x
+        );
+        for id in ["context-switcher", "refresh", "settings"] {
+            assert!(window.find(id).visible(), "{id} is missing");
+        }
+        assert!(window.find("context-switcher").bounds().right() < search.left());
+        assert!(window.find("refresh").bounds().left() > search.right());
+    })
+    .unwrap();
+}
+
+/// At the narrowest window and the largest text (494 dp), Search everything
+/// is its icon, and nothing overlaps.
+#[gpui_kit::test]
+fn narrowest_header_is_an_icon_search_with_nothing_overlapping(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let search = window.find("search-everything").bounds();
+        let dp = |n| crate::ui::dp_px(n, window);
+        assert!(
+            (search.size.width - dp(28.)).abs() < px(0.5),
+            "search is {:?} wide, not its icon",
+            search.size.width
+        );
+        let switcher = window.find("context-switcher").bounds();
+        let settings = window.find("settings").bounds();
+        assert!(switcher.right() <= search.left(), "{switcher:?} {search:?}");
+        assert!(search.right() <= settings.left(), "{search:?} {settings:?}");
+        assert!(settings.right() <= px(760.));
+    })
+    .unwrap();
+}
+
+/// With the room for neither the full field nor its icon yet (760 px at text
+/// size 18 is 548 dp, over the 520 dp where it becomes the icon), the field
+/// gives up width before anything overlaps: narrower than 320 dp, and the
+/// controls that remain at this width (the switcher and Settings) whole.
+#[gpui_kit::test]
+fn header_at_548_dp_shrinks_the_search_field_before_anything_overlaps(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    cx.update(|cx| crate::text_size::set(18., cx));
+    let full = "talos-production-frankfurt-equinix-fr5-baremetal-b7";
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.select_context(full.into(), window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let dp = |n| crate::ui::dp_px(n, window);
+        let search = window.find("search-everything").bounds();
+        assert!(
+            search.size.width > dp(28.) && search.size.width < dp(320.) - px(1.),
+            "search is {:?} wide: the field should be shrunk, not an icon or 320 dp",
+            search.size.width
+        );
+        let ids = ["context-switcher", "search-everything", "settings"];
+        let bounds: Vec<_> = ids.iter().map(|id| window.find(*id).bounds()).collect();
+        for (pair, id) in bounds.windows(2).zip(ids.windows(2)) {
+            assert!(
+                pair[0].right() <= pair[1].left(),
+                "{} overlaps {}: {:?} {:?}",
+                id[0],
+                id[1],
+                pair[0],
+                pair[1]
+            );
+        }
+        for (id, bounds) in ids.iter().zip(&bounds) {
+            assert!(window.find(*id).visible(), "{id} is missing");
+            assert!(bounds.right() <= px(760.), "{id} runs past the window");
+        }
+    })
+    .unwrap();
+}
+
+/// At 760 px and text size 13 the switcher's side needs more than half of
+/// what the search leaves, so the search shrinks around the window's middle
+/// instead of sliding right: narrower than 320 dp, no narrower than 200, and
+/// centred.
+#[gpui_kit::test]
+fn a_wide_switcher_shrinks_the_search_around_the_middle_at_760(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    // A long name is cut inside the switcher, which keeps its width.
+    let full = "talos-production-frankfurt-equinix-fr5-baremetal-b7";
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.select_context(full.into(), window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let dp = |n| crate::ui::dp_px(n, window);
+        let search = window.find("search-everything").bounds();
+        // Windows' three caption buttons take 102 px of the bar, so there the
+        // middle is given up at 760 (it holds to about 890 dp): the search
+        // only fits what the sides leave.
+        if freshkube_ui::platform::Platform::current() == freshkube_ui::platform::Platform::Windows
+        {
+            assert!(
+                search.size.width >= dp(28.) - px(0.5) && search.size.width <= dp(320.) + px(0.5),
+                "search is {:?} wide",
+                search.size.width
+            );
+        } else {
+            assert!(
+                search.size.width < dp(320.) - px(1.) && search.size.width >= dp(200.) - px(0.5),
+                "search is {:?} wide",
+                search.size.width
+            );
+            assert!(
+                (search.center().x - px(760.) / 2.).abs() < dp(1.5),
+                "search is centred at {:?}",
+                search.center().x
+            );
+        }
+        let switcher = window.find("context-switcher").bounds();
+        assert!(
+            (switcher.size.width - dp(180.)).abs() < px(0.5),
+            "the switcher is {:?} wide, not 180 dp",
+            switcher.size.width
+        );
+        assert!(switcher.right() <= search.left());
+        assert!(search.right() <= window.find("refresh").bounds().left());
+    })
+    .unwrap();
 }

@@ -12,12 +12,28 @@ const SEARCH_KEY: &str = match Platform::current() {
 };
 
 /// Below this window width, in dp, the protection level's tag in the
-/// switcher keeps its glyph and leaves the word to the tooltip.
-const LEVEL_WORD_MIN_WIDTH: f32 = 900.;
+/// switcher keeps its glyph and leaves the word to the tooltip: the same
+/// width under which the switcher is a fixed 180 dp, so its name keeps room.
+const LEVEL_WORD_MIN_WIDTH: f32 = SWITCHER_FIXED_BELOW;
+
+/// Below this window width, in dp, the switcher is a fixed width of
+/// [`SWITCHER_WIDTH`], its name cut to fit, so the room the left side needs
+/// is known and the search can stay centred.
+const SWITCHER_FIXED_BELOW: f32 = 1000.;
+
+/// The switcher's width, in dp, in a window under [`SWITCHER_FIXED_BELOW`].
+const SWITCHER_WIDTH: f32 = 180.;
+
+/// The least width of the search field, in dp, before it moves off centre
+/// to leave room to the sides.
+const SEARCH_FIELD_LEAST_WIDTH: f32 = 200.;
+
+/// Search everything's width, in dp, when the header has the room.
+const SEARCH_FIELD_WIDTH: f32 = 320.;
 
 /// Below this window width, in dp, Search everything shrinks to its icon.
-/// Every page uses the same width: none adds controls to the header.
-const SEARCH_FIELD_MIN_WIDTH: f32 = 1180.;
+/// Above it the field gives up width before anything overlaps.
+const SEARCH_FIELD_MIN_WIDTH: f32 = 520.;
 
 impl Pilot {
     pub(in crate::desktop) fn render_header(
@@ -30,106 +46,124 @@ impl Pilot {
         let glyph_only_level = width < LEVEL_WORD_MIN_WIDTH;
         // Clear of the window's controls: macOS's traffic lights keep their
         // size in points.
-        let insets = freshkube_ui::platform::header_insets();
+        let insets = freshkube_ui::platform::header_insets_in(window);
+        let centring = freshkube_ui::platform::centring_padding(insets, window.rem_size());
+        let one_dp = ui::dp_px(1., window);
+        let narrow_search = width < SEARCH_FIELD_MIN_WIDTH;
+        let fixed_switcher = width < SWITCHER_FIXED_BELOW;
+        // What the sides need is known because the switcher is a fixed width
+        // where the room is short: the app menu's button, the switcher, and
+        // on the other side the controls that are shown.
+        let menu_width =
+            if self.chrome.menu_platform.app_menu() == freshkube_ui::platform::AppMenu::Button {
+                24. + if minimal { 6. } else { 8. }
+            } else {
+                0.
+            };
+        let leading_need = menu_width
+            + if fixed_switcher {
+                SWITCHER_WIDTH
+            } else {
+                f32::INFINITY
+            };
+        let trailing_need = if minimal {
+            24.
+        } else {
+            APP_HEADER_CONTROL + 24. + 24. + 12.
+        };
+        let row = freshkube_ui::platform::HeaderRow {
+            bar: (window.viewport_size().width
+                - insets.leading.to_pixels(px(0.).into(), window.rem_size())
+                - insets.controls
+                - insets.trailing.to_pixels(px(0.).into(), window.rem_size()))
+                / one_dp,
+            leading: leading_need,
+            trailing: trailing_need,
+            leading_pad: centring.leading_side / one_dp,
+            trailing_pad: centring.trailing_side / one_dp,
+            gap: 6.,
+            search_least: if narrow_search {
+                APP_HEADER_CONTROL
+            } else {
+                SEARCH_FIELD_LEAST_WIDTH
+            },
+            search_floor: APP_HEADER_CONTROL,
+        };
+        let share = row.centred_share();
+        // Where the switcher is not a fixed width (1000 dp and over) the
+        // room is plenty: the sides keep the cross-padding that centres the
+        // search and need no minimum. Under 1000 dp, once the search has
+        // given up the middle, the sides pad nothing: the padding only adds
+        // to their minimum, and centres nothing.
+        let centred = row.keeps_centring_padding(fixed_switcher);
+        let centring = if centred {
+            centring
+        } else {
+            freshkube_ui::platform::CentringPadding {
+                leading_side: px(0.),
+                trailing_side: px(0.),
+            }
+        };
+        let search_least = if centred {
+            row.search_least
+        } else {
+            row.search_floor
+        };
+        // Three parts on a row: the sides share what the search leaves, so
+        // the search sits in the middle. Each side pads its inner edge so the
+        // two differ by as much as the window's edges do, and the search is
+        // centred on the window, not on the bar (`centring_padding`). Each side keeps its content's
+        // width, so the search gives way first. The bar behind them is the
+        // window's drag region.
         TitleBar::new()
             .h(dp(APP_HEADER_HEIGHT))
             .bg(cx.theme().title_bar)
             .pl(insets.leading)
             .child(
                 h_flex()
-                    .gap(dp(if minimal { 6. } else { 14. }))
+                    .w_full()
                     .min_w_0()
+                    .pr(insets.trailing)
+                    .gap(dp(6.))
                     .child(
                         h_flex()
-                            .gap(dp(8.))
+                            .flex_1()
+                            .when_some(share, |this, share| {
+                                this.min_w(one_dp * share + centring.leading_side)
+                            })
+                            .pr(centring.leading_side)
+                            .gap(dp(if minimal { 6. } else { 8. }))
                             .children(self.render_menu_button(cx))
-                            .child(self.render_context_switcher(minimal, glyph_only_level, cx)),
+                            .child(self.render_context_switcher(
+                                fixed_switcher,
+                                glyph_only_level,
+                                cx,
+                            ))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .w(px(0.))
+                                    .h(px(0.))
+                                    .overflow_hidden()
+                                    .child(self.render_location(cx)),
+                            ),
                     )
-                    .child(self.render_section_tabs(window, cx))
+                    .child(self.render_search_field(window, search_least, cx))
                     .child(
-                        div()
-                            .absolute()
-                            .w(px(0.))
-                            .h(px(0.))
-                            .overflow_hidden()
-                            .child(self.render_location(cx)),
+                        h_flex()
+                            .flex_1()
+                            .justify_end()
+                            .when_some(share, |this, share| {
+                                this.min_w(one_dp * share + centring.trailing_side)
+                            })
+                            .pl(centring.trailing_side)
+                            .gap(dp(6.))
+                            .when(!minimal, |this| {
+                                this.child(self.render_refresh(cx))
+                                    .child(self.render_appearance(cx))
+                            })
+                            .child(self.render_settings(cx)),
                     ),
-            )
-            .child(
-                h_flex()
-                    .gap(dp(6.))
-                    .pl(dp(12.))
-                    .pr(insets.trailing)
-                    .flex_shrink_0()
-                    .child(self.render_search_field(window, cx))
-                    .when(!minimal, |this| {
-                        this.child(self.render_refresh(cx))
-                            .child(self.render_appearance(cx))
-                    })
-                    .child(self.render_settings(cx)),
-            )
-            .into_any_element()
-    }
-
-    fn render_section_tabs(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let width = window.viewport_size().width / ui::dp_px(1., window);
-        let compact = width < 1120.;
-        let minimal = width < 680.;
-        h_flex()
-            .gap(dp(2.))
-            .children(
-                [
-                    (
-                        "dashboard",
-                        "Dashboard",
-                        Area::Overview,
-                        IconName::LayoutDashboard,
-                    ),
-                    ("nodes", "Nodes", Area::Nodes, IconName::Server),
-                    (
-                        "workloads",
-                        "Workloads",
-                        Area::Group("workloads"),
-                        IconName::Boxes,
-                    ),
-                    ("events", "Events", Area::Events, IconName::Activity),
-                    (
-                        "observability",
-                        "Observability",
-                        Area::Observability,
-                        IconName::ChartLine,
-                    ),
-                ]
-                .into_iter()
-                .filter(|(_, _, area, _)| !minimal || self.navigation.area == *area)
-                .map(|(id, label, area, icon)| {
-                    let selected = self.navigation.area == area;
-                    Button::new(SharedString::from(format!("section-{id}")))
-                        .ghost()
-                        .small()
-                        .toggled(selected)
-                        // The header less its hairline: the underline sits on it.
-                        .h(ui::dp_px(APP_HEADER_HEIGHT, window) - px(1.))
-                        .rounded(px(0.))
-                        .border_b_2()
-                        .border_color(if selected {
-                            p.accent
-                        } else {
-                            gpui_kit::transparent_black()
-                        })
-                        .text_color(if selected { p.ink } else { p.muted })
-                        .when_else(
-                            compact,
-                            |button| button.icon(icon).w(dp(34.)).tooltip(label),
-                            |button| button.label(label).px(dp(10.)),
-                        )
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.show_area(area, window, cx)
-                            }),
-                        )
-                }),
             )
             .into_any_element()
     }
@@ -235,7 +269,7 @@ impl Pilot {
             .trigger(
                 Button::new("context-switcher")
                     .ghost()
-                    .when(compact, |button| button.max_w(dp(180.)))
+                    .when(compact, |button| button.w(dp(SWITCHER_WIDTH)))
                     .h(dp(APP_HEADER_CONTROL))
                     .pl(dp(4.))
                     .pr(dp(8.))
@@ -364,7 +398,12 @@ impl Pilot {
     }
 
     /// Opens Search everything; it shrinks to its icon in a narrow window.
-    fn render_search_field(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_search_field(
+        &self,
+        window: &Window,
+        least: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = palette(cx);
         let narrow = window.viewport_size().width / ui::dp_px(1., window) < SEARCH_FIELD_MIN_WIDTH;
         h_flex()
@@ -377,7 +416,16 @@ impl Pilot {
             .when(narrow, |this| {
                 this.w(dp(APP_HEADER_CONTROL)).justify_center()
             })
-            .when(!narrow, |this| this.w(dp(240.)).px(dp(10.)))
+            .when(!narrow, |this| {
+                // A basis, not a width: a width counts whole towards the
+                // bar's minimum, so the bar would outgrow a narrow window.
+                this.flex_basis(dp(SEARCH_FIELD_WIDTH))
+                    .min_w(dp(least))
+                    .flex_grow_0()
+                    .flex_shrink_1()
+                    .px(dp(10.))
+            })
+            .when(narrow, |this| this.flex_none())
             .gap(dp(8.))
             .rounded(px(8.))
             .border_1()
