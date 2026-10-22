@@ -597,3 +597,207 @@ async fn a_prepared_action_is_consumed_so_a_run_is_sent_once() {
     let second = ready(&runner, fake::scale(3)).await;
     assert_ne!(first.run(), second.run());
 }
+
+// ---- The dialog each state and level asks for ----
+
+async fn dialog_for(level: Protection, action: ActionDescription) -> Dialog {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), level);
+    Dialog::for_verdict(&runner.preflight(action).await, "prod-fra")
+}
+
+#[tokio::test(start_paused = true)]
+async fn each_level_draws_the_dialog_the_table_names() {
+    use Protection::*;
+    // Read-only: disabled, with the reason, whatever the tier.
+    for action in [fake::scale(3), fake::set_image("x"), fake::delete_web()] {
+        assert_eq!(
+            dialog_for(ReadOnly, action).await,
+            Dialog::Disabled {
+                reason: "This cluster is read-only.".into()
+            }
+        );
+    }
+    // Open: a reversible action goes with no dialog and says so.
+    assert_eq!(
+        dialog_for(Open, fake::scale(3)).await,
+        Dialog::SendWithoutAsking {
+            notice: OPEN_NOTICE
+        }
+    );
+    // Guarded reversible: a plain confirm. Protected: the name.
+    let Dialog::Ask(ask) = dialog_for(Guarded, fake::scale(3)).await else {
+        panic!()
+    };
+    assert_eq!(
+        (ask.type_name.clone(), ask.cancel_window, ask.danger),
+        (None, None, false)
+    );
+    assert_eq!(ask.verb, "Scale");
+    let Dialog::Ask(ask) = dialog_for(Protected, fake::scale(3)).await else {
+        panic!()
+    };
+    assert_eq!(ask.type_name.as_deref(), Some("web"));
+    // Spec change at every level that allows it: the diff is in the dialog.
+    for level in [Protected, Guarded, Open] {
+        let Dialog::Ask(ask) = dialog_for(level, fake::set_image("registry.example/web:2")).await
+        else {
+            panic!("{level:?}")
+        };
+        assert_eq!(ask.diff[0].changes.len(), 1);
+        assert_eq!(ask.type_name.is_some(), level == Protected);
+    }
+    // Destructive: impact, a cancel window, and a dangerous confirm.
+    for level in [Protected, Guarded, Open] {
+        let Dialog::Ask(ask) = dialog_for(level, fake::delete_web()).await else {
+            panic!()
+        };
+        assert_eq!(ask.impact, ["Deployment/web"]);
+        assert_eq!(ask.cancel_window, Some(Duration::from_secs(5)));
+        assert!(ask.danger);
+        assert_eq!(ask.type_name.is_some(), level == Protected);
+    }
+    // Several objects: the entry id, typed once, and every object listed.
+    let Dialog::Ask(ask) = dialog_for(Protected, fake::scale_and_delete()).await else {
+        panic!()
+    };
+    assert_eq!(ask.type_name.as_deref(), Some("prod-fra"));
+    assert_eq!(ask.impact, ["Deployment/web", "Secret/db"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_changed_object_offers_only_to_review_the_new_version_and_a_deleted_one_nothing() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &json!({"spec": {"paused": true}}),
+    );
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner
+        .preflight(fake::set_image("registry.example/web:2"))
+        .await;
+    let Dialog::Changed { text, can_review } = Dialog::for_verdict(&verdict, "e") else {
+        panic!()
+    };
+    assert!(
+        can_review && text.contains("changed after you opened it"),
+        "{text}"
+    );
+    // Reviewing re-bases the action and runs preflight again: a fresh diff
+    // against the new version, still unsent and still asking.
+    let Verdict::Blocked(_) = verdict else {
+        panic!()
+    };
+    let writes = cluster.writes().len();
+    let rebased = runner
+        .review_new_version(fake::set_image("registry.example/web:2"))
+        .await
+        .unwrap();
+    assert_eq!(rebased.changes[0].target.resource_version, "1001");
+    let again = runner.preflight(rebased).await;
+    assert!(matches!(Dialog::for_verdict(&again, "e"), Dialog::Ask(_)));
+    assert_eq!(cluster.writes().len(), writes);
+    // Gone: nothing to review.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let mut action = fake::set_image("x");
+    action.changes[0].target.name = "missing".into();
+    let block = runner.preflight(action).await;
+    let Dialog::Changed { can_review, .. } = Dialog::for_verdict(&block, "e") else {
+        panic!("{block:?}")
+    };
+    assert!(!can_review);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_conflict_dialog_names_the_manager_and_fields_and_offers_no_force() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.refuse_dry_runs(
+        409,
+        "Apply failed with 1 conflict: conflict with \"hpa\" using apps/v1: .spec.replicas",
+    );
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner.preflight(fake::scale(3)).await;
+    let Dialog::Conflict {
+        managers,
+        fields,
+        text,
+    } = Dialog::for_verdict(&verdict, "e")
+    else {
+        panic!("{verdict:?}")
+    };
+    assert_eq!(
+        (managers, fields),
+        (vec!["hpa".to_owned()], vec![".spec.replicas".to_owned()])
+    );
+    assert!(
+        text.contains("The rest of the write was not sent."),
+        "{text}"
+    );
+    assert!(!text.to_lowercase().contains("force anyway"));
+    cluster.assert_nothing_written();
+}
+
+#[tokio::test(start_paused = true)]
+async fn refusals_before_the_dialog_are_refused_not_asked() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.deny_access();
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    assert!(matches!(
+        Dialog::for_verdict(&runner.preflight(fake::scale(3)).await, "e"),
+        Dialog::Refused { .. }
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_an_observed_success_is_allowed_to_go_away_by_itself() {
+    // Observed: not sticky.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let done = run(
+        &runner,
+        ready(&runner, fake::scale(3)).await,
+        Confirmation::Confirmed,
+    )
+    .await;
+    assert!(!done.sticky());
+    assert!(done.message().starts_with("Done."));
+    // Not observed, unknown, conflict, cancelled, not sent: all stay.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.never_reaches_the_state();
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let stuck = run(
+        &runner,
+        ready(&runner, fake::scale(3)).await,
+        Confirmation::Confirmed,
+    )
+    .await;
+    assert!(stuck.sticky());
+    assert!(
+        stuck
+            .message()
+            .contains("not seen to take effect after 30 s")
+    );
+    assert!(!stuck.message().to_lowercase().contains("done"));
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.drop_the_connection_on_writes();
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let unknown = run(
+        &runner,
+        ready(&runner, fake::scale(3)).await,
+        Confirmation::Confirmed,
+    )
+    .await;
+    assert!(unknown.sticky() && unknown.message().contains("not known whether it accepted"));
+    assert!(!unknown.message().to_lowercase().contains("done"));
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let unconfirmed = run(
+        &runner,
+        ready(&runner, fake::scale(3)).await,
+        Confirmation::NotAsked,
+    )
+    .await;
+    assert!(unconfirmed.sticky() && unconfirmed.message().contains("Nothing was sent"));
+}

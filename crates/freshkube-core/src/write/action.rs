@@ -158,6 +158,8 @@ pub struct ActionDescription {
     /// A stable id for the audit log, such as `scale`.
     pub kind: String,
     pub tier: Tier,
+    /// What the confirm button says: `Scale`, `Delete`.
+    pub verb: String,
     /// One sentence about what is sent, with no values that could be secret.
     pub sentence: String,
     pub changes: Vec<ObjectChange>,

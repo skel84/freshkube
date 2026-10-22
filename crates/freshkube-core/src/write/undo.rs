@@ -131,6 +131,7 @@ impl Runner {
         }
         let action = ActionDescription {
             kind: format!("undo:{}", offer.action),
+            verb: "Undo".to_owned(),
             tier: Tier::Reversible,
             sentence: format!("Undo: {}", offer.sentence),
             changes,

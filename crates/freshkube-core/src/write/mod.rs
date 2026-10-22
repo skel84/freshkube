@@ -8,7 +8,9 @@
 mod access;
 mod action;
 mod audit;
+mod dialog;
 mod diff;
+mod history;
 mod outcome;
 mod preflight;
 mod protection;
@@ -26,7 +28,9 @@ pub use audit::{
     AuditObject, AuditRequest, AuditStore, KEEP as AUDIT_KEEP, Phase, RESULT_LIMIT, ROTATE_AT,
     Read as AuditRead, Record as AuditRecord, RunId, SCHEMA as AUDIT_SCHEMA, scrub,
 };
+pub use dialog::{Ask, Dialog, OPEN_NOTICE, REVIEW_LABEL};
 pub use diff::{ChangeKind, FieldChange};
+pub use history::{History, Row as HistoryRow, Source, SourceFilter, load as load_history};
 pub use outcome::{Accepted, DEFAULT_WAIT, MAX_WAIT, Observed, Watching};
 pub use preflight::{Block, ObjectDiff, Prepared, Verdict, Who};
 pub use protection::{Protection, READ_ONLY_REASON};

@@ -338,6 +338,7 @@ fn replicas(count: u64) -> Observation {
 pub fn scale(count: u64) -> ActionDescription {
     ActionDescription {
         kind: "test-scale".into(),
+        verb: "Scale".into(),
         tier: Tier::Reversible,
         sentence: format!("Scale web to {count}"),
         changes: vec![ObjectChange {
@@ -366,6 +367,7 @@ pub fn scale(count: u64) -> ActionDescription {
 pub fn set_image(image: &str) -> ActionDescription {
     ActionDescription {
         kind: "test-set-image".into(),
+        verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Change web's image".into(),
         changes: vec![ObjectChange {
@@ -386,6 +388,7 @@ pub fn set_image(image: &str) -> ActionDescription {
 pub fn delete_web() -> ActionDescription {
     ActionDescription {
         kind: "test-delete".into(),
+        verb: "Delete".into(),
         tier: Tier::Destructive,
         sentence: "Delete web".into(),
         changes: vec![ObjectChange {
@@ -401,6 +404,7 @@ pub fn delete_web() -> ActionDescription {
 pub fn rotate_password() -> ActionDescription {
     ActionDescription {
         kind: "test-rotate".into(),
+        verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Rotate db's password".into(),
         changes: vec![ObjectChange {
