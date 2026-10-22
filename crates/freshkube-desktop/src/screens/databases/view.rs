@@ -350,6 +350,7 @@ impl Render for DatabasesScreen {
                                 .id("databases-notices")
                                 .test_support()
                                 .overflow_y_scroll()
+                                .restrict_scroll_to_axis()
                                 .children(notice)
                                 .children(failure),
                         )
