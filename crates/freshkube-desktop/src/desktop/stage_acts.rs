@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
-use gpui_kit::component::WindowExt;
 use crate::applications::{ActKind, KargoAt, StageAct};
 use crate::backend::spawn_job;
 use crate::mutation::{entry_level_cell, level_cell, write_audit_store};
@@ -19,6 +18,7 @@ use freshkube_core::write::{ActionDescription, AuditStore, LevelCell, Protection
 use freshkube_delivery::acts::{self, Pick, Slot, StageActs};
 use freshkube_delivery::change::Destination as StageDestination;
 use freshkube_delivery::entry;
+use gpui_kit::component::WindowExt;
 
 /// How long connecting to Kargo's cluster may take before nothing is sent.
 const CONNECT: Duration = Duration::from_secs(30);
@@ -105,10 +105,10 @@ impl Pilot {
                 }
                 let stage = act.change.stages.iter().find(|s| s.name == act.stage)?;
                 let destination = match &stage.cluster {
-                    StageDestination::Cluster(name) | StageDestination::Entry { entry: name, .. } => {
-                        self.entry_named(name, cx)
-                            .map(|entry| (entry.id.clone(), self.level_of_entry(&entry, cx)))
-                    }
+                    StageDestination::Cluster(name)
+                    | StageDestination::Entry { entry: name, .. } => self
+                        .entry_named(name, cx)
+                        .map(|entry| (entry.id.clone(), self.level_of_entry(&entry, cx))),
                     StageDestination::Unknown(_) => None,
                 };
                 let suffix = format!("{:x}", now.timestamp_millis());
@@ -124,7 +124,12 @@ impl Pilot {
         })
     }
 
-    pub(super) fn stage_act(&mut self, act: &StageAct, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn stage_act(
+        &mut self,
+        act: &StageAct,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(stage) = act.change.stages.iter().find(|s| s.name == act.stage) else {
             return;
         };
@@ -136,10 +141,7 @@ impl Pilot {
         };
         let kargo = self.kargo_cluster(act, cx);
         let Some(audit) = write_audit_store() else {
-            window.push_notification(
-                "The audit log can't be located, so nothing was sent.",
-                cx,
-            );
+            window.push_notification("The audit log can't be located, so nothing was sent.", cx);
             return;
         };
         let who = Who {

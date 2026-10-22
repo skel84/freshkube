@@ -71,7 +71,8 @@ impl ChangePage {
             leads: why.is_none().then_some(Leads::Act(kind, name.clone())),
         };
         let unread = || -> SharedString {
-            "The Stage's UID and version weren't read, so a change to it couldn't be checked.".into()
+            "The Stage's UID and version weren't read, so a change to it couldn't be checked."
+                .into()
         };
         let no_kargo = self.kargo_at().err();
         let Some(acts) = &stage.acts else {

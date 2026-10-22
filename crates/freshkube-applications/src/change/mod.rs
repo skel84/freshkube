@@ -14,10 +14,14 @@
 //! Its breadcrumb, and Escape with nothing selected, go back to the
 //! application's page.
 //! An action that leads into Resources goes through the shell, as every
-//! object link does; the page never approves, promotes or syncs.
+//! object link does. A Stage's own actions (Refresh, Reverify, Promote,
+//! Abort; `act.rs`) ask the shell to describe the write and send it through
+//! core's write module; approvals and syncs stay in Kargo and Argo CD.
+mod act;
+#[cfg(test)]
+mod act_tests;
 #[cfg(test)]
 mod cause_tests;
-mod act;
 mod chain;
 mod changes;
 mod detail;
@@ -55,10 +59,10 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::links::Connections;
-pub use act::{ActKind, KargoAt, StageAct};
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{LogsAt, LogsRequest, ResourceLink, Tab, model::ObjectRef};
+pub use act::{ActKind, KargoAt, StageAct};
 pub use changes::Changes;
 #[cfg(any(test, feature = "testing"))]
 pub use changes::LiveChanges;

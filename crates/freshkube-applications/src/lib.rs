@@ -105,8 +105,10 @@ use gpui_kit::*;
 
 use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
+pub use change::{
+    ActKind, KargoAt, Links as CorootLinks, Live as CorootLive, OutcomeKind, StageAct,
+};
 use change::{ChangeEvent, ChangePage, Changes, Coroot};
-pub use change::{ActKind, KargoAt, Links as CorootLinks, Live as CorootLive, OutcomeKind, StageAct};
 use changes::ChangesEvent;
 pub use changes::ChangesPage;
 pub use column::Column;

@@ -78,10 +78,7 @@ impl Global for GlobalOperations {}
 /// operation slot: one level at a time, like the one slot. It is a shared
 /// cell, so a write's runner follows it and reads it again just before it
 /// sends (#853).
-pub(crate) struct GlobalProtection(
-    LevelCell,
-    std::collections::HashMap<String, LevelCell>,
-);
+pub(crate) struct GlobalProtection(LevelCell, std::collections::HashMap<String, LevelCell>);
 
 impl Default for GlobalProtection {
     fn default() -> Self {
