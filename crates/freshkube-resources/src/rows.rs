@@ -83,6 +83,8 @@ pub use freshkube_core::resources::died;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PodRow {
     pub(crate) state: PodState,
+    /// Actual init work reported by the status, derived on arrival.
+    pub(crate) initializing: bool,
     /// The printed status, as `kubectl get pods` shows it.
     pub(crate) status: String,
     /// Shown after the name while the pod isn't healthy:
@@ -322,6 +324,7 @@ pub(crate) fn pod_row(
         .collect();
     PodRow {
         state,
+        initializing: !terminating && facts.is_initializing(),
         status,
         reason,
         all_ready: ready_counts.is_none_or(|(up, all)| up == all),
