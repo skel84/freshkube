@@ -23,11 +23,11 @@ mod report;
 mod tests;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use freshkube_core::write::{
     ActionDescription, Confirmation, Dialog, Event, Finished, NotSent, Prepared, Runner, Status,
-    Verdict,
+    UndoOffer, UndoRefused, Verdict,
 };
 use gpui_kit::component::{
     WindowExt,
@@ -51,6 +51,18 @@ pub(crate) struct WriteRequest {
     pub(crate) runner: Arc<Runner>,
     pub(crate) runtime: Handle,
     pub(crate) action: ActionDescription,
+    /// Set for Undo: every check of it, a re-check under a stricter level
+    /// included, goes through `prepare_undo` so its guard is checked again
+    /// and Review can never put the old value back over someone else's write.
+    pub(crate) undo: Option<UndoSource>,
+}
+
+/// What an Undo flow re-checks from, and when its window started counting.
+#[derive(Clone)]
+pub(crate) struct UndoSource {
+    pub(crate) offer: UndoOffer,
+    pub(crate) elapsed: Duration,
+    pub(crate) at: Instant,
 }
 
 /// Where the dialog is.
@@ -146,11 +158,27 @@ impl WriteFlow {
         self.stage = Stage::Checking;
         self.prepared = None;
         let (runner, action) = (self.request.runner.clone(), self.request.action.clone());
+        let undo = self.request.undo.clone().map(|source| {
+            let spent = source.elapsed
+                + cx.background_executor()
+                    .now()
+                    .saturating_duration_since(source.at);
+            (source.offer, spent)
+        });
         let (job, receiver) = spawn_job(
             &self.request.runtime,
             CHECK_DEADLINE,
             "The cluster did not answer in time. Nothing was sent.".to_owned(),
-            async move { Ok::<_, String>(runner.preflight(action).await) },
+            async move {
+                Ok::<_, String>(match undo {
+                    None => runner.preflight(action).await,
+                    Some((offer, spent)) => match runner.prepare_undo(&offer, spent).await {
+                        Ok(prepared) => Verdict::Ready(Box::new(prepared)),
+                        Err(UndoRefused::Blocked(block)) => Verdict::Blocked(block),
+                        Err(refused) => return Err(refused.text()),
+                    },
+                })
+            },
         );
         let task = cx.spawn_in(window, async move |this, cx| {
             let verdict = receiver

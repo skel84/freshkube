@@ -77,6 +77,7 @@ impl Harness {
             runner: self.runner.clone(),
             runtime: self.runtime.handle().clone(),
             action,
+            undo: None,
         };
         let flow = cx
             .update_window(self.handle, |_, window, cx| start(request, window, cx))
@@ -572,4 +573,40 @@ fn a_level_that_got_stricter_while_the_dialog_was_open_asks_again(cx: &mut TestA
     h.click(cx, "write-confirm");
     h.drive(cx, Duration::from_secs(3));
     assert_eq!(h.cluster.writes().len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_worker_that_died_reads_as_unknown_and_never_as_not_sent(_cx: &mut TestAppContext) {
+    use freshkube_core::write::{Headline, Status};
+    let finished = super::report::stopped();
+    assert_eq!(finished.headline(), Headline::Unknown);
+    assert!(!matches!(finished.status, Status::NotSent(_)));
+    assert!(finished.message().contains("It is not known whether it accepted the write"));
+}
+
+#[gpui_kit::test]
+fn an_undo_asked_again_under_a_stricter_level_keeps_its_guard(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Guarded);
+    h.begin(cx, fake::scale(3));
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.cluster.writes().len(), 1);
+    h.click(cx, "write-undo");
+    h.drive(cx, Duration::from_secs(2));
+    assert!(h.present(cx, "write-dialog"));
+    // The level gets stricter, and someone else writes before Undo is sent.
+    cx.update(|cx| set_protection(Protection::Protected, cx));
+    h.cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "hpa",
+        &serde_json::json!({"spec": {"replicas": 5}}),
+    );
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    // Asked again, the check is Undo's own: its guard no longer holds, so
+    // the old value is not offered back over the other writer's.
+    assert!(h.present(cx, "write-refused") || h.present(cx, "write-changed"));
+    assert!(!h.present(cx, "write-confirm"));
+    assert_eq!(h.cluster.writes().len(), 1);
+    assert_eq!(h.replicas(), 5);
 }

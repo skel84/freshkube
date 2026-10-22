@@ -18,7 +18,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
-use super::{WriteRequest, start_prepared};
+use super::{UndoSource, WriteRequest, start_prepared};
 use crate::backend::spawn_job;
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
@@ -194,6 +194,11 @@ impl WriteReport {
         );
         self.undo = Undo::Running;
         let runner = self.runner.clone();
+        let source = UndoSource {
+            offer: offer.clone(),
+            elapsed,
+            at: cx.background_executor().now(),
+        };
         let (job, receiver) = spawn_job(
             &self.runtime,
             Duration::from_secs(30),
@@ -206,7 +211,7 @@ impl WriteReport {
                 .await
                 .unwrap_or_else(|_| Err("Checking stopped unexpectedly. Nothing was sent.".into()));
             _ = this.update_in(cx, |report, window, cx| match prepared {
-                Ok(Ok(prepared)) => report.run_undo(prepared, window, cx),
+                Ok(Ok(prepared)) => report.run_undo(prepared, source, window, cx),
                 Ok(Err(refused)) => report.undone(refused.text(), false, cx),
                 Err(text) => report.undone(format!("Can't undo: {text}"), false, cx),
             });
@@ -226,6 +231,7 @@ impl WriteReport {
     fn run_undo(
         &mut self,
         prepared: freshkube_core::write::Prepared,
+        source: UndoSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -233,6 +239,7 @@ impl WriteReport {
             runner: self.runner.clone(),
             runtime: self.runtime.clone(),
             action: prepared.description().clone(),
+            undo: Some(source),
         };
         start_prepared(request, prepared, window, cx);
         self.undo = Undo::Handed;

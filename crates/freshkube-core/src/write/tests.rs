@@ -1014,6 +1014,38 @@ async fn a_level_that_got_stricter_after_preflight_sends_nothing_and_asks_again(
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_level_that_changes_during_the_cancel_window_decides_the_send() {
+    use Protection::*;
+    for (becomes, read_only) in [(ReadOnly, true), (Protected, false)] {
+        let (cluster, dir) = (Cluster::new(), tmp());
+        let level = LevelCell::new(Guarded);
+        let runner = fake::runner(&cluster, dir.path(), Guarded).following(level.clone());
+        let prepared = ready(&runner, fake::delete_web()).await;
+        let started = tokio::time::Instant::now();
+        let finished = runner
+            .execute(
+                *prepared,
+                Confirmation::Confirmed,
+                || {
+                    if started.elapsed() >= Duration::from_secs(2) {
+                        level.set(becomes);
+                    }
+                    false
+                },
+                |_| {},
+            )
+            .await;
+        match finished.status {
+            Status::NotSent(NotSent::ReadOnly(_)) => assert!(read_only),
+            Status::NotSent(NotSent::LevelChanged(now)) => assert!(!read_only && now == Protected),
+            other => panic!("{other:?}"),
+        }
+        cluster.assert_nothing_written();
+        assert!(phases(&AuditStore::new(dir.path().join("audit"))).is_empty());
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn the_audit_line_records_the_level_at_send_time() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let level = LevelCell::new(Protection::Guarded);

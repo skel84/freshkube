@@ -281,6 +281,13 @@ impl Runner {
             Block::Conflict { .. } => Phase::Conflict,
             _ => return,
         };
-        let _ = self.record(run, action, &[change], phase, &scrub(&block.text()));
+        let _ = self.record(
+            run,
+            action,
+            self.level_for(action),
+            &[change],
+            phase,
+            &scrub(&block.text()),
+        );
     }
 }

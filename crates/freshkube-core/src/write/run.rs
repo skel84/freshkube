@@ -240,6 +240,7 @@ impl Runner {
         &self,
         run: &RunId,
         action: &ActionDescription,
+        level: Protection,
         objects: &[&ObjectChange],
         phase: Phase,
         result: &str,
@@ -253,7 +254,7 @@ impl Runner {
             actor: self.who.actor.clone(),
             action: action.kind.clone(),
             tier: action.tier.key().to_owned(),
-            protection: action.level(self.level.get()).key().to_owned(),
+            protection: level.key().to_owned(),
             objects: objects.iter().map(|change| audit_object(change)).collect(),
             request: AuditRequest {
                 sentence: scrub(&action.sentence),
@@ -298,23 +299,16 @@ impl Runner {
         if description.tier == super::Tier::Session {
             return finished(Status::NotSent(NotSent::Session), vec![], None, None);
         }
-        // Read again just before the send, not as it was when the dialog opened.
-        let now = self.level_for(&description);
-        if let Some(reason) = now.refusal().or(requirement.blocked) {
-            return finished(
-                Status::NotSent(NotSent::ReadOnly(reason)),
-                vec![],
-                None,
-                None,
-            );
-        }
-        if now < prepared_level {
-            return finished(
-                Status::NotSent(NotSent::LevelChanged(now)),
-                vec![],
-                None,
-                None,
-            );
+        // Read again, not as it was when the dialog opened; and once more
+        // after the cancel window, which is what decides the send.
+        let refused_at = |level: Protection| -> Option<NotSent> {
+            if let Some(reason) = level.refusal().or(requirement.blocked) {
+                return Some(NotSent::ReadOnly(reason));
+            }
+            (level < prepared_level).then_some(NotSent::LevelChanged(level))
+        };
+        if let Some(not_sent) = refused_at(self.level_for(&description)) {
+            return finished(Status::NotSent(not_sent), vec![], None, None);
         }
         if !requirement.satisfied_by(&confirmation, &description.names(), &self.who.entry) {
             return finished(Status::NotSent(NotSent::Unconfirmed), vec![], None, None);
@@ -326,22 +320,29 @@ impl Runner {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
+        // The one reading the send is decided on, and the level every audit
+        // line of this run records.
+        let level = self.level_for(&description);
         if cancel() {
             let _ = self.record(
                 &run,
                 &description,
+                level,
                 &all,
                 Phase::Cancelled,
                 "Cancelled before sending.",
             );
             return finished(Status::Cancelled, vec![], None, None);
         }
+        if let Some(not_sent) = refused_at(level) {
+            return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
         let first = if is_undo {
             Phase::UndoSent
         } else {
             Phase::Sending
         };
-        if let Err(error) = self.record(&run, &description, &all, first, "") {
+        if let Err(error) = self.record(&run, &description, level, &all, first, "") {
             return finished(
                 Status::NotSent(NotSent::AuditUnavailable(error.to_string())),
                 vec![],
@@ -382,6 +383,7 @@ impl Runner {
                     note(self.record(
                         &run,
                         &description,
+                        level,
                         &one,
                         Phase::Accepted,
                         "The API accepted it.",
@@ -400,6 +402,7 @@ impl Runner {
                     note(self.record(
                         &run,
                         &description,
+                        level,
                         &one,
                         Phase::Conflict,
                         &format!(
@@ -411,17 +414,25 @@ impl Runner {
                     Step::Conflict(conflict)
                 }
                 Err(Refusal::Changed(what)) => {
-                    note(self.record(&run, &description, &one, Phase::Conflict, what.text()));
+                    note(self.record(
+                        &run,
+                        &description,
+                        level,
+                        &one,
+                        Phase::Conflict,
+                        what.text(),
+                    ));
                     Step::Changed(what)
                 }
                 Err(Refusal::Denied(message)) => {
-                    note(self.record(&run, &description, &one, Phase::Refused, &message));
+                    note(self.record(&run, &description, level, &one, Phase::Refused, &message));
                     Step::Denied(message)
                 }
                 Err(Refusal::Rejected { code, message }) => {
                     note(self.record(
                         &run,
                         &description,
+                        level,
                         &one,
                         Phase::Refused,
                         &format!("{code}: {message}"),
@@ -432,6 +443,7 @@ impl Runner {
                     note(self.record(
                         &run,
                         &description,
+                        level,
                         &one,
                         Phase::Unknown,
                         &format!("No answer: {message}. Whether the cluster took it is not known."),
@@ -474,7 +486,7 @@ impl Runner {
                 ),
                 Observed::Diverged { why } => (Phase::NotObserved, (*why).to_owned()),
             };
-            note(self.record(&run, &description, &[change], phase, &text));
+            note(self.record(&run, &description, level, &[change], phase, &text));
             if let Some(Step::Accepted { observed: slot, .. }) =
                 results.get_mut(index).map(|r| &mut r.step)
             {
@@ -491,6 +503,7 @@ impl Runner {
             let _ = self.record(
                 &run,
                 &description,
+                level,
                 &all,
                 Phase::UndoOffered,
                 &format!("Undo offered for {} s.", offer.window.as_secs()),
