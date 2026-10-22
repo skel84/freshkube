@@ -306,6 +306,7 @@ mod tests {
                 .any(|n| n.starts_with("AWS") || n.contains("KEY") || n.contains("TOKEN"))
         );
         assert_eq!(env["LANG"], "de_DE.UTF-8");
+        #[cfg(unix)]
         assert_eq!(
             env["PATH"],
             "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"

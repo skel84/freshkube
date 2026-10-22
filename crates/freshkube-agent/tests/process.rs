@@ -66,7 +66,13 @@ async fn the_token_reaches_the_agent_only_in_session_new() {
 async fn the_child_starts_from_a_cleared_environment() {
     let (report, _stub) = environment(&[]).await;
     let env = report["env"].as_object().unwrap();
-    let mut names: Vec<&str> = env.keys().map(String::as_str).collect();
+    // The system may add its own `__`-prefixed variable to a started process
+    // (macOS adds `__CF_USER_TEXT_ENCODING`).
+    let mut names: Vec<&str> = env
+        .keys()
+        .map(String::as_str)
+        .filter(|name| !name.starts_with("__"))
+        .collect();
     names.sort_unstable();
     // Only what the profile sets; nothing of the test process's.
     assert_eq!(
