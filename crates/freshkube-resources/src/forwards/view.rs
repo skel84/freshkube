@@ -125,6 +125,45 @@ pub struct ForwardView {
 }
 
 impl ForwardView {
+    pub(super) fn matches_service(
+        &self,
+        connection: &str,
+        namespace: &str,
+        service: &str,
+        port: u16,
+    ) -> bool {
+        self.spec.identity.resource == "services"
+            && self.spec.identity.name == service
+            && self.spec.identity.connection == connection
+            && self.spec.identity.namespace == namespace
+            && self.spec.port == port
+            && matches!(&self.spec.target, ForwardTarget::Service { name } if name == service)
+    }
+
+    pub fn snapshot(&self) -> super::Snapshot {
+        use super::State;
+        let state = match self.phase {
+            Phase::Starting => State::Starting,
+            Phase::Ended => State::Ended(self.end.clone().expect("an ended forward has a reason")),
+            Phase::Running => match self.status.as_ref().map(|status| &status.state) {
+                Some(ForwardState::Listening { .. }) => State::Listening(
+                    std::num::NonZeroU16::new(
+                        self.local_port.expect("a running forward has a port"),
+                    )
+                    .expect("a bound port is nonzero"),
+                ),
+                _ => State::NoReadyPod,
+            },
+        };
+        super::Snapshot {
+            epoch: super::Epoch {
+                id: self.id,
+                start: self.seq,
+            },
+            state,
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn run_with_status(
         &mut self,
@@ -188,6 +227,9 @@ impl ForwardView {
     }
 
     pub(crate) fn address(&self) -> Option<String> {
+        if super::example_results::matches(&self.spec) {
+            return None;
+        }
         self.local_port.map(|port| format!("localhost:{port}"))
     }
 
@@ -325,6 +367,27 @@ impl ForwardView {
         fallback: Option<ForwardRequest>,
         cx: &mut Context<Self>,
     ) {
+        if super::example_results::matches(&self.spec) {
+            let task = cx.spawn(async move |this, cx| {
+                // Let fixture smoke observe Starting without running I/O.
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                _ = this.update(cx, |view, cx| {
+                    if view.seq != seq || view.phase != Phase::Starting {
+                        return;
+                    }
+                    let ExampleForward {
+                        local_port,
+                        status,
+                        guard,
+                    } = super::example_results::start(&view.spec.runtime);
+                    view.run(seq, local_port, status, Guard::Example(guard), cx);
+                });
+            });
+            self.session = Some(Session::Binding { _task: task });
+            self.describe();
+            cx.notify();
+            return;
+        }
         let route = match example::route(
             &self.spec.context,
             &self.spec.identity,
@@ -486,9 +549,13 @@ impl ForwardView {
             spec.identity.namespace,
             spec.identity.name
         );
-        let local = match self.local_port {
-            Some(port) => format!("localhost:{port}"),
-            None => "localhost".to_owned(),
+        let local = if super::example_results::matches(spec) {
+            "Example transport (no socket)".to_owned()
+        } else {
+            match self.local_port {
+                Some(port) => format!("localhost:{port}"),
+                None => "localhost".to_owned(),
+            }
         };
         let pod = match self.status.as_ref().map(|status| &status.state) {
             Some(ForwardState::Listening { pod, port }) if self.phase == Phase::Running => {

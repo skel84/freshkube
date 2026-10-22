@@ -49,3 +49,10 @@ base64.workspace = true
 http.workspace = true
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+bytes.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+tokio-rustls.workspace = true
+tokio-tungstenite.workspace = true

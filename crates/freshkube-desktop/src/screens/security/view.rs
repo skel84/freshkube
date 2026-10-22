@@ -24,7 +24,7 @@ impl SecurityScreen {
     fn render_details(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let selection = self.selected.as_ref()?;
         let p = palette(cx);
-        let inspector = Inspector::new("security-detail");
+        let inspector = Inspector::new("security-detail").selection(&selection.key);
         let Some(item) = self.selected_item() else {
             // A row that a refresh dropped, or that changed past
             // recognition, keeps its name until the selection moves.

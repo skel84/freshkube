@@ -217,6 +217,12 @@ impl ChangePage {
         if detail.fix.is_some() {
             detail.banner = None;
         }
+        if let Some(banner) = self.results_example_banner(&hop.key) {
+            if let Some(fix) = detail.fix.as_mut() {
+                fix.why = banner.2.clone();
+            }
+            detail.banner = Some(banner);
+        }
         if self.link_selected {
             detail.leading_link = match &hop.shows {
                 Shows::Hop(hop) => hop.link.as_ref(),
@@ -441,6 +447,9 @@ impl ChangePage {
             .heading(heading(detail, cx))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
+                    .id("change-detail-notice")
+                    .aria_label(body.clone())
+                    .test_support()
             }));
         let fix = detail.fix.as_ref().map(|fix| self.render_fix(fix, cx));
         let inspector = inspector.children(fix);
@@ -609,6 +618,7 @@ impl ChangePage {
             .gap(dp(6.))
             .flex_wrap()
             .children(buttons)
+            .children(self.results_action(cx))
             .into_any_element()
     }
 }

@@ -1,7 +1,8 @@
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    AnyWindowHandle, Bounds, Context, Render, ScrollDelta, TestAppContext, point, px, size,
+    AnyWindowHandle, Bounds, Context, Render, ScrollDelta, ScrollWheelEvent, TestAppContext,
+    TouchPhase, point, px, size,
 };
 
 use super::*;
@@ -16,6 +17,8 @@ struct Page {
     split: InspectorSplit,
     beside: bool,
     open: bool,
+    /// What the inspector shows; the body goes back to the top when it changes.
+    selection: u32,
     /// The table's own height, given to the split while rendering.
     lead: Option<f32>,
     /// The table's least width and the split's room beside it.
@@ -37,6 +40,7 @@ impl Render for Page {
             .into_any_element();
         let inspector = self.open.then(|| {
             Inspector::new("inspector")
+                .selection(self.selection)
                 .heading(div().id("inspector-title").test_support().child("INC-12"))
                 .child(
                     div()
@@ -101,6 +105,7 @@ fn open_with(
             split: InspectorSplit::new(PAGE, cx).stacked(heights),
             beside,
             open,
+            selection: 0,
             lead: None,
             keep: None,
         });
@@ -438,7 +443,24 @@ fn a_page_sets_the_stacked_heights(cx: &mut TestAppContext) {
 /// A short table page: a toolbar, then a table that leads with a group row
 /// and has a footer, over an inspector whose first field follows its
 /// heading, in a frame that scrolls.
-struct ShortPage(InspectorSplit);
+struct ShortPage {
+    split: InspectorSplit,
+    /// The height of the inspector's last line, in dp.
+    tall: f32,
+    selection: u32,
+    open: bool,
+}
+
+impl ShortPage {
+    fn new(split: InspectorSplit) -> Self {
+        Self {
+            split,
+            tall: 2000.,
+            selection: 0,
+            open: true,
+        }
+    }
+}
 
 impl Render for ShortPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -472,25 +494,21 @@ impl Render for ShortPage {
             )
             .child(line("footer", crate::table::FOOTER_HEIGHT))
             .into_any_element();
-        let inspector = Inspector::new("inspector")
-            .heading(div().id("inspector-title").test_support().child("checkout"))
-            .child(line("inspector-field", 20.))
-            .child(line("inspector-tall", 2000.))
-            .render(cx)
-            .into_any_element();
+        let inspector = self.open.then(|| {
+            Inspector::new("inspector")
+                .selection(self.selection)
+                .heading(div().id("inspector-title").test_support().child("checkout"))
+                .child(line("inspector-field", 20.))
+                .child(line("inspector-tall", self.tall))
+                .render(cx)
+                .into_any_element()
+        });
         v_flex()
             .id("frame")
             .size_full()
             .overflow_y_scroll()
             .child(line("toolbar", 2. * crate::page::TOOLBAR_HEIGHT))
-            .child(split(
-                "split",
-                &self.0,
-                false,
-                table,
-                Some(inspector),
-                window,
-            ))
+            .child(split("split", &self.split, false, table, inspector, window))
     }
 }
 
@@ -506,7 +524,7 @@ fn a_short_stacked_split_keeps_a_whole_row_and_the_first_field(cx: &mut TestAppC
         crate::text_size::set(20., cx);
     });
     let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
-        let view = cx.new(|cx| ShortPage(InspectorSplit::new(PAGE, cx)));
+        let view = cx.new(|cx| ShortPage::new(InspectorSplit::new(PAGE, cx)));
         Root::new(view, window, cx)
     });
     cx.run_until_parked();
@@ -539,6 +557,73 @@ fn a_short_stacked_split_keeps_a_whole_row_and_the_first_field(cx: &mut TestAppC
             "the first field shows: it ends at {:?}, the inspector at {:?}",
             field.bottom(),
             inspector.bottom()
+        );
+    })
+    .unwrap();
+}
+
+/// At 760 by 560 with text size 20 the wheel over a stacked inspector's body
+/// scrolls the body, and the frame stays until the body reaches its end.
+#[gpui_kit::test]
+fn the_wheel_over_a_short_stacked_body_scrolls_the_body(cx: &mut TestAppContext) {
+    install(cx);
+    cx.update(|cx| {
+        set_store(Rc::new(MemorySizes::default()), cx);
+        crate::text_size::set(20., cx);
+    });
+    let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+        let view = cx.new(|cx| ShortPage::new(InspectorSplit::new(PAGE, cx)));
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        settle(window, cx);
+        let toolbar = window.find("toolbar").bounds().top();
+        let tall = window.find("inspector-tall").bounds().top();
+        window.scroll(
+            "inspector-body",
+            ScrollDelta::Pixels(point(px(0.), px(-40.))),
+            cx,
+        );
+        settle(window, cx);
+        close(
+            "the frame stays",
+            window.find("toolbar").bounds().top(),
+            toolbar,
+        );
+        close(
+            "the body moved",
+            window.find("inspector-tall").bounds().top(),
+            tall - px(40.),
+        );
+        // At its end the body lets the wheel through, and the frame scrolls.
+        let wheel = |window: &mut Window, delta: Pixels, cx: &mut App| {
+            window.scroll(
+                "inspector-body",
+                ScrollDelta::Pixels(point(px(0.), delta)),
+                cx,
+            );
+            settle(window, cx);
+        };
+        let left = window.find("inspector-tall").bounds().bottom()
+            - window.find("inspector-body").bounds().bottom();
+        wheel(window, -left, cx);
+        close(
+            "the frame stays",
+            window.find("toolbar").bounds().top(),
+            toolbar,
+        );
+        let end = window.find("inspector-tall").bounds().bottom();
+        let frame = window.find("toolbar").bounds().top();
+        wheel(window, px(-100.), cx);
+        assert!(
+            window.find("toolbar").bounds().top() < frame,
+            "the frame scrolls once the body is at its end"
+        );
+        close(
+            "the body stays at its end",
+            window.find("inspector-tall").bounds().bottom(),
+            end + (window.find("toolbar").bounds().top() - frame),
         );
     })
     .unwrap();
@@ -1036,4 +1121,301 @@ fn a_chevron_pages_the_strip(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+struct TallBanner(InspectorSplit, Rc<Cell<usize>>);
+impl Render for TallBanner {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let clicks = self.1.clone();
+        div().size_full().flex().child(split(
+            "banner-split",
+            &self.0,
+            false,
+            div().size_full().into_any_element(),
+            Some(
+                Inspector::new("banner-inspector")
+                    .heading("Pruned PipelineRun")
+                    .banner(Some(
+                        div().h(dp(500.)).child("Not found; retained evidence"),
+                    ))
+                    .child("Retained fields")
+                    .footer(Some(
+                        gpui_kit::component::button::Button::new("banner-forward")
+                            .label("Forward")
+                            .on_click(move |_, _, _| clicks.set(clicks.get() + 1)),
+                    ))
+                    .render(cx)
+                    .into_any_element(),
+            ),
+            window,
+        ))
+    }
+}
+
+#[gpui_kit::test]
+fn stacked_inspector_with_tall_banner_keeps_footer_reachable_at_text_twenty(
+    cx: &mut TestAppContext,
+) {
+    install(cx);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    let clicked = Rc::new(Cell::new(0));
+    let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+        let view = cx.new(|cx| {
+            TallBanner(
+                InspectorSplit::new("banner-regression", cx),
+                clicked.clone(),
+            )
+        });
+        Root::new(view, window, cx)
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        settle(window, cx);
+        let inspector = window.find("banner-inspector").bounds();
+        let action = window.find("banner-forward").bounds();
+        assert!(
+            action.bottom() <= inspector.bottom(),
+            "footer {action:?}, inspector {inspector:?}"
+        );
+        window.click("banner-forward", cx);
+        assert_eq!(clicked.get(), 1);
+    })
+    .unwrap();
+}
+
+/// The short page at 760 by 560 and text size 20, where the frame scrolls
+/// around a stacked split.
+fn short_page(cx: &mut TestAppContext, tall: f32) -> (AnyWindowHandle, Entity<ShortPage>) {
+    install(cx);
+    cx.update(|cx| {
+        set_store(Rc::new(MemorySizes::default()), cx);
+        crate::text_size::set(20., cx);
+    });
+    let mut page = None;
+    let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = ShortPage::new(InspectorSplit::new(PAGE, cx));
+            view.tall = tall;
+            view
+        });
+        page = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    (handle.into(), page.unwrap())
+}
+
+/// Where the body is scrolled to, from the first line's place in it.
+fn body_offset(window: &mut Window) -> Pixels {
+    window.find("inspector-field").bounds().top() - window.find("inspector-body").bounds().top()
+}
+
+fn frame_top(window: &mut Window) -> Pixels {
+    window.find("toolbar").bounds().top()
+}
+
+fn wheel(window: &mut Window, over: &'static str, delta: ScrollDelta, cx: &mut App) {
+    window.scroll(over, delta, cx);
+    settle(window, cx);
+}
+
+fn up(by: f32) -> ScrollDelta {
+    ScrollDelta::Pixels(point(px(0.), px(-by)))
+}
+
+/// One event of a trackpad gesture over `over`, in `phase`.
+fn gesture(
+    window: &mut Window,
+    over: &'static str,
+    by: f32,
+    touch_phase: TouchPhase,
+    cx: &mut App,
+) {
+    use gpui_kit::InputEvent as _;
+    window.hover(over, cx);
+    window.dispatch_event(
+        ScrollWheelEvent {
+            position: window.find(over).bounds().center(),
+            delta: up(by),
+            touch_phase,
+            ..Default::default()
+        }
+        .to_platform_input(),
+        cx,
+    );
+    settle(window, cx);
+}
+
+/// What was scrolled in the body stays with the body only until the
+/// selection moves or the inspector closes: a new selection starts at the
+/// top, and so does the inspector when it opens again.
+#[gpui_kit::test]
+fn the_body_goes_back_to_the_top_on_another_selection_and_on_reopening(cx: &mut TestAppContext) {
+    let (handle, page) = short_page(cx, 2000.);
+    let scrolled = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            wheel(window, "inspector-body", up(40.), cx);
+            body_offset(window)
+        })
+        .unwrap()
+    };
+    let top = cx
+        .update_window(handle, |_, window, cx| {
+            settle(window, cx);
+            body_offset(window)
+        })
+        .unwrap();
+    close("scrolled", scrolled(cx), top - px(40.));
+    page.update(cx, |page, cx| {
+        page.selection = 1;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        close("another selection", body_offset(window), top);
+    })
+    .unwrap();
+    close("scrolled again", scrolled(cx), top - px(40.));
+    for open in [false, true] {
+        page.update(cx, |page, cx| {
+            page.open = open;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| settle(window, cx))
+            .unwrap();
+    }
+    cx.update_window(handle, |_, window, _| {
+        close("reopened", body_offset(window), top);
+    })
+    .unwrap();
+}
+
+/// A body that fits has nothing to scroll, so the wheel over it is the
+/// page's.
+#[gpui_kit::test]
+fn a_body_that_fits_passes_the_wheel_to_the_page(cx: &mut TestAppContext) {
+    let (handle, _) = short_page(cx, 4.);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        let (top, frame) = (body_offset(window), frame_top(window));
+        wheel(window, "inspector-body", up(40.), cx);
+        assert!(frame_top(window) < frame, "the page scrolls");
+        close("the body stays", body_offset(window), top);
+    })
+    .unwrap();
+}
+
+/// A wheel that turns sideways more than up is not the body's.
+#[gpui_kit::test]
+fn a_sideways_wheel_passes_through_the_body(cx: &mut TestAppContext) {
+    let (handle, _) = short_page(cx, 2000.);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        let top = body_offset(window);
+        wheel(
+            window,
+            "inspector-body",
+            ScrollDelta::Pixels(point(px(-60.), px(-10.))),
+            cx,
+        );
+        close("the body stays", body_offset(window), top);
+    })
+    .unwrap();
+}
+
+/// A mouse wheel's line deltas move the body by lines.
+#[gpui_kit::test]
+fn a_wheel_in_lines_scrolls_the_body(cx: &mut TestAppContext) {
+    let (handle, _) = short_page(cx, 2000.);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        let (top, frame) = (body_offset(window), frame_top(window));
+        let lines = window.line_height() * 3.;
+        wheel(
+            window,
+            "inspector-body",
+            ScrollDelta::Lines(point(0., -3.)),
+            cx,
+        );
+        close("the body moved", body_offset(window), top - lines);
+        close("the page stays", frame_top(window), frame);
+    })
+    .unwrap();
+}
+
+/// Beside the table nothing scrolls around the split: the wheel over the
+/// body moves the body, and over the table it leaves the body alone.
+#[gpui_kit::test]
+fn beside_the_table_the_wheel_moves_what_it_is_over(cx: &mut TestAppContext) {
+    let (handle, _, _) = open(cx, None, true, true);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tall = window.find("inspector-tall").bounds().top();
+        window.scroll("table", up(100.), cx);
+        window.render_frame(cx);
+        close(
+            "the table's wheel",
+            window.find("inspector-tall").bounds().top(),
+            tall,
+        );
+        window.scroll("inspector-body", up(100.), cx);
+        window.render_frame(cx);
+        close(
+            "the body's wheel",
+            window.find("inspector-tall").bounds().top(),
+            tall - px(100.),
+        );
+        // At its end the body keeps the wheel from nothing: there is no
+        // page behind it to take it.
+        window.scroll("inspector-body", up(5000.), cx);
+        window.render_frame(cx);
+        window.scroll("inspector-body", up(100.), cx);
+        window.render_frame(cx);
+        assert!(
+            window.find("inspector-tall").bounds().bottom()
+                <= window.viewport_size().height + px(1.)
+        );
+    })
+    .unwrap();
+}
+
+/// A flick that starts on a body with room stays on it to the end of its
+/// momentum, and a gesture that starts at the body's end is the page's.
+#[gpui_kit::test]
+fn a_gesture_stays_with_whoever_it_started_on(cx: &mut TestAppContext) {
+    let (handle, _) = short_page(cx, 2000.);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        let frame = frame_top(window);
+        gesture(window, "inspector-body", 10., TouchPhase::Started, cx);
+        gesture(window, "inspector-body", 5000., TouchPhase::Moved, cx);
+        let end = body_offset(window);
+        // The fingers lift and the momentum goes on past the body's end.
+        gesture(window, "inspector-body", 10., TouchPhase::Ended, cx);
+        gesture(window, "inspector-body", 300., TouchPhase::Moved, cx);
+        close("the flick stays on the body", frame_top(window), frame);
+        close("at its end", body_offset(window), end);
+        // A new gesture at the end belongs to the page.
+        gesture(window, "inspector-body", 10., TouchPhase::Started, cx);
+        gesture(window, "inspector-body", 100., TouchPhase::Moved, cx);
+        assert!(frame_top(window) < frame, "the page scrolls");
+    })
+    .unwrap();
+}
+
+/// The page's momentum is not taken by a body it passes over.
+#[gpui_kit::test]
+fn a_gesture_that_started_on_the_page_is_not_taken_by_the_body(cx: &mut TestAppContext) {
+    let (handle, _) = short_page(cx, 2000.);
+    cx.update_window(handle, |_, window, cx| {
+        settle(window, cx);
+        let (top, frame) = (body_offset(window), frame_top(window));
+        gesture(window, "toolbar", 10., TouchPhase::Started, cx);
+        gesture(window, "inspector-body", 20., TouchPhase::Moved, cx);
+        close("the body stays", body_offset(window), top);
+        assert!(frame_top(window) < frame, "the page goes on");
+    })
+    .unwrap();
 }

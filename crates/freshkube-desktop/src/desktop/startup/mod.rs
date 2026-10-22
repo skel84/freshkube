@@ -256,6 +256,13 @@ impl Pilot {
                     .applications
                     .update(cx, |page, cx| page.show_changes(window, cx));
             }
+            // Waiting to ship, with every state in example data.
+            Some("waiting") => {
+                self.navigate(Page::Applications, window, cx);
+                self.pages
+                    .applications
+                    .update(cx, |page, cx| page.show_waiting(window, cx));
+            }
             // Monitoring's alert pages, in the shape `FRESHKUBE_ALERTS` names.
             Some(slug @ ("alerts" | "rules" | "silences")) => {
                 use crate::monitoring::alerts::Which;

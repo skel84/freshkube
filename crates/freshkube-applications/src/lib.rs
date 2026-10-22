@@ -33,8 +33,10 @@ mod display;
 mod example;
 mod links;
 mod page;
+mod results_forward;
 mod table;
 mod view;
+mod waiting;
 
 /// What desktop's tests read of the pages it drives through the shell.
 #[cfg(any(test, feature = "testing"))]
@@ -60,6 +62,9 @@ pub mod testing {
     }
     pub mod changes {
         pub use crate::changes::display::Body;
+    }
+    pub mod waiting {
+        pub use crate::waiting::display::Body;
     }
     pub mod links {
         pub use crate::links::Connections;
@@ -118,6 +123,7 @@ use display::{Body, Display, Labels, MARKS, Mark};
 pub use example::Variant;
 use links::Connections;
 use page::{ApplicationEvent, ApplicationPage};
+pub use waiting::WaitingPage;
 
 /// The page's id prefix: `applications-title`, `-list`, `-tally-…`.
 const PREFIX: &str = "applications";
@@ -154,6 +160,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     bindings.extend(page::key_bindings());
     bindings.extend(change::key_bindings());
     bindings.extend(changes::key_bindings());
+    bindings.extend(waiting::key_bindings());
     bindings
 }
 
@@ -379,6 +386,9 @@ pub struct ApplicationsPage {
     /// The Changes list, which shows in the list's place while `changes_shown`.
     changes: Entity<ChangesPage>,
     changes_shown: bool,
+    /// Waiting to ship, which shows in the list's place while `waiting_shown`.
+    waiting: Entity<WaitingPage>,
+    waiting_shown: bool,
     /// The keyboard handle of a page that closed without a window at hand,
     /// kept until the next frame looks whether it had the keyboard.
     refocus: Option<FocusHandle>,
@@ -421,6 +431,15 @@ impl ApplicationsPage {
         let split = InspectorSplit::new(PREFIX, cx);
         let changes =
             cx.new(|cx| ChangesPage::new(runtime.clone(), variant.shape(), secrets.clone(), cx));
+        let waiting = cx.new(|cx| {
+            WaitingPage::new(
+                runtime.clone(),
+                variant.shape(),
+                secrets.clone(),
+                window,
+                cx,
+            )
+        });
         // The page starts hidden, and so does its read.
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
@@ -478,6 +497,8 @@ impl ApplicationsPage {
             change: None,
             changes,
             changes_shown: false,
+            waiting,
+            waiting_shown: false,
             refocus: None,
             status: Segment::default(),
             column: Column::new(&Display::default(), false, false, false),
@@ -519,6 +540,8 @@ impl ApplicationsPage {
         }
         // The list has the new connections before it reads the new source.
         self.update_changes(cx);
+        self.waiting
+            .update(cx, |waiting, cx| waiting.set_source(source.clone(), cx));
         self.changes
             .update(cx, |changes, cx| changes.set_source(source, cx));
         self.loader.reset();
@@ -592,6 +615,8 @@ impl ApplicationsPage {
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));
         }
+        self.waiting
+            .update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));
         self.changes
             .update(cx, |page, cx| page.set_setup_problem(problem, cx));
     }
@@ -631,6 +656,8 @@ impl ApplicationsPage {
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.reload_setup(&across, cx));
         }
+        self.waiting
+            .update(cx, |page, cx| page.reload_setup(&across, cx));
         self.changes
             .update(cx, |page, cx| page.reload_setup(&across, cx));
         // The list derives its Applications' projects from the naming.
@@ -750,6 +777,8 @@ impl ApplicationsPage {
     fn update_changes(&mut self, cx: &mut Context<Self>) {
         let connections = self.base_connections();
         let across = self.across();
+        self.waiting
+            .update(cx, |waiting, cx| waiting.set_clusters(across.clone(), cx));
         self.changes.update(cx, |changes, cx| {
             changes.set_clusters(connections, across, cx)
         });
@@ -804,7 +833,10 @@ impl ApplicationsPage {
         };
         let connections = self.connections(read);
         let across = self.across();
-        change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
+        change.update(cx, |page, cx| {
+            page.configure_example_results(&self.runtime, self.source.as_ref(), &across, cx);
+            page.set_clusters(across, connections, cx);
+        });
     }
 
     /// Which connection each cluster of a read is, and which workspace
@@ -841,6 +873,9 @@ impl ApplicationsPage {
         let changes = visible && self.changes_shown;
         self.changes
             .update(cx, |page, cx| page.set_visible(changes, cx));
+        let waiting = visible && self.waiting_shown;
+        self.waiting
+            .update(cx, |page, cx| page.set_visible(waiting, cx));
         // Fresh only by when an answer arrived: a read dropped on hide, or
         // a refresh that failed, doesn't make old data new.
         let reads_again = self.loader.set_visible(visible, ON_SHOW, cx);
@@ -861,6 +896,10 @@ impl ApplicationsPage {
         }
         if self.changes_shown {
             self.changes.update(cx, |changes, cx| changes.refresh(cx));
+            return;
+        }
+        if self.waiting_shown {
+            self.waiting.update(cx, |waiting, cx| waiting.refresh(cx));
             return;
         }
         // A change shown reads itself; the applications read on below it.
@@ -894,6 +933,8 @@ impl ApplicationsPage {
                 let shape = self.variant.shape();
                 self.changes
                     .update(cx, |changes, _| changes.set_shape(shape));
+                self.waiting
+                    .update(cx, |waiting, _| waiting.set_shape(shape));
                 let read = Read {
                     changes: Changes::Example(Utc::now(), shape),
                     ..Read::of(
@@ -1144,6 +1185,7 @@ impl ApplicationsPage {
         let coroot = self.coroot();
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
+            page.configure_example_results(&self.runtime, Some(source), &self.across(), cx);
             page.set_coroot(coroot, cx);
             page.set_setup_problem(self.problem(), cx);
             page
@@ -1228,6 +1270,11 @@ impl ApplicationsPage {
             window.focus(&focus, cx);
             return;
         }
+        if self.waiting_shown {
+            let focus = self.waiting.read(cx).focus_handle();
+            window.focus(&focus, cx);
+            return;
+        }
         if let Some(change) = self.change_page() {
             let focus = change.read(cx).focus_handle();
             window.focus(&focus, cx);
@@ -1246,6 +1293,9 @@ impl ApplicationsPage {
     pub fn status(&self, cx: &App) -> Segment {
         if self.changes_shown {
             return self.changes.read(cx).status.clone();
+        }
+        if self.waiting_shown {
+            return self.waiting.read(cx).status.clone();
         }
         self.status.clone()
     }
@@ -1298,6 +1348,9 @@ impl ApplicationsPage {
     pub fn loading_motion(&self, cx: &App) -> Option<Entity<kit::LoadingMotion>> {
         if self.changes_shown {
             return self.changes.read(cx).loading_motion(cx);
+        }
+        if self.waiting_shown {
+            return self.waiting.read(cx).loading_motion();
         }
         if let Some(change) = self.change_page() {
             return change.read(cx).loading_motion();

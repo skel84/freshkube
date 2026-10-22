@@ -430,7 +430,15 @@ impl TableSource for ChangesPage {
             cx.notify();
         }
         self.focus(window, cx);
-        vec![freshkube_ui::menu::MenuAction::new("Open", OpenChange)]
+        let mut actions = vec![freshkube_ui::menu::MenuAction::new("Open", OpenChange)];
+        if let Some(session) = &self.results.session {
+            let session = session.read(cx);
+            actions.push(
+                freshkube_ui::menu::MenuAction::new(session.label.clone(), ForwardResults)
+                    .enabled(session.enabled),
+            );
+        }
+        actions
     }
 
     fn loading(&self) -> Option<&kit::LoadingRows> {

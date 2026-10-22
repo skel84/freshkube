@@ -13,6 +13,7 @@
 //! drops the read in flight. Another connection drops what was read.
 pub(crate) mod display;
 pub(crate) mod outcome;
+mod results;
 mod table;
 mod view;
 
@@ -62,16 +63,18 @@ gpui_kit::actions!(
         /// Clears the selection, which closes the Inspector.
         ClearChange,
         /// Opens the selected change's page.
-        OpenChange
+        OpenChange,
+        ForwardResults
     ]
 );
 
-pub(crate) fn key_bindings() -> [KeyBinding; 4] {
+pub(crate) fn key_bindings() -> [KeyBinding; 5] {
     [
         KeyBinding::new("down", NextChange, Some(CONTEXT)),
         KeyBinding::new("up", PreviousChange, Some(CONTEXT)),
         KeyBinding::new("escape", ClearChange, Some(CONTEXT)),
         KeyBinding::new("enter", OpenChange, Some(CONTEXT)),
+        KeyBinding::new("f", ForwardResults, Some(CONTEXT)),
     ]
 }
 
@@ -112,7 +115,8 @@ pub struct ChangesPage {
     /// The read, its answer and the work in flight, keyed by the
     /// connection. It is hidden while the list is, and its answer's age
     /// decides whether showing reads.
-    loader: Loader<Read, (String, u64)>,
+    loader: Loader<Read, (String, u64, Option<freshkube_resources::forwards::Epoch>)>,
+    results: crate::results_forward::Binding,
     /// Which connection each cluster is, for the change page's links.
     connections: Connections,
     /// Where a live read reads each part, and how the workspace maps Argo
@@ -195,6 +199,7 @@ impl ChangesPage {
             shape,
             example_delay: Duration::ZERO,
             loader,
+            results: Default::default(),
             connections: Connections::default(),
             across: Across::default(),
             coroot: Coroot::None,
@@ -255,6 +260,7 @@ impl ChangesPage {
     pub fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
         let same = self.source.as_ref().map(|s| &s.id) == source.as_ref().map(|s| &s.id);
         self.source = source;
+        self.configure_results(cx);
         if same {
             return;
         }
@@ -282,15 +288,22 @@ impl ChangesPage {
         let remapped = across != self.across;
         self.connections = connections.clone();
         self.across = across.clone();
+        self.configure_results(cx);
         self.sync_outcomes(cx);
         if let Some((change, _)) = &self.change {
-            change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
+            change.update(cx, |page, cx| {
+                page.configure_example_results(&self.runtime, self.source.as_ref(), &across, cx);
+                page.set_clusters(across, connections, cx);
+            });
         }
         // A live list reads each part where the workspace says and
         // resolves its Stages by the mapping: read it again, now if shown,
         // else when next shown. The change shown read itself again above.
         if remapped && self.is_live() {
-            self.read_again(cx);
+            self.loader.expire();
+            if self.visible {
+                self.read(cx);
+            }
         }
     }
 
@@ -444,7 +457,10 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start((source.id.clone(), self.setup_revision));
+        self.configure_results(cx);
+        let request =
+            self.loader
+                .start((source.id.clone(), self.setup_revision, self.results.epoch()));
         match &source.access {
             ClusterAccess::Example(hold) => {
                 // Held, it stays in flight, so the page keeps its loading
@@ -477,6 +493,7 @@ impl ChangesPage {
                 let at = self.where_to_read(&source);
                 let across = self.across.clone();
                 let secrets = self.secrets.clone();
+                let results_route = self.results.route();
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
                     DEADLINE,
@@ -495,7 +512,8 @@ impl ChangesPage {
                             |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
                             core_changes::live::BUDGET,
                         )
-                        .with_secrets(secrets);
+                        .with_secrets(secrets)
+                        .with_results_route(results_route);
                         let read = core_changes::live::read_in(
                             &pool,
                             &at,
@@ -524,7 +542,7 @@ impl ChangesPage {
     /// A read's answer, published only while it is the one in flight.
     fn answer(
         &mut self,
-        request: &Request<(String, u64)>,
+        request: &Request<(String, u64, Option<freshkube_resources::forwards::Epoch>)>,
         result: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
@@ -594,19 +612,25 @@ impl ChangesPage {
 
     fn segment(&self) -> Segment {
         let context = self.source.as_ref().map(|s| s.context.clone());
+        let segment = |mut parts: Vec<Part>| {
+            if let Some(words) = &self.results.words {
+                parts.push(Part::new(words.clone()).keep());
+            }
+            Segment::new(context.clone(), parts)
+        };
         match &self.display.body {
             Body::Refused { .. } => {
                 let part = Part::new("Kargo not permitted").tone(Tone::Unknown);
-                return Segment::new(context, vec![part]);
+                return segment(vec![part]);
             }
             Body::Failed { .. } => {
                 let part = Part::new("couldn't read changes").tone(Tone::Warn);
-                return Segment::new(context, vec![part]);
+                return segment(vec![part]);
             }
             Body::Table | Body::Empty { .. } => {}
         }
         if self.loader.data().is_none() {
-            return Segment::default();
+            return segment(Vec::new());
         }
         let total = self.display.rows.len();
         let mut parts = vec![Part::new(format!(
@@ -625,7 +649,7 @@ impl ChangesPage {
         if self.loader.is_stale() {
             parts.push(Part::new("last read").tone(Tone::Warn));
         }
-        Segment::new(context, parts)
+        segment(parts)
     }
 
     /// The motion over the loading rows, which the shell mounts beside the
@@ -733,6 +757,7 @@ impl ChangesPage {
         let coroot = self.coroot.clone();
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, None, connections, visible, window, cx);
+            page.configure_example_results(&self.runtime, self.source.as_ref(), &self.across, cx);
             page.set_parent("Changes");
             page.set_setup_problem(self.setup_problem.clone(), cx);
             page.set_coroot(coroot, cx);
@@ -832,7 +857,9 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start((source.id, self.setup_revision));
+        let request = self
+            .loader
+            .start((source.id, self.setup_revision, self.results.epoch()));
         let read = Read {
             changes,
             example: None,
@@ -845,7 +872,9 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start((source.id, self.setup_revision));
+        let request = self
+            .loader
+            .start((source.id, self.setup_revision, self.results.epoch()));
         self.answer(&request, Err(why.into()), cx);
     }
 }

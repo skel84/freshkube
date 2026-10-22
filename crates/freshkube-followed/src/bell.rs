@@ -31,6 +31,7 @@ pub struct FollowedBell {
     /// The new count alone (the follows' without any), for a window too
     /// narrow for the bar; the icon says the rest.
     short: SharedString,
+    tooltip: SharedString,
     _subscription: Subscription,
 }
 
@@ -47,6 +48,7 @@ impl FollowedBell {
             open: false,
             label: SharedString::default(),
             short: SharedString::default(),
+            tooltip: SharedString::default(),
             _subscription: subscription,
         };
         bell.derive(cx);
@@ -70,6 +72,7 @@ impl FollowedBell {
             (_, 0) => (format!("Notifying · {of}"), count.to_string()),
             (_, new) => (format!("Notifying · {of} · {new} new"), new.to_string()),
         };
+        self.tooltip = format!("{label}. What you follow, and what it told you").into();
         self.label = label.into();
         self.short = short.into();
     }
@@ -93,10 +96,6 @@ impl Render for FollowedBell {
         let width = window.viewport_size().width;
         let narrow = width < ui::dp_px(1080., window);
         let narrowest = width < ui::dp_px(800., window);
-        let tooltip = SharedString::from(format!(
-            "{}. What you follow, and what it told you",
-            self.label
-        ));
         Popover::new("followed-popover")
             .anchor(Anchor::BottomRight)
             .open(self.open)
@@ -124,7 +123,7 @@ impl Render for FollowedBell {
                         })
                     })
                     .accessibility_label(self.label.clone())
-                    .tooltip(tooltip),
+                    .tooltip(self.tooltip.clone()),
             )
             .content(move |_, _, _| panel.clone())
             .into_any_element()

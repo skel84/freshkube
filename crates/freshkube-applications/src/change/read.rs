@@ -109,7 +109,8 @@ impl ChangePage {
     /// Reads the change again, whatever is in flight. With a window at
     /// hand, example data answers at once.
     pub(super) fn read(&mut self, window: Option<&Window>, cx: &mut Context<Self>) {
-        let request = self.loader.start(self.fetch.identity());
+        self.configure_results(cx);
+        let request = self.loader.start(self.results_identity());
         match self.fetch.clone() {
             Fetch::Example {
                 project,
@@ -153,6 +154,7 @@ impl ChangePage {
                     stage_naming: place.stage_naming.clone(),
                     github: place.github.clone(),
                 };
+                let results_route = self.results_route();
                 let (job, receiver) = backend::spawn_job(
                     &runtime,
                     DEADLINE,
@@ -169,7 +171,8 @@ impl ChangePage {
                             |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
                             live::BUDGET,
                         )
-                        .with_secrets(secrets);
+                        .with_secrets(secrets)
+                        .with_results_route(results_route);
                         live::read_in(&pool, &place, Utc::now())
                             .await
                             .map_err(|failure| failure.message)
@@ -304,6 +307,7 @@ impl ChangePage {
             place.sources = across.sources;
             *kubeconfig = across.kubeconfig;
             place.github = across.github;
+            self.configure_results(cx);
             self.pull_reset();
             self.loader.expire();
             self.refresh(cx);

@@ -2131,3 +2131,181 @@ fn a_destination_changed_in_settings_reaches_a_promote_dialog_the_shell_built(
     assert!(status.contains("read-only"), "{status}");
     assert!(!status.contains("Example data"), "{status}");
 }
+
+/// #887: with the fix bar and the banners up in a short window at the
+/// largest text size, the trail keeps at least three rows in view or
+/// reachable by scrolling the page, and every banner still says why: also
+/// with a failed refresh, whose banner leads the capped block.
+#[gpui_kit::test]
+fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut TestAppContext) {
+    const WHY: &str = "connection refused by core-fra.example.test:6443";
+    for stale in [false, true] {
+        let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            window.press("f", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            if stale {
+                change(&view, cx)
+                    .unwrap()
+                    .update(cx, |page, cx| page.fail_read(WHY, window, cx));
+            }
+            window.render_frame(cx);
+            for _ in 0..10 {
+                if window.simulate_next_frame(cx) == 0 {
+                    break;
+                }
+            }
+            window.render_frame(cx);
+            assert!(freshkube_ui::page::is_short(window));
+            for id in ["change-missing", "change-pull"] {
+                let banner = window.find(id);
+                assert!(
+                    banner.label().is_some_and(|words| !words.is_empty()),
+                    "{id}"
+                );
+            }
+            let notes = window.find("change-notes").bounds();
+            let table = window.find("change-table-scroll").bounds();
+            if stale {
+                // The failed refresh leads the block, its reason's first line
+                // in view wherever the trail leaves room, the rest a wheel away.
+                let banner = window.find("change-stale");
+                assert!(banner.label().is_some_and(|words| words.contains(WHY)));
+                let at = banner.bounds();
+                let pad = at.top() - notes.top();
+                assert!(
+                    pad >= gpui_kit::px(0.) && pad <= gpui_kit::px(24.),
+                    "{at:?} leads {notes:?}"
+                );
+                assert!(
+                    notes.bottom() - at.top() >= freshkube_ui::ui::dp_px(20., window),
+                    "{at:?} has no line in {notes:?}"
+                );
+            }
+            // Nothing overlaps: the banners end where the trail begins.
+            assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+            // The notes keep their content's height: the last banner ends within
+            // the block's padding, never past it.
+            let last = window.find("change-pull").bounds();
+            assert!(
+                notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
+                "{notes:?} taller than its banners, last {last:?}"
+            );
+            // The trail keeps three rows' height in the page, which scrolls.
+            let key = change(&view, cx)
+                .unwrap()
+                .read(cx)
+                .selected()
+                .cloned()
+                .unwrap();
+            let row = window.find(hop(&key)).bounds().size.height;
+            assert!(
+                table.size.height >= row * 3.,
+                "table {table:?} for rows of {row:?}"
+            );
+            // And the header with two rows (three rows' height) sit above the
+            // status bar before any scrolling, the banners having given way.
+            let status = window.find("status-bar").bounds();
+            assert!(
+                table.top() + row * 3. <= status.top(),
+                "table {table:?} for rows of {row:?} under the status bar {status:?}"
+            );
+            // A wheel over the block scrolls the block and leaves the page.
+            let banner = window.find("change-missing").bounds().top();
+            window.scroll(
+                "change-notes",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-20.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(
+                window.find("change-missing").bounds().top() < banner,
+                "the block scrolled"
+            );
+            assert_eq!(
+                window.find("change-table-scroll").bounds().top(),
+                table.top(),
+                "the page stayed"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// #887: with room to spare, every banner shows whole and nothing scrolls.
+#[gpui_kit::test]
+fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage_of(cx, 1280., 880., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_some());
+        assert!(!freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let table = window.find("change-table-scroll").bounds();
+        for id in ["change-missing", "change-pull"] {
+            let banner = window.find(id).bounds();
+            assert!(
+                banner.top() >= notes.top() && banner.bottom() <= notes.bottom(),
+                "{id} {banner:?} cut by {notes:?}"
+            );
+        }
+        assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+        // The notes keep their content's height: the last banner ends within
+        // the block's padding, never past it.
+        let last = window.find("change-pull").bounds();
+        assert!(
+            notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
+            "{notes:?} taller than its banners, last {last:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// #887: at the default text size in a short window the banners keep the
+/// room the table's header and two rows leave them, more than their floor.
+#[gpui_kit::test]
+fn banners_use_the_room_the_trail_leaves_at_the_default_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let table = window.find("change-table-scroll").bounds();
+        let status = window.find("status-bar").bounds();
+        assert!(
+            notes.size.height > freshkube_ui::ui::dp_px(60., window),
+            "{notes:?} left at its floor"
+        );
+        assert!(
+            table.top() + freshkube_ui::ui::dp_px(90., window) <= status.top(),
+            "{table:?} under {status:?}"
+        );
+    })
+    .unwrap();
+}
