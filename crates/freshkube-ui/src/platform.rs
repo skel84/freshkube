@@ -294,6 +294,13 @@ impl HeaderRow {
         room.min(widest)
     }
 
+    /// Whether the sides keep the padding that centres the search. Where the
+    /// switcher is not a fixed width there is plenty of room and they do; where
+    /// it is, they do only while the search can still be centred.
+    pub fn keeps_centring_padding(self, fixed_switcher: bool) -> bool {
+        !fixed_switcher || self.centred_share().is_some()
+    }
+
     /// The search's width, centred or not. Once it has given up the middle,
     /// the sides keep their content's width without padding (the controls
     /// after the bar are outside it, so padding for them would only add to the
@@ -705,6 +712,33 @@ mod tests {
         // padding's: the row overruns by exactly what the floor needs.
         let short = HeaderRow { bar: 300., ..row };
         assert_eq!(short.search_width(320.), 28.);
+    }
+
+    /// Where the switcher is not a fixed width the sides keep the padding
+    /// that centres the search, whatever the insets: a leading side of
+    /// unknown width is not a reason to drop it (it was, on macOS and
+    /// Windows, at 1280).
+    #[test]
+    fn a_free_switcher_keeps_the_centring_padding() {
+        let row = HeaderRow {
+            bar: 1100.,
+            leading: f32::INFINITY,
+            trailing: 88.,
+            leading_pad: 12.,
+            trailing_pad: 80.,
+            gap: 6.,
+            search_least: 200.,
+            search_floor: 28.,
+        };
+        assert_eq!(row.centred_share(), None);
+        assert!(row.keeps_centring_padding(false));
+        // A fixed switcher keeps it only while the search can be centred.
+        assert!(!row.keeps_centring_padding(true));
+        let fixed = HeaderRow {
+            leading: 212.,
+            ..row
+        };
+        assert!(fixed.keeps_centring_padding(true));
     }
 
     /// Every key the module names parses, and each platform's keys and
