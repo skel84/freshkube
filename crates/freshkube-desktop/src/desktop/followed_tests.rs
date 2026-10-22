@@ -385,6 +385,12 @@ fn the_bell_never_pushes_the_pages_segment_or_the_level_out_of_the_bar(cx: &mut 
             "the bell is its icon alone: {:?}, {shown}",
             bell.size.width
         );
+        // The count is the accessibility label's, and what the tooltip says.
+        assert_eq!(
+            window.find("followed").label(),
+            Some("Notifying · 3 · 2 new"),
+            "{shown}"
+        );
         assert!(left.right() <= bell.left(), "{shown}");
         assert!(bell.right() <= window.viewport_size().width, "{shown}");
         assert!(

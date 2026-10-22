@@ -123,6 +123,7 @@ impl Render for FollowedBell {
                             self.label.clone()
                         })
                     })
+                    .accessibility_label(self.label.clone())
                     .tooltip(tooltip),
             )
             .content(move |_, _, _| panel.clone())
