@@ -2,7 +2,7 @@
 //! open and show tabs, close them, and the keys.
 
 use freshkube_nav::{KindKey, Name, Namespace, ObjectUid, ViewObject, ViewTab};
-use gpui_kit::{Modifiers, MouseButton, MouseUpEvent};
+use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
 
 use super::set::{MAX_TABS, Shown, TabId};
 use super::strip::Entry;
@@ -50,9 +50,14 @@ impl Pilot {
         root.on_action(
             cx.listener(|view, _: &DuplicateTab, window, cx| view.duplicate_tab(window, cx)),
         )
-        .capture_any_mouse_up(
-            cx.listener(|view, event: &MouseUpEvent, _, cx| view.note_gesture(event, cx)),
-        )
+        // Some links act on the press and some on the release; either way
+        // the link arrives after the event that made it.
+        .capture_any_mouse_down(cx.listener(|view, event: &MouseDownEvent, _, cx| {
+            view.note_gesture(event.button, event.modifiers, cx)
+        }))
+        .capture_any_mouse_up(cx.listener(|view, event: &MouseUpEvent, _, cx| {
+            view.note_gesture(event.button, event.modifiers, cx)
+        }))
         .when(self.tabs.set.can_reopen(), |this| {
             this.on_action(
                 cx.listener(|view, _: &ReopenViewTab, window, cx| view.reopen_tab(window, cx)),
@@ -80,12 +85,18 @@ impl Pilot {
         })
     }
 
-    /// Notes how the click that just ended was modified, for the link it
-    /// makes: ⌘-click opens a background tab, ⇧⌘-click one in front. The
+    /// Notes how the press or release that just came was modified, for the
+    /// link it makes: ⌘-click opens a background tab, ⇧⌘-click one in
+    /// front, a middle-click a background tab. The
     /// click's own handlers run after this one, and the link they send
     /// reaches the shell after that (`take_gesture`).
-    fn note_gesture(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
-        let open_in = open_in_for(event.button, event.modifiers);
+    pub(super) fn note_gesture(
+        &mut self,
+        button: MouseButton,
+        modifiers: Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let open_in = open_in_for(button, modifiers);
         self.tabs.gesture =
             (open_in != OpenIn::Here).then(|| (open_in, cx.background_executor().now()));
     }
@@ -202,6 +213,16 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let key = identity.unwrap_or_default();
+        // A source that is missing for a moment is not another cluster.
+        if key.is_empty()
+            && self
+                .tabs
+                .cluster
+                .as_deref()
+                .is_some_and(|open| !open.is_empty())
+        {
+            return;
+        }
         match self.tabs.cluster.as_deref() {
             Some(same) if same == key => return,
             Some("") | None => {}

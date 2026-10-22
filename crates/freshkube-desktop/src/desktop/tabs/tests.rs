@@ -682,3 +682,29 @@ fn a_closed_tab_keeps_no_rows(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.read(|cx| pilot.read(cx).tabs.frozen.is_empty()));
 }
+
+#[test]
+fn a_click_says_where_its_link_opens() {
+    use gpui_kit::{Modifiers, MouseButton};
+    let command = if cfg!(target_os = "macos") {
+        Modifiers::command()
+    } else {
+        Modifiers::control()
+    };
+    let shifted = Modifiers {
+        shift: true,
+        ..command
+    };
+    let open_in = super::commands::open_in_for;
+    assert_eq!(
+        open_in(MouseButton::Left, Modifiers::default()),
+        OpenIn::Here
+    );
+    assert_eq!(open_in(MouseButton::Left, command), OpenIn::Background);
+    assert_eq!(open_in(MouseButton::Left, shifted), OpenIn::Front);
+    assert_eq!(
+        open_in(MouseButton::Middle, Modifiers::default()),
+        OpenIn::Background
+    );
+    assert_eq!(open_in(MouseButton::Right, command), OpenIn::Here);
+}

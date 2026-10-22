@@ -22,7 +22,8 @@ The shown tab follows the window: whenever the shell or the Resources or Nodes p
 
 `Pilot::open_object` still opens here. `open_object_in` takes an `OpenIn` and runs the cluster guard (`divert_link`) first, so a link made in another cluster is sent to it or refused, with the question about a running shell, whatever the click says; only then does it open a tab.
 
-- Command-click opens a background tab, Shift-Command-click a tab in front. The shell notes how the last click was modified (`capture_any_mouse_up` on its root) and the link that click makes, which arrives once the click's update ends, takes it (`take_gesture`, for half a second). Every link that reaches `resource_link` takes it, so a new kind of link needs no code of its own.
+- Command-click opens a background tab, Shift-Command-click a tab in front. The shell notes how the last press or release was modified (`capture_any_mouse_down` and `capture_any_mouse_up` on its root, since some links act on the press) and the link that click makes, which arrives once the click's update ends, takes it (`take_gesture`, for half a second). Every link that reaches `resource_link` takes it, so a new kind of link needs no code of its own.
+- A middle-click does the same where the link takes it: today the Resources list's Owner and Node cells. The other links (the pane's relation buttons, the Applications page's) act on a left click only, so Command-click is what reaches them all.
 - In ⌘K, Command-Return opens the result in a new tab in front.
 - A link whose names do not fit the link's closed types opens here.
 
