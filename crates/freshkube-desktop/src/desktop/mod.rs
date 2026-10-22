@@ -9,6 +9,8 @@ pub(crate) mod dock;
 mod entity_pages;
 mod followed;
 #[cfg(test)]
+mod followed_tests;
+#[cfg(test)]
 mod gate_tests;
 mod kubeconfig;
 mod kubernetes_only;
@@ -143,28 +145,28 @@ gpui_kit::actions!(
 /// where the window can't be updated again, so it asks once that update
 /// ends; asking inside it found no window and quit without a word.
 pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
+    // Quitting stops every follow's read first: a follow outlives its window
+    // and its page, but not the app (docs/STATE_LIFETIMES.md).
+    fn end(quit: fn(&mut App), cx: &mut App) {
+        freshkube_followed::stop_all(cx);
+        quit(cx);
+    }
     cx.on_action(move |_: &Quit, cx| {
         cx.defer(move |cx| {
             let Some(window) = cx.windows().into_iter().next() else {
-                return quit(cx);
+                return end(quit, cx);
             };
             let may_quit = window
                 .update(cx, |_, window, cx| {
                     mutation::may_close(window, cx)
-                        && pod_shell::may_close(window, cx, move |_, cx| quit(cx))
+                        && pod_shell::may_close(window, cx, move |_, cx| end(quit, cx))
                 })
                 .unwrap_or(true);
             if may_quit {
-                quit(cx);
+                end(quit, cx);
             }
         });
     });
-}
-
-/// ⌘Q: every follow's read stops first, then the app ends.
-fn quit_app(cx: &mut App) {
-    freshkube_followed::stop_all(cx);
-    cx.quit();
 }
 
 pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
@@ -200,7 +202,7 @@ pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Resu
                 },
                 cx,
             );
-            on_quit(cx, quit_app);
+            on_quit(cx, |cx| cx.quit());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();

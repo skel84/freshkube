@@ -215,6 +215,7 @@ impl ChangePage {
                 && self.view == ChangeView::Chain
                 && self.focus.is_focused(window);
             self.show(change);
+            self.offer_follows(cx);
             self.read_pull(false, cx);
             if focus_chain && !self.rows.is_empty() {
                 let this = cx.entity().downgrade();

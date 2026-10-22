@@ -396,6 +396,8 @@ pub struct ChangePage {
     outcomes: outcome::Outcomes,
     /// What the breadcrumb goes back to, when it isn't the project's page.
     parent: Option<SharedString>,
+    /// "Notify me": what the page offers to follow, when the app can.
+    follow: Option<Entity<freshkube_followed::FollowMenu>>,
 }
 
 impl EventEmitter<ChangeEvent> for ChangePage {}
@@ -455,6 +457,7 @@ impl ChangePage {
             detail_scroll: ScrollHandle::new(),
             outcomes: outcome::Outcomes::default(),
             parent: None,
+            follow: freshkube_followed::FollowMenu::create(format!("{PREFIX}-follow"), cx),
         };
         if visible {
             page.read(Some(window), cx);
@@ -677,6 +680,7 @@ impl ChangePage {
         self.link_selected = false;
         self.graph.clear_selection();
         self.detail = self.derive_detail();
+        self.offer_follows(cx);
         self.read_outcome(false, cx);
         if self.folded.remove(&group) {
             self.derive();
@@ -979,5 +983,62 @@ pub(super) fn on_entry(entry: &str, object: &Object) -> Object {
     Object {
         cluster: entry.to_owned(),
         ..object.clone()
+    }
+}
+
+impl ChangePage {
+    /// The Stage a follow is about: the selected one, else the last in the
+    /// chain, which is where a change ends.
+    fn followed_stage(&self) -> Option<&Stage> {
+        let selected = self
+            .selected
+            .as_ref()
+            .and_then(|key| self.change.hop(key))
+            .and_then(|hop| match hop.shows {
+                Shows::Stage(ix) => self.change.stages.get(ix),
+                Shows::Hop(_) => None,
+            });
+        selected.or(self.change.stages.last())
+    }
+
+    /// What the page offers to follow: it lands in the Stage, its
+    /// verification fails there, an incident opens. Derived when the change
+    /// or the selection changes, never while drawing.
+    pub(super) fn offer_follows(&self, cx: &mut Context<Self>) {
+        let Some(menu) = &self.follow else {
+            return;
+        };
+        let mut offers = Vec::new();
+        if let Some(stage) = self
+            .followed_stage()
+            .filter(|_| !self.change.project.is_empty())
+        {
+            let (project, freight) = (self.change.project.clone(), self.change.freight.clone());
+            offers.push(freshkube_followed::Offer {
+                label: format!("Freight {freight} reaches {}", stage.name),
+                subject: freshkube_followed::Subject::Landing {
+                    project: project.clone(),
+                    stage: stage.name.clone(),
+                    freight: freight.clone(),
+                },
+            });
+            offers.push(freshkube_followed::Offer {
+                label: format!("Its verification fails in {}", stage.name),
+                subject: freshkube_followed::Subject::Verification {
+                    project,
+                    stage: stage.name.clone(),
+                    freight,
+                },
+            });
+            let application = self.parent.as_ref().map(ToString::to_string);
+            offers.push(freshkube_followed::Offer {
+                label: match &application {
+                    Some(app) => format!("An incident opens in {app}"),
+                    None => "An incident opens".to_owned(),
+                },
+                subject: freshkube_followed::Subject::Incident { application },
+            });
+        }
+        menu.update(cx, |menu, cx| menu.offer(offers, cx));
     }
 }

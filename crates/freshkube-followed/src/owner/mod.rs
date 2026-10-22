@@ -83,6 +83,8 @@ pub struct Followed {
     hub: Hub,
     pub(crate) inbox: Inbox,
     pub(crate) connections: HashMap<String, Connection>,
+    /// The context offered last: the one the window is on.
+    active: Option<String>,
     pub(crate) feeds: HashMap<FeedKey, Feed>,
     /// Takes a late delivery for a feed that is gone.
     orphan: Feed,
@@ -145,6 +147,7 @@ impl Followed {
             hub: Hub::default(),
             inbox: Inbox::default(),
             connections: HashMap::new(),
+            active: None,
             feeds: HashMap::new(),
             orphan: Feed::default(),
             epoch: 0,
@@ -158,6 +161,12 @@ impl Followed {
                 (now.hour() * 60 + now.minute()) as u16
             }),
         }
+    }
+
+    /// Sets the time of day quiet hours are judged by.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn at_minute_for_tests(&mut self, minute: u16) {
+        self.local_minute = Arc::new(move || minute);
     }
 
     pub fn items(&self) -> &[Item] {
@@ -187,6 +196,29 @@ impl Followed {
         self.items
             .iter()
             .any(|i| &i.follow.subject == subject && i.follow.context == context)
+    }
+
+    /// The id of the follow of `subject` in `context`, if there is one.
+    pub fn id_of(&self, subject: &Subject, context: &str) -> Option<u64> {
+        self.items
+            .iter()
+            .find(|i| &i.follow.subject == subject && i.follow.context == context)
+            .map(|i| i.follow.id)
+    }
+
+    /// The id of the follow of `subject` in the context the window is on.
+    pub fn id_here(&self, subject: &Subject) -> Option<u64> {
+        self.id_of(subject, self.active.as_deref()?)
+    }
+
+    /// Follows `subject` in the context the window is on.
+    pub fn follow_here(
+        &mut self,
+        subject: Subject,
+        cx: &mut Context<Self>,
+    ) -> Result<u64, Refused> {
+        let context = self.active.clone().ok_or(Refused::NotOpen)?;
+        self.follow_in(subject, &context, cx)
     }
 
     /// Follows `subject` in `context`, through the connection the shell
@@ -257,10 +289,24 @@ impl Followed {
             return;
         }
         let context = connection.context.clone();
+        self.active = Some(context.clone());
         let changed = self
             .connections
             .get(&context)
             .is_none_or(|known| known.coroot.is_some() != connection.coroot.is_some());
+        // A change of the cluster's level reaches its follows' next notices.
+        let mut level_changed = false;
+        for item in self
+            .items
+            .iter_mut()
+            .filter(|i| i.follow.context == context)
+        {
+            level_changed |= item.follow.sensitive != connection.sensitive;
+            item.follow.sensitive = connection.sensitive;
+        }
+        if level_changed {
+            self.save();
+        }
         self.connections.insert(context.clone(), connection);
         let keys: Vec<FeedKey> = self
             .items
@@ -315,7 +361,11 @@ impl Followed {
             {
                 let step = item.tracker.observe(seen, now);
                 item.status = step.status;
-                updates.extend(step.updates);
+                let sensitive = item.follow.sensitive;
+                updates.extend(step.updates.into_iter().map(|update| Update {
+                    sensitive,
+                    ..update
+                }));
                 if step.finished {
                     finished.push(item.follow.id);
                 }
@@ -328,6 +378,22 @@ impl Followed {
             self.stop(id, cx);
         }
         cx.notify();
+    }
+
+    /// Hands the follows of `context` an answer a read would bring.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn deliver_for_tests(
+        &mut self,
+        context: &str,
+        watch: WatchKey,
+        seen: Seen,
+        cx: &mut Context<Self>,
+    ) {
+        let key = FeedKey {
+            context: context.to_owned(),
+            watch,
+        };
+        self.deliver(&key, vec![seen], cx);
     }
 
     /// Groups an update and shows or holds the notice it makes.

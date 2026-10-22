@@ -58,10 +58,14 @@ impl ChangePage {
         let (kargo, kargo_fold) = self.render_open_in_kargo(&header, cx);
         let (copy, copy_fold) = self.render_copy_link(&header, cx);
         let (view, view_fold) = self.view_control(cx);
-        header
+        let mut header = header
             .chips(Some(chips))
             .foldable(kargo, kargo_fold)
-            .foldable(copy, copy_fold)
+            .foldable(copy, copy_fold);
+        if let Some(menu) = self.follow.clone() {
+            header = header.control(menu);
+        }
+        header
             .control(refresh)
             .foldable(view, view_fold)
             .render(window, cx)

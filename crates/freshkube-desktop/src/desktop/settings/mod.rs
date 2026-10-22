@@ -22,6 +22,7 @@ mod kubeconfig_row;
 mod labels;
 mod metrics_tokens;
 mod monitoring;
+mod notifications;
 #[cfg(test)]
 mod recovery_tests;
 mod sections;
@@ -344,6 +345,10 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> Self {
         let (columns, width) = source::columns(&[]);
+        // Followed items and the notice settings draw from the app's owner.
+        if let Some(followed) = freshkube_followed::owner::followed(cx) {
+            cx.observe(&followed, |_, _, cx| cx.notify()).detach();
+        }
         Self {
             connection: None,
             coroot: None,
@@ -910,6 +915,7 @@ impl Render for SettingsPage {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
             SettingsSection::Coroot => self.render_coroot(window, cx),
+            SettingsSection::Notifications => self.render_notifications(window, cx),
             SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self

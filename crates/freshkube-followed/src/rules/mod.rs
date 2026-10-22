@@ -92,7 +92,9 @@ pub struct Update {
     pub detail: String,
     /// Whether it comes through quiet hours.
     pub failure: bool,
-    /// Whether its cluster is protected or read-only.
+    /// Whether its cluster is protected or read-only; the owner sets it
+    /// from the follow's cluster, so a change of level reaches updates
+    /// still to come.
     pub sensitive: bool,
     pub at: DateTime<Utc>,
 }
@@ -111,7 +113,6 @@ pub struct Step {
 pub struct Tracker {
     follow: u64,
     subject: Subject,
-    sensitive: bool,
     last_state: Option<String>,
     /// Whether a crash loop may fire.
     armed: bool,
@@ -128,7 +129,6 @@ impl Tracker {
         Self {
             follow: follow.id,
             subject: follow.subject.clone(),
-            sensitive: follow.sensitive,
             last_state: None,
             armed: true,
             ready_since: None,
@@ -237,7 +237,7 @@ impl Tracker {
                 headline: "Not watching".into(),
                 detail: format!("{} · {why}", self.subject.title()),
                 failure: false,
-                sensitive: self.sensitive,
+                sensitive: false,
                 at: now,
             });
         }
@@ -311,7 +311,7 @@ impl Tracker {
                 headline: format!("Incident opened in {}", incident.application),
                 detail: format!("{severity}: {}", incident.description),
                 failure: true,
-                sensitive: self.sensitive,
+                sensitive: false,
                 at: now,
             });
         }
@@ -337,7 +337,7 @@ impl Tracker {
             headline,
             detail,
             failure,
-            sensitive: self.sensitive,
+            sensitive: false,
             at: now,
         });
     }

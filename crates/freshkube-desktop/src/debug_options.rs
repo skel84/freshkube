@@ -202,6 +202,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn follows_names_the_shape_of_the_bell_and_ignores_anything_else() {
+        use freshkube_followed::example::Shape;
+        for (value, shape) in [
+            ("bell", Shape::Bell),
+            ("states", Shape::States),
+            ("quiet", Shape::Quiet),
+            ("hidden", Shape::Hidden),
+            ("full", Shape::Full),
+            ("unwatched", Shape::Unwatched),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_FOLLOWS", value)]).follows, Some(shape));
+        }
+        for bad in ["", "Bell", "nothing"] {
+            assert_eq!(
+                parse(&[("FRESHKUBE_FOLLOWS", bad)]).follows,
+                None,
+                "{bad:?}"
+            );
+        }
+    }
+
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
         DebugOptions::parse(|name| {
             pairs

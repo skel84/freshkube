@@ -81,6 +81,16 @@ impl Subject {
         }
     }
 
+    /// The kind, as a list labels it.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Subject::CrashLoop { .. } => "Crash loop",
+            Subject::Landing { .. } => "Landing",
+            Subject::Verification { .. } => "Verification",
+            Subject::Incident { .. } => "Incident",
+        }
+    }
+
     /// What it keeps reading, said before it is turned on.
     pub fn reads(&self) -> String {
         match self.watch_key() {

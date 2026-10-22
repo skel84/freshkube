@@ -82,6 +82,7 @@ freshkube-terminal = { workspace = true, features = ["testing"] }
 freshkube-core = { workspace = true, features = ["testing"] }
 freshkube-applications = { workspace = true, features = ["testing"] }
 freshkube-delivery = { workspace = true, features = ["testing"] }
+freshkube-followed = { workspace = true, features = ["testing"] }
 # The log tests read the view's state (`applied_and_held`, `retained`, …).
 freshkube-logs = { workspace = true, features = ["testing"] }
 # The startup and Observability tests read the charts (`reading`, `marker_labels`).

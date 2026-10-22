@@ -8,7 +8,8 @@ queries belong in core or the domain crate; presentation belongs in the view.
 Start reads from lifecycle methods or explicit actions, never from `render`.
 
 There are exactly [two exception classes](#exceptions): Operations mutations
-and user-started sessions. The remaining counters outside the primitives
+and user-started sessions (logs, shells, forwards, packet capture and
+[followed items](#followed-items)). The remaining counters outside the primitives
 are the [allowed list](#allowed-counters) from
 [#582](https://github.com/skel84/freshkube/issues/582), each with its specific
 reason to remain.
@@ -293,3 +294,21 @@ forwarding the page's hide to `Watch::set_visible`.
   [`pcap.rs`](../crates/freshkube-core/src/pcap.rs) owns capture/save state.
   Leaving the Network tab does not cancel it. Stop, capture completion,
   target replacement or owner drop ends its work.
+- **Followed items:** [`Followed`](../crates/freshkube-followed/src/owner/mod.rs)
+  is the app's follows, made once at startup like `ForwardList` and kept as
+  a global. See [Followed items](#followed-items).
+
+### Followed items
+
+A follow is something the user turned on to be told about: a pod that keeps
+crash-looping, a Freight that reaches a Stage, a verification that fails, a
+Coroot incident that opens (issue #846). It is a user-started session, not
+a page's read, so page visibility is not its stop signal.
+
+| Boundary | Owner and lifetime |
+| --- | --- |
+| The follows | `Followed` ([`owner/`](../crates/freshkube-followed/src/owner/mod.rs)), an app-wide entity. A follow lives from the user's choice until Stop, through page and context changes and with the window closed. They are saved in `follows.json` beside `preferences.json` ([`saved.rs`](../crates/freshkube-followed/src/saved.rs)) and come back at the next launch reading nothing: each shows "Not watching" until the shell offers its context's connection. |
+| The reads | One `Watch<Seen, u64>` per object or Kargo project of a context ([`owner/feeds.rs`](../crates/freshkube-followed/src/owner/feeds.rs)), shared by every follow that needs it, and Coroot's incidents read once a minute. The watch's job and delivery drop together when its last follow stops. Reads are the user's own, through a read-only client; nothing writes. |
+| The bounds | At most 20 follows, refused beyond that; a repeat of one follow is refused. A listing or watch that fails retries with a growing wait and says "Not watching" once, never as a failure. |
+| Quit | `⌘Q` calls `stop_all` before the app ends: every feed is dropped and nothing starts again. The follows stay saved. |
+| What they tell | Pure [`rules`](../crates/freshkube-followed/src/rules/mod.rs) turn a read into updates: the same state never repeats, a crash loop fires once and again only after 5 minutes Ready. [`notice`](../crates/freshkube-followed/src/notice/mod.rs) groups updates within 2 minutes and holds all but failures in quiet hours. The owner emits an event for each notice that shows; the shell, which has the window, pushes it as a toast. The bell lists every notice. |

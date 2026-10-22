@@ -26,6 +26,11 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
+[features]
+# Test hooks for the desktop's tests (`deliver_for_tests`); turned on from
+# dev-dependencies.
+testing = []
+
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 freshkube-core = { workspace = true, features = ["testing"] }

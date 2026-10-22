@@ -16,6 +16,7 @@
 //!   holds the follows, one watch per object or Kargo project, and Coroot
 //!   once a minute. [`live`] is what reads the cluster, [`example`] is
 //!   scripted data for `--fixture`.
+//! - [`menu`] is the "Notify me" control a page offers its follows with.
 //! - [`bell`] is the status bar's "Notifying · n" and its list.
 //!
 //! The app shows what the owner emits as a toast; macOS banners and the
@@ -24,6 +25,7 @@
 pub mod bell;
 pub mod example;
 pub mod live;
+pub mod menu;
 pub mod model;
 pub mod notice;
 pub mod owner;
@@ -31,7 +33,8 @@ pub mod rules;
 pub mod saved;
 
 pub use bell::FollowedBell;
+pub use menu::{FollowMenu, Offer};
 pub use model::{Follow, Subject, WatchKey};
 pub use notice::{Notice, Quiet, Settings};
 pub use owner::{Connection, Event, Followed, followed, stop_all};
-pub use rules::{Status, Update};
+pub use rules::{IncidentSeen, PodSeen, Seen, StageSeen, Status, Update};
