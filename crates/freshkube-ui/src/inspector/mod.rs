@@ -9,6 +9,7 @@ pub(crate) use tabs::bare_strip;
 pub use tabs::{Edges, TAB_HEIGHT, TabStrip, tab};
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -19,8 +20,9 @@ use gpui_kit::component::resizable::{
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AppContext, DispatchPhase, Div, Entity, MouseDownEvent, Pixels, ScrollHandle,
-    SharedString, Stateful, Subscription, TestSupportExt, Window, canvas, div,
+    AnyElement, App, AppContext, DispatchPhase, Div, Entity, HitboxBehavior, MouseDownEvent,
+    Pixels, ScrollHandle, ScrollWheelEvent, SharedString, Stateful, Subscription, TestSupportExt,
+    Window, canvas, div,
 };
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
@@ -148,6 +150,7 @@ impl Inspector {
     pub fn render(self, cx: &App) -> Observed<Stateful<Div>> {
         let line = palette(cx).line;
         let part = |part: &str| SharedString::from(format!("{}-{part}", self.id));
+        let scroll = self.scroll.unwrap_or_else(|| body_scroll(&self.id));
         let body = match self.content {
             Some(content) => div()
                 .id(part("content"))
@@ -165,6 +168,7 @@ impl Inspector {
                 .min_h_0()
                 .min_w_0()
                 .p(dp(PANE_PADDING))
+                .child(wheel_first(scroll.clone()))
                 .child(
                     v_flex()
                         .id(part("body"))
@@ -174,7 +178,7 @@ impl Inspector {
                         .min_w_0()
                         .overflow_y_scroll()
                         .restrict_scroll_to_axis()
-                        .when_some(self.scroll, |this, scroll| this.track_scroll(&scroll))
+                        .track_scroll(&scroll)
                         .gap(dp(GAP))
                         .children(self.body),
                 ),
@@ -459,6 +463,51 @@ fn press_width(pressed: Rc<Cell<Option<f32>>>) -> impl IntoElement {
                 if phase == DispatchPhase::Capture {
                     pressed.set(Some(shown * BASE_TEXT / crate::text_size::current(cx)));
                 }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
+}
+
+thread_local! {
+    /// The scroll position of each inspector whose page doesn't track it,
+    /// by id, kept across frames the way Kit keeps an element's own.
+    static BODY_SCROLLS: RefCell<HashMap<SharedString, ScrollHandle>> = RefCell::default();
+}
+
+fn body_scroll(id: &SharedString) -> ScrollHandle {
+    BODY_SCROLLS.with(|scrolls| scrolls.borrow_mut().entry(id.clone()).or_default().clone())
+}
+
+/// Gives the wheel to the body first. Kit hands a wheel event to every
+/// scroll container under the pointer, so over a body inside a page that
+/// scrolls too, both would move. This listens before them: while the body
+/// can still move the way the wheel turns, it moves the body itself and the
+/// page behind never hears of the event; once the body is at that end, the
+/// event goes on and the page scrolls. It covers the body's frame, which
+/// it sits in, and takes no mouse input of its own.
+fn wheel_first(scroll: ScrollHandle) -> impl IntoElement {
+    canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        move |_, hitbox, window, _| {
+            let (scroll, view) = (scroll.clone(), window.current_view());
+            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture || !hitbox.should_handle_scroll(window) {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                if delta.y == Pixels::ZERO || delta.x.abs() > delta.y.abs() {
+                    return;
+                }
+                let (offset, most) = (scroll.offset(), scroll.max_offset().y);
+                let to = (offset.y + delta.y).clamp(-most, Pixels::ZERO);
+                if (to - offset.y).abs() < Pixels::from(0.5) {
+                    return;
+                }
+                scroll.set_offset(gpui_kit::point(offset.x, to));
+                cx.notify(view);
+                cx.stop_propagation();
             });
         },
     )

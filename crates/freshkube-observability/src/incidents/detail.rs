@@ -300,23 +300,29 @@ impl ObservabilityPage {
             }))
     }
     pub(super) fn live_incident_slo(&self, d: &Detail, cx: &Context<Self>) -> Div {
-        section("Service level objectives", cx).children(d.objectives.iter().map(|o| {
-            part()
-                .child(
-                    line()
-                        .flex_wrap()
-                        .child(status(o.severity, cx))
-                        .child(text(o.name).font_weight(ui::HEADING_WEIGHT))
-                        .child(muted(o.state, cx)),
-                )
-                .child(text(o.objective.clone()).whitespace_normal())
-                .child(pair("Compliance", o.compliance.clone(), cx))
-                .child(muted(o.impact.clone(), cx))
-                .when(o.rates.is_empty(), |b| {
-                    b.child(muted("Burn rates not reported", cx))
-                })
-                .children(o.rates.iter().map(|r| mono(r.clone()).whitespace_normal()))
-        }))
+        section("Service level objectives", cx).children(d.objectives.iter().enumerate().map(
+            |(ix, o)| {
+                part()
+                    .id(SharedString::from(format!("obs-incident-slo-{ix}")))
+                    .test_support()
+                    .child(
+                        line()
+                            .id(SharedString::from(format!("obs-incident-slo-{ix}-name")))
+                            .test_support()
+                            .flex_wrap()
+                            .child(status(o.severity, cx))
+                            .child(text(o.name).font_weight(ui::HEADING_WEIGHT))
+                            .child(muted(o.state, cx)),
+                    )
+                    .child(text(o.objective.clone()).whitespace_normal())
+                    .child(pair("Compliance", o.compliance.clone(), cx))
+                    .child(muted(o.impact.clone(), cx))
+                    .when(o.rates.is_empty(), |b| {
+                        b.child(muted("Burn rates not reported", cx))
+                    })
+                    .children(o.rates.iter().map(|r| mono(r.clone()).whitespace_normal()))
+            },
+        ))
     }
     pub(super) fn live_incident_rca(&self, d: &Detail, cx: &Context<Self>) -> Div {
         let key = d.key.clone();

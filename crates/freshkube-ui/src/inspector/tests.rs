@@ -544,6 +544,73 @@ fn a_short_stacked_split_keeps_a_whole_row_and_the_first_field(cx: &mut TestAppC
     .unwrap();
 }
 
+/// At 760 by 560 with text size 20 the wheel over a stacked inspector's body
+/// scrolls the body, and the frame stays until the body reaches its end.
+#[gpui_kit::test]
+fn the_wheel_over_a_short_stacked_body_scrolls_the_body(cx: &mut TestAppContext) {
+    install(cx);
+    cx.update(|cx| {
+        set_store(Rc::new(MemorySizes::default()), cx);
+        crate::text_size::set(20., cx);
+    });
+    let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+        let view = cx.new(|cx| ShortPage(InspectorSplit::new(PAGE, cx)));
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        settle(window, cx);
+        let toolbar = window.find("toolbar").bounds().top();
+        let tall = window.find("inspector-tall").bounds().top();
+        window.scroll(
+            "inspector-body",
+            ScrollDelta::Pixels(point(px(0.), px(-40.))),
+            cx,
+        );
+        settle(window, cx);
+        close(
+            "the frame stays",
+            window.find("toolbar").bounds().top(),
+            toolbar,
+        );
+        close(
+            "the body moved",
+            window.find("inspector-tall").bounds().top(),
+            tall - px(40.),
+        );
+        // At its end the body lets the wheel through, and the frame scrolls.
+        let wheel = |window: &mut Window, delta: Pixels, cx: &mut App| {
+            window.scroll(
+                "inspector-body",
+                ScrollDelta::Pixels(point(px(0.), delta)),
+                cx,
+            );
+            settle(window, cx);
+        };
+        let left = window.find("inspector-tall").bounds().bottom()
+            - window.find("inspector-body").bounds().bottom();
+        wheel(window, -left, cx);
+        close(
+            "the frame stays",
+            window.find("toolbar").bounds().top(),
+            toolbar,
+        );
+        let end = window.find("inspector-tall").bounds().bottom();
+        let frame = window.find("toolbar").bounds().top();
+        wheel(window, px(-100.), cx);
+        assert!(
+            window.find("toolbar").bounds().top() < frame,
+            "the frame scrolls once the body is at its end"
+        );
+        close(
+            "the body stays at its end",
+            window.find("inspector-tall").bounds().bottom(),
+            end + (window.find("toolbar").bounds().top() - frame),
+        );
+    })
+    .unwrap();
+}
+
 /// An inspector with tabs: a heading, a banner, the tab strip, content
 /// that lays itself out, and a footer.
 struct Tabbed(TabStrip);

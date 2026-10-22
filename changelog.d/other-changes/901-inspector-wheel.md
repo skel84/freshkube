@@ -1,0 +1,1 @@
+- **Inspector:** on a short window or at a large text size, the wheel over a stacked Inspector's body scrolls the body first and the page once the body is at its end, and a short Inspector no longer clips its first lines, such as the first line under Service level objectives in Incidents.
