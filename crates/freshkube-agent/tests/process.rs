@@ -12,7 +12,7 @@ use support::{alive, said, start_binary, stub, until_ended};
 
 async fn environment(args: &[&str]) -> (Value, support::Stub) {
     let stub = stub().await;
-    let (session, mut rx) = start_binary(args, stub.endpoint());
+    let (session, mut rx) = start_binary(args, stub.endpoint()).await;
     session.prompt("describe your environment").unwrap();
     let mut inv = Investigation::default();
     until_ended(&mut rx, &mut inv).await;
@@ -26,7 +26,7 @@ async fn environment(args: &[&str]) -> (Value, support::Stub) {
 async fn the_token_reaches_the_agent_only_in_session_new() {
     let stub = stub().await;
     let token = stub.token.clone();
-    let (session, mut rx) = start_binary(&[], stub.endpoint());
+    let (session, mut rx) = start_binary(&[], stub.endpoint()).await;
 
     // What the process was given: neither its arguments nor its environment
     // hold the token.
@@ -96,7 +96,7 @@ async fn the_child_starts_from_a_cleared_environment() {
 #[tokio::test]
 async fn cancel_ends_a_process_prompt_within_500_ms() {
     let stub = stub().await;
-    let (session, mut rx) = start_binary(&[], stub.endpoint());
+    let (session, mut rx) = start_binary(&[], stub.endpoint()).await;
     session.prompt("slow").unwrap();
     let mut inv = Investigation::default();
     let mut cancelled_at = None;
@@ -124,7 +124,7 @@ async fn cancel_ends_a_process_prompt_within_500_ms() {
 #[tokio::test]
 async fn dropping_the_session_ends_the_child_and_its_group() {
     let stub = stub().await;
-    let (session, mut rx) = start_binary(&[], stub.endpoint());
+    let (session, mut rx) = start_binary(&[], stub.endpoint()).await;
     session.prompt("start a grandchild").unwrap();
     let mut inv = Investigation::default();
     until_ended(&mut rx, &mut inv).await;
@@ -145,7 +145,7 @@ async fn dropping_the_session_ends_the_child_and_its_group() {
 #[tokio::test]
 async fn a_crash_mid_prompt_in_a_process_ends_as_failed() {
     let stub = stub().await;
-    let (session, mut rx) = start_binary(&[], stub.endpoint());
+    let (session, mut rx) = start_binary(&[], stub.endpoint()).await;
     session.prompt("crash").unwrap();
     let mut inv = Investigation::default();
     until_ended(&mut rx, &mut inv).await;
@@ -159,7 +159,7 @@ async fn a_crash_mid_prompt_in_a_process_ends_as_failed() {
 #[tokio::test]
 async fn a_process_that_never_initializes_fails_and_is_ended() {
     let stub = stub().await;
-    let (session, mut rx) = start_binary(&["--never-initialize"], stub.endpoint());
+    let (session, mut rx) = start_binary(&["--never-initialize"], stub.endpoint()).await;
     // Dropping the session while it waits ends the process; nothing hangs.
     tokio::time::sleep(Duration::from_millis(200)).await;
     drop(session);

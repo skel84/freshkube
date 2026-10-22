@@ -20,7 +20,7 @@ use std::process::Stdio;
 
 pub use locate::{locate, search_dirs};
 pub use opencode::{BUILTIN_TOOLS, LOCKDOWN_SOURCES, SUPPORTED};
-pub use version::{CHECK_TIMEOUT, Range, Version, VersionState};
+pub use version::{CHECK_TIMEOUT, Checked, Range, Version, VersionState};
 
 use crate::child::{Guard, Link, ProcessGroup};
 
@@ -192,8 +192,14 @@ impl Profile {
 
     /// Starts the agent with a cleared environment in its own process group
     /// and returns both ends of its stdio. Ending the session ends the group
-    /// and removes the directories.
-    pub fn spawn(&self, host: &Host) -> io::Result<Link> {
+    /// and removes the directories. `checked` is the proof [`Profile::check`]
+    /// gave for this profile's binary; one for another binary is refused.
+    pub fn spawn(&self, host: &Host, checked: &Checked) -> io::Result<Link> {
+        if checked.binary() != self.binary() {
+            return Err(io::Error::other(
+                "the version check was made on another binary",
+            ));
+        }
         let dirs = Dirs::create()?;
         let plan = self.plan(&dirs, host);
         let workspace = dirs.workspace();

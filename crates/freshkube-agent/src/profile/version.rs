@@ -1,6 +1,7 @@
 //! Versions of an agent and which of them a profile supports.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
@@ -126,7 +127,60 @@ impl VersionState {
     }
 }
 
+/// Proof that the profile's binary passed its version check, and the only
+/// thing [`Profile::spawn`] accepts. Only [`Profile::check`] makes one, so a
+/// session never starts on a version the profile doesn't support: another
+/// version may read its permissions under other keys and fall back to
+/// defaults that allow a shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checked {
+    binary: PathBuf,
+    /// None for a command with no version range.
+    state: Option<VersionState>,
+}
+
+impl Checked {
+    /// The binary that was checked.
+    pub fn binary(&self) -> &Path {
+        &self.binary
+    }
+
+    /// `Supported`, or `Newer` (a warning that still starts); none for a
+    /// command with no range.
+    pub fn state(&self) -> Option<&VersionState> {
+        self.state.as_ref()
+    }
+}
+
 impl Profile {
+    /// Checks the version and returns the proof a start needs, or the state
+    /// that stops it.
+    pub async fn check(&self, host: &Host) -> Result<Checked, VersionState> {
+        self.check_within(host, CHECK_TIMEOUT).await
+    }
+
+    pub async fn check_within(
+        &self,
+        host: &Host,
+        timeout: Duration,
+    ) -> Result<Checked, VersionState> {
+        if self.range().is_none() {
+            return Ok(Checked {
+                binary: self.binary().to_path_buf(),
+                state: None,
+            });
+        }
+        let state = self.check_version_within(host, timeout).await;
+        if state.can_start() {
+            Ok(Checked {
+                binary: self.binary().to_path_buf(),
+                state: Some(state),
+            })
+        } else {
+            Err(state)
+        }
+    }
+
     /// Runs `<binary> --version` with the locked environment and reads the
     /// version. Never installs, upgrades or runs `npx`.
     pub async fn check_version(&self, host: &Host) -> VersionState {
@@ -292,6 +346,42 @@ mod tests {
                 profile.check_version(&Host::default()).await,
                 VersionState::Unsupported { .. }
             ));
+        }
+
+        #[tokio::test]
+        async fn only_a_passing_check_gives_the_proof_a_start_needs() {
+            let host = Host::default();
+            let old = tempfile::tempdir().unwrap();
+            let unsupported = script(old.path(), "echo 2.0.9");
+            assert!(matches!(
+                unsupported.check(&host).await,
+                Err(VersionState::Unsupported { .. })
+            ));
+            let missing = Profile::opencode(old.path().join("nothing"));
+            assert_eq!(missing.check(&host).await, Err(VersionState::NotInstalled));
+
+            let new = tempfile::tempdir().unwrap();
+            let supported = script(new.path(), "echo 2.1.3");
+            let checked = supported.check(&host).await.unwrap();
+            assert_eq!(
+                checked.state(),
+                Some(&VersionState::Supported {
+                    found: Version::new(2, 1, 3)
+                })
+            );
+            // A newer version warns and still starts.
+            let newer_dir = tempfile::tempdir().unwrap();
+            let newer = script(newer_dir.path(), "echo 2.9.0");
+            assert!(matches!(
+                newer.check(&host).await.unwrap().state(),
+                Some(VersionState::Newer { .. })
+            ));
+            // The proof is for the binary that was checked.
+            let other = script(old.path(), "echo 2.0.9");
+            let error = other.spawn(&host, &checked).err().expect("refused");
+            assert!(error.to_string().contains("another binary"), "{error}");
+            // And for the right one it starts.
+            assert!(supported.spawn(&host, &checked).is_ok());
         }
     }
 }

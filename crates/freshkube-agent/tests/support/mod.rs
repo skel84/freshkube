@@ -156,9 +156,12 @@ pub fn scripted_binary(args: &[&str]) -> Profile {
     )
 }
 
-pub fn start_binary(args: &[&str], endpoint: Endpoint) -> (AcpSession, Receiver<Event>) {
-    let link = scripted_binary(args)
-        .spawn(&Host::default())
+pub async fn start_binary(args: &[&str], endpoint: Endpoint) -> (AcpSession, Receiver<Event>) {
+    let profile = scripted_binary(args);
+    let host = Host::default();
+    let checked = profile.check(&host).await.expect("it needs no version");
+    let link = profile
+        .spawn(&host, &checked)
         .expect("the scripted agent starts");
     AcpSession::start(link, endpoint)
 }

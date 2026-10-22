@@ -26,7 +26,10 @@ async fn the_child_gets_the_locked_environment() {
     }
 
     let stub = stub().await;
-    let link = scripted_binary(&[]).spawn(&Host::current()).unwrap();
+    let profile = scripted_binary(&[]);
+    let host = Host::current();
+    let checked = profile.check(&host).await.unwrap();
+    let link = profile.spawn(&host, &checked).unwrap();
     let (session, mut rx) = freshkube_agent::acp::AcpSession::start(link, stub.endpoint());
     session.prompt("describe your environment").unwrap();
     let mut inv = Investigation::default();
