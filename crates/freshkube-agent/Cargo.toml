@@ -1,0 +1,43 @@
+[package]
+name = "freshkube-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The agent in the dock: an ACP client over a child's stdio, the opencode profile and its lock-down, and the transcript"
+
+# No GPUI and nothing of desktop. The client takes the endpoint as a URL and a
+# token; it needs nothing of the endpoint's own crate code.
+[dependencies]
+agent-client-protocol = "=2.2.0"
+futures.workspace = true
+# The scripted agent reads through the MCP endpoint it is handed, as the real agents do.
+rmcp = { version = "=3.5.0", default-features = false, features = [
+    "client",
+    "transport-streamable-http-client-reqwest",
+] }
+serde_json.workspace = true
+tempfile = "3"
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["compat"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
+rmcp = { version = "=3.5.0", default-features = false, features = [
+    "server",
+    "transport-streamable-http-server",
+] }
+
+[lib]
+doctest = false
