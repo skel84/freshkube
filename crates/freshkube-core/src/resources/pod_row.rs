@@ -71,6 +71,16 @@ pub struct PodFacts {
     pub init_containers: Vec<ContainerFacts>,
 }
 
+impl PodFacts {
+    /// A regular init container is executing. A native sidecar can keep
+    /// running while initialization is blocked, so it proves no progress.
+    pub fn is_initializing(&self) -> bool {
+        self.init_containers
+            .iter()
+            .any(|container| !container.sidecar && container.state == RunState::Running)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PodSpec {

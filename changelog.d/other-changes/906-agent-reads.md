@@ -1,0 +1,1 @@
+- **Agent reads (not in the app yet):** the building blocks for an agent that investigates a cluster: four read-only tools (`list_objects`, `get_object`, `pod_logs`, `list_events`) with bounded answers and Secrets as metadata only, a per-cluster access switch that is off until a person turns it on, and a loopback endpoint guarded by a per-session token. Nothing starts them yet.
