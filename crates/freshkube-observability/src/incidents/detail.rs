@@ -200,6 +200,7 @@ impl ObservabilityPage {
                 )
         });
         let inspector = Inspector::new("obs-incident-detail")
+            .selection(state.detail.as_ref().map(|d| &d.key))
             .heading(self.incident_heading(state.detail.as_ref(), read_tag, cx))
             .children(failed);
         let Some(d) = &state.detail else {

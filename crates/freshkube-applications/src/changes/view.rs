@@ -223,6 +223,7 @@ impl ChangesPage {
             .on_click(cx.listener(|this, _, window, cx| this.open_selected(window, cx)));
         Some(
             Inspector::new("changes-detail")
+                .selection(&row.key)
                 .heading(heading)
                 .children(fields)
                 .child(stages)
