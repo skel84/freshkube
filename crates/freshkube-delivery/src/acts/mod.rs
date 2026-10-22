@@ -421,7 +421,9 @@ pub fn freight_lines(freight: &kargo::Freight) -> Vec<String> {
         .map(|image| {
             let tag = image.tag.as_deref().unwrap_or("no tag");
             match &image.digest {
-                Some(digest) => format!("Image {}:{tag} @ {}", image.repo_url, short_digest(digest)),
+                Some(digest) => {
+                    format!("Image {}:{tag} @ {}", image.repo_url, short_digest(digest))
+                }
                 None => format!("Image {}:{tag}", image.repo_url),
             }
         })
