@@ -1933,59 +1933,151 @@ fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppC
     .unwrap();
 }
 
-/// #887: with the fix bar and both banners up in a short window at the
-/// largest text size, the trail keeps at least three rows in view or
-/// reachable by scrolling the page, and every banner still says why.
+/// "Notify me" opens below its button, so it never covers the page header,
+/// the search or the button itself.
 #[gpui_kit::test]
-fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+fn the_notify_me_popover_opens_below_its_button(cx: &mut TestAppContext) {
+    let followed_runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: followed_runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
-        crate::text_size::set(20., cx);
-        window.press("f", cx);
         window.render_frame(cx);
+        window.click("change-follow-trigger", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        for _ in 0..10 {
-            if window.simulate_next_frame(cx) == 0 {
-                break;
-            }
-        }
-        window.render_frame(cx);
-        assert!(change(&view, cx).is_some());
-        assert!(freshkube_ui::page::is_short(window));
-        for id in ["change-missing", "change-pull"] {
-            let banner = window.find(id);
-            assert!(
-                banner.label().is_some_and(|words| !words.is_empty()),
-                "{id}"
-            );
-        }
-        let notes = window.find("change-notes").bounds();
-        let table = window.find("change-table-scroll").bounds();
-        // Nothing overlaps: the banners end where the trail begins.
-        assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
-        // The trail keeps three rows' height in the page, which scrolls.
-        let key = change(&view, cx)
-            .unwrap()
-            .read(cx)
-            .selected()
-            .cloned()
-            .unwrap();
-        let row = window.find(hop(&key)).bounds().size.height;
+        let trigger = window.find("change-follow-trigger").bounds();
+        let panel = window.find("change-follow-panel").bounds();
         assert!(
-            table.size.height >= row * 3.,
-            "table {table:?} for rows of {row:?}"
-        );
-        // And the first of them is in view before any scrolling, the banners
-        // having left it room under the fix bar.
-        let page = window.find("change-page").bounds();
-        assert!(
-            table.top() + row <= page.bottom(),
-            "table {table:?} starts below the page {page:?}"
+            panel.top() >= trigger.bottom(),
+            "the panel {panel:?} opens below its button {trigger:?}"
         );
     })
     .unwrap();
+}
+
+/// A toast draws under an open popover, so turning a switch on closes the
+/// popover before its confirmation shows.
+#[gpui_kit::test]
+fn turning_a_notify_me_switch_on_closes_the_popover_and_toasts(cx: &mut TestAppContext) {
+    let followed_runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: followed_runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::component::WindowExt as _;
+        window.render_frame(cx);
+        window.click("change-follow-trigger", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("change-follow-panel").is_some(), "open");
+        let toasts = window.notifications(cx).len();
+        window.click("change-follow-switch-0", cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("change-follow-panel").is_none(),
+            "the popover closed"
+        );
+        assert_eq!(
+            window.notifications(cx).len(),
+            toasts + 1,
+            "the confirmation"
+        );
+    })
+    .unwrap();
+}
+
+/// #887: with the fix bar and the banners up in a short window at the
+/// largest text size, the trail keeps at least three rows in view or
+/// reachable by scrolling the page, and every banner still says why: also
+/// with a failed refresh, whose banner leads the capped block.
+#[gpui_kit::test]
+fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext) {
+    const WHY: &str = "connection refused by core-fra.example.test:6443";
+    for stale in [false, true] {
+        let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            window.press("f", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            if stale {
+                change(&view, cx)
+                    .unwrap()
+                    .update(cx, |page, cx| page.fail_read(WHY, window, cx));
+            }
+            window.render_frame(cx);
+            for _ in 0..10 {
+                if window.simulate_next_frame(cx) == 0 {
+                    break;
+                }
+            }
+            window.render_frame(cx);
+            assert!(freshkube_ui::page::is_short(window));
+            for id in ["change-missing", "change-pull"] {
+                let banner = window.find(id);
+                assert!(
+                    banner.label().is_some_and(|words| !words.is_empty()),
+                    "{id}"
+                );
+            }
+            let notes = window.find("change-notes").bounds();
+            let table = window.find("change-table-scroll").bounds();
+            if stale {
+                // The failed refresh leads the block, its reason whole in view.
+                let banner = window.find("change-stale");
+                assert!(banner.label().is_some_and(|words| words.contains(WHY)));
+                let at = banner.bounds();
+                let pad = at.top() - notes.top();
+                assert!(
+                    pad >= gpui_kit::px(0.) && pad <= gpui_kit::px(24.),
+                    "{at:?} leads {notes:?}"
+                );
+                assert!(at.bottom() <= notes.bottom(), "{at:?} cut by {notes:?}");
+            }
+            // Nothing overlaps: the banners end where the trail begins.
+            assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+            // The trail keeps three rows' height in the page, which scrolls.
+            let key = change(&view, cx)
+                .unwrap()
+                .read(cx)
+                .selected()
+                .cloned()
+                .unwrap();
+            let row = window.find(hop(&key)).bounds().size.height;
+            assert!(
+                table.size.height >= row * 3.,
+                "table {table:?} for rows of {row:?}"
+            );
+            // And the first of them is in view before any scrolling, the
+            // banners having left it room under the fix bar.
+            let page = window.find("change-page").bounds();
+            assert!(
+                table.top() + row <= page.bottom(),
+                "table {table:?} starts below the page {page:?}"
+            );
+        })
+        .unwrap();
+    }
 }

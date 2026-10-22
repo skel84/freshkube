@@ -1,6 +1,6 @@
 # Settings
 
-The behaviour of the Settings rail area: its seven sections, the shared form rules they follow and how they save to `freshkube.yaml`. The design is DESIGN.md's [The Settings page](../DESIGN.md#the-settings-page); the setup file's format, reload and migration are in [SETUP_FILE.md](../SETUP_FILE.md). Where this document and the code differ, the code wins. Written at main `2af002d`, after [#697](https://github.com/skel84/freshkube/issues/697)'s slices 1 to 10.
+The behaviour of the Settings rail area: its eight sections, the shared form rules they follow and how they save to `freshkube.yaml`. The design is DESIGN.md's [The Settings page](../DESIGN.md#the-settings-page); the setup file's format, reload and migration are in [SETUP_FILE.md](../SETUP_FILE.md). Where this document and the code differ, the code wins. Written at main `2af002d`, after [#697](https://github.com/skel84/freshkube/issues/697)'s slices 1 to 10.
 
 Code:
 
@@ -22,7 +22,7 @@ Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit
 
 ## The page and its sections
 
-Settings is one `Page::Settings` with one `SettingsPage`, which shows one `SettingsSection` at a time. The rail has a Settings button, and its column (`shell/source.rs`, `settings_lines`) lists the sections in two groups: *App* (General, Connection, Monitoring, Coroot, Audit log) and *Workspace* (Clusters, Argo CD destinations, Delivery sources). Each row is `nav-settings-<slug>` and is current while its section shows. Each section is also a page slug, `settings-<slug>`, for `FRESHKUBE_PAGE`; a bare `settings` opens Clusters, the default. `OpenSettings` (⌘, on macOS; Windows and Linux bind no key, since Control-, is the dock's) and the gear's "All settings…" open the section shown last, which the page holds for the session and doesn't save.
+Settings is one `Page::Settings` with one `SettingsPage`, which shows one `SettingsSection` at a time. The rail has a Settings button, and its column (`shell/source.rs`, `settings_lines`) lists the sections in two groups: *App* (General, Connection, Monitoring, Coroot, Notifications, Audit log) and *Workspace* (Clusters, Argo CD destinations, Delivery sources). Each row is `nav-settings-<slug>` and is current while its section shows. Each section is also a page slug, `settings-<slug>`, for `FRESHKUBE_PAGE`; a bare `settings` opens Clusters, the default. `OpenSettings` (⌘, on macOS; Windows and Linux bind no key, since Control-, is the dock's) and the gear's "All settings…" open the section shown last, which the page holds for the session and doesn't save.
 
 The header's gear keeps only "Quick controls": Talos auto-refresh, Appearance and Text size, the same preferences as General. Below them, "All settings…" closes the popover and opens the area.
 
@@ -101,6 +101,10 @@ One *Connection* group: the server, how to sign in (API key, Session, Anonymous)
 - **Example data** shows the example connection with every control off and saves nothing; a window without preferences has nowhere to save.
 
 Observability no longer holds the connection: with none, its card is one line, "Coroot isn't connected · Open Settings", which opens this section (`ObservabilityEvent::OpenSettings`). The header's Coroot button opens this section when nothing is connected, and the link panel, with Open Settings, when connected. The link panel also says which Coroot cluster the open entry's Kubernetes links read, or why it has none; that is `clusters[].coroot` in the setup file (`freshkube-observability`'s `entry.rs`), edited by hand until the Clusters Inspector's Observability group exists.
+
+## Notifications
+
+`desktop/settings/notifications.rs`. An immediate-save form over the app's `Followed` owner ([followed.md](followed.md)), saved in `follows.json` beside the preferences as each control changes: **Group updates** (on by default), **Quiet hours** (off by default; a start and an end in half hours, and failures still come through), **Hide details** (Default is on for protected and read-only clusters, On, Off), and **Followed**, every followed item with what it reads, when it ends and its state, and Stop. A follow that can't be read says "Not watching" and why. The macOS permission row arrives with banners.
 
 ## Audit log
 

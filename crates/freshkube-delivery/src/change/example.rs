@@ -1133,7 +1133,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
     Change {
         project: PROJECT.into(),
         freight: FREIGHT.into(),
-        kargo_cluster: CICD.into(),
+        kargo_context: CICD.into(),
         observed_at: now,
         page: Ok(kargo_page()),
         origin: Origin {

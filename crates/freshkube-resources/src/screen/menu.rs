@@ -50,13 +50,16 @@ impl ResourcesScreen {
     }
 
     /// The selected row's actions, with the list's keys.
-    pub(super) fn menu_actions(&self, _cx: &App) -> Vec<MenuAction> {
+    pub(super) fn menu_actions(&self, cx: &App) -> Vec<MenuAction> {
         let Some(identity) = self.projection.selected() else {
             return Vec::new();
         };
         let mut actions = vec![MenuAction::new("Open", OpenSelected)];
         if self.lists_pods() {
             actions.push(MenuAction::new("Logs", OpenLogs));
+            if let Some(label) = self.follow_label(identity, cx) {
+                actions.push(MenuAction::new(label, FollowCrashLoop));
+            }
         }
         actions.push(MenuAction::Separator);
         actions.push(MenuAction::new(

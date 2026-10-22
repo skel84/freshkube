@@ -93,7 +93,7 @@ impl Fetch {
         Change {
             project,
             freight,
-            kargo_cluster: cluster,
+            kargo_context: cluster,
             observed_at: DateTime::<Utc>::MIN_UTC,
             page: Err("Nothing is read yet".into()),
             origin: Default::default(),
@@ -215,6 +215,7 @@ impl ChangePage {
                 && self.view == ChangeView::Chain
                 && self.focus.is_focused(window);
             self.show(change);
+            self.offer_follows(cx);
             self.read_pull(false, cx);
             if focus_chain && !self.rows.is_empty() {
                 let this = cx.entity().downgrade();
