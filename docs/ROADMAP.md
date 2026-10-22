@@ -18,6 +18,7 @@ One row per step: its commit, its pull requests, and where to read what it did, 
 
 | Step | Commit | Pull requests | Read more |
 |------|--------|---------------|-----------|
+| Agent in the dock D1b. The ACP client, the opencode profile, lock-down and version check ([#874](https://github.com/skel84/freshkube/issues/874), [#907](https://github.com/skel84/freshkube/issues/907)) | — | [#912](https://github.com/skel84/freshkube/pull/912) | [agent.md](features/agent.md); the endpoint, the dock tab and following remain D1a, D1c and D1d, and the live check on a real opencode is the lead's |
 | Database operators 2. Grouped table, verdict Inspector, Coroot evidence and the MariaDB reader ([#827](https://github.com/skel84/freshkube/issues/827)) | — | [#886](https://github.com/skel84/freshkube/pull/886) | [databases.md](features/databases.md); poolers' list, Prometheus lag, logs, observed history and success rate remain later slices |
 | Database operators 1. Shared model and read-only CloudNativePG inventory ([#827](https://github.com/skel84/freshkube/issues/827)) | — | [#851](https://github.com/skel84/freshkube/pull/851) | [databases.md](features/databases.md); MariaDB, logs, observed history and success rate remain later slices |
 | Results forward 1. Delivery transport and setup ([#268](https://github.com/skel84/freshkube/issues/268)) | — | [#824](https://github.com/skel84/freshkube/pull/824) | [SETUP_FILE.md](SETUP_FILE.md#the-file), [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md#what-it-is-and-how-it-is-reached); app wiring remains slice 2 |
