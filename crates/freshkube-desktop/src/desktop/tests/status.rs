@@ -461,3 +461,52 @@ fn the_open_refresh_tooltip_reads_refreshing_during_a_read(cx: &mut TestAppConte
     settle_tip(cx, handle);
     assert!(freshkube_ui::tooltip::drawn("Refreshing…") > before);
 }
+
+#[gpui_kit::test]
+fn default_bar_keeps_results_state_and_failure_text(cx: &mut TestAppContext) {
+    use crate::desktop::pages::PageId;
+    use freshkube_ui::status::{Part, Segment};
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let screen = cx.new(|_| SegmentScreen(None));
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.pages.map.insert(
+                PageId::Etcd,
+                crate::screens::ScreenHandle::new(screen.clone()),
+            );
+            view.navigate(Page::Etcd, window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for state in [
+        "Tekton Results isn't forwarded yet · Forward (F)",
+        "Tekton Results forward failed: No pods · The Service selects no pods · Forward (F)",
+    ] {
+        cx.update(|cx| {
+            screen.update(cx, |screen, cx| {
+                screen.0 = Some(Segment::new(
+                    None::<&str>,
+                    [
+                        Part::new("6 changes"),
+                        Part::new("2 not fully confirmed"),
+                        Part::new(state).keep(),
+                    ],
+                ));
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let shown = freshkube_ui::status::shown("etcd-scope").unwrap();
+            let prefix = if state.contains("failed") {
+                "Tekton Results forward failed"
+            } else {
+                "Tekton Results isn't forwarded yet"
+            };
+            assert!(shown.contains(prefix), "{shown}");
+        })
+        .unwrap();
+    }
+}
