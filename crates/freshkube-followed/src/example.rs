@@ -32,6 +32,9 @@ pub enum Shape {
     Full,
     /// Saved follows of a cluster that isn't open: Not watching.
     Unwatched,
+    /// Three landings told in a row: the first at once, the other two
+    /// grouped into one notice when the 2-minute window ends.
+    Grouped,
 }
 
 impl Shape {
@@ -43,6 +46,7 @@ impl Shape {
             "hidden" => Self::Hidden,
             "full" => Self::Full,
             "unwatched" => Self::Unwatched,
+            "grouped" => Self::Grouped,
             _ => return None,
         })
     }
@@ -218,7 +222,7 @@ impl Followed {
                 let states = [
                     Status::Watching,
                     Status::Starting,
-                    Status::NotWatching("Coroot isn't connected.".to_owned()),
+                    Status::NotWatching("The cluster refused the read (Forbidden).".to_owned()),
                 ];
                 for (item, status) in self.items.iter_mut().zip(states) {
                     item.status = status;
@@ -258,10 +262,9 @@ impl Followed {
                 }
             }
             Shape::Hidden => {
-                // Hide details on, as a protected cluster has it by default
-                // (the example cluster itself is as open as the header says):
-                // the notice is told at once and says only its summary.
-                self.settings.hide_details = Some(true);
+                // The window opens on a protected cluster, so Hide details
+                // resolves to On: the notice is told at once, with its
+                // summary alone.
                 let _ = self.follow(pod("shop", "api-7c9"), connection.clone(), cx);
                 let at = self.now(cx) - Span::seconds(2);
                 self.show(
@@ -274,13 +277,37 @@ impl Followed {
                             headline: "api-7c9 keeps crash-looping".to_owned(),
                             detail: "In shop, restarted 4 times.".to_owned(),
                             failure: true,
-                            sensitive: false,
+                            sensitive: connection.sensitive,
                             at,
                         }],
                         held: false,
                     },
                     cx,
                 );
+            }
+            Shape::Grouped => {
+                let mut ids = Vec::new();
+                for freight in ["wonky-otter", "tidy-heron", "brisk-newt"] {
+                    if let Ok(id) = self.follow(landing(freight), connection.clone(), cx) {
+                        ids.push((id, freight));
+                    }
+                }
+                let now = self.now(cx);
+                for (id, freight) in ids {
+                    self.tell(
+                        Update {
+                            follow: id,
+                            state: "landed".to_owned(),
+                            headline: format!("{freight} reached prod-ams"),
+                            detail: "In Kargo project checkout.".to_owned(),
+                            failure: false,
+                            sensitive: connection.sensitive,
+                            at: now,
+                        },
+                        now,
+                        cx,
+                    );
+                }
             }
             Shape::Full => {
                 for n in 0..MAX_FOLLOWS {
@@ -301,6 +328,16 @@ impl Followed {
                 self.feeds.clear();
                 for item in &mut self.items {
                     item.status = Status::NotWatching(crate::owner::NOT_CONNECTED.to_owned());
+                }
+            }
+        }
+        // A shape plays no story, so its follows would stay Starting: they
+        // have been read once and are watching, but for the shapes that
+        // show other states.
+        if !matches!(shape, Shape::States | Shape::Unwatched) {
+            for item in &mut self.items {
+                if item.status == Status::Starting {
+                    item.status = Status::Watching;
                 }
             }
         }

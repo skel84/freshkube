@@ -28,6 +28,11 @@ struct Following {
 
 /// The fixture window with the app's follows made and seeded as `shape`.
 fn following(cx: &mut TestAppContext, shape: Shape) -> Following {
+    following_at(cx, shape, 1280., 880.)
+}
+
+/// [`following`] in a window of `width` by `height`.
+fn following_at(cx: &mut TestAppContext, shape: Shape, width: f32, height: f32) -> Following {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let followed = cx.update(|cx| {
         install(
@@ -39,7 +44,11 @@ fn following(cx: &mut TestAppContext, shape: Shape) -> Following {
             cx,
         )
     });
-    let (app, handle, pilot) = fixture(cx, 1280., 880.);
+    let options = crate::GpuiOptions::fixture().with_debug(crate::debug_options::DebugOptions {
+        follows: Some(shape),
+        ..Default::default()
+    });
+    let (app, handle, pilot) = super::testing::mount(cx, options, width, height);
     cx.run_until_parked();
     Following {
         _app: app,
@@ -134,8 +143,8 @@ fn a_protected_cluster_toasts_only_the_title(cx: &mut TestAppContext) {
             followed.hides_by_default(),
         )
     });
-    assert_eq!(hide, Some(true));
-    assert_eq!(default, Some(false), "Guarded shows details by default");
+    assert_eq!(hide, None, "Hide details is left on its Default");
+    assert_eq!(default, Some(true), "a protected cluster hides by default");
     let told = notices(cx, f.handle);
     let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     cx.update(|cx| {
@@ -300,5 +309,92 @@ fn follows_take_their_own_clusters_level_across_switches(cx: &mut TestAppContext
     for ((id, hides), (title, sensitive)) in levels.iter().zip(&seen) {
         assert!(title.contains(id), "{title}");
         assert_eq!(sensitive, hides, "{id}");
+    }
+}
+
+/// At the narrowest window and the largest text the bell shrinks to its icon
+/// and count, and the page's segment and the level's pill stay whole inside
+/// the bar beside it.
+#[gpui_kit::test]
+fn the_bell_never_pushes_the_pages_segment_or_the_level_out_of_the_bar(cx: &mut TestAppContext) {
+    use super::pages::Page;
+    let f = following_at(cx, Shape::Bell, 760., 560.);
+    cx.update_window(f.handle, |_, _, cx| crate::text_size::set(20., cx))
+        .unwrap();
+    for (page, id) in [
+        (Page::Resources, "resource-scope"),
+        (Page::Settings, "settings-scope"),
+    ] {
+        cx.update_window(f.handle, |_, window, cx| {
+            f.pilot
+                .update(cx, |pilot, cx| pilot.navigate(page, window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(f.handle, |_, window, cx| {
+            window.render_frame(cx);
+            // The bar's left side, where the level and the segment sit, ends
+            // before the bell, and the bell inside the window.
+            let left = window.find("status-bar").bounds();
+            let shown = format!("{page:?} in a {:?} left side", left.size.width);
+            let bell = window.find("followed").bounds();
+            let level = window.find("status-protection").bounds();
+            let segment = window.find(id).bounds();
+            assert!(
+                bell.size.width > gpui_kit::px(0.),
+                "the bell is drawn: {shown}"
+            );
+            assert!(
+                bell.size.width < crate::ui::dp_px(60., window),
+                "the bell is its icon and count: {:?}, {shown}",
+                bell.size.width
+            );
+            assert!(left.right() <= bell.left(), "{shown}");
+            assert!(bell.right() <= window.viewport_size().width, "{shown}");
+            for (name, bounds) in [("level", level), ("segment", segment)] {
+                assert!(bounds.size.width > gpui_kit::px(0.), "{name}: {shown}");
+                assert!(bounds.left() >= left.left(), "{name} left: {shown}");
+                assert!(bounds.right() <= left.right(), "{name} right: {shown}");
+            }
+            assert!(
+                level.right() <= segment.left() || segment.right() <= level.left(),
+                "{shown}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// The bell says the cap before the next follow is refused, and the
+/// Settings section says where it saves only where it does.
+#[gpui_kit::test]
+fn the_bell_names_the_cap_and_settings_say_saved_in_only_when_saved(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Full);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let label = window.find("followed").label().map(str::to_owned);
+        assert_eq!(label.as_deref(), Some("Notifying · 20 of 20"));
+    })
+    .unwrap();
+    cx.update_window(f.handle, |_, window, cx| {
+        f.pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Notifications, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(present(cx, f.handle, "settings-notifications-form"));
+    // An example launch saves nothing, so nothing says where.
+    for group in [
+        "notifications-grouping-group",
+        "notifications-quiet-group",
+        "notifications-details-group",
+        "notifications-followed",
+    ] {
+        assert!(
+            !present(cx, f.handle, &format!("{group}-saved-in")),
+            "{group}"
+        );
     }
 }

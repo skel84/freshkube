@@ -312,6 +312,17 @@ impl Followed {
 
     /// Stops following; the read stops with its last follow.
     pub fn stop(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.remove(id, cx);
+        // Nothing left to follow: what was new has had its say.
+        if self.items.is_empty() {
+            self.inbox.mark_seen();
+            cx.notify();
+        }
+    }
+
+    /// Drops a follow and its read; a finished one leaves this way too, so
+    /// its last notice stays new.
+    fn remove(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(at) = self.items.iter().position(|i| i.follow.id == id) else {
             return;
         };
@@ -380,6 +391,22 @@ impl Followed {
         cx.notify();
     }
 
+    /// Whether the follows are saved: the example launches have no file.
+    pub fn saves(&self) -> bool {
+        self.file.is_some()
+    }
+
+    /// Whether a toast about something followed in `context` (the window's,
+    /// without one) hides what it is about: Hide details, which defaults on
+    /// for a protected or read-only cluster and when the level isn't known.
+    pub fn hides_details_in(&self, context: Option<&str>) -> bool {
+        let level = context
+            .or(self.active.as_deref())
+            .and_then(|context| self.connections.get(context))
+            .map(|c| c.sensitive);
+        self.settings.hides(level.unwrap_or(true))
+    }
+
     /// Whether details hide by default in the context the window is on:
     /// what Hide details' Default resolves to there. `None` before the
     /// shell has offered a connection.
@@ -432,7 +459,7 @@ impl Followed {
             self.tell(update, now, cx);
         }
         for id in finished {
-            self.stop(id, cx);
+            self.remove(id, cx);
         }
         // What the bell and the lists show is the status and the notices;
         // an answer that changes neither redraws nothing.
@@ -458,7 +485,7 @@ impl Followed {
     }
 
     /// Groups an update and shows or holds the notice it makes.
-    fn tell(&mut self, update: Update, now: DateTime<Utc>, cx: &mut Context<Self>) {
+    pub(crate) fn tell(&mut self, update: Update, now: DateTime<Utc>, cx: &mut Context<Self>) {
         if let Some(notice) = self.hub.push(update, self.settings.grouping, now) {
             self.show(notice, cx);
         }

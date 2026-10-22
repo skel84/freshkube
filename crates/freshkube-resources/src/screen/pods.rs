@@ -283,9 +283,16 @@ impl ResourcesScreen {
                     format!("No longer following {pod}.")
                 }
                 None => match followed.follow_in(subject, &context, cx) {
-                    Ok(_) => format!(
-                        "Notifying you if {pod} keeps crash-looping. It watches that pod, and the bell lists it with Stop."
-                    ),
+                    Ok(_) => {
+                        // Hide details keeps the pod's name out of the toast.
+                        let pod = match followed.hides_details_in(Some(&context)) {
+                            true => "this pod".to_owned(),
+                            false => pod,
+                        };
+                        format!(
+                            "Notifying you if {pod} keeps crash-looping. It watches that pod, and the bell lists it with Stop."
+                        )
+                    }
                     Err(refused) => refused.words(),
                 },
             }

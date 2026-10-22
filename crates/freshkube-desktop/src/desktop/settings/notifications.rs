@@ -101,7 +101,12 @@ impl SettingsPage {
     ) -> impl IntoElement {
         let settings = owner.read(cx).settings();
         let default_hides = owner.read(cx).hides_by_default();
-        let saved = || form::SavedIn::file("follows.json");
+        // Said once, on the first group, and only where something is saved.
+        let saves = owner.read(cx).saves();
+        let saved_once = move |group: form::Group| match saves {
+            true => group.saved_in(form::SavedIn::file("follows.json")),
+            false => group,
+        };
         let change = |owner: &Entity<Followed>, edit: fn(&mut Settings, i32), value: i32| {
             let owner = owner.clone();
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -210,6 +215,7 @@ impl SettingsPage {
                 })
         };
         let p = palette(cx);
+        let last = self.follow_rows.last().map(|row| row.id);
         let items: Vec<form::Row> = self
             .follow_rows
             .iter()
@@ -225,9 +231,14 @@ impl SettingsPage {
                             owner.update(cx, |followed, cx| followed.stop(id, cx));
                         })
                 };
+                let divided = Some(row.id) != last;
                 let control = v_flex()
+                    .min_w_0()
                     .gap(dp(4.))
-                    .child(div().child(row.title.clone()))
+                    .when(divided, |this| {
+                        this.pb(dp(10.)).border_b_1().border_color(p.line)
+                    })
+                    .child(div().truncate().child(row.title.clone()))
                     .child(div().text_color(p.muted).child(row.reads.clone()))
                     .child(div().text_color(p.muted).child(row.ends))
                     .when_some(row.reason.clone(), |this, why| {
@@ -263,6 +274,7 @@ impl SettingsPage {
             .gap(dp(20.))
             .flex_none()
             .child(
+                saved_once(
                 form::group("notifications-grouping-group", "Grouping")
                     .narrow(narrow)
                     .row(
@@ -277,8 +289,8 @@ impl SettingsPage {
                         )
                         .hint("The first update shows at once; the ones after it within 2 minutes join one notice. The same state is never told twice."),
                     )
-                    .saved_in(saved())
-                    .render(cx),
+                )
+                .render(cx),
             )
             .child(
                 form::group("notifications-quiet-group", "Quiet hours")
@@ -309,7 +321,6 @@ impl SettingsPage {
                             s.quiet.until = shifted(s.quiet.until, by);
                         }),
                     ))
-                    .saved_in(saved())
                     .render(cx),
             )
             .child(
@@ -320,10 +331,9 @@ impl SettingsPage {
                             "With it on, a notice says only \"Freshkube · 1 update\". Default is on for protected and read-only clusters, whose notices can show on a lock screen.",
                         ),
                     )
-                    .saved_in(saved())
                     .render(cx),
             )
-            .child(followed_group.saved_in(saved()).render(cx))
+            .child(followed_group.render(cx))
     }
 }
 

@@ -42,4 +42,4 @@ The shell offers the owner a connection (`Connection`: its access id, context, C
 
 ## Example data
 
-`FRESHKUBE_FOLLOWS` (with `--fixture`) seeds the bell and each state: `bell`, `states`, `quiet`, `hidden`, `full`, `unwatched`. Without it a follow made in the example cluster plays a short story: a pod becomes Ready and crash-loops, a Freight lands and its verification fails, an incident opens.
+`FRESHKUBE_FOLLOWS` (with `--fixture`) seeds the bell and each state: `bell`, `states`, `quiet`, `hidden` (the window opens on the protected `prod-ams`), `full`, `unwatched` and `grouped` (three landings told in a row, so the 2-minute grouping shows). Without it a follow made in the example cluster plays a short story: a pod becomes Ready and crash-loops, a Freight lands and its verification fails, an incident opens.

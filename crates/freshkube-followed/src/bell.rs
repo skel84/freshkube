@@ -18,7 +18,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::notice::Notice;
+use crate::model::MAX_FOLLOWS;
+use crate::notice::{Notice, Settings};
 use crate::owner::{Followed, Item};
 use crate::rules::Status;
 
@@ -27,7 +28,8 @@ pub struct FollowedBell {
     panel: Entity<BellPanel>,
     open: bool,
     label: SharedString,
-    /// The same without its word, for a window too narrow for the bar.
+    /// The new count alone (the follows' without any), for a window too
+    /// narrow for the bar; the icon says the rest.
     short: SharedString,
     _subscription: Subscription,
 }
@@ -56,13 +58,17 @@ impl FollowedBell {
     fn derive(&mut self, cx: &App) {
         let followed = self.followed.read(cx);
         let new = followed.inbox().new.len();
-        let (label, short) = match (followed.count(), new) {
-            (0, new) => (format!("{new} new"), format!("{new} new")),
-            (n, 0) => (format!("Notifying · {n}"), n.to_string()),
-            (n, new) => (
-                format!("Notifying · {n} · {new} new"),
-                format!("{n} · {new} new"),
-            ),
+        let count = followed.count();
+        // At the cap, the bell says so before the next follow is refused.
+        let of = match count == MAX_FOLLOWS {
+            true => format!("{count} of {MAX_FOLLOWS}"),
+            false => count.to_string(),
+        };
+        let (label, short) = match (count, new) {
+            (0, 0) => ("Notifications".to_owned(), "0".to_owned()),
+            (0, new) => (format!("{new} new"), new.to_string()),
+            (_, 0) => (format!("Notifying · {of}"), count.to_string()),
+            (_, new) => (format!("Notifying · {of} · {new} new"), new.to_string()),
         };
         self.label = label.into();
         self.short = short.into();
@@ -205,12 +211,16 @@ impl BellPanel {
         let new: Vec<Notice> = followed.inbox().new.iter().cloned().collect();
         let earlier: Vec<Notice> = followed.inbox().earlier.iter().cloned().collect();
         self.following = followed.items().iter().map(follow_line).collect();
-        self.new = new.iter().map(|n| notice_line(n, cx)).collect();
-        self.earlier = earlier.iter().map(|n| notice_line(n, cx)).collect();
+        let settings = followed.settings();
+        self.new = new.iter().map(|n| notice_line(n, &settings, cx)).collect();
+        self.earlier = earlier
+            .iter()
+            .map(|n| notice_line(n, &settings, cx))
+            .collect();
     }
 }
 
-fn notice_line(notice: &Notice, cx: &mut Context<BellPanel>) -> NoticeLine {
+fn notice_line(notice: &Notice, settings: &Settings, cx: &mut Context<BellPanel>) -> NoticeLine {
     // The bell is in the app: it lists what a banner would hide.
     let lines = notice
         .updates
@@ -232,7 +242,8 @@ fn notice_line(notice: &Notice, cx: &mut Context<BellPanel>) -> NoticeLine {
         } else {
             "Update"
         },
-        summary: notice.summary(),
+        // The headline when its details show, the summary when they hide.
+        summary: notice.words(settings).title,
         lines,
         held: notice.held,
         age: cx.new(|cx| Age::new(at, cx)),

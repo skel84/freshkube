@@ -137,6 +137,7 @@ impl Render for Panel {
                 let context = offer.context.clone();
                 let this = cx.entity().downgrade();
                 let followed = self.followed.clone();
+                let label = offer.label.clone();
                 h_flex()
                     .id(SharedString::from(format!("{}-offer-{ix}", self.prefix)))
                     .test_support()
@@ -150,19 +151,35 @@ impl Render for Panel {
                             .small()
                             .checked(on)
                             .accessibility_label(offer.label.clone())
-                            .on_click(move |_, _, cx| {
-                                let refused = followed.update(cx, |followed, cx| {
+                            .on_click(move |_, window, cx| {
+                                let label = label.clone();
+                                let (refused, started) = followed.update(cx, |followed, cx| {
                                     match followed.id_for(&subject, context.as_deref()) {
                                         Some(id) => {
                                             followed.stop(id, cx);
-                                            None
+                                            (None, None)
                                         }
-                                        None => followed
-                                            .follow_for(subject.clone(), context.as_deref(), cx)
-                                            .err()
-                                            .map(|refused| refused.words()),
+                                        None => match followed.follow_for(
+                                            subject.clone(),
+                                            context.as_deref(),
+                                            cx,
+                                        ) {
+                                            Ok(_) => (
+                                                None,
+                                                Some(match followed
+                                                    .hides_details_in(context.as_deref())
+                                                {
+                                                    true => "Notifying you about this. The bell lists it with Stop.".to_owned(),
+                                                    false => format!("Notifying you: {label}. The bell lists it with Stop."),
+                                                }),
+                                            ),
+                                            Err(refused) => (Some(refused.words()), None),
+                                        },
                                     }
                                 });
+                                if let Some(words) = started {
+                                    gpui_kit::component::WindowExt::push_notification(window, words, cx);
+                                }
                                 _ = this.update(cx, |panel, cx| {
                                     panel.refused = refused;
                                     cx.notify();

@@ -83,14 +83,16 @@ impl Pilot {
                 window,
                 |_, _, event: &Event, window, cx| {
                     let Event::Toast { words, failure } = event;
-                    let mut note =
-                        Notification::new()
-                            .title(words.title.clone())
-                            .with_type(if *failure {
-                                NotificationType::Warning
-                            } else {
-                                NotificationType::Info
-                            });
+                    let mut note = Notification::new().title(words.title.clone());
+                    // A failure wears the bell's failure glyph and colour.
+                    note = if *failure {
+                        note.with_type(NotificationType::Error).icon(
+                            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::CircleX)
+                                .text_color(freshkube_ui::palette::palette(cx).crit_ink),
+                        )
+                    } else {
+                        note.with_type(NotificationType::Info)
+                    };
                     if let Some(body) = &words.body {
                         note = note.message(body.clone());
                     }

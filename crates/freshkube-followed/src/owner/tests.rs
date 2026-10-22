@@ -714,3 +714,101 @@ fn hide_details_default_resolves_to_the_open_clusters_level(cx: &mut TestAppCont
         assert_eq!(default(cx), expected);
     }
 }
+
+#[gpui_kit::test]
+fn the_last_stop_makes_what_was_new_earlier_but_a_finished_follow_keeps_its_notice_new(
+    cx: &mut TestAppContext,
+) {
+    let h = harness(cx, None);
+    let new = |cx: &mut TestAppContext| cx.read(|cx| h.followed.read(cx).inbox().new.len());
+    // A landing finishes by itself: its notice is still New.
+    h.follow(cx, landing("wonky-otter"), connection("dev-fra", false))
+        .unwrap();
+    h.deliver(
+        cx,
+        &key(
+            "dev-fra",
+            WatchKey::Kargo {
+                project: "checkout".into(),
+            },
+        ),
+        Seen::Stages(vec![StageSeen {
+            name: "prod-ams".into(),
+            current_freight: vec!["wonky-otter".into()],
+            verifications: vec![],
+        }]),
+    );
+    assert_eq!(cx.read(|cx| h.followed.read(cx).count()), 0);
+    assert_eq!(new(cx), 1, "the finished follow's notice stays new");
+    // The user's Stop of the last follow clears what was new.
+    let id = h
+        .follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
+    cx.update(|cx| h.followed.update(cx, |f, cx| f.stop(id, cx)));
+    assert_eq!(new(cx), 0, "nothing followed, nothing new");
+}
+
+#[gpui_kit::test]
+fn grouped_tells_the_first_landing_at_once_and_the_rest_as_one_notice(cx: &mut TestAppContext) {
+    let runtime = Runtime::new().expect("a runtime");
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let followed = cx.update(|cx| {
+        let followed = install(
+            Options {
+                runtime: runtime.handle().clone(),
+                preferences: None,
+                script: Some(Script {
+                    shape: Some(Shape::Grouped),
+                }),
+            },
+            cx,
+        );
+        let events = events.clone();
+        cx.subscribe(&followed, move |_, event: &Event, _| {
+            events.borrow_mut().push(event.clone());
+        })
+        .detach();
+        followed.update(cx, |f, cx| {
+            f.seed_example(&connection("dev-fra", false), cx)
+        });
+        followed
+    });
+    cx.run_until_parked();
+    let titles = |events: &RefCell<Vec<Event>>| -> Vec<String> {
+        events
+            .borrow()
+            .iter()
+            .map(|Event::Toast { words, .. }| words.title.clone())
+            .collect()
+    };
+    assert_eq!(titles(&events), ["wonky-otter reached prod-ams"]);
+    cx.executor().advance_clock(Duration::from_secs(121));
+    cx.run_until_parked();
+    assert_eq!(
+        titles(&events),
+        ["wonky-otter reached prod-ams", "Freshkube · 2 updates"]
+    );
+    assert_eq!(cx.read(|cx| followed.read(cx).count()), 3);
+}
+
+#[gpui_kit::test]
+fn a_toast_about_a_follow_names_it_unless_details_hide(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    let hides = |cx: &mut TestAppContext, context: Option<&'static str>| {
+        cx.read(|cx| h.followed.read(cx).hides_details_in(context))
+    };
+    assert!(hides(cx, None), "unknown, so hidden");
+    cx.update(|cx| {
+        h.followed.update(cx, |f, cx| {
+            f.offer(connection("prod-ams", true), cx);
+            f.offer(connection("dev-fra", false), cx);
+        })
+    });
+    assert!(hides(cx, Some("prod-ams")));
+    assert!(!hides(cx, Some("dev-fra")));
+    assert!(!hides(cx, None), "the window's cluster is the last offered");
+    let mut settings = cx.read(|cx| h.followed.read(cx).settings());
+    settings.hide_details = Some(true);
+    cx.update(|cx| h.followed.update(cx, |f, cx| f.set_settings(settings, cx)));
+    assert!(hides(cx, Some("dev-fra")), "Hide details On wins");
+}

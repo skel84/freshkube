@@ -698,7 +698,13 @@ impl Pilot {
         }
         self.load_workspace(cx);
         self.rebuild_switcher(cx);
-        let workspace_entry = self.launch_entry(names_source, cx);
+        // The followed-items example `hidden` is a protected cluster, so
+        // Hide details resolves to On there; no other example picks one.
+        let hidden = options.starts_with_examples()
+            && options.debug.follows == Some(freshkube_followed::example::Shape::Hidden);
+        let workspace_entry = self
+            .launch_entry(names_source, cx)
+            .or_else(|| hidden.then(|| ("prod-ams".to_owned(), None)));
         let started_entry = workspace_entry.is_some();
         if let Some((id, note)) = workspace_entry {
             self.activate_entry(&id, window, cx);
