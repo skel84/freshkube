@@ -26,3 +26,13 @@ pub use child::Link;
 /// log every message they send, and `session/new` carries the session's
 /// token in a header. The app's logger adds these whatever its level.
 pub const QUIET_LOG_TARGETS: [&str; 2] = ["agent_client_protocol=info", "rmcp=info"];
+
+/// Whether a log target belongs to the ACP or MCP library. A logger that
+/// drops these libraries' events below info (whatever the filter says: a
+/// more specific `RUST_LOG` target such as `agent_client_protocol::jsonrpc`
+/// beats a directive) keeps the token out of the log. `src/main.rs` has the
+/// same predicate and the same clamp.
+pub fn is_agent_library_target(target: &str) -> bool {
+    let crate_name = target.split("::").next().unwrap_or(target);
+    crate_name == "rmcp" || crate_name.starts_with("agent_client_protocol")
+}
