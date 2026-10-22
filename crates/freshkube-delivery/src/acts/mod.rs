@@ -280,8 +280,10 @@ pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> 
 /// One Stage a Promote is for, and the destination level that holds it.
 pub struct Pick<'a> {
     pub acts: &'a StageActs,
-    /// The Stage's destination cluster and its level, when it is known.
-    pub destination: Option<(String, freshkube_core::write::Protection)>,
+    /// The Stage's destination cluster and its level (`covers` is filled in
+    /// here), when it is known. Give it the cell holding the level, and the
+    /// action follows the level live.
+    pub destination: Option<Destination>,
 }
 
 /// The alphabet of a ULID, lowercase: Crockford's base 32.
@@ -320,15 +322,17 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
     let names: Vec<String> = picks.iter().map(|p| p.acts.stage.name.clone()).collect();
     let mut destinations: Vec<Destination> = vec![];
     for pick in picks {
-        let Some((entry, protection)) = &pick.destination else {
+        let Some(destination) = &pick.destination else {
             continue;
         };
-        match destinations.iter_mut().find(|d| &d.entry == entry) {
+        match destinations
+            .iter_mut()
+            .find(|known| known.entry == destination.entry)
+        {
             Some(known) => known.covers.push(pick.acts.stage.name.clone()),
             None => destinations.push(Destination {
-                entry: entry.clone(),
-                protection: *protection,
                 covers: vec![pick.acts.stage.name.clone()],
+                ..destination.clone()
             }),
         }
     }
@@ -394,8 +398,12 @@ fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
         ];
         lines.extend(pick.acts.would_run.iter().map(|line| format!("  {line}")));
         match &pick.destination {
-            Some((entry, level)) => {
-                lines.push(format!("Deploys to {entry} ({}).", level.label()));
+            Some(destination) => {
+                lines.push(format!(
+                    "Deploys to {} ({}).",
+                    destination.entry,
+                    destination.level().label()
+                ));
             }
             None => lines.push(
                 "Where it deploys isn't known, so only Kargo's cluster's level applies.".into(),

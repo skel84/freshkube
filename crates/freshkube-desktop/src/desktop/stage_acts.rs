@@ -14,7 +14,9 @@ use crate::backend::spawn_job;
 use crate::mutation::{entry_level_cell, level_cell, write_audit_store};
 use crate::write_flow::{self, WriteRequest};
 use freshkube_core::workspace::{Entry, Role, Workspace};
-use freshkube_core::write::{ActionDescription, AuditStore, LevelCell, Protection, Runner, Who};
+use freshkube_core::write::{
+    ActionDescription, AuditStore, Destination, LevelCell, Protection, Runner, Who,
+};
 use freshkube_delivery::acts::{self, Pick, Slot, StageActs};
 use freshkube_delivery::change::Destination as StageDestination;
 use freshkube_delivery::entry;
@@ -100,7 +102,7 @@ impl Pilot {
         &self,
         act: &StageAct,
         stage_acts: &StageActs,
-        cx: &App,
+        cx: &mut App,
     ) -> Option<ActionDescription> {
         let now = chrono::Utc::now();
         let token = unique_token(now);
@@ -119,9 +121,18 @@ impl Pilot {
                 let stage = act.change.stages.iter().find(|s| s.name == act.stage)?;
                 let destination = match &stage.cluster {
                     StageDestination::Cluster(name)
-                    | StageDestination::Entry { entry: name, .. } => self
-                        .entry_named(name, cx)
-                        .map(|entry| (entry.id.clone(), self.level_of_entry(&entry, cx))),
+                    | StageDestination::Entry { entry: name, .. } => {
+                        self.entry_named(name, cx).map(|entry| {
+                            let level = self.level_of_entry(&entry, cx);
+                            Destination {
+                                entry: entry.id.clone(),
+                                protection: level,
+                                // Followed live, as Kargo's cluster is.
+                                cell: Some(entry_level_cell(&entry.id, level, cx)),
+                                covers: vec![],
+                            }
+                        })
+                    }
                     StageDestination::Unknown(_) => None,
                 };
                 let ulid = acts::new_ulid(now);

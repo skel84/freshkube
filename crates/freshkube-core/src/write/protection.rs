@@ -112,6 +112,15 @@ impl LevelCell {
     }
 }
 
+/// Two cells are equal when they hold the same level now.
+impl PartialEq for LevelCell {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+impl Eq for LevelCell {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

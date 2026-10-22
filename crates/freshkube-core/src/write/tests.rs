@@ -836,6 +836,7 @@ async fn the_level_is_the_strictest_of_the_cluster_and_the_destination() {
         action.destinations = vec![Destination {
             entry: "prod-ams".into(),
             protection,
+            cell: None,
             covers: vec![],
         }];
         action
@@ -1270,6 +1271,7 @@ async fn the_typed_name_is_the_subject_and_is_typed_once_for_several() {
         action.destinations = vec![Destination {
             entry: "prod-ams".into(),
             protection,
+            cell: None,
             covers: names.iter().map(|n| (*n).to_owned()).collect(),
         }];
         action
@@ -1317,6 +1319,7 @@ async fn guarded_on_both_clusters_shows_the_preview_without_typing() {
     action.destinations = vec![Destination {
         entry: "prod-ams".into(),
         protection: Guarded,
+        cell: None,
         covers: vec!["stage-a".into()],
     }];
     let verdict = runner.preflight(action).await;
@@ -1332,11 +1335,13 @@ async fn guarded_on_both_clusters_shows_the_preview_without_typing() {
         Destination {
             entry: "dev-fra".into(),
             protection: Open,
+            cell: None,
             covers: vec![],
         },
         Destination {
             entry: "prod-ams".into(),
             protection: Protected,
+            cell: None,
             covers: vec!["stage-a".into()],
         },
     ];
@@ -1397,4 +1402,48 @@ async fn an_example_runner_shows_each_level_s_dialog_and_makes_no_request() {
         runner.preflight(fake::annotate_web()).await,
         Verdict::Blocked(Block::ReadOnly(_))
     ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_destination_whose_level_changes_after_the_dialog_opened_is_followed() {
+    use Protection::*;
+    for (becomes, read_only) in [(Protected, false), (ReadOnly, true)] {
+        let (cluster, dir) = (Cluster::new(), tmp());
+        let destination = LevelCell::new(Guarded);
+        let runner = fake::runner(&cluster, dir.path(), Open);
+        let mut action = fake::create_notes(&["stage-a"]);
+        action.destinations = vec![Destination {
+            entry: "prod-ams".into(),
+            protection: Guarded,
+            cell: Some(destination.clone()),
+            covers: vec!["stage-a".into()],
+        }];
+        let prepared = ready(&runner, action).await;
+        assert!(!prepared.requirement().type_name);
+        // Settings changes the destination's level while the dialog is open.
+        destination.set(becomes);
+        let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+        match finished.status {
+            Status::NotSent(NotSent::ReadOnly(_)) => assert!(read_only),
+            Status::NotSent(NotSent::LevelChanged(now)) => assert!(!read_only && now == Protected),
+            other => panic!("{other:?}"),
+        }
+        cluster.assert_nothing_written();
+        // Asked again, the dialog reads the level as it is now.
+        if !read_only {
+            let mut again = fake::create_notes(&["stage-a"]);
+            again.destinations = vec![Destination {
+                entry: "prod-ams".into(),
+                protection: Guarded,
+                cell: Some(destination.clone()),
+                covers: vec!["stage-a".into()],
+            }];
+            let verdict = runner.preflight(again).await;
+            let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "prod-fra") else {
+                panic!("asks");
+            };
+            assert_eq!(ask.type_name.as_deref(), Some("stage-a"));
+            assert_eq!(ask.destinations, [("prod-ams".to_owned(), Protected)]);
+        }
+    }
 }

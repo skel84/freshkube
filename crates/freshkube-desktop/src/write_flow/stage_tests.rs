@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use freshkube_core::write::testing::Cluster;
-use freshkube_core::write::{Phase, Protection};
+use freshkube_core::write::{Destination, LevelCell, Phase, Protection};
 use freshkube_delivery::acts::{self, Pick, StageActs};
 use freshkube_delivery::change::Change;
 use freshkube_delivery::change::example::{example_acts, for_stage};
@@ -34,6 +34,15 @@ fn kargo() -> Cluster {
     ])
 }
 
+fn dest(entry: &str, level: Protection) -> Destination {
+    Destination {
+        entry: entry.into(),
+        protection: level,
+        cell: None,
+        covers: vec![],
+    }
+}
+
 fn change() -> Change {
     for_stage("checkout", "prod-ams", chrono::Utc::now()).unwrap()
 }
@@ -44,7 +53,7 @@ fn promote(destination: Protection) -> freshkube_core::write::ActionDescription 
         &change(),
         &[Pick {
             acts: &stage,
-            destination: Some(("prod-ams".into(), destination)),
+            destination: Some(dest("prod-ams", destination)),
         }],
         "01k8d2qy4v9z3m6n7p8r5t0w1x",
     )
@@ -166,11 +175,11 @@ fn several_stages_are_typed_once_and_the_dialog_names_the_protected_one(cx: &mut
         &[
             Pick {
                 acts: &dev,
-                destination: Some(("dev-fra".into(), Protection::Open)),
+                destination: Some(dest("dev-fra", Protection::Open)),
             },
             Pick {
                 acts: &prod,
-                destination: Some(("prod-ams".into(), Protection::Protected)),
+                destination: Some(dest("prod-ams", Protection::Protected)),
             },
         ],
         "01k8d2qy4v9z3m6n7p8r5t0w1x",
@@ -281,4 +290,46 @@ fn abort_names_what_already_ran_counts_down_and_then_marks_the_promotion(cx: &mu
         body["metadata"]["annotations"]["kargo.akuity.io/abort"],
         r#"{"action":"terminate"}"#
     );
+}
+
+#[gpui_kit::test]
+fn the_destination_s_level_is_followed_live_while_a_promote_dialog_is_open(
+    cx: &mut TestAppContext,
+) {
+    let h = harness_on(cx, Protection::Open, kargo);
+    // The destination's own cell, which the shell keeps current for its entry.
+    let cell = LevelCell::new(Protection::Guarded);
+    let stage = example_acts("prod-ams");
+    let action = acts::promote(
+        &change(),
+        &[Pick {
+            acts: &stage,
+            destination: Some(Destination {
+                entry: "prod-ams".into(),
+                protection: Protection::Guarded,
+                cell: Some(cell.clone()),
+                covers: vec![],
+            }),
+        }],
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
+    );
+    h.begin(cx, action);
+    assert!(h.present(cx, "write-confirm") && !h.present(cx, "write-type-name"));
+    // Settings makes the destination protected while the dialog is open.
+    cell.set(Protection::Protected);
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(2));
+    h.cluster.assert_nothing_written();
+    assert_eq!(h.label(cx, "write-type-prompt"), "Type prod-ams to confirm");
+    assert!(
+        h.label(cx, "write-destinations")
+            .contains("prod-ams (Protected)")
+    );
+    // And then read-only: typing the name sends nothing at all.
+    cell.set(Protection::ReadOnly);
+    h.type_name(cx, "prod-ams");
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(2));
+    h.cluster.assert_nothing_written();
+    assert!(h.slot_free(cx));
 }

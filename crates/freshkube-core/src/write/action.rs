@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::{Protection, requirement::Tier};
+use super::{LevelCell, Protection, requirement::Tier};
 
 /// One object an action touches, as the person saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,12 +193,23 @@ pub struct ObjectChange {
 pub struct Destination {
     /// The destination entry's id.
     pub entry: String,
-    /// Its level.
+    /// Its level when the action was described.
     pub protection: Protection,
+    /// The cell that holds its level now, when the app keeps one: the action
+    /// follows it, as it follows the level of the cluster its objects are in,
+    /// so a level changed in Settings reaches a dialog already open.
+    pub cell: Option<LevelCell>,
     /// The subjects of the action it holds (`ActionDescription::subjects`),
     /// such as the Stages that deploy there; the dialog names them when the
     /// level asks for a name typed once for several.
     pub covers: Vec<String>,
+}
+
+impl Destination {
+    /// The level now: the cell's when there is one, else the level it had.
+    pub fn level(&self) -> Protection {
+        self.cell.as_ref().map_or(self.protection, LevelCell::get)
+    }
 }
 
 /// A titled list of lines the dialog shows under the sentence, which the
@@ -242,7 +253,7 @@ impl ActionDescription {
     /// objects are in (`own`) and its destination's.
     pub fn level(&self, own: Protection) -> Protection {
         self.destinations.iter().fold(own, |level, destination| {
-            level.stricter(destination.protection)
+            level.stricter(destination.level())
         })
     }
 
@@ -268,7 +279,7 @@ impl ActionDescription {
         }
         let mut names: Vec<String> = vec![];
         for destination in &self.destinations {
-            if destination.protection == Protection::Protected {
+            if destination.level() == Protection::Protected {
                 for name in &destination.covers {
                     if !names.contains(name) {
                         names.push(name.clone());

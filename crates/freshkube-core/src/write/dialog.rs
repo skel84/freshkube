@@ -107,7 +107,7 @@ fn ask(prepared: &Prepared, entry: &str) -> Ask {
         destinations: action
             .destinations
             .iter()
-            .map(|destination| (destination.entry.clone(), destination.protection))
+            .map(|destination| (destination.entry.clone(), destination.level()))
             .collect(),
         protected: if requirement.type_name {
             prepared.protected_subjects()

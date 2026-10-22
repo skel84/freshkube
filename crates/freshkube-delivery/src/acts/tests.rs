@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use freshkube_core::write::testing::Cluster;
 use freshkube_core::write::{
-    ANNOTATION_NOTICE, ActionDescription, AuditStore, Block, Confirmation, Dialog, Headline,
-    NotSent, Phase, Protection, Runner, Status, Tier, Verdict, Who,
+    ANNOTATION_NOTICE, ActionDescription, AuditStore, Block, Confirmation, Destination, Dialog,
+    Headline, NotSent, Phase, Protection, Runner, Status, Tier, Verdict, Who,
 };
 use serde_json::{Value, json};
 
@@ -49,6 +49,16 @@ fn kargo_runner(cluster: &Cluster, dir: &std::path::Path, level: Protection) -> 
     )
 }
 
+/// A destination cluster at `level`, as a caller describes one.
+fn dest(entry: &str, level: Protection) -> Destination {
+    Destination {
+        entry: entry.into(),
+        protection: level,
+        cell: None,
+        covers: vec![],
+    }
+}
+
 fn acts() -> StageActs {
     example_acts("prod-ams")
 }
@@ -75,7 +85,7 @@ fn promote_action(level: Protection) -> ActionDescription {
         &change(),
         &[Pick {
             acts: &acts,
-            destination: Some(("prod-ams".into(), level)),
+            destination: Some(dest("prod-ams", level)),
         }],
         "01k8d2qy4v9z3m6n7p8r5t0w1x",
     )
@@ -309,11 +319,11 @@ async fn several_stages_type_once_and_the_dialog_names_the_protected_ones() {
         &[
             Pick {
                 acts: &dev,
-                destination: Some(("dev-fra".into(), Protection::Open)),
+                destination: Some(dest("dev-fra", Protection::Open)),
             },
             Pick {
                 acts: &prod,
-                destination: Some(("prod-ams".into(), Protection::Protected)),
+                destination: Some(dest("prod-ams", Protection::Protected)),
             },
         ],
         "01k8d2qy4v9z3m6n7p8r5t0w1x",
