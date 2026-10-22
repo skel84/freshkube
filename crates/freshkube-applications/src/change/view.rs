@@ -18,6 +18,9 @@ const NOTES_MAX_HEIGHT: f32 = 100.;
 /// The least a capped block keeps, in dp: a banner's first line, so the
 /// banners stay on the page when the trail needs the room.
 const NOTES_MIN_HEIGHT: f32 = 40.;
+/// What the table keeps in view under the capped banners at rest, in dp:
+/// its header and two rows.
+const TABLE_VISIBLE: f32 = 90.;
 
 impl ChangePage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -158,7 +161,12 @@ impl ChangePage {
 
     /// A refresh that failed over an earlier answer, then what the change
     /// may be missing.
-    fn render_notes(&self, short: bool, cx: &App) -> Option<AnyElement> {
+    fn render_notes(
+        &self,
+        short: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let refresh = self.stale.as_ref().map(|(text, label)| {
             ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
                 .id("change-stale")
@@ -195,11 +203,7 @@ impl ChangePage {
             // its room; any other shows every banner whole.
             .when(short, |this| {
                 let scroll = self.notes_scroll.clone();
-                // Up to the cap, and less when the page's room is short: the
-                // trail keeps its least height first, so rows always show.
-                this.max_h(dp(NOTES_MAX_HEIGHT))
-                    .min_h(dp(NOTES_MIN_HEIGHT))
-                    .flex_shrink(1.)
+                this.max_h(self.notes_cap(window))
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
                     .track_scroll(&self.notes_scroll)
@@ -222,14 +226,10 @@ impl ChangePage {
             .children(missing)
             .children(pull);
         // The edge below a capped block is its own element, which the block's
-        // scrolling can't move, so a clipped banner reads as scrollable. Only
-        // a short window lets the block shrink; otherwise the notes keep their
-        // content's height. The 1 px edge is not counted in the minimum.
+        // scrolling can't move, so a clipped banner reads as scrollable. The
+        // 1 px edge is not counted in the cap.
         Some(
             v_flex()
-                .when(short, |this| {
-                    this.min_h(dp(NOTES_MIN_HEIGHT)).flex_shrink(1.)
-                })
                 .child(notes)
                 .when(short, |this| {
                     this.child(
@@ -242,6 +242,28 @@ impl ChangePage {
                 })
                 .into_any_element(),
         )
+    }
+
+    /// How tall the capped banners may be in a short window: what is left of
+    /// the page's visible height once the table's header and two rows fit
+    /// under them, between [`NOTES_MIN_HEIGHT`] and [`NOTES_MAX_HEIGHT`] dp.
+    /// The room is the last layout's, so a change asks for one more frame.
+    fn notes_cap(&self, window: &mut Window) -> Pixels {
+        let (least, most) = (
+            freshkube_ui::ui::dp_px(NOTES_MIN_HEIGHT, window),
+            freshkube_ui::ui::dp_px(NOTES_MAX_HEIGHT, window),
+        );
+        let (page, notes) = (self.page_scroll.bounds(), self.notes_scroll.bounds());
+        if page.size.height <= Pixels::ZERO || notes.size.height <= Pixels::ZERO {
+            return most;
+        }
+        let top = notes.top() - self.page_scroll.offset().y;
+        let room = page.bottom() - top - freshkube_ui::ui::dp_px(TABLE_VISIBLE, window);
+        let cap = room.max(least).min(most);
+        if self.notes_cap_used.replace(cap) != cap {
+            window.on_next_frame(|window, _| window.refresh());
+        }
+        cap
     }
 
     /// In place of the trail when nothing could be read: why, and Retry.
@@ -295,7 +317,7 @@ impl Render for ChangePage {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
         let short = page::is_short(window);
-        let notes = self.render_notes(short, cx);
+        let notes = self.render_notes(short, window, cx);
         let summary = self.render_summary(window, cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,

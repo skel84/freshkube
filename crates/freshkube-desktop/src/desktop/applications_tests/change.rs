@@ -2147,3 +2147,38 @@ fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// #887: at the default text size in a short window the banners keep the
+/// room the table's header and two rows leave them, more than their floor.
+#[gpui_kit::test]
+fn banners_use_the_room_the_trail_leaves_at_the_default_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let table = window.find("change-table-scroll").bounds();
+        let status = window.find("status-bar").bounds();
+        assert!(
+            notes.size.height > freshkube_ui::ui::dp_px(60., window),
+            "{notes:?} left at its floor"
+        );
+        assert!(
+            table.top() + freshkube_ui::ui::dp_px(90., window) <= status.top(),
+            "{table:?} under {status:?}"
+        );
+    })
+    .unwrap();
+}
