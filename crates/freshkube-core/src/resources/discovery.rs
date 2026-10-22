@@ -14,7 +14,7 @@ use kube::Client;
 use serde::Deserialize;
 
 use super::failure::{Failure, FailureKind};
-use super::kinds::ResourceKind;
+use super::kinds::{ResourceKind, builtin};
 use super::object::{JSON, json_get};
 use super::table::nullable;
 
@@ -130,6 +130,36 @@ pub async fn list_group_kinds(client: &Client, group: &ApiGroup) -> Result<Group
     group_kinds(&group.name, join_all(reads).await)
 }
 
+/// The kind a kubectl key (`pods`, `certificates.cert-manager.io`) names in
+/// this cluster: a built-in one at once, else the one its API group's
+/// discovery serves. `None` means the cluster doesn't serve it; a failure
+/// means discovery couldn't be read.
+pub async fn resolve_kind_key(client: &Client, key: &str) -> Result<Option<ResourceKind>, Failure> {
+    if let Some(kind) = builtin(key) {
+        return Ok(Some(kind));
+    }
+    let groups = list_custom_groups(client).await?;
+    for group in groups_for_key(&groups, key) {
+        let kinds = list_group_kinds(client, group).await?;
+        if let Some(kind) = kinds.kinds.into_iter().find(|kind| kind.key() == key) {
+            return Ok(Some(kind));
+        }
+    }
+    Ok(None)
+}
+
+/// The groups a key can belong to: `<plural>.<group>`, so the group is a
+/// suffix after a dot.
+fn groups_for_key<'a>(groups: &'a [ApiGroup], key: &str) -> Vec<&'a ApiGroup> {
+    groups
+        .iter()
+        .filter(|group| {
+            key.strip_suffix(group.name.as_str())
+                .is_some_and(|rest| rest.len() > 1 && rest.ends_with('.'))
+        })
+        .collect()
+}
+
 fn custom_groups(list: GroupList) -> Vec<ApiGroup> {
     let mut groups: Vec<ApiGroup> = list
         .groups
@@ -212,6 +242,35 @@ fn group_kinds(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_key_belongs_to_the_groups_it_ends_with() {
+        let group = |name: &str| ApiGroup {
+            name: name.into(),
+            versions: vec!["v1".into()],
+        };
+        let groups = [
+            group("cert-manager.io"),
+            group("io"),
+            group("manager.io"),
+            group("x.dev"),
+        ];
+        let names = |key: &str| {
+            groups_for_key(&groups, key)
+                .into_iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>()
+        };
+        // `manager.io` is not a suffix after a dot: `cert-` runs into it.
+        assert_eq!(
+            names("certificates.cert-manager.io"),
+            ["cert-manager.io", "io"]
+        );
+        // The group alone is not a key, and a longer word is not its suffix.
+        assert_eq!(names("cert-manager.io"), ["io"]);
+        assert!(names("certificatesx.dev").is_empty());
+        assert!(names(".dev").is_empty());
+    }
     use super::*;
 
     #[test]

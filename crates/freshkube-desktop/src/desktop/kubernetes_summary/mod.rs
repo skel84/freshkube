@@ -77,6 +77,7 @@ impl Pilot {
     /// Manual Refresh relists every source. The automatic Talos cycle calls
     /// ensure_summary instead, which leaves an existing session alone.
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_alerts(cx);
         if let Some(session) = &self.switch.registry.active().summary_session {
             session.core.relist();
             if self.mode().is_example() && !self.mode().holds_talos() {
@@ -91,6 +92,11 @@ impl Pilot {
         self.ensure_summary_session(window, cx);
         // A link into this entry waits for its source, which is known here.
         self.open_pending_link(window, cx);
+        // The open cluster's identity, for Copy link, and a deep link's view
+        // held for the context the reader chose.
+        self.identify_open_cluster(window, cx);
+        self.apply_held_view(window, cx);
+        self.open_waiting_links(window, cx);
     }
 
     fn ensure_summary_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -127,6 +133,8 @@ impl Pilot {
             applied_revision: 0,
         });
         self.sync_unread_health(cx);
+        // The alert read starts beside it, for the same connection.
+        self.ensure_alerts(cx);
         if matches!(source.access, ClusterAccess::Example(_)) {
             self.start_fixture_summary(window, cx);
             return;

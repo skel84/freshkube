@@ -1,10 +1,12 @@
 mod access;
+mod alerts;
 mod app_menu;
 #[cfg(test)]
 mod applications_column_tests;
 #[cfg(test)]
 mod applications_tests;
 mod connection;
+mod deep_link;
 pub(crate) mod dock;
 mod entity_pages;
 #[cfg(test)]
@@ -130,6 +132,7 @@ gpui_kit::actions!(
         PreviousService,
         NextService,
         GoToKind,
+        CopyLink,
         ToggleColumn
     ]
 );
@@ -165,83 +168,90 @@ pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Resu
     options.setup_notice = migrate_startup::migrate_setup(&options);
     let error = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_error = error.clone();
-    gpui_kit::application()
-        .with_assets(theme::AppAssets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            theme::install(cx);
-            text_size::install_with(options.preferences.clone(), options.debug.text_size, cx);
-            // Kit's animations draw still when the OS asks for reduced motion.
-            // Tests never run this, so they keep the reduced motion they set.
-            freshkube_ui::motion::follow_system(cx);
-            cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
-            freshkube_ui::platform::bind_keys(cx);
-            // Maintenance mode has the same menus; the shell sets them again
-            // as what they state changes.
-            cx.set_menus(app_menu::menus(
-                freshkube_ui::platform::Platform::current(),
-                &app_menu::MenuState::default(),
-            ));
-            on_quit(cx, |cx| cx.quit());
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-            #[cfg(not(any(debug_assertions, feature = "stress")))]
-            let window_size = size(px(1320.), px(860.));
-            #[cfg(any(debug_assertions, feature = "stress"))]
-            let window_size = startup::window_size(options.debug.window_size.as_deref());
-            // Debug fixture checks open maintenance mode on an invented node
-            // that stops at the review (`maintenance/example.rs`).
-            #[cfg(debug_assertions)]
-            let example_maintenance =
-                options.starts_with_examples() && options.debug.page() == Some("maintenance");
-            #[cfg(not(debug_assertions))]
-            let example_maintenance = false;
-            let window_options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(window_size, cx)),
-                window_min_size: Some(size(px(760.), px(560.))),
-                // The window's controls sit on the header at the saved text
-                // size; the shell moves them when it changes.
-                titlebar: Some(freshkube_ui::platform::titlebar_options(
-                    if options.maintenance_endpoint().is_some() || example_maintenance {
-                        "Freshkube (maintenance)"
-                    } else {
-                        "Freshkube"
-                    },
-                    crate::text_size::current(cx),
-                )),
-                ..TitleBar::window_options()
-            };
-            // Maintenance mode replaces the cluster shell: no talosconfig,
-            // no cluster, only the insecure node workflow.
-            let opened = match options.maintenance_endpoint().map(str::to_owned) {
-                #[cfg(debug_assertions)]
-                None if example_maintenance => {
-                    gpui_kit::open_window(window_options, cx, |window, cx| {
-                        cx.new(|cx| {
-                            MaintenanceView::example(runtime, options.debug.theme, window, cx)
-                        })
-                    })
-                    .map(|_| ())
-                }
-                Some(endpoint) => gpui_kit::open_window(window_options, cx, |window, cx| {
-                    cx.new(|cx| MaintenanceView::new(endpoint, runtime, window, cx))
-                })
-                .map(|_| ()),
-                None => gpui_kit::open_window(window_options, cx, |window, cx| {
-                    cx.new(|cx| Pilot::new(options, runtime, window, cx))
-                })
-                .map(|_| ()),
-            };
-            if let Err(failure) = opened {
-                *launch_error.lock().expect("launch error mutex") = Some(failure.to_string());
+    // Links the operating system opens us with once we run (macOS's
+    // open-URL event, also for the one that started us) reach the shell
+    // through this channel, and wait in it until the window is up.
+    let (sender, receiver) = futures::channel::mpsc::unbounded::<String>();
+    options.urls = Some(std::sync::Arc::new(std::sync::Mutex::new(Some(receiver))));
+    let application = gpui_kit::application().with_assets(theme::AppAssets);
+    application.on_open_urls(move |urls| {
+        for url in urls {
+            _ = sender.unbounded_send(url);
+        }
+    });
+    application.run(move |cx| {
+        gpui_kit::init(cx);
+        theme::install(cx);
+        text_size::install_with(options.preferences.clone(), options.debug.text_size, cx);
+        // Kit's animations draw still when the OS asks for reduced motion.
+        // Tests never run this, so they keep the reduced motion they set.
+        freshkube_ui::motion::follow_system(cx);
+        cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
+        freshkube_ui::platform::bind_keys(cx);
+        // Maintenance mode has the same menus; the shell sets them again
+        // as what they state changes.
+        cx.set_menus(app_menu::menus(
+            freshkube_ui::platform::Platform::current(),
+            &app_menu::MenuState::default(),
+        ));
+        on_quit(cx, |cx| cx.quit());
+        cx.on_window_closed(|cx, _| {
+            if cx.windows().is_empty() {
                 cx.quit();
             }
-            cx.activate(true);
-        });
+        })
+        .detach();
+        #[cfg(not(any(debug_assertions, feature = "stress")))]
+        let window_size = size(px(1320.), px(860.));
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        let window_size = startup::window_size(options.debug.window_size.as_deref());
+        // Debug fixture checks open maintenance mode on an invented node
+        // that stops at the review (`maintenance/example.rs`).
+        #[cfg(debug_assertions)]
+        let example_maintenance =
+            options.starts_with_examples() && options.debug.page() == Some("maintenance");
+        #[cfg(not(debug_assertions))]
+        let example_maintenance = false;
+        let window_options = WindowOptions {
+            window_bounds: Some(WindowBounds::centered(window_size, cx)),
+            window_min_size: Some(size(px(760.), px(560.))),
+            // The window's controls sit on the header at the saved text
+            // size; the shell moves them when it changes.
+            titlebar: Some(freshkube_ui::platform::titlebar_options(
+                if options.maintenance_endpoint().is_some() || example_maintenance {
+                    "Freshkube (maintenance)"
+                } else {
+                    "Freshkube"
+                },
+                crate::text_size::current(cx),
+            )),
+            ..TitleBar::window_options()
+        };
+        // Maintenance mode replaces the cluster shell: no talosconfig,
+        // no cluster, only the insecure node workflow.
+        let opened = match options.maintenance_endpoint().map(str::to_owned) {
+            #[cfg(debug_assertions)]
+            None if example_maintenance => {
+                gpui_kit::open_window(window_options, cx, |window, cx| {
+                    cx.new(|cx| MaintenanceView::example(runtime, options.debug.theme, window, cx))
+                })
+                .map(|_| ())
+            }
+            Some(endpoint) => gpui_kit::open_window(window_options, cx, |window, cx| {
+                cx.new(|cx| MaintenanceView::new(endpoint, runtime, window, cx))
+            })
+            .map(|_| ()),
+            None => gpui_kit::open_window(window_options, cx, |window, cx| {
+                cx.new(|cx| Pilot::new(options, runtime, window, cx))
+            })
+            .map(|_| ()),
+        };
+        if let Err(failure) = opened {
+            *launch_error.lock().expect("launch error mutex") = Some(failure.to_string());
+            cx.quit();
+        }
+        cx.activate(true);
+    });
     if let Some(error) = error.lock().expect("launch error mutex").take() {
         color_eyre::eyre::bail!("Could not open GPUI window: {error}");
     }
@@ -310,6 +320,8 @@ pub(crate) struct Pilot {
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
+    /// Deep links (#873).
+    deep_link: deep_link::State,
     /// Example data or a live cluster, and Talos or a kubeconfig alone
     /// (`source::Mode`): what the window shows.
     mode: source::Mode,
@@ -321,6 +333,8 @@ pub(crate) struct Pilot {
     // The snapshots keep the display/freshness state and its existing request
     // tokens; these completion owners retain the jobs and their deliveries.
     overview_read: Loader<(), AppliedConfig>,
+    /// What example data's alerts look like (`FRESHKUBE_ALERTS`).
+    alerts_shape: freshkube_core::monitoring::alerts::example::Shape,
     _tick: Task<()>,
 }
 
@@ -412,6 +426,11 @@ impl Pilot {
                 GoToKind,
                 Some(freshkube_ui::page::SHELL_CONTEXT),
             ),
+            KeyBinding::new(
+                "secondary-shift-c",
+                CopyLink,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
             KeyBinding::new("up", PreviousNode, Some("TalosNodes")),
             KeyBinding::new("left", PreviousNode, Some("TalosNodes")),
             KeyBinding::new("down", NextNode, Some("TalosNodes")),
@@ -481,6 +500,7 @@ impl Pilot {
         cx.bind_keys(settings::destinations::key_bindings());
         cx.bind_keys(settings::sources::key_bindings());
         cx.bind_keys(crate::applications::key_bindings());
+        cx.bind_keys(crate::monitoring::alerts::key_bindings());
         cx.bind_keys([
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
@@ -721,6 +741,32 @@ impl Pilot {
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
         self.open_startup_page(&debug, window, cx);
+        // A link given at launch, and every one the operating system opens
+        // us with after it, opens once the window has settled and has a
+        // cluster to read.
+        if let Some(link) = options.open_link.clone() {
+            cx.defer_in(window, move |this, window, cx| {
+                this.open_external_link(link, window, cx)
+            });
+        }
+        let urls = options
+            .urls
+            .as_ref()
+            .and_then(|urls| urls.lock().ok()?.take());
+        if let Some(mut urls) = urls {
+            cx.spawn_in(window, async move |this, cx| {
+                use futures::StreamExt as _;
+                while let Some(url) = urls.next().await {
+                    let opened = this.update_in(cx, |this, window, cx| {
+                        this.open_external_link(url, window, cx)
+                    });
+                    if opened.is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+        }
         #[cfg(feature = "stress")]
         crate::stress::start(window, cx);
         // Overview's first frame needs no notify of the shell to know where
@@ -781,6 +827,7 @@ impl Pilot {
             kubeconfig: KubeconfigSelection::Automatic,
             kubeconfig_draft: Default::default(),
             navigation,
+            deep_link: deep_link::State::new(options.debug.links, options.preferences.as_deref()),
             // The one place a hold is set: example data's, from
             // `DebugOptions::hold`.
             mode: source::Mode::new(options.starts_with_examples().then_some(options.debug.hold)),
@@ -788,6 +835,7 @@ impl Pilot {
             window: window.window_handle(),
             _subscriptions: subscriptions,
             overview_read: Loader::default(),
+            alerts_shape: options.debug.alerts,
             _tick: tick,
         }
     }

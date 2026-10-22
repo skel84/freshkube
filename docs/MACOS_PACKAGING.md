@@ -178,26 +178,31 @@ CI has only `contents: read` permission and needs no Apple secrets. The old
 cargo-dist publishing workflow, shell installer, updater configuration and dist
 profile have been removed; do not regenerate them with `cargo dist init`.
 
-For local captures on an Intel Mac, the separate
+For local captures on a Mac, the separate
 [Capture workflow](../.github/workflows/capture.yml) builds a **debug** executable
-on `macos-15-intel`. Add the `capture` label to a pull request; each new commit
-then replaces its pending capture build. Adding other labels does not start a
-build, and this workflow never cancels the required CI check. To request a build
-on a branch by hand, run
-`gh workflow run capture.yml --ref <branch> -f debug_binary=true`.
+for each architecture: `Debug binary (Apple silicon macOS)` on `macos-15` and
+`Debug binary (Intel macOS)` on `macos-15-intel`. Add the `capture` label to a
+pull request; each new commit then replaces its pending capture builds. Adding
+other labels does not start a build, and this workflow never cancels the required
+CI check. To request builds on a branch by hand, run
+`gh workflow run capture.yml --ref <branch> -f architecture=both`; `architecture`
+is `both` (the default), `aarch64` or `x86_64`.
 Manual builds on the same branch wait for a running capture instead of cancelling
-it; only newer PR heads cancel an in-progress capture.
+it; only newer PR heads cancel an in-progress capture. Each architecture has its
+own concurrency group, so one never waits for the other.
 
-The job uses stable Rust, protobuf and `Swatinem/rust-cache`, with a separate
-`capture-debug-x86_64` key for debug builds. Only runs on `main` save the cache;
-PRs and manual runs on other branches restore it without saving. Seed it once
-on `main` with `gh workflow run capture.yml --ref main -f debug_binary=true`.
+Each job uses stable Rust, protobuf and `Swatinem/rust-cache`, with a separate
+key per architecture, `capture-debug-aarch64` and `capture-debug-x86_64`. Only
+runs on `main` save the cache; PRs and manual runs on other branches restore it
+without saving. Seed them once on `main` with
+`gh workflow run capture.yml --ref main -f architecture=both`.
 Keep an eye on the repository's shared cache usage under **Actions → Caches**
-(10 GB budget).
+(10 GB budget); two debug caches roughly double the capture share of it.
 
-The job runs
+Each job first checks that `rustc` reports its native host
+(`aarch64-apple-darwin` or `x86_64-apple-darwin`), then runs
 `cargo build --locked --bin freshkube --features capture-embed` and uploads `target/debug/freshkube` as
-`freshkube-debug-x86_64-apple-darwin-<short-sha>`, kept for **3 days**. The SHA is
+`freshkube-debug-<architecture>-apple-darwin-<short-sha>`, kept for **3 days**. The SHA is
 the checked-out PR head (or the selected revision for a manual run). Release
 bundles ignore the debug page, kind, theme, window-size and text-size overrides;
 use this debug artifact when a capture needs them.
@@ -210,16 +215,19 @@ portable capture binaries. Its optional `rust-embed` dependency is pinned to
 the version resolved for `gpui-kit-assets`, so their features unify; keep the
 pin aligned when updating that dependency.
 
-After the Capture run succeeds, download the artifact for the revision you want.
+After the Capture run succeeds, download the artifact for your Mac's
+architecture (`aarch64` on Apple silicon, `x86_64` on Intel) and the revision you
+want. `scripts/smoke.sh` refuses a binary built for the other architecture.
 GitHub's artifact archive strips executable permissions, so restore them before
-using the smoke helper. Replace the example run ID and short SHA below:
+using the smoke helper. Replace the example run ID, architecture and short SHA below:
 
 ```sh
 gh run list --workflow capture.yml
 CAPTURE_RUN=123456789
+CAPTURE_ARCH=aarch64   # x86_64 on an Intel Mac
 CAPTURE_SHA=abc1234
-CAPTURE_DIR="$PWD/target/ci-capture/$CAPTURE_SHA"
-gh run download "$CAPTURE_RUN" --name "freshkube-debug-x86_64-apple-darwin-$CAPTURE_SHA" --dir "$CAPTURE_DIR"
+CAPTURE_DIR="$PWD/target/ci-capture/$CAPTURE_ARCH-$CAPTURE_SHA"
+gh run download "$CAPTURE_RUN" --name "freshkube-debug-$CAPTURE_ARCH-apple-darwin-$CAPTURE_SHA" --dir "$CAPTURE_DIR"
 chmod +x "$CAPTURE_DIR/freshkube"
 FRESHKUBE_SMOKE_BINARY="$CAPTURE_DIR/freshkube" scripts/smoke.sh start --page monitoring
 scripts/smoke.sh shot monitoring
@@ -379,6 +387,10 @@ doesn't help. Started as the binary itself from a terminal
 shell's `PATH` and the same kubeconfig works. Finding
 user-installed auth tools from a Finder launch is planned with kubeconfig auth
 plugins ([roadmap](ROADMAP.md#8-later)).
+
+## Opening freshkube:// links
+
+The bundle's `Info.plist` registers the `freshkube` scheme (`CFBundleURLTypes`, with the bundle identifier as its name), so a link clicked in a browser or chat opens Freshkube. macOS hands the URL to the running app, or to the one it starts, through GPUI's `on_open_urls`; the shell opens it once the window has a cluster to read ([deep links](features/deep-links.md#opening-from-the-system)). `package-macos.py` refuses a bundle that registers anything but that scheme, and `scripts/package-urls.test.sh` checks the script without building. Launch Services learns the scheme when the app is first opened from its final location.
 
 ## Local Network privacy
 

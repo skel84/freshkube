@@ -201,6 +201,22 @@ coverage rules remain separate. Monitoring's
 still receive a hide and retain recovery requested by visible history while
 the dashboard is hidden. See [Monitoring](features/monitoring.md).
 
+### The session alert read
+
+The active alerts of the open cluster
+([`desktop/alerts/`](../crates/freshkube-desktop/src/desktop/alerts/mod.rs),
+core's [`monitoring/alerts/`](../crates/freshkube-core/src/monitoring/alerts/mod.rs))
+are a session-owned read beside the Kubernetes summary, not a page's: it feeds
+Overview's attention rows and the rail's Monitoring mark, so it runs on every
+page.
+
+| Boundary | Owner and lifetime |
+| --- | --- |
+| The read | One [`Watch`](../crates/freshkube-reads/src/watch/mod.rs) per live session, `Registry.alerts_watch`, keyed by the context, the connection id and the alert `Scope` (how the setup's metrics mode says the entry's alerts are found). Starting replaces it; `stop_summary`, a parked or replaced session and `reset_active` stop it, and a delivery for another identity or an older generation never lands. `Pilot::apply_alerts` checks the identity again against the session's own before it publishes. |
+| What it reads | Core's `drive`: it looks for the Alertmanager and vmalert once, and starts polling only when one answered; it then reads the active alerts every 60 s, bounded (answers 8 MiB, 500 alerts kept, the rest counted). With none found, or after a refusal, it publishes that and ends; after a source was once found nothing ends it, and a source that stops answering is looked for again after three failed reads. |
+| What it knows | `ClusterSession.alerts`: its identity and the last `State`. Unread, stale, refused or without the central store's cluster label is Unknown, never "no alerts"; only a current read with nothing active is quiet, and PrometheusRule objects alone say nothing of health. A failed read keeps the one before it as stale evidence. |
+| Sharing | One read per live session and one per source. #846's Followed owner reads `Pilot::alert_state` instead of polling. The Alerts, Rules and Silences pages are not part of it: each is an ordinary `Loader` owner that reads only while shown (`OnShow::ReadIfOlder(30 s)`), and Refresh reads again. |
+
 ### The change page's outcome read
 
 What Coroot found after a deploy
@@ -229,6 +245,10 @@ Projects only on press, hiding drops it, and the item is derived from the kept
 findings and the setup's `delivery.build_namespace`. Its keys (`f`, `a`, Enter,
 Backspace) act only when there is something to start, accept or ignore, and
 otherwise let the key through to the focused control.
+
+### Deep links' reads
+
+The fingerprint reads of [deep links](features/deep-links.md#which-cluster) are ordinary reads owned by `deep_link::cluster::Identities` on `Pilot`: each `OwnedJob` and its delivery `Task` stay there. The open cluster's read belongs to the source it started under and is ignored when the window moved to another; a Check is one job per context, started only by the reader's click, replaced by none and dropped with the window; the kubeconfig read (server and CA hashes) completes into whoever waited for it. `fingerprints.json` is a cache, never an identity: a record counts only while the kubeconfig still names the same server and CA.
 
 ## Exceptions
 

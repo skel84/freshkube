@@ -68,6 +68,16 @@ struct Cli {
         "insecure", "kubeconfig", "config", "context", "kubernetes_only", "kube_context",
     ])]
     fixture: bool,
+
+    /// Open a `freshkube://open?…` link once the window is up; the operating
+    /// system hands one over this way when a link is clicked on Linux or
+    /// Windows. It is read with this window's own cluster and access
+    #[arg(value_name = "URL", conflicts_with = "open_link")]
+    url: Option<String>,
+
+    /// The same, as an option
+    #[arg(long, value_name = "URL")]
+    open_link: Option<String>,
 }
 
 /// Writes `--help`, errors and logs to the terminal that started a release
@@ -105,6 +115,8 @@ fn main() -> Result<()> {
         kubernetes_only: asked_kubernetes_only,
         kube_context,
         fixture,
+        url,
+        open_link,
     } = Cli::parse();
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
@@ -197,7 +209,9 @@ fn main() -> Result<()> {
             .with_keyring()
     };
     // The debug knobs are read here once; a release build gets the default.
-    let options = options.with_debug(DebugOptions::from_env());
+    let options = options
+        .with_debug(DebugOptions::from_env())
+        .with_open_link(url.or(open_link));
     freshkube_desktop::run(options, runtime.handle().clone())?;
 
     tracing::info!("Goodbye!");
@@ -453,6 +467,18 @@ mod tests {
                 .fixture
         );
         assert!(Cli::try_parse_from(["freshkube", "--fixture", "--context", "lab"]).is_err());
+    }
+
+    #[test]
+    fn a_link_comes_as_a_url_argument_or_an_option_and_never_both() {
+        let link = "freshkube://open?page=etcd";
+        let positional = Cli::try_parse_from(["freshkube", link]).unwrap();
+        assert_eq!(positional.url.as_deref(), Some(link));
+        let option = Cli::try_parse_from(["freshkube", "--open-link", link]).unwrap();
+        assert_eq!(option.open_link.as_deref(), Some(link));
+        assert!(Cli::try_parse_from(["freshkube", link, "--open-link", link]).is_err());
+        // It combines with a fixture, which a smoke opens a link in.
+        assert!(Cli::try_parse_from(["freshkube", "--fixture", link]).is_ok());
     }
 
     #[test]

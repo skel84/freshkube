@@ -82,6 +82,9 @@ jobs:
           python3 --version
           scripts/changelog.test.sh
           scripts/changelog.sh check
+      - name: Link scheme registration
+        # The packages register freshkube:// (#873).
+        run: scripts/package-urls.test.sh
       - name: Docs link check
         # Every relative link and anchor in AGENTS.md and docs/ resolves. It
         # runs here, not in the macOS job, which docs-only changes skip.

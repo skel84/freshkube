@@ -1,0 +1,1 @@
+- The Capture workflow now also builds a debug binary for Apple silicon, `freshkube-debug-aarch64-apple-darwin-<short-sha>`, and `scripts/smoke.sh` refuses a saved binary built for another architecture.
