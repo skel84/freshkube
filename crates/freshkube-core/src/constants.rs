@@ -67,6 +67,45 @@ pub mod refresh_intervals {
     pub const NORMAL: u64 = 5;
 }
 
+/// What an agent's reads may ask for and be answered with
+/// (`agent_reads`, docs/features/agent.md). Asked of the server where the API
+/// allows, and checked again in core on every answer.
+pub mod agent {
+    use std::time::Duration;
+
+    /// Items in one list, or events in one answer.
+    pub const MAX_ITEMS: usize = 200;
+    /// Items when the agent names no limit.
+    pub const DEFAULT_ITEMS: usize = 100;
+    /// Log lines in one answer.
+    pub const MAX_LOG_LINES: usize = 500;
+    /// Log lines when the agent names no count.
+    pub const DEFAULT_LOG_LINES: usize = 200;
+    /// Log bytes in one answer, and the `limitBytes` asked of the server.
+    pub const MAX_LOG_BYTES: usize = 64 * 1024;
+    /// The farthest back a log or an event may reach, in seconds.
+    pub const MAX_SINCE_SECONDS: u64 = 86_400;
+    /// How far back events reach when the agent names no age.
+    pub const DEFAULT_EVENT_SINCE_SECONDS: u64 = 3_600;
+    /// Pages of 200 events one `list_events` read looks through to find the
+    /// newest, since the API lists them in no order of time.
+    pub const MAX_EVENT_PAGES: usize = 5;
+    /// A log line is cut here.
+    pub const MAX_LINE_BYTES: usize = 2 * 1024;
+    /// An event message is cut here.
+    pub const MAX_EVENT_MESSAGE_BYTES: usize = 1024;
+    /// One object, as JSON, once its noise is removed.
+    pub const MAX_OBJECT_BYTES: usize = 64 * 1024;
+    /// Any answer, as JSON.
+    pub const MAX_ANSWER_BYTES: usize = 128 * 1024;
+    /// One read, from the gate to the answer.
+    pub const READ_DEADLINE: Duration = Duration::from_secs(20);
+    /// Reads one session may make.
+    pub const MAX_READS_PER_SESSION: u32 = 500;
+    /// A cluster entry id, as the workspace bounds it.
+    pub const MAX_ENTRY_ID_BYTES: usize = 64;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

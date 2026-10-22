@@ -230,6 +230,7 @@ fn strip_values(message: &str) -> String {
 #[derive(Clone, Debug)]
 pub struct AuditStore {
     dir: PathBuf,
+    file: String,
     rotate_at: u64,
 }
 
@@ -246,8 +247,15 @@ pub struct Read {
 
 impl AuditStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self::named(dir, "writes.jsonl")
+    }
+
+    /// A store of another log in the same directory, with the same mode and
+    /// rotation: the agent's access log is `agent.jsonl`.
+    pub fn named(dir: impl Into<PathBuf>, file: &str) -> Self {
         Self {
             dir: dir.into(),
+            file: file.to_owned(),
             rotate_at: ROTATE_AT,
         }
     }
@@ -259,16 +267,22 @@ impl AuditStore {
     }
 
     pub fn path(&self) -> PathBuf {
-        self.dir.join("writes.jsonl")
+        self.dir.join(&self.file)
     }
 
     fn rotated(&self, n: usize) -> PathBuf {
-        self.dir.join(format!("writes.jsonl.{n}"))
+        self.dir.join(format!("{}.{n}", self.file))
     }
 
     /// Appends one line, rotating first when the file would pass its size.
     /// An error means the line was not written.
     pub fn append(&self, record: &Record) -> io::Result<()> {
+        self.append_json(record)
+    }
+
+    /// Appends any serializable line, as [`append`](Self::append) does a
+    /// write's record.
+    pub fn append_json<T: Serialize>(&self, record: &T) -> io::Result<()> {
         let mut line = serde_json::to_string(record).map_err(io::Error::other)?;
         line.push('\n');
         let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());

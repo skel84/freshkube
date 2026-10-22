@@ -23,7 +23,7 @@ pub use pod_status::{
 
 /// kubectl apply stores the whole applied object here, a Secret's data
 /// included.
-const LAST_APPLIED: &str = "kubectl.kubernetes.io/last-applied-configuration";
+pub(crate) const LAST_APPLIED: &str = "kubectl.kubernetes.io/last-applied-configuration";
 
 /// An object as the server returned it, ready to show.
 #[derive(Clone, Debug, PartialEq)]
