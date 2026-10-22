@@ -1033,7 +1033,7 @@ fn promoting(change: &mut Change) {
         acts.promoting = vec![Promoting {
             promotion: Handle {
                 name: format!(
-                    "prod-ams.01j9x4k2.{}",
+                    "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.{}",
                     FREIGHT.chars().take(7).collect::<String>()
                 ),
                 uid: "uid-promotion-prod-ams-running".into(),

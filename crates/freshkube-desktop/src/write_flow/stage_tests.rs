@@ -28,8 +28,8 @@ fn kargo() -> Cluster {
     Cluster::with(vec![
         (format!("{NS}/stages/prod-ams"), object("Stage", "prod-ams")),
         (
-            format!("{NS}/promotions/prod-ams.01j9x4k2.wonky-o"),
-            object("Promotion", "prod-ams.01j9x4k2.wonky-o"),
+            format!("{NS}/promotions/prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"),
+            object("Promotion", "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"),
         ),
     ])
 }
@@ -46,15 +46,15 @@ fn promote(destination: Protection) -> freshkube_core::write::ActionDescription 
             acts: &stage,
             destination: Some(("prod-ams".into(), destination)),
         }],
-        "01j9x4k3",
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
     )
 }
 
 fn running() -> acts::Promoting {
     acts::Promoting {
         promotion: acts::Handle {
-            name: "prod-ams.01j9x4k2.wonky-o".into(),
-            uid: "uid-promotion-prod-ams.01j9x4k2.wonky-o".into(),
+            name: "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o".into(),
+            uid: "uid-promotion-prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o".into(),
             resource_version: "100".into(),
         },
         freight: "wonky-otter".into(),
@@ -131,10 +131,9 @@ fn the_exact_stage_name_unlocks_the_send(cx: &mut TestAppContext) {
     h.click(cx, "write-confirm");
     h.drive(cx, Duration::from_secs(3));
     assert_eq!(h.cluster.writes().len(), 1);
-    assert!(
-        h.cluster
-            .exists(&format!("{NS}/promotions/prod-ams.01j9x4k3.wonky-o"))
-    );
+    assert!(h.cluster.exists(&format!(
+        "{NS}/promotions/prod-ams.01k8d2qy4v9z3m6n7p8r5t0w1x.wonky-o"
+    )));
 }
 
 #[gpui_kit::test]
@@ -174,7 +173,7 @@ fn several_stages_are_typed_once_and_the_dialog_names_the_protected_one(cx: &mut
                 destination: Some(("prod-ams".into(), Protection::Protected)),
             },
         ],
-        "01j9x4k3",
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
     );
     h.begin(cx, action);
     assert_eq!(h.label(cx, "write-type-prompt"), "Type prod-fra to confirm");
@@ -274,7 +273,7 @@ fn abort_names_what_already_ran_counts_down_and_then_marks_the_promotion(cx: &mu
     assert!(
         sent[0]
             .path
-            .ends_with("/promotions/prod-ams.01j9x4k2.wonky-o")
+            .ends_with("/promotions/prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o")
     );
     // The value Kargo acts on: its AbortPromotionRequest's `terminate`.
     let body: Value = serde_json::from_str(&sent[0].body).unwrap();

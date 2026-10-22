@@ -30,8 +30,8 @@ fn kargo() -> Cluster {
             object("Warehouse", "checkout-images"),
         ),
         (
-            format!("{NS}/promotions/prod-ams.01j9x4k2.wonky-o"),
-            object("Promotion", "prod-ams.01j9x4k2.wonky-o"),
+            format!("{NS}/promotions/prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"),
+            object("Promotion", "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"),
         ),
     ])
 }
@@ -60,8 +60,8 @@ fn change() -> change::Change {
 fn running() -> Promoting {
     Promoting {
         promotion: Handle {
-            name: "prod-ams.01j9x4k2.wonky-o".into(),
-            uid: "uid-promotion-prod-ams.01j9x4k2.wonky-o".into(),
+            name: "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o".into(),
+            uid: "uid-promotion-prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o".into(),
             resource_version: "100".into(),
         },
         freight: FREIGHT.into(),
@@ -77,7 +77,7 @@ fn promote_action(level: Protection) -> ActionDescription {
             acts: &acts,
             destination: Some(("prod-ams".into(), level)),
         }],
-        "01j9x4k3",
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
     )
 }
 
@@ -247,7 +247,10 @@ async fn promote_creates_a_promotion_and_the_dialog_names_the_destination_and_th
         body["spec"],
         json!({"stage": "prod-ams", "freight": FREIGHT})
     );
-    assert_eq!(body["metadata"]["name"], "prod-ams.01j9x4k3.wonky-o");
+    assert_eq!(
+        body["metadata"]["name"],
+        "prod-ams.01k8d2qy4v9z3m6n7p8r5t0w1x.wonky-o"
+    );
     assert!(!sent[0].body.contains("resourceVersion"));
     // The promotion is audited as a spec change and offers no Undo.
     assert!(finished.undo.is_none());
@@ -278,7 +281,7 @@ async fn a_protected_destination_asks_for_the_stage_s_name_though_kargo_s_cluste
     let finished = runner
         .execute(
             *prepared,
-            Confirmation::Typed("prod-ams.01j9x4k3.wonky-o".into()),
+            Confirmation::Typed("prod-ams.01k8d2qy4v9z3m6n7p8r5t0w1x.wonky-o".into()),
             || false,
             |_| {},
         )
@@ -313,7 +316,7 @@ async fn several_stages_type_once_and_the_dialog_names_the_protected_ones() {
                 destination: Some(("prod-ams".into(), Protection::Protected)),
             },
         ],
-        "01j9x4k3",
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
     );
     assert_eq!(action.subjects, ["dev", "prod-ams"]);
     let verdict = runner.preflight(action).await;
@@ -355,7 +358,10 @@ async fn abort_marks_the_promotion_counts_down_and_says_what_already_ran() {
     };
     assert_eq!(ask.type_name.as_deref(), Some("prod-ams"));
     assert_eq!(ask.cancel_window, Some(Duration::from_secs(5)));
-    assert_eq!(ask.impact, ["Promotion/prod-ams.01j9x4k2.wonky-o"]);
+    assert_eq!(
+        ask.impact,
+        ["Promotion/prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"]
+    );
     let text: String = ask.preview.iter().flat_map(|p| p.lines.clone()).collect();
     assert!(
         text.contains("already ran") || text.contains("stays"),
@@ -379,11 +385,45 @@ async fn abort_marks_the_promotion_counts_down_and_says_what_already_ran() {
     assert!(
         sent[0]
             .path
-            .ends_with("/promotions/prod-ams.01j9x4k2.wonky-o")
+            .ends_with("/promotions/prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o")
     );
     let body: Value = serde_json::from_str(&sent[0].body).unwrap();
     assert_eq!(
         body["metadata"]["annotations"][ABORT],
         r#"{"action":"terminate"}"#
     );
+}
+
+#[test]
+fn a_promotion_name_has_a_lowercase_ulid_that_sorts_by_time_as_kargo_s_do() {
+    let later = new_ulid(chrono::DateTime::from_timestamp_millis(1_792_000_000_000).unwrap());
+    let earlier = new_ulid(chrono::DateTime::from_timestamp_millis(1_791_999_999_000).unwrap());
+    for id in [&later, &earlier] {
+        assert_eq!(id.len(), 26);
+        assert!(
+            id.bytes()
+                .all(|b| b"0123456789abcdefghjkmnpqrstvwxyz".contains(&b)),
+            "{id}"
+        );
+    }
+    assert!(later > earlier, "{later} should sort after {earlier}");
+    // The first digits are the time alone, whatever the random part is.
+    assert_eq!(ulid(1, 0)[..10], ulid(1, u128::MAX)[..10]);
+    assert_eq!(ulid(0, 0), "0".repeat(26));
+    // Two made in one instant differ, so two presses never collide.
+    let now = chrono::Utc::now();
+    assert_ne!(new_ulid(now), new_ulid(now));
+    // And a Promotion made now sorts after one Kargo made a minute ago.
+    let kargo = format!(
+        "prod-ams.{}.wonky-o",
+        new_ulid(now - chrono::Duration::minutes(1))
+    );
+    let ours = promote_action(Protection::Guarded);
+    let name = &ours.changes[0].target.name;
+    assert!(
+        name.split('.').nth(1).is_some_and(|u| u.len() == 26),
+        "{name}"
+    );
+    let ours_now = format!("prod-ams.{}.wonky-o", new_ulid(now));
+    assert!(ours_now > kargo);
 }

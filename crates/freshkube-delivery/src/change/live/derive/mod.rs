@@ -305,7 +305,8 @@ fn stage_acts(
                     })
                 })
                 .collect();
-            // Kargo's names sort by time: the newest first.
+            // Kargo's names are `<stage>.<ulid>.<freight>` and ours follow
+            // them (`acts::ulid`), so within a Stage they sort by time.
             running.sort_by(|a, b| b.promotion.name.cmp(&a.promotion.name));
             running
         })

@@ -124,14 +124,14 @@ impl Pilot {
                         .map(|entry| (entry.id.clone(), self.level_of_entry(&entry, cx))),
                     StageDestination::Unknown(_) => None,
                 };
-                let suffix = format!("{:x}", now.timestamp_millis());
+                let ulid = acts::new_ulid(now);
                 acts::promote(
                     &act.change,
                     &[Pick {
                         acts: stage_acts,
                         destination,
                     }],
-                    &suffix,
+                    &ulid,
                 )
             }
         })

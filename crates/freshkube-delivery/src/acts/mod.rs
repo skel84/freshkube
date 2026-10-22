@@ -284,11 +284,38 @@ pub struct Pick<'a> {
     pub destination: Option<(String, freshkube_core::write::Protection)>,
 }
 
+/// The alphabet of a ULID, lowercase: Crockford's base 32.
+const ULID_DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+
+/// A lowercase ULID: 48 bits of milliseconds, then 80 of `random`, in 26
+/// characters that sort by time as Kargo's Promotion names do.
+pub fn ulid(millis: u64, random: u128) -> String {
+    let value = (u128::from(millis & 0xFFFF_FFFF_FFFF) << 80) | (random & ((1u128 << 80) - 1));
+    (0..26)
+        .map(|n| ULID_DIGITS[((value >> (5 * (25 - n))) & 31) as usize] as char)
+        .collect()
+}
+
+/// A ULID for `now`. Its random part is not a secret, only a tie-break
+/// between two Promotions made in one millisecond.
+pub fn new_ulid(now: chrono::DateTime<chrono::Utc>) -> String {
+    use std::hash::{BuildHasher, Hasher, RandomState};
+    let mut random = 0u128;
+    for _ in 0..2 {
+        let mut hasher = RandomState::new().build_hasher();
+        hasher.write_i64(now.timestamp_nanos_opt().unwrap_or_default());
+        random = (random << 64) | u128::from(hasher.finish());
+    }
+    ulid(now.timestamp_millis().max(0) as u64, random)
+}
+
 /// Promote: creates a Promotion of the change's Freight for each Stage in
-/// `picks`. `suffix` is the sortable token in each Promotion's name, as
-/// Kargo's own are (`<stage>.<suffix>.<freight prefix>`). There is no Undo:
+/// `picks`. `ulid` is the lowercase ULID in each Promotion's name, as
+/// Kargo's own are (`<stage>.<ulid>.<freight prefix>`): Kargo sorts
+/// Promotions by name, so a name that doesn't sort by time reads as older
+/// than the Promotions Kargo makes after it. There is no Undo:
 /// going back is promoting the previous Freight again (#845).
-pub fn promote(change: &change::Change, picks: &[Pick<'_>], suffix: &str) -> ActionDescription {
+pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> ActionDescription {
     let freight = picks.first().map(|p| p.acts.freight.as_str()).unwrap_or("");
     let names: Vec<String> = picks.iter().map(|p| p.acts.stage.name.clone()).collect();
     let mut destinations: Vec<Destination> = vec![];
@@ -309,7 +336,7 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], suffix: &str) -> Act
         .iter()
         .map(|pick| {
             let stage = &pick.acts.stage.name;
-            let name = format!("{stage}.{suffix}.{}", short(freight).to_lowercase());
+            let name = format!("{stage}.{ulid}.{}", short(freight).to_lowercase());
             ObjectChange {
                 target: Target {
                     group: kargo::GROUP.into(),
