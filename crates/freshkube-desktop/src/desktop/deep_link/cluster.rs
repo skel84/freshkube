@@ -23,7 +23,7 @@ use gpui_kit::component::WindowExt as _;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a Check may take, a sign-in included.
 const CHECK_DEADLINE: Duration = Duration::from_secs(45);
@@ -36,7 +36,7 @@ type Continue = Box<dyn FnOnce(&mut Pilot, &mut Window, &mut Context<Pilot>)>;
 pub(super) struct Held {
     context: String,
     view: ViewState,
-    at: std::time::Instant,
+    at: Instant,
 }
 
 /// The dialog that asks which cluster, while it is open.
@@ -66,10 +66,23 @@ pub(super) struct Identities {
     identified: Option<String>,
     checks: BTreeMap<String, (OwnedJob, Task<()>)>,
     reads: Vec<(OwnedJob, Task<()>)>,
+    /// The kubeconfig read, apart from `reads` so that finishing it never
+    /// drops a cluster's read still under way.
+    local_read: Option<(OwnedJob, Task<()>)>,
     waiting: Vec<Continue>,
     reading_local: bool,
     pub(super) choosing: Option<Choosing>,
     held: Option<Held>,
+    /// The source whose open cluster is being identified: links wait for the
+    /// answer or the failure, or they would match against a cache that
+    /// doesn't know the cluster yet.
+    identifying: Option<String>,
+    /// Counts the cache's saves; the file takes only the latest ([`save_latest`]).
+    saves: u64,
+    saved: Arc<std::sync::Mutex<u64>>,
+    /// Makes the example read answer after this long, for tests.
+    #[cfg(test)]
+    pub(super) example_delay: Option<Duration>,
 }
 
 impl Identities {
@@ -83,6 +96,29 @@ impl Identities {
         self.cache.put(context, record);
         match &self.document {
             Some(document) => save(document, self.cache.clone()),
+            None => Ok(()),
+        }
+    }
+
+    /// Makes the open cluster unidentified again, as on a cold start, with
+    /// the example read answering `delay` later.
+    #[cfg(test)]
+    pub(super) fn go_cold(&mut self, delay: Duration) {
+        self.cache = Cache::default();
+        self.identified = None;
+        self.example_delay = Some(delay);
+    }
+
+    #[cfg(test)]
+    pub(super) fn snapshot(&self) -> Cache {
+        self.cache.clone()
+    }
+
+    /// Saves `cache` as snapshot number `seq`, as `record`'s background save does.
+    #[cfg(test)]
+    pub(super) fn save_numbered(&self, cache: Cache, seq: u64) -> std::io::Result<()> {
+        match &self.document {
+            Some(document) => save_latest(document, cache, seq, &self.saved),
             None => Ok(()),
         }
     }
@@ -130,6 +166,24 @@ impl Identities {
 /// Writes the cache over the file's: blocking.
 fn save(document: &Document<Cache>, cache: Cache) -> std::io::Result<()> {
     document.update(|saved| *saved = cache)
+}
+
+/// Writes snapshot number `seq` unless a later one is already on the file:
+/// the saves run in the background and can finish in any order, but each
+/// holds the whole cache, so the latest wins.
+fn save_latest(
+    document: &Document<Cache>,
+    cache: Cache,
+    seq: u64,
+    last: &std::sync::Mutex<u64>,
+) -> std::io::Result<()> {
+    let mut last = last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if seq <= *last {
+        return Ok(());
+    }
+    save(document, cache)?;
+    *last = seq;
+    Ok(())
 }
 
 fn token(text: &Option<String>) -> Option<FingerprintToken> {
@@ -373,7 +427,7 @@ impl Pilot {
                 .unwrap_or_else(|_| Err("The read stopped".into()));
             _ = this.update_in(cx, |this, window, cx| {
                 this.deep_link.identities.reading_local = false;
-                this.deep_link.identities.reads.clear();
+                this.deep_link.identities.local_read = None;
                 if let Ok(local) = local {
                     this.deep_link.identities.local.extend(local);
                 }
@@ -383,7 +437,7 @@ impl Pilot {
                 this.push_fingerprints(cx);
             });
         });
-        self.deep_link.identities.reads.push((job, task));
+        self.deep_link.identities.local_read = Some((job, task));
     }
 
     /// Identifies the cluster the window has just opened: its `kube-system`
@@ -404,8 +458,12 @@ impl Pilot {
             return;
         };
         self.deep_link.identities.identified = Some(source.id.clone());
+        self.deep_link.identities.identifying = Some(source.id.clone());
         if self.shape() == Some(LinkShape::Unchecked) {
-            return self.with_local(window, cx, |_, _, _| {});
+            let id = source.id.clone();
+            return self.with_local(window, cx, move |this, window, cx| {
+                this.identified(&id, window, cx);
+            });
         }
         let over = self.override_of(&context, cx);
         self.with_local(window, cx, move |this, window, cx| {
@@ -431,11 +489,11 @@ impl Pilot {
                     .is_some();
             cx.notify();
             if known {
+                this.identified(&source.id, window, cx);
                 return;
             }
             if this.mode().is_example() {
-                let answer = example::read(&context, this.shape());
-                this.record(&context, local, answer, cx);
+                this.answer_example(&context, local, source.id.clone(), window, cx);
                 return;
             }
             let wanted = source.id.clone();
@@ -453,17 +511,64 @@ impl Pilot {
                 let answer = receiver
                     .await
                     .unwrap_or_else(|_| Err("The read stopped".into()));
-                _ = this.update_in(cx, |this, _, cx| {
+                _ = this.update_in(cx, |this, window, cx| {
                     // The window moved on to another cluster meanwhile.
                     if this.deep_link.identities.identified.as_deref() != Some(wanted.as_str()) {
                         return;
                     }
                     let answer = answer.unwrap_or_else(StrongRead::Failed);
                     this.record(&context, local, answer, cx);
+                    this.identified(&wanted, window, cx);
                 });
             });
             this.deep_link.identities.reads.push((job, task));
         });
+    }
+
+    /// The example cluster's read, answered at once (after a delay, in tests
+    /// that need the read to be pending).
+    fn answer_example(
+        &mut self,
+        context: &str,
+        local: Option<Local>,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(test)]
+        if let Some(delay) = self.deep_link.identities.example_delay {
+            let context = context.to_owned();
+            let task = cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(delay).await;
+                _ = this.update_in(cx, |this, window, cx| {
+                    let answer = example::read(&context, this.shape());
+                    this.record(&context, local, answer, cx);
+                    this.identified(&id, window, cx);
+                });
+            });
+            task.detach();
+            return;
+        }
+        let answer = example::read(context, self.shape());
+        self.record(context, local, answer, cx);
+        self.identified(&id, window, cx);
+    }
+
+    /// The open cluster `id` is identified, or its read failed: the links
+    /// that waited for that can open now.
+    fn identified(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.deep_link.identities.identifying.as_deref() == Some(id) {
+            self.deep_link.identities.identifying = None;
+        }
+        self.open_waiting_links(window, cx);
+    }
+
+    /// Whether the open cluster's identity is still being read.
+    pub(super) fn identifying(&self) -> bool {
+        match (&self.deep_link.identities.identifying, self.source().kube) {
+            (Some(reading), Some(source)) => *reading == source.id,
+            _ => false,
+        }
     }
 
     /// Keeps what a read of `context` found, and saves it beside the
@@ -501,9 +606,11 @@ impl Pilot {
             // Example data saves nothing.
             if let Some(document) = identities.document.clone().filter(|_| !example) {
                 let cache = identities.cache.clone();
+                identities.saves += 1;
+                let (seq, last) = (identities.saves, identities.saved.clone());
                 cx.background_executor()
                     .spawn(async move {
-                        if let Err(error) = save(&document, cache) {
+                        if let Err(error) = save_latest(&document, cache, seq, &last) {
                             tracing::warn!("fingerprints.json not saved: {error}");
                         }
                     })
@@ -706,7 +813,7 @@ impl Pilot {
                 self.deep_link.identities.held = Some(Held {
                     context: context.clone(),
                     view,
-                    at: std::time::Instant::now(),
+                    at: cx.background_executor().now(),
                 });
                 self.select_context(context, window, cx);
             }
@@ -724,7 +831,7 @@ impl Pilot {
         let Some(held) = &self.deep_link.identities.held else {
             return;
         };
-        if held.at.elapsed() > HOLD {
+        if cx.background_executor().now().duration_since(held.at) > HOLD {
             self.deep_link.identities.held = None;
             return;
         }

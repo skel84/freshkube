@@ -86,7 +86,7 @@ Close, the list's Escape or opening anything else clears the card. A node the cl
 
 ## Opening from the system
 
-Every way in ends at `Pilot::open_external_link`, which parses the text like ⌘K does and waits (at most 4 links) until the window has a Kubernetes source to read; example data always has one.
+Every way in ends at `Pilot::open_external_link`, which parses the text like ⌘K does and waits (at most 4 links) until the window has a Kubernetes source to read and its open cluster is identified (the `kube-system` read has answered or failed), so a link made in that cluster matches it exactly and not on the CA alone; example data always has a source.
 
 - **macOS:** the bundle registers `freshkube` in `Info.plist` (`CFBundleURLTypes`), and GPUI's `on_open_urls` delivers each URL into a channel the shell reads (`desktop::run`), so one that starts the app waits there until the window is up.
 - **Linux:** the tarball's `freshkube.desktop` has `Exec=freshkube %u` and `MimeType=x-scheme-handler/freshkube;`. It isn't installed, so the user registers it once with `xdg-mime default freshkube.desktop x-scheme-handler/freshkube` ([PACKAGING.md](../PACKAGING.md)).

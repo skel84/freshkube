@@ -78,7 +78,7 @@ impl DetailPane {
                                     .xsmall()
                                     .flex_none()
                                     .icon(IconName::Link)
-                                    .tooltip("Copy link (Shift-Command-C)")
+                                    .tooltip(freshkube_ui::platform::copy_link_tooltip())
                                     .accessibility_label("Copy link to this object")
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(DetailEvent::Link(

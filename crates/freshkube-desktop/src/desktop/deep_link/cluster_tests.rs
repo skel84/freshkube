@@ -159,6 +159,36 @@ fn a_link_made_in_the_open_cluster_opens_there_without_asking(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
+fn a_link_waits_for_the_open_clusters_read_before_it_is_matched(cx: &mut TestAppContext) {
+    let delay = std::time::Duration::from_secs(2);
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let text = made_in("prod-fra");
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            // A cold start: nothing known of the open cluster, its read pending.
+            pilot.deep_link.identities.go_cold(delay);
+            pilot.identify_open_cluster(window, cx);
+            pilot.open_external_link(text.clone(), window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.deep_link.waiting.len(), 1);
+        assert_ne!(pilot.navigation.page, Page::Etcd);
+    });
+    assert!(!asking(cx, &view));
+    cx.executor().advance_clock(delay);
+    cx.run_until_parked();
+    // The read answered: the link matches the open cluster exactly and opens
+    // there without asking, not on the CA alone.
+    assert!(!asking(cx, &view));
+    assert_eq!(page(cx, &view), Page::Etcd);
+    cx.read(|cx| assert!(view.read(cx).deep_link.waiting.is_empty()));
+}
+
+#[gpui_kit::test]
 fn a_cluster_never_opened_matches_on_the_ca_alone_and_asks(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let before = (active(cx, &view), page(cx, &view));
@@ -418,6 +448,31 @@ fn a_setup_file_fingerprint_stands_for_the_clusters_own_and_is_never_in_a_link(
         assert!(identity.ca.is_some());
         assert!(!format!("{identity:?}").contains("prod-eu"));
     });
+}
+
+#[test]
+fn an_older_save_that_finishes_last_never_replaces_a_newer_one() {
+    use super::cluster::Identities;
+    use super::identity::Record;
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let record = |name: &str| Record {
+        server: strong_from_uid(&format!("https://{name}.example.test:6443")),
+        ca: None,
+        strong: Some(strong_from_uid(name)),
+        refused: false,
+    };
+    let mut identities = Identities::open(Some(&preferences));
+    identities.keep("dev", record("dev")).unwrap();
+    let older = identities.snapshot();
+    identities.keep("stage", record("stage")).unwrap();
+    let newer = identities.snapshot();
+    // The background saves finish in the wrong order.
+    identities.save_numbered(newer, 2).unwrap();
+    identities.save_numbered(older, 1).unwrap();
+    let later = Identities::open(Some(&preferences));
+    assert!(later.has_record("dev"));
+    assert!(later.has_record("stage"));
 }
 
 #[test]

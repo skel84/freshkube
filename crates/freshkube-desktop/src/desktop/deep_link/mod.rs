@@ -252,7 +252,9 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.mode().is_example() || self.source().kube.is_some() {
+        let ready =
+            (self.mode().is_example() || self.source().kube.is_some()) && !self.identifying();
+        if ready {
             self.open_link_text(&text, window, cx);
         } else if self.deep_link.waiting.len() < WAITING_LIMIT {
             self.deep_link.waiting.push(text);
@@ -265,7 +267,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.deep_link.waiting.is_empty() || self.source().kube.is_none() {
+        if self.deep_link.waiting.is_empty() || self.source().kube.is_none() || self.identifying() {
             return;
         }
         for text in std::mem::take(&mut self.deep_link.waiting) {
