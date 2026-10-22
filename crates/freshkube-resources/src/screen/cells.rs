@@ -6,11 +6,11 @@
 use freshkube_core::pluralize;
 use std::sync::Arc;
 
-use freshkube_core::resources::Amounts;
+use freshkube_core::resources::{Amounts, PodVerdict};
 use gpui_kit::component::tooltip::Tooltip;
 
 use super::super::model::ResourceRow;
-use super::super::rows::{Emphasis, PodRow, PodState, RowOwner, died};
+use super::super::rows::{Emphasis, PodRow, PodState, RowOwner};
 use super::layout::DisplayColumn;
 use super::*;
 use crate::palette::Palette;
@@ -26,38 +26,33 @@ const SUFFIX_SHRINK: f32 = 1000.;
 /// stopped, the critical disc where the pod can't run. A pod on a node
 /// that isn't ready can't be confirmed, so it warns.
 pub(super) fn pod_tone(pod: &PodRow, node_ready: bool) -> ui::Tone {
-    match pod.state {
-        PodState::Failing if died(&pod.status) => ui::Tone::Died,
-        PodState::Failing => ui::Tone::Crit,
-        PodState::NotReady => ui::Tone::Warn,
-        _ if !node_ready => ui::Tone::Warn,
-        PodState::Running | PodState::Completed => ui::Tone::Good,
-        PodState::Pending | PodState::Terminating | PodState::Unknown => ui::Tone::Unknown,
+    match freshkube_core::resources::pod_verdict(pod.state, &pod.status, node_ready) {
+        PodVerdict::Good => ui::Tone::Good,
+        PodVerdict::Warn => ui::Tone::Warn,
+        PodVerdict::Crit => ui::Tone::Crit,
+        PodVerdict::Died => ui::Tone::Died,
+        PodVerdict::Unknown => ui::Tone::Unknown,
     }
 }
 
 /// A workload's tone from its ready replicas of all: every one ready, some,
 /// or none of several. A workload scaled to zero is fine.
 pub(super) fn ready_tone(text: &str) -> Option<ui::Tone> {
-    let (up, all) = text.split_once('/')?;
-    let (up, all): (u32, u32) = (up.trim().parse().ok()?, all.trim().parse().ok()?);
-    Some(if up >= all {
-        ui::Tone::Good
-    } else if up == 0 {
-        ui::Tone::Crit
-    } else {
-        ui::Tone::Warn
-    })
+    freshkube_core::resources::ready_tone(text).map(tone_of)
 }
 
-/// A printed status's tone, for kinds other than pods.
-pub(super) fn printed_tone(text: &str) -> ui::Tone {
-    match status_tone(text) {
+fn tone_of(tone: StatusTone) -> ui::Tone {
+    match tone {
         StatusTone::Success => ui::Tone::Good,
         StatusTone::Warning => ui::Tone::Warn,
         StatusTone::Danger => ui::Tone::Crit,
         StatusTone::Neutral => ui::Tone::Unknown,
     }
+}
+
+/// A printed status's tone, for kinds other than pods.
+pub(super) fn printed_tone(text: &str) -> ui::Tone {
+    tone_of(status_tone(text))
 }
 
 /// A cell's tooltip, hidden while the row's menu is open over it.

@@ -414,4 +414,39 @@ fn the_hidden_and_grouped_examples_toast_their_first_notice_at_launch(cx: &mut T
             "{shape:?} toasts its first notice"
         );
     }
+
+#[gpui_kit::test]
+fn a_bell_notice_is_headed_by_its_headline_unless_details_hide(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Bell);
+    click(cx, f.handle, "followed");
+    cx.update_window(f.handle, |_, window, _| {
+        let label = window
+            .find("notice-new-1")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(label.starts_with("api-7c9 keeps crash-looping"), "{label}");
+        assert!(!label.starts_with("Freshkube"), "{label}");
+    })
+    .unwrap();
+    // Hide details On: the heading is the summary, and the lines still list.
+    cx.update(|cx| {
+        f.followed.update(cx, |followed, cx| {
+            let mut settings = followed.settings();
+            settings.hide_details = Some(true);
+            followed.set_settings(settings, cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let label = window
+            .find("notice-new-1")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(label.starts_with("Freshkube · 1 update"), "{label}");
+        assert!(label.contains("api-7c9 keeps crash-looping"), "{label}");
+    })
+    .unwrap();
 }

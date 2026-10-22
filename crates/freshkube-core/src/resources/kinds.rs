@@ -88,6 +88,24 @@ pub fn builtin(key: &str) -> Option<ResourceKind> {
         })
 }
 
+/// A built-in kind by what a person types: the kubectl key (`deployments.apps`),
+/// a plural (`deployments`) or a kind in any case (`Deployment`). A name
+/// that two groups share, such as `events`, is not guessed: `None`.
+pub fn find(name: &str) -> Option<ResourceKind> {
+    if let Some(kind) = builtin(name) {
+        return Some(kind);
+    }
+    let wanted = name.to_ascii_lowercase();
+    let mut found = BUILTIN
+        .iter()
+        .filter(|(_, _, kind, plural, _)| *plural == wanted || kind.to_ascii_lowercase() == wanted);
+    let first = found.next()?;
+    found.next().is_none().then(|| {
+        let (group, version, kind, plural, namespaced) = first;
+        ResourceKind::new(group, version, kind, plural, *namespaced)
+    })
+}
+
 /// Resolve a built-in owner reference by group and kind, keeping its named version.
 pub fn builtin_by_gvk(api_version: &str, kind: &str) -> Option<ResourceKind> {
     let (group, version) = api_version.split_once('/').unwrap_or(("", api_version));
@@ -286,6 +304,15 @@ const BUILTIN: [(&str, &str, &str, &str, bool); 47] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kind_is_found_by_key_plural_or_kind_and_never_guessed() {
+        assert_eq!(find("deployments.apps").unwrap().key(), "deployments.apps");
+        assert_eq!(find("deployments").unwrap().key(), "deployments.apps");
+        assert_eq!(find("Deployment").unwrap().key(), "deployments.apps");
+        assert_eq!(find("pods").unwrap().key(), "pods");
+        assert!(find("nonsense").is_none());
+    }
 
     #[test]
     fn keys_and_paths_follow_kubectl_and_api_conventions() {
