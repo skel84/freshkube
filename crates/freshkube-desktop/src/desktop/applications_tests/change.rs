@@ -455,23 +455,36 @@ fn a_fold_opens_and_closes_its_stage(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_chip_shows_only_its_hops_in_every_stage(cx: &mut TestAppContext) {
+fn a_chip_shows_the_groups_it_counts_with_every_row_in_them(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         let page = change(&view, cx).unwrap();
         window.click("change-tally-failing", cx);
         window.render_frame(cx);
+        // The failing group, with every row in it: a chip counts groups.
         assert_eq!(
             page.read(cx).lines_text(),
-            ["# Stage prod-lon", "prod-lon-verification"]
+            [
+                "# Stage prod-lon",
+                "prod-lon-eligible",
+                "prod-lon-promotion",
+                "prod-lon-verification",
+                "prod-lon-argocd",
+                "prod-lon-deployment",
+                "prod-lon-pods"
+            ]
         );
         window.click("change-tally-ok", cx);
         window.render_frame(cx);
         let lines = page.read(cx).lines_text();
-        // Folded Stages show their ok rows under a filter, and the hand
-        // approval's blue dot counts as ok.
+        // Folded Stages show their rows under a filter; the Stages that
+        // are ok count, and the failing Stage, whose hand approval is ok
+        // in itself, does not.
         assert!(lines.contains(&"dev-pods".to_owned()), "{lines:?}");
-        assert!(lines.contains(&"prod-lon-eligible".to_owned()), "{lines:?}");
+        assert!(
+            !lines.contains(&"prod-lon-eligible".to_owned()),
+            "{lines:?}"
+        );
         assert!(
             !lines.contains(&"prod-ams-promotion".to_owned()),
             "{lines:?}"
@@ -490,7 +503,9 @@ fn a_chip_shows_only_its_hops_in_every_stage(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_hop_shows_its_link_and_a_gate_its_stage(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    // Tall enough for the headline, the fix bar and the pull request's
+    // banner above the trail, so these far rows are drawn.
+    let (_runtime, handle, _view) = open(cx, 1280., 1000.);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("pr-run"), cx);
         window.render_frame(cx);
@@ -708,7 +723,9 @@ fn o_opens_the_freight_in_resources(cx: &mut TestAppContext) {
 /// opens: the button is greyed out and the menu item too.
 #[gpui_kit::test]
 fn a_hop_on_a_cluster_that_is_not_open_does_not_open(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    // Tall enough for the headline, the fix bar and the pull request's
+    // banner above the trail, so these far rows are drawn.
+    let (_runtime, handle, view) = open(cx, 1280., 1000.);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("prod-lon-pods"), cx);
         window.render_frame(cx);

@@ -1,5 +1,5 @@
 //! Where a build was read, kept separate from what its manifest reports.
-use crate::change::{Gap, Hop, Missing, Shows, Target, Value};
+use crate::change::{Cause, Gap, Hop, Missing, SettingsField, Shows, Target, Value};
 use crate::join::{Evidence, Hop as Joined, Link};
 use crate::results::{Cap, Error, History, Skip};
 use crate::tekton::{self, Build};
@@ -99,6 +99,9 @@ pub(super) fn decorate(hop: &mut Hop, evidence: &Evidence, link: &Link, entry: &
     {
         return;
     }
+    if matches!(evidence.build_history, Err(Error::BuildNamespace(_))) {
+        not_set_up(hop);
+    }
     let found = build(evidence, link);
     let mut from = match found.map(|build| build.origin) {
         Some(tekton::Origin::Results) => format!("Tekton Results · {entry}"),
@@ -140,6 +143,27 @@ pub(super) fn decorate(hop: &mut Hop, evidence: &Evidence, link: &Link, entry: &
         if let Some(notice) = &mut detail.notice {
             notice.body.push_str(&format!(" {why}."));
         }
+    }
+}
+
+/// A build namespace template that doesn't resolve for the project is a
+/// setup problem: the cluster refused nothing, so the hop and its link are
+/// Not set up, naming the setting, in place of a Can't read that asks for
+/// a Role.
+fn not_set_up(hop: &mut Hop) {
+    let cause = Cause::not_set_up(
+        "a build namespace that resolves for this project, to look for the build",
+        SettingsField::BUILD_NAMESPACE,
+    );
+    let replaces = |was: &Option<Cause>| matches!(was, None | Some(Cause::CantRead { .. }));
+    if replaces(&hop.cause) {
+        hop.cause = Some(cause.clone());
+    }
+    if let Shows::Hop(detail) = &mut hop.shows
+        && let Some(link) = &mut detail.link
+        && replaces(&link.cause)
+    {
+        link.cause = Some(cause);
     }
 }
 

@@ -656,6 +656,46 @@ fn each_section_opens_from_its_page_slug(cx: &mut TestAppContext) {
     }
 }
 
+/// The change page's Fix actions open Settings on the section that holds
+/// the key they name.
+#[gpui_kit::test]
+fn the_change_pages_fix_actions_open_the_sources_and_destinations_sections(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::platform::{OpenDestinationsSettings, OpenSourcesSettings};
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    for (action, section, list) in [
+        (
+            Box::new(OpenSourcesSettings) as Box<dyn gpui_kit::Action>,
+            SettingsSection::Sources,
+            "settings-source-kargo",
+        ),
+        (
+            Box::new(OpenDestinationsSettings),
+            SettingsSection::Destinations,
+            "settings-destinations-list",
+        ),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.navigate_from_keyboard(Page::Overview, window, cx)
+            });
+            window.render_frame(cx);
+            window.dispatch_action(action, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let pilot = view.read(cx);
+            assert_eq!(pilot.navigation.page, Page::Settings);
+            assert_eq!(pilot.settings_page.read(cx).section(), section);
+            assert!(window.find(list).visible());
+        })
+        .unwrap();
+    }
+}
+
 /// Command-comma and All settings… open the section shown last, not the
 /// gear's menu.
 #[gpui_kit::test]

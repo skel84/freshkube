@@ -1,1 +1,0 @@
-- **Protection levels:** a cluster's protection level is shown in the header and the status bar, and edited in Settings' Clusters Inspector. A read-only cluster disables a shell's Start, Operations' Review and a service's Restart.

@@ -22,8 +22,8 @@ fn show(page: &Entity<ChangePage>, key: &str, cx: &mut gpui_kit::App) -> (String
         cx.notify();
     });
     let detail = page.read(cx).derive_detail().expect("a detail");
-    let (_, lead, body) = detail.banner.expect("a banner");
-    (lead.to_string(), body.to_string())
+    let (word, needs) = detail.fix_words().expect("a Why / Needs / Fix block");
+    (word, needs)
 }
 
 #[gpui_kit::test]
@@ -35,14 +35,15 @@ fn waiting_has_its_own_glyph_and_chip_and_counts_with_no_problem(cx: &mut TestAp
         // prod-ams's promotion and verification have not been reached.
         assert_eq!(row_tone(p, "prod-ams-promotion"), Tone::Waiting);
         assert_eq!(row_tone(p, "prod-ams-verification"), Tone::Waiting);
-        assert_eq!(count(p, Tone::Waiting), 2);
-        // The unreadable pods and the pruned run are the unknowns; waiting
-        // adds to neither them nor the warnings nor the failures.
-        assert_eq!(count(p, Tone::Unknown), 2);
-        assert_eq!(count(p, Tone::Warn), 1);
+        // The chips count groups at their weakest: the start (warn), prod-ams
+        // (its pods can't be read), prod-lon (failing), and dev and stage.
         assert_eq!(count(p, Tone::Crit), 1);
-        assert!(window.find("change-tally-waiting").visible());
+        assert_eq!(count(p, Tone::Warn), 1);
+        assert_eq!(count(p, Tone::Unknown), 1);
+        assert_eq!(count(p, Tone::Good), 2);
+        assert_eq!(count(p, Tone::Waiting), 0);
         assert!(window.find("change-tally-unknown").visible());
+        assert!(window.try_find("change-tally-waiting").is_none());
         // The group of a waiting Stage is no worse than its other rows:
         // the clock ranks with what is fine.
         assert!(super::rank(Tone::Waiting) > super::rank(Tone::Good));
@@ -56,11 +57,8 @@ fn the_link_column_says_the_cause_in_place_of_unknown(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let p = page.read(cx);
-        assert_eq!(
-            count(p, Tone::Unknown),
-            4,
-            "the pruned run is Can't read too"
-        );
+        // The start and the Stages stage and prod-ams can't be confirmed.
+        assert_eq!(count(p, Tone::Unknown), 2);
         for (key, word) in [
             ("prod-ams-pods", "Can't read"),
             ("policy", "Not found"),
@@ -77,23 +75,51 @@ fn the_link_column_says_the_cause_in_place_of_unknown(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_inspector_leads_with_the_cause_what_confirms_it_and_the_step(cx: &mut TestAppContext) {
+fn the_inspector_leads_with_why_needs_and_fix_before_the_fields(cx: &mut TestAppContext) {
     let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let (lead, body) = show(&page, "prod-ams-pods", cx);
-        assert_eq!(lead, "Can't read.");
-        assert!(body.contains("Needs the pods of checkout-api"), "{body}");
-        assert!(
-            body.contains("Ask for read access to pods in checkout."),
-            "{body}"
-        );
-        let (lead, body) = show(&page, "policy", cx);
-        assert_eq!(lead, "Not found.");
-        assert!(body.contains("Check sources in Settings"), "{body}");
-        let (lead, body) = show(&page, "stage-argocd", cx);
-        assert_eq!(lead, "Not set up.");
-        assert!(body.contains("delivery.stage_naming"), "{body}");
+        for (key, word, needs, button, words) in [
+            (
+                "prod-ams-pods",
+                "Can't read",
+                "the pods of checkout-api",
+                "change-fix-copy",
+                "Ask for read access to pods in checkout.",
+            ),
+            (
+                "policy",
+                "Not found",
+                "a ",
+                "change-fix-sources",
+                "Check sources in Settings › Delivery sources.",
+            ),
+            (
+                "stage-argocd",
+                "Not set up",
+                "an ",
+                "change-fix-settings",
+                "Set delivery.stage_naming in Settings › Delivery sources.",
+            ),
+        ] {
+            page.update(cx, |page, cx| page.select(key, window, cx));
+            window.render_frame(cx);
+            assert_eq!(window.find("change-fix-cause").label(), Some(word), "{key}");
+            let said = window.find("change-fix-needs").label().unwrap().to_owned();
+            assert!(said.starts_with(needs), "{key}: {said}");
+            assert!(window.find(button).visible(), "{key}");
+            assert_eq!(
+                window.find(format!("{button}-words")).label(),
+                Some(words),
+                "{key}"
+            );
+            // Why, Needs and Fix sit above the fields and the link.
+            let fix = window.find("change-fix").bounds();
+            let link = window.find("change-detail-link").bounds();
+            assert!(fix.bottom() <= link.top() + gpui_kit::px(1.), "{key}");
+            // The cause is not also a banner.
+            assert!(window.try_find("change-detail-banner").is_none(), "{key}");
+        }
     })
     .unwrap();
 }
@@ -133,9 +159,8 @@ fn a_verification_nothing_recorded_after_its_promotion_ended_is_not_found_not_wa
         assert_eq!(count(p, Tone::Unknown), unknown + 1);
         assert_eq!(count(p, Tone::Waiting), waiting);
         let (lead, body) = show(&page, "dev-verification", cx);
-        assert_eq!(lead, "Not found.");
-        assert!(body.contains("Check sources in Settings"), "{body}");
-        assert!(!body.contains("settings-"), "no slug on screen: {body}");
+        assert_eq!(lead, "Not found");
+        assert!(body.starts_with("an AnalysisRun"), "{body}");
     })
     .unwrap();
 }
