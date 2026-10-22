@@ -7,6 +7,7 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 ```
 crates/
 ├── talos-rs/            Talos gRPC client
+├── freshkube-cli/       the read commands of the binary: check and get, JSON and exit codes; no GPUI
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-delivery/  the delivery chain (Kargo, Argo CD, builds → pods) and its applications; no UI types
 ├── freshkube-prefs/     the preferences files: a typed JSON Document per file, saved atomically
@@ -255,6 +256,7 @@ Diagnostic checks follow these rules; [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 
 Behaviour that is not a rule lives in one doc per feature, each starting with its module paths and the tests that prove it ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#feature-docs)).
 
+- The command line, `freshkube check` and `freshkube get` (`crates/freshkube-cli/`): [docs/features/cli.md](docs/features/cli.md). Read-only; the cluster is always named, never the current context; Secret values are never requested or printed.
 - Databases (`core/databases/`, `screens/databases/`): [docs/features/databases.md](docs/features/databases.md). CloudNativePG first; no Secret or credential reads or mutations.
 - Resources, the dock, shells and ports (`crates/freshkube-resources/`, `desktop/dock/`): [docs/features/resources.md](docs/features/resources.md). Rules kept here: a dock log tab reads while it is open, on any page, and nothing else reads out of sight; Resources reads only while its page shows; Secret values never reach the detail pane's document, search or a link's resolution (metadata-only reads).
 - Deep links, Copy link and opening a `freshkube://open` link (`crates/freshkube-nav/src/view.rs`, `desktop/deep_link/`): [docs/features/deep-links.md](docs/features/deep-links.md). Rules kept here: a link holds identities only in closed, bounded types and only navigates; Copy link always means a Freshkube link (the change page's is Copy Kargo link).
