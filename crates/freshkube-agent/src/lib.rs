@@ -20,3 +20,8 @@ pub mod scripted;
 pub mod tools;
 
 pub use child::Link;
+
+/// Log directives that keep the ACP and MCP libraries at info. At debug they
+/// log every message they send, and `session/new` carries the session's
+/// token in a header. The app's logger adds these whatever its level.
+pub const QUIET_LOG_TARGETS: [&str; 2] = ["agent_client_protocol=info", "rmcp=info"];

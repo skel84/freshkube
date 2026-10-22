@@ -167,18 +167,7 @@ fn main() -> Result<()> {
     let log_path = resolve_log_path(log_file);
     let log_file = File::create(&log_path)?;
 
-    // Set the base level, but quiet down noisy HTTP/gRPC libraries.
-    let filter = if debug {
-        EnvFilter::from_default_env()
-            .add_directive(Level::DEBUG.into())
-            .add_directive("h2=info".parse().unwrap())
-            .add_directive("hyper=info".parse().unwrap())
-            .add_directive("tower=info".parse().unwrap())
-            .add_directive("tonic=info".parse().unwrap())
-            .add_directive("rustls=info".parse().unwrap())
-    } else {
-        EnvFilter::from_default_env().add_directive(Level::INFO.into())
-    };
+    let filter = log_filter(debug);
 
     tracing_subscriber::registry()
         .with(
@@ -310,6 +299,28 @@ fn options(
 }
 
 /// Resolve the log file path, falling back to the platform temp directory.
+/// The log filter: the base level, with noisy HTTP/gRPC libraries quieted. The
+/// agent libraries stay at info whatever the level: at debug they log every
+/// message they send, and an agent session's first message carries its token.
+/// (`freshkube-agent`'s `QUIET_LOG_TARGETS` is the same pair, and its log test
+/// proves that they hide the token.)
+fn log_filter(debug: bool) -> EnvFilter {
+    let filter = if debug {
+        EnvFilter::from_default_env()
+            .add_directive(Level::DEBUG.into())
+            .add_directive("h2=info".parse().unwrap())
+            .add_directive("hyper=info".parse().unwrap())
+            .add_directive("tower=info".parse().unwrap())
+            .add_directive("tonic=info".parse().unwrap())
+            .add_directive("rustls=info".parse().unwrap())
+    } else {
+        EnvFilter::from_default_env().add_directive(Level::INFO.into())
+    };
+    filter
+        .add_directive("agent_client_protocol=info".parse().unwrap())
+        .add_directive("rmcp=info".parse().unwrap())
+}
+
 fn resolve_log_path(log_file: Option<String>) -> PathBuf {
     match log_file {
         Some(path) => PathBuf::from(path),
@@ -320,6 +331,16 @@ fn resolve_log_path(log_file: Option<String>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_agent_libraries_stay_at_info_at_every_level() {
+        for debug in [false, true] {
+            let shown = log_filter(debug).to_string();
+            for directive in ["agent_client_protocol=info", "rmcp=info"] {
+                assert!(shown.contains(directive), "debug {debug}: {shown}");
+            }
+        }
+    }
 
     fn env(path: &str) -> Option<String> {
         Some(path.to_string())
