@@ -33,7 +33,6 @@ use super::changes::{Gap, MAX_FREIGHT, Note, unread};
 use super::github::PullState;
 use super::kargo::{Freight, Stage, promotion_order};
 use super::source::Source;
-use freshkube_core::resources::Failure;
 
 /// A pull request GitHub names for a Freight's commit.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,8 +56,13 @@ pub enum PullRead {
     Found(Pull),
     /// GitHub answered and names none.
     NoPull,
-    /// GitHub wasn't asked, or couldn't answer, in words.
-    Unread(String),
+    /// GitHub wasn't asked, or couldn't answer, in words. A read that the
+    /// sparing client skipped because the rate limit is low or reached says
+    /// so, which is not a failure.
+    Unread {
+        rate_limit: bool,
+        why: String,
+    },
 }
 
 /// One Kargo project, as the page reads it.
@@ -235,6 +239,8 @@ pub struct App {
     pub finals: Vec<StageGap>,
     pub stages: Vec<StageLine>,
     pub listed: Vec<Listed>,
+    /// How many older Freight the cap left out of what was read.
+    pub older: usize,
 }
 
 impl App {
@@ -474,8 +480,36 @@ pub fn derive(read: &Read) -> Waiting {
         });
     }
     for app in waiting.apps.iter().filter(|_| read.pulls_read) {
+        let limited = app
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item.pull,
+                    Some(PullRead::Unread {
+                        rate_limit: true,
+                        ..
+                    })
+                )
+            })
+            .count();
+        if limited > 0 {
+            waiting.notes.push(Note {
+                gap: Gap::Unreadable,
+                project: Some(app.name.clone()),
+                text: format!(
+                    "{limited} of {}'s pull requests weren't read: GitHub's rate limit is low or \
+                     reached",
+                    app.name
+                ),
+            });
+        }
         for item in &app.items {
-            if let Some(PullRead::Unread(why)) = &item.pull {
+            if let Some(PullRead::Unread {
+                rate_limit: false,
+                why,
+            }) = &item.pull
+            {
                 let note = Note {
                     gap: Gap::Unreadable,
                     project: Some(app.name.clone()),
@@ -620,6 +654,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
         finals: Vec::new(),
         stages: Vec::new(),
         listed: Vec::new(),
+        older: 0,
     };
     let Some(freight) = project.freight.read() else {
         return not_read(
@@ -744,6 +779,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
         finals,
         stages: stage_lines,
         listed,
+        older: left,
     }
 }
 
@@ -847,7 +883,10 @@ fn item(
             .any(|name| freight.verified_in.contains(name));
     let commit = freight.commits.first().map(|c| c.id.clone());
     let pull = project.pulls.get(&freight.name).cloned().or_else(|| {
-        (!read.pulls_read).then(|| PullRead::Unread("Pull requests aren't read".into()))
+        (!read.pulls_read).then(|| PullRead::Unread {
+            rate_limit: false,
+            why: "Pull requests aren't read".into(),
+        })
     });
     let title = match &pull {
         Some(PullRead::Found(pull)) => pull.title.clone(),
@@ -937,10 +976,14 @@ pub(crate) fn pull_of(request: &super::github::PullRequest) -> Option<Pull> {
     })
 }
 
-/// A failed read of a pull request, as the page words it.
-pub(crate) fn pull_unread(failure: &Failure) -> PullRead {
-    PullRead::Unread(format!(
-        "Pull requests couldn't be read: {}",
-        failure.message
-    ))
+/// A failed read of a pull request, as the page words it. A limit that was
+/// low or reached is a skipped read, not a failure.
+pub(crate) fn pull_unread(error: &super::github::Error) -> PullRead {
+    PullRead::Unread {
+        rate_limit: matches!(
+            error,
+            super::github::Error::Low { .. } | super::github::Error::Limited { .. }
+        ),
+        why: format!("Pull requests weren't read: {error}"),
+    }
 }

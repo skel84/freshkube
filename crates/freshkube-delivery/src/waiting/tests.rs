@@ -302,7 +302,7 @@ fn a_kargo_that_was_not_reached_is_the_pages_own_state() {
 fn github_trouble_keeps_or_withholds_pull_requests_without_hiding_the_gap() {
     let refused = derive(&example::read_shaped(now(), Shape::GitHubRefused));
     let item = app_item(&refused, "checkout", "wonky-otter");
-    assert!(matches!(item.pull, Some(PullRead::Unread(_))));
+    assert!(matches!(item.pull, Some(PullRead::Unread { .. })));
     assert_eq!(
         item.title.as_deref(),
         Some("Retry idempotency keys"),
@@ -493,4 +493,241 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
     let waiting = derive(&unserved);
     assert!(waiting.apps.is_empty());
     assert_eq!(waiting.notes[0].gap, Gap::NotServed);
+}
+
+/// A reader that counts the projects it is answering at once, each
+/// listing taking `by` on Tokio's clock.
+struct Counting {
+    inner: FixtureReader,
+    busy: std::cell::RefCell<std::collections::BTreeMap<String, usize>>,
+    most: std::cell::Cell<usize>,
+}
+
+impl Counting {
+    fn new(inner: FixtureReader) -> Self {
+        Self {
+            inner,
+            busy: Default::default(),
+            most: Default::default(),
+        }
+    }
+}
+
+impl crate::read::Reader for Counting {
+    async fn get(
+        &self,
+        resource: &crate::read::Resource,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<serde_json::Value, freshkube_core::resources::Failure> {
+        self.inner.get(resource, namespace, name).await
+    }
+
+    async fn list(
+        &self,
+        request: &crate::read::ListRequest,
+    ) -> Result<crate::read::Listing, freshkube_core::resources::Failure> {
+        let project = match &request.scope {
+            crate::read::Scope::Namespace(project) => Some(project.clone()),
+            _ => None,
+        };
+        if let Some(project) = &project {
+            let mut busy = self.busy.borrow_mut();
+            *busy.entry(project.clone()).or_default() += 1;
+            self.most.set(self.most.get().max(busy.len()));
+        }
+        let listing = self.inner.list(request).await;
+        if let Some(project) = &project {
+            let mut busy = self.busy.borrow_mut();
+            if let Some(count) = busy.get_mut(project) {
+                *count -= 1;
+                if *count == 0 {
+                    busy.remove(project);
+                }
+            }
+        }
+        listing
+    }
+
+    async fn groups(
+        &self,
+    ) -> Result<Vec<crate::read::ServedGroup>, freshkube_core::resources::Failure> {
+        self.inner.groups().await
+    }
+
+    async fn plurals(
+        &self,
+        group: &str,
+        version: &str,
+    ) -> Result<Vec<String>, freshkube_core::resources::Failure> {
+        self.inner.plurals(group, version).await
+    }
+}
+
+fn projects_world(names: &[&str]) -> FixtureReader {
+    let freight = |project: &str| {
+        json!({
+            "metadata": {
+                "namespace": project, "name": format!("{project}-f"),
+                "creationTimestamp": now().to_rfc3339(),
+            },
+            "commits": [{"repoURL": "https://git.example.test/acme/x", "id": "abc1234"}],
+        })
+    };
+    let stage = |project: &str| {
+        json!({
+            "metadata": {"namespace": project, "name": "prod"},
+            "spec": {"requestedFreight": [{"sources": {"direct": true}}]},
+        })
+    };
+    FixtureReader::default()
+        .serves(GROUP, "v1alpha1", &["projects", "freights", "stages"])
+        .with(
+            "projects",
+            names
+                .iter()
+                .map(|name| json!({"metadata": {"name": name}}))
+                .collect(),
+        )
+        .with("freights", names.iter().map(|name| freight(name)).collect())
+        .with("stages", names.iter().map(|name| stage(name)).collect())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_live_read_reads_no_more_than_four_projects_at_once() {
+    let names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+    let reader = Counting::new(projects_world(&names).slow(std::time::Duration::from_secs(5)));
+    let read = live::read(&reader, &at(None), now(), live::BUDGET).await;
+    let Source::Read(projects) = &read.projects else {
+        panic!("read: {:?}", read.projects)
+    };
+    assert_eq!(projects.len(), names.len(), "every project was read");
+    assert_eq!(reader.most.get(), 4, "four at a time, and all four used");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_project_late_past_the_budget_is_not_read_never_dropped() {
+    let reader = projects_world(&["fine", "stuck"]).hanging_list("freights", "stuck");
+    let read = live::read(&reader, &at(None), now(), live::BUDGET).await;
+    let waiting = derive(&read);
+    assert_eq!(waiting.apps.len(), 2, "the late project is still listed");
+    let stuck = app(&waiting, "stuck");
+    let State::NotRead { gap, cause, text } = &stuck.state else {
+        panic!("{:?}", stuck.state)
+    };
+    assert_eq!(*gap, Gap::Unreadable);
+    assert_eq!(cause.word(), "Can't read");
+    assert!(text.contains("no answer within the read's 90 s"), "{text}");
+    assert_eq!(app(&waiting, "fine").fold(), Fold::Waiting);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pull_request_late_past_the_budget_is_unread_never_dropped() {
+    let api = Server::new(|_| {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        Reply::json(200, "", &json!([]))
+    });
+    let mut world = projects_world(&["shop"]);
+    world = world.with(
+        "freights",
+        vec![json!({
+            "metadata": {
+                "namespace": "shop", "name": "f",
+                "creationTimestamp": now().to_rfc3339(),
+            },
+            "commits": [{"repoURL": "https://github.com/acme/shop", "id": format!("{:040x}", 1)}],
+        })],
+    );
+    let at = at(Some(Handle::trusting(&api.address, None)));
+    let budget = std::time::Duration::from_millis(600);
+    let waiting = derive(&live::read(&world, &at, now(), budget).await);
+    let item = &app(&waiting, "shop").items[0];
+    match &item.pull {
+        Some(PullRead::Unread { rate_limit, why }) => {
+            assert!(!rate_limit);
+            assert!(why.contains("no answer within the read's"), "{why}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_low_rate_limit_skips_pull_requests_and_says_so_apart_from_other_failures() {
+    // The first answers leave 0 calls, so the calls after them are skipped.
+    let reset = (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp();
+    let api = Server::new(move |request| {
+        let sha = request
+            .path
+            .split('/')
+            .nth(5)
+            .unwrap_or_default()
+            .to_owned();
+        Reply::json(
+            200,
+            &format!(
+                "x-ratelimit-limit: 60\r\nx-ratelimit-remaining: 0\r\nx-ratelimit-reset: {reset}\r\n"
+            ),
+            &pulls_for(&format!("/a/b/c/d/e/{sha}")),
+        )
+    });
+    let at = at(Some(Handle::trusting(&api.address, None)));
+    let waiting = derive(&live::read(&crowded_on_github(8), &at, now(), live::BUDGET).await);
+    let shop = app(&waiting, "shop-api");
+    let limited = shop
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.pull,
+                Some(PullRead::Unread {
+                    rate_limit: true,
+                    ..
+                })
+            )
+        })
+        .count();
+    let found = shop
+        .items
+        .iter()
+        .filter(|item| item.pull().is_some())
+        .count();
+    // Some were in flight before the first answer told the limit; the
+    // rest were skipped, and a skipped read sends nothing.
+    assert!(
+        found >= 1 && limited >= 1,
+        "{found} read, {limited} skipped"
+    );
+    assert_eq!(found + limited, 8);
+    assert_eq!(api.seen().len(), found);
+    // A failure that isn't the limit is its own kind of unread.
+    let other = Server::new(|_| Reply::empty(500, ""));
+    let at = super::tests::at(Some(Handle::trusting(&other.address, None)));
+    let waiting = derive(&live::read(&crowded_on_github(2), &at, now(), live::BUDGET).await);
+    assert!(app(&waiting, "shop-api").items.iter().all(|item| matches!(
+        item.pull,
+        Some(PullRead::Unread {
+            rate_limit: false,
+            ..
+        })
+    )));
+}
+
+/// `count` Freight on GitHub, the Stage running none, so all are ahead.
+fn crowded_on_github(count: usize) -> FixtureReader {
+    crowded(count).with(
+        "stages",
+        vec![json!({
+            "metadata": {"namespace": "shop-api", "name": "prod"},
+            "spec": {"requestedFreight": [{"sources": {"direct": true}}]},
+        })],
+    )
+}
+
+#[tokio::test]
+async fn the_group_counts_the_freight_the_cap_left_out() {
+    let waiting = derive(&live::read(&crowded(60), &at(None), now(), live::BUDGET).await);
+    let shop = app(&waiting, "shop-api");
+    assert_eq!(shop.older, 10);
+    let waiting = derive(&live::read(&crowded(5), &at(None), now(), live::BUDGET).await);
+    assert_eq!(app(&waiting, "shop-api").older, 0);
 }

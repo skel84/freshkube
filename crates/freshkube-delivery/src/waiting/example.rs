@@ -303,10 +303,10 @@ fn pull_read(invented: &Invented, now: DateTime<Utc>, shape: Shape, pulls_exist:
     };
     let trouble = shape.github();
     if trouble == Some(Trouble::Refused) {
-        return PullRead::Unread(format!(
-            "Pull requests couldn't be read: {}",
-            Trouble::Refused.words()
-        ));
+        return PullRead::Unread {
+            rate_limit: false,
+            why: format!("Pull requests weren't read: {}", Trouble::Refused.words()),
+        };
     }
     PullRead::Found(Pull {
         number,

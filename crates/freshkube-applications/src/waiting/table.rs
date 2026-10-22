@@ -56,7 +56,7 @@ pub(super) fn columns() -> (Vec<Column>, f32) {
     };
     let columns = vec![
         column(Field::Glyph, "", kit::GLYPH_WIDTH),
-        column(Field::Named, "PR", 80.),
+        column(Field::Named, "PR", 140.),
         column(Field::Change, "Change", 140.),
         column(Field::Merged, "Merged", 64.),
         column(Field::Stage, "In", 84.),
@@ -150,6 +150,9 @@ impl TableSource for WaitingPage {
                 .items_center()
                 .gap(dp(4.))
                 .overflow_hidden()
+                .when_some(row.pull_note.clone(), |cell, note| {
+                    cell.follow_tooltip(note)
+                })
                 .child(
                     div()
                         .when(row.by_commit, |cell| {

@@ -21,7 +21,7 @@ use crate::applications::read::MAX_PROJECTS;
 use crate::change::live::pull::chosen_request;
 use crate::changes::live::{AT_ONCE, Where, late};
 use crate::entry::pool::{Open, Pool};
-use crate::github::{GitHub, repo_of};
+use crate::github::repo_of;
 use crate::kargo::{Freight, parse_freight, parse_stage, read_kind, read_project_names};
 use crate::read::Reader;
 use crate::source::{Source, Truncation};
@@ -126,7 +126,7 @@ where
                 stages: Source::Unreadable(late(budget)),
                 pulls: BTreeMap::new(),
             });
-            ask(at, calls, deadline, &mut project).await;
+            ask(at, calls, deadline, budget, &mut project).await;
             project
         }))
         .await;
@@ -156,7 +156,13 @@ async fn project<R: Reader>(reader: &R, name: &str) -> Project {
 /// Asks GitHub for the pull request of each Freight in `project`'s gaps,
 /// one call each, in one of the read's turns. A Freight with no GitHub
 /// commit isn't asked about.
-async fn ask(at: &Where, calls: &Semaphore, deadline: Instant, project: &mut Project) {
+async fn ask(
+    at: &Where,
+    calls: &Semaphore,
+    deadline: Instant,
+    budget: std::time::Duration,
+    project: &mut Project,
+) {
     let Some(github) = at.github.as_ref().map(crate::github::Handle::sparing) else {
         return;
     };
@@ -173,20 +179,20 @@ async fn ask(at: &Where, calls: &Semaphore, deadline: Instant, project: &mut Pro
                 return None;
             };
             let _turn = calls.acquire().await;
-            Some(match github.pulls_for_commit(&repo, &commit).await {
+            Some(match github.pulls_for_commit_or(&repo, &commit).await {
                 Ok(pulls) => match chosen_request(&pulls, Some(&commit), None).and_then(pull_of) {
                     Some(pull) => PullRead::Found(pull),
                     None => PullRead::NoPull,
                 },
-                Err(failure) => pull_unread(&failure),
+                Err(error) => pull_unread(&error),
             })
         };
         let answer = match timeout_at(deadline, answer).await {
             Ok(answer) => answer,
-            Err(_) => Some(pull_unread(&Failure::new(
-                FailureKind::Timeout,
-                late_words(),
-            ))),
+            Err(_) => Some(PullRead::Unread {
+                rate_limit: false,
+                why: format!("Pull requests weren't read: {}", late(budget)),
+            }),
         };
         (freight.name, answer)
     }))
@@ -196,8 +202,4 @@ async fn ask(at: &Where, calls: &Semaphore, deadline: Instant, project: &mut Pro
             .into_iter()
             .filter_map(|(name, answer)| Some((name, answer?))),
     );
-}
-
-fn late_words() -> String {
-    "no answer within the read's time".into()
 }

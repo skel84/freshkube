@@ -514,3 +514,117 @@ fn what_may_be_missing_is_a_banner_beside_the_rows(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+fn derived() -> Waiting {
+    core_waiting::derive(&core_waiting::example::read(chrono::Utc::now()))
+}
+
+#[gpui_kit::test]
+fn a_pull_request_that_was_not_read_says_so_never_the_bare_commit(cx: &mut TestAppContext) {
+    use core_waiting::PullRead;
+    let mut waiting_read = core_waiting::example::read(chrono::Utc::now());
+    if let freshkube_delivery::source::Source::Read(projects) = &mut waiting_read.projects {
+        for project in projects.iter_mut() {
+            let unread = |rate_limit| PullRead::Unread {
+                rate_limit,
+                why: "Pull requests weren't read: GitHub's limit is low: 8 left until 14:05 UTC"
+                    .into(),
+            };
+            if project.name == "checkout" {
+                project.pulls.insert("wonky-otter".into(), unread(true));
+                project.pulls.insert("tidy-badger".into(), unread(false));
+            }
+        }
+    }
+    let (_runtime, handle, view) = answered(cx, core_waiting::derive(&waiting_read));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = waiting(&view, cx);
+        let page = page.read(cx);
+        let named = |key: &str| {
+            page.display
+                .rows
+                .iter()
+                .find(|row| row.key.as_ref() == key)
+                .map(|row| (row.named.to_string(), row.by_commit))
+                .unwrap()
+        };
+        assert_eq!(
+            named("checkout/wonky-otter"),
+            ("not read (rate limit)".into(), false)
+        );
+        assert_eq!(named("checkout/tidy-badger"), ("not read".into(), false));
+        // A pull request GitHub answered it names none for shows the commit.
+        assert_eq!(named("catalog/plucky-newt"), ("0c4e8b1".into(), true));
+        // The cause is the Inspector's.
+        let row = page
+            .display
+            .rows
+            .iter()
+            .find(|row| row.key.as_ref() == "checkout/wonky-otter")
+            .unwrap();
+        assert!(
+            row.detail.fields.iter().any(|(label, value, _)| {
+                *label == "Pull request" && value.starts_with("Not read (rate limit): ")
+            }),
+            "{:?}",
+            row.detail.fields
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_capped_project_says_how_many_older_freight_are_not_listed_where_it_shows(
+    cx: &mut TestAppContext,
+) {
+    let mut waiting_read = derived();
+    for app in &mut waiting_read.apps {
+        if app.name == "checkout" {
+            app.older = 10;
+        }
+    }
+    let (_runtime, handle, view) = answered(cx, waiting_read);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = waiting(&view, cx);
+        let page = page.read(cx);
+        let group = page
+            .display
+            .groups
+            .iter()
+            .find(|group| group.title.as_ref() == "checkout")
+            .unwrap();
+        assert!(
+            group
+                .detail
+                .iter()
+                .any(|line| line.starts_with("10 older Freight not listed")),
+            "{:?}",
+            group.detail
+        );
+        let catalog = page
+            .display
+            .groups
+            .iter()
+            .find(|group| group.title.as_ref() == "catalog")
+            .unwrap();
+        assert!(!catalog.detail.iter().any(|line| line.contains("older")));
+        let row = page
+            .display
+            .rows
+            .iter()
+            .find(|row| row.key.as_ref() == "checkout/quiet-heron")
+            .unwrap();
+        assert!(row.detail.basis.contains("10 older Freight not listed"));
+        assert!(
+            row.detail
+                .production
+                .iter()
+                .any(|line| line.starts_with("10 older Freight not listed")),
+            "{:?}",
+            row.detail.production
+        );
+    })
+    .unwrap();
+}

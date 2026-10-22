@@ -5,7 +5,9 @@
 use chrono::{DateTime, Local, Utc};
 use freshkube_delivery::change::Cause;
 use freshkube_delivery::changes::Gap;
-use freshkube_delivery::waiting::{App, Fold, Item, Query, Shipped, Standing, State, Waiting};
+use freshkube_delivery::waiting::{
+    App, Fold, Item, PullRead, Query, Shipped, Standing, State, Waiting,
+};
 use freshkube_ui::ui::Tone;
 use gpui_kit::SharedString;
 
@@ -65,6 +67,8 @@ pub struct WaitRow {
     /// Where the pull request stands, dimmer when it is what was kept.
     pub pull: Option<SharedString>,
     pub pull_stale: bool,
+    /// Why the pull request wasn't read, or how stale it is.
+    pub pull_note: Option<SharedString>,
     pub change: SharedString,
     pub title_len: usize,
     pub merged: SharedString,
@@ -276,7 +280,7 @@ impl Display {
             )
         });
         let detail = match &app.state {
-            State::Waiting => behind.into_iter().collect(),
+            State::Waiting => behind.into_iter().chain(older_words(app)).collect(),
             State::CaughtUp => vec!["caught up".to_owned()],
             State::NotRead { .. } => vec!["not read".to_owned()],
         };
@@ -404,24 +408,69 @@ fn uninstalled(waiting: &Waiting) -> bool {
         .any(|note| note.gap == Gap::NotServed && note.project.is_none())
 }
 
-fn named_of(item: &Item) -> (SharedString, bool, Option<SharedString>, bool) {
+/// What the PR cell says of a Freight: its pull request, else its commit,
+/// and for a pull request that wasn't read, that it wasn't, never the bare
+/// commit a pull request GitHub doesn't name shows.
+struct Named {
+    text: SharedString,
+    by_commit: bool,
+    state: Option<SharedString>,
+    stale: bool,
+    /// The PR cell's tooltip: why the pull request wasn't read.
+    note: Option<SharedString>,
+}
+
+fn named_of(item: &Item) -> Named {
     if let Some(pull) = item.pull() {
-        return (
-            format!("#{}", pull.number).into(),
-            false,
-            Some(pull.state.label().into()),
-            pull.stale.is_some(),
-        );
+        return Named {
+            text: format!("#{}", pull.number).into(),
+            by_commit: false,
+            state: Some(pull.state.label().into()),
+            stale: pull.stale.is_some(),
+            note: pull.stale.clone().map(Into::into),
+        };
+    }
+    if let Some(PullRead::Unread { rate_limit, why }) = &item.pull {
+        return Named {
+            text: if *rate_limit {
+                "not read (rate limit)"
+            } else {
+                "not read"
+            }
+            .into(),
+            by_commit: false,
+            state: None,
+            stale: true,
+            note: Some(why.clone().into()),
+        };
     }
     match &item.commit {
-        Some(commit) => (
-            commit.chars().take(7).collect::<String>().into(),
-            true,
-            None,
-            false,
-        ),
-        None => ("–".into(), false, None, false),
+        Some(commit) => Named {
+            text: commit.chars().take(7).collect::<String>().into(),
+            by_commit: true,
+            state: None,
+            stale: false,
+            note: None,
+        },
+        None => Named {
+            text: "–".into(),
+            by_commit: false,
+            state: None,
+            stale: false,
+            note: None,
+        },
     }
+}
+
+/// `10 older Freight not listed`, for a project the cap cut.
+fn older_words(app: &App) -> Option<String> {
+    (app.older > 0).then(|| {
+        format!(
+            "{} older Freight not listed: only the {} newest are read",
+            app.older,
+            freshkube_delivery::changes::MAX_FREIGHT
+        )
+    })
 }
 
 fn item_row(
@@ -433,7 +482,7 @@ fn item_row(
     group: usize,
     now: DateTime<Utc>,
 ) -> WaitRow {
-    let (named, by_commit, pull_state, pull_stale) = named_of(item);
+    let named = named_of(item);
     let title = item.title.clone().unwrap_or_else(|| item.freight.clone());
     let merged = item.pull().and_then(|pull| pull.merged_at);
     let tone = if item.why.blocked {
@@ -452,7 +501,8 @@ fn item_row(
     let stage: SharedString = item.in_stage.clone().unwrap_or_else(|| "–".into()).into();
     let why = format!("{} {}", item.why.word(), item.why.needs());
     let label = format!(
-        "{named} {title} · {} · {}, waited {waited} · {why}",
+        "{} {title} · {} · {}, waited {waited} · {why}",
+        named.text,
         app.name,
         if item.in_stage.is_some() {
             format!("in {stage}")
@@ -469,10 +519,11 @@ fn item_row(
         group,
         tone,
         state: state.clone(),
-        named,
-        by_commit,
-        pull: pull_state,
-        pull_stale,
+        named: named.text.clone(),
+        by_commit: named.by_commit,
+        pull: named.state.clone(),
+        pull_stale: named.stale,
+        pull_note: named.note.clone(),
         change: title.clone().into(),
         title_len: title.len(),
         merged: age(merged, now),
@@ -518,6 +569,7 @@ fn listed_row(
         by_commit: true,
         pull: None,
         pull_stale: false,
+        pull_note: None,
         change: title.clone().into(),
         title_len: title.len(),
         merged: "–".into(),
@@ -598,6 +650,7 @@ fn app_row(waiting: &Waiting, app_ix: usize, group: usize, now: DateTime<Utc>) -
         by_commit: false,
         pull: None,
         pull_stale: false,
+        pull_note: None,
         change: app.name.clone().into(),
         title_len: app.name.len(),
         merged: "–".into(),
@@ -619,12 +672,13 @@ fn basis(waiting: &Waiting, app: &App) -> SharedString {
     let pulls = app.items.iter().any(|item| item.pull().is_some());
     format!(
         "Freight, Stages and their history read from Kargo at {at}{}. Nothing here says whether \
-         pods run it.",
+         pods run it.{}",
         if pulls {
             "; pull requests from GitHub"
         } else {
             ""
-        }
+        },
+        older_words(app).map_or_else(String::new, |older| format!(" {older}."))
     )
     .into()
 }
@@ -678,6 +732,7 @@ fn production_lines(app: &App) -> Vec<SharedString> {
             .into(),
         );
     }
+    lines.extend(older_words(app).map(SharedString::from));
     if app.finals.len() > 1 {
         lines.push(
             format!(
@@ -713,7 +768,7 @@ fn ship_lines(app: &App) -> Vec<SharedString> {
 
 fn item_detail(waiting: &Waiting, app: &App, item: &Item, now: DateTime<Utc>) -> Detail {
     let title = item.title.clone().unwrap_or_else(|| item.freight.clone());
-    let (named, ..) = named_of(item);
+    let named = named_of(item).text;
     let pull = item.pull();
     let mut fields: Vec<(&'static str, SharedString, bool)> = vec![
         ("Application", app.name.clone().into(), true),
@@ -743,6 +798,23 @@ fn item_detail(waiting: &Waiting, app: &App, item: &Item, now: DateTime<Utc>) ->
         if let Some(note) = &pull.stale {
             fields.push(("GitHub", note.clone().into(), false));
         }
+    }
+    match &item.pull {
+        Some(PullRead::Unread { rate_limit, why }) => fields.push((
+            "Pull request",
+            format!(
+                "Not read{}: {why}",
+                if *rate_limit { " (rate limit)" } else { "" }
+            )
+            .into(),
+            false,
+        )),
+        Some(PullRead::NoPull) => fields.push((
+            "Pull request",
+            "GitHub names none for this commit".into(),
+            false,
+        )),
+        _ => {}
     }
     if let Some(merged) = pull.and_then(|pull| pull.merged_at) {
         fields.push((

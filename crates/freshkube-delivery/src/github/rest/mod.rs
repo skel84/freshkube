@@ -628,6 +628,25 @@ impl std::fmt::Debug for Handle {
     }
 }
 
+impl Handle {
+    /// The pull requests GitHub associates with a commit, as
+    /// [`GitHub::pulls_for_commit`] reads them, with the error kept so a
+    /// reader can tell a limit that was low or reached from a failure.
+    pub(crate) async fn pulls_for_commit_or(
+        &self,
+        repo: &str,
+        sha: &str,
+    ) -> Result<Vec<PullRequest>, Error> {
+        if check_repo(repo).is_err() {
+            return Err(Error::Unreadable("the repository isn't written owner/name"));
+        }
+        if check_sha(sha).is_err() {
+            return Err(Error::Unreadable("the commit isn't a full SHA"));
+        }
+        self.client.pulls(repo, sha, self.spare).await
+    }
+}
+
 impl GitHub for Handle {
     async fn pulls_for_commit(&self, repo: &str, sha: &str) -> Result<Vec<PullRequest>, Failure> {
         check_repo(repo)?;
