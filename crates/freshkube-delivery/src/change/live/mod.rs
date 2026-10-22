@@ -34,7 +34,7 @@ mod gates;
 mod history;
 mod links;
 pub(crate) mod pages;
-mod pull;
+pub(crate) mod pull;
 #[cfg(test)]
 mod tests;
 

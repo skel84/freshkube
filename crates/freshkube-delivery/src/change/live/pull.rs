@@ -49,6 +49,15 @@ pub(super) fn chosen(
     commit: Option<&str>,
     number: Option<u64>,
 ) -> Option<PullSummary> {
+    chosen_request(pulls, commit, number).and_then(|pull| pull.summary.clone())
+}
+
+/// The pull request [`chosen`] takes the summary of.
+pub(crate) fn chosen_request<'a>(
+    pulls: &'a [PullRequest],
+    commit: Option<&str>,
+    number: Option<u64>,
+) -> Option<&'a PullRequest> {
     let is = |sha: &str| commit.is_some_and(|commit| commit.eq_ignore_ascii_case(sha));
     number
         .and_then(|number| pulls.iter().find(|pull| pull.number == number))
@@ -59,7 +68,6 @@ pub(super) fn chosen(
         })
         .or_else(|| pulls.iter().find(|pull| is(&pull.head_sha)))
         .or_else(|| pulls.first())
-        .and_then(|pull| pull.summary.clone())
 }
 
 /// Puts the pull request on the change's origin, or why GitHub wasn't read
