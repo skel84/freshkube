@@ -351,7 +351,7 @@ fn notice_row(prefix: &'static str, line: &NoticeLine, cx: &App) -> AnyElement {
     v_flex()
         .id(SharedString::from(format!("notice-{prefix}-{}", line.id)))
         .test_support()
-        .aria_label(line.lines.join(". "))
+        .aria_label(format!("{}. {}", line.summary, line.lines.join(". ")))
         .gap_1()
         .px_2()
         .py_1p5()
