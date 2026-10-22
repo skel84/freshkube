@@ -88,7 +88,8 @@ actions!(
         OpenLogs,
         SelectGroup,
         OpenNode,
-        ToggleHealthy
+        ToggleHealthy,
+        FollowCrashLoop
     ]
 );
 

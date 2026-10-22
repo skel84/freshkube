@@ -36,6 +36,8 @@ pub(crate) enum ColumnKey {
     Namespace(Option<SharedString>),
     /// The Changes list.
     Changes,
+    /// Waiting to ship, the gap between Stages.
+    Waiting,
     /// The Applications list.
     AllApplications,
     /// An application's page, by its id.
@@ -510,7 +512,7 @@ impl Pilot {
         let column = page.column();
         let shown = page.shown_application(cx);
         let here = self.navigation.page == Page::Applications;
-        let listing = here && shown.is_none() && !page.changes_shown();
+        let listing = here && shown.is_none() && !page.changes_shown() && !page.waiting_shown();
         // Changes leads; the workspace's delivery sources will sit under it.
         let changes = Row::new(ColumnKey::Changes, "nav-changes", "Changes")
             .icon(IconName::GitCommitHorizontal)
@@ -526,7 +528,11 @@ impl Pilot {
         if column.note.is_none() {
             all = all.count(column.total.to_string(), None);
         }
-        let mut lines: Vec<Line<ColumnKey>> = vec![changes.into(), all.into()];
+        let waiting = Row::new(ColumnKey::Waiting, "nav-waiting", "Waiting to ship")
+            .icon(IconName::Clock)
+            .tooltip("What is built or deployed somewhere but not yet in production")
+            .current(here && page.waiting_shown());
+        let mut lines: Vec<Line<ColumnKey>> = vec![changes.into(), waiting.into(), all.into()];
         if let Some(note) = &column.note {
             let mut line = Note::new("nav-applications-status", note.text.clone());
             if let Some(tooltip) = &note.tooltip {
@@ -771,6 +777,12 @@ impl SourceListHost for Pilot {
                 self.pages
                     .applications
                     .update(cx, |page, cx| page.show_changes(window, cx));
+                self.navigate_from_keyboard(Page::Applications, window, cx);
+            }
+            ColumnKey::Waiting => {
+                self.pages
+                    .applications
+                    .update(cx, |page, cx| page.show_waiting(window, cx));
                 self.navigate_from_keyboard(Page::Applications, window, cx);
             }
             ColumnKey::AllApplications => {

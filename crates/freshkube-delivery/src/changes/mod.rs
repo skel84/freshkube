@@ -268,7 +268,12 @@ fn followed_missing(rows: &[Row]) -> Vec<Note> {
 }
 
 /// A source that wasn't read, as a note; none for one that was.
-fn unread<T>(source: &Source<T>, project: Option<&str>, what: &str, cluster: &str) -> Option<Note> {
+pub(crate) fn unread<T>(
+    source: &Source<T>,
+    project: Option<&str>,
+    what: &str,
+    cluster: &str,
+) -> Option<Note> {
     let (gap, text) = match source {
         Source::NotInstalled(_) => (Gap::NotServed, words::arent_served(what, cluster)),
         Source::Refused(why) => (Gap::Refused, words::were_refused(what, cluster, why)),

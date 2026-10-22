@@ -26,6 +26,7 @@ mod kubeconfig_row;
 mod labels;
 mod metrics_tokens;
 mod monitoring;
+mod notifications;
 #[cfg(test)]
 mod recovery_tests;
 mod sections;
@@ -211,6 +212,9 @@ pub(crate) struct SettingsPage {
     sources_status: Segment,
     /// Suggestions the person ignored, for the session.
     ignored: HashSet<find::Ignored>,
+    /// The followed items as Notifications lists them, worded when the
+    /// follows change.
+    follow_rows: Vec<notifications::FollowRow>,
     /// Settings › Audit log: what was read from both logs, and the filter.
     audit: audit::AuditView,
 }
@@ -352,7 +356,15 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> Self {
         let (columns, width) = source::columns(&[]);
-        Self {
+        // Followed items and the notice settings draw from the app's owner.
+        if let Some(followed) = freshkube_followed::owner::followed(cx) {
+            cx.observe(&followed, |this, _, cx| {
+                this.derive_follows(cx);
+                cx.notify();
+            })
+            .detach();
+        }
+        let mut page = Self {
             connection: None,
             coroot: None,
             coroot_state: crate::observability::ConnectionState::Disconnected,
@@ -418,8 +430,11 @@ impl SettingsPage {
             destinations_status: Segment::default(),
             sources_status: Segment::default(),
             ignored: HashSet::new(),
+            follow_rows: Vec::new(),
             audit: audit::AuditView::new(),
-        }
+        };
+        page.derive_follows(cx);
+        page
     }
 
     /// Takes what the workspace file held, and derives the page's lines
@@ -929,6 +944,7 @@ impl Render for SettingsPage {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
             SettingsSection::Coroot => self.render_coroot(window, cx),
+            SettingsSection::Notifications => self.render_notifications(window, cx),
             SettingsSection::AuditLog => self.render_audit_log(window, cx),
             SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),

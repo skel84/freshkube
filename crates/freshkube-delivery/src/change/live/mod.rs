@@ -34,7 +34,7 @@ mod gates;
 mod history;
 mod links;
 pub(crate) mod pages;
-mod pull;
+pub(crate) mod pull;
 #[cfg(test)]
 mod tests;
 
@@ -115,6 +115,8 @@ impl Place {
         At {
             cluster: self.cluster.clone(),
             label: self.label.clone(),
+            // The open connection is named by its Kubernetes context.
+            context: Some(self.label.clone()),
             missing: None,
         }
     }
@@ -127,12 +129,14 @@ impl Place {
             Chosen::Entry { entry, .. } if !self.is_here(&entry.id) => At {
                 cluster: entry.id.clone(),
                 label: entry.id.clone(),
+                context: Some(entry.context.clone()),
                 missing: None,
             },
             Chosen::Entry { .. } | Chosen::Open => self.open(),
             Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => At {
                 cluster: String::new(),
                 label: crate::applications::across::WORKSPACE.into(),
+                context: None,
                 missing: chosen.missing(),
             },
         }
@@ -146,6 +150,7 @@ impl Place {
             false => At {
                 cluster: context.to_owned(),
                 label: context.to_owned(),
+                context: None,
                 missing: None,
             },
         }
@@ -172,6 +177,10 @@ pub(crate) struct At {
     /// The open connection's key, or the workspace entry's id.
     pub cluster: String,
     pub label: String,
+    /// The Kubernetes context the part is read in, which a follow is keyed
+    /// by. It is not the label: another entry's label is its id, and a part
+    /// with no entry has the workspace's words and no context.
+    pub context: Option<String>,
     /// Why no entry holds the part, when none does.
     pub missing: Option<String>,
 }
