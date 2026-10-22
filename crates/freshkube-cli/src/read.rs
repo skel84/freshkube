@@ -53,7 +53,7 @@ pub struct Read {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Problem {
     pub class: Class,
-    pub read: Read,
+    pub read: Box<Read>,
     pub message: String,
 }
 
@@ -244,17 +244,17 @@ pub async fn list(
     };
     let problem = |failure: Failure| Problem {
         class: Class::of(failure.kind),
-        read: read.clone(),
+        read: Box::new(read.clone()),
         message: failure.message,
     };
-    let client = target.source.access.client().await.map_err(&problem)?;
+    let client = target.source.access.client().await.map_err(problem)?;
     let table = match tokio::time::timeout(
         deadline(),
         list_table(&client, kind, namespace, selector),
     )
     .await
     {
-        Ok(result) => result.map_err(&problem)?,
+        Ok(result) => result.map_err(problem)?,
         Err(_) => return Err(problem(Failure::timeout("The read"))),
     };
     Ok(listing(kind, table, wide))
