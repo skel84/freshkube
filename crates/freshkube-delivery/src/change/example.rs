@@ -63,8 +63,7 @@ pub fn freight_of(project: &str, stage: &str) -> Option<&'static str> {
 }
 
 /// The change of a Stage of a project, when example mode has one.
-#[cfg(test)]
-pub(crate) fn for_stage(project: &str, stage: &str, now: DateTime<Utc>) -> Option<Change> {
+pub fn for_stage(project: &str, stage: &str, now: DateTime<Utc>) -> Option<Change> {
     freight_of(project, stage).map(|_| change(now))
 }
 
@@ -360,7 +359,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
 /// on a Stage with the id of the verification to repeat, abort on the
 /// Promotion with `{"action":"abort"}`, and Promote creates a `Promotion`
 /// whose `spec` names the `stage` and the `freight`.
-pub(crate) fn example_acts(name: &str) -> crate::acts::StageActs {
+pub fn example_acts(name: &str) -> crate::acts::StageActs {
     use crate::acts::{Handle, StageActs};
     let handle = |kind: &str, name: &str| Handle {
         name: name.into(),

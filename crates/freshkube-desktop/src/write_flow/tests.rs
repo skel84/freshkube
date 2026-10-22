@@ -27,15 +27,35 @@ impl Render for Host {
     }
 }
 
-struct Harness {
-    runtime: Runtime,
-    handle: AnyWindowHandle,
-    cluster: Cluster,
-    runner: Arc<Runner>,
-    _dir: tempfile::TempDir,
+pub(super) struct Harness {
+    pub(super) runtime: Runtime,
+    pub(super) handle: AnyWindowHandle,
+    pub(super) cluster: Cluster,
+    pub(super) runner: Arc<Runner>,
+    pub(super) _dir: tempfile::TempDir,
 }
 
 fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
+    harness_on(cx, level, Cluster::new)
+}
+
+/// The harness over the cluster `make` builds, inside its runtime.
+pub(super) fn harness_on(
+    cx: &mut TestAppContext,
+    level: Protection,
+    make: impl FnOnce() -> Cluster,
+) -> Harness {
+    harness_sized(cx, level, 880., make)
+}
+
+/// [`harness_on`] in a window `height` points tall: a dialog with a long
+/// preview scrolls its body, and a click needs the control in view.
+pub(super) fn harness_sized(
+    cx: &mut TestAppContext,
+    level: Protection,
+    height: f32,
+    make: impl FnOnce() -> Cluster,
+) -> Harness {
     let runtime = Builder::new_current_thread()
         .enable_all()
         .start_paused(true)
@@ -52,12 +72,12 @@ fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
     // The client's buffer worker spawns onto the runtime it is built in.
     let cluster = {
         let _guard = runtime.enter();
-        Cluster::new()
+        make()
     };
     let cell = cx.update(level_cell);
     let runner = Arc::new(fake::runner(&cluster, dir.path(), level).following(cell));
     let handle = cx
-        .open_window(size(px(1280.), px(880.)), |window, cx| {
+        .open_window(size(px(1280.), px(height)), |window, cx| {
             Root::new(cx.new(|_| Host), window, cx)
         })
         .into();
@@ -72,7 +92,11 @@ fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
 }
 
 impl Harness {
-    fn begin(&self, cx: &mut TestAppContext, action: ActionDescription) -> Entity<WriteFlow> {
+    pub(super) fn begin(
+        &self,
+        cx: &mut TestAppContext,
+        action: ActionDescription,
+    ) -> Entity<WriteFlow> {
         let request = WriteRequest {
             runner: self.runner.clone(),
             runtime: self.runtime.handle().clone(),
@@ -88,7 +112,7 @@ impl Harness {
 
     /// Lets the runtime run for `time` of its virtual clock, and GPUI take
     /// what it sent.
-    fn drive(&self, cx: &mut TestAppContext, time: Duration) {
+    pub(super) fn drive(&self, cx: &mut TestAppContext, time: Duration) {
         let step = Duration::from_millis(250).min(time);
         let mut left = time;
         loop {
@@ -104,7 +128,7 @@ impl Harness {
             .unwrap();
     }
 
-    fn present(&self, cx: &mut TestAppContext, id: &'static str) -> bool {
+    pub(super) fn present(&self, cx: &mut TestAppContext, id: &'static str) -> bool {
         cx.update_window(self.handle, |_, window, cx| {
             window.render_frame(cx);
             window.try_find(id).is_some()
@@ -112,7 +136,7 @@ impl Harness {
         .unwrap()
     }
 
-    fn label(&self, cx: &mut TestAppContext, id: &'static str) -> String {
+    pub(super) fn label(&self, cx: &mut TestAppContext, id: &'static str) -> String {
         cx.update_window(self.handle, |_, window, cx| {
             window.render_frame(cx);
             window
@@ -124,7 +148,7 @@ impl Harness {
         .unwrap()
     }
 
-    fn click(&self, cx: &mut TestAppContext, id: &'static str) {
+    pub(super) fn click(&self, cx: &mut TestAppContext, id: &'static str) {
         cx.update_window(self.handle, |_, window, cx| {
             window.render_frame(cx);
             window.click(id, cx);
@@ -134,7 +158,7 @@ impl Harness {
         cx.run_until_parked();
     }
 
-    fn type_name(&self, cx: &mut TestAppContext, text: &'static str) {
+    pub(super) fn type_name(&self, cx: &mut TestAppContext, text: &'static str) {
         cx.update_window(self.handle, |_, window, cx| {
             window.render_frame(cx);
             window.click("write-type-name", cx);
@@ -144,12 +168,12 @@ impl Harness {
         cx.run_until_parked();
     }
 
-    fn advance(&self, cx: &mut TestAppContext, time: Duration) {
+    pub(super) fn advance(&self, cx: &mut TestAppContext, time: Duration) {
         cx.executor().advance_clock(time);
         cx.run_until_parked();
     }
 
-    fn slot_free(&self, cx: &mut TestAppContext) -> bool {
+    pub(super) fn slot_free(&self, cx: &mut TestAppContext) -> bool {
         cx.update(|cx| Operations::current(cx).is_none())
     }
 

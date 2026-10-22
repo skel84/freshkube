@@ -15,6 +15,8 @@
 mod dialog;
 mod report;
 #[cfg(test)]
+mod stage_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;

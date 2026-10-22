@@ -361,32 +361,29 @@ fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
             format!("Would run: Freight {}", short(&pick.acts.freight)),
         ];
         lines.extend(pick.acts.would_run.iter().map(|line| format!("  {line}")));
-        if let Some((entry, level)) = &pick.destination {
-            lines.push(format!("Deploys to {entry} ({}).", level.label()));
+        match &pick.destination {
+            Some((entry, level)) => {
+                lines.push(format!("Deploys to {entry} ({}).", level.label()));
+            }
+            None => lines.push(
+                "Where it deploys isn't known, so only Kargo's cluster's level applies.".into(),
+            ),
+        }
+        if let Some(model) = model {
+            if !model.steps.is_empty() {
+                let steps: Vec<&str> = model.steps.iter().map(|c| c.name.as_str()).collect();
+                lines.push(format!("Steps: {}.", steps.join(", ")));
+            }
+            if !model.verification.is_empty() {
+                let checks: Vec<&str> =
+                    model.verification.iter().map(|c| c.name.as_str()).collect();
+                lines.push(format!("Checks after it: {}.", checks.join(", ")));
+            }
         }
         out.push(Preview {
             title: format!("Stage {stage}"),
             lines,
         });
-        if let Some(model) = model {
-            let checks: Vec<String> = model
-                .steps
-                .iter()
-                .map(|c| format!("Step {}", c.name))
-                .chain(
-                    model
-                        .verification
-                        .iter()
-                        .map(|c| format!("Check {} after it", c.name)),
-                )
-                .collect();
-            if !checks.is_empty() {
-                out.push(Preview {
-                    title: format!("Steps and checks of {stage}"),
-                    lines: checks,
-                });
-            }
-        }
     }
     let mut between = vec![];
     if let Some(pr) = change.origin.pull_request {
