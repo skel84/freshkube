@@ -6,6 +6,7 @@ mod outcome;
 mod page;
 mod results_forward;
 mod setup;
+mod waiting;
 
 use crate::applications::{ApplicationsPage, Variant};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};

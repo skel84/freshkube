@@ -40,6 +40,7 @@ pub mod source;
 pub(crate) mod tekton;
 pub(crate) mod verify;
 pub(crate) mod versions;
+pub mod waiting;
 pub mod words;
 
 #[cfg(test)]
