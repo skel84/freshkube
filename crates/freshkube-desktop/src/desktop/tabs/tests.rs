@@ -882,3 +882,73 @@ fn an_owner_link_follows_the_click(cx: &mut TestAppContext) {
     assert_eq!(selected(cx, &pilot), 0);
     assert_eq!(shown(cx, &pilot), Page::Overview);
 }
+
+/// A pods tab on All namespaces with a pod open comes back on All
+/// namespaces, not narrowed to the pod's.
+#[gpui_kit::test]
+fn a_tab_with_an_object_open_keeps_the_namespace_it_listed(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let context = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
+    let pod = rows[0].identity.clone();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_builtin("pods", window, cx);
+            pilot.open_object(
+                freshkube_core::resources::builtin("pods").unwrap(),
+                pod.clone().into(),
+                resources::Tab::Overview,
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let resources_page = cx.read(|cx| pilot.read(cx).pages.resources.clone());
+    let listed = |cx: &mut TestAppContext| {
+        cx.read(|cx| resources_page.read(cx).namespace().map(str::to_owned))
+    };
+    // Opening the pod from the list may narrow it; set All namespaces with
+    // the pod still open, as a person does from the picker.
+    cx.update_window(handle, |_, window, cx| {
+        resources_page.update(cx, |page, cx| page.set_namespace(None, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(
+                freshkube_core::resources::builtin("pods").unwrap(),
+                pod.clone().into(),
+                resources::Tab::Overview,
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let before = listed(cx);
+    open(cx, handle, &pilot, page(LinkPage::Health), OpenIn::Front);
+    press(cx, handle, "secondary-{");
+    assert_eq!(shown(cx, &pilot), Page::Resources);
+    assert_eq!(listed(cx), before);
+    assert!(cx.read(|cx| resources_page.read(cx).detail_identity(cx).is_some()));
+}
+
+#[test]
+fn tab_titles_use_the_names_resources_shows() {
+    let mut list = page(LinkPage::Resources);
+    list.kind = Some(freshkube_nav::KindKey::parse("deployments.apps").unwrap());
+    assert_eq!(super::commands::describe_tab(&list), "Deployments");
+    list.object = Some(freshkube_nav::ViewObject {
+        name: freshkube_nav::Name::parse("api").unwrap(),
+        uid: None,
+    });
+    list.ns = Some(freshkube_nav::Namespace::parse("payments").unwrap());
+    assert_eq!(
+        super::commands::describe_tab(&list),
+        "Deployment payments/api"
+    );
+}

@@ -283,3 +283,42 @@ fn control_tab_in_a_focused_terminal_does_not_switch_tabs(cx: &mut TestAppContex
     assert_eq!(cx.read(|cx| pilot.read(cx).tabs.set.selected()), 1);
     assert_eq!(cx.read(|cx| pilot.read(cx).navigation.page), Page::Health);
 }
+
+/// Opening a pod's logs or starting its shell opens the dock and leaves the
+/// pod's pane open in the headless window.
+#[gpui_kit::test]
+fn opening_the_dock_keeps_the_pod_pane_open(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let context = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
+    let pod = rows
+        .iter()
+        .find(|row| row.cells[2] == "Running")
+        .unwrap()
+        .identity
+        .clone();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(
+                builtin("pods").unwrap(),
+                pod.clone().into(),
+                resources::Tab::Overview,
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let open = |cx: &mut TestAppContext| cx.read(|cx| pilot.read(cx).opened_object(cx).is_some());
+    assert!(open(cx));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("l", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(open(cx), "logs");
+    start_shell(handle, &pilot, &pod, cx);
+    assert!(open(cx), "shell");
+}

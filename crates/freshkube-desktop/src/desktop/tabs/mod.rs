@@ -14,6 +14,8 @@ use super::*;
 use freshkube_nav::ViewState;
 use std::time::Duration;
 
+#[cfg(test)]
+mod click_tests;
 mod commands;
 #[cfg(test)]
 mod guard_tests;
@@ -75,6 +77,9 @@ pub(super) struct Tabs {
     restore: Option<restore::Saved>,
     /// Saves the views shortly after the last change.
     save: Option<Task<()>>,
+    /// While a tab is shown: the namespace to list, when the object it opens
+    /// is in another (`Tab::list_ns`). `apply_kind` takes it.
+    pub(super) list_override: Option<Option<String>>,
     /// The rows each Resources tab kept when it stopped showing.
     pub(super) frozen: freshkube_resources::frozen::FrozenSet<set::TabId>,
     /// What the shell last drew of the tabs (`answers`).
@@ -98,6 +103,7 @@ impl Tabs {
             cluster: None,
             restore,
             save: None,
+            list_override: None,
             frozen: Default::default(),
             answered: Default::default(),
         }

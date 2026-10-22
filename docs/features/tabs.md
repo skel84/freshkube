@@ -16,6 +16,8 @@ Tests that prove it: `tabs/set_tests.rs` (the rules), `tabs/tests.rs` (the windo
 
 A `TabSet` is on `Pilot` and belongs to the cluster that is open: a tab is one cluster's, and a context or workspace switch leaves one tab at the view shown. At most 16 tabs; a tab remembers 64 steps back and 64 forward. A background tab opens right after the shown one and changes nothing on screen; a front tab is shown at once. The last tab does not close. Closing the shown tab shows its right neighbour, else the left; the last ten closed tabs can be reopened.
 
+A view has one namespace, the open object's, so a tab keeps its list's own beside it (`Tab::list_ns`) and comes back listing where it was. Titles use the names Resources shows ("Deployments", "Deployment payments/api").
+
 The shown tab follows the window: whenever the shell changes, or the Resources page's namespace, drawer object or drawer tab, or the Nodes page's node or tab, change, the tab records the view the window shows (the pages notify with every watch event and metric, so `ViewTabs` compares those few fields first and asks only on a change; the probe `tabs.sync` counts the asks) (`Pilot::current_view`), pushing the old view onto its history. A tab just shown waits for its page to arrive (two seconds at most) before it follows the page again. Pages a link cannot name (Settings, Operations) leave the tab where it was.
 
 ## Opening links
@@ -42,6 +44,8 @@ The shown tab follows the window: whenever the shell changes, or the Resources p
 Command-1 to 9 stay pages. Each action's handler is on the shell's root only while it can act, so the menus grey it and its key goes on to whatever else binds it. Option-Command-[ is bound as `secondary-alt-[`; the headless test presses it, and the macOS keystroke is the same one Zed binds as `cmd-alt-[`. The running app on macOS is the check that cannot be made headless.
 
 ## The strip
+
+A click, ×, middle-click or menu entry asks the shell to act once the strip's own update ends (`ViewTabs::act` defers it), since what the shell does updates the strip. `tabs/click_tests.rs` drives all four with the pointer.
 
 32 dp under the header: 28 for the tab and the rest above it. It is a cached view of its own beside the page (`ViewTabs`), derived when a tab changes and drawn from that. A page's redraw and a bare notify of the shell leave it alone, and a hover over it draws only it; the render probe `tabs.strip` proves both. The shell draws again only when what it lays out or answers changes: the strip appearing, or Reopen, Back or Forward gaining or losing their handler, not at each navigation.
 

@@ -35,6 +35,10 @@ pub(crate) enum OpenIn {
 pub(crate) struct Tab {
     pub id: TabId,
     pub view: ViewState,
+    /// The namespace its Resources list was on while an object was open.
+    /// A view has one namespace, the object's, so the list's own is kept
+    /// here, and a tab that comes back opens the list where it was.
+    pub list_ns: Option<Option<String>>,
     back: VecDeque<ViewState>,
     forward: Vec<ViewState>,
 }
@@ -44,6 +48,7 @@ impl Tab {
         Self {
             id,
             view,
+            list_ns: None,
             back: VecDeque::new(),
             forward: Vec::new(),
         }
@@ -192,11 +197,14 @@ impl TabSet {
     /// Records where the shown tab is now. A change pushes the old view onto
     /// its history and clears what lay ahead; the same view changes nothing.
     /// Returns whether the tab changed.
-    pub fn record(&mut self, view: ViewState) -> bool {
+    pub fn record(&mut self, view: ViewState, list_ns: Option<Option<String>>) -> bool {
         let tab = &mut self.tabs[self.current];
         if tab.view == view {
+            // The list's namespace is no change of view.
+            tab.list_ns = list_ns;
             return false;
         }
+        tab.list_ns = list_ns;
         let old = std::mem::replace(&mut tab.view, view);
         if tab.back.len() == HISTORY {
             tab.back.pop_front();

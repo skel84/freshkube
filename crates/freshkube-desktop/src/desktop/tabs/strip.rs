@@ -125,13 +125,18 @@ impl ViewTabs {
         cx.notify();
     }
 
+    /// Asks the shell to act once this strip's update ends: what it does
+    /// changes the tabs, and so updates this strip.
     fn act(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        act: impl FnOnce(&mut Pilot, &mut Window, &mut Context<Pilot>),
+        act: impl FnOnce(&mut Pilot, &mut Window, &mut Context<Pilot>) + 'static,
     ) {
-        _ = self.pilot.update(cx, |pilot, cx| act(pilot, window, cx));
+        let pilot = self.pilot.clone();
+        window.defer(cx, move |window, cx| {
+            _ = pilot.update(cx, |pilot, cx| act(pilot, window, cx));
+        });
     }
 
     fn tab_menu(
@@ -188,17 +193,17 @@ impl Render for ViewTabs {
         let pilot = self.pilot.clone();
         let actions = Actions::<Self> {
             select: |this, id, window, cx| {
-                this.act(window, cx, |pilot, window, cx| {
+                this.act(window, cx, move |pilot, window, cx| {
                     pilot.select_tab(id, window, cx)
                 })
             },
             close: |this, id, window, cx| {
-                this.act(window, cx, |pilot, window, cx| {
+                this.act(window, cx, move |pilot, window, cx| {
                     pilot.close_tab(id, window, cx)
                 })
             },
             press_for_menu: |this, id, window, cx| {
-                this.act(window, cx, |pilot, window, cx| {
+                this.act(window, cx, move |pilot, window, cx| {
                     pilot.select_tab(id, window, cx)
                 })
             },

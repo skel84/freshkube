@@ -125,7 +125,9 @@ impl Pilot {
             }
             self.tabs.applying = None;
         }
-        if self.tabs.set.record(view) {
+        let list_ns = (view.page == freshkube_nav::LinkPage::Resources && view.object.is_some())
+            .then(|| self.pages.resources.read(cx).namespace().map(str::to_owned));
+        if self.tabs.set.record(view, list_ns) {
             self.tabs_changed(cx);
         }
     }
@@ -138,7 +140,7 @@ impl Pilot {
             .tabs()
             .iter()
             .map(|tab| {
-                let full = deep_link::describe(&tab.view);
+                let full = describe_tab(&tab.view);
                 Entry {
                     id: tab.id,
                     title: shorten(&full).into(),
@@ -175,7 +177,9 @@ impl Pilot {
                 .resources
                 .update(cx, |resources, cx| resources.hold_frozen(frozen, cx));
         }
+        self.tabs.list_override = self.tabs.set.current().list_ns.clone();
         self.apply_view(&view, window, cx);
+        self.tabs.list_override = None;
     }
 
     /// Keeps the rows of the Resources tab that is about to stop showing.
@@ -494,5 +498,29 @@ pub(in crate::desktop) fn destination_view(
         Destination::Node(name) => node_view(name, freshkube_nav::NodeTab::Overview),
         // Objects open through `open_object_in`, which runs the cluster guard.
         Destination::Object(..) | Destination::Link(_) => None,
+    }
+}
+
+/// A view in words for a tab: as a toast says it, but with the kind's name
+/// as Resources shows it, "Deployments" for a list and "Deployment
+/// payments/api" for an object.
+pub(super) fn describe_tab(view: &ViewState) -> String {
+    let words = deep_link::describe(view);
+    let Some(key) = view
+        .kind
+        .as_ref()
+        .filter(|_| view.page == freshkube_nav::LinkPage::Resources)
+    else {
+        return words;
+    };
+    let key = key.as_str();
+    let shown = if view.object.is_some() {
+        freshkube_core::resources::builtin(key).map(|kind| kind.kind)
+    } else {
+        crate::resources::navigation::label(key).map(str::to_owned)
+    };
+    match shown {
+        Some(shown) => words.replacen(key, &shown, 1),
+        None => words,
     }
 }

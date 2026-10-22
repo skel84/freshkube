@@ -45,7 +45,7 @@ fn the_set_is_capped() {
 #[test]
 fn duplicating_copies_the_view_with_a_history_of_its_own() {
     let mut set = TabSet::new(page(LinkPage::Overview));
-    set.record(page(LinkPage::Nodes));
+    set.record(page(LinkPage::Nodes), None);
     assert!(set.current().can_go_back());
     let id = set.duplicate().unwrap();
     assert_eq!(set.current().id, id);
@@ -138,14 +138,14 @@ fn closing_to_the_right_of_a_tab_left_of_the_shown_one_shows_it() {
 #[test]
 fn history_goes_back_and_forward_and_a_new_view_clears_the_forward() {
     let mut set = TabSet::new(page(LinkPage::Overview));
-    assert!(set.record(page(LinkPage::Nodes)));
-    assert!(!set.record(page(LinkPage::Nodes)));
-    set.record(page(LinkPage::Etcd));
+    assert!(set.record(page(LinkPage::Nodes), None));
+    assert!(!set.record(page(LinkPage::Nodes), None));
+    set.record(page(LinkPage::Etcd), None);
     assert_eq!(set.go_back(), Some(page(LinkPage::Nodes)));
     assert_eq!(set.go_back(), Some(page(LinkPage::Overview)));
     assert_eq!(set.go_back(), None);
     assert_eq!(set.go_forward(), Some(page(LinkPage::Nodes)));
-    set.record(page(LinkPage::Health));
+    set.record(page(LinkPage::Health), None);
     assert!(!set.current().can_go_forward());
     assert_eq!(set.go_forward(), None);
 }
@@ -159,7 +159,7 @@ fn history_keeps_the_newest_steps() {
         } else {
             LinkPage::Etcd
         };
-        set.record(page(next));
+        set.record(page(next), None);
     }
     let mut steps = 0;
     while set.go_back().is_some() {
