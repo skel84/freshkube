@@ -22,6 +22,9 @@ pub struct Recorded {
     pub path: String,
     pub query: String,
     pub accept: String,
+    /// The request body as text; empty where the fake never read it (see
+    /// [`client`], which does).
+    pub body: String,
 }
 
 impl Recorded {
@@ -52,8 +55,19 @@ impl Recorder {
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("")
                 .to_owned(),
+            body: String::new(),
         };
         self.0.lock().unwrap().push(recorded.clone());
+        recorded
+    }
+
+    /// Records a request with its body, which only the caller could read.
+    pub fn record_with_body<B>(&self, request: &Request<B>, body: String) -> Recorded {
+        let mut recorded = self.record(request);
+        recorded.body = body.clone();
+        if let Some(last) = self.0.lock().unwrap().last_mut() {
+            last.body = body;
+        }
         recorded
     }
 
@@ -118,10 +132,22 @@ pub fn client(
 ) -> (kube::Client, Recorder) {
     let recorder = Recorder::default();
     let log = recorder.clone();
+    let route = Arc::new(route);
     let service = tower::service_fn(move |request: Request<Body>| {
-        let recorded = log.record(&request);
-        let answer = route(&recorded).unwrap_or_else(|| unknown(&recorded));
-        async move { Ok::<_, Infallible>(response(answer)) }
+        let log = log.clone();
+        let route = route.clone();
+        async move {
+            let (parts, body) = request.into_parts();
+            let bytes = http_body_util::BodyExt::collect(body)
+                .await
+                .map(|collected| collected.to_bytes())
+                .unwrap_or_default();
+            let request = Request::from_parts(parts, ());
+            let recorded =
+                log.record_with_body(&request, String::from_utf8_lossy(&bytes).into_owned());
+            let answer = route(&recorded).unwrap_or_else(|| unknown(&recorded));
+            Ok::<_, Infallible>(response(answer))
+        }
     });
     (kube::Client::new(service, "default"), recorder)
 }
