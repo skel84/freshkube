@@ -53,7 +53,8 @@ fn row(
     let verdict = databases::verdict(db, inv, coroot, now);
     // A cluster list kept after a failed refresh is not evidence of health.
     let mut state = verdict.state;
-    if inv.databases.stale || inv.retained.contains(&db.engine) {
+    let kept = inv.databases.stale || inv.retained.contains(&db.engine);
+    if kept {
         state.health = HealthIndicator::Unknown;
     }
     let found = databases::coverage(db, inv, inv.backups.observed_at);
@@ -152,12 +153,23 @@ fn row(
         group: Some(group),
         search: search.join(" ").to_lowercase(),
         engine: engine.into(),
-        verdict: Verdict {
-            tone: tone_of(state.health),
-            headline: verdict.headline.into(),
-            source: chip,
-            why,
-            next,
+        verdict: if kept {
+            // Kept from an earlier read: nothing here says how it is now.
+            Verdict {
+                tone: tone_of(HealthIndicator::Unknown),
+                headline: "Unknown: this read failed, the last good read is kept".into(),
+                source: None,
+                why: Vec::new(),
+                next: vec!["Refresh, or open the object in Resources".into()],
+            }
+        } else {
+            Verdict {
+                tone: tone_of(state.health),
+                headline: verdict.headline.into(),
+                source: chip,
+                why,
+                next,
+            }
         },
         sections,
         observe,

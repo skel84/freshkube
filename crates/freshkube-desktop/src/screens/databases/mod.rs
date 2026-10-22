@@ -525,6 +525,10 @@ impl ScreenPanel for DatabasesScreen {
             ),
             Part::new(self.display.summary.clone()),
         ];
+        parts.extend(self.display.attention.clone().map(Part::new));
+        if self.display.notice.is_some() {
+            parts.push(Part::new("coverage incomplete").tone(ui::Tone::Warn));
+        }
         if self.loader.is_loading() {
             parts.push(Part::new("Reading…"))
         }

@@ -57,6 +57,12 @@ fn backup(backup: &Backup, inv: &Inventory) -> Row {
         // Kept from an earlier read: not evidence of how it is now.
         tone = ui::Tone::Unknown;
         headline = format!("{headline} · last read retained");
+    } else if orphan.is_none()
+        && databases::link(backup.cluster.as_ref(), &inv.databases) == LinkState::Unknown
+    {
+        // Its database could not be checked this time: not a pass either.
+        tone = ui::Tone::Unknown;
+        headline = format!("{headline} · its database could not be checked");
     }
     let fields = vec![
         Field::prose("Database", database_name(backup.cluster.as_ref())),

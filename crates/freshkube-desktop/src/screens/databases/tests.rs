@@ -1018,11 +1018,7 @@ fn stale_and_retained_rows_are_marked_in_every_view_and_the_summary_counts() {
             "{}",
             mode.label()
         );
-        assert!(
-            display.summary.contains("coverage incomplete"),
-            "{}",
-            display.summary
-        );
+        assert!(display.notice.is_some(), "{}", mode.label());
         assert!(
             display
                 .summary
@@ -1036,7 +1032,30 @@ fn stale_and_retained_rows_are_marked_in_every_view_and_the_summary_counts() {
     assert_eq!(inv.retained, vec![databases::Engine::MariaDb]);
     let display = display_of(&inv, Mode::Clusters);
     assert_eq!(display.rows.len(), 2);
-    assert!(display.notice.unwrap().contains("last read retained"));
+    assert!(
+        display
+            .notice
+            .as_ref()
+            .unwrap()
+            .contains("last read retained")
+    );
+    // The kept row's Inspector says so too, not Healthy.
+    let ledger = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "ledger-db")
+        .unwrap();
+    assert_eq!(ledger.verdict.tone, crate::ui::Tone::Unknown);
+    assert!(ledger.verdict.headline.starts_with("Unknown"));
+    assert_eq!(ledger.verdict.source, None);
+    // A backup whose database could not be checked is not a pass.
+    let archive = display_of(&inv, Mode::Backups);
+    let archive = archive
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "archive-old")
+        .unwrap();
+    assert_eq!(archive.tone, crate::ui::Tone::Unknown);
 }
 
 #[test]

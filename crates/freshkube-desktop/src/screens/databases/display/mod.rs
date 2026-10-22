@@ -150,7 +150,10 @@ pub(super) struct Display {
     pub groups: Vec<GroupLine>,
     /// What the table draws: rows and group headers, filtered.
     pub lines: Vec<Entry>,
+    /// "2 clusters".
     pub summary: SharedString,
+    /// "1 need a look", when some do.
+    pub attention: Option<SharedString>,
     /// One line per kind or operator that was not read completely.
     pub notice: Option<SharedString>,
     pub empty: SharedString,
@@ -273,6 +276,7 @@ impl Display {
             groups: Vec::new(),
             lines: Vec::new(),
             summary: SharedString::default(),
+            attention: None,
             notice: (!notice.is_empty()).then(|| notice.join(" · ").into()),
             empty: empty.into(),
             columns: (Vec::new(), 0.),
@@ -334,14 +338,11 @@ impl Display {
             .iter()
             .filter(|&&ix| self.rows[ix].group == Some(cluster::NEEDS_A_LOOK))
             .count();
-        let mut summary = plural(matching.len(), self.mode.singular());
-        if self.mode == Mode::Clusters && needs > 0 {
-            summary.push_str(&format!(" · {needs} need a look"));
-        }
-        if self.notice.is_some() {
-            summary.push_str(" · coverage incomplete");
-        }
-        self.summary = summary.into();
+        // Separate parts, so a narrow status bar drops them one at a time
+        // and keeps the count longest.
+        self.summary = plural(matching.len(), self.mode.singular()).into();
+        self.attention = (self.mode == Mode::Clusters && needs > 0)
+            .then(|| format!("{needs} need a look").into());
         self.columns = table::columns(self.mode, self.engine_shown, &self.rows);
     }
 }
