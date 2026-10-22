@@ -87,6 +87,7 @@ impl ApplicationPage {
             .children(why);
         Some(
             Inspector::new("application-detail")
+                .selection(&row.key)
                 .heading(heading)
                 .child(render_open(row, cx).children(render_follow(row, cx)))
                 .children(fields(&row.fields, cx))

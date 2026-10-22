@@ -203,7 +203,7 @@ impl LifecycleScreen {
     /// The Inspector for the selection, or `None` without one.
     pub(super) fn render_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let detail = self.detail.as_ref()?;
-        let inspector = Inspector::new("lifecycle-detail");
+        let inspector = Inspector::new("lifecycle-detail").selection(&detail.key);
         let inspector = match &detail.shown {
             Shown::Node(node) => self.render_node(inspector, node, detail.aria.clone(), cx),
             Shown::Alert(alert) => self.render_alert(inspector, alert, detail.aria.clone(), cx),

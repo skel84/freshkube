@@ -19,8 +19,9 @@ use gpui_kit::component::resizable::{
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AppContext, DispatchPhase, Div, Entity, MouseDownEvent, Pixels, ScrollHandle,
-    SharedString, Stateful, Subscription, TestSupportExt, Window, canvas, div,
+    AnyElement, App, AppContext, DispatchPhase, Div, Entity, HitboxBehavior, MouseDownEvent,
+    Pixels, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Stateful,
+    Subscription, TestSupportExt, TouchPhase, Window, canvas, div,
 };
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
@@ -71,6 +72,7 @@ pub struct Inspector {
     tabs: Option<(TabStrip, AnyElement)>,
     body: Vec<AnyElement>,
     scroll: Option<ScrollHandle>,
+    selection: Option<u64>,
     content: Option<AnyElement>,
     footer: Option<AnyElement>,
 }
@@ -84,6 +86,7 @@ impl Inspector {
             tabs: None,
             body: vec![],
             scroll: None,
+            selection: None,
             content: None,
             footer: None,
         }
@@ -121,10 +124,24 @@ impl Inspector {
         self
     }
 
-    /// Track the body's scroll position so its owner can reset it when
-    /// the selection changes. Does not apply to self-scrolling content.
+    /// Track the body's scroll position in the owner's handle, in place of
+    /// the one the body keeps itself. The owner then resets it; without
+    /// this, [`selection`] does. Does not apply to self-scrolling content.
+    ///
+    /// [`selection`]: Self::selection
     pub fn track_scroll(mut self, scroll: &ScrollHandle) -> Self {
         self.scroll = Some(scroll.clone());
+        self
+    }
+
+    /// What the inspector is showing, such as the selected row. The body
+    /// goes back to the top when it changes, and when the inspector closes
+    /// and opens again.
+    pub fn selection(mut self, selection: impl std::hash::Hash) -> Self {
+        use std::hash::Hasher as _;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        selection.hash(&mut hasher);
+        self.selection = Some(hasher.finish());
         self
     }
 
@@ -157,27 +174,15 @@ impl Inspector {
                 .flex_1()
                 .min_h_0()
                 .min_w_0()
-                .child(content),
-            None => v_flex()
-                .id(part("body-frame"))
-                .test_support()
-                .flex_1()
-                .min_h_0()
-                .min_w_0()
-                .p(dp(PANE_PADDING))
-                .child(
-                    v_flex()
-                        .id(part("body"))
-                        .test_support()
-                        .size_full()
-                        .min_h_0()
-                        .min_w_0()
-                        .overflow_y_scroll()
-                        .restrict_scroll_to_axis()
-                        .when_some(self.scroll, |this, scroll| this.track_scroll(&scroll))
-                        .gap(dp(GAP))
-                        .children(self.body),
-                ),
+                .child(content)
+                .into_any_element(),
+            None => Body {
+                id: self.id.clone(),
+                parts: self.body,
+                tracked: self.scroll,
+                selection: self.selection,
+            }
+            .into_any_element(),
         };
         v_flex()
             .id(self.id.clone())
@@ -464,6 +469,162 @@ fn press_width(pressed: Rc<Cell<Option<f32>>>) -> impl IntoElement {
                 if phase == DispatchPhase::Capture {
                     pressed.set(Some(shown * BASE_TEXT / crate::text_size::current(cx)));
                 }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
+}
+
+/// What the body remembers between frames: where it is scrolled, which
+/// selection that is for, and whose a trackpad gesture is. It lives as long
+/// as the body is drawn in consecutive frames, so closing the inspector
+/// drops it.
+struct BodyState {
+    scroll: ScrollHandle,
+    selection: Option<u64>,
+    gesture: Rc<Cell<Gesture>>,
+}
+
+/// Who a trackpad gesture belongs to. The body takes a gesture that starts
+/// over it able to move the way the fingers go, and keeps it, momentum
+/// included, until the next gesture starts; a gesture that starts anywhere
+/// else, or with the body at that end, belongs to the page. Events outside
+/// any gesture the body saw start are decided one by one.
+#[derive(Clone, Copy, PartialEq)]
+enum Gesture {
+    Idle,
+    /// Started over the body, not yet moved.
+    Undecided,
+    Body,
+    Page,
+}
+
+/// The body's frame: its padding, the wheel listener and the scrolling body.
+#[derive(IntoElement)]
+struct Body {
+    id: SharedString,
+    parts: Vec<AnyElement>,
+    tracked: Option<ScrollHandle>,
+    selection: Option<u64>,
+}
+
+impl RenderOnce for Body {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = window.use_keyed_state(self.id.clone(), cx, |_, _| BodyState {
+            scroll: ScrollHandle::new(),
+            selection: self.selection,
+            gesture: Rc::new(Cell::new(Gesture::Idle)),
+        });
+        let (own, gesture) = state.update(cx, |state, _| {
+            if state.selection != self.selection {
+                state.selection = self.selection;
+                state
+                    .scroll
+                    .set_offset(gpui_kit::point(Pixels::ZERO, Pixels::ZERO));
+                state.gesture.set(Gesture::Idle);
+            }
+            (state.scroll.clone(), state.gesture.clone())
+        });
+        let scroll = self.tracked.unwrap_or(own);
+        v_flex()
+            .id(SharedString::from(format!("{}-body-frame", self.id)))
+            .test_support()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .p(dp(PANE_PADDING))
+            .child(wheel_first(scroll.clone(), gesture))
+            .child(
+                v_flex()
+                    .id(SharedString::from(format!("{}-body", self.id)))
+                    .test_support()
+                    .size_full()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .track_scroll(&scroll)
+                    .gap(dp(GAP))
+                    .children(self.parts),
+            )
+    }
+}
+
+/// Gives the wheel to the body first. Kit hands a wheel event to every
+/// scroll container under the pointer, so over a body inside a page that
+/// scrolls too, both would move. This listens before them: while the body
+/// can still move the way the wheel turns, it moves the body itself and the
+/// page behind never hears of the event; once the body is at that end, the
+/// event goes on and the page scrolls. It covers the body's frame, which
+/// it sits in, and takes no mouse input of its own.
+///
+/// A trackpad's pixel deltas come in gestures (`touch_phase`), and the
+/// momentum after the fingers lift arrives as more of the same gesture, so
+/// who owns a gesture is decided once, when it starts ([`Gesture`]): a flick
+/// that began on the body stays on it past its end instead of spilling into
+/// the page, and the page's momentum is not taken by a body it passes over.
+/// A wheel's line deltas have no gesture and are decided event by event.
+fn wheel_first(scroll: ScrollHandle, gesture: Rc<Cell<Gesture>>) -> impl IntoElement {
+    canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        move |_, hitbox, window, _| {
+            let (scroll, gesture, view) = (scroll.clone(), gesture.clone(), window.current_view());
+            // The body's own listener runs between the two phases and moves
+            // it by whatever the wheel says; an event the page owns gives
+            // that back.
+            let kept = Rc::new(Cell::new(None));
+            window.on_mouse_event({
+                let (scroll, kept) = (scroll.clone(), kept.clone());
+                move |_: &ScrollWheelEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Bubble
+                        && let Some(offset) = kept.take()
+                    {
+                        scroll.set_offset(offset);
+                        cx.notify(view);
+                    }
+                }
+            });
+            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture {
+                    return;
+                }
+                let over = hitbox.should_handle_scroll(window);
+                let trackpad = matches!(event.delta, ScrollDelta::Pixels(_));
+                if trackpad && event.touch_phase == TouchPhase::Started {
+                    gesture.set(if over {
+                        Gesture::Undecided
+                    } else {
+                        Gesture::Page
+                    });
+                }
+                if !over {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                if delta.y == Pixels::ZERO || delta.x.abs() > delta.y.abs() {
+                    return;
+                }
+                let (offset, most) = (scroll.offset(), scroll.max_offset().y);
+                let to = (offset.y + delta.y).clamp(-most, Pixels::ZERO);
+                let moves = (to - offset.y).abs() >= Pixels::from(0.5);
+                if trackpad && gesture.get() == Gesture::Undecided {
+                    gesture.set(if moves { Gesture::Body } else { Gesture::Page });
+                }
+                let owned = match gesture.get() {
+                    Gesture::Body if trackpad => true,
+                    Gesture::Page if trackpad => false,
+                    _ => moves,
+                };
+                if !owned {
+                    kept.set(Some(offset));
+                    return;
+                }
+                if moves {
+                    scroll.set_offset(gpui_kit::point(offset.x, to));
+                    cx.notify(view);
+                }
+                cx.stop_propagation();
             });
         },
     )
