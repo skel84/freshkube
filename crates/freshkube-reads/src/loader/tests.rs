@@ -535,3 +535,25 @@ fn expiring_reads_again_on_showing_however_recent(cx: &mut TestAppContext) {
         assert_eq!(screen.loader.data(), Some(&1), "the data stays");
     });
 }
+
+#[gpui_kit::test]
+fn retaining_a_route_invalidates_old_work_without_clearing_evidence(cx: &mut TestAppContext) {
+    let (_runtime, screen) = mount(cx);
+    screen.update(cx, |screen, cx| {
+        screen.loader.resolve("source/old-route", Ok(7));
+        let at = screen.loader.last_successful();
+        let old = screen.loader.start("source/old-route");
+        screen.loader.retain_stale("source/new-route");
+        assert_eq!(screen.loader.data(), Some(&7));
+        assert!(screen.loader.is_stale());
+        assert!(!screen.loader.is_loading());
+        assert_eq!(screen.loader.last_successful(), at);
+        assert!(!screen.loader.land(&old, Ok(9), cx));
+        let new = screen.loader.start("source/new-route");
+        assert_eq!(screen.loader.data(), Some(&7));
+        assert!(screen.loader.is_stale());
+        assert!(screen.loader.land(&new, Ok(8), cx));
+        assert_eq!(screen.loader.data(), Some(&8));
+        assert!(!screen.loader.is_stale());
+    });
+}

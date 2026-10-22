@@ -69,6 +69,14 @@ impl<T, I: Clone + Eq, E> Snapshot<T, I, E> {
         }
     }
 
+    /// Begins a route refresh within the same logical target, retaining old
+    /// evidence and timestamps as stale. The owner must establish that access
+    /// and target are unchanged; ordinary replacement uses `begin` instead.
+    pub fn begin_retaining(&mut self, identity: I) -> Request<I> {
+        self.identity = Some(identity.clone());
+        self.begin(identity)
+    }
+
     /// Puts back an answer kept from an earlier time, marked stale until a
     /// read of the same identity replaces it, with the time it was taken.
     /// Nothing is loading; a [`begin`](Self::begin) for another identity

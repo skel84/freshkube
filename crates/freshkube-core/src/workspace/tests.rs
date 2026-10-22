@@ -915,6 +915,18 @@ mod sources {
         assert_eq!(chosen(&sources, Part::Kargo).unwrap().0, "cicd-fra");
         assert_eq!(chosen(&sources, Part::Builds).unwrap().0, "cicd-fra");
         assert_eq!(chosen(&sources, Part::ArgoCd).unwrap().0, "core-fra");
+        let results = sources
+            .get(Part::Builds)
+            .entry()
+            .unwrap()
+            .results
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            results.forward,
+            Some(crate::setup::Forward::new("acme", "results", 8443))
+        );
+        assert!(results.address.is_none() && results.token.is_none() && results.ca_file.is_none());
     }
 
     #[test]
