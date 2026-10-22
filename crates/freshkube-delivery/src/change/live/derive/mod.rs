@@ -259,6 +259,7 @@ pub fn derive(
                     &stage.meta,
                 ),
             ),
+            acts: stage_acts(freight, stage, holds, evidence),
         });
     }
 
@@ -277,6 +278,58 @@ pub fn derive(
         stages: model,
         hops,
     }
+}
+
+/// What the Stage's actions need, when its handles were read.
+fn stage_acts(
+    freight: &Freight,
+    stage: &KargoStage,
+    holds: bool,
+    evidence: &Evidence,
+) -> Option<crate::acts::StageActs> {
+    use crate::acts::{Handle, Promoting, StageActs};
+    let promoting = evidence
+        .kargo
+        .promotions
+        .read()
+        .map(|promotions| {
+            let mut running: Vec<_> = promotions
+                .iter()
+                .filter(|p| p.stage.as_deref() == Some(stage.name.as_str()))
+                .filter(|p| matches!(p.phase.as_deref(), Some("Pending" | "Running")))
+                .filter_map(|p| {
+                    Some(Promoting {
+                        promotion: Handle::read(&p.name, &p.meta)?,
+                        freight: p.freight.clone()?,
+                        phase: p.phase.clone()?,
+                    })
+                })
+                .collect();
+            // Kargo's names sort by time: the newest first.
+            running.sort_by(|a, b| b.promotion.name.cmp(&a.promotion.name));
+            running
+        })
+        .unwrap_or_default();
+    let warehouse = freight.warehouse.as_ref().and_then(|name| {
+        let warehouses = evidence.kargo.warehouses.read()?;
+        let found = warehouses.iter().find(|w| &w.name == name)?;
+        Handle::read(&found.name, &found.meta)
+    });
+    let verification = stage
+        .verifications
+        .iter()
+        .find(|run| run.freight.contains(&freight.name))
+        .and_then(|run| run.id.clone());
+    Some(StageActs {
+        project: stage.project.clone(),
+        stage: Handle::read(&stage.name, &stage.meta)?,
+        freight: freight.name.clone(),
+        holds,
+        warehouse,
+        promoting,
+        verification,
+        would_run: crate::acts::freight_lines(freight),
+    })
 }
 
 /// The Stages the Freight can reach, in promotion order: those that take

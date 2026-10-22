@@ -510,6 +510,9 @@ pub struct Stage {
     pub reach: Reach,
     /// The Stage itself, to open in Resources.
     pub object: Object,
+    /// What its actions (Refresh, Promote, Abort) need, when the Stage and
+    /// the Freight were read with their UID and resourceVersion.
+    pub acts: Option<crate::acts::StageActs>,
 }
 
 /// Source words as a complete explanatory sentence.

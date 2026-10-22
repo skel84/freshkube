@@ -8,13 +8,16 @@
 //! ([`join`], [`change`], [`changes`]). [`applications`] derives what a
 //! cluster runs from Kargo Projects, Argo CD and the `part-of` label, and
 //! says how far each was read. Every cluster call goes through
-//! [`read::ReadOnlyClient`], which can only GET; nothing here writes.
+//! [`read::ReadOnlyClient`], which can only GET; nothing here sends a write.
+//! [`acts`] describes the Stage actions (#855) and core's `write` module
+//! sends them.
 //!
 //! The crate uses `freshkube-core` and `talos-rs` and no UI types. Only the
 //! modules a screen reaches are public; example data and parsers that
 //! other crates' tests read are behind the `testing` feature
 //! (`freshkube_delivery::testing`).
 
+pub mod acts;
 pub(crate) mod address;
 pub mod applications;
 pub mod argocd;

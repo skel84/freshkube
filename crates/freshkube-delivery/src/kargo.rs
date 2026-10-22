@@ -216,6 +216,8 @@ pub struct DiscoveredImage {
 /// running).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verification {
+    /// `id`: what a request to verify again names.
+    pub id: Option<String>,
     pub freight: Vec<String>,
     /// Which `freightHistory` entry (0 is the newest) it was recorded in.
     pub collection: usize,
@@ -403,6 +405,7 @@ fn verifications(stage: &Value) -> Vec<Verification> {
     for (index, entry) in array(stage, "/status/freightHistory").enumerate() {
         for (at, run) in array(entry, "/verificationHistory").enumerate() {
             found.push(Verification {
+                id: text(run, "/id"),
                 freight: held[index].clone(),
                 collection: index,
                 phase: text(run, "/phase"),

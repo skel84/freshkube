@@ -26,6 +26,9 @@ pub struct Runner {
     /// The cluster's level as it is now. A write reads it again just before
     /// it is sent.
     pub(super) level: LevelCell,
+    /// Example data: it asks nothing of the cluster and sends nothing, so a
+    /// dialog can be shown without one.
+    pub(super) example: bool,
 }
 
 /// Something the front end can draw while a write runs.
@@ -56,6 +59,8 @@ pub enum NotSent {
     /// Exec and port forwarding keep their own owners; they never go through
     /// this path.
     Session,
+    /// A runner for example data, which has no cluster to send to.
+    Example,
 }
 
 /// What happened to one object.
@@ -210,7 +215,22 @@ impl Runner {
             who,
             watching: Watching::default(),
             level,
+            example: false,
         }
+    }
+
+    /// A runner for example data: preflight shows the dialog the level asks
+    /// for from the action alone, and nothing is ever sent or even asked of
+    /// a cluster. `client` is never used.
+    pub fn example(client: kube::Client, audit: AuditStore, who: Who) -> Self {
+        Self {
+            example: true,
+            ..Self::new(client, audit, who)
+        }
+    }
+
+    pub fn is_example(&self) -> bool {
+        self.example
     }
 
     /// Follows a level that changes while the app runs, such as the one the
@@ -298,6 +318,9 @@ impl Runner {
         };
         if description.tier == super::Tier::Session {
             return finished(Status::NotSent(NotSent::Session), vec![], None, None);
+        }
+        if self.example {
+            return finished(Status::NotSent(NotSent::Example), vec![], None, None);
         }
         // Read again, not as it was when the dialog opened; and once more
         // after the cancel window, which is what decides the send.

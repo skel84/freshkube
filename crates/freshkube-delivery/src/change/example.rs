@@ -254,6 +254,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
         link: stage_link(name),
         reach: Reach::Linked(Confidence::Confirmed),
         object: stage_object(name),
+        acts: None,
     };
     vec![
         stage(

@@ -79,15 +79,19 @@ fn secret() -> Value {
 
 impl Cluster {
     pub fn new() -> Self {
+        Self::with(vec![
+            (DEPLOYMENT.to_owned(), deployment()),
+            (SECRET.to_owned(), secret()),
+        ])
+    }
+
+    /// A cluster holding these objects, by the path each is served at.
+    pub fn with(objects: Vec<(String, Value)>) -> Self {
         let state = Arc::new(Mutex::new(State {
             next_version: 1000,
             ..State::default()
         }));
-        {
-            let mut state = state.lock().unwrap();
-            state.objects.insert(DEPLOYMENT.into(), deployment());
-            state.objects.insert(SECRET.into(), secret());
-        }
+        state.lock().unwrap().objects.extend(objects);
         let recorder = Recorder::default();
         let (log, shared) = (recorder.clone(), state.clone());
         let service = tower::service_fn(move |request: Request<Body>| {

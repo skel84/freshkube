@@ -1343,3 +1343,58 @@ async fn guarded_on_both_clusters_shows_the_preview_without_typing() {
     assert_eq!(stricter.level(Open), Protected);
     assert_eq!(stricter.level(ReadOnly), ReadOnly);
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_example_runner_shows_each_level_s_dialog_and_makes_no_request() {
+    use Protection::*;
+    for (level, asks, typed) in [(Guarded, true, false), (Protected, true, true)] {
+        let (cluster, dir) = (Cluster::new(), tmp());
+        let runner = Runner::example(
+            cluster.client.clone(),
+            AuditStore::new(dir.path().join("audit")),
+            Who {
+                entry: "prod-fra".into(),
+                context: "ctx".into(),
+                protection: level,
+                actor: "tester".into(),
+            },
+        );
+        let verdict = runner.preflight(fake::create_notes(&["stage-a"])).await;
+        let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "prod-fra") else {
+            panic!("{level:?} asks: {asks}");
+        };
+        assert_eq!(ask.type_name.is_some(), typed);
+        let Verdict::Ready(prepared) = verdict else {
+            panic!()
+        };
+        let finished = runner
+            .execute(
+                *prepared,
+                Confirmation::Typed("stage-a".into()),
+                || false,
+                |_| {},
+            )
+            .await;
+        assert_eq!(finished.status, Status::NotSent(NotSent::Example));
+        assert!(finished.message().contains("Example data"));
+        // Not a request of any kind, and nothing audited.
+        assert!(cluster.recorder.requests().is_empty(), "{level:?}");
+        assert!(phases(&AuditStore::new(dir.path().join("audit"))).is_empty());
+    }
+    // Read-only still blocks, as for any runner.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = Runner::example(
+        cluster.client.clone(),
+        AuditStore::new(dir.path().join("audit")),
+        Who {
+            entry: "e".into(),
+            context: "c".into(),
+            protection: ReadOnly,
+            actor: "t".into(),
+        },
+    );
+    assert!(matches!(
+        runner.preflight(fake::annotate_web()).await,
+        Verdict::Blocked(Block::ReadOnly(_))
+    ));
+}

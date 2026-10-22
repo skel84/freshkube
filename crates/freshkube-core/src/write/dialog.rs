@@ -232,6 +232,9 @@ impl Finished {
                     "This cluster is now {}. Nothing was sent; you will be asked again.",
                     level.label()
                 ),
+                super::run::Status::NotSent(NotSent::Example) => {
+                    "Example data: there is no cluster, so nothing was sent.".to_owned()
+                }
                 super::run::Status::NotSent(NotSent::Session) => {
                     "Shells and port forwards are not writes. Nothing was sent.".to_owned()
                 }
@@ -257,6 +260,9 @@ impl Runner {
         &self,
         mut action: ActionDescription,
     ) -> Result<ActionDescription, Block> {
+        if self.example {
+            return Ok(action);
+        }
         for change in &mut action.changes {
             // A new object has no version to take again.
             if matches!(change.change, super::action::Change::Create(_)) {
