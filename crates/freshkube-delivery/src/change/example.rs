@@ -357,7 +357,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
 /// `AnnotationKeyAbort`, `AbortPromotionRequest`; pkg.go.dev lists them):
 /// refresh goes on a Stage or a Warehouse with any changing token, reverify
 /// on a Stage with the id of the verification to repeat, abort on the
-/// Promotion with `{"action":"abort"}`, and Promote creates a `Promotion`
+/// Promotion with `{"action":"terminate"}`, and Promote creates a `Promotion`
 /// whose `spec` names the `stage` and the `freight`.
 pub fn example_acts(name: &str) -> crate::acts::StageActs {
     use crate::acts::{Handle, StageActs};

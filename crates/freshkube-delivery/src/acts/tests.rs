@@ -384,6 +384,6 @@ async fn abort_marks_the_promotion_counts_down_and_says_what_already_ran() {
     let body: Value = serde_json::from_str(&sent[0].body).unwrap();
     assert_eq!(
         body["metadata"]["annotations"][ABORT],
-        r#"{"action":"abort"}"#
+        r#"{"action":"terminate"}"#
     );
 }

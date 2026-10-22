@@ -15,7 +15,7 @@
 //! | Refresh | the Stage or the Warehouse | `kargo.akuity.io/refresh` annotation, any token (a changed value reconciles) | reversible, no confirmation |
 //! | Reverify | the Stage | `kargo.akuity.io/reverify` annotation, the id of the verification to repeat | reversible, no confirmation |
 //! | Promote | a new Promotion per Stage | create `spec.stage`, `spec.freight` | spec change |
-//! | Abort | the running Promotion | `kargo.akuity.io/abort` annotation, `{"action":"abort"}` | destructive |
+//! | Abort | the running Promotion | `kargo.akuity.io/abort` annotation, `{"action":"terminate"}` | destructive |
 //!
 //! Approvals stay in Kargo, and so does everything else these don't do.
 
@@ -201,6 +201,11 @@ pub fn reverify(acts: &StageActs) -> Option<ActionDescription> {
     })
 }
 
+/// What the abort annotation holds: Kargo's `AbortPromotionRequest` acts only
+/// on the action `terminate` (`AbortActionTerminate`, `api/v1alpha1/request.go`);
+/// any other value is ignored.
+pub const ABORT_VALUE: &str = r#"{"action":"terminate"}"#;
+
 /// Abort: marks the running Promotion to be aborted. What it has already
 /// done stays done.
 pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> ActionDescription {
@@ -242,7 +247,7 @@ pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> 
         ),
         changes: vec![ObjectChange {
             target: target(&acts.project, "Promotion", "promotions", &running.promotion),
-            change: Change::MergePatch(annotate(ABORT, r#"{"action":"abort"}"#)),
+            change: Change::MergePatch(annotate(ABORT, ABORT_VALUE)),
             observe: Observation::FieldEquals {
                 pointer: "/status/phase".into(),
                 value: json!("Aborted"),

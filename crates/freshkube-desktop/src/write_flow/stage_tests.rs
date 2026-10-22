@@ -276,5 +276,10 @@ fn abort_names_what_already_ran_counts_down_and_then_marks_the_promotion(cx: &mu
             .path
             .ends_with("/promotions/prod-ams.01j9x4k2.wonky-o")
     );
-    assert!(sent[0].body.contains("kargo.akuity.io/abort"));
+    // The value Kargo acts on: its AbortPromotionRequest's `terminate`.
+    let body: Value = serde_json::from_str(&sent[0].body).unwrap();
+    assert_eq!(
+        body["metadata"]["annotations"]["kargo.akuity.io/abort"],
+        r#"{"action":"terminate"}"#
+    );
 }
