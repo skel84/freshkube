@@ -16,8 +16,8 @@ use kube::client::Body;
 use serde_json::{Value, json};
 
 use super::{
-    ActionDescription, AuditStore, Change, Inverse, ObjectChange, Observation, Protection, Runner,
-    Target, Tier, Who,
+    ActionDescription, AuditStore, Change, Inverse, InverseFrom, ObjectChange, Observation,
+    Protection, Runner, Target, Tier, Who,
 };
 use crate::fake_api::{self, Recorded, Recorder};
 
@@ -258,6 +258,42 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
     match request.method.as_str() {
         "GET" => (fake_api::json(200, &state.objects[path]), false),
         "PATCH" | "DELETE" => {
+            // The server enforces what the request carries, as a real one
+            // does: a resourceVersion in the body, or a delete's preconditions.
+            let sent: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+            let current = &state.objects[path];
+            let (sent_version, sent_uid) = if request.method == "DELETE" {
+                (
+                    sent.pointer("/preconditions/resourceVersion"),
+                    sent.pointer("/preconditions/uid"),
+                )
+            } else {
+                (sent.pointer("/metadata/resourceVersion"), None)
+            };
+            if let Some(uid) = sent_uid.and_then(Value::as_str)
+                && current["metadata"]["uid"].as_str() != Some(uid)
+            {
+                return (
+                    status(
+                        409,
+                        "Conflict",
+                        "Precondition failed: UID in precondition does not match the UID in object meta",
+                    ),
+                    false,
+                );
+            }
+            if let Some(version) = sent_version.and_then(Value::as_str)
+                && current["metadata"]["resourceVersion"].as_str() != Some(version)
+            {
+                return (
+                    status(
+                        409,
+                        "Conflict",
+                        "Operation cannot be fulfilled: the object has been modified; please apply your changes to the latest version and try again",
+                    ),
+                    false,
+                );
+            }
             if dry {
                 if let Some((code, message)) = &state.fail_dry_run {
                     return (status(*code, "Invalid", message), false);
@@ -334,13 +370,15 @@ fn replicas(count: u64) -> Observation {
     }
 }
 
-/// A reversible test action: scale `web` (from 2) to `count`.
+/// A reversible test action: scale `web` to `count`. The way back puts the
+/// replicas back to what the object has when it is read for preflight.
 pub fn scale(count: u64) -> ActionDescription {
     ActionDescription {
         kind: "test-scale".into(),
         verb: "Scale".into(),
         tier: Tier::Reversible,
         sentence: format!("Scale web to {count}"),
+        destination: None,
         changes: vec![ObjectChange {
             target: web(),
             change: Change::Apply(
@@ -348,17 +386,18 @@ pub fn scale(count: u64) -> ActionDescription {
                        "spec": {"replicas": count}}),
             ),
             observe: replicas(count),
-            inverse: Some(Inverse {
-                change: Change::Apply(
-                    json!({"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web"},
-                           "spec": {"replicas": 2}}),
-                ),
-                observe: replicas(2),
-                guard: Observation::FieldEquals {
-                    pointer: "/spec/replicas".into(),
-                    value: json!(count),
-                },
-            }),
+            inverse: Some(InverseFrom::new(move |before| {
+                let was = before.pointer("/spec/replicas")?.as_u64()?;
+                Some(Inverse {
+                    change: Change::Apply(json!({"apiVersion": "apps/v1", "kind": "Deployment",
+                               "metadata": {"name": "web"}, "spec": {"replicas": was}})),
+                    observe: replicas(was),
+                    guard: Observation::FieldEquals {
+                        pointer: "/spec/replicas".into(),
+                        value: json!(count),
+                    },
+                })
+            })),
         }],
     }
 }
@@ -370,6 +409,7 @@ pub fn set_image(image: &str) -> ActionDescription {
         verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Change web's image".into(),
+        destination: None,
         changes: vec![ObjectChange {
             target: web(),
             change: Change::Apply(json!({"apiVersion": "apps/v1", "kind": "Deployment",
@@ -391,6 +431,7 @@ pub fn delete_web() -> ActionDescription {
         verb: "Delete".into(),
         tier: Tier::Destructive,
         sentence: "Delete web".into(),
+        destination: None,
         changes: vec![ObjectChange {
             target: web(),
             change: Change::Delete,
@@ -407,6 +448,7 @@ pub fn rotate_password() -> ActionDescription {
         verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Rotate db's password".into(),
+        destination: None,
         changes: vec![ObjectChange {
             target: db(),
             change: Change::Apply(json!({"apiVersion": "v1", "kind": "Secret",

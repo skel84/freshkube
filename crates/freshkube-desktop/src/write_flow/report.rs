@@ -10,9 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use freshkube_core::write::{
-    Confirmation, Event, Finished, Headline, NotSent, Runner, Status, UNDO_WINDOW, UndoOffer,
-};
+use freshkube_core::write::{Event, Finished, Headline, Runner, Status, UNDO_WINDOW, UndoOffer};
 use gpui_kit::component::{
     Sizable, WindowExt, button::Button, h_flex, notification::Notification, v_flex,
 };
@@ -20,9 +18,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
-use super::{Msg, start_worker};
+use super::{WriteRequest, start_prepared};
 use crate::backend::spawn_job;
-use crate::mutation::{Operations, Refused};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
@@ -53,6 +50,8 @@ pub(crate) enum Undo {
         at: Instant,
     },
     Running,
+    /// Undo continues in its own dialog and notice.
+    Handed,
     /// What came of it, and how to tone it.
     Result {
         text: String,
@@ -72,15 +71,18 @@ pub(crate) struct WriteReport {
     _ticker: Option<Task<()>>,
 }
 
-/// A run whose worker ended without saying how.
+/// A run whose worker ended without saying how. The request may have been
+/// sent, so it reads as unknown, never as not sent.
 pub(super) fn stopped() -> Finished {
+    use freshkube_core::write::{ObjectResult, Step};
     Finished {
         run: freshkube_core::write::RunId::new(),
         action: String::new(),
-        status: Status::NotSent(NotSent::AuditUnavailable(
-            "the worker stopped unexpectedly; check the object".into(),
-        )),
-        objects: vec![],
+        status: Status::Sent,
+        objects: vec![ObjectResult {
+            object: "The object".into(),
+            step: Step::Unknown("the worker stopped unexpectedly".into()),
+        }],
         undo: None,
         audit_error: None,
     }
@@ -218,57 +220,22 @@ impl WriteReport {
         cx.notify();
     }
 
+    /// Undo is a write like any other at its level: it goes to its own flow,
+    /// which asks what the level asks (the name on a protected cluster) and
+    /// reports in its own notice.
     fn run_undo(
         &mut self,
         prepared: freshkube_core::write::Prepared,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let operations = Operations::global(cx);
-        let ticket = match operations.update(cx, |operations, cx| operations.begin("Undo", cx)) {
-            Ok(ticket) => ticket,
-            Err(Refused::Busy(running)) => {
-                let text = format!(
-                    "Can't undo: {} is running. Nothing was sent.",
-                    running.label
-                );
-                self.undone(text, false, cx);
-                return;
-            }
-            Err(Refused::ReadOnly(why)) => {
-                self.undone(format!("Can't undo: {why}"), false, cx);
-                return;
-            }
+        let request = WriteRequest {
+            runner: self.runner.clone(),
+            runtime: self.runtime.clone(),
+            action: prepared.description().clone(),
         };
-        let mut messages = start_worker(
-            &self.runner,
-            &self.runtime,
-            prepared,
-            Confirmation::NotAsked,
-            &ticket,
-        );
-        cx.spawn_in(window, async move |this, cx| {
-            let mut finished = None;
-            while let Some(message) = messages.recv().await {
-                if let Msg::Done(done) = message {
-                    finished = Some(done);
-                    break;
-                }
-            }
-            let (text, good) = match finished {
-                Some(done) if done.succeeded() => {
-                    ("Undone. The cluster is back as it was.".to_owned(), true)
-                }
-                Some(done) => (format!("Undo: {}", done.message()), false),
-                None => (
-                    "Undo stopped unexpectedly; check the object.".to_owned(),
-                    false,
-                ),
-            };
-            _ = this.update(cx, |report, cx| report.undone(text, good, cx));
-            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
-        })
-        .detach();
+        start_prepared(request, prepared, window, cx);
+        self.undo = Undo::Handed;
         cx.notify();
     }
 
@@ -397,6 +364,11 @@ impl WriteReport {
                 }
             }
             Undo::Running => Some(note("write-undo-note", "Undoing…", p.muted)),
+            Undo::Handed => Some(note(
+                "write-undo-note",
+                "Undo continues in its own notice.",
+                p.muted,
+            )),
             Undo::Result { text, good } => Some(note(
                 "write-undo-note",
                 text,

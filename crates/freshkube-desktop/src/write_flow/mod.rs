@@ -26,7 +26,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freshkube_core::write::{
-    ActionDescription, Confirmation, Dialog, Event, Finished, Prepared, Runner, Verdict,
+    ActionDescription, Confirmation, Dialog, Event, Finished, NotSent, Prepared, Runner, Status,
+    Verdict,
 };
 use gpui_kit::component::{
     WindowExt,
@@ -91,8 +92,10 @@ pub(crate) struct WriteFlow {
 /// Opens the flow for `request`: the dialog when the level asks anything,
 /// otherwise nothing until there is something to say.
 pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) -> Entity<WriteFlow> {
-    let asks =
-        freshkube_core::write::requirement(request.action.tier, request.runner.who().protection);
+    let asks = freshkube_core::write::requirement(
+        request.action.tier,
+        request.runner.level_for(&request.action),
+    );
     let flow = cx.new(|_| WriteFlow {
         request,
         stage: Stage::Checking,
@@ -108,6 +111,31 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
         flow.update(cx, |flow, _| flow.dialog_open = true);
     }
     flow.update(cx, |flow, cx| flow.check(window, cx));
+    flow
+}
+
+/// Opens the flow for an action that has already passed preflight, such as
+/// Undo's: it asks what its level asks, like any write, and sends nothing
+/// until that is met.
+pub(crate) fn start_prepared(
+    request: WriteRequest,
+    prepared: Prepared,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<WriteFlow> {
+    let flow = cx.new(|_| WriteFlow {
+        request,
+        stage: Stage::Checking,
+        prepared: None,
+        typed: None,
+        typed_matches: false,
+        dialog_open: false,
+        check: None,
+        _subscriptions: vec![],
+    });
+    flow.update(cx, |flow, cx| {
+        flow.checked(Ok(Verdict::Ready(Box::new(prepared))), window, cx)
+    });
     flow
 }
 
@@ -349,10 +377,15 @@ impl WriteFlow {
                 }
             }
             let done = *finished.unwrap_or_else(|| Box::new(report::stopped()));
+            // A level that got stricter sends nothing and asks again; there
+            // is nothing to report.
+            let again = matches!(done.status, Status::NotSent(NotSent::LevelChanged(_)));
             _ = flow.update_in(cx, |flow, window, cx| {
-                flow.finished(&report, &done, window, cx)
+                flow.finished(&report, again, window, cx)
             });
-            _ = report.update_in(cx, |report, window, cx| report.finished(done, window, cx));
+            if !again {
+                _ = report.update_in(cx, |report, window, cx| report.finished(done, window, cx));
+            }
             operations.update(cx, |operations, cx| operations.finish(ticket, cx));
         })
         .detach();
@@ -376,10 +409,19 @@ impl WriteFlow {
     fn finished(
         &mut self,
         report: &Entity<WriteReport>,
-        _: &Finished,
+        again: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if again {
+            // Back to the dialog, checked under the new level.
+            self.check(window, cx);
+            if !self.dialog_open {
+                self.dialog_open = true;
+                dialog::open(&cx.entity(), window, cx);
+            }
+            return;
+        }
         if self.stage != Stage::Closed {
             self.close(window, cx);
             report.update(cx, |report, cx| report.show(window, cx));

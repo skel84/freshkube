@@ -17,7 +17,7 @@ use gpui_kit::{
 use tokio::runtime::{Builder, Runtime};
 
 use super::{WriteFlow, WriteRequest, start};
-use crate::mutation::{Operations, set_protection};
+use crate::mutation::{Operations, level_cell, set_protection};
 
 struct Host;
 
@@ -54,7 +54,8 @@ fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
         let _guard = runtime.enter();
         Cluster::new()
     };
-    let runner = Arc::new(fake::runner(&cluster, dir.path(), level));
+    let cell = cx.update(level_cell);
+    let runner = Arc::new(fake::runner(&cluster, dir.path(), level).following(cell));
     let handle = cx
         .open_window(size(px(1280.), px(880.)), |window, cx| {
             Root::new(cx.new(|_| Host), window, cx)
@@ -258,12 +259,24 @@ fn open_still_asks_for_a_spec_change_and_shows_the_diff(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
-fn a_secret_diff_shows_the_key_and_never_a_value(cx: &mut TestAppContext) {
-    let h = harness(cx, Protection::Guarded);
-    h.begin(cx, fake::rotate_password());
-    let line = h.label(cx, "write-diff-data.password");
-    assert!(line.contains("(value hidden)"), "{line}");
-    assert!(!line.contains("aHVu") && !line.contains("bmV3"));
+fn a_diff_shows_paths_and_kinds_for_every_kind_and_never_a_value(cx: &mut TestAppContext) {
+    for action in [
+        fake::rotate_password(),
+        fake::set_image("registry.example/web:2"),
+    ] {
+        let h = harness(cx, Protection::Guarded);
+        let path = if action.changes[0].target.kind == "Secret" {
+            "write-diff-data.password"
+        } else {
+            "write-diff-spec.template.spec.containers[0].image"
+        };
+        h.begin(cx, action);
+        let line = h.label(cx, path);
+        assert!(line.starts_with("~ "), "{line}");
+        for value in ["aHVu", "bmV3", "registry.example"] {
+            assert!(!line.contains(value), "{line}");
+        }
+    }
 }
 
 #[gpui_kit::test]
@@ -419,10 +432,18 @@ fn undo_shows_its_time_left_and_goes_through_the_same_path(cx: &mut TestAppConte
     h.advance(cx, Duration::from_secs(10));
     assert_eq!(h.label(cx, "write-undo"), "Undo (20 s)");
     h.click(cx, "write-undo");
+    h.drive(cx, Duration::from_secs(2));
+    // Undo is a write like any other: at guarded it asks first.
+    assert!(h.present(cx, "write-dialog") && h.present(cx, "write-confirm"));
+    assert_eq!(h.cluster.writes().len(), 1);
+    assert_eq!(
+        h.label(cx, "write-undo-note"),
+        "Undo continues in its own notice."
+    );
+    h.click(cx, "write-confirm");
     h.drive(cx, Duration::from_secs(5));
     assert_eq!(h.replicas(), 2);
     assert_eq!(h.cluster.writes().len(), 2);
-    assert!(h.label(cx, "write-undo-note").starts_with("Undone."));
     assert!(h.slot_free(cx));
 }
 
@@ -512,4 +533,43 @@ fn the_level_turning_read_only_after_the_dialog_opened_sends_nothing(cx: &mut Te
     h.drive(cx, Duration::from_secs(2));
     h.cluster.assert_nothing_written();
     assert!(h.label(cx, "write-refused").contains("read-only"));
+}
+
+#[gpui_kit::test]
+fn undo_on_a_protected_cluster_asks_for_the_name(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Open);
+    h.begin(cx, fake::scale(3));
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.cluster.writes().len(), 1);
+    // The cluster becomes protected before Undo is pressed.
+    cx.update(|cx| set_protection(Protection::Protected, cx));
+    h.click(cx, "write-undo");
+    h.drive(cx, Duration::from_secs(2));
+    assert_eq!(h.label(cx, "write-type-prompt"), "Type web to confirm");
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(2));
+    assert_eq!(h.cluster.writes().len(), 1, "a bare click sends nothing");
+    h.type_name(cx, "web");
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.replicas(), 2);
+}
+
+#[gpui_kit::test]
+fn a_level_that_got_stricter_while_the_dialog_was_open_asks_again(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Guarded);
+    h.begin(cx, fake::scale(3));
+    assert!(!h.present(cx, "write-type-prompt"));
+    cx.update(|cx| set_protection(Protection::Protected, cx));
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(2));
+    // Back in the dialog, now asking for the name; nothing was sent.
+    assert!(h.present(cx, "write-dialog"));
+    assert_eq!(h.label(cx, "write-type-prompt"), "Type web to confirm");
+    h.cluster.assert_nothing_written();
+    assert!(h.slot_free(cx));
+    h.type_name(cx, "web");
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.cluster.writes().len(), 1);
 }

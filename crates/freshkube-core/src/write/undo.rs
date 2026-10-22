@@ -9,9 +9,9 @@ use std::time::Duration;
 use serde_json::Value;
 
 use super::{
-    action::{ActionDescription, ObjectChange, Observation},
+    action::{ActionDescription, Destination, ObjectChange, Observation},
     preflight::{Block, Prepared, Verdict},
-    requirement::{Requirement, Tier},
+    requirement::{Tier, requirement},
     run::Runner,
     send::{FIELD_MANAGER, Refusal, get},
 };
@@ -23,6 +23,8 @@ pub struct UndoOffer {
     pub action: String,
     pub sentence: String,
     pub window: Duration,
+    /// The other cluster the write reached, so Undo is held to the same level.
+    pub(super) destination: Option<Destination>,
     /// One inverse per object, each guarded.
     pub(super) items: Vec<(ObjectChange, Observation)>,
 }
@@ -85,7 +87,8 @@ fn holds(guard: &Observation, object: &Value) -> bool {
     match guard {
         Observation::FieldEquals { pointer, value } => object.pointer(pointer) == Some(value),
         Observation::Gone => false,
-        Observation::Unobservable => true,
+        // Nothing can be checked, so nothing is known to be safe: not holding.
+        Observation::Unobservable => false,
     }
 }
 
@@ -135,9 +138,14 @@ impl Runner {
             tier: Tier::Reversible,
             sentence: format!("Undo: {}", offer.sentence),
             changes,
+            destination: offer.destination.clone(),
         };
-        let requirement = Requirement::undo_click(self.who.protection);
-        match self.preflight_with(action, requirement, true).await {
+        // Undo is a write like any other at its level: a protected cluster
+        // asks for the name, a guarded one for a confirmation, an open one
+        // for nothing, and a read-only one blocks it.
+        let level = self.level_for(&action);
+        let requirement = requirement(Tier::Reversible, level);
+        match self.preflight_with(action, requirement, level, true).await {
             Verdict::Ready(prepared) => Ok(*prepared),
             Verdict::Blocked(block) => Err(UndoRefused::Blocked(block)),
         }
@@ -158,6 +166,27 @@ mod tests {
         ]}});
         assert_eq!(last_other_writer(&object).as_deref(), Some("hpa"));
         assert_eq!(last_other_writer(&json!({})), None);
+    }
+
+    #[test]
+    fn a_guard_that_cannot_be_checked_does_not_hold() {
+        let object = json!({"spec": {"replicas": 3}});
+        assert!(!holds(&Observation::Unobservable, &object));
+        assert!(!holds(&Observation::Gone, &object));
+        assert!(holds(
+            &Observation::FieldEquals {
+                pointer: "/spec/replicas".into(),
+                value: json!(3)
+            },
+            &object
+        ));
+        assert!(!holds(
+            &Observation::FieldEquals {
+                pointer: "/spec/replicas".into(),
+                value: json!(4)
+            },
+            &object
+        ));
     }
 
     #[test]

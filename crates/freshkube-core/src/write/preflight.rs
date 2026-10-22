@@ -6,10 +6,10 @@
 use super::{
     Protection,
     access::{self, Access},
-    action::{ActionDescription, ObjectChange},
+    action::{ActionDescription, Inverse, ObjectChange},
     audit::{Phase, RunId, scrub},
     diff::{FieldChange, diff},
-    requirement::{Requirement, expected_name, requirement},
+    requirement::{Requirement, Tier, expected_name, requirement},
     run::Runner,
     send::{ChangedWhat, Conflict, Refusal, get, send},
 };
@@ -47,6 +47,9 @@ pub enum Block {
     NoAnswer { object: String, message: String },
     /// The action touches nothing.
     Empty,
+    /// A session (exec, port forwarding) is not a write: it keeps its own
+    /// owner and never goes through this path.
+    Session,
 }
 
 impl Block {
@@ -74,6 +77,10 @@ impl Block {
             }
             Block::NoAnswer { object, .. } => format!("The cluster did not answer for {object}."),
             Block::Empty => "There is nothing to change.".to_owned(),
+            Block::Session => {
+                "Shells and port forwards are not writes; they start from their own actions."
+                    .to_owned()
+            }
         }
     }
 }
@@ -94,6 +101,10 @@ pub struct Prepared {
     pub(super) run: RunId,
     pub(super) diffs: Vec<ObjectDiff>,
     pub(super) undo: bool,
+    /// The level it was prepared under; a stricter one at send time sends nothing.
+    pub(super) level: Protection,
+    /// The way back for each object, worked out from the object read here.
+    pub(super) inverses: Vec<Option<Inverse>>,
 }
 
 impl Prepared {
@@ -142,16 +153,21 @@ impl Runner {
     /// level, then for each object the access review, the UID and
     /// resourceVersion, and the dry run.
     pub async fn preflight(&self, action: ActionDescription) -> Verdict {
-        let requirement = requirement(action.tier, self.who.protection);
-        self.preflight_with(action, requirement, false).await
+        let level = self.level_for(&action);
+        let requirement = requirement(action.tier, level);
+        self.preflight_with(action, requirement, level, false).await
     }
 
     pub(super) async fn preflight_with(
         &self,
         action: ActionDescription,
         requirement: Requirement,
+        level: Protection,
         undo: bool,
     ) -> Verdict {
+        if action.tier == Tier::Session {
+            return Verdict::Blocked(Block::Session);
+        }
         if let Some(reason) = requirement.blocked {
             return Verdict::Blocked(Block::ReadOnly(reason));
         }
@@ -160,12 +176,16 @@ impl Runner {
         }
         let run = RunId::new();
         let mut diffs = vec![];
+        let mut inverses = vec![];
         for change in &action.changes {
             match self.check_object(change).await {
-                Ok(diff) => diffs.push(ObjectDiff {
-                    object: change.target.label(),
-                    changes: diff,
-                }),
+                Ok((diff, inverse)) => {
+                    diffs.push(ObjectDiff {
+                        object: change.target.label(),
+                        changes: diff,
+                    });
+                    inverses.push(inverse);
+                }
                 Err(block) => {
                     self.audit_block(&run, &action, change, &block);
                     return Verdict::Blocked(block);
@@ -178,10 +198,15 @@ impl Runner {
             run,
             diffs,
             undo,
+            level,
+            inverses,
         }))
     }
 
-    async fn check_object(&self, change: &ObjectChange) -> Result<Vec<FieldChange>, Block> {
+    async fn check_object(
+        &self,
+        change: &ObjectChange,
+    ) -> Result<(Vec<FieldChange>, Option<Inverse>), Block> {
         let target = &change.target;
         let object = target.label();
         let verb = change.change.verb();
@@ -225,7 +250,10 @@ impl Runner {
             });
         }
         match send(&self.client, target, &change.change, true).await {
-            Ok(after) => Ok(diff(&before, &after, target.is_secret())),
+            Ok(after) => Ok((
+                diff(&before, &after),
+                change.inverse.as_ref().and_then(|from| from.of(&before)),
+            )),
             Err(Refusal::Conflict(conflict)) => Err(Block::Conflict { object, conflict }),
             Err(Refusal::Changed(what)) => Err(Block::Changed { object, what }),
             Err(Refusal::Denied(reason)) => Err(Block::AccessDenied {

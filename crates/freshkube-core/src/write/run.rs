@@ -7,8 +7,8 @@
 use std::{io, sync::Mutex, time::Duration};
 
 use super::{
-    Phase,
-    action::{ActionDescription, ObjectChange, Target},
+    LevelCell, Phase, Protection,
+    action::{ActionDescription, Inverse, ObjectChange, Target},
     audit::{AuditObject, AuditRequest, AuditStore, Record, RunId, SCHEMA, scrub},
     outcome::{Accepted, Observed, Watching, observe},
     preflight::{Prepared, Who},
@@ -23,6 +23,9 @@ pub struct Runner {
     pub(super) audit: AuditStore,
     pub(super) who: Who,
     pub(super) watching: Watching,
+    /// The cluster's level as it is now. A write reads it again just before
+    /// it is sent.
+    pub(super) level: LevelCell,
 }
 
 /// Something the front end can draw while a write runs.
@@ -47,6 +50,12 @@ pub enum NotSent {
     Unconfirmed,
     /// The audit log can't be written, so nothing is sent.
     AuditUnavailable(String),
+    /// The level got stricter after the action was prepared: nothing was
+    /// sent, and the person is asked again under the new level.
+    LevelChanged(Protection),
+    /// Exec and port forwarding keep their own owners; they never go through
+    /// this path.
+    Session,
 }
 
 /// What happened to one object.
@@ -69,6 +78,36 @@ pub enum Step {
         accepted: Accepted,
         observed: Observed,
     },
+}
+
+impl Step {
+    /// What happened to this object, in words that never read as more than
+    /// it was.
+    pub fn describe(&self) -> String {
+        match self {
+            Step::NotAttempted => "not sent (an earlier object failed)".to_owned(),
+            Step::Refused { code, message } => {
+                format!("refused by the cluster ({code}): {message}")
+            }
+            Step::Denied(message) => format!("not allowed: {message}"),
+            Step::Conflict(conflict) => format!(
+                "conflict with {} on {}",
+                conflict.managers.join(", "),
+                conflict.fields.join(", ")
+            ),
+            Step::Changed(what) => what.text().to_owned(),
+            Step::Unknown(_) => {
+                "no answer; not known whether the cluster took it, check the object".to_owned()
+            }
+            Step::Accepted { observed, .. } => match observed {
+                Observed::Reached => "accepted and seen to take effect".to_owned(),
+                Observed::NotObserved { .. } => "accepted, not seen to take effect".to_owned(),
+                Observed::Diverged { .. } => {
+                    "accepted, but the object is no longer the one written".to_owned()
+                }
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,12 +203,27 @@ impl Finished {
 
 impl Runner {
     pub fn new(client: kube::Client, audit: AuditStore, who: Who) -> Self {
+        let level = LevelCell::new(who.protection);
         Self {
             client,
             audit,
             who,
             watching: Watching::default(),
+            level,
         }
+    }
+
+    /// Follows a level that changes while the app runs, such as the one the
+    /// shell keeps for the window's cluster.
+    pub fn following(mut self, level: LevelCell) -> Self {
+        self.level = level;
+        self
+    }
+
+    /// The level an action is held to now: the strictest of the cluster's
+    /// current level and its destination's.
+    pub fn level_for(&self, action: &ActionDescription) -> Protection {
+        action.level(self.level.get())
     }
 
     /// Looks for outcomes for this long and this often instead of the default.
@@ -199,7 +253,7 @@ impl Runner {
             actor: self.who.actor.clone(),
             action: action.kind.clone(),
             tier: action.tier.key().to_owned(),
-            protection: self.who.protection.key().to_owned(),
+            protection: action.level(self.level.get()).key().to_owned(),
             objects: objects.iter().map(|change| audit_object(change)).collect(),
             request: AuditRequest {
                 sentence: scrub(&action.sentence),
@@ -228,6 +282,8 @@ impl Runner {
             requirement,
             run,
             undo: is_undo,
+            level: prepared_level,
+            inverses,
             ..
         } = prepared;
         let all: Vec<&ObjectChange> = description.changes.iter().collect();
@@ -239,9 +295,22 @@ impl Runner {
             undo,
             audit_error,
         };
-        if let Some(reason) = self.who.protection.refusal().or(requirement.blocked) {
+        if description.tier == super::Tier::Session {
+            return finished(Status::NotSent(NotSent::Session), vec![], None, None);
+        }
+        // Read again just before the send, not as it was when the dialog opened.
+        let now = self.level_for(&description);
+        if let Some(reason) = now.refusal().or(requirement.blocked) {
             return finished(
                 Status::NotSent(NotSent::ReadOnly(reason)),
+                vec![],
+                None,
+                None,
+            );
+        }
+        if now < prepared_level {
+            return finished(
+                Status::NotSent(NotSent::LevelChanged(now)),
                 vec![],
                 None,
                 None,
@@ -414,7 +483,7 @@ impl Runner {
         }
 
         let undo = if requirement.undo && !is_undo {
-            self.offer_undo(&description, &results, &taken)
+            self.offer_undo(&description, &inverses, &results, &taken)
         } else {
             None
         };
@@ -434,6 +503,7 @@ impl Runner {
     fn offer_undo(
         &self,
         description: &ActionDescription,
+        inverses: &[Option<Inverse>],
         results: &[ObjectResult],
         taken: &[(usize, Accepted)],
     ) -> Option<UndoOffer> {
@@ -447,7 +517,7 @@ impl Runner {
         let mut items = vec![];
         for (index, accepted) in taken {
             let change = &description.changes[*index];
-            let inverse = change.inverse.as_ref()?;
+            let inverse = inverses.get(*index)?.as_ref()?;
             let target = Target {
                 resource_version: accepted.resource_version.clone()?,
                 ..change.target.clone()
@@ -466,6 +536,7 @@ impl Runner {
             action: description.kind.clone(),
             sentence: description.sentence.clone(),
             window: UNDO_WINDOW,
+            destination: description.destination.clone(),
             items,
         })
     }

@@ -244,12 +244,24 @@ async fn an_object_that_moves_after_preflight_is_refused_by_the_server_not_force
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     let prepared = ready(&runner, fake::scale(3)).await;
-    cluster.refuse_writes(
-        409,
-        "Operation cannot be fulfilled on deployments.apps \"web\": the object has been modified",
+    // Someone writes the object after preflight. The fake enforces the
+    // resourceVersion in the body as a real server does; nothing is injected.
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &json!({"spec": {"paused": true}}),
     );
     let finished = run(&runner, prepared, Confirmation::Confirmed).await;
     assert_eq!(finished.headline(), Headline::Changed);
+    assert_eq!(
+        finished.objects[0].step,
+        Step::Changed(ChangedWhat::Modified)
+    );
+    assert!(
+        cluster.object(fake::DEPLOYMENT)["spec"]
+            .get("replicas")
+            .is_some_and(|r| r == 2)
+    );
     assert!(finished.undo.is_none());
     // One attempt and no second try, with or without force.
     let writes = cluster.writes();
@@ -431,8 +443,9 @@ async fn the_diff_of_a_spec_change_is_the_fields_that_move() {
     let diff = &prepared.diffs()[0].changes;
     assert_eq!(diff.len(), 1);
     assert_eq!(diff[0].path, "spec.template.spec.containers[0].image");
-    assert_eq!(diff[0].before.as_deref(), Some("registry.example/web:1"));
-    assert_eq!(diff[0].after.as_deref(), Some("registry.example/web:2"));
+    assert_eq!(diff[0].kind, ChangeKind::Changed);
+    // Paths and kinds only, never what the fields hold.
+    assert!(!format!("{diff:?}").contains("registry.example"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -442,10 +455,6 @@ async fn a_secret_is_diffed_and_audited_by_key_names_never_values() {
     let prepared = ready(&runner, fake::rotate_password()).await;
     let diff = &prepared.diffs()[0].changes;
     assert_eq!(diff[0].path, "data.password");
-    assert_eq!(
-        (diff[0].before.as_ref(), diff[0].after.as_ref()),
-        (None, None)
-    );
     run(&runner, prepared, Confirmation::Confirmed).await;
     let text = std::fs::read_to_string(dir.path().join("audit/writes.jsonl")).unwrap();
     assert!(text.contains("data.password"));
@@ -501,7 +510,7 @@ async fn undo_goes_through_the_same_path_and_is_audited_as_its_own_write() {
             .any(|l| l.starts_with("POST /apis/authorization"))
     );
     assert!(lines[before..].iter().any(|l| l.contains("dryRun=All")));
-    let undone = run(&runner, Box::new(prepared), Confirmation::NotAsked).await;
+    let undone = run(&runner, Box::new(prepared), Confirmation::Confirmed).await;
     assert_eq!(undone.headline(), Headline::Done);
     assert_eq!(cluster.object(fake::DEPLOYMENT)["spec"]["replicas"], 2);
     assert!(undone.undo.is_none(), "an undo is not undone");
@@ -800,4 +809,282 @@ async fn only_an_observed_success_is_allowed_to_go_away_by_itself() {
     )
     .await;
     assert!(unconfirmed.sticky() && unconfirmed.message().contains("Nothing was sent"));
+}
+
+// ---- Review items: levels, session, undo, values ----
+
+#[tokio::test(start_paused = true)]
+async fn the_level_is_the_strictest_of_the_cluster_and_the_destination() {
+    use Protection::*;
+    let with_destination = |protection| {
+        let mut action = fake::scale(3);
+        action.destination = Some(Destination {
+            entry: "prod-ams".into(),
+            protection,
+        });
+        action
+    };
+    // Own guarded, destination read-only: blocked, with no request at all.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Guarded);
+    assert!(matches!(
+        runner.preflight(with_destination(ReadOnly)).await,
+        Verdict::Blocked(Block::ReadOnly(_))
+    ));
+    assert!(cluster.recorder.requests().is_empty());
+    // Own guarded, destination protected: the name is asked.
+    let prepared = ready(&runner, with_destination(Protected)).await;
+    assert!(prepared.requirement().type_name);
+    // Own protected, destination open: still protected.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protected);
+    assert!(
+        ready(&runner, with_destination(Open))
+            .await
+            .requirement()
+            .type_name
+    );
+    // No destination: the own level.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Open);
+    assert!(!ready(&runner, fake::scale(3)).await.requirement().confirm);
+    assert_eq!(fake::scale(3).level(Open), Open);
+    assert_eq!(with_destination(ReadOnly).level(Open), ReadOnly);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_action_is_refused_before_any_request() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Open);
+    let mut action = fake::scale(3);
+    action.tier = Tier::Session;
+    assert!(matches!(
+        runner.preflight(action).await,
+        Verdict::Blocked(Block::Session)
+    ));
+    assert!(cluster.recorder.requests().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn undo_after_review_puts_back_what_the_new_version_had() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    // Scale 2 -> 5 is prepared; an autoscaler sets 4 before it is sent.
+    let action = fake::scale(5);
+    cluster.foreign_write(fake::DEPLOYMENT, "hpa", &json!({"spec": {"replicas": 4}}));
+    let Verdict::Blocked(Block::Changed {
+        what: ChangedWhat::Modified,
+        ..
+    }) = runner.preflight(action.clone()).await
+    else {
+        panic!()
+    };
+    let rebased = runner.review_new_version(action).await.unwrap();
+    let finished = run(
+        &runner,
+        ready(&runner, rebased).await,
+        Confirmation::Confirmed,
+    )
+    .await;
+    assert_eq!(cluster.object(fake::DEPLOYMENT)["spec"]["replicas"], 5);
+    let offer = finished.undo.unwrap();
+    let prepared = runner
+        .prepare_undo(&offer, Duration::from_secs(1))
+        .await
+        .unwrap();
+    run(&runner, Box::new(prepared), Confirmation::Confirmed).await;
+    // Back to 4, what the new version had, not the 2 the person first saw.
+    assert_eq!(cluster.object(fake::DEPLOYMENT)["spec"]["replicas"], 4);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_recreated_object_is_not_something_to_review() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    cluster.recreate(fake::DEPLOYMENT);
+    let block = runner.review_new_version(fake::scale(3)).await.unwrap_err();
+    assert!(matches!(
+        block,
+        Block::Changed {
+            what: ChangedWhat::Recreated,
+            ..
+        }
+    ));
+    let verdict = Verdict::Blocked(block);
+    assert!(matches!(
+        Dialog::for_verdict(&verdict, "e"),
+        Dialog::Changed {
+            can_review: false,
+            ..
+        }
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn undo_asks_what_any_write_asks_at_its_level() {
+    for (level, asks, typed) in [
+        (Protection::Open, false, false),
+        (Protection::Guarded, true, false),
+        (Protection::Protected, true, true),
+    ] {
+        let (cluster, dir) = (Cluster::new(), tmp());
+        let runner = fake::runner(&cluster, dir.path(), Protection::Open);
+        let offer = run(
+            &runner,
+            ready(&runner, fake::scale(3)).await,
+            Confirmation::NotAsked,
+        )
+        .await
+        .undo
+        .unwrap();
+        let runner = fake::runner(&cluster, dir.path(), level);
+        let prepared = runner
+            .prepare_undo(&offer, Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                prepared.requirement().confirm,
+                prepared.requirement().type_name
+            ),
+            (asks, typed)
+        );
+        // A bare click is not enough where the level asks for more.
+        let writes = cluster.writes().len();
+        let finished = run(&runner, Box::new(prepared), Confirmation::NotAsked).await;
+        assert_eq!(
+            matches!(finished.status, Status::NotSent(NotSent::Unconfirmed)),
+            asks,
+            "{level:?}"
+        );
+        assert_eq!(cluster.writes().len(), writes + usize::from(!asks));
+    }
+    // Protected: the object's name unlocks it.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let open = fake::runner(&cluster, dir.path(), Protection::Open);
+    let offer = run(
+        &open,
+        ready(&open, fake::scale(3)).await,
+        Confirmation::NotAsked,
+    )
+    .await
+    .undo
+    .unwrap();
+    let protected = fake::runner(&cluster, dir.path(), Protection::Protected);
+    let prepared = protected
+        .prepare_undo(&offer, Duration::from_secs(1))
+        .await
+        .unwrap();
+    let undone = run(
+        &protected,
+        Box::new(prepared),
+        Confirmation::Typed("web".into()),
+    )
+    .await;
+    assert_eq!(undone.headline(), Headline::Done);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_level_that_got_stricter_after_preflight_sends_nothing_and_asks_again() {
+    use Protection::*;
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let level = LevelCell::new(Guarded);
+    let runner = fake::runner(&cluster, dir.path(), Guarded).following(level.clone());
+    let prepared = ready(&runner, fake::scale(3)).await;
+    level.set(Protected);
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert_eq!(
+        finished.status,
+        Status::NotSent(NotSent::LevelChanged(Protected))
+    );
+    assert!(finished.message().contains("Nothing was sent"));
+    cluster.assert_nothing_written();
+    // Asked again under the new level: the name is wanted now.
+    assert!(ready(&runner, fake::scale(3)).await.requirement().type_name);
+    // Read-only now: refused outright.
+    let prepared = ready(&runner, fake::scale(3)).await;
+    level.set(ReadOnly);
+    let finished = run(&runner, prepared, Confirmation::Typed("web".into())).await;
+    assert!(matches!(
+        finished.status,
+        Status::NotSent(NotSent::ReadOnly(_))
+    ));
+    cluster.assert_nothing_written();
+    assert!(phases(&AuditStore::new(dir.path().join("audit"))).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_audit_line_records_the_level_at_send_time() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let level = LevelCell::new(Protection::Guarded);
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded).following(level.clone());
+    let prepared = ready(&runner, fake::scale(3)).await;
+    // Looser now: the stricter requirement it was prepared under still
+    // applies, and the line says what the level was when it was sent.
+    level.set(Protection::Open);
+    run(&runner, prepared, Confirmation::Confirmed).await;
+    let read = AuditStore::new(dir.path().join("audit")).read().unwrap();
+    assert!(
+        read.records.iter().all(|r| r.protection == "open"),
+        "{:?}",
+        read.records
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_error_that_echoes_a_value_reaches_neither_the_dialog_nor_the_audit_log() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.refuse_dry_runs(
+        422,
+        "Deployment.apps \"web\" is invalid: spec.template.spec.containers[0].env[0].value: Invalid value: \"hunter2-pass\": must not contain a secret",
+    );
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner.preflight(fake::set_image("x")).await;
+    let Dialog::Refused { text } = Dialog::for_verdict(&verdict, "e") else {
+        panic!("{verdict:?}")
+    };
+    assert!(
+        text.contains("env[0].value") && !text.contains("hunter2"),
+        "{text}"
+    );
+    let log = std::fs::read_to_string(dir.path().join("audit/writes.jsonl")).unwrap();
+    assert!(!log.contains("hunter2"), "{log}");
+}
+
+#[test]
+fn a_partial_write_names_each_objects_own_outcome() {
+    let accepted = |observed| Step::Accepted {
+        accepted: Accepted {
+            resource_version: Some("2".into()),
+        },
+        observed,
+    };
+    let finished = Finished {
+        run: RunId::new(),
+        action: "x".into(),
+        status: Status::Sent,
+        objects: vec![
+            ObjectResult {
+                object: "Deployment/web".into(),
+                step: accepted(Observed::Reached),
+            },
+            ObjectResult {
+                object: "Secret/db".into(),
+                step: Step::Unknown("reset".into()),
+            },
+        ],
+        undo: None,
+        audit_error: None,
+    };
+    assert_eq!(finished.headline(), Headline::Partial);
+    let message = finished.message();
+    assert!(
+        message.contains("Deployment/web: accepted and seen to take effect"),
+        "{message}"
+    );
+    assert!(
+        message.contains("Secret/db: no answer; not known whether the cluster took it"),
+        "{message}"
+    );
+    assert!(!message.contains("were not changed"));
 }

@@ -13,14 +13,14 @@ pub enum ChangeKind {
     Removed,
 }
 
-/// One field of a diff.
+/// One field of a diff: where and how, never the value. A value can be a
+/// credential in any kind (an `env[].value`, a ConfigMap, a custom
+/// resource's token, the `last-applied-configuration` annotation), so none is
+/// carried for any object.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldChange {
     pub path: String,
     pub kind: ChangeKind,
-    /// The value before, cut for display. `None` for a Secret, or when added.
-    pub before: Option<String>,
-    pub after: Option<String>,
 }
 
 const IGNORED: [&str; 6] = [
@@ -31,8 +31,6 @@ const IGNORED: [&str; 6] = [
     "metadata.creationTimestamp",
     "metadata.selfLink",
 ];
-
-const SHOWN: usize = 160;
 
 fn flatten(value: &Value, prefix: String, out: &mut BTreeMap<String, Value>) {
     if IGNORED.iter().any(|ignored| prefix.starts_with(ignored)) {
@@ -61,55 +59,33 @@ fn flatten(value: &Value, prefix: String, out: &mut BTreeMap<String, Value>) {
     }
 }
 
-fn shown(value: &Value) -> String {
-    let text = match value {
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    };
-    if text.chars().count() > SHOWN {
-        let mut cut: String = text.chars().take(SHOWN - 1).collect();
-        cut.push('…');
-        cut
-    } else {
-        text
-    }
-}
-
 /// The fields that differ between `before` and `after`, in path order.
-/// `status` is left out: a spec change does not write it. With `secret`, no
-/// value is carried, only the paths.
-pub fn diff(before: &Value, after: &Value, secret: bool) -> Vec<FieldChange> {
+/// `status` is left out: a spec change does not write it.
+pub fn diff(before: &Value, after: &Value) -> Vec<FieldChange> {
     let (mut old, mut new) = (BTreeMap::new(), BTreeMap::new());
     flatten(before, String::new(), &mut old);
     flatten(after, String::new(), &mut new);
     old.retain(|path, _| path != "status" && !path.starts_with("status."));
     new.retain(|path, _| path != "status" && !path.starts_with("status."));
-    let value = |v: &Value| (!secret).then(|| shown(v));
     let mut changes = vec![];
     for (path, was) in &old {
         match new.get(path) {
             None => changes.push(FieldChange {
                 path: path.clone(),
                 kind: ChangeKind::Removed,
-                before: value(was),
-                after: None,
             }),
             Some(now) if now != was => changes.push(FieldChange {
                 path: path.clone(),
                 kind: ChangeKind::Changed,
-                before: value(was),
-                after: value(now),
             }),
             Some(_) => {}
         }
     }
-    for (path, now) in &new {
+    for path in new.keys() {
         if !old.contains_key(path) {
             changes.push(FieldChange {
                 path: path.clone(),
                 kind: ChangeKind::Added,
-                before: None,
-                after: value(now),
             });
         }
     }
@@ -126,27 +102,16 @@ mod tests {
     fn it_lists_added_changed_and_removed_fields_in_path_order() {
         let before = json!({"spec": {"replicas": 2, "paused": true, "image": "a:1"}});
         let after = json!({"spec": {"replicas": 3, "image": "a:1", "strategy": "x"}});
-        let changes = diff(&before, &after, false);
-        let lines: Vec<_> = changes
-            .iter()
-            .map(|c| (c.path.as_str(), c.kind, c.before.clone(), c.after.clone()))
+        let lines: Vec<_> = diff(&before, &after)
+            .into_iter()
+            .map(|c| (c.path, c.kind))
             .collect();
         assert_eq!(
             lines,
             [
-                (
-                    "spec.paused",
-                    ChangeKind::Removed,
-                    Some("true".into()),
-                    None
-                ),
-                (
-                    "spec.replicas",
-                    ChangeKind::Changed,
-                    Some("2".into()),
-                    Some("3".into())
-                ),
-                ("spec.strategy", ChangeKind::Added, None, Some("x".into())),
+                ("spec.paused".to_owned(), ChangeKind::Removed),
+                ("spec.replicas".to_owned(), ChangeKind::Changed),
+                ("spec.strategy".to_owned(), ChangeKind::Added),
             ]
         );
     }
@@ -155,28 +120,27 @@ mod tests {
     fn server_bookkeeping_and_status_are_not_changes() {
         let before = json!({"metadata": {"resourceVersion": "1", "generation": 1, "managedFields": [{"a": 1}]}, "status": {"ready": 1}, "spec": {"n": 1}});
         let after = json!({"metadata": {"resourceVersion": "2", "generation": 2, "managedFields": [{"a": 2}]}, "status": {"ready": 2}, "spec": {"n": 1}});
-        assert!(diff(&before, &after, false).is_empty());
+        assert!(diff(&before, &after).is_empty());
     }
 
     #[test]
-    fn a_secret_carries_paths_and_no_value() {
-        let before = json!({"data": {"password": "b2xk"}});
-        let after = json!({"data": {"password": "bmV3", "token": "dG9r"}});
-        let changes = diff(&before, &after, true);
-        assert_eq!(changes.len(), 2);
-        for change in &changes {
-            assert_eq!(
-                (change.before.as_ref(), change.after.as_ref()),
-                (None, None)
-            );
+    fn no_kind_carries_a_value_not_a_secret_a_config_map_nor_an_env_var() {
+        let before = json!({
+            "data": {"password": "b2xk"},
+            "spec": {"containers": [{"env": [{"name": "TOKEN", "value": "s3cr3t-old"}]}]},
+            "metadata": {"annotations": {"kubectl.kubernetes.io/last-applied-configuration": "{\"token\":\"abc\"}"}}
+        });
+        let after = json!({
+            "data": {"password": "bmV3", "token": "dG9r"},
+            "spec": {"containers": [{"env": [{"name": "TOKEN", "value": "s3cr3t-new"}]}]},
+            "metadata": {"annotations": {"kubectl.kubernetes.io/last-applied-configuration": "{\"token\":\"xyz\"}"}}
+        });
+        let changes = diff(&before, &after);
+        assert_eq!(changes.len(), 4);
+        let shown = format!("{changes:?}");
+        for value in ["b2xk", "bmV3", "dG9r", "s3cr3t", "abc", "xyz"] {
+            assert!(!shown.contains(value), "{value} in {shown}");
         }
-        assert_eq!(changes[0].path, "data.password");
-    }
-
-    #[test]
-    fn long_values_are_cut() {
-        let after = json!({"spec": {"command": "x".repeat(1000)}});
-        let changes = diff(&json!({}), &after, false);
-        assert_eq!(changes[0].after.as_ref().unwrap().chars().count(), SHOWN);
+        assert!(shown.contains("env[0].value"));
     }
 }

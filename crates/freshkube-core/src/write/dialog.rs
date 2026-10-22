@@ -56,7 +56,7 @@ pub enum Dialog {
     Refused { text: String },
     /// The object is not as it was when opened. Only "Review the new
     /// version" (which runs the dry run again), never "send anyway". When it
-    /// is gone there is nothing to review.
+    /// is gone, or is a different object, there is nothing to review.
     Changed { text: String, can_review: bool },
     /// Another field manager owns what the write sets. No force option; the
     /// rest of the write was not sent.
@@ -124,7 +124,7 @@ impl Dialog {
             },
             Verdict::Blocked(Block::Changed { what, object }) => Dialog::Changed {
                 text: format!("{object}: {}", what.text()),
-                can_review: *what != ChangedWhat::Gone,
+                can_review: *what == ChangedWhat::Modified,
             },
             Verdict::Blocked(Block::Conflict { object, conflict }) => Dialog::Conflict {
                 managers: conflict.managers.clone(),
@@ -169,15 +169,12 @@ impl Finished {
             }
             Headline::Unknown => "No answer from the cluster. It is not known whether it accepted the write; check the object. Nothing was sent again.".to_owned(),
             Headline::Partial => {
-                let done = self
+                let parts: Vec<String> = self
                     .objects
                     .iter()
-                    .filter(|o| matches!(o.step, Step::Accepted { .. }))
-                    .count();
-                format!(
-                    "{done} of {} objects were accepted; the rest were not changed.",
-                    self.objects.len()
-                )
+                    .map(|o| format!("{}: {}", o.object, o.step.describe()))
+                    .collect();
+                format!("Not every object was changed. {}.", parts.join("; "))
             }
             Headline::Refused => match self.objects.first().map(|o| &o.step) {
                 Some(Step::Refused { code, message }) => format!("The cluster refused it ({code}): {message}"),
@@ -196,6 +193,13 @@ impl Finished {
             Headline::NotSent => match &self.status {
                 super::run::Status::NotSent(NotSent::ReadOnly(reason)) => {
                     format!("{reason} Nothing was sent.")
+                }
+                super::run::Status::NotSent(NotSent::LevelChanged(level)) => format!(
+                    "This cluster is now {}. Nothing was sent; you will be asked again.",
+                    level.label()
+                ),
+                super::run::Status::NotSent(NotSent::Session) => {
+                    "Shells and port forwards are not writes. Nothing was sent.".to_owned()
                 }
                 super::run::Status::NotSent(NotSent::Unconfirmed) => {
                     "It was not confirmed. Nothing was sent.".to_owned()
@@ -224,10 +228,13 @@ impl Runner {
             let object = target.label();
             match get(&self.client, target).await {
                 Ok(current) => {
-                    target.uid = current["metadata"]["uid"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned();
+                    // A different UID is a different object: nothing to review.
+                    if current["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
+                        return Err(Block::Changed {
+                            object,
+                            what: ChangedWhat::Recreated,
+                        });
+                    }
                     target.resource_version = current["metadata"]["resourceVersion"]
                         .as_str()
                         .unwrap_or_default()

@@ -3,9 +3,11 @@
 //! and hands it over; it never builds a request (`docs/WRITE_MODEL.md`).
 
 use kube::api::ApiResource;
+use std::sync::Arc;
+
 use serde_json::Value;
 
-use super::requirement::Tier;
+use super::{Protection, requirement::Tier};
 
 /// One object an action touches, as the person saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,11 +47,6 @@ impl Target {
     /// `kind/name`, how a dialog and a toast name the object.
     pub fn label(&self) -> String {
         format!("{}/{}", self.kind, self.name)
-    }
-
-    /// Secret values are never shown in a diff.
-    pub fn is_secret(&self) -> bool {
-        self.group.is_empty() && self.resource == "secrets"
     }
 }
 
@@ -141,14 +138,55 @@ pub struct Inverse {
     pub guard: Observation,
 }
 
+/// How to work out the way back from the object as it is just before the
+/// send. It is run on the object preflight reads, so after "Review the new
+/// version" the way back is worked out again from the new version, never
+/// kept from the old one.
+#[derive(Clone)]
+pub struct InverseFrom(Arc<WayBack>);
+
+type WayBack = dyn Fn(&Value) -> Option<Inverse> + Send + Sync;
+
+impl InverseFrom {
+    pub fn new(f: impl Fn(&Value) -> Option<Inverse> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+
+    pub fn of(&self, before: &Value) -> Option<Inverse> {
+        (self.0)(before)
+    }
+}
+
+impl std::fmt::Debug for InverseFrom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InverseFrom")
+    }
+}
+
+impl PartialEq for InverseFrom {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// One object's part of an action.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjectChange {
     pub target: Target,
     pub change: Change,
     pub observe: Observation,
-    /// For a reversible action: the way back.
-    pub inverse: Option<Inverse>,
+    /// For a reversible action: how to work out the way back.
+    pub inverse: Option<InverseFrom>,
+}
+
+/// A second cluster an action also touches, such as the cluster a promotion
+/// lands in. The action is held to the stricter of the two levels.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Destination {
+    /// The destination entry's id.
+    pub entry: String,
+    /// Its level.
+    pub protection: Protection,
 }
 
 /// An action, described. Not sent until the framework has run its preflight
@@ -163,9 +201,19 @@ pub struct ActionDescription {
     /// One sentence about what is sent, with no values that could be secret.
     pub sentence: String,
     pub changes: Vec<ObjectChange>,
+    /// The other cluster the action reaches, when it names one.
+    pub destination: Option<Destination>,
 }
 
 impl ActionDescription {
+    /// The level the action is held to: the strictest of the cluster the
+    /// objects are in (`own`) and its destination's.
+    pub fn level(&self, own: Protection) -> Protection {
+        self.destination
+            .as_ref()
+            .map_or(own, |destination| own.stricter(destination.protection))
+    }
+
     pub fn names(&self) -> Vec<&str> {
         self.changes
             .iter()
@@ -218,7 +266,6 @@ mod tests {
             subresource: None,
         };
         assert_eq!(target.api_resource().api_version, "v1");
-        assert!(target.is_secret());
         assert_eq!(target.label(), "Secret/s");
     }
 }

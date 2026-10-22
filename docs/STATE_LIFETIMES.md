@@ -283,10 +283,13 @@ owner in [`write_flow/`](../crates/freshkube-desktop/src/write_flow/mod.rs).
 - **Counted once.** One run id links a write's audit lines; the log is the count.
   The `sending` line is written before the first request, and if it cannot be
   written nothing is sent.
+- **The level is read again at the send.** The runner follows the window's level
+  cell and, if it got stricter since the dialog opened, sends nothing and the
+  flow goes back to its dialog under the new requirement.
 - **Observing and Undo are part of the write.** Looking for the new state
   (30 s by default, 2 min at most) is the runner's, on Tokio's clock; the toast
-  and Undo's 30 s are the report entity's, and Undo is its own run, through
-  the same preflight and slot.
+  and Undo's 30 s are the report entity's, and Undo is its own flow and run, asking what
+  its level asks, through the same preflight and slot.
 
 ### User-started sessions
 

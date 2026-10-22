@@ -253,21 +253,15 @@ impl WriteFlow {
                                         ChangeKind::Changed => "~",
                                         ChangeKind::Removed => "−",
                                     };
-                                    let values = match (&change.before, &change.after) {
-                                        (Some(b), Some(a)) => format!("{b} → {a}"),
-                                        (None, Some(a)) => a.clone(),
-                                        (Some(b), None) => b.clone(),
-                                        (None, None) => "(value hidden)".to_owned(),
-                                    };
                                     div()
                                         .id(SharedString::from(format!(
                                             "write-diff-{}",
                                             change.path
                                         )))
                                         .test_support()
-                                        .aria_label(format!("{sign} {} {values}", change.path))
+                                        .aria_label(format!("{sign} {}", change.path))
                                         .text_size(dp(12.))
-                                        .child(format!("{sign} {}  {values}", change.path))
+                                        .child(format!("{sign} {}", change.path))
                                 }))
                         })),
                 )

@@ -1,3 +1,8 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
+
 use serde::{Deserialize, Serialize};
 
 /// The reason a control gives when a `read-only` cluster refuses a write.
@@ -76,6 +81,37 @@ impl Protection {
     }
 }
 
+/// The level of one cluster as it is now, shared with a runner on another
+/// thread, so a write reads it again just before it is sent: a level that
+/// got stricter while a dialog was open is not missed.
+#[derive(Clone, Debug)]
+pub struct LevelCell(Arc<AtomicU8>);
+
+impl LevelCell {
+    pub fn new(level: Protection) -> Self {
+        Self(Arc::new(AtomicU8::new(Self::code(level))))
+    }
+
+    fn code(level: Protection) -> u8 {
+        Protection::ALL
+            .iter()
+            .position(|candidate| *candidate == level)
+            .unwrap_or(0) as u8
+    }
+
+    pub fn get(&self) -> Protection {
+        Protection::ALL
+            .get(self.0.load(Ordering::SeqCst) as usize)
+            .copied()
+            // An unreadable code is the strictest level, never a looser one.
+            .unwrap_or(Protection::ReadOnly)
+    }
+
+    pub fn set(&self, level: Protection) {
+        self.0.store(Self::code(level), Ordering::SeqCst);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +166,16 @@ mod tests {
                 level.refusal(),
                 level.is_read_only().then_some("This cluster is read-only.")
             );
+        }
+    }
+
+    #[test]
+    fn the_level_cell_holds_each_level_and_is_shared() {
+        let cell = LevelCell::new(Protection::Guarded);
+        let other = cell.clone();
+        for level in Protection::ALL {
+            other.set(level);
+            assert_eq!(cell.get(), level);
         }
     }
 }

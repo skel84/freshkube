@@ -109,16 +109,6 @@ pub fn requirement(tier: Tier, level: Protection) -> Requirement {
 }
 
 impl Requirement {
-    /// What Undo needs: the click is the confirmation, whatever the level but
-    /// `read-only`, which blocks it.
-    pub fn undo_click(level: Protection) -> Requirement {
-        Requirement {
-            blocked: level.refusal(),
-            confirm: false,
-            ..requirement(Tier::Session, level)
-        }
-    }
-
     /// Whether `given` meets this requirement for objects named `names`,
     /// asked under the entry `entry`.
     pub fn satisfied_by(&self, given: &Confirmation, names: &[&str], entry: &str) -> bool {
@@ -311,11 +301,14 @@ mod tests {
     }
 
     #[test]
-    fn undo_is_a_click_except_where_read_only_blocks_it() {
-        let given = Requirement::undo_click(Protection::Protected);
-        assert!(given.satisfied_by(&Confirmation::NotAsked, &["a"], "e"));
+    fn undo_follows_the_requirement_of_any_write_at_its_level() {
+        // Undo is a reversible write: a protected cluster asks for the name.
+        let protected = requirement(Tier::Reversible, Protection::Protected);
+        assert!(protected.type_name && protected.confirm);
+        assert!(requirement(Tier::Reversible, Protection::Guarded).confirm);
+        assert!(!requirement(Tier::Reversible, Protection::Open).confirm);
         assert!(
-            Requirement::undo_click(Protection::ReadOnly)
+            requirement(Tier::Reversible, Protection::ReadOnly)
                 .blocked
                 .is_some()
         );

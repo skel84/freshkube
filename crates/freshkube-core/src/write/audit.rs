@@ -140,10 +140,13 @@ impl Default for RunId {
 }
 
 /// Cuts an API error to what the log keeps: one line of at most
-/// [`RESULT_LIMIT`] characters, with bearer tokens, `key=value` credentials
-/// and long opaque strings (keys, tokens, base64) replaced.
+/// [`RESULT_LIMIT`] characters. Quoted values (`Invalid value: "…"`, which
+/// echoes what was sent, such as an environment variable), bearer tokens,
+/// `key=value` credentials and long opaque strings are replaced: an error
+/// names the field and the reason, never the value.
 pub fn scrub(message: &str) -> String {
     const NAMES: [&str; 5] = ["token", "password", "secret", "key", "authorization"];
+    let message = strip_values(message);
     let mut words: Vec<String> = vec![];
     let mut redact_next = false;
     for word in message.split_whitespace() {
@@ -174,6 +177,53 @@ pub fn scrub(message: &str) -> String {
     } else {
         line
     }
+}
+
+/// Replaces what a validation message echoes: anything in double or single
+/// quotes or backticks, and what follows `value:` (`Invalid value: 10:`,
+/// `Unsupported value: map[a:b]`) up to the next `: ` or the end.
+fn strip_values(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut chars = message.chars().peekable();
+    while let Some(c) = chars.next() {
+        if matches!(c, '"' | '\'' | '`') {
+            // An apostrophe inside a word is not a quote.
+            let word_apostrophe = c == '\''
+                && out.chars().last().is_some_and(char::is_alphanumeric)
+                && chars.peek().is_some_and(|n| n.is_alphabetic());
+            if word_apostrophe {
+                out.push(c);
+                continue;
+            }
+            let mut closed = false;
+            for inner in chars.by_ref() {
+                if inner == c {
+                    closed = true;
+                    break;
+                }
+            }
+            out.push_str(if closed { "[value]" } else { "[value" });
+            continue;
+        }
+        out.push(c);
+    }
+    // `value: X` up to the next `: ` or the end.
+    let mut result = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(at) = rest.find("value: ") {
+        let (head, tail) = rest.split_at(at + "value: ".len());
+        result.push_str(head);
+        let end = tail.find(": ").unwrap_or(tail.len());
+        let echoed = &tail[..end];
+        if echoed.starts_with("[value]") || echoed.is_empty() {
+            result.push_str(echoed);
+        } else {
+            result.push_str("[value]");
+        }
+        rest = &tail[end..];
+    }
+    result.push_str(rest);
+    result
 }
 
 /// The store: a directory holding `writes.jsonl` and its rotated files.
@@ -416,6 +466,22 @@ mod tests {
         assert_eq!(long.chars().count(), RESULT_LIMIT);
         assert!(long.ends_with('…'));
         assert!(!scrub("a\nb\tc").contains('\n'));
+    }
+
+    #[test]
+    fn a_validation_error_names_the_field_and_never_the_value() {
+        let message = "Deployment.apps \"web\" is invalid: spec.template.spec.containers[0].env[0].value: \
+            Invalid value: \"s3cr3t-pass\": a valid value; spec.replicas: Invalid value: -1: must be non-negative; \
+            spec.x: Unsupported value: map[token:abc]: supported values: \"a\", \"b\"";
+        let scrubbed = scrub(message);
+        for leak in ["s3cr3t-pass", "token:abc", "-1:"] {
+            assert!(!scrubbed.contains(leak), "{leak}: {scrubbed}");
+        }
+        assert!(scrubbed.contains("env[0].value"), "{scrubbed}");
+        assert!(scrubbed.contains("spec.replicas"), "{scrubbed}");
+        assert!(scrubbed.contains("[value]"));
+        // An apostrophe in a word is left alone.
+        assert!(scrub("can't be empty").contains("can't"));
     }
 
     #[test]
