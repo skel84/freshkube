@@ -59,7 +59,7 @@ pub enum Dialog {
     /// nothing is asked and nothing is sent.
     Disabled { reason: String },
     /// Ask first.
-    Ask(Ask),
+    Ask(Box<Ask>),
     /// Send at once; the toast says nothing was asked and why.
     SendWithoutAsking { notice: &'static str },
     /// Preflight refused it: access, the dry run, or the cluster not
@@ -144,7 +144,7 @@ impl Dialog {
     pub fn for_verdict(verdict: &Verdict, entry: &str) -> Dialog {
         match verdict {
             Verdict::Ready(prepared) if prepared.requirement().confirm => {
-                Dialog::Ask(ask(prepared, entry))
+                Dialog::Ask(Box::new(ask(prepared, entry)))
             }
             Verdict::Ready(prepared) => Dialog::SendWithoutAsking {
                 notice: if prepared.description().no_confirmation {

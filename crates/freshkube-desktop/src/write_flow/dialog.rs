@@ -318,24 +318,27 @@ impl WriteFlow {
                                 .aria_label(format!("Type {expected} to confirm"))
                                 .child(format!("Type {expected} to confirm.")),
                         )
-                        .when(ask.protected.len() > 0 && ask.subjects.len() > 1, |this| {
-                            this.child(
-                                div()
-                                    .id("write-type-once")
-                                    .test_support()
-                                    .aria_label(format!(
-                                        "Typed once for {}. Protected: {}",
-                                        ask.subjects.join(", "),
-                                        ask.protected.join(", ")
-                                    ))
-                                    .text_color(p.muted)
-                                    .child(format!(
-                                        "Typed once for {}. Protected: {}.",
-                                        ask.subjects.join(", "),
-                                        ask.protected.join(", ")
-                                    )),
-                            )
-                        })
+                        .when(
+                            !ask.protected.is_empty() && ask.subjects.len() > 1,
+                            |this| {
+                                this.child(
+                                    div()
+                                        .id("write-type-once")
+                                        .test_support()
+                                        .aria_label(format!(
+                                            "Typed once for {}. Protected: {}",
+                                            ask.subjects.join(", "),
+                                            ask.protected.join(", ")
+                                        ))
+                                        .text_color(p.muted)
+                                        .child(format!(
+                                            "Typed once for {}. Protected: {}.",
+                                            ask.subjects.join(", "),
+                                            ask.protected.join(", ")
+                                        )),
+                                )
+                            },
+                        )
                         .child(Input::new(&input).small().id("write-type-name")),
                 )
             })
