@@ -414,6 +414,7 @@ fn the_hidden_and_grouped_examples_toast_their_first_notice_at_launch(cx: &mut T
             "{shape:?} toasts its first notice"
         );
     }
+}
 
 #[gpui_kit::test]
 fn a_bell_notice_is_headed_by_its_headline_unless_details_hide(cx: &mut TestAppContext) {
