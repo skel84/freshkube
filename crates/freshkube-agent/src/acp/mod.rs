@@ -415,9 +415,12 @@ impl Run {
         id: String,
     ) {
         let Some(current) = option else {
-            let _ = self.events.send(Event::Note(
-                "This agent doesn't offer a choice of model".into(),
-            ));
+            let _ = self
+                .events
+                .send(Event::Note(
+                    "This agent doesn't offer a choice of model".into(),
+                ))
+                .await;
             return;
         };
         let request = SetSessionConfigOptionRequest::new(
@@ -435,7 +438,8 @@ impl Run {
             _ => {
                 let _ = self
                     .events
-                    .send(Event::Note("The model wasn't changed".into()));
+                    .send(Event::Note("The model wasn't changed".into()))
+                    .await;
             }
         }
     }
