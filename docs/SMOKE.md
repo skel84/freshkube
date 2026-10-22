@@ -18,19 +18,21 @@ scripts/smoke.sh pages                                      # every page, one ca
 scripts/smoke.sh start --page overview -- --config <talosconfig> --context <name> --kubeconfig <file>
 ```
 
-## Captures on an Intel Mac
+## Captures from a CI build
 
-For captures on an Intel Mac, add the `capture` label to your PR to get a debug
-binary from the separate [Capture workflow](MACOS_PACKAGING.md#ci). New
+For captures with a binary CI built, add the `capture` label to your PR to get a debug
+binary for each architecture, Apple silicon and Intel, from the separate [Capture workflow](MACOS_PACKAGING.md#ci). New
 commits refresh its artifact; it expires after three days. After the run succeeds,
-download the artifact for the PR head you want (replace the example run ID and
-short SHA), restore its executable bit, and pass it to the helper:
+download your Mac's artifact for the PR head you want (replace the example run ID,
+architecture and short SHA), restore its executable bit, and pass it to the helper,
+which refuses a binary built for the other architecture:
 
 ```sh
 CAPTURE_RUN=123456789
+CAPTURE_ARCH=aarch64   # x86_64 on an Intel Mac
 CAPTURE_SHA=abc1234
-CAPTURE_DIR="$PWD/target/ci-capture/$CAPTURE_SHA"
-gh run download "$CAPTURE_RUN" --name "freshkube-debug-x86_64-apple-darwin-$CAPTURE_SHA" --dir "$CAPTURE_DIR"
+CAPTURE_DIR="$PWD/target/ci-capture/$CAPTURE_ARCH-$CAPTURE_SHA"
+gh run download "$CAPTURE_RUN" --name "freshkube-debug-$CAPTURE_ARCH-apple-darwin-$CAPTURE_SHA" --dir "$CAPTURE_DIR"
 chmod +x "$CAPTURE_DIR/freshkube"
 FRESHKUBE_SMOKE_BINARY="$CAPTURE_DIR/freshkube" scripts/smoke.sh start --page monitoring
 ```
