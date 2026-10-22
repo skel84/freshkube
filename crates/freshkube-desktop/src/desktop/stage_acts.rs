@@ -23,6 +23,30 @@ use gpui_kit::component::WindowExt;
 /// How long connecting to Kargo's cluster may take before nothing is sent.
 const CONNECT: Duration = Duration::from_secs(30);
 
+/// A refresh token that differs for every press, even two in one instant:
+/// Kargo reconciles when the annotation's value changes, so a repeated value
+/// would register once.
+fn unique_token(now: chrono::DateTime<chrono::Utc>) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static PRESSES: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "{}-{}",
+        now.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+        PRESSES.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_token;
+
+    #[test]
+    fn two_presses_in_the_same_instant_get_different_tokens() {
+        let now = chrono::Utc::now();
+        assert_ne!(unique_token(now), unique_token(now));
+    }
+}
+
 /// Where the writes go and what holds them: the Kargo cluster's entry, its
 /// level now, and the cell a runner follows.
 struct KargoCluster {
@@ -90,7 +114,7 @@ impl Pilot {
         cx: &App,
     ) -> Option<ActionDescription> {
         let now = chrono::Utc::now();
-        let token = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let token = unique_token(now);
         Some(match act.kind {
             ActKind::RefreshStage => acts::refresh_stage(stage_acts, &token),
             ActKind::RefreshWarehouse => acts::refresh_warehouse(stage_acts, &token)?,
