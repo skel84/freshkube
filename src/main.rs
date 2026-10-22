@@ -91,6 +91,17 @@ fn attach_console() {
     }
 }
 
+/// Runs a read command and returns its exit code; `None` starts the app.
+/// `main` calls it before it opens the log file, installs tracing, reads a
+/// talosconfig or reaches the keyring or the window, and `tests/cli_startup.rs`
+/// fails if a command leaves any trace of them.
+fn dispatch(command: Option<freshkube_cli::Command>) -> Option<i32> {
+    let command = command?;
+    let setup = freshkube_desktop::preferences_path()
+        .map(|preferences| preferences.with_file_name("freshkube.yaml"));
+    Some(freshkube_cli::run(&command, setup))
+}
+
 fn main() -> Result<()> {
     // `FRESHKUBE_FIRST_FRAME=1` times the first drawn frame from here.
     freshkube_probe::first_frame::start();
@@ -112,11 +123,8 @@ fn main() -> Result<()> {
         kube_context,
         fixture,
     } = Cli::parse();
-    if let Some(command) = command {
-        // The read commands never start the window or write the log file.
-        let setup = freshkube_desktop::preferences_path()
-            .map(|preferences| preferences.with_file_name("freshkube.yaml"));
-        std::process::exit(freshkube_cli::run(&command, setup));
+    if let Some(code) = dispatch(command) {
+        std::process::exit(code);
     }
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
