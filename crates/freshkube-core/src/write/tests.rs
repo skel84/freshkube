@@ -384,20 +384,20 @@ async fn a_destructive_action_waits_five_seconds_and_cancelling_sends_nothing() 
         prepared.requirement().cancel_window,
         Some(Duration::from_secs(5))
     );
-    let events = std::cell::RefCell::new(vec![]);
+    let events = std::sync::Mutex::new(vec![]);
     let started = tokio::time::Instant::now();
     let finished = runner
         .execute(
             *prepared,
             Confirmation::Confirmed,
             || started.elapsed() >= Duration::from_secs(2),
-            |event| events.borrow_mut().push(event),
+            |event| events.lock().unwrap().push(event),
         )
         .await;
     assert_eq!(finished.status, Status::Cancelled);
     assert_eq!(finished.headline(), Headline::Cancelled);
     assert_eq!(
-        events.borrow()[0],
+        events.lock().unwrap()[0],
         Event::CancelWindow(Duration::from_secs(5))
     );
     cluster.assert_nothing_written();

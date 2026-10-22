@@ -4,7 +4,7 @@
 //! result. Submitting is one-way: a [`Prepared`] is consumed, and after a
 //! request that got no answer the result is "unknown" and nothing is resent.
 
-use std::{cell::RefCell, io, time::Duration};
+use std::{io, sync::Mutex, time::Duration};
 
 use super::{
     Phase,
@@ -104,6 +104,7 @@ pub enum Headline {
     NotSent,
 }
 
+#[derive(Clone, Debug)]
 pub struct Finished {
     pub run: RunId,
     pub action: String,
@@ -215,10 +216,13 @@ impl Runner {
         &self,
         prepared: Prepared,
         confirmation: Confirmation,
-        cancel: impl Fn() -> bool,
-        events: impl FnMut(Event),
+        cancel: impl Fn() -> bool + Send,
+        events: impl FnMut(Event) + Send,
     ) -> Finished {
-        let events = RefCell::new(events);
+        // Behind a mutex so the future is `Send` and can run on a runtime;
+        // the lock is never held across an await.
+        let events = Mutex::new(events);
+        let tell = |event: Event| (events.lock().unwrap_or_else(|p| p.into_inner()))(event);
         let Prepared {
             description,
             requirement,
@@ -247,7 +251,7 @@ impl Runner {
             return finished(Status::NotSent(NotSent::Unconfirmed), vec![], None, None);
         }
         if let Some(window) = requirement.cancel_window {
-            events.borrow_mut()(Event::CancelWindow(window));
+            tell(Event::CancelWindow(window));
             let started = tokio::time::Instant::now();
             while started.elapsed() < window && !cancel() {
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -276,7 +280,7 @@ impl Runner {
                 None,
             );
         }
-        events.borrow_mut()(Event::Sending);
+        tell(Event::Sending);
 
         let mut audit_error = None;
         let mut note = |outcome: io::Result<()>| {
@@ -313,7 +317,7 @@ impl Runner {
                         Phase::Accepted,
                         "The API accepted it.",
                     ));
-                    events.borrow_mut()(Event::Accepted(index));
+                    tell(Event::Accepted(index));
                     taken.push((index, accepted.clone()));
                     Step::Accepted {
                         accepted,
@@ -373,7 +377,7 @@ impl Runner {
         let limit = self.watching.clamped().wait;
         let looks = taken.iter().map(|(index, _)| {
             let change = &description.changes[*index];
-            let events = &events;
+            let tell = &tell;
             async move {
                 let observed = observe(
                     &self.client,
@@ -381,7 +385,7 @@ impl Runner {
                     &change.observe,
                     self.watching,
                     |waited| {
-                        events.borrow_mut()(Event::Observing { waited, limit });
+                        tell(Event::Observing { waited, limit });
                     },
                 )
                 .await;
