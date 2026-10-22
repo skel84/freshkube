@@ -19,6 +19,7 @@ mod edit;
 #[cfg(test)]
 mod edit_tests;
 mod entry;
+pub(crate) use entry::FingerprintLine;
 mod find;
 mod form;
 mod kubeconfig_row;
@@ -160,6 +161,8 @@ pub(crate) struct SettingsPage {
     saving: Option<Task<()>>,
     /// How an entry opened when it did not open as defined, by entry id.
     notes: std::collections::BTreeMap<String, SharedString>,
+    /// What each entry's link fingerprint is, pushed by the shell (#873).
+    fingerprints: std::collections::BTreeMap<String, entry::FingerprintLine>,
     /// Advances each time the workspace is replaced, so a reader of the page
     /// can tell a new workspace from a redraw.
     revision: u64,
@@ -375,6 +378,7 @@ impl SettingsPage {
             notice: None,
             saving: None,
             notes: Default::default(),
+            fingerprints: Default::default(),
             revision: 0,
             select_on_save: None,
             deselect_on_save: false,

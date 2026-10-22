@@ -27,6 +27,7 @@ clusters:
     talosconfig: /home/acme/.talos/config   # optional: Talos pages for this entry
     talos_context: cluster-a                # optional, needs talosconfig
     protection: protected         # optional (#852): read-only, protected, guarded or open; none is guarded
+    fingerprint: cluster-a-prod   # optional (#873): what deep links match this cluster by, for clusters behind a proxy
     coroot:                       # optional (#269): this entry in Coroot
       cluster: cluster-a          # the Coroot cluster that is this entry
     # No metrics: key, so in the central store its series are cluster="cluster-a".
@@ -173,6 +174,11 @@ The forward token's key-store account is `Tekton Results forward://<namespace>/<
 - **Two entries on one context:** the stricter level wins: `read-only`, then `protected`, `guarded`, `open`.
 - **What `read-only` refuses today:** a shell's Start, Operations, a service's Restart and Diagnostics' Apply fix ([WRITE_MODEL.md](WRITE_MODEL.md#what-is-enforced-today)). Maintenance mode is not governed by the level: it isn't tied to a cluster entry, since it works on a node that has no cluster yet.
 - **A hand-edited value** is read as written, and a read never rewrites the file.
+
+
+### Fingerprint
+
+An entry may set `fingerprint`, a name deep links ([features/deep-links.md](features/deep-links.md)) match this cluster by, in place of its `kube-system` namespace UID. It is for clusters behind an access proxy that refuses that read for some users, or terminates TLS so that every cluster shares one CA. It is 1 to 128 characters with no whitespace; a link carries a salted hash of it, never the text, so two people who set the same name on their own entries match. The file is the only place it is set; Settings shows the fingerprint a link carries, read-only, and a save keeps the key. A value that is empty, too long or holds whitespace refuses the file, saying so without repeating it.
 
 ## What stays out
 

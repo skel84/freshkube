@@ -9,6 +9,8 @@ pub(super) enum Destination {
     Kind(ResourceKind),
     Node(String),
     Object(ResourceKind, ObjectRef),
+    /// A pasted link, as typed: parsed when it opens, so a bad one says why.
+    Link(String),
 }
 #[derive(Clone)]
 pub(super) struct Entry {
@@ -140,10 +142,45 @@ impl Pilot {
     }
 }
 impl Search {
+    /// One "Open link" result when the query is a link, valid or not; no
+    /// field of its own.
+    fn push_link_group(&mut self) {
+        let text = self.query.trim();
+        if !text.to_ascii_lowercase().starts_with("freshkube:") {
+            return;
+        }
+        let label: SharedString = match freshkube_nav::Link::parse(text) {
+            Ok(link) => format!(
+                "Open link: {}",
+                super::super::deep_link::describe(&link.view)
+            ),
+            Err(_) => "Open link".to_owned(),
+        }
+        .into();
+        let item_label = label.clone();
+        let item = CommandItem::new().label(label).child(move |_, cx| {
+            div()
+                .id("search-open-link")
+                .test_support()
+                .w_full()
+                .py(dp(5.))
+                .child(
+                    div()
+                        .text_color(crate::palette::palette(cx).ink)
+                        .child(item_label.clone()),
+                )
+        });
+        self.groups
+            .push(CommandGroup::new().label("Link").items(vec![item]));
+        self.destinations
+            .push(vec![Some(Destination::Link(text.to_owned()))]);
+    }
+
     pub(super) fn rebuild(&mut self) {
         let query = self.query.trim().to_lowercase();
         self.groups.clear();
         self.destinations.clear();
+        self.push_link_group();
         for group in GROUPS {
             let matches = self
                 .local

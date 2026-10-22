@@ -32,6 +32,28 @@ WINDOWS_RUNTIME = re.compile(r"(vcruntime|msvcp|ucrtbase|api-ms-win-crt-).*", re
 WINDOWS_GUI = 2  # IMAGE_SUBSYSTEM_WINDOWS_GUI
 
 
+# freshkube:// links open the app (docs/features/deep-links.md). The tarball
+# isn't installed, so registering the handler is the user's step:
+# `xdg-mime default freshkube.desktop x-scheme-handler/freshkube`.
+DESKTOP_ENTRY = (
+    "[Desktop Entry]\nType=Application\nName=Freshkube\n"
+    "Comment=Talos Linux and Kubernetes clusters\nExec=freshkube %u\n"
+    "Terminal=false\nCategories=Development;\n"
+    "MimeType=x-scheme-handler/freshkube;\n"
+)
+# A template: the app never writes the registry. Replace the path, then merge
+# the file, to register the scheme for the current user.
+URL_HANDLER_REG = (
+    "Windows Registry Editor Version 5.00\r\n\r\n"
+    "; Replace C:\\\\Path\\\\To\\\\freshkube.exe with where freshkube.exe is, then merge this file.\r\n"
+    "[HKEY_CURRENT_USER\\Software\\Classes\\freshkube]\r\n"
+    '@="URL:Freshkube link"\r\n'
+    '"URL Protocol"=""\r\n\r\n'
+    "[HKEY_CURRENT_USER\\Software\\Classes\\freshkube\\shell\\open\\command]\r\n"
+    '@="\\"C:\\\\Path\\\\To\\\\freshkube.exe\\" \\"%1\\""\r\n'
+)
+
+
 def run(*args, capture=False, env=None):
     return subprocess.run(
         args, cwd=ROOT, env=env, check=True, text=True,
@@ -146,12 +168,9 @@ def stage(directory, binary, target):
     shutil.copytree(ROOT / "crates/freshkube-ui/assets", directory / "crates/freshkube-ui/assets")
     if target == LINUX:
         shutil.copy2(ROOT / "scripts/linux-runtime-packages.txt", directory / "RUNTIME-PACKAGES.txt")
-        (directory / "freshkube.desktop").write_text(
-            "[Desktop Entry]\nType=Application\nName=Freshkube\n"
-            "Comment=Talos Linux and Kubernetes clusters\nExec=freshkube\n"
-            "Terminal=false\nCategories=Development;\n",
-            newline="\n",
-        )
+        (directory / "freshkube.desktop").write_text(DESKTOP_ENTRY, newline="\n")
+    if target == WINDOWS:
+        (directory / "freshkube-url-handler.reg").write_text(URL_HANDLER_REG, newline="\r\n")
 
 
 def files(directory, target):

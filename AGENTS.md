@@ -19,7 +19,7 @@ crates/
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
 ├── freshkube-graph/     graph layout without GPUI: columns of boxes and the curves between them
 ├── freshkube-monitoring/ Grafana dashboards from the cluster's Prometheus, and the CPU and memory history charts
-├── freshkube-nav/       where a link goes: ResourceLink, its requests, objects and tabs; no GPUI
+├── freshkube-nav/       where a link goes: ResourceLink, its requests, objects and tabs, and the deep link's closed ViewState; no GPUI
 ├── freshkube-observability/ Coroot's applications, service map, incidents, traces, profiles and logs
 ├── freshkube-workbench/ the shared components on invented data; never shipped
 └── freshkube-desktop/   the GPUI Kit application (shell, screens, the log sources)
@@ -57,6 +57,7 @@ cargo build
 cargo run -- --fixture            # synthetic example data, no credentials or cluster
 cargo run -- --config ~/.talos/config --context <name>
 cargo run -- --kubernetes-only --kubeconfig <file> --kube-context <name>   # no talosconfig
+cargo run -- --fixture 'freshkube://open?page=etcd'   # opens a link once the window is up (also --open-link)
 cargo run -p freshkube-workbench   # the shared components on invented data, one story at a time; not shipped
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
@@ -94,6 +95,7 @@ Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `
 | `FRESHKUBE_DATABASES` | `not-installed`, `refused`, `unsupported`, `failed`, `empty`, `backup-refused`, `partial`, `old`, `backup-failed`, `no-primary`, `stale`, `no-backup`, `no-schedule`, `suspended`, `mariadb-model` | With `--fixture`, reshapes the Databases inventory using invented records; `mariadb-model` exercises the shared model without a MariaDB reader. | debug and stress builds |
 | `FRESHKUBE_FIXTURE_HOLD` | `talos`, `lists`, `coroot`, `monitoring`, `applications`, `all` | Keeps example data from answering so pages stay on their loading rows: `talos` holds the Talos overview and the Kubernetes summary (Overview, Nodes, System services, Operations), `lists` the Resources lists, `coroot` Observability's applications, incidents and traces, `monitoring` the dashboard's panels and the alert reads, `applications` the Applications list, `all` every one; `scripts/stress.sh … loading <page>` sets it. | debug and stress builds |
 | `FRESHKUBE_ALERTS` | `firing`, `quiet`, `not-found`, `refused`, `several`, `no-label`, `stale`, `rules-only` | With `--fixture`, reshapes the Alerts, Rules and Silences example and the session alert read: `firing` (the default) alerts of every state with a broken rule, `quiet` a current read with nothing active, `not-found` no Alertmanager or vmalert, `refused` the proxy refusing the read, `several` another Alertmanager answering beside the one read, `no-label` a central store whose alerts carry no cluster label (nothing is shown), `stale` a failed refresh over an earlier read, `rules-only` PrometheusRule objects with no evaluator, so every health is Unknown (`monitoring/alerts/example.rs`). | debug and stress builds |
+| `FRESHKUBE_LINKS` | `refused`, `not-found`, `not-served`, `replaced`, `several`, `none`, `ca-only`, `unchecked` | With `--fixture`, shapes deep links. The first four force the outcome of every link opened (`--open-link`, ⌘K's Open link): the read is refused, the object isn't found, the kind isn't served, or the name belongs to another object now, so the pane's slot shows it. The last four reshape how the example clusters identify themselves: `dev-fra` and `stage-fra` are one cluster to a link (`several`, so the picker asks); no example cluster is the one a link was made in (`none`); each answers on its CA alone (`ca-only`, so every match is marked CA only); nothing is checked, not even the open cluster (`unchecked`). | debug and stress builds |
 
 The app's binaries parse all of these knobs once into `DebugOptions` (`crates/freshkube-desktop/src/debug_options.rs`) and the pages are handed their value; none reads the environment ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-the-debug-knobs-are-parsed)). A unit test there fails when these tables and `DebugOptions` name different knobs. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
 
@@ -110,6 +112,7 @@ The app's binaries parse all of these knobs once into `DebugOptions` (`crates/fr
   - Pod exec (`resources/exec/`) creates a `pods/exec`. The app starts one only from an explicit Start, and a live check runs one only on a pod and container the user named, with harmless commands ([docs/POD_EXEC.md](docs/POD_EXEC.md)).
   - Port forwarding (`freshkube-resources`' `forwards/`) creates a `pods/portforward`. It changes no objects, but it reaches whatever the port serves. The app starts one only from an explicit Forward, and a live check forwards only a pod and port the user named ([docs/PORT_FORWARD.md](docs/PORT_FORWARD.md)).
 - Operations, a service's Restart and Diagnostics' Apply fix keep their own preflight and confirmation, and a `read-only` cluster refuses them. Maintenance mode keeps its own rules and is not governed by the level: it isn't tied to a cluster entry, since it works on a node that has no cluster yet.
+- **A deep link only navigates** ([docs/features/deep-links.md](docs/features/deep-links.md)). It is parsed into closed, bounded types (`freshkube_nav::Link`), carries identities only and no credential, and never opens a dialog, starts a shell or a forward, reaches Operations or maintenance, or moves focus onto a button. The object it names is read with the reader's own access, and a context is never switched unasked.
 - Never run Operations or maintenance actions (drain, reboot, upgrade, apply config, reset) during verification unless the user asked for that specific action on a node they named as disposable.
 - Use the context the user chose. Never fall back to whatever kubeconfig or talosconfig context is current.
 - Never print or commit credentials: talosconfig and kubeconfig contents, tokens, Secret values, keys. Redact them in logs, screenshots, evidence and the audit log.
@@ -254,6 +257,7 @@ Behaviour that is not a rule lives in one doc per feature, each starting with it
 
 - Databases (`core/databases/`, `screens/databases/`): [docs/features/databases.md](docs/features/databases.md). CloudNativePG first; no Secret or credential reads or mutations.
 - Resources, the dock, shells and ports (`crates/freshkube-resources/`, `desktop/dock/`): [docs/features/resources.md](docs/features/resources.md). Rules kept here: a dock log tab reads while it is open, on any page, and nothing else reads out of sight; Resources reads only while its page shows; Secret values never reach the detail pane's document, search or a link's resolution (metadata-only reads).
+- Deep links, Copy link and opening a `freshkube://open` link (`crates/freshkube-nav/src/view.rs`, `desktop/deep_link/`): [docs/features/deep-links.md](docs/features/deep-links.md). Rules kept here: a link holds identities only in closed, bounded types and only navigates; Copy link always means a Freshkube link (the change page's is Copy Kargo link).
 - Applications, the Changes list and the change page (`crates/freshkube-applications/`): [docs/features/applications.md](docs/features/applications.md).
 - The Nodes workspace and its node pane (`desktop/nodes/`): [docs/features/nodes.md](docs/features/nodes.md).
 - The frame, the Overview and the Kubernetes summary session (`desktop/shell/`, `presentation/`, `kubernetes_summary/`): [docs/features/shell.md](docs/features/shell.md).

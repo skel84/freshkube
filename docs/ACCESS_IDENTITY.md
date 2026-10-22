@@ -65,6 +65,8 @@ replaces the whole session (`Registry::reset_active`), so nothing a session hold
 can carry over to the next. The summary epoch lives on the `Registry` and only
 rises, so a replaced session never repeats a summary `SessionIdentity`.
 
+A deep link names its cluster by a fingerprint, never an access identity, a connection key or a context name ([deep links](features/deep-links.md#which-cluster)): the window matches it to its own clusters and never switches unasked.
+
 Object links name their cluster: `ObjectRef::connection` is a
 `ResourceIdentity::connection` (the opaque `ClusterSource.id`), and `None` means
 the cluster that is open. `open_object` and the owner-kind read send a link through
