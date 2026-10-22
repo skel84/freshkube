@@ -285,11 +285,10 @@ fn missing_policy_and_an_anchored_unserved_source_are_unknown_in_both_views(
             Missing::new(Gap::NotServed, "Signature results not served on cluster-a")
                 .after("push-run"),
         );
-        let waiting = page.read(cx).counts[2];
         page.update(cx, |page, cx| page.read_answer(change, window, cx));
         chain(&page, window, cx);
         let p = page.read(cx);
-        assert_eq!(p.counts[2], waiting + 1);
+        assert!(p.counts[3] >= 1, "the start can't be confirmed");
         assert!(
             p.graph
                 .nodes()

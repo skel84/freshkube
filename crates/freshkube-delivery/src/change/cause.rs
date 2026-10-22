@@ -30,9 +30,7 @@ impl Role {
 
     /// The Role (or ClusterRole, for all namespaces) a person would ask an
     /// administrator for: read-only, and only this kind.
-    // The Copy access request button of the Why / Needs / Fix block copies it.
-    #[allow(dead_code)]
-    pub(crate) fn manifest(&self) -> String {
+    pub fn manifest(&self) -> String {
         let (kind, scope) = match &self.namespace {
             Some(namespace) => ("Role", format!("\n  namespace: {namespace}")),
             None => ("ClusterRole", String::new()),
