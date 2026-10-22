@@ -24,7 +24,50 @@ use crate::ui::{self, Tone, dp};
 /// A quiet hour moves by this many minutes.
 const STEP: i32 = 30;
 
+/// A followed item as the list shows it.
+pub(super) struct FollowRow {
+    id: u64,
+    kind: &'static str,
+    title: String,
+    /// "dev-fra · Watches pod shop/api".
+    reads: String,
+    ends: &'static str,
+    status: String,
+    tone: Tone,
+    reason: Option<String>,
+}
+
 impl SettingsPage {
+    /// Words the followed items; the list draws these.
+    pub(super) fn derive_follows(&mut self, cx: &App) {
+        let Some(owner) = followed(cx) else {
+            self.follow_rows.clear();
+            return;
+        };
+        self.follow_rows = owner
+            .read(cx)
+            .items()
+            .iter()
+            .map(|item| {
+                let (tone, reason) = match &item.status {
+                    Status::Watching => (Tone::Good, None),
+                    Status::Starting => (Tone::Waiting, None),
+                    Status::NotWatching(why) => (Tone::Unknown, Some(why.clone())),
+                };
+                FollowRow {
+                    id: item.follow.id,
+                    kind: item.follow.subject.kind(),
+                    title: item.follow.subject.title(),
+                    reads: format!("{} · {}", item.follow.context, item.follow.subject.reads()),
+                    ends: item.follow.subject.ends(),
+                    status: item.status.label().to_owned(),
+                    tone,
+                    reason,
+                }
+            })
+            .collect();
+    }
+
     pub(super) fn render_notifications(
         &self,
         window: &mut Window,
@@ -162,17 +205,11 @@ impl SettingsPage {
                 })
         };
         let p = palette(cx);
-        let items: Vec<form::Row> = owner
-            .read(cx)
-            .items()
+        let items: Vec<form::Row> = self
+            .follow_rows
             .iter()
-            .map(|item| {
-                let id = item.follow.id;
-                let (tone, reason) = match &item.status {
-                    Status::Watching => (Tone::Good, None),
-                    Status::Starting => (Tone::Waiting, None),
-                    Status::NotWatching(why) => (Tone::Unknown, Some(why.clone())),
-                };
+            .map(|row| {
+                let id = row.id;
                 let stop = {
                     let owner = owner.clone();
                     Button::new(SharedString::from(format!("notifications-stop-{id}")))
@@ -185,28 +222,20 @@ impl SettingsPage {
                 };
                 let control = v_flex()
                     .gap(dp(4.))
-                    .child(div().child(item.follow.subject.title()))
-                    .child(div().text_color(p.muted).child(format!(
-                        "{} · {}",
-                        item.follow.context,
-                        item.follow.subject.reads()
-                    )))
-                    .child(div().text_color(p.muted).child(item.follow.subject.ends()))
-                    .when_some(reason, |this, why| {
+                    .child(div().child(row.title.clone()))
+                    .child(div().text_color(p.muted).child(row.reads.clone()))
+                    .child(div().text_color(p.muted).child(row.ends))
+                    .when_some(row.reason.clone(), |this, why| {
                         this.child(div().text_color(p.muted).child(why))
                     })
                     .child(
                         h_flex()
                             .gap(dp(8.))
                             .items_center()
-                            .child(ui::tag(tone, None, item.status.label().to_owned(), cx))
+                            .child(ui::tag(row.tone, None, row.status.clone(), cx))
                             .child(stop),
                     );
-                form::row(
-                    format!("notifications-follow-{id}"),
-                    item.follow.subject.kind(),
-                    control,
-                )
+                form::row(format!("notifications-follow-{id}"), row.kind, control)
             })
             .collect();
         let mut followed_group = form::group("notifications-followed", "Followed").narrow(narrow);

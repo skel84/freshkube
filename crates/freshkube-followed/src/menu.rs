@@ -23,6 +23,10 @@ use crate::owner::Followed;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offer {
     pub subject: Subject,
+    /// The cluster it is about, when it isn't the one the window is on: a
+    /// Kargo project is followed in the cluster Kargo runs in. A cluster
+    /// that isn't open shows "Not watching" until it is.
+    pub context: Option<String>,
     /// What it asks, as a sentence: "Freight wonky-otter reaches prod-ams".
     pub label: String,
 }
@@ -48,6 +52,11 @@ impl FollowMenu {
                 open: false,
             }
         }))
+    }
+
+    /// What is offered now.
+    pub fn offers(&self, cx: &App) -> Vec<Offer> {
+        self.panel.read(cx).offers.clone()
     }
 
     /// What is offered now; nothing redraws unless it changed.
@@ -119,8 +128,13 @@ impl Render for Panel {
             .iter()
             .enumerate()
             .map(|(ix, offer)| {
-                let on = self.followed.read(cx).id_here(&offer.subject).is_some();
+                let on = self
+                    .followed
+                    .read(cx)
+                    .id_for(&offer.subject, offer.context.as_deref())
+                    .is_some();
                 let subject = offer.subject.clone();
+                let context = offer.context.clone();
                 let this = cx.entity().downgrade();
                 let followed = self.followed.clone();
                 h_flex()
@@ -138,13 +152,13 @@ impl Render for Panel {
                             .accessibility_label(offer.label.clone())
                             .on_click(move |_, _, cx| {
                                 let refused = followed.update(cx, |followed, cx| {
-                                    match followed.id_here(&subject) {
+                                    match followed.id_for(&subject, context.as_deref()) {
                                         Some(id) => {
                                             followed.stop(id, cx);
                                             None
                                         }
                                         None => followed
-                                            .follow_here(subject.clone(), cx)
+                                            .follow_for(subject.clone(), context.as_deref(), cx)
                                             .err()
                                             .map(|refused| refused.words()),
                                     }

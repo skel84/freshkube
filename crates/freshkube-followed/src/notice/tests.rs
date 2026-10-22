@@ -21,9 +21,9 @@ fn update(follow: u64, failure: bool, sensitive: bool) -> Update {
 #[test]
 fn the_first_update_is_told_at_once_and_the_next_within_two_minutes_group() {
     let mut hub = Hub::default();
-    let first = hub.push(update(1, true, false), true, at(0));
+    let first = hub.push(update(1, false, false), true, at(0));
     assert_eq!(first.map(|n| n.updates.len()), Some(1));
-    assert!(hub.push(update(2, true, false), true, at(30)).is_none());
+    assert!(hub.push(update(2, false, false), true, at(30)).is_none());
     assert!(hub.push(update(3, false, false), true, at(90)).is_none());
     assert_eq!(hub.due(), Some(at(120)));
     assert!(hub.flush(at(100)).is_none());
@@ -31,14 +31,28 @@ fn the_first_update_is_told_at_once_and_the_next_within_two_minutes_group() {
     assert_eq!(group.updates.len(), 2);
     assert_eq!(group.summary(), "Freshkube · 2 updates");
     // The window is over; the next update is told at once.
-    assert!(hub.push(update(4, true, false), true, at(200)).is_some());
+    assert!(hub.push(update(4, false, false), true, at(200)).is_some());
+}
+
+#[test]
+fn a_failure_inside_a_window_is_told_at_once_with_what_waited() {
+    let mut hub = Hub::default();
+    assert!(hub.push(update(1, false, false), true, at(0)).is_some());
+    assert!(hub.push(update(2, false, false), true, at(10)).is_none());
+    let failure = hub
+        .push(update(3, true, false), true, at(20))
+        .expect("a failure does not wait");
+    assert_eq!(failure.updates.len(), 2);
+    assert!(failure.has_failure());
+    // Nothing is left to wait for.
+    assert!(hub.flush(at(130)).is_none());
 }
 
 #[test]
 fn without_grouping_each_update_is_told() {
     let mut hub = Hub::default();
-    assert!(hub.push(update(1, true, false), false, at(0)).is_some());
-    assert!(hub.push(update(2, true, false), false, at(1)).is_some());
+    assert!(hub.push(update(1, false, false), false, at(0)).is_some());
+    assert!(hub.push(update(2, false, false), false, at(1)).is_some());
     assert!(hub.due().is_none());
 }
 

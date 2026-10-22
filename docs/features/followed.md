@@ -21,7 +21,7 @@ Tests that prove it: inline tests in `freshkube-followed` (`rules/tests.rs`, `no
 ## What it tells
 
 - **The same state never repeats.** A crash loop fires once, and again only after the pod has been Ready for 5 minutes. A landing and a failed verification end their follow. An incident is told once by its key; those open when the follow starts are not news.
-- **Grouping.** The first update shows at once; updates within 2 minutes after it join one notice, shown when the window ends.
+- **Grouping.** The first update shows at once; updates within 2 minutes after it join one notice, shown when the window ends. A failure never waits: it shows at once, with whatever waited.
 - **Quiet hours** (off by default) hold every update but failures. A held notice is in the bell as Held and shows no toast. Crash loops, failed verifications and incidents are failures; a landing and "Not watching" are not.
 - **Hide details.** With it on a notice says only "Freshkube · 1 update" (or "n updates"). Default is on for protected and read-only clusters; the bell inside the app lists the details.
 
@@ -31,9 +31,14 @@ The shell offers the follows the connection of the cluster the window is on, wit
 
 ## Known limits in this slice
 
-- A change page's follows read through the connection of the cluster the window is on. A Kargo project that lives in another cluster of the workspace shows "Not watching" until that cluster is open.
+- A change page's "reaches a Stage" and "verification fails" follows are about the cluster Kargo runs in (`Change.kargo_cluster`), not the one the window is on, and are saved with that context. When that cluster isn't open they show "Not watching" and read once the shell offers its connection. The incident follow is about the window's cluster, whose Coroot project the shell offers.
 - A saved follow of a cluster that is not open stays "Not watching" until it is.
+- The rules' state (what was last told, a crash loop's re-arm, the incidents seen) is not saved. After a launch a follow can tell what it told before once more; that is accepted for now.
 - Clicking a toast does not open the item yet; that comes with banners.
+
+## Connections and levels
+
+The shell offers the owner a connection (`Connection`: its access id, context, Coroot project and whether details hide by default) together with the level read in the same call (`Pilot::offer_followed`, `desktop/followed.rs`), so a level never reaches another cluster's follows. A new access id, or another Coroot project, replaces the running reads of that context; the same ones are left alone.
 
 ## Example data
 

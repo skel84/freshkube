@@ -2,6 +2,8 @@
 //! nothing has been told, and its popover: New, Earlier and Following, each
 //! followed item with what it reads and Stop.
 
+use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, Tone, dp};
@@ -95,44 +97,171 @@ impl Render for FollowedBell {
     }
 }
 
+/// A notice, worded when the notices change.
+struct NoticeLine {
+    id: u64,
+    tone: Tone,
+    tag: &'static str,
+    summary: String,
+    lines: Vec<String>,
+    held: bool,
+    age: Entity<Age>,
+}
+
+/// A followed item, worded when the follows change.
+struct FollowLine {
+    id: u64,
+    tone: Tone,
+    status: String,
+    title: String,
+    context: String,
+    reads: String,
+    reason: Option<String>,
+    label: String,
+}
+
+/// How long ago a notice was: the one thing in the bell that changes with
+/// the clock, so it is the one small view that ticks.
+struct Age {
+    at: DateTime<Utc>,
+    _tick: Task<()>,
+}
+
+impl Age {
+    fn new(at: DateTime<Utc>, cx: &mut Context<Self>) -> Self {
+        Self {
+            at,
+            _tick: cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_secs(30))
+                        .await;
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        return;
+                    }
+                }
+            }),
+        }
+    }
+}
+
+impl Render for Age {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex_none()
+            .text_color(palette(cx).muted)
+            .child(ago(Utc::now(), self.at))
+    }
+}
+
 /// The popover's lists. An entity, so it redraws as notices arrive while
-/// it is open.
+/// it is open. It words its lines when the owner changes, not when it
+/// draws.
 pub struct BellPanel {
     followed: Entity<Followed>,
+    new: Vec<NoticeLine>,
+    earlier: Vec<NoticeLine>,
+    following: Vec<FollowLine>,
     _subscription: Subscription,
 }
 
 impl BellPanel {
     fn new(followed: Entity<Followed>, cx: &mut Context<Self>) -> Self {
-        let subscription = cx.observe(&followed, |_, _, cx| cx.notify());
-        Self {
+        let subscription = cx.observe(&followed, |this, _, cx| {
+            this.derive(cx);
+            cx.notify();
+        });
+        let mut panel = Self {
             followed,
+            new: Vec::new(),
+            earlier: Vec::new(),
+            following: Vec::new(),
             _subscription: subscription,
-        }
+        };
+        panel.derive(cx);
+        panel
+    }
+
+    fn derive(&mut self, cx: &mut Context<Self>) {
+        let followed = self.followed.read(cx);
+        let new: Vec<Notice> = followed.inbox().new.iter().cloned().collect();
+        let earlier: Vec<Notice> = followed.inbox().earlier.iter().cloned().collect();
+        self.following = followed.items().iter().map(follow_line).collect();
+        self.new = new.iter().map(|n| notice_line(n, cx)).collect();
+        self.earlier = earlier.iter().map(|n| notice_line(n, cx)).collect();
+    }
+}
+
+fn notice_line(notice: &Notice, cx: &mut Context<BellPanel>) -> NoticeLine {
+    // The bell is in the app: it lists what a banner would hide.
+    let lines = notice
+        .updates
+        .iter()
+        .map(|u| format!("{} · {}", u.headline, u.detail))
+        .collect();
+    let at = notice.at;
+    NoticeLine {
+        id: notice.id,
+        tone: if notice.has_failure() {
+            Tone::Crit
+        } else {
+            Tone::Good
+        },
+        tag: if notice.held {
+            "Held"
+        } else if notice.has_failure() {
+            "Failed"
+        } else {
+            "Update"
+        },
+        summary: notice.summary(),
+        lines,
+        held: notice.held,
+        age: cx.new(|cx| Age::new(at, cx)),
+    }
+}
+
+fn follow_line(item: &Item) -> FollowLine {
+    let (tone, reason) = match &item.status {
+        Status::Watching => (Tone::Good, None),
+        Status::Starting => (Tone::Waiting, None),
+        Status::NotWatching(why) => (Tone::Unknown, Some(why.clone())),
+    };
+    FollowLine {
+        id: item.follow.id,
+        tone,
+        status: item.status.label().to_owned(),
+        title: item.follow.subject.title(),
+        context: item.follow.context.clone(),
+        reads: format!(
+            "{} · {}",
+            item.follow.subject.reads(),
+            item.follow.subject.ends()
+        ),
+        reason,
+        label: format!(
+            "{}. {}. {}",
+            item.follow.subject.title(),
+            item.status.label(),
+            item.follow.context
+        ),
     }
 }
 
 impl Render for BellPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let followed = self.followed.read(cx);
-        let settings = followed.settings();
-        let now = Utc::now();
-        let new: Vec<AnyElement> = followed
-            .inbox()
-            .new
+        let rows = |prefix: &'static str, lines: &[NoticeLine]| -> Vec<AnyElement> {
+            lines
+                .iter()
+                .map(|line| notice_row(prefix, line, cx))
+                .collect()
+        };
+        let new = rows("new", &self.new);
+        let earlier = rows("earlier", &self.earlier);
+        let following: Vec<AnyElement> = self
+            .following
             .iter()
-            .map(|n| notice_row("new", n, &settings, now, cx))
-            .collect();
-        let earlier: Vec<AnyElement> = followed
-            .inbox()
-            .earlier
-            .iter()
-            .map(|n| notice_row("earlier", n, &settings, now, cx))
-            .collect();
-        let following: Vec<AnyElement> = followed
-            .items()
-            .iter()
-            .map(|item| following_row(&self.followed, item, cx))
+            .map(|line| following_row(&self.followed, line, cx))
             .collect();
         let section = |id: &'static str, title: &str, empty: &str, rows: Vec<AnyElement>| {
             v_flex()
@@ -188,37 +317,12 @@ pub fn ago(now: DateTime<Utc>, at: DateTime<Utc>) -> String {
     }
 }
 
-fn notice_row(
-    prefix: &'static str,
-    notice: &Notice,
-    settings: &crate::notice::Settings,
-    now: DateTime<Utc>,
-    cx: &App,
-) -> AnyElement {
+fn notice_row(prefix: &'static str, line: &NoticeLine, cx: &App) -> AnyElement {
     let p = palette(cx);
-    // The bell is in the app: it shows what a banner would hide.
-    let lines: Vec<String> = notice
-        .updates
-        .iter()
-        .map(|u| format!("{} · {}", u.headline, u.detail))
-        .collect();
-    let _ = settings;
-    let tone = if notice.has_failure() {
-        Tone::Crit
-    } else {
-        Tone::Good
-    };
-    let tag = if notice.held {
-        "Held"
-    } else if notice.has_failure() {
-        "Failed"
-    } else {
-        "Update"
-    };
     v_flex()
-        .id(SharedString::from(format!("notice-{prefix}-{}", notice.id)))
+        .id(SharedString::from(format!("notice-{prefix}-{}", line.id)))
         .test_support()
-        .aria_label(lines.join(". "))
+        .aria_label(line.lines.join(". "))
         .gap_1()
         .px_2()
         .py_1p5()
@@ -229,23 +333,18 @@ fn notice_row(
         .child(
             h_flex()
                 .gap_2()
-                .child(ui::tag(tone, None, tag, cx))
+                .child(ui::tag(line.tone, None, line.tag, cx))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(notice.summary()),
+                        .child(line.summary.clone()),
                 )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_color(p.muted)
-                        .child(ago(now, notice.at)),
-                ),
+                .child(line.age.clone()),
         )
-        .children(lines.into_iter().map(|line| div().child(line)))
-        .when(notice.held, |this| {
+        .children(line.lines.iter().cloned().map(|text| div().child(text)))
+        .when(line.held, |this| {
             this.child(
                 div()
                     .text_color(p.muted)
@@ -255,24 +354,14 @@ fn notice_row(
         .into_any_element()
 }
 
-fn following_row(followed: &Entity<Followed>, item: &Item, cx: &App) -> AnyElement {
+fn following_row(followed: &Entity<Followed>, line: &FollowLine, cx: &App) -> AnyElement {
     let p = palette(cx);
-    let id = item.follow.id;
-    let (tone, reason) = match &item.status {
-        Status::Watching => (Tone::Good, None),
-        Status::Starting => (Tone::Waiting, None),
-        Status::NotWatching(why) => (Tone::Unknown, Some(why.clone())),
-    };
+    let id = line.id;
     let followed = followed.clone();
     v_flex()
         .id(SharedString::from(format!("following-{id}")))
         .test_support()
-        .aria_label(format!(
-            "{}. {}. {}",
-            item.follow.subject.title(),
-            item.status.label(),
-            item.follow.context
-        ))
+        .aria_label(line.label.clone())
         .gap_1()
         .px_2()
         .py_1p5()
@@ -283,28 +372,24 @@ fn following_row(followed: &Entity<Followed>, item: &Item, cx: &App) -> AnyEleme
         .child(
             h_flex()
                 .gap_2()
-                .child(ui::tag(tone, None, item.status.label().to_owned(), cx))
+                .child(ui::tag(line.tone, None, line.status.clone(), cx))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(item.follow.subject.title()),
+                        .child(line.title.clone()),
                 )
                 .child(
                     div()
                         .flex_none()
                         .text_color(p.muted)
-                        .child(item.follow.context.clone()),
+                        .child(line.context.clone()),
                 ),
         )
-        .child(div().text_color(p.muted).child(format!(
-            "{} · {}",
-            item.follow.subject.reads(),
-            item.follow.subject.ends()
-        )))
-        .when_some(reason, |this, why| {
+        .child(div().text_color(p.muted).child(line.reads.clone()))
+        .when_some(line.reason.clone(), |this, why| {
             this.child(div().text_color(p.muted).child(why))
         })
         .child(

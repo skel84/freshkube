@@ -221,3 +221,73 @@ fn settings_notifications_changes_grouping_quiet_hours_and_hide_details(cx: &mut
     click(cx, f.handle, &format!("notifications-stop-{id}"));
     assert_eq!(cx.read(|cx| f.followed.read(cx).count()), 2);
 }
+
+#[test]
+fn only_a_protected_or_read_only_cluster_hides_details_by_default() {
+    use freshkube_core::write::Protection;
+    for (level, hides) in [
+        (Protection::ReadOnly, true),
+        (Protection::Protected, true),
+        (Protection::Guarded, false),
+        (Protection::Open, false),
+    ] {
+        assert_eq!(super::followed::hides_by_default(level), hides, "{level:?}");
+    }
+}
+
+/// Each cluster's follows hide details by its own level, and switching to
+/// another cluster never changes the level an earlier cluster's follows have.
+#[gpui_kit::test]
+fn follows_take_their_own_clusters_level_across_switches(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let followed = cx.update(|cx| {
+        install(
+            Options {
+                runtime: runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    let (_app, handle, pilot) = fixture(cx, 1280., 880.);
+    let levels = [
+        ("prod-ams", true),
+        ("dev-fra", false),
+        ("stage-fra", true),
+        ("cicd-fra", false),
+    ];
+    for (id, _) in levels {
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| pilot.switch_cluster(id.into(), window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            followed.update(cx, |followed, cx| {
+                followed
+                    .follow_here(
+                        freshkube_followed::Subject::CrashLoop {
+                            namespace: "shop".into(),
+                            pod: format!("api-{id}"),
+                        },
+                        cx,
+                    )
+                    .expect("followed")
+            })
+        });
+    }
+    let seen: Vec<(String, bool)> = cx.read(|cx| {
+        followed
+            .read(cx)
+            .items()
+            .iter()
+            .map(|item| (item.follow.subject.title(), item.follow.sensitive))
+            .collect()
+    });
+    assert_eq!(seen.len(), 4);
+    for ((id, hides), (title, sensitive)) in levels.iter().zip(&seen) {
+        assert!(title.contains(id), "{title}");
+        assert_eq!(sensitive, hides, "{id}");
+    }
+}

@@ -1060,7 +1060,11 @@ impl ChangePage {
             .filter(|_| !self.change.project.is_empty())
         {
             let (project, freight) = (self.change.project.clone(), self.change.freight.clone());
+            // Kargo's objects are in the cluster Kargo runs in, not
+            // necessarily the one the window is on.
+            let kargo = Some(self.change.kargo_cluster.clone()).filter(|c| !c.is_empty());
             offers.push(freshkube_followed::Offer {
+                context: kargo.clone(),
                 label: format!("Freight {freight} reaches {}", stage.name),
                 subject: freshkube_followed::Subject::Landing {
                     project: project.clone(),
@@ -1069,6 +1073,7 @@ impl ChangePage {
                 },
             });
             offers.push(freshkube_followed::Offer {
+                context: kargo,
                 label: format!("Its verification fails in {}", stage.name),
                 subject: freshkube_followed::Subject::Verification {
                     project,
@@ -1078,6 +1083,7 @@ impl ChangePage {
             });
             let application = self.parent.as_ref().map(ToString::to_string);
             offers.push(freshkube_followed::Offer {
+                context: None,
                 label: match &application {
                     Some(app) => format!("An incident opens in {app}"),
                     None => "An incident opens".to_owned(),

@@ -206,6 +206,9 @@ pub(crate) struct SettingsPage {
     sources_status: Segment,
     /// Suggestions the person ignored, for the session.
     ignored: HashSet<find::Ignored>,
+    /// The followed items as Notifications lists them, worded when the
+    /// follows change.
+    follow_rows: Vec<notifications::FollowRow>,
 }
 
 impl SettingsPage {
@@ -347,9 +350,13 @@ impl SettingsPage {
         let (columns, width) = source::columns(&[]);
         // Followed items and the notice settings draw from the app's owner.
         if let Some(followed) = freshkube_followed::owner::followed(cx) {
-            cx.observe(&followed, |_, _, cx| cx.notify()).detach();
+            cx.observe(&followed, |this, _, cx| {
+                this.derive_follows(cx);
+                cx.notify();
+            })
+            .detach();
         }
-        Self {
+        let mut page = Self {
             connection: None,
             coroot: None,
             coroot_state: crate::observability::ConnectionState::Disconnected,
@@ -414,7 +421,10 @@ impl SettingsPage {
             destinations_status: Segment::default(),
             sources_status: Segment::default(),
             ignored: HashSet::new(),
-        }
+            follow_rows: Vec::new(),
+        };
+        page.derive_follows(cx);
+        page
     }
 
     /// Takes what the workspace file held, and derives the page's lines

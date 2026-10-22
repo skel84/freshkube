@@ -41,6 +41,9 @@ use feeds::{Feed, FeedKey};
 /// context it has open; the follow keeps reading with the last one offered.
 #[derive(Clone)]
 pub struct Connection {
+    /// The access it reads with (`ClusterSource.id`): a rotated credential
+    /// or a rebuilt session is another id, and replaces running reads.
+    pub id: String,
     pub context: String,
     pub access: ClusterAccess,
     /// A protected or read-only cluster: Hide details is on by default.
@@ -211,6 +214,28 @@ impl Followed {
         self.id_of(subject, self.active.as_deref()?)
     }
 
+    /// The id of the follow of `subject` in `context`, or in the context the
+    /// window is on.
+    pub fn id_for(&self, subject: &Subject, context: Option<&str>) -> Option<u64> {
+        match context {
+            Some(context) => self.id_of(subject, context),
+            None => self.id_here(subject),
+        }
+    }
+
+    /// Follows `subject` in `context`, or in the context the window is on.
+    pub fn follow_for(
+        &mut self,
+        subject: Subject,
+        context: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<u64, Refused> {
+        match context {
+            Some(context) => self.follow_in(subject, context, cx),
+            None => self.follow_here(subject, cx),
+        }
+    }
+
     /// Follows `subject` in the context the window is on.
     pub fn follow_here(
         &mut self,
@@ -221,54 +246,68 @@ impl Followed {
         self.follow_in(subject, &context, cx)
     }
 
-    /// Follows `subject` in `context`, through the connection the shell
-    /// offered for it.
+    /// Follows `subject` in `context`. With a connection offered for the
+    /// context it reads at once; without one, as for a Kargo project in a
+    /// cluster that isn't open, it is "Not watching" until the shell offers
+    /// one. Refused at [`MAX_FOLLOWS`] and for a repeat.
     pub fn follow_in(
         &mut self,
         subject: Subject,
         context: &str,
         cx: &mut Context<Self>,
     ) -> Result<u64, Refused> {
-        let connection = self
+        if self.items.len() >= MAX_FOLLOWS {
+            return Err(Refused::Full);
+        }
+        if self.is_following(&subject, context) {
+            return Err(Refused::Duplicate);
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let known = self
             .connections
             .get(context)
-            .cloned()
-            .ok_or(Refused::NotOpen)?;
-        self.follow(subject, connection, cx)
+            .filter(|_| !self.stopped)
+            .map(|c| c.sensitive);
+        let since = self.now(cx);
+        // Unknown cluster, unknown level: details stay hidden until the
+        // shell offers it.
+        let follow = Follow {
+            id,
+            subject,
+            context: context.to_owned(),
+            sensitive: known.unwrap_or(true),
+            since,
+        };
+        let status = match known {
+            Some(_) => Status::Starting,
+            None => Status::NotWatching(NOT_CONNECTED.to_owned()),
+        };
+        let key = FeedKey::of(&follow);
+        let open = known.is_some();
+        self.items.push(Item {
+            tracker: Tracker::new(&follow),
+            status,
+            follow,
+        });
+        if open && !self.feeds.get(&key).is_some_and(|f| f.watch.is_running()) {
+            self.start_feed(key, cx);
+        }
+        self.save();
+        cx.notify();
+        Ok(id)
     }
 
-    /// Follows `subject` through `connection`, which the follow keeps
-    /// reading with. Refused at [`MAX_FOLLOWS`] and for a repeat.
+    /// Follows `subject` through `connection`, which is offered first.
     pub fn follow(
         &mut self,
         subject: Subject,
         connection: Connection,
         cx: &mut Context<Self>,
     ) -> Result<u64, Refused> {
-        if self.items.len() >= MAX_FOLLOWS {
-            return Err(Refused::Full);
-        }
-        if self.is_following(&subject, &connection.context) {
-            return Err(Refused::Duplicate);
-        }
-        let id = self.next_id;
-        self.next_id += 1;
-        let follow = Follow {
-            id,
-            subject,
-            context: connection.context.clone(),
-            sensitive: connection.sensitive,
-            since: self.now(cx),
-        };
-        self.items.push(Item {
-            tracker: Tracker::new(&follow),
-            status: Status::Starting,
-            follow,
-        });
+        let context = connection.context.clone();
         self.offer(connection, cx);
-        self.save();
-        cx.notify();
-        Ok(id)
+        self.follow_in(subject, &context, cx)
     }
 
     /// Stops following; the read stops with its last follow.
@@ -290,10 +329,12 @@ impl Followed {
         }
         let context = connection.context.clone();
         self.active = Some(context.clone());
-        let changed = self
-            .connections
-            .get(&context)
-            .is_none_or(|known| known.coroot.is_some() != connection.coroot.is_some());
+        let known = self.connections.get(&context);
+        let replaced = known.is_some_and(|known| known.id != connection.id);
+        let coroot_changed = known.is_none_or(|known| {
+            known.coroot.as_ref().map(|c| &c.source)
+                != connection.coroot.as_ref().map(|c| &c.source)
+        });
         // A change of the cluster's level reaches its follows' next notices.
         let mut level_changed = false;
         for item in self
@@ -303,6 +344,10 @@ impl Followed {
         {
             level_changed |= item.follow.sensitive != connection.sensitive;
             item.follow.sensitive = connection.sensitive;
+            // The cluster is open: it reads now.
+            if matches!(&item.status, Status::NotWatching(why) if why == NOT_CONNECTED) {
+                item.status = Status::Starting;
+            }
         }
         if level_changed {
             self.save();
@@ -316,8 +361,10 @@ impl Followed {
             .collect();
         for key in keys {
             let reading = self.feeds.get(&key).is_some_and(|f| f.watch.is_running());
-            // Coroot starts again when it was not connected before.
-            if !reading || (changed && key.watch == WatchKey::Coroot) {
+            // A read goes on with the access it started with unless the
+            // connection is another (a rotated credential, a rebuilt
+            // session) or Coroot's project is.
+            if !reading || replaced || (coroot_changed && key.watch == WatchKey::Coroot) {
                 self.start_feed(key, cx);
             }
         }
@@ -353,6 +400,7 @@ impl Followed {
         let now = self.now(cx);
         let mut updates = Vec::new();
         let mut finished = Vec::new();
+        let mut changed = false;
         for seen in &batch {
             for item in self
                 .items
@@ -360,6 +408,7 @@ impl Followed {
                 .filter(|i| FeedKey::of(&i.follow) == *key)
             {
                 let step = item.tracker.observe(seen, now);
+                changed |= item.status != step.status;
                 item.status = step.status;
                 let sensitive = item.follow.sensitive;
                 updates.extend(step.updates.into_iter().map(|update| Update {
@@ -377,7 +426,11 @@ impl Followed {
         for id in finished {
             self.stop(id, cx);
         }
-        cx.notify();
+        // What the bell and the lists show is the status and the notices;
+        // an answer that changes neither redraws nothing.
+        if changed {
+            cx.notify();
+        }
     }
 
     /// Hands the follows of `context` an answer a read would bring.

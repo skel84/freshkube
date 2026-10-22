@@ -38,6 +38,9 @@ impl FeedKey {
 #[derive(Default)]
 pub(crate) struct Feed {
     pub(crate) watch: Watch<Seen, u64>,
+    /// Which start this is, so a test tells a restarted read.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) epoch: u64,
     /// An example feed plays its script on the GPUI clock.
     player: Option<Task<()>>,
 }
@@ -64,7 +67,10 @@ impl Followed {
         };
         self.epoch += 1;
         let epoch = self.epoch;
-        let mut feed = Feed::default();
+        let mut feed = Feed {
+            epoch,
+            ..Feed::default()
+        };
         let slot = slot_of(key.clone());
         let apply = {
             let key = key.clone();

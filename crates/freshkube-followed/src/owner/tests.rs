@@ -56,6 +56,7 @@ fn harness(cx: &mut TestAppContext, preferences: Option<std::path::PathBuf>) -> 
 
 fn connection(context: &str, sensitive: bool) -> Connection {
     Connection {
+        id: format!("access-of-{context}"),
         context: context.to_owned(),
         access: ClusterAccess::EXAMPLE,
         sensitive,
@@ -243,25 +244,72 @@ fn a_crash_loop_toasts_once_and_again_only_after_five_minutes_ready(cx: &mut Tes
     assert_eq!(h.toasts().len(), 2);
 }
 
+fn landed(freight: &str) -> Seen {
+    Seen::Stages(vec![StageSeen {
+        name: "prod-ams".into(),
+        current_freight: vec![freight.into()],
+        verifications: vec![],
+    }])
+}
+
+fn project_key(project: &str) -> FeedKey {
+    key(
+        "dev-fra",
+        WatchKey::Kargo {
+            project: project.into(),
+        },
+    )
+}
+
 #[gpui_kit::test]
 fn updates_within_two_minutes_group_into_one_toast(cx: &mut TestAppContext) {
     let h = harness(cx, None);
-    for name in ["a", "b", "c"] {
-        h.follow(cx, pod(name), connection("dev-fra", false))
-            .unwrap();
+    for (project, freight) in [("a", "f1"), ("b", "f2"), ("c", "f3")] {
+        let subject = Subject::Landing {
+            project: project.into(),
+            stage: "prod-ams".into(),
+            freight: freight.into(),
+        };
+        h.follow(cx, subject, connection("dev-fra", false)).unwrap();
     }
-    h.deliver(cx, &pod_key("a"), crash(false, true));
+    h.deliver(cx, &project_key("a"), landed("f1"));
     assert_eq!(h.toasts().len(), 1, "the first is told at once");
     cx.executor().advance_clock(Duration::from_secs(30));
-    h.deliver(cx, &pod_key("b"), crash(false, true));
+    h.deliver(cx, &project_key("b"), landed("f2"));
     cx.executor().advance_clock(Duration::from_secs(30));
-    h.deliver(cx, &pod_key("c"), crash(false, true));
+    h.deliver(cx, &project_key("c"), landed("f3"));
     assert_eq!(h.toasts().len(), 1, "the others wait for the window");
     cx.executor().advance_clock(Duration::from_secs(61));
     cx.run_until_parked();
     let toasts = h.toasts();
     assert_eq!(toasts.len(), 2);
     assert_eq!(toasts[1].0, "Freshkube · 2 updates");
+}
+
+#[gpui_kit::test]
+fn a_failure_is_told_at_once_inside_a_group_window(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    h.follow(cx, landing("wonky-otter"), connection("dev-fra", false))
+        .unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
+    h.deliver(
+        cx,
+        &key(
+            "dev-fra",
+            WatchKey::Kargo {
+                project: "checkout".into(),
+            },
+        ),
+        landed("wonky-otter"),
+    );
+    assert_eq!(h.toasts().len(), 1);
+    // 10 s later a pod crash-loops: grouping is on, and it does not wait.
+    cx.executor().advance_clock(Duration::from_secs(10));
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    let toasts = h.toasts();
+    assert_eq!(toasts.len(), 2, "told at once, not after the window");
+    assert!(toasts[1].2);
 }
 
 #[gpui_kit::test]
@@ -468,4 +516,67 @@ fn saved_follows_wait_for_their_cluster_and_then_read(cx: &mut TestAppContext) {
     });
     assert_eq!(fresh.read(|cx| h.followed.read(cx).reads_running()), 2);
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[gpui_kit::test]
+fn a_follow_in_a_cluster_that_is_not_open_waits_for_it(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    // The window is on dev-fra; Kargo runs in cicd-fra.
+    cx.update(|cx| {
+        h.followed
+            .update(cx, |f, cx| f.offer(connection("dev-fra", false), cx))
+    });
+    let id = cx
+        .update(|cx| {
+            h.followed.update(cx, |f, cx| {
+                f.follow_in(landing("wonky-otter"), "cicd-fra", cx)
+            })
+        })
+        .unwrap();
+    let status = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let f = h.followed.read(cx);
+            f.items()
+                .iter()
+                .find(|i| i.follow.id == id)
+                .unwrap()
+                .status
+                .clone()
+        })
+    };
+    assert!(matches!(status(cx), Status::NotWatching(_)));
+    assert_eq!(cx.read(|cx| h.followed.read(cx).reads_running()), 0);
+    assert!(h.toasts().is_empty(), "quietly, not a failure");
+    // It is not the window's cluster that is followed.
+    assert_eq!(
+        cx.read(|cx| h.followed.read(cx).id_here(&landing("wonky-otter"))),
+        None
+    );
+    // Once that cluster is open, it reads.
+    cx.update(|cx| {
+        h.followed
+            .update(cx, |f, cx| f.offer(connection("cicd-fra", false), cx))
+    });
+    assert_eq!(status(cx), Status::Starting);
+    assert_eq!(cx.read(|cx| h.followed.read(cx).reads_running()), 1);
+}
+
+#[gpui_kit::test]
+fn another_access_replaces_a_running_read_and_the_same_one_keeps_it(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
+    let epoch =
+        |cx: &mut TestAppContext| cx.read(|cx| h.followed.read(cx).feeds[&pod_key("api")].epoch);
+    let first = epoch(cx);
+    let offer = |cx: &mut TestAppContext, id: &str| {
+        let mut c = connection("dev-fra", false);
+        c.id = id.to_owned();
+        cx.update(|cx| h.followed.update(cx, |f, cx| f.offer(c, cx)));
+    };
+    offer(cx, "access-of-dev-fra");
+    assert_eq!(epoch(cx), first, "the same access keeps the read");
+    offer(cx, "rotated");
+    assert_ne!(epoch(cx), first, "a rotated credential restarts it");
+    assert_eq!(cx.read(|cx| h.followed.read(cx).reads_running()), 1);
 }

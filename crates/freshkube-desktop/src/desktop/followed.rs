@@ -22,9 +22,17 @@ pub(super) struct Offered {
     coroot: Option<freshkube_core::coroot::Source>,
 }
 
+/// Whether a level hides details in banners by default: a protected or
+/// read-only cluster's banners can show on a lock screen.
+pub(super) fn hides_by_default(level: Protection) -> bool {
+    matches!(level, Protection::ReadOnly | Protection::Protected)
+}
+
 impl Pilot {
-    /// Offers the app's follows this window's connection, when it, the
-    /// cluster's protection or the Coroot project it reads has changed.
+    /// Offers the app's follows this window's connection and the level it
+    /// works under, as one pair read at the same moment, when either or the
+    /// Coroot project has changed. The cheap keys are compared first; the
+    /// provider is cloned only for an offer.
     pub(super) fn offer_followed(&mut self, cx: &mut App) {
         let Some(followed) = followed(cx) else {
             return;
@@ -32,23 +40,24 @@ impl Pilot {
         let Some(kube) = self.source().kube else {
             return;
         };
-        // A protected or read-only cluster hides details by default: its
-        // banners show on the lock screen.
-        let sensitive = matches!(
-            self.context_display.level,
-            Protection::ReadOnly | Protection::Protected
-        );
-        let reader = self.pages.observability.read(cx).follow_reader();
-        let offered = Offered {
+        let sensitive = hides_by_default(self.current_level(cx));
+        let observability = self.pages.observability.read(cx);
+        let unchanged = self.followed_offer.as_ref().is_some_and(|offered| {
+            offered.id == kube.id
+                && offered.sensitive == sensitive
+                && offered.coroot.as_ref() == observability.follow_source()
+        });
+        if unchanged {
+            return;
+        }
+        let reader = observability.follow_reader();
+        self.followed_offer = Some(Offered {
             id: kube.id.clone(),
             sensitive,
             coroot: reader.as_ref().map(|(_, source)| source.clone()),
-        };
-        if self.followed_offer.as_ref() == Some(&offered) {
-            return;
-        }
-        self.followed_offer = Some(offered);
+        });
         let connection = Connection {
+            id: kube.id.clone(),
             context: kube.context.clone(),
             access: kube.access.clone(),
             sensitive,

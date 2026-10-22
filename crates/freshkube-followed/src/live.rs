@@ -197,7 +197,10 @@ pub async fn watch_project(access: ClusterAccess, project: String, tx: Sender<Se
                         .and_then(stage_seen)
                 };
                 match item {
-                    Ok(watcher::Event::Init) => listing.clear(),
+                    Ok(watcher::Event::Init) => {
+                        listing.clear();
+                        continue;
+                    }
                     Ok(watcher::Event::InitApply(object)) => {
                         if let Some(stage) = of(&object) {
                             listing.insert(stage.name.clone(), stage);
@@ -307,5 +310,155 @@ mod tests {
         .expect("a stage");
         assert_eq!(seen.name, "prod-ams");
         assert_eq!(seen.current_freight, vec!["wonky-otter".to_owned()]);
+    }
+
+    use std::sync::Arc;
+
+    use freshkube_core::cluster_source::{ClusterAccess, KubeClientSource};
+    use freshkube_core::failure::Failure;
+    use freshkube_core::fake_api::{self, Recorder, json};
+    use futures::future::BoxFuture;
+    use http::Method;
+
+    /// Hands out the fake's client.
+    struct Fake(kube::Client);
+
+    impl KubeClientSource for Fake {
+        fn client(&self) -> BoxFuture<'_, Result<kube::Client, Failure>> {
+            let client = self.0.clone();
+            Box::pin(async move { Ok(client) })
+        }
+    }
+
+    fn fake(
+        route: impl Fn(&fake_api::Recorded) -> Option<(u16, String)> + Send + Sync + 'static,
+    ) -> (ClusterAccess, Recorder) {
+        let (client, recorder) = fake_api::client(route);
+        (ClusterAccess::Live(Arc::new(Fake(client))), recorder)
+    }
+
+    /// Everything a follow asks the API is a read: a list, or a watch,
+    /// which is a GET too.
+    fn only_reads(recorder: &Recorder) {
+        assert!(!recorder.requests().is_empty(), "it asked the API");
+        recorder.assert_all("a follow only reads", |request| {
+            request.method == Method::GET
+        });
+    }
+
+    #[tokio::test]
+    async fn watching_a_pod_lists_it_by_name_and_only_reads() {
+        let (access, recorder) = fake(|request| {
+            (request.path == "/api/v1/namespaces/shop/pods").then(|| {
+                if request.query.contains("watch=true") {
+                    json(200, "")
+                } else {
+                    json(
+                        200,
+                        serde_json::json!({
+                            "apiVersion": "v1", "kind": "PodList",
+                            "metadata": {"resourceVersion": "1"},
+                            "items": [{
+                                "metadata": {"name": "api-7c9", "namespace": "shop"},
+                                "status": {
+                                    "conditions": [{"type": "Ready", "status": "False"}],
+                                    "containerStatuses": [{
+                                        "name": "api", "image": "i", "imageID": "",
+                                        "ready": false, "restartCount": 6,
+                                        "state": {"waiting": {"reason": "CrashLoopBackOff"}}
+                                    }]
+                                }
+                            }]
+                        }),
+                    )
+                }
+            })
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let job = tokio::spawn(watch_pod(access, "shop".into(), "api-7c9".into(), tx));
+        let seen = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("an answer")
+            .expect("a pod");
+        assert_eq!(
+            seen,
+            Seen::Pod(Some(PodSeen {
+                crash_looping: true,
+                ready: false,
+                restarts: 6
+            }))
+        );
+        drop(rx);
+        job.abort();
+        only_reads(&recorder);
+        assert!(
+            recorder.requests()[0]
+                .query
+                .contains("fieldSelector=metadata.name%3Dapi-7c9"),
+            "{:?}",
+            recorder.lines()
+        );
+    }
+
+    #[tokio::test]
+    async fn watching_a_project_lists_its_stages_and_only_reads() {
+        let (access, recorder) = fake(|request| {
+            (request.path == "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout/stages").then(
+                || {
+                    if request.query.contains("watch=true") {
+                        json(200, "")
+                    } else {
+                        json(
+                            200,
+                            serde_json::json!({
+                                "apiVersion": "kargo.akuity.io/v1alpha1", "kind": "StageList",
+                                "metadata": {"resourceVersion": "1"},
+                                "items": [{
+                                    "apiVersion": "kargo.akuity.io/v1alpha1", "kind": "Stage",
+                                    "metadata": {"name": "prod-ams", "namespace": "checkout",
+                                                 "uid": "u", "resourceVersion": "1"},
+                                    "status": {"currentFreight": {"name": "wonky-otter"}}
+                                }]
+                            }),
+                        )
+                    }
+                },
+            )
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let job = tokio::spawn(watch_project(access, "checkout".into(), tx));
+        let seen = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("an answer")
+            .expect("stages");
+        let Seen::Stages(stages) = seen else {
+            panic!("stages");
+        };
+        assert_eq!(stages.len(), 1);
+        assert_eq!(stages[0].current_freight, vec!["wonky-otter".to_owned()]);
+        drop(rx);
+        job.abort();
+        only_reads(&recorder);
+    }
+
+    #[tokio::test]
+    async fn a_refused_read_is_unreadable_not_a_crash() {
+        let (access, recorder) = fake(|_| {
+            Some(json(
+                403,
+                serde_json::json!({"kind":"Status","apiVersion":"v1","status":"Failure",
+                    "reason":"Forbidden","code":403,"message":"forbidden"}),
+            ))
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let job = tokio::spawn(watch_pod(access, "shop".into(), "api".into(), tx));
+        let seen = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("an answer")
+            .expect("a report");
+        assert!(matches!(seen, Seen::Unreadable(_)), "{seen:?}");
+        drop(rx);
+        job.abort();
+        only_reads(&recorder);
     }
 }

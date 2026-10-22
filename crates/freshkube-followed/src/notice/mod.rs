@@ -166,6 +166,13 @@ impl Hub {
 
     /// Takes an update. Returns the notice to tell now, if any.
     pub fn push(&mut self, update: Update, grouping: bool, now: DateTime<Utc>) -> Option<Notice> {
+        // A failure waits for no window: it is told now, with whatever
+        // waited, and the window it fell in goes on.
+        if update.failure {
+            let mut updates = std::mem::take(&mut self.pending);
+            updates.push(update);
+            return Some(self.notice(updates, now));
+        }
         if grouping
             && let Some(start) = self.window_start
             && now < start + Duration::seconds(GROUP_WINDOW_SECONDS)
