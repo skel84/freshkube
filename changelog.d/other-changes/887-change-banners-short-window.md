@@ -1,0 +1,1 @@
+- **Change page:** in a short window at a large text size the banners under the fix bar are capped and scroll inside themselves (and show whole otherwise), so the trail keeps its rows in view.

@@ -257,6 +257,7 @@ impl ApplicationsPage {
         });
         Some(
             Inspector::new("applications-detail")
+                .selection(&row.key)
                 .heading(heading)
                 .children(row.fields.iter().map(|(label, value)| {
                     field(label, mono(value.clone()).whitespace_normal(), cx)

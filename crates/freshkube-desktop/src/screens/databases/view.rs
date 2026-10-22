@@ -208,6 +208,7 @@ impl DatabasesScreen {
         });
         Some(
             Inspector::new("databases-detail")
+                .selection(selected)
                 .heading(heading)
                 .child(self.verdict(row, cx))
                 .children(row.sections.iter().map(|section| self.section(section, cx)))

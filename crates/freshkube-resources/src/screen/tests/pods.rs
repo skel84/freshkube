@@ -239,6 +239,78 @@ fn a_container_that_ran_and_stopped_died_and_one_that_cannot_start_is_critical()
     assert_eq!(pod_glyph("Running"), Tone::Warn);
 }
 
+/// The same printed Pending status needs actual running init-container
+/// evidence before its dashed ring becomes a clock (#829).
+#[test]
+fn a_pending_pod_with_a_running_init_container_uses_the_waiting_glyph() {
+    use crate::ui::Tone;
+    use freshkube_core::resources::{ContainerFacts, PodFacts, RunState};
+
+    let glyph = |status: &str, state, sidecar, terminating, node_ready| {
+        let cells = ["p", "0/1", status, "0", "", "10.0.0.1", "wk-1"].map(str::to_owned);
+        let facts = PodFacts {
+            init_containers: vec![ContainerFacts {
+                state,
+                sidecar,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let pod = crate::rows::pod_row(&example::pod_columns(), &cells, Some(facts), terminating);
+        super::super::cells::pod_tone(&pod, node_ready)
+    };
+    assert_eq!(
+        glyph("Pending", RunState::Running, false, false, true),
+        Tone::Waiting
+    );
+    assert_eq!(
+        glyph("Init:0/1", RunState::Running, false, false, true),
+        Tone::Waiting
+    );
+    // No reported state, waiting to start, and a long-running sidecar do
+    // not prove that initialization is advancing.
+    for (state, sidecar) in [
+        (RunState::Unknown, false),
+        (RunState::Waiting, false),
+        (RunState::Running, true),
+        (
+            RunState::Terminated {
+                exit_code: 0,
+                reason: None,
+            },
+            false,
+        ),
+    ] {
+        assert_eq!(glyph("Pending", state, sidecar, false, true), Tone::Unknown);
+    }
+    assert_eq!(
+        glyph("Pending", RunState::Running, false, true, true),
+        Tone::Unknown
+    );
+    assert_eq!(
+        glyph("Pending", RunState::Running, false, false, false),
+        Tone::Warn
+    );
+    assert_eq!(
+        glyph("ImagePullBackOff", RunState::Running, false, false, true),
+        Tone::Crit
+    );
+    assert_eq!(
+        glyph(
+            "Init:CrashLoopBackOff",
+            RunState::Running,
+            false,
+            false,
+            true
+        ),
+        Tone::Died
+    );
+    assert_eq!(
+        glyph("Unknown", RunState::Running, false, false, true),
+        Tone::Unknown
+    );
+}
+
 #[gpui_kit::test]
 fn a_pod_that_died_counts_with_the_failing_ones(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
