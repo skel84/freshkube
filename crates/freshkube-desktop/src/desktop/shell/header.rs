@@ -46,6 +46,7 @@ impl Pilot {
                 h_flex()
                     .w_full()
                     .min_w_0()
+                    .pr(insets.trailing)
                     .gap(dp(6.))
                     .child(
                         h_flex()
@@ -68,8 +69,6 @@ impl Pilot {
                             .flex_1()
                             .justify_end()
                             .gap(dp(6.))
-                            .pl(dp(6.))
-                            .pr(insets.trailing)
                             .when(!minimal, |this| {
                                 this.child(self.render_refresh(cx))
                                     .child(self.render_appearance(cx))
@@ -326,7 +325,7 @@ impl Pilot {
             .when(!narrow, |this| {
                 this.w(dp(SEARCH_FIELD_WIDTH))
                     .min_w(dp(APP_HEADER_CONTROL))
-                    .flex_shrink()
+                    .flex_shrink_1()
                     .px(dp(10.))
             })
             .when(narrow, |this| this.flex_none())
