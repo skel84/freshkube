@@ -9,6 +9,9 @@ mod connection;
 mod deep_link;
 pub(crate) mod dock;
 mod entity_pages;
+mod followed;
+#[cfg(test)]
+mod followed_tests;
 #[cfg(test)]
 mod gate_tests;
 mod kubeconfig;
@@ -145,19 +148,25 @@ gpui_kit::actions!(
 /// where the window can't be updated again, so it asks once that update
 /// ends; asking inside it found no window and quit without a word.
 pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
+    // Quitting stops every follow's read first: a follow outlives its window
+    // and its page, but not the app (docs/STATE_LIFETIMES.md).
+    fn end(quit: fn(&mut App), cx: &mut App) {
+        freshkube_followed::stop_all(cx);
+        quit(cx);
+    }
     cx.on_action(move |_: &Quit, cx| {
         cx.defer(move |cx| {
             let Some(window) = cx.windows().into_iter().next() else {
-                return quit(cx);
+                return end(quit, cx);
             };
             let may_quit = window
                 .update(cx, |_, window, cx| {
                     mutation::may_close(window, cx)
-                        && pod_shell::may_close(window, cx, move |_, cx| quit(cx))
+                        && pod_shell::may_close(window, cx, move |_, cx| end(quit, cx))
                 })
                 .unwrap_or(true);
             if may_quit {
-                quit(cx);
+                end(quit, cx);
             }
         });
     });
@@ -194,6 +203,17 @@ pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Resu
             freshkube_ui::platform::Platform::current(),
             &app_menu::MenuState::default(),
         ));
+        let follows = options.debug.follows;
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: runtime.clone(),
+                preferences: options.preferences.clone(),
+                script: options
+                    .starts_with_examples()
+                    .then_some(freshkube_followed::example::Script { shape: follows }),
+            },
+            cx,
+        );
         on_quit(cx, |cx| cx.quit());
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
@@ -296,6 +316,8 @@ pub(crate) struct Pilot {
     /// Node counts for contexts that loaded at least once this session.
     context_nodes: BTreeMap<String, usize>,
     context_display: shell::ContextDisplay,
+    /// What the app's follows were last offered (`followed.rs`).
+    followed_offer: Option<followed::Offered>,
     config_error: Option<String>,
     config_loading: bool,
     configuration_read: Loader<(), Option<ConfigurationRead>>,
@@ -349,6 +371,12 @@ impl Pilot {
     #[cfg(test)]
     pub(crate) fn applications(&self) -> (Entity<crate::applications::ApplicationsPage>, Page) {
         (self.pages.applications.clone(), self.navigation.page)
+    }
+
+    /// The Databases page, for tests of what it reads and links to.
+    #[cfg(test)]
+    pub(crate) fn databases(&self) -> Entity<crate::screens::DatabasesScreen> {
+        self.pages.databases.clone()
     }
 
     /// The Observability page, for tests of the links that open it.
@@ -674,9 +702,19 @@ impl Pilot {
         if let Some(notice) = options.setup_notice.take() {
             self.tell(notice, window, cx);
         }
+        // Before the first source is opened: opening it offers the follows
+        // their connection, and an example seeds notices the toast shows.
+        let followed = self.watch_followed(window, cx);
+        self._subscriptions.extend(followed);
         self.load_workspace(cx);
         self.rebuild_switcher(cx);
-        let workspace_entry = self.launch_entry(names_source, cx);
+        // The followed-items example `hidden` is a protected cluster, so
+        // Hide details resolves to On there; no other example picks one.
+        let hidden = options.starts_with_examples()
+            && options.debug.follows == Some(freshkube_followed::example::Shape::Hidden);
+        let workspace_entry = self
+            .launch_entry(names_source, cx)
+            .or_else(|| hidden.then(|| ("prod-ams".to_owned(), None)));
         let started_entry = workspace_entry.is_some();
         if let Some((id, note)) = workspace_entry {
             self.activate_entry(&id, window, cx);
@@ -797,6 +835,7 @@ impl Pilot {
             contexts: Vec::new(),
             context_nodes: BTreeMap::new(),
             context_display: shell::ContextDisplay::default(),
+            followed_offer: None,
             config_error: None,
             config_loading: false,
             configuration_read: Loader::default(),
@@ -1087,6 +1126,7 @@ impl Pilot {
         for (_, page) in self.pages.map.iter().filter(|(id, _)| !id.is_screen()) {
             page.set_page_source(source.clone(), window, cx);
         }
+        self.offer_followed(cx);
     }
 
     /// Hands pod and node history the Monitoring page's Prometheus.

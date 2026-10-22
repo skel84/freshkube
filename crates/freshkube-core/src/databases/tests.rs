@@ -109,9 +109,13 @@ fn references_respect_namespaces_engines_and_incarnations() {
         link(Some(&reference), &inventory.databases),
         LinkState::Orphaned
     );
-    let maria = example::mariadb(at);
-    assert_eq!(maria.engine, Engine::MariaDb);
-    assert_eq!(maria.current_primary, Fact::Unknown);
+    // The same name in the other engine is another database.
+    let mut same_name = reference.clone();
+    same_name.engine = Engine::MariaDb;
+    assert_eq!(
+        link(Some(&same_name), &inventory.databases),
+        LinkState::Orphaned
+    );
 }
 
 fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
@@ -128,6 +132,11 @@ fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
         let path = request.uri().path();
         let mut status = 200;
         let body = match path {
+            // The MariaDB operator is not installed in these fakes.
+            "/apis/k8s.mariadb.com" => {
+                status = 404;
+                json!({"kind":"Status","status":"Failure","reason":"NotFound","code":404})
+            }
             "/apis/postgresql.cnpg.io" => {
                 if mode == "absent" {
                     status = 404;
@@ -140,13 +149,13 @@ fn client(mode: &'static str) -> (kube::Client, Arc<Mutex<Vec<String>>>) {
                 }
             }
             "/apis/postgresql.cnpg.io/v1" => {
-                json!({"resources":[{"name":"clusters","kind":"Cluster","namespaced":true,"verbs":["list"]},{"name":"backups","kind":"Backup","namespaced":true,"verbs":["list"]},{"name":"scheduledbackups","kind":"ScheduledBackup","namespaced":true,"verbs":["list"]}]})
+                json!({"resources":[{"name":"clusters","kind":"Cluster","namespaced":true,"verbs":["list"]},{"name":"backups","kind":"Backup","namespaced":true,"verbs":["list"]},{"name":"scheduledbackups","kind":"ScheduledBackup","namespaced":true,"verbs":["list"]},{"name":"poolers","kind":"Pooler","namespaced":true,"verbs":["list"]}]})
             }
             path if path.ends_with("/backups") && mode == "backup-refused" => {
                 status = 403;
                 json!({"kind":"Status","status":"Failure","reason":"Forbidden","message":"sensitive-canary","code":403})
             }
-            path if ["clusters", "backups", "scheduledbackups"]
+            path if ["clusters", "backups", "scheduledbackups", "poolers"]
                 .iter()
                 .any(|kind| {
                     path == format!("/apis/postgresql.cnpg.io/v1/namespaces/shop/{kind}")
@@ -200,7 +209,13 @@ async fn discovery_absence_refusal_and_unsupported_version_are_distinct() {
         let (client, calls) = client(mode);
         let inventory = read(&client, Some("shop"), now()).await;
         assert_eq!(inventory.discovery, expected);
-        assert_requests(&calls, vec!["GET /apis/postgresql.cnpg.io".into()]);
+        assert_requests(
+            &calls,
+            vec![
+                "GET /apis/postgresql.cnpg.io".into(),
+                "GET /apis/k8s.mariadb.com".into(),
+            ],
+        );
     }
 }
 #[tokio::test]
@@ -294,8 +309,9 @@ fn expected_requests(pages: usize) -> Vec<String> {
     let mut expected = vec![
         "GET /apis/postgresql.cnpg.io".into(),
         "GET /apis/postgresql.cnpg.io/v1".into(),
+        "GET /apis/k8s.mariadb.com".into(),
     ];
-    for kind in ["clusters", "backups", "scheduledbackups"] {
+    for kind in ["clusters", "backups", "scheduledbackups", "poolers"] {
         for page in 0..pages {
             expected.push(format!(
                 "GET /apis/postgresql.cnpg.io/v1/namespaces/shop/{kind}?limit=200{}",
@@ -431,7 +447,9 @@ fn every_example_shape_has_consistent_backup_times_and_old_is_old() {
         "no-backup",
         "no-schedule",
         "suspended",
-        "mariadb-model",
+        "cert-expiring",
+        "switchover-stuck",
+        "mariadb",
     ] {
         let inv = example::shaped(at, shape);
         for backup in &inv.backups.items {

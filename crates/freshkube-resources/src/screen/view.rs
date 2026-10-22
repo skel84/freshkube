@@ -289,6 +289,9 @@ impl ResourcesScreen {
             }))
             .on_action(cx.listener(|view, _: &ToggleMark, _, cx| view.toggle_mark(cx)))
             .on_action(cx.listener(|view, _: &OpenLogs, window, cx| view.open_logs(window, cx)))
+            .on_action(cx.listener(|view, _: &FollowCrashLoop, window, cx| {
+                view.toggle_follow_crash_loop(window, cx)
+            }))
             .on_action(cx.listener(|view, _: &SelectGroup, _, cx| view.select_group(cx)))
             .on_action(cx.listener(|view, _: &OpenNode, _, cx| view.open_selected_node(cx)))
             .on_action(cx.listener(|view, _: &ToggleHealthy, _, cx| view.toggle_healthy(cx)))

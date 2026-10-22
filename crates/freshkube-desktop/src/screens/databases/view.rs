@@ -2,6 +2,7 @@ use super::*;
 use freshkube_ui::{
     inspector::{self, Inspector},
     page::{self, PageHeader},
+    palette::palette,
     table::DataTable,
 };
 use gpui_kit::assets::IconName;
@@ -9,7 +10,9 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     h_flex,
     input::Input,
+    v_flex,
 };
+
 impl DatabasesScreen {
     fn header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let header = PageHeader::new(PREFIX, "Databases");
@@ -31,7 +34,14 @@ impl DatabasesScreen {
                     )
                 }),
         );
-        let namespace = div().w(dp(170.)).child(
+        let filter = div().w(dp(170.)).child(
+            Input::new(&self.filter_input)
+                .id("databases-filter")
+                .aria_label("Filter by name, namespace, engine, primary or state")
+                .small()
+                .h(dp(ui::CONTROL_HEIGHT)),
+        );
+        let namespace = div().w(dp(170.)).h(dp(ui::CONTROL_HEIGHT)).child(
             Input::new(&self.namespace_input)
                 .id("databases-namespace")
                 .aria_label("Namespace; blank reads all namespaces; Enter applies")
@@ -54,13 +64,106 @@ impl DatabasesScreen {
             .label("Open in Resources")
             .disabled(self.selected.is_none())
             .on_click(cx.listener(|this, _, _, cx| this.open(cx)));
+        let observe = Button::new("databases-open-observability")
+            .ghost()
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .label("Open in Observability")
+            .disabled(self.selected_observe().is_none())
+            .on_click(cx.listener(|this, _, _, cx| this.open_observability(cx)));
         header
-            .filter(namespace)
+            .filter(filter)
+            .control(namespace)
             .control(modes)
             .control(open)
+            .control(observe)
             .control(refresh)
             .render(window, cx)
     }
+
+    /// The verdict, then why and what next; the groups follow it.
+    fn verdict(&self, row: &display::Row, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let verdict = &row.verdict;
+        let lines = |title: &'static str, lines: &[SharedString], cx: &mut Context<Self>| {
+            (!lines.is_empty()).then(|| {
+                v_flex()
+                    .id(SharedString::from(format!(
+                        "databases-detail-{}",
+                        title.to_lowercase()
+                    )))
+                    .test_support()
+                    .gap(dp(4.))
+                    .text_size(dp(12.))
+                    .child(ui::caption(title, cx))
+                    .children(
+                        lines
+                            .iter()
+                            .cloned()
+                            .map(|line| div().text_color(p.ink_2).whitespace_normal().child(line)),
+                    )
+            })
+        };
+        v_flex()
+            .id("databases-detail-verdict")
+            .test_support()
+            .aria_label(verdict.headline.clone())
+            .gap(dp(8.))
+            .child(
+                h_flex()
+                    .gap(dp(8.))
+                    .items_start()
+                    .children(ui::status_glyph(verdict.tone, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_weight(FontWeight::MEDIUM)
+                            .whitespace_normal()
+                            .child(verdict.headline.clone()),
+                    )
+                    .children(verdict.source.map(|source| {
+                        ui::tag(ui::Tone::Outline, None, source, cx)
+                            .id("databases-detail-source")
+                            .aria_label(source)
+                            .test_support()
+                    })),
+            )
+            .children(lines("Why", &verdict.why, cx))
+            .children(lines("Next", &verdict.next, cx))
+            .into_any_element()
+    }
+
+    fn section(&self, section: &display::Section, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        v_flex()
+            .id(SharedString::from(format!(
+                "databases-detail-section-{}",
+                section.id
+            )))
+            .test_support()
+            .gap(dp(7.))
+            .text_size(dp(12.))
+            .child(ui::caption(section.title, cx))
+            .children(section.fields.iter().map(|field| {
+                let value = if field.monospace {
+                    ui::mono(field.value.clone())
+                } else {
+                    div().child(field.value.clone())
+                }
+                .whitespace_normal();
+                let value = match (field.tone, field.dim) {
+                    (_, true) => value.text_color(p.muted),
+                    (Some(ui::Tone::Crit), _) => value.text_color(p.crit_ink),
+                    (Some(ui::Tone::Warn), _) => value.text_color(p.warn_ink),
+                    (Some(ui::Tone::Good), _) => value.text_color(p.good_ink),
+                    _ => value,
+                };
+                freshkube_ui::ui::named_field(field.label.clone().into(), value, cx)
+            }))
+            .into_any_element()
+    }
+
     fn details(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let selected = self.selected.as_ref()?;
         let Some(row) = self.display.rows.iter().find(|row| &row.key == selected) else {
@@ -71,27 +174,44 @@ impl DatabasesScreen {
                     .into_any_element(),
             );
         };
+        let p = palette(cx);
+        let heading = v_flex()
+            .flex_1()
+            .w_full()
+            .min_w_0()
+            .gap(dp(2.))
+            .child(
+                div()
+                    .id("databases-detail-title")
+                    .aria_label(row.identity.name.clone())
+                    .test_support()
+                    .truncate()
+                    .child(row.identity.name.clone()),
+            )
+            // The engine shows here when the table has no room for its column.
+            .children((!self.display.engine_shown()).then(|| {
+                div()
+                    .id("databases-detail-engine")
+                    .aria_label(row.engine.clone())
+                    .test_support()
+                    .text_size(dp(12.))
+                    .text_color(p.muted)
+                    .truncate()
+                    .child(row.engine.clone())
+            }));
+        let observe = row.observe.is_some().then(|| {
+            Button::new("databases-detail-observe")
+                .small()
+                .outline()
+                .label("Open in Observability")
+                .on_click(cx.listener(|this, _, _, cx| this.open_observability(cx)))
+        });
         Some(
             Inspector::new("databases-detail")
-                .heading(
-                    div()
-                        .id("databases-detail-title")
-                        .aria_label(row.identity.name.clone())
-                        .test_support()
-                        .child(row.identity.name.clone()),
-                )
-                .children(row.fields.iter().map(|field| {
-                    freshkube_ui::ui::named_field(
-                        field.label.clone().into(),
-                        if field.monospace {
-                            ui::mono(field.value.clone())
-                        } else {
-                            div().child(field.value.clone())
-                        }
-                        .whitespace_normal(),
-                        cx,
-                    )
-                }))
+                .heading(heading)
+                .child(self.verdict(row, cx))
+                .children(row.sections.iter().map(|section| self.section(section, cx)))
+                .footer(observe)
                 .render(cx)
                 .into_any_element(),
         )
@@ -126,6 +246,11 @@ impl DatabasesScreen {
 impl Render for DatabasesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync();
+        // With the Inspector open the table has less room: the engine then
+        // moves into the Inspector's header.
+        let engine = self.selected.is_none()
+            || super::super::page_width(window) >= table::ENGINE_COLUMN_WIDTH;
+        self.display.set_engine_shown(engine);
         let loading = self.loader.is_loading() && self.loader.data().is_none();
         self.loading.show(loading);
         let header = self.header(window, cx);
@@ -179,6 +304,12 @@ impl Render for DatabasesScreen {
         } else {
             self.body(window, cx)
         };
+        // A short window scrolls the page instead of squeezing the split
+        // below its least height, as the other table pages do.
+        let least = self.split.short_height(
+            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.selected.is_some(),
+        );
         let body = div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
@@ -186,6 +317,7 @@ impl Render for DatabasesScreen {
             .flex_col()
             .flex_1()
             .min_h_0()
+            .when(page::is_short(window), |this| this.min_h(dp(least)))
             .child(body);
         div()
             .size_full()
@@ -204,8 +336,11 @@ impl Render for DatabasesScreen {
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenResource, _, cx| this.open(cx)))
+            .on_action(
+                cx.listener(|this, _: &OpenObservability, _, cx| this.open_observability(cx)),
+            )
             .on_action(cx.listener(|this, _: &Find, window, cx| {
-                this.namespace_input
+                this.filter_input
                     .update(cx, |input, cx| input.focus(window, cx))
             }))
             .child(
@@ -214,7 +349,22 @@ impl Render for DatabasesScreen {
                     .restrict_scroll_to_axis()
                     .child(page::toolbar(cx).child(header))
                     .when(notice.is_some() || failure.is_some(), |this| {
-                        this.child(page::inset().children(notice).children(failure))
+                        // Capped, so a long coverage line leaves the table and
+                        // the Inspector their room in a short window.
+                        this.child(
+                            page::inset()
+                                // A bottom edge, so a clipped banner reads as
+                                // scrollable, not cut off by the table.
+                                .border_b_1()
+                                .border_color(palette(cx).line)
+                                .max_h(dp(72.))
+                                .id("databases-notices")
+                                .test_support()
+                                .overflow_y_scroll()
+                                .restrict_scroll_to_axis()
+                                .children(notice)
+                                .children(failure),
+                        )
                     })
                     .child(body),
             )

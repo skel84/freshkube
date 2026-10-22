@@ -246,7 +246,15 @@ impl Pilot {
                 .flex_none()
                 .gap_3()
                 .children(self.render_dock_button(cx))
-                .child(self.chrome.forwards.clone())
+                .child(
+                    // Two indicators that draw nothing until there is
+                    // something to say; a tight gap, so the empty one costs
+                    // the page's segment almost no room.
+                    h_flex()
+                        .gap_1()
+                        .child(self.chrome.forwards.clone())
+                        .children(self.chrome.followed.clone()),
+                )
                 .child(
                     div()
                         .id("kubernetes-only")
@@ -263,7 +271,15 @@ impl Pilot {
                 .gap_3()
                 .flex_none()
                 .children(self.render_dock_button(cx))
-                .child(self.chrome.forwards.clone())
+                .child(
+                    // Two indicators that draw nothing until there is
+                    // something to say; a tight gap, so the empty one costs
+                    // the page's segment almost no room.
+                    h_flex()
+                        .gap_1()
+                        .child(self.chrome.forwards.clone())
+                        .children(self.chrome.followed.clone()),
+                )
                 .children(
                     self.overview
                         .last_successful()

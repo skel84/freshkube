@@ -127,7 +127,7 @@ fn hop<'a>(change: &'a Change, name: &str) -> &'a super::super::Hop {
 #[tokio::test]
 async fn each_part_is_read_from_its_entry() {
     let change = read_across(&workspace(), |_| {}, &[]).await.expect("read");
-    assert_eq!(change.kargo_cluster, "cicd-b");
+    assert_eq!(change.kargo_context, "cicd-b-context");
     assert_eq!(change.groups[0].detail, "Tekton on cicd-b");
     assert_eq!(change.groups[1].detail, "Kargo on cicd-b");
     assert_eq!(hop(&change, "Freight wonky-otter").from, "cicd-b");
