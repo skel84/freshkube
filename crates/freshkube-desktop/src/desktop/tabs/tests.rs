@@ -523,3 +523,162 @@ fn the_strip_is_a_cached_view_of_its_own(cx: &mut TestAppContext) {
     assert_eq!(overview(), page_before, "the page did not draw");
     assert!(strip() > strip_before, "the strip did");
 }
+
+fn resources_view(kind: &str) -> ViewState {
+    let mut view = page(LinkPage::Resources);
+    view.kind = Some(freshkube_nav::KindKey::parse(kind).unwrap());
+    view
+}
+
+fn listed(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> usize {
+    cx.read(|cx| {
+        pilot
+            .read(cx)
+            .pages
+            .resources
+            .read(cx)
+            .store_identities()
+            .len()
+    })
+}
+
+fn frozen_rows(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> bool {
+    cx.read(|cx| pilot.read(cx).pages.resources.read(cx).rows_are_frozen())
+}
+
+fn hold_lists(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    pilot: &Entity<Pilot>,
+    lists: bool,
+) {
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.set_hold(
+                freshkube_core::cluster_source::Hold {
+                    lists,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+/// Leaving a Resources tab keeps its rows. Coming back shows them, muted,
+/// while the list is read again, and the fresh list replaces them.
+#[gpui_kit::test]
+fn a_tab_that_returns_shows_its_last_rows_then_fresh_ones(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let pods = listed(cx, &pilot);
+    assert!(pods > 1);
+    open(
+        cx,
+        handle,
+        &pilot,
+        resources_view("deployments.apps"),
+        OpenIn::Front,
+    );
+    assert_eq!(selected(cx, &pilot), 1);
+    assert!(!frozen_rows(cx, &pilot));
+    assert!(cx.read(|cx| pilot.read(cx).tabs.set.tabs().len()) == 2);
+    assert!(cx.read(|cx| pilot.read(cx).tabs.frozen.contains(&0)));
+
+    // The list is slow to answer, as on a big cluster.
+    hold_lists(cx, handle, &pilot, true);
+    press(cx, handle, "secondary-{");
+    assert_eq!(selected(cx, &pilot), 0);
+    assert!(frozen_rows(cx, &pilot), "the pods tab shows what it kept");
+    assert_eq!(listed(cx, &pilot), pods);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("resource-frozen").visible());
+    })
+    .unwrap();
+
+    // The list answers: fresh rows, no banner. (A held example never
+    // answers by itself; a refresh reads again once it is let go.)
+    hold_lists(cx, handle, &pilot, false);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.refresh_now(window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!frozen_rows(cx, &pilot));
+    assert_eq!(listed(cx, &pilot), pods);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("resource-frozen").is_none());
+    })
+    .unwrap();
+}
+
+/// A list that cannot be read keeps the frozen rows, marked stale.
+#[gpui_kit::test]
+fn a_returning_tab_whose_list_fails_keeps_its_rows_and_says_so(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let pods = listed(cx, &pilot);
+    open(
+        cx,
+        handle,
+        &pilot,
+        resources_view("deployments.apps"),
+        OpenIn::Front,
+    );
+    hold_lists(cx, handle, &pilot, true);
+    press(cx, handle, "secondary-{");
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.pages.resources.update(cx, |resources, cx| {
+                resources.deliver_read(
+                    crate::resources::model::ReadState::Failed("Unreachable".into()),
+                    cx,
+                )
+            })
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-stale").visible());
+        assert!(window.find("resource-stale-retry").visible());
+    })
+    .unwrap();
+    assert_eq!(listed(cx, &pilot), pods, "never an empty list");
+    assert!(frozen_rows(cx, &pilot));
+}
+
+#[gpui_kit::test]
+fn a_closed_tab_keeps_no_rows(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    open(
+        cx,
+        handle,
+        &pilot,
+        resources_view("deployments.apps"),
+        OpenIn::Front,
+    );
+    assert!(cx.read(|cx| pilot.read(cx).tabs.frozen.contains(&0)));
+    let first = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[0].id);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.close_tab(first, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(|cx| pilot.read(cx).tabs.frozen.is_empty()));
+}

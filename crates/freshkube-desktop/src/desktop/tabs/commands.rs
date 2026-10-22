@@ -153,7 +153,43 @@ impl Pilot {
     /// page before following the page again.
     fn show_tab_view(&mut self, view: ViewState, window: &mut Window, cx: &mut Context<Self>) {
         self.tabs.applying = Some((view.clone(), cx.background_executor().now()));
+        // Coming back to a Resources tab shows the rows it kept, muted,
+        // until its list is read again.
+        let id = self.tabs.set.current().id;
+        if view.page == freshkube_nav::LinkPage::Resources
+            && let Some(frozen) = self.tabs.frozen.take(&id)
+        {
+            self.pages
+                .resources
+                .update(cx, |resources, cx| resources.hold_frozen(frozen, cx));
+        }
         self.apply_view(&view, window, cx);
+    }
+
+    /// Keeps the rows of the Resources tab that is about to stop showing.
+    fn freeze_shown_tab(&mut self, cx: &mut Context<Self>) {
+        let tab = self.tabs.set.current();
+        let view = &tab.view;
+        let (Some(kind), true) = (&view.kind, view.page == freshkube_nav::LinkPage::Resources)
+        else {
+            return;
+        };
+        let frozen = self
+            .pages
+            .resources
+            .read(cx)
+            .freeze(kind.as_str(), view.ns.as_ref().map(|ns| ns.as_str()));
+        let id = tab.id;
+        match frozen {
+            Some(frozen) => self.tabs.frozen.insert(id, frozen),
+            None => self.tabs.frozen.forget(&id),
+        }
+    }
+
+    /// Drops the rows of tabs that have closed.
+    fn forget_closed_tabs(&mut self) {
+        let live: Vec<_> = self.tabs.set.tabs().iter().map(|tab| tab.id).collect();
+        self.tabs.frozen.retain(|id| live.contains(id));
     }
 
     /// The tabs follow the cluster that is open. A set made for another is
@@ -199,6 +235,7 @@ impl Pilot {
     fn reset_tabs(&mut self, cx: &mut Context<Self>) {
         let view = self.current_view(cx).unwrap_or_else(overview);
         self.tabs.set = TabSet::new(view);
+        self.tabs.frozen.clear();
         self.tabs.applying = None;
         self.tabs_changed(cx);
     }
@@ -213,6 +250,10 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let front = open_in == OpenIn::Front;
+        if front {
+            self.sync_tabs(cx);
+            self.freeze_shown_tab(cx);
+        }
         if self.tabs.set.open(view.clone(), front).is_none() {
             self.tell(too_many(), window, cx);
             return;
@@ -234,6 +275,7 @@ impl Pilot {
 
     pub(super) fn select_tab(&mut self, id: TabId, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_tabs(cx);
+        self.freeze_shown_tab(cx);
         if let Some(view) = self.tabs.set.select(id) {
             self.tabs_changed(cx);
             self.show_tab_view(view, window, cx);
@@ -242,6 +284,7 @@ impl Pilot {
 
     pub(super) fn step_tab(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_tabs(cx);
+        self.freeze_shown_tab(cx);
         if let Some(view) = self.tabs.set.step(by) {
             self.tabs_changed(cx);
             self.show_tab_view(view, window, cx);
@@ -284,6 +327,7 @@ impl Pilot {
     }
 
     fn closed(&mut self, shown: Option<Shown>, window: &mut Window, cx: &mut Context<Self>) {
+        self.forget_closed_tabs();
         match shown {
             None => {}
             Some(Shown::Same) => self.tabs_changed(cx),
@@ -314,6 +358,7 @@ impl Pilot {
 
     pub(super) fn reopen_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_tabs(cx);
+        self.freeze_shown_tab(cx);
         if let Some(view) = self.tabs.set.reopen() {
             self.tabs_changed(cx);
             self.show_tab_view(view, window, cx);

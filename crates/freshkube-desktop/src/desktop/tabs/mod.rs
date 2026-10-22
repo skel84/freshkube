@@ -73,6 +73,8 @@ pub(super) struct Tabs {
     restore: Option<restore::Saved>,
     /// Saves the views shortly after the last change.
     save: Option<Task<()>>,
+    /// The rows each Resources tab kept when it stopped showing.
+    pub(super) frozen: freshkube_resources::frozen::FrozenSet<set::TabId>,
     /// What the shell last drew of the tabs (`answers`).
     answered: std::cell::Cell<Option<[bool; 4]>>,
 }
@@ -94,6 +96,7 @@ impl Tabs {
             cluster: None,
             restore,
             save: None,
+            frozen: Default::default(),
             answered: Default::default(),
         }
     }
