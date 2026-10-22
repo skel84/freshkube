@@ -49,7 +49,7 @@ A tab's menu is the dock's: Close, Close others, Close to the right, Close all (
 
 ## Saving
 
-The views are saved in `navigation.json` under `tabs` shortly after the last change: `selected`, `views` as each view's query text, and `cluster`, the workspace entry they were made in (`entry:<id>`), or for a window that is no entry's a one-way token of the session's identity, never the identity. At most eight views are saved; with more tabs open, the eight ending at the shown one, so it is among them. Nothing else is saved: no title, history or rows. The first cluster to open in a run takes them back only if it is the cluster named; any other, or a file with no cluster, starts with one tab and applies no view. Each comes back as loading rows until its first list. A view that no longer parses is dropped, the selection follows the rest, and at most eight are read.
+The views are saved in `navigation.json` under `tabs` shortly after the last change: `selected`, `views` as each view's query text, and `cluster`, the workspace entry they were made in (`entry:<id>`). A window that is no entry's writes no `cluster`, so its tabs are not restored: the session's identity does not survive a launch. A real identity can come with slice 2 (#878). At most eight views are saved; with more tabs open, the eight ending at the shown one, so it is among them. Nothing else is saved: no title, history or rows. The first cluster to open in a run takes them back only if it is the cluster named; any other, or a file with no cluster, starts with one tab and applies no view. Each comes back as loading rows until its first list. A view that no longer parses is dropped, the selection follows the rest, and at most eight are read.
 
 ## Frozen rows
 

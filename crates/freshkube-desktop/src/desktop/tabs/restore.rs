@@ -85,21 +85,9 @@ impl Pilot {
 
 impl Pilot {
     /// Which cluster the tabs belong to, as the file names it: the workspace
-    /// entry, else a one-way token of the session's identity, never the
-    /// identity itself.
+    /// entry. A window that is no entry's names none, so its tabs are not
+    /// restored: the session's identity does not survive a launch.
     pub(super) fn tabs_cluster(&self) -> Option<String> {
-        if let Some(id) = self.switch.active_cluster() {
-            return Some(format!("entry:{id}"));
-        }
-        self.tabs
-            .cluster
-            .as_deref()
-            .filter(|identity| !identity.is_empty())
-            .map(|identity| {
-                format!(
-                    "session:{}",
-                    freshkube_core::fingerprint::strong_from_uid(identity)
-                )
-            })
+        self.switch.active_cluster().map(|id| format!("entry:{id}"))
     }
 }

@@ -78,7 +78,14 @@ impl Pilot {
                 object,
             } => {
                 if let Some(kind) = freshkube_core::resources::builtin_by_gvk(&api_version, &kind) {
-                    self.open_object(kind, object, resources::Tab::Overview, window, cx);
+                    self.open_object_in(
+                        open_in,
+                        kind,
+                        object,
+                        resources::Tab::Overview,
+                        window,
+                        cx,
+                    );
                     return;
                 }
                 let work = LinkWork::Owner {

@@ -213,6 +213,11 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.adopt_key(identity, cx);
+        self.try_restore(window, cx);
+    }
+
+    fn adopt_key(&mut self, identity: Option<&str>, cx: &mut Context<Self>) {
         let key = identity.unwrap_or_default();
         // A source that is missing for a moment is not another cluster.
         if key.is_empty()
@@ -239,13 +244,30 @@ impl Pilot {
             return;
         }
         self.tabs.cluster = Some(key.to_owned());
+    }
+
+    /// Opens the tabs of the last run once the cluster entry they were made
+    /// in is the one open. Tabs of any other are left alone, and not
+    /// applied.
+    fn try_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let open = self
+            .tabs
+            .cluster
+            .as_deref()
+            .is_some_and(|key| !key.is_empty());
+        let named = self.tabs_cluster();
+        if !open
+            || !self
+                .tabs
+                .restore
+                .as_ref()
+                .is_some_and(|saved| saved.cluster.is_some() && saved.cluster == named)
+        {
+            return;
+        }
         let Some(saved) = self.tabs.restore.take() else {
             return;
         };
-        // Tabs of another cluster are not this one's to open: one tab.
-        if saved.cluster.is_none() || saved.cluster != self.tabs_cluster() {
-            return;
-        }
         let (views, selected) = saved.views();
         if views.is_empty() {
             return;

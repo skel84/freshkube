@@ -44,6 +44,17 @@ fn open(
     cx.run_until_parked();
 }
 
+/// Opens the workspace entry `dev-fra`, so the tabs have a cluster to name.
+fn enter(cx: &mut TestAppContext, handle: AnyWindowHandle, pilot: &Entity<Pilot>) {
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.switch_cluster("dev-fra".into(), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
 fn press(cx: &mut TestAppContext, handle: AnyWindowHandle, key: &str) {
     cx.update_window(handle, |_, window, cx| window.press(key, cx))
         .unwrap();
@@ -391,6 +402,7 @@ fn tabs_are_saved_as_views_and_restored(cx: &mut TestAppContext) {
     let preferences = directory.join("preferences.json");
     let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
     let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
+    enter(cx, handle, &pilot);
     open(
         cx,
         handle,
@@ -411,8 +423,12 @@ fn tabs_are_saved_as_views_and_restored(cx: &mut TestAppContext) {
     assert!(saved.iter().all(|view| view.is_string()));
     assert!(!file["tabs"].to_string().contains("rows"));
 
-    let (_runtime, _handle, pilot) = mount(cx, options(), 1280., 880.);
+    assert_eq!(file["tabs"]["cluster"], "entry:dev-fra");
+    let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
     cx.run_until_parked();
+    // Not the entry they were made in: nothing is applied yet.
+    assert_eq!(views(cx, &pilot).len(), 1);
+    enter(cx, handle, &pilot);
     assert_eq!(
         views(cx, &pilot),
         [
@@ -423,15 +439,6 @@ fn tabs_are_saved_as_views_and_restored(cx: &mut TestAppContext) {
     );
     assert_eq!(selected(cx, &pilot), 1);
     assert_eq!(shown(cx, &pilot), Page::Etcd);
-}
-
-/// The cluster key the fixture window saves its tabs under.
-fn cluster_of(cx: &mut TestAppContext, directory: &std::path::Path) -> String {
-    let options =
-        crate::GpuiOptions::fixture().with_preferences(Some(directory.join("preferences.json")));
-    let (_runtime, _handle, pilot) = mount(cx, options, 1280., 880.);
-    cx.run_until_parked();
-    cx.read(|cx| pilot.read(cx).tabs_cluster().expect("a cluster"))
 }
 
 fn write_tabs(directory: &std::path::Path, tabs: serde_json::Value) {
@@ -445,19 +452,18 @@ fn write_tabs(directory: &std::path::Path, tabs: serde_json::Value) {
 #[gpui_kit::test]
 fn a_view_that_no_longer_parses_is_dropped_on_reading(cx: &mut TestAppContext) {
     let directory = scratch("dropped");
-    let cluster = cluster_of(cx, &directory);
     write_tabs(
         &directory,
         serde_json::json!({
             "selected": 2,
-            "cluster": cluster,
+            "cluster": "entry:dev-fra",
             "views": ["page=nodes", "page=nowhere", "page=etcd", 7],
         }),
     );
     let options =
         crate::GpuiOptions::fixture().with_preferences(Some(directory.join("preferences.json")));
-    let (_runtime, _handle, pilot) = mount(cx, options, 1280., 880.);
-    cx.run_until_parked();
+    let (_runtime, handle, pilot) = mount(cx, options, 1280., 880.);
+    enter(cx, handle, &pilot);
     assert_eq!(
         views(cx, &pilot),
         [page(LinkPage::Nodes), page(LinkPage::Etcd)]
@@ -478,8 +484,8 @@ fn tabs_of_another_cluster_or_of_no_cluster_are_not_restored(cx: &mut TestAppCon
         write_tabs(&directory, tabs);
         let options = crate::GpuiOptions::fixture()
             .with_preferences(Some(directory.join("preferences.json")));
-        let (_runtime, _handle, pilot) = mount(cx, options, 1280., 880.);
-        cx.run_until_parked();
+        let (_runtime, handle, pilot) = mount(cx, options, 1280., 880.);
+        enter(cx, handle, &pilot);
         assert_eq!(views(cx, &pilot), [page(LinkPage::Overview)], "{name}");
         assert_eq!(shown(cx, &pilot), Page::Overview, "{name}");
     }
@@ -492,6 +498,7 @@ fn the_file_holds_eight_tabs_at_most_and_the_shown_one_is_among_them(cx: &mut Te
     let preferences = directory.join("preferences.json");
     let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
     let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
+    enter(cx, handle, &pilot);
     for link in LinkPage::ALL
         .into_iter()
         .filter(|link| *link != LinkPage::Overview)
@@ -526,8 +533,8 @@ fn the_file_holds_eight_tabs_at_most_and_the_shown_one_is_among_them(cx: &mut Te
             "views": vec!["page=nodes"; 12],
         }),
     );
-    let (_runtime, _handle, pilot) = mount(cx, options(), 1280., 880.);
-    cx.run_until_parked();
+    let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
+    enter(cx, handle, &pilot);
     assert_eq!(views(cx, &pilot).len(), 8);
     assert_eq!(selected(cx, &pilot), 7);
 }
@@ -846,4 +853,32 @@ fn a_watch_burst_does_not_ask_whether_the_view_moved(cx: &mut TestAppContext) {
         Some("payments".to_owned()),
         "and the tab followed"
     );
+}
+
+/// A built-in Owner link opens where the click says, like the others.
+#[gpui_kit::test]
+fn an_owner_link_follows_the_click(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let context = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let (_, rows) = example::read(&context, "deployments.apps", None, live::now()).unwrap();
+    let object = ObjectRef::from(rows[0].identity.clone());
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.tabs.gesture = Some((OpenIn::Background, cx.background_executor().now()));
+            pilot.resource_link(
+                resources::ResourceLink::Owner {
+                    api_version: "apps/v1".into(),
+                    kind: "Deployment".into(),
+                    object,
+                },
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(views(cx, &pilot).len(), 2);
+    assert_eq!(selected(cx, &pilot), 0);
+    assert_eq!(shown(cx, &pilot), Page::Overview);
 }

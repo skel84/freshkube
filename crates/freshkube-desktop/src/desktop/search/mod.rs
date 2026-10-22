@@ -156,7 +156,6 @@ impl Pilot {
         // An object goes through `open_object_in` below, so the cluster
         // guard sees it before any tab does. Anything else opens here.
         if open_in != super::tabs::OpenIn::Here
-            && !matches!(destination, Destination::Object(..))
             && let Some(view) = super::tabs::destination_view(&destination)
         {
             self.open_view_tab(view, open_in, window, cx);
