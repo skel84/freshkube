@@ -44,6 +44,17 @@ pub(super) fn mount(
     Entity<DatabasesScreen>,
     WindowHandle<Root>,
 ) {
+    mount_sized(cx, width, 880.)
+}
+fn mount_sized(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (
+    tokio::runtime::Runtime,
+    Entity<DatabasesScreen>,
+    WindowHandle<Root>,
+) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()
@@ -55,7 +66,7 @@ pub(super) fn mount(
         crate::theme::install(cx)
     });
     let mut page = None;
-    let window = cx.open_window(size(px(width), px(880.)), |window, cx| {
+    let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
             let mut view = DatabasesScreen::new(runtime.handle().clone(), window, cx);
             view.set_page_source(source("invented-access"), window, cx);
@@ -1191,4 +1202,34 @@ fn kept_rows_say_so_in_the_row_and_the_inspector() {
         .unwrap();
     assert_eq!(archive.tone, crate::ui::Tone::Unknown);
     assert!(archive.verdict.headline.contains("could not be checked"));
+}
+
+#[gpui_kit::test]
+fn the_stacked_inspector_stays_reachable_under_a_long_coverage_banner(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount_sized(cx, 760., 560.);
+    cx.update_window(window.into(), |_, window, cx| {
+        crate::text_size::set(20., cx);
+        page.update(cx, |page, cx| {
+            page.loader.resolve(
+                page.identity().unwrap(),
+                Ok(databases::example::shaped(at(), "engine-refused")),
+            );
+            page.mode(Mode::Clusters, cx);
+        });
+        window.render_frame(cx);
+        let id = row_id(&page, "ledger-db", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        let banner = window.find("databases-notices").bounds();
+        let inspector = window.find("databases-detail").bounds();
+        assert!(
+            banner.size.height <= px(72. * 20. / 13.) + px(1.),
+            "banner {banner:?}"
+        );
+        assert!(
+            inspector.origin.y < px(560.),
+            "the Inspector starts inside the window: {inspector:?}"
+        );
+    })
+    .unwrap();
 }

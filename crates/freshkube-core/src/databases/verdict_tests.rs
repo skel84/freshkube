@@ -608,3 +608,23 @@ fn a_second_failed_refresh_still_retains_the_rows() {
     back.retain(&two);
     assert!(back.retained.is_empty());
 }
+
+#[test]
+fn a_database_in_a_partial_cluster_list_still_matches_but_an_absent_one_is_unknown() {
+    let mut inv = example::inventory(now());
+    inv.databases.coverage = Coverage::Partial;
+    let morning = inv.backups.items[0].cluster.clone();
+    assert_eq!(link(morning.as_ref(), &inv.databases), LinkState::Matched);
+    let mut name_only = morning.clone().unwrap();
+    name_only.uid = None;
+    assert_eq!(link(Some(&name_only), &inv.databases), LinkState::NameOnly);
+    let mut replaced = morning.unwrap();
+    replaced.uid = Some("an-older-incarnation".into());
+    assert_eq!(link(Some(&replaced), &inv.databases), LinkState::Unknown);
+    let orphan = inv.backups.items[2].cluster.clone();
+    assert_eq!(link(orphan.as_ref(), &inv.databases), LinkState::Unknown);
+    // A list kept from an older read matches nothing.
+    inv.databases.stale = true;
+    let morning = inv.backups.items[0].cluster.clone();
+    assert_eq!(link(morning.as_ref(), &inv.databases), LinkState::Unknown);
+}

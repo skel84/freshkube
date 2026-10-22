@@ -342,7 +342,17 @@ impl Render for DatabasesScreen {
                     .restrict_scroll_to_axis()
                     .child(page::toolbar(cx).child(header))
                     .when(notice.is_some() || failure.is_some(), |this| {
-                        this.child(page::inset().children(notice).children(failure))
+                        // Capped, so a long coverage line leaves the table and
+                        // the Inspector their room in a short window.
+                        this.child(
+                            page::inset()
+                                .max_h(dp(72.))
+                                .id("databases-notices")
+                                .test_support()
+                                .overflow_y_scroll()
+                                .children(notice)
+                                .children(failure),
+                        )
                     })
                     .child(body),
             )

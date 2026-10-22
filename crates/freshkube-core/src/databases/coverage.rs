@@ -8,19 +8,29 @@ pub enum LinkState {
     Orphaned,
     Unknown,
 }
-/// Never call a reference orphaned after a refused, capped or stale Cluster read.
+/// Never call a reference orphaned after a refused, capped or stale Cluster
+/// read; a database that read does list still matches.
 pub fn link(reference: Option<&ClusterRef>, databases: &Read<Database>) -> LinkState {
     let Some(reference) = reference else {
         return LinkState::Unknown;
     };
-    if !databases.complete() {
-        return LinkState::Unknown;
-    }
     let database = databases.items.iter().find(|db| {
         db.engine == reference.engine
             && db.identity.namespace == reference.namespace
             && db.identity.name == reference.name
     });
+    if !databases.complete() {
+        // A database present in a fresh partial list still matches; one that
+        // is absent, or kept from an older read, may only be missing from it.
+        return match database {
+            Some(db) if !databases.stale => match &reference.uid {
+                Some(uid) if *uid == db.identity.uid => LinkState::Matched,
+                None => LinkState::NameOnly,
+                Some(_) => LinkState::Unknown,
+            },
+            _ => LinkState::Unknown,
+        };
+    }
     match database {
         None => LinkState::Orphaned,
         Some(db) => match &reference.uid {
