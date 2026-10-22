@@ -392,3 +392,38 @@ async fn open_in_observability_names_the_entry_the_application_and_the_report(
     );
     assert_eq!(links[0].tab, freshkube_nav::ObservabilityTab::Postgres);
 }
+
+#[gpui_kit::test]
+async fn coroot_is_wanted_only_while_shown_and_only_with_a_link(cx: &mut TestAppContext) {
+    let live = live(cx, true).await;
+    assert_eq!(live.script.wanting(), 1, "shown with a link");
+    cx.update_window(live.window, |_, window, cx| {
+        live.page
+            .update(cx, |page, cx| page.set_visible(false, window, cx));
+    })
+    .unwrap();
+    assert_eq!(live.script.wanting(), 0, "hidden");
+    cx.update_window(live.window, |_, window, cx| {
+        live.page
+            .update(cx, |page, cx| page.set_visible(true, window, cx));
+    })
+    .unwrap();
+    assert_eq!(live.script.wanting(), 1);
+    for why in [Absence::NotLinked, Absence::NoProject] {
+        cx.update(|cx| {
+            live.page.update(cx, |page, cx| {
+                let unlinked = CorootInput {
+                    reader: Some(OutcomeReader::scripted(&live.obs, &live.script)),
+                    entry: "core-fra".into(),
+                    link: Err(why),
+                };
+                page.set_coroot(Some(unlinked), cx);
+            })
+        });
+        assert_eq!(
+            live.script.wanting(),
+            0,
+            "{why:?}: no link, no connection asked for"
+        );
+    }
+}

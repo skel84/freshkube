@@ -291,6 +291,9 @@ pub struct Inventory {
     pub discovery: Coverage,
     /// What discovery found of each operator's API.
     pub engines: Vec<(Engine, Coverage)>,
+    /// Operators whose records are kept from an earlier read because they
+    /// failed this time; their rows are stale, not current.
+    pub retained: Vec<Engine>,
     pub databases: Read<Database>,
     pub backups: Read<Backup>,
     pub schedules: Read<Schedule>,
@@ -299,6 +302,7 @@ impl Inventory {
     pub fn unavailable(coverage: Coverage, at: DateTime<Utc>) -> Self {
         Self {
             engines: Vec::new(),
+            retained: Vec::new(),
             discovery: coverage.clone(),
             databases: Read::empty(coverage.clone(), at),
             backups: Read::empty(coverage.clone(), at),
@@ -354,6 +358,7 @@ impl Inventory {
         }
         Self {
             engines,
+            retained: Vec::new(),
             discovery,
             databases: join(&considered, |i| &i.databases, at),
             backups: join(&considered, |i| &i.backups, at),
@@ -372,6 +377,56 @@ impl Inventory {
         retain(&mut self.databases, &previous.databases);
         retain(&mut self.backups, &previous.backups);
         retain(&mut self.schedules, &previous.schedules);
+        self.retain_failed_engines(previous);
+    }
+
+    /// An operator that answered before and fails now keeps its last good
+    /// records beside the other's fresh ones, marked in [`retained`](Self::retained).
+    fn retain_failed_engines(&mut self, previous: &Self) {
+        fn engine_of(group: &str) -> Option<Engine> {
+            match group {
+                "postgresql.cnpg.io" => Some(Engine::CloudNativePg),
+                "k8s.mariadb.com" => Some(Engine::MariaDb),
+                _ => None,
+            }
+        }
+        fn keep<T: Clone>(
+            new: &mut Read<T>,
+            old: &Read<T>,
+            engine: Engine,
+            group: impl Fn(&T) -> &str,
+        ) {
+            if new
+                .items
+                .iter()
+                .any(|i| engine_of(group(i)) == Some(engine))
+            {
+                return;
+            }
+            new.items.extend(
+                old.items
+                    .iter()
+                    .filter(|i| engine_of(group(i)) == Some(engine))
+                    .cloned(),
+            );
+        }
+        for (engine, before) in &previous.engines {
+            let now = self.engines.iter().find(|(e, _)| e == engine);
+            let failed = matches!(now, Some((_, c)) if *c != Coverage::Complete && *c != Coverage::NotServed);
+            if *before != Coverage::Complete || !failed || self.retained.contains(engine) {
+                continue;
+            }
+            keep(&mut self.databases, &previous.databases, *engine, |d| {
+                &d.identity.group
+            });
+            keep(&mut self.backups, &previous.backups, *engine, |b| {
+                &b.identity.group
+            });
+            keep(&mut self.schedules, &previous.schedules, *engine, |s| {
+                &s.identity.group
+            });
+            self.retained.push(*engine);
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 //! The verdict an Inspector opens with: one state, why it is so, and what
 //! to look at next, computed from the evidence by one pure function.
 use super::coroot::{CorootState, DatabaseReport};
+use super::coverage::{coroot_archiving, operator_archiving};
 use super::state::severity;
 use super::*;
 use crate::HealthIndicator;
@@ -210,13 +211,19 @@ pub fn verdict(
         findings.push(Finding::new(Info, operator, "No backup schedule"));
     }
     let archiving = archiving(db, report);
+    // Archiving is whoever reported it; a disagreement is both's.
+    let archiving_by = match (operator_archiving(db), coroot_archiving(report)) {
+        (Some(_), Some(_)) => Source::Both,
+        (None, Some(_)) => Source::Coroot,
+        _ => Source::Operator,
+    };
     match archiving {
         Archiving::Failing => findings.push(
-            Finding::new(Warning, operator, "WAL archiving is failing")
+            Finding::new(Warning, archiving_by, "WAL archiving is failing")
                 .next("Restores reach only the last completed backup until it works"),
         ),
         Archiving::Disagree => findings.push(
-            Finding::new(Warning, operator, Archiving::Disagree.label())
+            Finding::new(Warning, Source::Both, Archiving::Disagree.label())
                 .next("The restore window stops at the last completed backup"),
         ),
         _ => {}
@@ -265,9 +272,14 @@ pub fn verdict(
         if let Fact::Known(lag) = lag_of(instance, report)
             && lag.seconds > LAG_WARNING_SECONDS
         {
+            // The finding is whoever measured the lag.
+            let by = match lag.source {
+                LagSource::Coroot => Source::Coroot,
+                LagSource::Operator => Source::Operator,
+            };
             findings.push(Finding::new(
                 Warning,
-                Source::Coroot,
+                by,
                 format!(
                     "{} lags {:.0} s behind ({})",
                     instance.name,
@@ -297,7 +309,7 @@ pub fn verdict(
     let worst = |source: Source| {
         findings
             .iter()
-            .filter(|finding| finding.source == source)
+            .filter(|finding| finding.source == source || finding.source == Source::Both)
             .map(|finding| finding.health)
             .max_by_key(|health| severity(*health))
     };

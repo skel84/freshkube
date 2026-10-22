@@ -173,7 +173,16 @@ fn notices(inv: &Inventory) -> Vec<String> {
     }
     for (engine, coverage) in &inv.engines {
         if *coverage != Coverage::NotServed && *coverage != Coverage::Complete {
-            lines.push(format!("{}: {}", engine.label(), coverage.label()));
+            lines.push(format!(
+                "{}: {}{}",
+                engine.label(),
+                coverage.label(),
+                if inv.retained.contains(engine) {
+                    " · last read retained"
+                } else {
+                    ""
+                }
+            ));
         }
     }
     for (name, coverage, stale, at) in [

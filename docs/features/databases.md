@@ -94,7 +94,7 @@ shows as the `PrimarySwitched` condition False with reason `SwitchPrimary`; it
 is **stuck** when the requested primary differs from the current one for more
 than 10 minutes, measured from that condition's transition. It is Unknown when
 the requested primary or the time is not reported, never stuck without a time.
-The CRD has no ready-replica count (instances ready is Unknown). A Backup with
+The CRD has no ready-replica count (instances ready is Unknown). A schedule's runs are Jobs the page does not read and the status keeps no run time, so a MariaDB with a schedule and no run Backup shows its last good backup as Unknown, never none. A Backup with
 `spec.schedule` is a schedule and reports no run time; one without is a single
 run, mapped from its `Complete` condition (`JobComplete` completed, `JobFailed`
 failed: the operator sets that condition True on failure too, `JobRunning`
@@ -109,9 +109,9 @@ fact. A CloudNativePG cluster is `<cluster>:<namespace>:DatabaseCluster:<name>`.
 
 Core reads the applications list and each wanted database's page
 (`databases::coroot::read`), at most 10 pages at once, in 45 seconds, over the
-project and cluster the open entry's `coroot::Link` names. Three states keep
+project and cluster the open entry's `coroot::Link` names. Four states keep
 the operator's data: no Coroot (not connected, no link, or no project), the
-application not found, and unreachable, which dims the last answer and does not
+application not found, the application found with no report for the engine, and unreachable, which dims the last answer and does not
 use it. Past the cap a database is "not read". The page asks only after the
 inventory lands and only while shown; hiding drops the read, a different
 connection or link restarts it, and answers for an older read are rejected
@@ -203,7 +203,7 @@ Open in Resources retains access to the full object status.
 `unsupported`, `failed`, `empty`, `backup-refused`, `partial`, `old`,
 `backup-failed`, `no-primary`, `stale`, `no-backup`, `no-schedule`, `suspended`,
 `cert-expiring`, `switchover-stuck`, `mariadb`, `coroot-none`,
-`coroot-not-found`, `coroot-unreachable`, `coroot-disagree` and `lag-high`. Every name is invented: `orders-db`, `ledger-db`, namespace
+`coroot-not-found`, `coroot-no-report`, `coroot-unreachable`, `coroot-disagree`, `lag-high` and `scheduled-only`. Every name is invented: `orders-db`, `ledger-db`, namespace
 `shop`. The default has `orders-db` (CloudNativePG) and `ledger-db` (MariaDB), an
 active backup, a completed plugin backup and an orphaned backup, with Coroot
 flagging slow MariaDB queries the operator does not. The `old` shape has consistent creation/start/end times more

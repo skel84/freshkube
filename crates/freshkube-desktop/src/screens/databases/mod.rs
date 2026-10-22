@@ -263,11 +263,20 @@ impl DatabasesScreen {
                 .clone()
                 .map(|reader| cx.on_release(move |_, cx| reader.want(id, false, cx)));
         }
-        if let Some(reader) = &new {
-            reader.want(cx.entity_id(), self.visible, cx);
-        }
+        self.want_coroot(cx);
         self.read_coroot(cx);
         cx.notify();
+    }
+
+    /// Tells Observability whether this page wants Coroot connected: only
+    /// while shown, and only when the open entry has a Coroot link.
+    fn want_coroot(&self, cx: &mut Context<Self>) {
+        let Some(input) = &self.coroot else {
+            return;
+        };
+        if let Some(reader) = &input.reader {
+            reader.want(cx.entity_id(), self.visible && input.link.is_ok(), cx);
+        }
     }
 
     /// The inventory changed: what Coroot says of it is asked again.
@@ -482,11 +491,7 @@ impl ScreenPanel for DatabasesScreen {
         // Hiding drops the Coroot read with the inventory's.
         let again = self.loader.set_visible(visible, ON_SHOW, cx);
         let coroot_again = self.evidence.set_visible(visible, ON_SHOW, cx);
-        if let Some(input) = &self.coroot
-            && let Some(reader) = &input.reader
-        {
-            reader.want(cx.entity_id(), visible, cx);
-        }
+        self.want_coroot(cx);
         if again {
             self.read(cx)
         } else if coroot_again {

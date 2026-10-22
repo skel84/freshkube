@@ -426,3 +426,137 @@ fn application_ids_follow_coroots_kinds() {
         AppId::new("core-fra:shop:StatefulSet:ledger-db")
     );
 }
+
+#[test]
+fn an_operators_lag_is_the_operators_finding_and_counts_in_its_state() {
+    let inv = example::inventory(now());
+    let mut db = inv.databases.items[1].clone();
+    db.instances[1].lag = Fact::Known(Lag {
+        seconds: 45.,
+        source: LagSource::Operator,
+    });
+    let v = verdict_of(&db, &inv, &CorootState::NotRead);
+    assert_eq!(v.state.health, HealthIndicator::Warning);
+    assert_eq!(v.state.source, Source::Operator);
+    let finding = v.problems().next().unwrap();
+    assert_eq!(finding.source, Source::Operator);
+    assert!(finding.why.contains("the operator"));
+    // Coroot's own measurement is Coroot's.
+    let mut found = report(&db);
+    found.lag.insert(
+        "ledger-db-1".into(),
+        Lag {
+            seconds: 50.,
+            source: LagSource::Coroot,
+        },
+    );
+    let v = verdict_of(&db, &inv, &read(found));
+    assert_eq!(v.problems().next().unwrap().source, Source::Coroot);
+}
+
+#[test]
+fn archiving_findings_name_who_reported_them() {
+    let inv = example::inventory(now());
+    let mut db = inv.databases.items[0].clone();
+    db.conditions.retain(|c| c.kind != "ContinuousArchiving");
+    let mut found = report(&db);
+    found.archiving = Some(Status::Critical);
+    let v = verdict_of(&db, &inv, &read(found.clone()));
+    let finding = v.problems().find(|f| f.why.contains("archiving")).unwrap();
+    assert_eq!(finding.source, Source::Coroot, "only Coroot reported it");
+    assert_eq!(v.state.source, Source::Coroot);
+    db.conditions.push(Condition {
+        kind: "ContinuousArchiving".into(),
+        status: "False".into(),
+        reason: "ContinuousArchivingFailing".into(),
+        transition_time: None,
+        observed_generation: None,
+        current: true,
+    });
+    let v = verdict_of(&db, &inv, &read(found.clone()));
+    assert_eq!(
+        v.problems()
+            .find(|f| f.why.contains("archiving"))
+            .unwrap()
+            .source,
+        Source::Both
+    );
+    let v = verdict_of(&db, &inv, &CorootState::NotRead);
+    assert_eq!(
+        v.problems()
+            .find(|f| f.why.contains("archiving"))
+            .unwrap()
+            .source,
+        Source::Operator
+    );
+}
+
+#[test]
+fn a_mariadb_with_only_a_scheduled_backup_has_an_unknown_last_backup_not_none() {
+    let inv = example::shaped(now(), "scheduled-only");
+    let db = &inv.databases.items[1];
+    assert_eq!(db.engine, Engine::MariaDb);
+    let found = coverage(db, &inv, now());
+    assert_eq!(found.freshness, Freshness::Unknown);
+    assert_eq!(found.restore, Restore::Unknown);
+    let v = verdict_of(db, &inv, &CorootState::NotRead);
+    assert!(v.problems().all(|f| f.why != "No completed backup"));
+    // With no schedule either, or on CloudNativePG, none is still none.
+    let mut bare = inv.clone();
+    bare.schedules.items.retain(|s| s.identity.kind != "Backup");
+    assert_eq!(
+        coverage(&bare.databases.items[1], &bare, now()).freshness,
+        Freshness::None
+    );
+    let mut cnpg = inv.clone();
+    cnpg.backups.items.clear();
+    assert_eq!(
+        coverage(&cnpg.databases.items[0], &cnpg, now()).freshness,
+        Freshness::None
+    );
+}
+
+#[test]
+fn a_refused_engine_keeps_its_last_good_rows_as_retained_while_the_other_answers() {
+    let at = now();
+    let previous = example::inventory(at);
+    let mut fresh = example::inventory(at);
+    fresh.engines[1].1 = Coverage::Refused;
+    fresh.databases.items.remove(1);
+    fresh
+        .backups
+        .items
+        .retain(|b| b.identity.group != "k8s.mariadb.com");
+    fresh
+        .schedules
+        .items
+        .retain(|s| s.identity.group != "k8s.mariadb.com");
+    fresh.databases.coverage = Coverage::Refused;
+    fresh.retain(&previous);
+    assert_eq!(fresh.retained, vec![Engine::MariaDb]);
+    assert_eq!(fresh.databases.items.len(), 2, "ledger-db is kept");
+    assert!(
+        fresh
+            .backups
+            .items
+            .iter()
+            .any(|b| b.identity.name == "ledger-manual")
+    );
+    assert!(
+        fresh
+            .schedules
+            .items
+            .iter()
+            .any(|s| s.identity.name == "ledger-nightly")
+    );
+    // Nothing is retained for an engine that answers or is simply absent.
+    let mut ok = example::inventory(at);
+    ok.retain(&previous);
+    assert!(ok.retained.is_empty());
+    let mut absent = example::inventory(at);
+    absent.engines[1].1 = Coverage::NotServed;
+    absent.databases.items.remove(1);
+    absent.retain(&previous);
+    assert!(absent.retained.is_empty());
+    assert_eq!(absent.databases.items.len(), 1);
+}

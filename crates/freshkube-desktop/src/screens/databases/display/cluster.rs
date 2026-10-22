@@ -53,7 +53,7 @@ fn row(
     let verdict = databases::verdict(db, inv, coroot, now);
     // A cluster list kept after a failed refresh is not evidence of health.
     let mut state = verdict.state;
-    if inv.databases.stale {
+    if inv.databases.stale || inv.retained.contains(&db.engine) {
         state.health = HealthIndicator::Unknown;
     }
     let found = databases::coverage(db, inv, inv.backups.observed_at);
@@ -455,6 +455,14 @@ fn from_coroot(db: &Database, coroot: &CorootState) -> Section {
                 db.identity.name
             ),
         )],
+        CorootState::NoReport => vec![Field::prose(
+            "Coroot",
+            format!(
+                "Coroot lists {} but has no {} report for it; the operator's answer stands",
+                db.identity.name,
+                databases::coroot::report_name(db.engine)
+            ),
+        )],
         CorootState::NotRead => vec![Field::prose(
             "Coroot",
             "Not read: only the first 10 databases are looked up at once",
@@ -591,9 +599,10 @@ fn sources(db: &Database, inv: &Inventory, coroot: &CorootState) -> Section {
                 None => "Unreachable".into(),
             },
         ),
-        CorootState::NoCoroot(_) | CorootState::AppNotFound | CorootState::NotRead => {
-            Field::prose("Coroot read", "None")
-        }
+        CorootState::NoCoroot(_)
+        | CorootState::AppNotFound
+        | CorootState::NoReport
+        | CorootState::NotRead => Field::prose("Coroot read", "None"),
     });
     fields.push(Field::prose(
         "Lag",

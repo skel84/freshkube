@@ -895,3 +895,61 @@ fn both_operators_failing_differently_say_one_line_each() {
     assert!(notice.contains("Backups: Partial / capped"), "{notice}");
     assert!(!notice.contains("PostgreSQL"), "{notice}");
 }
+
+#[test]
+fn a_coroot_app_without_a_report_is_not_called_missing() {
+    use databases::coroot::{CorootState, Evidence};
+    let inv = databases::example::inventory(at());
+    let evidence = Evidence {
+        states: inv
+            .databases
+            .items
+            .iter()
+            .map(|db| (db.identity.uid.clone(), CorootState::NoReport))
+            .collect(),
+    };
+    let display = super::display::Display::new(Some(&inv), &evidence, Mode::Clusters, at());
+    let row = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "orders-db")
+        .unwrap();
+    let value = &row
+        .sections
+        .iter()
+        .find(|s| s.id == "coroot")
+        .unwrap()
+        .fields[0]
+        .value;
+    assert!(value.contains("has no Postgres report"), "{value}");
+    assert!(!value.contains("lists no application"));
+}
+
+#[test]
+fn a_failed_operator_keeps_stale_rows_that_say_so_and_never_read_healthy() {
+    let previous = databases::example::inventory(at());
+    let mut fresh = databases::example::inventory(at());
+    fresh.engines[1].1 = Coverage::Refused;
+    fresh.databases.items.remove(1);
+    fresh.databases.coverage = Coverage::Refused;
+    fresh.retain(&previous);
+    let display = display_of(&fresh, Mode::Clusters);
+    let ledger = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "ledger-db")
+        .expect("kept");
+    assert_eq!(ledger.cells[4], "Unknown");
+    assert_eq!(ledger.chip, None);
+    let orders = display
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "orders-db")
+        .unwrap();
+    assert_eq!(orders.cells[4], "Healthy");
+    let notice = display.notice.unwrap();
+    assert!(
+        notice.contains("MariaDB · MariaDB operator: Not permitted · last read retained"),
+        "{notice}"
+    );
+}

@@ -156,6 +156,15 @@ pub fn coverage<'a>(
         .items
         .iter()
         .any(|schedule| uncertain(schedule.cluster.as_ref(), db, schedule.created));
+    // The MariaDB operator records a scheduled Backup's runs as Jobs, which
+    // are not read, and its status keeps no time of a run: with a schedule
+    // and no run Backup the last good backup is unknown, not absent.
+    let freshness =
+        if freshness == Freshness::None && db.engine == Engine::MariaDb && !schedules.is_empty() {
+            Freshness::Unknown
+        } else {
+            freshness
+        };
     let no_schedule = schedules.is_empty() && inventory.schedules.complete() && !uncertain_schedule;
     let restore = if freshness == Freshness::None {
         Restore::NoCompletedBackup
@@ -196,7 +205,7 @@ impl Archiving {
 }
 
 /// The operator's side: a current `ContinuousArchiving` condition.
-fn operator_archiving(db: &Database) -> Option<bool> {
+pub(super) fn operator_archiving(db: &Database) -> Option<bool> {
     let condition = db
         .conditions
         .iter()
@@ -207,7 +216,7 @@ fn operator_archiving(db: &Database) -> Option<bool> {
         _ => None,
     }
 }
-fn coroot_archiving(report: Option<&super::coroot::DatabaseReport>) -> Option<bool> {
+pub(super) fn coroot_archiving(report: Option<&super::coroot::DatabaseReport>) -> Option<bool> {
     use crate::coroot::Status;
     match report?.archiving? {
         Status::Ok | Status::Info => Some(true),

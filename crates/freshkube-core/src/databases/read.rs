@@ -235,6 +235,7 @@ async fn read_cnpg(client: &Client, namespace: Option<&str>, at: DateTime<Utc>) 
     Inventory {
         discovery: Coverage::Complete,
         engines: Vec::new(),
+        retained: Vec::new(),
         databases,
         backups,
         schedules,
@@ -291,6 +292,7 @@ async fn read_mariadb(client: &Client, namespace: Option<&str>, at: DateTime<Utc
     Inventory {
         discovery: Coverage::Complete,
         engines: Vec::new(),
+        retained: Vec::new(),
         databases: projected,
         backups: runs,
         schedules,

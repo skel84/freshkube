@@ -243,6 +243,7 @@ pub fn inventory(at: DateTime<Utc>) -> Inventory {
             (Engine::CloudNativePg, Coverage::Complete),
             (Engine::MariaDb, Coverage::Complete),
         ],
+        retained: Vec::new(),
         databases: read(vec![db, maria], at),
         backups: read(vec![backup, running, orphan, manual], at),
         schedules: read(vec![daily, nightly], at),
@@ -303,6 +304,11 @@ pub fn coroot(at: DateTime<Utc>, shape: &str, inv: &Inventory) -> Evidence {
         "coroot-not-found" => {
             return Evidence {
                 states: uids().map(|uid| (uid, CorootState::AppNotFound)).collect(),
+            };
+        }
+        "coroot-no-report" => {
+            return Evidence {
+                states: uids().map(|uid| (uid, CorootState::NoReport)).collect(),
             };
         }
         "coroot-unreachable" => {
@@ -433,6 +439,12 @@ pub fn shaped(at: DateTime<Utc>, shape: &str) -> Inventory {
                 at - Duration::minutes(25),
             ));
             db.primary_changed = Some(at - Duration::minutes(25));
+        }
+        // A MariaDB with a schedule whose runs are Jobs the page does not read.
+        "scheduled-only" => {
+            inv.backups
+                .items
+                .retain(|b| b.identity.name != "ledger-manual");
         }
         "mariadb" => {
             inv.databases.items.remove(0);

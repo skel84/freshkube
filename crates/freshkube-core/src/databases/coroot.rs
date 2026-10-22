@@ -102,6 +102,9 @@ pub enum CorootState {
     NoCoroot(Absence),
     /// Coroot lists no such application.
     AppNotFound,
+    /// Coroot lists the application, but its page holds no report for the
+    /// engine (Coroot did not recognise it as that database).
+    NoReport,
     /// Coroot could not be read. The last answer is dimmed and not used.
     Unreachable {
         why: ReadError,
@@ -309,7 +312,7 @@ pub async fn read(
             let state = match page {
                 Ok(view) => match project(&view, want.engine, now) {
                     Some(report) => CorootState::Read(Box::new(report)),
-                    None => CorootState::AppNotFound,
+                    None => CorootState::NoReport,
                 },
                 Err(ReadError::Missing) => CorootState::AppNotFound,
                 Err(why) => CorootState::Unreachable { why, last: None },
