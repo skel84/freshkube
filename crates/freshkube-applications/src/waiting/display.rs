@@ -810,6 +810,13 @@ fn item_detail(waiting: &Waiting, app: &App, item: &Item, now: DateTime<Utc>) ->
             fields.push(("GitHub", note.clone().into(), false));
         }
     }
+    if !app.pulls_read {
+        fields.push((
+            "Pull request",
+            "Not looked up: GitHub isn't set up, so a Freight is named by its commit".into(),
+            false,
+        ));
+    }
     match &item.pull {
         Some(PullRead::Unread { rate_limit, why }) => fields.push((
             "Pull request",

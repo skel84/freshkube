@@ -649,9 +649,7 @@ impl Handle {
 
 impl GitHub for Handle {
     async fn pulls_for_commit(&self, repo: &str, sha: &str) -> Result<Vec<PullRequest>, Failure> {
-        check_repo(repo)?;
-        check_sha(sha)?;
-        Ok(self.client.pulls(repo, sha, self.spare).await?)
+        Ok(self.pulls_for_commit_or(repo, sha).await?)
     }
 
     async fn pull(&self, repo: &str, number: u64) -> Result<PullRequest, Failure> {

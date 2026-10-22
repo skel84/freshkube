@@ -646,7 +646,7 @@ async fn a_project_late_past_the_budget_is_not_read_never_dropped() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_pull_request_late_past_the_budget_is_unread_never_dropped() {
     let api = Server::new(|_| {
-        std::thread::sleep(std::time::Duration::from_secs(6));
+        std::thread::sleep(std::time::Duration::from_secs(3));
         Reply::json(200, "", &json!([]))
     });
     let mut world = projects_world(&["shop"]);
@@ -661,14 +661,17 @@ async fn a_pull_request_late_past_the_budget_is_unread_never_dropped() {
         })],
     );
     let at = at(Some(Handle::trusting(&api.address, None)));
-    let budget = std::time::Duration::from_secs(2);
+    // The client's own deadline is 5 s, so the budget's is the one that ends it.
+    let budget = std::time::Duration::from_secs(1);
     let waiting = derive(&live::read(&world, &at, now(), budget).await);
     let item = &app(&waiting, "shop").items[0];
     match &item.pull {
         Some(PullRead::Unread { rate_limit, why }) => {
             assert!(!rate_limit);
-            // The budget ran out, or the client's own deadline did first.
-            assert!(why.starts_with("Pull requests weren't read: "), "{why}");
+            assert_eq!(
+                why,
+                "Pull requests weren't read: no answer within the read's 1 s"
+            );
         }
         other => panic!("{other:?}"),
     }

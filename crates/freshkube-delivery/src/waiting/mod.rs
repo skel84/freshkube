@@ -241,6 +241,9 @@ pub struct App {
     pub listed: Vec<Listed>,
     /// How many older Freight the cap left out of what was read.
     pub older: usize,
+    /// Whether pull requests are looked up at all: false when GitHub isn't
+    /// set up.
+    pub pulls_read: bool,
 }
 
 impl App {
@@ -655,6 +658,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
         stages: Vec::new(),
         listed: Vec::new(),
         older: 0,
+        pulls_read: read.pulls_read,
     };
     let Some(freight) = project.freight.read() else {
         return not_read(
@@ -724,7 +728,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
     let last = finals(&ordered);
     let mut gaps: Vec<(StageGap, Vec<Item>)> = last
         .iter()
-        .map(|stage| stage_gap(stage, &ordered, &newest, freight, project, read))
+        .map(|stage| stage_gap(stage, &ordered, &newest, freight, project))
         .collect();
     // The furthest behind first: the most Freight, then the oldest wait.
     gaps.sort_by(|(a, a_items), (b, b_items)| {
@@ -780,6 +784,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
         stages: stage_lines,
         listed,
         older: left,
+        pulls_read: read.pulls_read,
     }
 }
 
@@ -795,12 +800,11 @@ fn stage_gap(
     newest: &[&Freight],
     all: &[Freight],
     project: &Project,
-    read: &Read,
 ) -> (StageGap, Vec<Item>) {
     let (ahead, at_least) = gap(stage, newest, all);
     let mut items: Vec<Item> = ahead
         .iter()
-        .map(|freight| item(freight, stage, ordered, project, read))
+        .map(|freight| item(freight, stage, ordered, project))
         .collect();
     // Oldest first: by when it reached the Stage before production, else by
     // when it was made.
@@ -841,13 +845,7 @@ fn stage_gap(
     (gap, items)
 }
 
-fn item(
-    freight: &Freight,
-    last: &Stage,
-    ordered: &[&Stage],
-    project: &Project,
-    read: &Read,
-) -> Item {
+fn item(freight: &Freight, last: &Stage, ordered: &[&Stage], project: &Project) -> Item {
     // The furthest Stage other than `last` that has held it.
     let held = |stage: &&&Stage| {
         stage
@@ -882,12 +880,8 @@ fn item(
             .iter()
             .any(|name| freight.verified_in.contains(name));
     let commit = freight.commits.first().map(|c| c.id.clone());
-    let pull = project.pulls.get(&freight.name).cloned().or_else(|| {
-        (!read.pulls_read).then(|| PullRead::Unread {
-            rate_limit: false,
-            why: "Pull requests aren't read".into(),
-        })
-    });
+    // GitHub not set up is no failed read: the Freight keeps its commit.
+    let pull = project.pulls.get(&freight.name).cloned();
     let title = match &pull {
         Some(PullRead::Found(pull)) => pull.title.clone(),
         _ => None,

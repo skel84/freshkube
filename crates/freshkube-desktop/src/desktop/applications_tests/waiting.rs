@@ -645,3 +645,37 @@ fn a_capped_project_says_how_many_older_freight_are_not_listed_where_it_shows(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn with_github_not_set_up_a_row_keeps_its_commit_and_the_inspector_says_why(
+    cx: &mut TestAppContext,
+) {
+    let mut waiting_read = core_waiting::example::read(chrono::Utc::now());
+    waiting_read.pulls_read = false;
+    if let freshkube_delivery::source::Source::Read(projects) = &mut waiting_read.projects {
+        projects
+            .iter_mut()
+            .for_each(|project| project.pulls.clear());
+    }
+    let (_runtime, handle, view) = answered(cx, core_waiting::derive(&waiting_read));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = waiting(&view, cx);
+        let page = page.read(cx);
+        let row = page
+            .display
+            .rows
+            .iter()
+            .find(|row| row.key.as_ref() == "checkout/wonky-otter")
+            .unwrap();
+        assert_eq!((row.named.as_ref(), row.by_commit), ("a1f3c9e", true));
+        assert!(
+            row.detail.fields.iter().any(|(label, value, _)| {
+                *label == "Pull request" && value.contains("GitHub isn't set up")
+            }),
+            "{:?}",
+            row.detail.fields
+        );
+    })
+    .unwrap();
+}
