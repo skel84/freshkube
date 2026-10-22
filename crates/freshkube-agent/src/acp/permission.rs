@@ -3,7 +3,7 @@
 //!
 //! This is the second line. The first is the profile's lock-down, which
 //! leaves the agent no other tool to ask for. A permission request may name
-//! only a call's id (opencode's and Codex's do), so the decision rests on
+//! only a call's id (opencode's does), so the decision rests on
 //! what the call's own notifications said, as well as on what the request
 //! says.
 //!
@@ -11,8 +11,10 @@
 //! `freshkube` and one of the four tool names, in one of the forms agents use:
 //!
 //! - `freshkube_get_object`: opencode's name for an MCP tool;
-//! - `mcp__freshkube__get_object`: Claude Code's;
-//! - `mcp.freshkube.get_object`, or an input of `{server, tool}`: Codex's.
+//! - `mcp__freshkube__get_object`: a double-underscore prefix, which some
+//!   agents use;
+//! - `mcp.freshkube.get_object`, or an input of `{server, tool}`: a dotted
+//!   name or the server named in the input, which others use.
 //!
 //! A name that merely contains ours, such as `freshkube_get_object_extra` or
 //! `other_freshkube_get_object`, is not ours. The identity is the agent's own
@@ -266,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_names_the_server_in_the_input() {
+    fn a_server_named_in_the_input_is_read() {
         let calls = Calls::default();
         let call = ToolCall::new("t1", "Run tool")
             .raw_input(json!({"server": "freshkube", "tool": "get_object", "arguments": {}}));

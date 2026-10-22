@@ -22,7 +22,7 @@ async fn the_child_gets_the_locked_environment() {
         std::env::set_var("KUBECONFIG", &kubeconfig);
         std::env::set_var("AWS_SECRET_ACCESS_KEY", "do-not-leak-this-value");
         std::env::set_var("AWS_ACCESS_KEY_ID", "AKIAEXAMPLE");
-        std::env::set_var("ANTHROPIC_API_KEY", "do-not-leak-this-key");
+        std::env::set_var("MODEL_PROVIDER_API_KEY", "do-not-leak-this-key");
     }
 
     let stub = stub().await;

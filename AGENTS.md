@@ -7,6 +7,7 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 ```
 crates/
 ├── talos-rs/            Talos gRPC client
+├── freshkube-agent/     the agent in the dock: the ACP client, the opencode profile and its lock-down, the transcript; no GPUI, not yet used by desktop
 ├── freshkube-cli/       the read commands of the binary: check and get, JSON and exit codes; no GPUI
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-followed/  what the user follows (a pod, a change, an incident): the app-wide owner, its rules, the toasts and the bell; no desktop types
@@ -264,6 +265,7 @@ Behaviour that is not a rule lives in one doc per feature, each starting with it
 - Databases (`core/databases/`, `screens/databases/`): [docs/features/databases.md](docs/features/databases.md). CloudNativePG first; no Secret or credential reads or mutations.
 - Resources, the dock, shells and ports (`crates/freshkube-resources/`, `desktop/dock/`): [docs/features/resources.md](docs/features/resources.md). Rules kept here: a dock log tab reads while it is open, on any page, and so does a followed item (below), and nothing else reads out of sight; Resources reads only while its page shows; Secret values never reach the detail pane's document, search or a link's resolution (metadata-only reads).
 - Deep links, Copy link and opening a `freshkube://open` link (`crates/freshkube-nav/src/view.rs`, `desktop/deep_link/`): [docs/features/deep-links.md](docs/features/deep-links.md). Rules kept here: a link holds identities only in closed, bounded types and only navigates; Copy link always means a Freshkube link (the change page's is Copy Kargo link).
+- The agent in the dock (`crates/freshkube-agent/`): [docs/features/agent.md](docs/features/agent.md). The agent's only tools are Freshkube's four reads; it gets no credential, an empty workspace and a cleared environment; the token goes only into `session/new`; tests and CI never run opencode.
 - Applications, the Changes list and the change page (`crates/freshkube-applications/`): [docs/features/applications.md](docs/features/applications.md).
 - The Nodes workspace and its node pane (`desktop/nodes/`): [docs/features/nodes.md](docs/features/nodes.md).
 - The frame, the Overview and the Kubernetes summary session (`desktop/shell/`, `presentation/`, `kubernetes_summary/`): [docs/features/shell.md](docs/features/shell.md).

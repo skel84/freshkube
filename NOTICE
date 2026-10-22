@@ -3,6 +3,23 @@ talos-pilot, copyright Ken Udovic, under the same licence.
 
 The application ships the following third-party components.
 
+agent-client-protocol 2.2.0, with agent-client-protocol-schema 1.9.1 and
+agent-client-protocol-derive 2.2.0
+  The client side of the Agent Client Protocol, which the agent in the dock
+  speaks to the person's own agent over its stdio.
+  https://github.com/agentclientprotocol/rust-sdk
+  https://github.com/agentclientprotocol/agent-client-protocol
+  Copyright Zed <hi@zed.dev> (the crates' authors)
+  Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
+  Used unmodified, as libraries.
+
+rmcp 3.5.0
+  The client the scripted agent reads Freshkube's tools with, in the example
+  agent that tests and the fixture use.
+  https://github.com/modelcontextprotocol/rust-sdk
+  Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
+  Used unmodified, as a library.
+
 alacritty_terminal 0.26.0
   The terminal emulator behind the pod shell.
   https://github.com/alacritty/alacritty

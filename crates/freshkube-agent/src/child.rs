@@ -15,6 +15,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::task::AbortHandle;
 
 /// How long a terminated group has before it is killed.
+#[cfg(unix)]
 pub const KILL_AFTER: Duration = Duration::from_secs(2);
 
 /// Both ends of an agent's stdio, the workspace it works in, and what ends it.
@@ -162,7 +163,6 @@ mod unix {
 #[cfg(windows)]
 mod windows {
     use super::*;
-    use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,

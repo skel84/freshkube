@@ -23,7 +23,7 @@ use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio_util::sync::CancellationToken;
 
@@ -132,7 +132,7 @@ impl ServerHandler for Handler {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let arguments = request.arguments.unwrap_or_else(Map::new);
+        let arguments = request.arguments.unwrap_or_default();
         let name = arguments.get("name").and_then(Value::as_str).unwrap_or("?");
         let kind = arguments.get("kind").and_then(Value::as_str).unwrap_or("?");
         let namespace = arguments
