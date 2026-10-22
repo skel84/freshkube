@@ -10,6 +10,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Sizable,
     button::{Button, ButtonVariants},
+    v_flex,
 };
 
 /// The tallest the banners under the fix bar grow, in dp, before they scroll.
@@ -154,7 +155,7 @@ impl ChangePage {
 
     /// A refresh that failed over an earlier answer, then what the change
     /// may be missing.
-    fn render_notes(&self, cx: &App) -> Option<AnyElement> {
+    fn render_notes(&self, short: bool, cx: &App) -> Option<AnyElement> {
         let refresh = self.stale.as_ref().map(|(text, label)| {
             ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
                 .id("change-stale")
@@ -181,23 +182,46 @@ impl ChangePage {
         if refresh.is_none() && missing.is_none() && pull.is_none() {
             return None;
         }
+        let notes = page::inset()
+            .id("change-notes")
+            .test_support()
+            .flex()
+            .flex_col()
+            .gap(dp(page::PANE_PADDING_Y))
+            // A short window caps the block, so the banners leave the trail
+            // its room; any other shows every banner whole.
+            .when(short, |this| {
+                let scroll = self.notes_scroll.clone();
+                this.max_h(dp(NOTES_MAX_HEIGHT))
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .track_scroll(&self.notes_scroll)
+                    .on_scroll_wheel(move |event, window, cx| {
+                        // The block keeps the wheel until it reaches its end
+                        // in that direction, instead of also scrolling the page.
+                        let delta = event.delta.pixel_delta(window.line_height()).y;
+                        let (offset, most) = (scroll.offset().y, scroll.max_offset().y);
+                        let more = if delta < gpui_kit::px(0.) {
+                            offset > -most
+                        } else {
+                            offset < gpui_kit::px(0.)
+                        };
+                        if most > gpui_kit::px(0.) && more {
+                            cx.stop_propagation();
+                        }
+                    })
+            })
+            .children(refresh)
+            .children(missing)
+            .children(pull);
+        // The edge below a capped block is its own element, which the block's
+        // scrolling can't move, so a clipped banner reads as scrollable.
         Some(
-            page::inset()
-                .id("change-notes")
-                .test_support()
-                // Capped, so the banners leave the trail its room in a short
-                // window; the bottom edge reads a clipped block as scrollable.
-                .border_b_1()
-                .border_color(palette(cx).line)
-                .max_h(dp(NOTES_MAX_HEIGHT))
-                .overflow_y_scroll()
-                .restrict_scroll_to_axis()
-                .flex()
-                .flex_col()
-                .gap(dp(page::PANE_PADDING_Y))
-                .children(refresh)
-                .children(missing)
-                .children(pull)
+            v_flex()
+                .child(notes)
+                .when(short, |this| {
+                    this.child(div().h(gpui_kit::px(1.)).w_full().bg(palette(cx).line))
+                })
                 .into_any_element(),
         )
     }
@@ -252,7 +276,8 @@ impl Render for ChangePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
-        let notes = self.render_notes(cx);
+        let short = page::is_short(window);
+        let notes = self.render_notes(short, cx);
         let summary = self.render_summary(window, cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,
@@ -264,10 +289,9 @@ impl Render for ChangePage {
             }
             None => self.render_table(window, cx),
         };
-        let short = page::is_short(window);
         let least = self.split.short_height(
             page::page_width(window) >= inspector::SPLIT_WIDTH,
-            self.selected().is_some(),
+            self.selected.is_some(),
         );
         // The keys live on a wrapper drawn in every state.
         div()

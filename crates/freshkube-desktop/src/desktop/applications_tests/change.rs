@@ -2077,7 +2077,55 @@ fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext)
                 table.top() + row <= page.bottom(),
                 "table {table:?} starts below the page {page:?}"
             );
+            // A wheel over the block scrolls the block and leaves the page.
+            let banner = window.find("change-missing").bounds().top();
+            window.scroll(
+                "change-notes",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-20.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(
+                window.find("change-missing").bounds().top() < banner,
+                "the block scrolled"
+            );
+            assert_eq!(
+                window.find("change-table-scroll").bounds().top(),
+                table.top(),
+                "the page stayed"
+            );
         })
         .unwrap();
     }
+}
+
+/// #887: with room to spare, every banner shows whole and nothing scrolls.
+#[gpui_kit::test]
+fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage_of(cx, 1280., 880., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_some());
+        assert!(!freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let table = window.find("change-table-scroll").bounds();
+        for id in ["change-missing", "change-pull"] {
+            let banner = window.find(id).bounds();
+            assert!(
+                banner.top() >= notes.top() && banner.bottom() <= notes.bottom(),
+                "{id} {banner:?} cut by {notes:?}"
+            );
+        }
+        assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+    })
+    .unwrap();
 }
