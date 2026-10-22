@@ -1,6 +1,6 @@
 //! Needs attention, on Overview and in a node's pane, and where its
 //! subjects open.
-use super::super::Pilot;
+use super::super::{Page, Pilot};
 use crate::logs::TalosPanel;
 use crate::palette::palette;
 use crate::presentation::attention::{Attention, AttentionRow, Destination};
@@ -28,6 +28,12 @@ impl Pilot {
     ) {
         match target {
             Destination::Page(page) => self.navigate_from_keyboard(page, window, cx),
+            Destination::Alerts => {
+                self.pages.monitoring.update(cx, |monitoring, cx| {
+                    monitoring.show_alerts(crate::monitoring::alerts::Which::Alerts, cx)
+                });
+                self.navigate_from_keyboard(Page::Monitoring, window, cx);
+            }
             Destination::Node(key, tab) => {
                 self.open_node(key, window, cx);
                 self.show_node_tab(tab, window, cx);

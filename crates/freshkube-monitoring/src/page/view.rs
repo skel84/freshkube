@@ -19,7 +19,7 @@ use super::board::Board;
 use super::connection::{Connection, Missing};
 use super::layout::{NARROW, ROW_HEADER};
 use super::markers::MarkerToggle;
-use super::{MonitoringEvent, MonitoringPage, Viewport};
+use super::{MonitoringEvent, MonitoringPage, Section, Viewport};
 use crate::palette::palette;
 use crate::panel::marker_glyph;
 use crate::store::Choice;
@@ -29,6 +29,15 @@ use std::rc::Rc;
 
 impl Render for MonitoringPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // An alert page shows in the dashboard's place, edge to edge.
+        if let Section::Alerts(which) = self.section {
+            return div()
+                .id("monitoring-alerts")
+                .size_full()
+                .min_h_0()
+                .child(self.alerts_page(which).clone())
+                .into_any_element();
+        }
         crate::probe::hit("monitoring-page");
         let _span = crate::perf::span("monitoring.page_render");
         let narrow = freshkube_ui::page::content_width(window) < NARROW;
@@ -56,6 +65,7 @@ impl Render for MonitoringPage {
                     .child(self.render_body(narrow, short, window, cx))
                     .test_support(),
             )
+            .into_any_element()
     }
 }
 

@@ -62,8 +62,13 @@ gpui_kit::assets::icon_assets!(
         GitCommitHorizontal,
         // Deep links: Copy link, and the cards for a link that can't open.
         Link,
-        ShieldX,
         SearchX,
+        // Monitoring's Alerts, Rules and Silences, and their states.
+        BellRing,
+        BellOff,
+        ListChecks,
+        ShieldX,
+        CircleDashed,
     ]
 );
 

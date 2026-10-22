@@ -256,6 +256,17 @@ impl Pilot {
                     .applications
                     .update(cx, |page, cx| page.show_changes(window, cx));
             }
+            // Monitoring's alert pages, in the shape `FRESHKUBE_ALERTS` names.
+            Some(slug @ ("alerts" | "rules" | "silences")) => {
+                use crate::monitoring::alerts::Which;
+                let which = Which::ALL.into_iter().find(|which| which.slug() == slug);
+                if let Some(which) = which {
+                    self.pages
+                        .monitoring
+                        .update(cx, |monitoring, cx| monitoring.show_alerts(which, cx));
+                    self.navigate(Page::Monitoring, window, cx);
+                }
+            }
             Some("kubernetes-only") if self.mode().is_example() => {
                 self.fixture_kubernetes_only(window, cx)
             }
