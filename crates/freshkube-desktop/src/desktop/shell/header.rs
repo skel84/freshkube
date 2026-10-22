@@ -35,7 +35,10 @@ impl Pilot {
         // size in points.
         let insets = freshkube_ui::platform::header_insets();
         // Three parts on a row: the sides share what the search leaves, so
-        // the search sits in the middle. Each side keeps its content's
+        // the search sits in the middle. The bar runs from the leading inset
+        // to the trailing one; each side pads its inner edge by the other
+        // side's inset, so the two differ by as much as the insets do and the
+        // search is centred on the window, not on the bar. Each side keeps its content's
         // width, so the search gives way first. The bar behind them is the
         // window's drag region.
         TitleBar::new()
@@ -51,6 +54,7 @@ impl Pilot {
                     .child(
                         h_flex()
                             .flex_1()
+                            .pr(insets.trailing)
                             .gap(dp(if minimal { 6. } else { 8. }))
                             .children(self.render_menu_button(cx))
                             .child(self.render_context_switcher(minimal, glyph_only_level, cx))
@@ -68,6 +72,7 @@ impl Pilot {
                         h_flex()
                             .flex_1()
                             .justify_end()
+                            .pl(insets.leading)
                             .gap(dp(6.))
                             .when(!minimal, |this| {
                                 this.child(self.render_refresh(cx))
