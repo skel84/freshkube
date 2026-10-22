@@ -146,9 +146,13 @@ impl Switcher {
 
     pub(super) fn stop_summary(&mut self) {
         self.registry.summary_watch.stop();
+        // The alert read goes with the session: nothing of the old
+        // identity publishes once the next one starts.
+        self.registry.alerts_watch.stop();
         let session = self.registry.active_mut();
         session.summary_fixture = None;
         session.summary_session = None;
+        session.alerts = None;
     }
 }
 

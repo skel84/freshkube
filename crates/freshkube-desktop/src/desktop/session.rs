@@ -15,6 +15,7 @@ use freshkube_core::{
 use freshkube_reads::Watch;
 use gpui_kit::Task;
 
+use super::alerts::{AlertFeed, AlertIdentity, AlertRead};
 use super::kubernetes_summary::{SummaryFeed, SummarySession};
 use crate::{backend::AppliedConfig, screens::WorkloadData, state::Snapshot};
 
@@ -26,6 +27,9 @@ pub(super) struct ClusterSession {
     pub(super) summary_health: Option<Result<Arc<WorkloadData>, String>>,
     pub(super) summary_session: Option<SummarySession>,
     pub(super) summary_fixture: Option<Task<()>>,
+    /// The alert read beside the summary: what it was started for and what
+    /// it last published.
+    pub(super) alerts: Option<AlertRead>,
     /// The access this session reads with, once an overview has collected it.
     pub(super) access: Option<AccessIdentity>,
     /// The inspected local configuration it was collected under.
@@ -41,6 +45,7 @@ impl ClusterSession {
             summary_health: None,
             summary_session: None,
             summary_fixture: None,
+            alerts: None,
             access: None,
             access_configuration: None,
             prompted_access: None,
@@ -101,6 +106,9 @@ pub(super) struct Registry {
     /// The active session's driver and delivery. Kept across replacement so
     /// an earlier start can never match a new session's request sequence.
     pub(super) summary_watch: Watch<SummaryFeed, (String, String)>,
+    /// The active session's alert read, keyed by its context, connection and
+    /// metrics scope.
+    pub(super) alerts_watch: Watch<AlertFeed, AlertIdentity>,
 }
 
 impl Registry {
@@ -111,6 +119,7 @@ impl Registry {
             parked: Vec::new(),
             retired: Vec::new(),
             summary_watch: Watch::default(),
+            alerts_watch: Watch::default(),
         }
     }
 
@@ -118,6 +127,7 @@ impl Registry {
     /// can carry over to the next context. Its tasks are dropped with it.
     pub(super) fn reset_active(&mut self) {
         self.summary_watch.stop();
+        self.alerts_watch.stop();
         self.active = ClusterSession::new();
     }
 
