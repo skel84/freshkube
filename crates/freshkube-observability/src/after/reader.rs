@@ -13,6 +13,9 @@ use tokio::sync::oneshot;
 /// ("took too long") wins over the job's.
 const DEADLINE: Duration = Duration::from_secs(55);
 
+/// A little past core's own limit for reading databases' pages.
+const DATABASES_DEADLINE: Duration = Duration::from_secs(50);
+
 /// Reads the connection Observability holds, when a read starts.
 #[derive(Clone)]
 pub struct OutcomeReader {
@@ -157,6 +160,40 @@ impl ReadConnection {
     }
 }
 
+impl ReadConnection {
+    /// What Coroot says of `wanted` databases over `link`'s project and
+    /// cluster, on Tokio. Dropping the job cancels the read.
+    pub fn databases(
+        &self,
+        link: api::Link,
+        wanted: Vec<freshkube_core::databases::coroot::Wanted>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> (
+        Option<OwnedJob>,
+        oneshot::Receiver<Result<freshkube_core::databases::coroot::Evidence, String>>,
+    ) {
+        match &self.0 {
+            Via::Coroot { runtime, provider } => {
+                let provider = provider.clone();
+                let (job, receiver) = spawn_job(
+                    runtime,
+                    DATABASES_DEADLINE,
+                    api::ReadError::Timeout.to_string(),
+                    async move {
+                        Ok(
+                            freshkube_core::databases::coroot::read(&provider, &link, wanted, now)
+                                .await,
+                        )
+                    },
+                );
+                (Some(job), receiver)
+            }
+            #[cfg(any(test, feature = "testing"))]
+            Via::Scripted(script) => (None, script.ask_databases(link, wanted)),
+        }
+    }
+}
+
 impl ObservabilityPage {
     /// The connection a change page reads over, when one is open.
     pub(crate) fn reader_connection(&self) -> Option<ReadConnection> {
@@ -201,9 +238,19 @@ struct Scripted {
     id: api::ProviderId,
     connected: bool,
     asked: Vec<Asked>,
+    databases: Vec<AskedDatabases>,
     connects: usize,
     /// The change pages that want the connection.
     wanting: std::collections::BTreeSet<EntityId>,
+}
+
+/// A read of databases' pages asked of the script.
+#[cfg(any(test, feature = "testing"))]
+pub struct AskedDatabases {
+    pub id: api::ProviderId,
+    pub link: api::Link,
+    pub wanted: Vec<freshkube_core::databases::coroot::Wanted>,
+    answer: Option<oneshot::Sender<Result<freshkube_core::databases::coroot::Evidence, String>>>,
 }
 
 /// A look asked of the script.
@@ -242,6 +289,7 @@ impl Script {
             id: provider.id(),
             connected: true,
             asked: Vec::new(),
+            databases: Vec::new(),
             connects: 0,
             wanting: Default::default(),
         })))
@@ -333,6 +381,60 @@ impl Script {
     pub fn answer_as(&self, index: usize, answer: api::Answer) -> bool {
         let sender = self.0.borrow_mut().asked[index].answer.take();
         sender.is_some_and(|sender| sender.send(Ok(answer)).is_ok())
+    }
+
+    /// Reads of databases asked, answered or not.
+    pub fn databases_asked(&self) -> usize {
+        self.0.borrow().databases.len()
+    }
+
+    /// What the read at `index` was asked: its link and databases.
+    pub fn databases_at(
+        &self,
+        index: usize,
+    ) -> (api::Link, Vec<freshkube_core::databases::coroot::Wanted>) {
+        let script = self.0.borrow();
+        let asked = &script.databases[index];
+        (asked.link.clone(), asked.wanted.clone())
+    }
+
+    /// The connection the read at `index` was asked over.
+    pub fn databases_id_of(&self, index: usize) -> api::ProviderId {
+        self.0.borrow().databases[index].id
+    }
+
+    /// Whether the read at `index` was dropped, as hiding drops it.
+    pub fn databases_dropped(&self, index: usize) -> bool {
+        self.0.borrow().databases[index]
+            .answer
+            .as_ref()
+            .is_none_or(|a| a.is_closed())
+    }
+
+    /// Answers the read at `index`; whether anyone still waited for it.
+    pub fn answer_databases(
+        &self,
+        index: usize,
+        evidence: freshkube_core::databases::coroot::Evidence,
+    ) -> bool {
+        let sender = self.0.borrow_mut().databases[index].answer.take();
+        sender.is_some_and(|sender| sender.send(Ok(evidence)).is_ok())
+    }
+
+    fn ask_databases(
+        &self,
+        link: api::Link,
+        wanted: Vec<freshkube_core::databases::coroot::Wanted>,
+    ) -> oneshot::Receiver<Result<freshkube_core::databases::coroot::Evidence, String>> {
+        let (sender, receiver) = oneshot::channel();
+        let id = self.id();
+        self.0.borrow_mut().databases.push(AskedDatabases {
+            id,
+            link,
+            wanted,
+            answer: Some(sender),
+        });
+        receiver
     }
 
     fn ask(

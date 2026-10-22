@@ -35,6 +35,8 @@ pub(crate) enum PageEvent {
     Link(ResourceLink),
     /// Show a Deployment's revision in Observability.
     Revision(RevisionLink),
+    /// Show a Coroot application in Observability, on a report.
+    Application(freshkube_nav::ObservabilityLink),
     /// Open a part once the window has switched to its workspace entry.
     Switch(SwitchLink),
     /// A Stage action of the change page: Refresh, Reverify, Promote, Abort.
@@ -74,6 +76,12 @@ impl From<ResourceLink> for PageEvent {
 impl From<RevisionLink> for PageEvent {
     fn from(link: RevisionLink) -> Self {
         Self::Revision(link)
+    }
+}
+
+impl From<freshkube_nav::ObservabilityLink> for PageEvent {
+    fn from(link: freshkube_nav::ObservabilityLink) -> Self {
+        Self::Application(link)
     }
 }
 

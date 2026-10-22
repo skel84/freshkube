@@ -430,6 +430,7 @@ impl Pilot {
             page.set_entries(&clusters, project.as_deref(), cx)
         });
         let reader = crate::observability::OutcomeReader::new(&self.pages.observability);
+        self.sync_databases_coroot(&clusters, project.as_deref(), &reader, cx);
         self.pages.applications.update(cx, |page, cx| {
             page.set_coroot(
                 crate::applications::CorootLive {
@@ -439,6 +440,40 @@ impl Pilot {
                 cx,
             )
         });
+    }
+
+    /// Hands the Databases page Observability's connection and the open
+    /// entry's Coroot link, so it reads Coroot only through the project and
+    /// cluster the setup file names for that entry.
+    fn sync_databases_coroot(
+        &mut self,
+        clusters: &[Entry],
+        project: Option<&str>,
+        reader: &crate::observability::OutcomeReader,
+        cx: &mut Context<Self>,
+    ) {
+        use freshkube_core::databases::coroot::Absence;
+        let active = self.switch.active_cluster().map(str::to_owned);
+        let link = match active
+            .as_deref()
+            .and_then(|id| clusters.iter().find(|entry| entry.id == id))
+        {
+            None => Err(Absence::NotLinked),
+            Some(entry) => {
+                freshkube_core::coroot::Link::of(entry, project).map_err(|why| match why {
+                    freshkube_core::coroot::Outcome::NoProjectForEntry => Absence::NoProject,
+                    _ => Absence::NotLinked,
+                })
+            }
+        };
+        let input = crate::screens::CorootInput {
+            reader: Some(reader.clone()),
+            entry: active.unwrap_or_default(),
+            link,
+        };
+        self.pages
+            .databases
+            .update(cx, |page, cx| page.set_coroot(Some(input), cx));
     }
 
     /// Presents a notice and tells subscribers what was said.
@@ -674,6 +709,24 @@ impl Pilot {
             return LinkRoute::Refuse(reconnected_notice(id));
         }
         LinkRoute::Activate(id.clone())
+    }
+
+    /// Where an Observability link goes: only the entry it was made in
+    /// shows its Coroot application, so a link naming another is refused.
+    pub(super) fn route_observability(
+        &self,
+        link: &freshkube_nav::ObservabilityLink,
+    ) -> Result<(), String> {
+        match self.switch.active_cluster() {
+            Some(entry) if entry == link.entry => Ok(()),
+            // Example data has no workspace entry to compare.
+            None if self.mode().is_example() => Ok(()),
+            _ => Err(format!(
+                "Can’t open {} in Observability: it belongs to {}, which isn’t open",
+                link.app.name(),
+                link.entry
+            )),
+        }
     }
 
     /// Sends a link where `route_link` says. True when it has been dealt
