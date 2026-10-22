@@ -304,6 +304,12 @@ impl Render for DatabasesScreen {
         } else {
             self.body(window, cx)
         };
+        // A short window scrolls the page instead of squeezing the split
+        // below its least height, as the other table pages do.
+        let least = self.split.short_height(
+            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.selected.is_some(),
+        );
         let body = div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
@@ -311,6 +317,7 @@ impl Render for DatabasesScreen {
             .flex_col()
             .flex_1()
             .min_h_0()
+            .when(page::is_short(window), |this| this.min_h(dp(least)))
             .child(body);
         div()
             .size_full()
