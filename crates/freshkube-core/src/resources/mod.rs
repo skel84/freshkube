@@ -30,6 +30,7 @@ mod object;
 mod pod_links;
 mod pod_logs;
 mod pod_row;
+mod state;
 mod table;
 mod watch;
 mod workload_pods;
@@ -52,7 +53,7 @@ pub use forward::{
     WorkloadKind, candidates, declared_ports, listen_blocking, listen_local, preferred_port,
     start_forward,
 };
-pub use kinds::{ResourceKind, builtin, builtin_by_gvk};
+pub use kinds::{ResourceKind, builtin, builtin_by_gvk, find as find_kind};
 pub use node_usage::{NodeUsage, list_node_usage};
 pub use object::{
     Condition, ContainerStatus, Diagnosis, Instance, ObjectDocument, Overview, Owner, PodStatus,
@@ -66,6 +67,7 @@ pub use pod_logs::{
 pub use pod_row::{
     Amounts, ContainerFacts, PodFacts, PodUsage, RunState, cpu_millis, list_pod_usage, quantity,
 };
+pub use state::{StatusTone, ready_tone, row_tone, status_tone, tone_column};
 pub use table::{OwnerReference, RowMetadata, Table, TableColumn, TableRow, list_table};
 pub use watch::{WatchBatch, WatchEvent, watch_collection};
 pub use workload_pods::{

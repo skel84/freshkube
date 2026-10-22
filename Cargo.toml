@@ -85,6 +85,7 @@ freshkube-prefs = { path = "crates/freshkube-prefs" }
 freshkube-probe = { path = "crates/freshkube-probe" }
 freshkube-reads = { path = "crates/freshkube-reads" }
 freshkube-resources = { path = "crates/freshkube-resources" }
+freshkube-cli = { path = "crates/freshkube-cli" }
 freshkube-applications = { path = "crates/freshkube-applications" }
 freshkube-terminal = { path = "crates/freshkube-terminal" }
 freshkube-desktop = { path = "crates/freshkube-desktop" }
@@ -107,6 +108,7 @@ capture-embed = ["dep:rust-embed"]
 
 [dependencies]
 freshkube-desktop.workspace = true
+freshkube-cli.workspace = true
 freshkube-probe.workspace = true
 clap.workspace = true
 tokio.workspace = true

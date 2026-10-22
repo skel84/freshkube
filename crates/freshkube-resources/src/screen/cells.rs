@@ -39,25 +39,21 @@ pub(super) fn pod_tone(pod: &PodRow, node_ready: bool) -> ui::Tone {
 /// A workload's tone from its ready replicas of all: every one ready, some,
 /// or none of several. A workload scaled to zero is fine.
 pub(super) fn ready_tone(text: &str) -> Option<ui::Tone> {
-    let (up, all) = text.split_once('/')?;
-    let (up, all): (u32, u32) = (up.trim().parse().ok()?, all.trim().parse().ok()?);
-    Some(if up >= all {
-        ui::Tone::Good
-    } else if up == 0 {
-        ui::Tone::Crit
-    } else {
-        ui::Tone::Warn
-    })
+    freshkube_core::resources::ready_tone(text).map(tone_of)
 }
 
-/// A printed status's tone, for kinds other than pods.
-pub(super) fn printed_tone(text: &str) -> ui::Tone {
-    match status_tone(text) {
+fn tone_of(tone: StatusTone) -> ui::Tone {
+    match tone {
         StatusTone::Success => ui::Tone::Good,
         StatusTone::Warning => ui::Tone::Warn,
         StatusTone::Danger => ui::Tone::Crit,
         StatusTone::Neutral => ui::Tone::Unknown,
     }
+}
+
+/// A printed status's tone, for kinds other than pods.
+pub(super) fn printed_tone(text: &str) -> ui::Tone {
+    tone_of(status_tone(text))
 }
 
 /// A cell's tooltip, hidden while the row's menu is open over it.

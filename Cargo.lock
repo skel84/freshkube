@@ -2414,6 +2414,7 @@ version = "0.18.0"
 dependencies = [
  "clap",
  "color-eyre",
+ "freshkube-cli",
  "freshkube-desktop",
  "freshkube-probe",
  "rust-embed",
@@ -2450,6 +2451,19 @@ dependencies = [
  "tokio",
  "tower 0.5.2",
  "tracing",
+]
+
+[[package]]
+name = "freshkube-cli"
+version = "0.18.0"
+dependencies = [
+ "clap",
+ "freshkube-core",
+ "futures",
+ "kube",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

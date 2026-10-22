@@ -16,7 +16,12 @@ use tracing_subscriber::{EnvFilter, prelude::*};
 #[derive(Parser)]
 #[command(name = "freshkube")]
 #[command(author, version, about, long_about = None)]
+#[command(args_conflicts_with_subcommands = true)]
 struct Cli {
+    /// Read-only commands for terminals and CI; they never open the window
+    #[command(subcommand)]
+    command: Option<freshkube_cli::Command>,
+
     /// Talos context to use (from talosconfig)
     #[arg(short, long)]
     context: Option<String>,
@@ -94,6 +99,7 @@ fn main() -> Result<()> {
     #[cfg(all(windows, not(debug_assertions)))]
     attach_console();
     let Cli {
+        command,
         context,
         config,
         debug,
@@ -106,6 +112,12 @@ fn main() -> Result<()> {
         kube_context,
         fixture,
     } = Cli::parse();
+    if let Some(command) = command {
+        // The read commands never start the window or write the log file.
+        let setup = freshkube_desktop::preferences_path()
+            .map(|preferences| preferences.with_file_name("freshkube.yaml"));
+        std::process::exit(freshkube_cli::run(&command, setup));
+    }
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
     let config = talosconfig_or_env(

@@ -7,12 +7,13 @@ What the code is today, on main `6b5fdc9` (after #589, #591 and #593). It descri
 A crate may depend only on the crates below it. Read the arrows off each `crates/*/Cargo.toml`, not off this page.
 
 ```
-src/main.rs (freshkube)      → freshkube-desktop, freshkube-probe
+src/main.rs (freshkube)      → freshkube-cli, freshkube-desktop, freshkube-probe
 freshkube-desktop            → applications, core, delivery, logs, monitoring, nav, observability, prefs, probe, reads, resources, terminal, ui, talos-rs
 freshkube-applications       → core, delivery, monitoring, nav, observability, probe, reads, resources, ui
 freshkube-resources          → core, delivery, monitoring, nav, probe, reads, terminal, ui
 freshkube-observability      → core, delivery, graph, logs, monitoring, prefs, ui
 freshkube-delivery           → core, talos-rs
+freshkube-cli                → core
 freshkube-monitoring         → core, prefs, probe, reads, ui, talos-rs
 freshkube-logs               → core, probe, ui
 freshkube-terminal           → probe, ui
@@ -163,6 +164,7 @@ Every log view is `LogView<S: LogSource>` from `freshkube-logs` (`crates/freshku
 
 Behaviour that does not belong in the rules lives in one doc per feature, each starting with its module paths and the modules whose tests prove it (#587).
 
+- [docs/features/cli.md](features/cli.md): the `check` and `get` commands, their cluster choice, exit codes and JSON.
 - [docs/features/applications.md](features/applications.md): the Applications area, the Changes list and the change page.
 - [docs/features/resources.md](features/resources.md): the Resources page, the dock's logs, shells and ports, and a pod's cause card.
 - [docs/features/nodes.md](features/nodes.md): the Nodes table, its node pane and their keys.
