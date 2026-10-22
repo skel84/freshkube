@@ -68,7 +68,6 @@ impl Pilot {
                             .flex_1()
                             .justify_end()
                             .gap(dp(6.))
-                            .pl(dp(6.))
                             .pr(insets.trailing)
                             .when(!minimal, |this| {
                                 this.child(self.render_refresh(cx))
@@ -326,7 +325,7 @@ impl Pilot {
             .when(!narrow, |this| {
                 this.w(dp(SEARCH_FIELD_WIDTH))
                     .min_w(dp(APP_HEADER_CONTROL))
-                    .flex_shrink()
+                    .flex_shrink(1.)
                     .px(dp(10.))
             })
             .when(narrow, |this| this.flex_none())
