@@ -14,7 +14,7 @@ use kube::Client;
 use serde::Deserialize;
 
 use super::failure::{Failure, FailureKind};
-use super::kinds::{ResourceKind, builtin};
+use super::kinds::{ResourceKind, builtin, find_named, names_kind, split_name};
 use super::object::{JSON, json_get};
 use super::table::nullable;
 
@@ -130,12 +130,17 @@ pub async fn list_group_kinds(client: &Client, group: &ApiGroup) -> Result<Group
     group_kinds(&group.name, join_all(reads).await)
 }
 
-/// The kind a kubectl key (`pods`, `certificates.cert-manager.io`) names in
-/// this cluster: a built-in one at once, else the one its API group's
-/// discovery serves. `None` means the cluster doesn't serve it; a failure
+/// The kind a name kubectl takes names in this cluster: a kubectl key
+/// (`pods`, `certificates.cert-manager.io`), a plural, a singular or short
+/// name, or a Kind, in any case, with an optional `.group`. A built-in one
+/// resolves at once, else the one its API group's discovery serves. `None`
+/// means the cluster doesn't serve it, or the name fits two kinds; a failure
 /// means discovery couldn't be read.
 pub async fn resolve_kind_key(client: &Client, key: &str) -> Result<Option<ResourceKind>, Failure> {
     if let Some(kind) = builtin(key) {
+        return Ok(Some(kind));
+    }
+    if let Some(kind) = find_named(key) {
         return Ok(Some(kind));
     }
     let groups = list_custom_groups(client).await?;
@@ -145,7 +150,40 @@ pub async fn resolve_kind_key(client: &Client, key: &str) -> Result<Option<Resou
             return Ok(Some(kind));
         }
     }
-    Ok(None)
+    resolve_loose(client, &groups, key).await
+}
+
+/// How many groups an unqualified name looks through.
+const LOOSE_GROUPS: usize = 64;
+
+/// A name that is not a key: the plural or the kind in any case, in the group
+/// it names or, with none, in the first groups discovery lists. A group that
+/// can't be read is passed over when none is named.
+async fn resolve_loose(
+    client: &Client,
+    groups: &[ApiGroup],
+    asked: &str,
+) -> Result<Option<ResourceKind>, Failure> {
+    let (name, group) = split_name(asked);
+    let wanted: Vec<&ApiGroup> = groups
+        .iter()
+        .filter(|candidate| group.as_deref().is_none_or(|group| candidate.name == group))
+        .take(LOOSE_GROUPS)
+        .collect();
+    let mut found: Vec<ResourceKind> = Vec::new();
+    for candidate in wanted {
+        match list_group_kinds(client, candidate).await {
+            Ok(kinds) => found.extend(
+                kinds
+                    .kinds
+                    .into_iter()
+                    .filter(|kind| names_kind(kind, &name, false)),
+            ),
+            Err(failure) if group.is_some() => return Err(failure),
+            Err(_) => {}
+        }
+    }
+    Ok(if found.len() == 1 { found.pop() } else { None })
 }
 
 /// The groups a key can belong to: `<plural>.<group>`, so the group is a
