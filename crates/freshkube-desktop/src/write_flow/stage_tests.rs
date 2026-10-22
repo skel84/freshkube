@@ -371,3 +371,24 @@ fn a_stage_that_moved_on_blocks_a_promotion_from_a_stale_page_and_offers_only_to
     assert!(!h.present(cx, "write-confirm") && !h.present(cx, "write-review"));
     h.cluster.assert_nothing_written();
 }
+
+#[gpui_kit::test]
+fn a_stage_that_moves_while_the_dialog_is_open_stops_the_send(cx: &mut TestAppContext) {
+    let h = harness_on(cx, Protection::Guarded, kargo);
+    h.begin(cx, promote(Protection::Guarded));
+    assert!(h.present(cx, "write-confirm"));
+    // Someone else promotes the Stage while the person reads the preview.
+    h.cluster.foreign_write(
+        &format!("{NS}/stages/prod-ams"),
+        "kargo-controller",
+        &json!({"status": {"freightHistory": [
+            {"items": {"Warehouse/checkout-images": {"name": "pale-heron"}}}
+        ]}}),
+    );
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(2));
+    h.cluster.assert_nothing_written();
+    let status = h.label(cx, "write-toast-status");
+    assert!(status.contains("nothing was sent"), "{status}");
+    assert!(h.slot_free(cx));
+}

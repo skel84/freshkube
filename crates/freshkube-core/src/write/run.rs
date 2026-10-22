@@ -61,6 +61,9 @@ pub enum NotSent {
     Session,
     /// A runner for example data, which has no cluster to send to.
     Example,
+    /// Something the write depends on (a Stage that runs other Freight now)
+    /// is no longer as the person was shown, so nothing was sent.
+    Moved(String),
 }
 
 /// What happened to one object.
@@ -329,9 +332,6 @@ impl Runner {
         if description.tier == super::Tier::Session {
             return finished(Status::NotSent(NotSent::Session), vec![], None, None);
         }
-        if self.example {
-            return finished(Status::NotSent(NotSent::Example), vec![], None, None);
-        }
         // Read again, not as it was when the dialog opened; and once more
         // after the cancel window, which is what decides the send.
         let refused_at = |level: Protection| -> Option<NotSent> {
@@ -369,6 +369,26 @@ impl Runner {
         }
         if let Some(not_sent) = refused_at(level) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
+        // What the write depends on is read again just before it is sent, as
+        // the level is: a dialog can stay open while someone else promotes the
+        // Stage, and a create from the page as it was would roll it back.
+        if !self.example {
+            for depends in description.changes.iter().flat_map(|c| &c.depends) {
+                if let Err(block) = self.check_depends(depends).await {
+                    return finished(
+                        Status::NotSent(NotSent::Moved(block.text())),
+                        vec![],
+                        None,
+                        None,
+                    );
+                }
+            }
+        }
+        // Example data has no cluster to send to; everything the level and the
+        // person decide has been decided as for a real one.
+        if self.example {
+            return finished(Status::NotSent(NotSent::Example), vec![], None, None);
         }
         let first = if is_undo {
             Phase::UndoSent

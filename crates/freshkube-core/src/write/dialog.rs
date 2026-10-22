@@ -232,6 +232,9 @@ impl Finished {
                     "This cluster is now {}. Nothing was sent; you will be asked again.",
                     level.label()
                 ),
+                super::run::Status::NotSent(NotSent::Moved(what)) => format!(
+                    "{what} It changed after you were asked, so nothing was sent; open it again."
+                ),
                 super::run::Status::NotSent(NotSent::Example) => {
                     "Example data: there is no cluster, so nothing was sent.".to_owned()
                 }
@@ -295,7 +298,14 @@ impl Runner {
                 Err(Refusal::NoAnswer(message) | Refusal::Rejected { message, .. }) => {
                     return Err(Block::NoAnswer { object, message });
                 }
-                Err(Refusal::Conflict(_)) => unreachable!("a read does not conflict"),
+                // A read does not conflict, but a proxy can answer it with a 409
+                // that reads as one: that is an answer we can't use, not a panic.
+                Err(Refusal::Conflict(_)) => {
+                    return Err(Block::NoAnswer {
+                        object,
+                        message: "the cluster answered a read with a conflict".to_owned(),
+                    });
+                }
             }
         }
         Ok(action)

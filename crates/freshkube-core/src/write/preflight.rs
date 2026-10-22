@@ -274,7 +274,14 @@ impl Runner {
             Err(Refusal::NoAnswer(message) | Refusal::Rejected { message, .. }) => {
                 return Err(Block::NoAnswer { object, message });
             }
-            Err(Refusal::Conflict(_)) => unreachable!("a read does not conflict"),
+            // A read does not conflict, but a proxy can answer it with a 409
+            // that reads as one: that is an answer we can't use, not a panic.
+            Err(Refusal::Conflict(_)) => {
+                return Err(Block::NoAnswer {
+                    object,
+                    message: "the cluster answered a read with a conflict".to_owned(),
+                });
+            }
         };
         if !creates && before["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
             return Err(Block::Changed {
@@ -312,7 +319,7 @@ impl Runner {
     /// An object the change depends on: the access review for the verb it
     /// names, a read that finds it with the UID the person saw, and the
     /// fields that must still hold what the page showed.
-    async fn check_depends(&self, depends: &Depends) -> Result<(), Block> {
+    pub(super) async fn check_depends(&self, depends: &Depends) -> Result<(), Block> {
         let target = &depends.target;
         let object = target.label();
         if let Some(verb) = depends.verb {
@@ -343,7 +350,14 @@ impl Runner {
             Err(Refusal::NoAnswer(message) | Refusal::Rejected { message, .. }) => {
                 return Err(Block::NoAnswer { object, message });
             }
-            Err(Refusal::Conflict(_)) => unreachable!("a read does not conflict"),
+            // A read does not conflict, but a proxy can answer it with a 409
+            // that reads as one: that is an answer we can't use, not a panic.
+            Err(Refusal::Conflict(_)) => {
+                return Err(Block::NoAnswer {
+                    object,
+                    message: "the cluster answered a read with a conflict".to_owned(),
+                });
+            }
         };
         if now["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
             return Err(Block::Changed {

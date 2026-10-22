@@ -1542,3 +1542,93 @@ async fn a_verb_the_dependency_refuses_blocks_the_create_before_anything_is_writ
         "no dry run after a refusal"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_dependency_that_moves_after_the_dialog_stops_the_send() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, fake::create_note_after_web()).await;
+    // The dialog is open while someone else changes what the page showed.
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &json!({"spec": {"replicas": 5}}),
+    );
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    match &finished.status {
+        Status::NotSent(NotSent::Moved(what)) => {
+            assert!(what.contains("no longer as the page showed it"), "{what}")
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(finished.message().contains("nothing was sent"));
+    cluster.assert_nothing_written();
+    assert!(phases(&AuditStore::new(dir.path().join("audit"))).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_dependency_that_is_unchanged_is_checked_again_and_the_send_goes_ahead() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, fake::create_note_after_web()).await;
+    let reads_before = cluster.recorder.requests().len();
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert_eq!(finished.headline(), Headline::Done);
+    // The Stage-like object was read again just before the send.
+    let after: Vec<String> = cluster
+        .recorder
+        .lines()
+        .into_iter()
+        .skip(reads_before)
+        .collect();
+    let read = after
+        .iter()
+        .position(|l| l == "GET /apis/apps/v1/namespaces/shop/deployments/web")
+        .expect("read again");
+    let send = after
+        .iter()
+        .position(|l| l.starts_with("POST /api/v1/namespaces/shop/configmaps"))
+        .expect("sent");
+    assert!(read < send, "{after:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_conflict_answering_a_read_is_no_answer_not_a_panic() {
+    use crate::fake_api;
+    let (client, _recorder) = fake_api::client(|request| {
+        if request.path.ends_with("/selfsubjectaccessreviews") {
+            return Some(fake_api::json(
+                201,
+                json!({"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview",
+                    "metadata": {}, "spec": {}, "status": {"allowed": true}}),
+            ));
+        }
+        // A proxy answers every read with a 409 that reads as a conflict.
+        Some(fake_api::json(
+            409,
+            json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 409,
+                "reason": "Conflict",
+                "message": "Apply failed with 1 conflict: conflict with \"proxy\" using v1: .spec.x"}),
+        ))
+    });
+    let dir = tmp();
+    let runner = Runner::new(
+        client,
+        AuditStore::new(dir.path().join("audit")),
+        Who {
+            entry: "e".into(),
+            context: "c".into(),
+            protection: Protection::Guarded,
+            actor: "t".into(),
+        },
+    );
+    // Both the dependency's read and an ordinary object's read.
+    for action in [fake::create_note_after_web(), fake::scale(3)] {
+        match runner.preflight(action).await {
+            Verdict::Blocked(Block::NoAnswer { message, .. }) => {
+                assert!(message.contains("conflict"), "{message}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}

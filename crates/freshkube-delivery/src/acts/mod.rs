@@ -107,8 +107,18 @@ pub enum Slot<'a> {
 }
 
 impl StageActs {
+    /// The Promotion Abort acts on: the one that is running, else the newest
+    /// that is still pending. A newer Promotion waiting in the queue is not
+    /// the one doing the work.
+    pub fn running(&self) -> Option<&Promoting> {
+        self.promoting
+            .iter()
+            .find(|p| p.phase == "Running")
+            .or_else(|| self.promoting.first())
+    }
+
     pub fn slot(&self) -> Slot<'_> {
-        match self.promoting.first() {
+        match self.running() {
             Some(running) => Slot::Abort(running),
             None if self.holds => Slot::Not("The Stage already runs this Freight."),
             None => Slot::Promote,
@@ -290,6 +300,9 @@ pub fn abort(acts: &StageActs, running: &Promoting) -> ActionDescription {
     }
 }
 
+/// How much of a Stage's name a Promotion's name keeps.
+const MAX_STAGE_IN_NAME: usize = 218;
+
 /// How a destination that isn't known is named in the dialog.
 pub const UNKNOWN_DESTINATION: &str = "an unknown cluster";
 
@@ -362,7 +375,10 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
         .iter()
         .map(|pick| {
             let stage = &pick.acts.stage.name;
-            let name = format!("{stage}.{ulid}.{}", short(freight).to_lowercase());
+            // Kargo cuts the Stage's part of the name so the whole stays
+            // within a name's 253 characters (253 - 26 - 7 - 2 = 218).
+            let stage_part: String = stage.chars().take(MAX_STAGE_IN_NAME).collect();
+            let name = format!("{stage_part}.{ulid}.{}", short(freight).to_lowercase());
             ObjectChange {
                 // The Stage must still be the one the page showed, running
                 // the Freight the page said it runs, and the person must be

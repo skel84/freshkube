@@ -608,3 +608,45 @@ async fn what_already_ran_is_the_running_promotion_s_own_steps_and_commits() {
         .collect();
     assert!(text.contains("No step of this Promotion is recorded as run."));
 }
+
+#[test]
+fn a_very_long_stage_name_is_cut_in_the_promotion_s_name_as_kargo_cuts_it() {
+    let mut stage = acts();
+    stage.stage.name = "s".repeat(253);
+    let action = promote(
+        &change(),
+        &[Pick {
+            acts: &stage,
+            destination: None,
+        }],
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
+    );
+    let name = &action.changes[0].target.name;
+    // 218 + '.' + 26 + '.' + 7 = 253: a name within the limit, ULID and Freight intact.
+    assert_eq!(name.len(), 253, "{name}");
+    assert!(name.starts_with(&"s".repeat(218)));
+    assert!(name.ends_with(".01k8d2qy4v9z3m6n7p8r5t0w1x.wonky-o"));
+    // And the Promotion's subject is still the whole Stage name.
+    assert_eq!(action.subjects, [stage.stage.name.clone()]);
+}
+
+#[test]
+fn abort_acts_on_the_running_promotion_not_a_newer_one_still_pending() {
+    let mut stage = acts();
+    let mut pending = running();
+    pending.promotion.name = "prod-ams.01k8d2qz0000000000000000zz.wonky-o".into();
+    pending.promotion.uid = "uid-pending".into();
+    pending.phase = "Pending".into();
+    // Newest first, as the derive sorts them.
+    stage.promoting = vec![pending.clone(), running()];
+    match stage.slot() {
+        Slot::Abort(target) => {
+            assert_eq!(target.phase, "Running");
+            assert_eq!(target.promotion.name, running().promotion.name);
+        }
+        other => panic!("{other:?}"),
+    }
+    // With none running, the newest pending is the one.
+    stage.promoting = vec![pending.clone()];
+    assert!(matches!(stage.slot(), Slot::Abort(t) if t.phase == "Pending"));
+}

@@ -2085,3 +2085,40 @@ fn refresh_on_example_data_asks_nothing_and_says_there_is_no_cluster(cx: &mut Te
     let status = found(cx, handle, "write-toast-status").unwrap_or_default();
     assert!(status.contains("Example data"), "{status}");
 }
+
+#[gpui_kit::test]
+fn a_destination_changed_in_settings_reaches_a_promote_dialog_the_shell_built(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = open(cx, 1280., 1200.);
+    stage_action(cx, handle, &view, "prod-ams-promotion", "change-action-4");
+    assert!(found(cx, handle, "write-type-prompt").is_some());
+    // The shell holds each workspace entry's level in a cell the dialog was
+    // given for its destination: Settings making prod-ams read-only reaches it.
+    cx.update(|cx| {
+        crate::mutation::set_entry_levels(
+            [(
+                "prod-ams".to_owned(),
+                freshkube_core::write::Protection::ReadOnly,
+            )],
+            cx,
+        )
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.click("write-type-name", cx);
+        window.render_frame(cx);
+        window.input("prod-ams", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("write-confirm", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Refused for the level, not "Example data": the runner followed the cell.
+    let status = found(cx, handle, "write-toast-status").unwrap_or_default();
+    assert!(status.contains("read-only"), "{status}");
+    assert!(!status.contains("Example data"), "{status}");
+}
