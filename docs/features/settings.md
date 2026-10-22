@@ -1,6 +1,6 @@
 # Settings
 
-The behaviour of the Settings rail area: its eight sections, the shared form rules they follow and how they save to `freshkube.yaml`. The design is DESIGN.md's [The Settings page](../DESIGN.md#the-settings-page); the setup file's format, reload and migration are in [SETUP_FILE.md](../SETUP_FILE.md). Where this document and the code differ, the code wins. Written at main `2af002d`, after [#697](https://github.com/skel84/freshkube/issues/697)'s slices 1 to 10.
+The behaviour of the Settings rail area: its nine sections, the shared form rules they follow and how they save to `freshkube.yaml`. The design is DESIGN.md's [The Settings page](../DESIGN.md#the-settings-page); the setup file's format, reload and migration are in [SETUP_FILE.md](../SETUP_FILE.md). Where this document and the code differ, the code wins. Written at main `2af002d`, after [#697](https://github.com/skel84/freshkube/issues/697)'s slices 1 to 10.
 
 Code:
 
