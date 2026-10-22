@@ -615,52 +615,46 @@ fn header_cell<S: TableSource>(
     let p = palette(cx);
     let sort_id = &source.table_state().ids.sort;
     let label = column.label();
-    let Some((sort, order)) = source.sorting(column) else {
-        // A column without a label, such as the glyph's, stays bare.
-        if label.is_empty() {
-            return cell(column).into_any_element();
-        }
-        return cell(column)
-            .id((sort_id.clone(), ix))
-            .test_support()
-            .role(Role::ColumnHeader)
-            .aria_label(label.clone())
-            .flex()
-            .items_center()
-            .follow_tooltip(label.clone())
-            .child(ui::column_label_style(cx).min_w_0().child(super::word_cut(
-                SharedString::from(format!("{sort_id}-{ix}-label")),
-                label.clone(),
-            )))
-            .into_any_element();
-    };
-    let order = order.map(|order| match order {
-        SortOrder::Ascending => ("ascending", IconName::ArrowUp),
-        SortOrder::Descending => ("descending", IconName::ArrowDown),
-    });
+    let sorting = source.sorting(column);
+    // A column without a label, such as the glyph's, stays bare.
+    if sorting.is_none() && label.is_empty() {
+        return cell(column).into_any_element();
+    }
+    let order = sorting
+        .as_ref()
+        .and_then(|(_, order)| *order)
+        .map(|order| match order {
+            SortOrder::Ascending => ("ascending", IconName::ArrowUp),
+            SortOrder::Descending => ("descending", IconName::ArrowDown),
+        });
     cell(column)
         .id((sort_id.clone(), ix))
         .test_support()
         .role(Role::ColumnHeader)
         .aria_label(match order {
-            Some((order, _)) => format!("{label}, sorted {order}"),
-            None => label.to_string(),
+            Some((order, _)) => SharedString::from(format!("{label}, sorted {order}")),
+            None => label.clone(),
         })
         .flex()
         .items_center()
         .gap_1()
-        .cursor_pointer()
+        // Sorted and unsorted headers share the same visible-edge cut
+        // and full-text tooltip, as the table's prose cells do.
         .follow_tooltip(label.clone())
         .child(ui::column_label_style(cx).min_w_0().child(super::word_cut(
             SharedString::from(format!("{sort_id}-{ix}-label")),
             label.clone(),
         )))
         .children(order.map(|(_, icon)| Icon::new(icon).size(dp(12.)).text_color(p.muted)))
-        .on_click(cx.listener(move |view, _, _, cx| {
-            // A sort is no click beside the rows for a page around it.
-            cx.stop_propagation();
-            view.sort(sort.clone(), cx)
-        }))
+        .when_some(sorting, |header, (sort, _)| {
+            header
+                .cursor_pointer()
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    // A sort is no click beside the rows for a page around it.
+                    cx.stop_propagation();
+                    view.sort(sort.clone(), cx)
+                }))
+        })
         .into_any_element()
 }
 
