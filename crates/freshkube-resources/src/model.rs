@@ -120,51 +120,7 @@ pub(crate) fn natural_cmp(left: &str, right: &str) -> Ordering {
     }
 }
 
-/// The meaning of a printed status, for colouring; unknown values are neutral.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StatusTone {
-    Neutral,
-    Success,
-    Warning,
-    Danger,
-}
-
-pub(crate) fn status_tone(value: &str) -> StatusTone {
-    let value = value.trim();
-    match value {
-        "Running" | "Ready" | "Active" | "Bound" | "Available" | "Complete" | "Completed"
-        | "Succeeded" | "True" | "Healthy" | "Synced" | "Established" => StatusTone::Success,
-        "Pending"
-        | "ContainerCreating"
-        | "PodInitializing"
-        | "Terminating"
-        | "Unknown"
-        | "Released"
-        | "Progressing"
-        | "Suspended"
-        | "NotReady"
-        | "Ready,SchedulingDisabled"
-        | "SchedulingDisabled"
-        | "Waiting" => StatusTone::Warning,
-        _ if value.starts_with("Init:")
-            && !value.contains("Error")
-            && !value.contains("CrashLoop") =>
-        {
-            StatusTone::Warning
-        }
-        _ if value.contains("BackOff")
-            || value.contains("Err")
-            || value.contains("Fail")
-            || value.contains("OOMKilled")
-            || value == "Lost"
-            || value == "Evicted"
-            || value == "False" =>
-        {
-            StatusTone::Danger
-        }
-        _ => StatusTone::Neutral,
-    }
-}
+pub(crate) use freshkube_core::resources::{StatusTone, status_tone};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadState {

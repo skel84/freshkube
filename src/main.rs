@@ -16,7 +16,12 @@ use tracing_subscriber::{EnvFilter, prelude::*};
 #[derive(Parser)]
 #[command(name = "freshkube")]
 #[command(author, version, about, long_about = None)]
+#[command(args_conflicts_with_subcommands = true)]
 struct Cli {
+    /// Read-only commands for terminals and CI; they never open the window
+    #[command(subcommand)]
+    command: Option<freshkube_cli::Command>,
+
     /// Talos context to use (from talosconfig)
     #[arg(short, long)]
     context: Option<String>,
@@ -96,6 +101,17 @@ fn attach_console() {
     }
 }
 
+/// Runs a read command and returns its exit code; `None` starts the app.
+/// `main` calls it before it opens the log file, installs tracing, reads a
+/// talosconfig or reaches the keyring or the window, and `tests/cli_startup.rs`
+/// fails if a command leaves any trace of them.
+fn dispatch(command: Option<freshkube_cli::Command>) -> Option<i32> {
+    let command = command?;
+    let setup = freshkube_desktop::preferences_path()
+        .map(|preferences| preferences.with_file_name("freshkube.yaml"));
+    Some(freshkube_cli::run(&command, setup))
+}
+
 fn main() -> Result<()> {
     // `FRESHKUBE_FIRST_FRAME=1` times the first drawn frame from here.
     freshkube_probe::first_frame::start();
@@ -104,6 +120,7 @@ fn main() -> Result<()> {
     #[cfg(all(windows, not(debug_assertions)))]
     attach_console();
     let Cli {
+        command,
         context,
         config,
         debug,
@@ -118,6 +135,9 @@ fn main() -> Result<()> {
         url,
         open_link,
     } = Cli::parse();
+    if let Some(code) = dispatch(command) {
+        std::process::exit(code);
+    }
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
     let config = talosconfig_or_env(
