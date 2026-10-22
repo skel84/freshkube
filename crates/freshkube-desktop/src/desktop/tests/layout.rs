@@ -331,7 +331,7 @@ fn search_everything_keeps_one_width_on_every_page(cx: &mut TestAppContext) {
     }
     for (page, width) in &widths {
         assert!(
-            (*width - 240.).abs() < 0.5,
+            (*width - 320.).abs() < 0.5,
             "{page:?} shows Search everything as a {width} dp field, not the full one"
         );
     }
