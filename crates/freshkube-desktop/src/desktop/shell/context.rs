@@ -79,6 +79,27 @@ impl Pilot {
             .unwrap_or_else(|| "No context".into())
     }
 
+    /// The level the window works under right now, from the entry and the
+    /// context as they stand: see [`Self::prepare_protection`], which keeps
+    /// it for drawing. The app's follows are offered this and the
+    /// connection in one call, so a level never reaches another cluster's
+    /// follows.
+    pub(in crate::desktop) fn current_level(&self, cx: &App) -> Protection {
+        let shown = self.display_context(cx);
+        let settings = self.settings_page.read(cx);
+        let workspace = settings.workspace();
+        let active = self
+            .switch
+            .active_cluster()
+            .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id));
+        match active {
+            Some(entry) => workspace
+                .level_of(&entry.context, &settings.source_recovery)
+                .stricter(entry.level()),
+            None => workspace.level_of(&shown, &settings.source_recovery),
+        }
+    }
+
     /// The level the window works under: the active workspace entry's, with
     /// the stricter of any entry naming the same kubeconfig context, else
     /// guarded, else what a skipped row locked it to. The entry is the
@@ -87,19 +108,7 @@ impl Pilot {
     /// the context shown decides. Prepared on a source change and when the
     /// setup changes, never while drawing.
     pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
-        let shown = self.display_context(cx);
-        let settings = self.settings_page.read(cx);
-        let workspace = settings.workspace();
-        let active = self
-            .switch
-            .active_cluster()
-            .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id));
-        let level = match active {
-            Some(entry) => workspace
-                .level_of(&entry.context, &settings.source_recovery)
-                .stricter(entry.level()),
-            None => workspace.level_of(&shown, &settings.source_recovery),
-        };
+        let level = self.current_level(cx);
         if level == self.context_display.level && !self.context_display.level_words.is_empty() {
             return false;
         }
@@ -110,6 +119,8 @@ impl Pilot {
         self.pages
             .dock
             .update(cx, |dock, cx| dock.set_read_only(level.is_read_only(), cx));
+        // Hide details defaults on for a protected or read-only cluster.
+        self.offer_followed(cx);
         true
     }
 

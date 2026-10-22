@@ -226,6 +226,80 @@ impl ResourcesScreen {
         }));
     }
 
+    /// The subject of following the selected pod, and its context.
+    fn crash_loop_subject(
+        &self,
+        identity: &ResourceIdentity,
+    ) -> Option<(freshkube_followed::Subject, String)> {
+        let source = self.source.as_ref()?;
+        Some((
+            freshkube_followed::Subject::CrashLoop {
+                namespace: identity.namespace.clone(),
+                pod: identity.name.clone(),
+            },
+            source.context.clone(),
+        ))
+    }
+
+    /// The pod menu's follow entry, once the app can follow at all. A pod
+    /// followed already offers to stop.
+    pub(super) fn follow_label(
+        &self,
+        identity: &ResourceIdentity,
+        cx: &gpui_kit::App,
+    ) -> Option<&'static str> {
+        if self.embedded {
+            return None;
+        }
+        let owner = freshkube_followed::owner::followed(cx)?;
+        let (subject, context) = self.crash_loop_subject(identity)?;
+        Some(if owner.read(cx).is_following(&subject, &context) {
+            "Stop notifying me about crash-loops"
+        } else {
+            "Notify me if it keeps crash-looping"
+        })
+    }
+
+    /// Follows the selected pod for crash loops, or stops following it. A
+    /// follow only reads: it watches this pod with the user's own access.
+    pub(super) fn toggle_follow_crash_loop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.lists_pods() || self.embedded {
+            return;
+        }
+        let Some(identity) = self.projection.selected().cloned() else {
+            return;
+        };
+        let Some((subject, context)) = self.crash_loop_subject(&identity) else {
+            return;
+        };
+        let Some(owner) = freshkube_followed::owner::followed(cx) else {
+            return;
+        };
+        let pod = identity.name.clone();
+        let words = owner.update(cx, |followed, cx| {
+            match followed.id_of(&subject, &context) {
+                Some(id) => {
+                    followed.stop(id, cx);
+                    format!("No longer following {pod}.")
+                }
+                None => match followed.follow_in(subject, &context, cx) {
+                    Ok(_) => {
+                        // Hide details keeps the pod's name out of the toast.
+                        let pod = match followed.hides_details_in(Some(&context)) {
+                            true => "this pod".to_owned(),
+                            false => pod,
+                        };
+                        format!(
+                            "Notifying you if {pod} keeps crash-looping. It watches that pod, and the bell lists it with Stop."
+                        )
+                    }
+                    Err(refused) => refused.words(),
+                },
+            }
+        });
+        gpui_kit::component::WindowExt::push_notification(window, words, cx);
+    }
+
     pub(super) fn open_node(&mut self, node: String, cx: &mut Context<Self>) {
         cx.emit(super::super::ResourceLink::Node(node, NodeTab::Overview));
     }

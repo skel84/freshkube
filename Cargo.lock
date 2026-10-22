@@ -2433,6 +2433,7 @@ dependencies = [
  "chrono",
  "freshkube-core",
  "freshkube-delivery",
+ "freshkube-followed",
  "freshkube-monitoring",
  "freshkube-nav",
  "freshkube-observability",
@@ -2542,6 +2543,7 @@ dependencies = [
  "freshkube-applications",
  "freshkube-core",
  "freshkube-delivery",
+ "freshkube-followed",
  "freshkube-graph",
  "freshkube-logs",
  "freshkube-monitoring",
@@ -2570,6 +2572,27 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower 0.5.2",
+ "tracing",
+]
+
+[[package]]
+name = "freshkube-followed"
+version = "0.18.0"
+dependencies = [
+ "chrono",
+ "freshkube-core",
+ "freshkube-delivery",
+ "freshkube-prefs",
+ "freshkube-reads",
+ "freshkube-ui",
+ "futures",
+ "gpui-kit",
+ "http",
+ "k8s-openapi",
+ "kube",
+ "serde",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 
@@ -2676,6 +2699,7 @@ dependencies = [
  "chrono",
  "freshkube-core",
  "freshkube-delivery",
+ "freshkube-followed",
  "freshkube-monitoring",
  "freshkube-nav",
  "freshkube-probe",

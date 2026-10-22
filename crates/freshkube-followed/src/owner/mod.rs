@@ -1,0 +1,557 @@
+//! [`Followed`], the app's follows. Like `ForwardList` it belongs to the
+//! app, not to a page: a follow reads from the moment the person turns it
+//! on until they stop it, through page and context changes and while the
+//! window is closed, and `stop_all` at quit stops every read. This is a
+//! user-started lifetime beside dock log tabs (docs/STATE_LIFETIMES.md).
+//!
+//! What it reads is bounded: at most [`MAX_FOLLOWS`] follows, one watch per
+//! object or Kargo project however many follows share it, and Coroot once a
+//! minute. Every read is the user's own, through the connection the shell
+//! offered for the follow's context; a follow with none, or one that can't
+//! be read, is "Not watching". The follows are saved in `follows.json`.
+//!
+//! The owner does not draw. It emits [`Event::Toast`] for a notice that
+//! shows, and the shell, which has the window, pushes it. The bell lists
+//! every notice. macOS banners and firing alerts plug in here later: the
+//! first as another way to show a notice, the second as another `WatchKey`.
+
+mod feeds;
+#[cfg(test)]
+mod tests;
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+
+use chrono::{DateTime, Timelike, Utc};
+use freshkube_core::cluster_source::ClusterAccess;
+use freshkube_prefs::Document;
+use gpui_kit::*;
+use tokio::runtime::Handle;
+
+use crate::example::Script;
+use crate::live::Coroot;
+use crate::model::{Follow, MAX_FOLLOWS, Refused, Subject, WatchKey};
+use crate::notice::{Hub, Inbox, Notice, Settings, Words};
+use crate::rules::{Seen, Status, Tracker, Update};
+use crate::saved::{self, Saved};
+use feeds::{Feed, FeedKey};
+
+/// How a cluster is reached for a follow. The shell offers one for each
+/// context it has open; the follow keeps reading with the last one offered.
+#[derive(Clone)]
+pub struct Connection {
+    /// The access it reads with (`ClusterSource.id`): a rotated credential
+    /// or a rebuilt session is another id, and replaces running reads.
+    pub id: String,
+    pub context: String,
+    pub access: ClusterAccess,
+    /// A protected or read-only cluster: Hide details is on by default.
+    pub sensitive: bool,
+    /// Where Coroot's incidents are read, once Observability has connected.
+    pub coroot: Option<Coroot>,
+}
+
+/// What the owner tells the shell.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Event {
+    /// Show this as a toast.
+    Toast { words: Words, failure: bool },
+}
+
+/// One follow and where it stands.
+pub struct Item {
+    pub follow: Follow,
+    pub status: Status,
+    tracker: Tracker,
+}
+
+/// What the owner needs to start.
+pub struct Options {
+    pub runtime: Handle,
+    /// `preferences.json`'s path; `follows.json` is beside it. Without one,
+    /// as in tests, nothing is read or written.
+    pub preferences: Option<std::path::PathBuf>,
+    /// Example data: the reads are scripted and nothing is contacted.
+    pub script: Option<Script>,
+}
+
+pub struct Followed {
+    runtime: Handle,
+    file: Option<Document<Saved>>,
+    save_failed: bool,
+    next_id: u64,
+    pub(crate) items: Vec<Item>,
+    pub(crate) settings: Settings,
+    hub: Hub,
+    pub(crate) inbox: Inbox,
+    pub(crate) connections: HashMap<String, Connection>,
+    /// The context offered last: the one the window is on.
+    active: Option<String>,
+    pub(crate) feeds: HashMap<FeedKey, Feed>,
+    /// Takes a late delivery for a feed that is gone.
+    orphan: Feed,
+    epoch: u64,
+    /// Set by `stop_all`: nothing starts again.
+    stopped: bool,
+    pub(crate) script: Option<Script>,
+    pub(crate) seeded: bool,
+    origin: Option<(Instant, DateTime<Utc>)>,
+    flush: Option<Task<()>>,
+    pub(crate) local_minute: Arc<dyn Fn() -> u16 + Send + Sync>,
+}
+
+impl EventEmitter<Event> for Followed {}
+
+struct Installed(Entity<Followed>);
+
+impl Global for Installed {}
+
+/// Makes the app's follows and loads the saved ones. They read once the
+/// shell offers their cluster's connection.
+pub fn install(options: Options, cx: &mut App) -> Entity<Followed> {
+    let followed = cx.new(|_| Followed::new(options));
+    cx.set_global(Installed(followed.clone()));
+    followed
+}
+
+/// The app's follows, once installed.
+pub fn followed(cx: &App) -> Option<Entity<Followed>> {
+    cx.try_global::<Installed>().map(|g| g.0.clone())
+}
+
+/// Stops every read of every follow, at quit. The follows stay saved.
+pub fn stop_all(cx: &mut App) {
+    if let Some(followed) = followed(cx) {
+        followed.update(cx, |followed, cx| followed.stop_all(cx));
+    }
+}
+
+impl Followed {
+    fn new(options: Options) -> Self {
+        let file = options.preferences.as_deref().map(saved::document);
+        let saved = file.as_ref().map(saved::load).unwrap_or_default();
+        let items = saved
+            .follows
+            .into_iter()
+            .map(|follow| Item {
+                tracker: Tracker::new(&follow),
+                status: Status::NotWatching(NOT_CONNECTED.to_owned()),
+                follow,
+            })
+            .collect();
+        Self {
+            runtime: options.runtime,
+            file,
+            save_failed: false,
+            next_id: saved.next_id.max(1),
+            items,
+            settings: saved.settings,
+            hub: Hub::default(),
+            inbox: Inbox::default(),
+            connections: HashMap::new(),
+            active: None,
+            feeds: HashMap::new(),
+            orphan: Feed::default(),
+            epoch: 0,
+            stopped: false,
+            script: options.script,
+            seeded: false,
+            origin: None,
+            flush: None,
+            local_minute: Arc::new(|| {
+                let now = chrono::Local::now();
+                (now.hour() * 60 + now.minute()) as u16
+            }),
+        }
+    }
+
+    /// Sets the time of day quiet hours are judged by.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn at_minute_for_tests(&mut self, minute: u16) {
+        self.local_minute = Arc::new(move || minute);
+    }
+
+    pub fn items(&self) -> &[Item] {
+        &self.items
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.settings
+    }
+
+    pub fn inbox(&self) -> &Inbox {
+        &self.inbox
+    }
+
+    /// How many are followed, for the bell's "Notifying · n".
+    pub fn count(&self) -> usize {
+        self.items.len()
+    }
+
+    /// How many reads run: one per object or Kargo project, and Coroot.
+    pub fn reads_running(&self) -> usize {
+        self.feeds.values().filter(|f| f.watch.is_running()).count()
+    }
+
+    /// Whether `subject` is followed in `context`.
+    pub fn is_following(&self, subject: &Subject, context: &str) -> bool {
+        self.items
+            .iter()
+            .any(|i| &i.follow.subject == subject && i.follow.context == context)
+    }
+
+    /// The id of the follow of `subject` in `context`, if there is one.
+    pub fn id_of(&self, subject: &Subject, context: &str) -> Option<u64> {
+        self.items
+            .iter()
+            .find(|i| &i.follow.subject == subject && i.follow.context == context)
+            .map(|i| i.follow.id)
+    }
+
+    /// The id of the follow of `subject` in the context the window is on.
+    pub fn id_here(&self, subject: &Subject) -> Option<u64> {
+        self.id_of(subject, self.active.as_deref()?)
+    }
+
+    /// The id of the follow of `subject` in `context`, or in the context the
+    /// window is on.
+    pub fn id_for(&self, subject: &Subject, context: Option<&str>) -> Option<u64> {
+        match context {
+            Some(context) => self.id_of(subject, context),
+            None => self.id_here(subject),
+        }
+    }
+
+    /// Follows `subject` in `context`, or in the context the window is on.
+    pub fn follow_for(
+        &mut self,
+        subject: Subject,
+        context: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<u64, Refused> {
+        match context {
+            Some(context) => self.follow_in(subject, context, cx),
+            None => self.follow_here(subject, cx),
+        }
+    }
+
+    /// Follows `subject` in the context the window is on.
+    pub fn follow_here(
+        &mut self,
+        subject: Subject,
+        cx: &mut Context<Self>,
+    ) -> Result<u64, Refused> {
+        let context = self.active.clone().ok_or(Refused::NotOpen)?;
+        self.follow_in(subject, &context, cx)
+    }
+
+    /// Follows `subject` in `context`. With a connection offered for the
+    /// context it reads at once; without one, as for a Kargo project in a
+    /// cluster that isn't open, it is "Not watching" until the shell offers
+    /// one. Refused at [`MAX_FOLLOWS`] and for a repeat.
+    pub fn follow_in(
+        &mut self,
+        subject: Subject,
+        context: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<u64, Refused> {
+        if self.items.len() >= MAX_FOLLOWS {
+            return Err(Refused::Full);
+        }
+        if self.is_following(&subject, context) {
+            return Err(Refused::Duplicate);
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let known = self
+            .connections
+            .get(context)
+            .filter(|_| !self.stopped)
+            .map(|c| c.sensitive);
+        let since = self.now(cx);
+        // Unknown cluster, unknown level: details stay hidden until the
+        // shell offers it.
+        let follow = Follow {
+            id,
+            subject,
+            context: context.to_owned(),
+            sensitive: known.unwrap_or(true),
+            since,
+        };
+        let status = match known {
+            Some(_) => Status::Starting,
+            None => Status::NotWatching(NOT_CONNECTED.to_owned()),
+        };
+        let key = FeedKey::of(&follow);
+        let open = known.is_some();
+        self.items.push(Item {
+            tracker: Tracker::new(&follow),
+            status,
+            follow,
+        });
+        if open && !self.feeds.get(&key).is_some_and(|f| f.watch.is_running()) {
+            self.start_feed(key, cx);
+        }
+        self.save();
+        cx.notify();
+        Ok(id)
+    }
+
+    /// Follows `subject` through `connection`, which is offered first.
+    pub fn follow(
+        &mut self,
+        subject: Subject,
+        connection: Connection,
+        cx: &mut Context<Self>,
+    ) -> Result<u64, Refused> {
+        let context = connection.context.clone();
+        self.offer(connection, cx);
+        self.follow_in(subject, &context, cx)
+    }
+
+    /// Stops following; the read stops with its last follow.
+    pub fn stop(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.remove(id, cx);
+        // Nothing left to follow: what was new has had its say.
+        if self.items.is_empty() {
+            self.inbox.mark_seen();
+            cx.notify();
+        }
+    }
+
+    /// Drops a follow and its read; a finished one leaves this way too, so
+    /// its last notice stays new.
+    fn remove(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(at) = self.items.iter().position(|i| i.follow.id == id) else {
+            return;
+        };
+        let item = self.items.remove(at);
+        self.release(&item.follow);
+        self.save();
+        cx.notify();
+    }
+
+    /// The shell has a connection to `connection.context`: follows there
+    /// read with it from now on.
+    pub fn offer(&mut self, connection: Connection, cx: &mut Context<Self>) {
+        if self.stopped {
+            return;
+        }
+        let context = connection.context.clone();
+        self.active = Some(context.clone());
+        let known = self.connections.get(&context);
+        let replaced = known.is_some_and(|known| known.id != connection.id);
+        let coroot_changed = known.is_none_or(|known| {
+            known.coroot.as_ref().map(|c| &c.source)
+                != connection.coroot.as_ref().map(|c| &c.source)
+        });
+        // A change of the cluster's level reaches its follows' next notices.
+        let mut level_changed = false;
+        for item in self
+            .items
+            .iter_mut()
+            .filter(|i| i.follow.context == context)
+        {
+            level_changed |= item.follow.sensitive != connection.sensitive;
+            item.follow.sensitive = connection.sensitive;
+            // The cluster is open: it reads now.
+            if matches!(&item.status, Status::NotWatching(why) if why == NOT_CONNECTED) {
+                item.status = Status::Starting;
+            }
+        }
+        if level_changed {
+            self.save();
+        }
+        self.connections.insert(context.clone(), connection);
+        let keys: Vec<FeedKey> = self
+            .items
+            .iter()
+            .filter(|i| i.follow.context == context)
+            .map(|i| FeedKey::of(&i.follow))
+            .collect();
+        for key in keys {
+            let reading = self.feeds.get(&key).is_some_and(|f| f.watch.is_running());
+            // A read goes on with the access it started with unless the
+            // connection is another (a rotated credential, a rebuilt
+            // session) or Coroot's project is.
+            if !reading || replaced || (coroot_changed && key.watch == WatchKey::Coroot) {
+                self.start_feed(key, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Stops every read, at quit. The follows stay saved and the owner
+    /// starts nothing again.
+    pub fn stop_all(&mut self, cx: &mut Context<Self>) {
+        self.stopped = true;
+        self.feeds.clear();
+        self.flush = None;
+        cx.notify();
+    }
+
+    /// Whether the follows are saved: the example launches have no file.
+    pub fn saves(&self) -> bool {
+        self.file.is_some()
+    }
+
+    /// Whether a toast about something followed in `context` (the window's,
+    /// without one) hides what it is about: Hide details, which defaults on
+    /// for a protected or read-only cluster and when the level isn't known.
+    pub fn hides_details_in(&self, context: Option<&str>) -> bool {
+        let level = context
+            .or(self.active.as_deref())
+            .and_then(|context| self.connections.get(context))
+            .map(|c| c.sensitive);
+        self.settings.hides(level.unwrap_or(true))
+    }
+
+    /// Whether details hide by default in the context the window is on:
+    /// what Hide details' Default resolves to there. `None` before the
+    /// shell has offered a connection.
+    pub fn hides_by_default(&self) -> Option<bool> {
+        let active = self.active.as_ref()?;
+        self.connections.get(active).map(|c| c.sensitive)
+    }
+
+    pub fn set_settings(&mut self, settings: Settings, cx: &mut Context<Self>) {
+        self.settings = settings;
+        self.save();
+        cx.notify();
+    }
+
+    /// Opening the bell: what was new is earlier.
+    pub fn mark_seen(&mut self, cx: &mut Context<Self>) {
+        if !self.inbox.new.is_empty() {
+            self.inbox.mark_seen();
+            cx.notify();
+        }
+    }
+
+    /// Takes what a read saw for `key`: applied to every follow that reads
+    /// it.
+    fn deliver(&mut self, key: &FeedKey, batch: Vec<Seen>, cx: &mut Context<Self>) {
+        let now = self.now(cx);
+        let mut updates = Vec::new();
+        let mut finished = Vec::new();
+        let mut changed = false;
+        for seen in &batch {
+            for item in self
+                .items
+                .iter_mut()
+                .filter(|i| FeedKey::of(&i.follow) == *key)
+            {
+                let step = item.tracker.observe(seen, now);
+                changed |= item.status != step.status;
+                item.status = step.status;
+                let sensitive = item.follow.sensitive;
+                updates.extend(step.updates.into_iter().map(|update| Update {
+                    sensitive,
+                    ..update
+                }));
+                if step.finished {
+                    finished.push(item.follow.id);
+                }
+            }
+        }
+        for update in updates {
+            self.tell(update, now, cx);
+        }
+        for id in finished {
+            self.remove(id, cx);
+        }
+        // What the bell and the lists show is the status and the notices;
+        // an answer that changes neither redraws nothing.
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// Hands the follows of `context` an answer a read would bring.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn deliver_for_tests(
+        &mut self,
+        context: &str,
+        watch: WatchKey,
+        seen: Seen,
+        cx: &mut Context<Self>,
+    ) {
+        let key = FeedKey {
+            context: context.to_owned(),
+            watch,
+        };
+        self.deliver(&key, vec![seen], cx);
+    }
+
+    /// Groups an update and shows or holds the notice it makes.
+    pub(crate) fn tell(&mut self, update: Update, now: DateTime<Utc>, cx: &mut Context<Self>) {
+        if let Some(notice) = self.hub.push(update, self.settings.grouping, now) {
+            self.show(notice, cx);
+        }
+        self.arm_flush(cx);
+    }
+
+    /// Lists a notice in the bell, and toasts it unless quiet hours hold it
+    /// and it is no failure.
+    pub(crate) fn show(&mut self, mut notice: Notice, cx: &mut Context<Self>) {
+        let quiet = self.settings.quiet.holds((self.local_minute)());
+        notice.held = quiet && !notice.has_failure();
+        if !notice.held {
+            cx.emit(Event::Toast {
+                words: notice.words(&self.settings),
+                failure: notice.has_failure(),
+            });
+        }
+        self.inbox.push(notice);
+        cx.notify();
+    }
+
+    /// Wakes when the open group window ends, to tell what waited in it.
+    fn arm_flush(&mut self, cx: &mut Context<Self>) {
+        let Some(due) = self.hub.due() else {
+            self.flush = None;
+            return;
+        };
+        let wait = (due - self.now(cx)).to_std().unwrap_or_default();
+        self.flush = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            _ = this.update(cx, |this, cx| {
+                let now = this.now(cx);
+                if let Some(notice) = this.hub.flush(now) {
+                    this.show(notice, cx);
+                }
+                this.arm_flush(cx);
+            });
+        }));
+    }
+
+    /// The time, on the executor's clock so a test steps it.
+    pub(crate) fn now(&mut self, cx: &App) -> DateTime<Utc> {
+        let instant = cx.background_executor().now();
+        let (origin_instant, origin) = *self.origin.get_or_insert((instant, Utc::now()));
+        origin + chrono::Duration::from_std(instant - origin_instant).unwrap_or_default()
+    }
+
+    fn save(&mut self) {
+        let Some(file) = &self.file else {
+            return;
+        };
+        let saved = Saved {
+            follows: self.items.iter().map(|i| i.follow.clone()).collect(),
+            next_id: self.next_id,
+            settings: self.settings,
+        };
+        match file.save(&saved) {
+            Ok(()) => self.save_failed = false,
+            Err(error) => {
+                if !std::mem::replace(&mut self.save_failed, true) {
+                    tracing::warn!("{} not saved: {error}", file.path().display());
+                }
+            }
+        }
+    }
+}
+
+/// Why a saved follow reads nothing before its cluster is open.
+pub(crate) const NOT_CONNECTED: &str = "This cluster isn't open in this session.";
