@@ -237,9 +237,10 @@ impl DetailPane {
             KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
             KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
             KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
-            // Command-Shift-] and [, as macOS reports them.
-            KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
-            KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
+            // Option-Command-] and [: the pane's tabs. Command-Shift-] and [,
+            // as macOS reports them, step the shell's view tabs everywhere.
+            KeyBinding::new("secondary-alt-]", NextTab, Some(CONTEXT)),
+            KeyBinding::new("secondary-alt-[", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("secondary-g", FindNext, Some(CONTEXT)),
             KeyBinding::new("secondary-shift-g", FindPrevious, Some(CONTEXT)),
             KeyBinding::new("f3", FindNext, Some(CONTEXT)),
@@ -936,7 +937,7 @@ impl DetailPane {
         window.focus(&self.focus, cx);
     }
 
-    /// Command-Shift-] and [ in the pane: the next tab, with the keyboard
+    /// Option-Command-] and [ in the pane: the next tab, with the keyboard
     /// on what it shows.
     fn switch_tab(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         if self.step_tab(delta, cx).is_some() {

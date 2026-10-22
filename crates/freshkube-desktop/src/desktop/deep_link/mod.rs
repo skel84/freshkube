@@ -69,7 +69,7 @@ pub(super) fn page_of(page: LinkPage) -> Page {
 
 /// The link page a shell page is, if it is a plain place: not Settings or
 /// Operations.
-fn link_page(page: Page) -> Option<LinkPage> {
+pub(super) fn link_page(page: Page) -> Option<LinkPage> {
     LinkPage::ALL
         .into_iter()
         .find(|candidate| page_of(*candidate) == page)

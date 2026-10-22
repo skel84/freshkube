@@ -266,9 +266,10 @@ impl ResourcesScreen {
             KeyBinding::new("shift-x", SelectGroup, Some(CONTEXT)),
             KeyBinding::new("o", OpenNode, Some(CONTEXT)),
             KeyBinding::new("h", ToggleHealthy, Some(CONTEXT)),
-            // Command-Shift-] and [, as macOS reports them.
-            KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
-            KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
+            // Option-Command-] and [; Command-Shift-] and [ step the shell's
+            // view tabs.
+            KeyBinding::new("secondary-alt-]", NextTab, Some(CONTEXT)),
+            KeyBinding::new("secondary-alt-[", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
         ]);
         cx.bind_keys([
@@ -1278,7 +1279,7 @@ impl ResourcesScreen {
         focus.dispatch_action(&base::actions::Confirm { secondary: false }, window, cx);
     }
 
-    /// Command-Shift-] and [ on the list switch the pane's tab and leave
+    /// Option-Command-] and [ on the list switch the pane's tab and leave
     /// the keyboard where it is.
     fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
         self.detail

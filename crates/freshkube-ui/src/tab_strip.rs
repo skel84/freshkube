@@ -10,12 +10,14 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, AnyView, App, Context, FontWeight, IntoElement, MouseButton, SharedString, Window,
-    div,
+    AnyElement, AnyView, App, Context, FontWeight, IntoElement, MouseButton, Role, SharedString,
+    TestSupportExt as _, Window, div,
 };
 
 use crate::dock;
-use crate::inspector::TabStrip;
+use crate::inspector::{self, TabStrip};
+use crate::palette::palette;
+use crate::ui::dp;
 
 /// Draws a tab's tooltip, when the pointer rests on it.
 pub type Tip = Rc<dyn Fn(&mut Window, &mut App) -> AnyView>;
@@ -95,4 +97,36 @@ pub fn row<V: 'static>(
                 .into_any_element()
         }))
         .into_any_element()
+}
+
+/// The height of a bar of tabs under the header, in dp: a tab and a little
+/// air above it.
+pub const BAR_HEIGHT: f32 = 32.;
+
+/// A full-width bar for a [`row`] of tabs, with a hairline below. The tabs
+/// sit on the hairline, so the selected one's underline meets it.
+pub fn bar(
+    id: impl Into<SharedString>,
+    strip: &TabStrip,
+    row: AnyElement,
+    cx: &App,
+) -> impl IntoElement {
+    let id = id.into();
+    gpui_kit::component::h_flex()
+        .id(id.clone())
+        .test_support()
+        .role(Role::TabList)
+        .w_full()
+        .h(dp(BAR_HEIGHT))
+        .pt(dp(BAR_HEIGHT - crate::inspector::TAB_HEIGHT))
+        .flex_none()
+        .min_w_0()
+        .bg(cx.theme().background)
+        .border_b_1()
+        .border_color(palette(cx).line)
+        .child(
+            inspector::bare_strip(SharedString::from(format!("{id}-tabs")), strip, row, cx)
+                .flex_1()
+                .min_w_0(),
+        )
 }
