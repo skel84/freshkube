@@ -100,6 +100,7 @@ impl SettingsPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let settings = owner.read(cx).settings();
+        let default_hides = owner.read(cx).hides_by_default();
         let saved = || form::SavedIn::file("follows.json");
         let change = |owner: &Entity<Followed>, edit: fn(&mut Settings, i32), value: i32| {
             let owner = owner.clone();
@@ -177,7 +178,11 @@ impl SettingsPage {
                 .small()
                 .child(choice(
                     "notifications-hide-default",
-                    "Default",
+                    match default_hides {
+                        Some(true) => "Default (On)",
+                        Some(false) => "Default (Off)",
+                        None => "Default",
+                    },
                     settings.hide_details.is_none(),
                 ))
                 .child(choice(

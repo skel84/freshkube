@@ -258,17 +258,27 @@ impl Followed {
                 }
             }
             Shape::Hidden => {
-                connection.sensitive = true;
+                // Hide details on, as a protected cluster has it by default
+                // (the example cluster itself is as open as the header says):
+                // the notice is told at once and says only its summary.
+                self.settings.hide_details = Some(true);
                 let _ = self.follow(pod("shop", "api-7c9"), connection.clone(), cx);
-                self.seed_notices(
-                    &[(
-                        "crash-looping",
-                        "api-7c9 keeps crash-looping",
-                        "In shop, restarted 4 times.",
-                        true,
-                        2,
-                    )],
-                    1,
+                let at = self.now(cx) - Span::seconds(2);
+                self.show(
+                    Notice {
+                        id: 1,
+                        at,
+                        updates: vec![Update {
+                            follow: 1,
+                            state: "crash-looping".to_owned(),
+                            headline: "api-7c9 keeps crash-looping".to_owned(),
+                            detail: "In shop, restarted 4 times.".to_owned(),
+                            failure: true,
+                            sensitive: false,
+                            at,
+                        }],
+                        held: false,
+                    },
                     cx,
                 );
             }

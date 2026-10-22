@@ -75,7 +75,7 @@ impl Render for FollowMenu {
         let this = cx.entity().downgrade();
         let panel = self.panel.clone();
         Popover::new(SharedString::from(format!("{}-popover", self.prefix)))
-            .anchor(Anchor::BottomRight)
+            .anchor(Anchor::TopRight)
             .open(self.open)
             .on_open_change(move |open, _, cx| {
                 let open = *open;

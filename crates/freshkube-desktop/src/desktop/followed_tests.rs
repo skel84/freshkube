@@ -125,6 +125,17 @@ fn a_protected_cluster_toasts_only_the_title(cx: &mut TestAppContext) {
         (followed.items()[0].follow.context.clone(), followed.count())
     });
     assert_eq!(before, 1);
+    // The example turns Hide details on and tells its notice at once; the
+    // Default beside it resolves to the open cluster's level.
+    let (hide, default) = cx.read(|cx| {
+        let followed = f.followed.read(cx);
+        (
+            followed.settings().hide_details,
+            followed.hides_by_default(),
+        )
+    });
+    assert_eq!(hide, Some(true));
+    assert_eq!(default, Some(false), "Guarded shows details by default");
     let told = notices(cx, f.handle);
     let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     cx.update(|cx| {

@@ -380,6 +380,14 @@ impl Followed {
         cx.notify();
     }
 
+    /// Whether details hide by default in the context the window is on:
+    /// what Hide details' Default resolves to there. `None` before the
+    /// shell has offered a connection.
+    pub fn hides_by_default(&self) -> Option<bool> {
+        let active = self.active.as_ref()?;
+        self.connections.get(active).map(|c| c.sensitive)
+    }
+
     pub fn set_settings(&mut self, settings: Settings, cx: &mut Context<Self>) {
         self.settings = settings;
         self.save();
@@ -459,7 +467,7 @@ impl Followed {
 
     /// Lists a notice in the bell, and toasts it unless quiet hours hold it
     /// and it is no failure.
-    fn show(&mut self, mut notice: Notice, cx: &mut Context<Self>) {
+    pub(crate) fn show(&mut self, mut notice: Notice, cx: &mut Context<Self>) {
         let quiet = self.settings.quiet.holds((self.local_minute)());
         notice.held = quiet && !notice.has_failure();
         if !notice.held {

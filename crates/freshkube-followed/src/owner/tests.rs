@@ -700,3 +700,17 @@ fn a_level_change_on_one_context_reaches_the_follows_made_under_the_old_one(
         "a notice of a follow made under protected shows its details once open"
     );
 }
+
+#[gpui_kit::test]
+fn hide_details_default_resolves_to_the_open_clusters_level(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    let default = |cx: &mut TestAppContext| cx.read(|cx| h.followed.read(cx).hides_by_default());
+    assert_eq!(default(cx), None, "nothing is offered yet");
+    for (level, expected) in [(true, Some(true)), (false, Some(false))] {
+        cx.update(|cx| {
+            h.followed
+                .update(cx, |f, cx| f.offer(connection("dev-fra", level), cx))
+        });
+        assert_eq!(default(cx), expected);
+    }
+}

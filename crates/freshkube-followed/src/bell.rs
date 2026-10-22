@@ -7,6 +7,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use freshkube_ui::palette::palette;
 use freshkube_ui::ui::{self, Tone, dp};
+use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
@@ -26,6 +27,8 @@ pub struct FollowedBell {
     panel: Entity<BellPanel>,
     open: bool,
     label: SharedString,
+    /// The same without its word, for a window too narrow for the bar.
+    short: SharedString,
     _subscription: Subscription,
 }
 
@@ -41,26 +44,33 @@ impl FollowedBell {
             panel,
             open: false,
             label: SharedString::default(),
+            short: SharedString::default(),
             _subscription: subscription,
         };
         bell.derive(cx);
         bell
     }
 
-    /// "Notifying · 3", and how many are new.
+    /// "Notifying · 3", and how many are new; without anything followed,
+    /// only what is new.
     fn derive(&mut self, cx: &App) {
         let followed = self.followed.read(cx);
         let new = followed.inbox().new.len();
-        self.label = match (followed.count(), new) {
-            (n, 0) => format!("Notifying · {n}"),
-            (n, new) => format!("Notifying · {n} · {new} new"),
-        }
-        .into();
+        let (label, short) = match (followed.count(), new) {
+            (0, new) => (format!("{new} new"), format!("{new} new")),
+            (n, 0) => (format!("Notifying · {n}"), n.to_string()),
+            (n, new) => (
+                format!("Notifying · {n} · {new} new"),
+                format!("{n} · {new} new"),
+            ),
+        };
+        self.label = label.into();
+        self.short = short.into();
     }
 }
 
 impl Render for FollowedBell {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let followed = self.followed.read(cx);
         if followed.count() == 0
             && followed.inbox().new.is_empty()
@@ -71,6 +81,9 @@ impl Render for FollowedBell {
         let this = cx.entity().downgrade();
         let panel = self.panel.clone();
         let list = self.followed.clone();
+        // The status bar's right side keeps its room, so a narrow bar gets
+        // the bell's icon and count, not its word.
+        let narrow = window.viewport_size().width < ui::dp_px(1080., window);
         Popover::new("followed-popover")
             .anchor(Anchor::BottomRight)
             .open(self.open)
@@ -89,7 +102,12 @@ impl Render for FollowedBell {
                 Button::new("followed")
                     .ghost()
                     .xsmall()
-                    .label(self.label.clone())
+                    .when(narrow, |this| this.icon(IconName::BellRing))
+                    .label(if narrow {
+                        self.short.clone()
+                    } else {
+                        self.label.clone()
+                    })
                     .tooltip("What you follow, and what it told you"),
             )
             .content(move |_, _, _| panel.clone())
