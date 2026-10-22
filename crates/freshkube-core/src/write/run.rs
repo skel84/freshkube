@@ -574,6 +574,7 @@ impl Runner {
                     change: inverse.change.clone(),
                     observe: inverse.observe.clone(),
                     inverse: None,
+                    depends: vec![],
                 },
                 inverse.guard.clone(),
             ));

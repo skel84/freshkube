@@ -185,6 +185,23 @@ pub struct ObjectChange {
     pub observe: Observation,
     /// For a reversible action: how to work out the way back.
     pub inverse: Option<InverseFrom>,
+    /// Other objects this change depends on, checked in preflight.
+    pub depends: Vec<Depends>,
+}
+
+/// Another object a change depends on, which preflight reads and finds as
+/// the person saw it, so a page left open can't quietly act on a state that
+/// has moved on (a Promotion on a Stage that runs other Freight now).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Depends {
+    /// The object, with the UID the person saw.
+    pub target: Target,
+    /// A verb the access review also asks about on it, such as Kargo's
+    /// `promote` on a Stage.
+    pub verb: Option<&'static str>,
+    /// Fields that must still hold what the person saw: a JSON pointer and
+    /// its value, where `null` means the field is absent.
+    pub holds: Vec<(String, Value)>,
 }
 
 /// A second cluster an action also touches, such as the cluster a promotion

@@ -35,6 +35,9 @@ pub enum ChangedWhat {
     Gone,
     /// It was deleted and created again: the UID moved.
     Recreated,
+    /// Something this write depends on is no longer as the page showed it.
+    /// Reading the object again would not help: the page must be opened again.
+    Moved,
 }
 
 impl ChangedWhat {
@@ -43,6 +46,9 @@ impl ChangedWhat {
             ChangedWhat::Modified => "It was changed after you opened it.",
             ChangedWhat::Gone => "It no longer exists.",
             ChangedWhat::Recreated => "It was deleted and created again after you opened it.",
+            ChangedWhat::Moved => {
+                "It is no longer as the page showed it. Read the page again before going on."
+            }
         }
     }
 }

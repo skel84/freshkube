@@ -159,6 +159,7 @@ fn refresh(kind: &str, sentence: String, target: Target, token: &str) -> ActionD
         verb: "Refresh".into(),
         sentence: format!("{sentence}: add the refresh annotation, so Kargo reads it again."),
         changes: vec![ObjectChange {
+            depends: vec![],
             target,
             change: Change::MergePatch(annotate(REFRESH, token)),
             // Kargo records the token it handled.
@@ -188,6 +189,7 @@ pub fn reverify(acts: &StageActs) -> Option<ActionDescription> {
             acts.stage.name
         ),
         changes: vec![ObjectChange {
+            depends: vec![],
             target: acts.stage_target(),
             change: Change::MergePatch(annotate(REVERIFY, id)),
             // Kargo clears the annotation once it has started the new run,
@@ -247,6 +249,7 @@ pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> 
             running.promotion.name
         ),
         changes: vec![ObjectChange {
+            depends: vec![],
             target: target(&acts.project, "Promotion", "promotions", &running.promotion),
             change: Change::MergePatch(annotate(ABORT, ABORT_VALUE)),
             observe: Observation::FieldEquals {
@@ -352,6 +355,7 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
             let stage = &pick.acts.stage.name;
             let name = format!("{stage}.{ulid}.{}", short(freight).to_lowercase());
             ObjectChange {
+                depends: vec![],
                 target: Target {
                     group: kargo::GROUP.into(),
                     version: VERSION.into(),

@@ -3,10 +3,12 @@
 //! a server-side dry run. None of it is skipped at any level, and none of it
 //! changes anything.
 
+use serde_json::Value;
+
 use super::{
     Protection,
     access::{self, Access},
-    action::{ActionDescription, Change, Inverse, ObjectChange},
+    action::{ActionDescription, Change, Depends, Inverse, ObjectChange},
     audit::{Phase, RunId, scrub},
     diff::{FieldChange, diff},
     requirement::{Requirement, Tier, expected_name, requirement_for},
@@ -250,6 +252,9 @@ impl Runner {
             }
             Access::Unknown { message } => return Err(Block::AccessUnknown { object, message }),
         }
+        for depends in &change.depends {
+            self.check_depends(depends).await?;
+        }
         // A new object has nothing to read and no version to have seen.
         let before = if creates {
             Ok(serde_json::json!({}))
@@ -302,6 +307,60 @@ impl Runner {
                 Err(Block::DryRunFailed { object, message })
             }
         }
+    }
+
+    /// An object the change depends on: the access review for the verb it
+    /// names, a read that finds it with the UID the person saw, and the
+    /// fields that must still hold what the page showed.
+    async fn check_depends(&self, depends: &Depends) -> Result<(), Block> {
+        let target = &depends.target;
+        let object = target.label();
+        if let Some(verb) = depends.verb {
+            match access::review(&self.client, target, verb).await {
+                Access::Allowed => {}
+                Access::Denied { reason } => {
+                    return Err(Block::AccessDenied {
+                        object,
+                        verb,
+                        reason,
+                    });
+                }
+                Access::Unknown { message } => {
+                    return Err(Block::AccessUnknown { object, message });
+                }
+            }
+        }
+        let now = match get(&self.client, target).await {
+            Ok(now) => now,
+            Err(Refusal::Changed(what)) => return Err(Block::Changed { object, what }),
+            Err(Refusal::Denied(reason)) => {
+                return Err(Block::AccessDenied {
+                    object,
+                    verb: "get",
+                    reason,
+                });
+            }
+            Err(Refusal::NoAnswer(message) | Refusal::Rejected { message, .. }) => {
+                return Err(Block::NoAnswer { object, message });
+            }
+            Err(Refusal::Conflict(_)) => unreachable!("a read does not conflict"),
+        };
+        if now["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
+            return Err(Block::Changed {
+                object,
+                what: ChangedWhat::Recreated,
+            });
+        }
+        let null = Value::Null;
+        for (pointer, expected) in &depends.holds {
+            if now.pointer(pointer).unwrap_or(&null) != expected {
+                return Err(Block::Changed {
+                    object,
+                    what: ChangedWhat::Moved,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// A dry run the cluster refused is a request the app made, so it is

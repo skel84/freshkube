@@ -16,8 +16,8 @@ use kube::client::Body;
 use serde_json::{Value, json};
 
 use super::{
-    ActionDescription, AuditStore, Change, Inverse, InverseFrom, ObjectChange, Observation,
-    Protection, Runner, Target, Tier, Who,
+    ActionDescription, AuditStore, Change, Depends, Inverse, InverseFrom, ObjectChange,
+    Observation, Protection, Runner, Target, Tier, Who,
 };
 use crate::fake_api::{self, Recorded, Recorder};
 
@@ -29,6 +29,8 @@ struct State {
     objects: BTreeMap<String, Value>,
     next_version: u64,
     denied: bool,
+    /// Verbs the access review refuses, whatever the object.
+    denied_verbs: Vec<String>,
     access_review_fails: bool,
     /// An answer for every write that is not a dry run.
     fail_write: Option<(u16, String)>,
@@ -126,6 +128,15 @@ impl Cluster {
     /// The access review answers no.
     pub fn deny_access(&self) {
         self.state.lock().unwrap().denied = true;
+    }
+
+    /// The access review refuses this verb alone.
+    pub fn deny_verb(&self, verb: &str) {
+        self.state
+            .lock()
+            .unwrap()
+            .denied_verbs
+            .push(verb.to_owned());
     }
 
     /// The access review itself fails.
@@ -237,13 +248,18 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
                 false,
             );
         }
+        let denied = state.denied
+            || state
+                .denied_verbs
+                .iter()
+                .any(|verb| request.body.contains(&format!("\"verb\":\"{verb}\"")));
         return (
             fake_api::json(
                 201,
                 json!({"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview",
                     "metadata": {}, "spec": {},
-                    "status": {"allowed": !state.denied,
-                               "reason": if state.denied { "RBAC: no role allows it" } else { "" }}}),
+                    "status": {"allowed": !denied,
+                               "reason": if denied { "RBAC: no role allows it" } else { "" }}}),
             ),
             false,
         );
@@ -414,6 +430,7 @@ pub fn scale(count: u64) -> ActionDescription {
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: web(),
             change: Change::Apply(
                 json!({"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web"},
@@ -448,6 +465,7 @@ pub fn set_image(image: &str) -> ActionDescription {
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: web(),
             change: Change::Apply(json!({"apiVersion": "apps/v1", "kind": "Deployment",
                 "metadata": {"name": "web"},
@@ -473,6 +491,7 @@ pub fn delete_web() -> ActionDescription {
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: web(),
             change: Change::Delete,
             observe: Observation::Gone,
@@ -493,6 +512,7 @@ pub fn rotate_password() -> ActionDescription {
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: db(),
             change: Change::Apply(json!({"apiVersion": "v1", "kind": "Secret",
                 "metadata": {"name": "db"}, "data": {"password": "bmV3cGFzc3dvcmQ="}})),
@@ -550,9 +570,23 @@ pub fn create_notes(names: &[&str]) -> ActionDescription {
                     "data": {"stage": name}})),
                 observe: Observation::Exists,
                 inverse: None,
+                depends: vec![],
             })
             .collect(),
     }
+}
+
+/// [`create_notes`] for one subject that depends on `web` still having two
+/// replicas, as a Promotion depends on its Stage still running the Freight
+/// the page showed: the access review also asks about `promote`.
+pub fn create_note_after_web() -> ActionDescription {
+    let mut action = create_notes(&["stage-a"]);
+    action.changes[0].depends = vec![Depends {
+        target: web(),
+        verb: Some("promote"),
+        holds: vec![("/spec/replicas".into(), json!(2))],
+    }];
+    action
 }
 
 /// An action that only adds an annotation, and says it needs no confirmation.
@@ -567,6 +601,7 @@ pub fn annotate_web() -> ActionDescription {
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: web(),
             change: Change::MergePatch(
                 json!({"metadata": {"annotations": {"example.com/refresh": "t1"}}}),

@@ -1447,3 +1447,98 @@ async fn a_destination_whose_level_changes_after_the_dialog_opened_is_followed()
         }
     }
 }
+
+// ---- Review of #855: a create reads what it depends on ----
+
+#[tokio::test(start_paused = true)]
+async fn a_create_reads_the_object_it_depends_on_and_asks_about_its_verb() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let _ = ready(&runner, fake::create_note_after_web()).await;
+    cluster.assert_nothing_written();
+    let lines = cluster.recorder.lines();
+    assert_eq!(
+        lines,
+        [
+            "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+            "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+            "GET /apis/apps/v1/namespaces/shop/deployments/web",
+            "POST /api/v1/namespaces/shop/configmaps?&dryRun=All&fieldManager=freshkube",
+        ]
+    );
+    let bodies: Vec<String> = cluster
+        .recorder
+        .requests()
+        .iter()
+        .take(2)
+        .map(|r| r.body.clone())
+        .collect();
+    assert!(bodies[0].contains("\"verb\":\"create\""));
+    assert!(bodies[1].contains("\"verb\":\"promote\"") && bodies[1].contains("\"name\":\"web\""));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_dependency_that_moved_blocks_the_create_and_cannot_be_reviewed_away() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Open);
+    // The page showed two replicas; someone has scaled it since.
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &json!({"spec": {"replicas": 5}}),
+    );
+    let verdict = runner.preflight(fake::create_note_after_web()).await;
+    assert!(matches!(
+        &verdict,
+        Verdict::Blocked(Block::Changed {
+            what: ChangedWhat::Moved,
+            ..
+        })
+    ));
+    // It offers to close, not to review: reading it again would not help.
+    assert!(matches!(
+        Dialog::for_verdict(&verdict, "prod-fra"),
+        Dialog::Changed {
+            can_review: false,
+            ..
+        }
+    ));
+    cluster.assert_nothing_written();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_recreated_or_deleted_dependency_blocks_the_create() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    cluster.recreate(fake::DEPLOYMENT);
+    assert!(matches!(
+        runner.preflight(fake::create_note_after_web()).await,
+        Verdict::Blocked(Block::Changed {
+            what: ChangedWhat::Recreated,
+            ..
+        })
+    ));
+    cluster.assert_nothing_written();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_verb_the_dependency_refuses_blocks_the_create_before_anything_is_written() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.deny_verb("promote");
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    match runner.preflight(fake::create_note_after_web()).await {
+        Verdict::Blocked(Block::AccessDenied { verb, object, .. }) => {
+            assert_eq!((verb, object.as_str()), ("promote", "Deployment/web"));
+        }
+        other => panic!("{other:?}"),
+    }
+    cluster.assert_nothing_written();
+    assert!(
+        cluster
+            .recorder
+            .lines()
+            .iter()
+            .all(|l| !l.contains("dryRun")),
+        "no dry run after a refusal"
+    );
+}

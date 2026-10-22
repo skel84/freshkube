@@ -24,8 +24,8 @@ pub mod testing;
 
 pub use access::{Access, review as review_access};
 pub use action::{
-    ActionDescription, Change, Destination, Inverse, InverseFrom, ObjectChange, Observation,
-    Preview, Target,
+    ActionDescription, Change, Depends, Destination, Inverse, InverseFrom, ObjectChange,
+    Observation, Preview, Target,
 };
 pub use audit::{
     AuditObject, AuditRequest, AuditStore, KEEP as AUDIT_KEEP, Phase, RESULT_LIMIT, ROTATE_AT,
