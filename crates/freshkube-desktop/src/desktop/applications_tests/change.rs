@@ -2010,7 +2010,7 @@ fn turning_a_notify_me_switch_on_closes_the_popover_and_toasts(cx: &mut TestAppC
 /// reachable by scrolling the page, and every banner still says why: also
 /// with a failed refresh, whose banner leads the capped block.
 #[gpui_kit::test]
-fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext) {
+fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut TestAppContext) {
     const WHY: &str = "connection refused by core-fra.example.test:6443";
     for stale in [false, true] {
         let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
@@ -2056,12 +2056,19 @@ fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext)
                     "{at:?} leads {notes:?}"
                 );
                 assert!(
-                    notes.bottom() - at.top() >= gpui_kit::px(30.),
+                    notes.bottom() - at.top() >= freshkube_ui::ui::dp_px(20., window),
                     "{at:?} has no line in {notes:?}"
                 );
             }
             // Nothing overlaps: the banners end where the trail begins.
             assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+            // The notes keep their content's height: the last banner ends within
+            // the block's padding, never past it.
+            let last = window.find("change-pull").bounds();
+            assert!(
+                notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
+                "{notes:?} taller than its banners, last {last:?}"
+            );
             // The trail keeps three rows' height in the page, which scrolls.
             let key = change(&view, cx)
                 .unwrap()
@@ -2074,8 +2081,8 @@ fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext)
                 table.size.height >= row * 3.,
                 "table {table:?} for rows of {row:?}"
             );
-            // And the header with two rows sit above the status bar before
-            // any scrolling, the banners having given way to them.
+            // And the header with two rows (three rows' height) sit above the
+            // status bar before any scrolling, the banners having given way.
             let status = window.find("status-bar").bounds();
             assert!(
                 table.top() + row * 3. <= status.top(),
@@ -2130,6 +2137,13 @@ fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
             );
         }
         assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+        // The notes keep their content's height: the last banner ends within
+        // the block's padding, never past it.
+        let last = window.find("change-pull").bounds();
+        assert!(
+            notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
+            "{notes:?} taller than its banners, last {last:?}"
+        );
     })
     .unwrap();
 }

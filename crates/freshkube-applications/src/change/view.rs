@@ -222,11 +222,14 @@ impl ChangePage {
             .children(missing)
             .children(pull);
         // The edge below a capped block is its own element, which the block's
-        // scrolling can't move, so a clipped banner reads as scrollable.
+        // scrolling can't move, so a clipped banner reads as scrollable. Only
+        // a short window lets the block shrink; otherwise the notes keep their
+        // content's height. The 1 px edge is not counted in the minimum.
         Some(
             v_flex()
-                .min_h(dp(NOTES_MIN_HEIGHT))
-                .flex_shrink(1.)
+                .when(short, |this| {
+                    this.min_h(dp(NOTES_MIN_HEIGHT)).flex_shrink(1.)
+                })
                 .child(notes)
                 .when(short, |this| {
                     this.child(
