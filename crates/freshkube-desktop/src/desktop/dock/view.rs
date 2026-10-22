@@ -6,10 +6,11 @@ use std::rc::Rc;
 
 use freshkube_ui::dock::{self, Frame};
 use freshkube_ui::menu;
+use freshkube_ui::tab_strip;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, ElementExt as _, Sizable as _, v_flex};
+use gpui_kit::component::{ElementExt as _, Sizable as _, v_flex};
 
 use super::feed::FeedState;
 use super::*;
@@ -42,59 +43,30 @@ fn shell_tip(tab: &DockTab) -> Option<impl Fn(&mut Window, &mut App) -> AnyView 
 impl Dock {
     fn render_tabs(&self, cx: &mut Context<Self>) -> AnyElement {
         let active = self.selected.and_then(|id| self.position(id)).unwrap_or(0);
-        self.strip
-            .row("dock-tab-row", active)
-            .children(self.tabs.iter().map(|tab| {
-                let id = tab.id;
-                let this = cx.entity().downgrade();
-                let close = dock::close_button(format!("dock-tab-{id}-close"), &tab.title)
-                    .on_click(cx.listener(move |dock, _, window, cx| {
-                        cx.stop_propagation();
-                        dock.close_tab(id, window, cx);
-                    }));
-                let tab = dock::tab(
-                    format!("dock-tab-{id}"),
-                    tab.title.clone(),
-                    Some(id) == self.selected,
-                    close,
-                    cx,
-                )
-                .when_some(shell_tip(tab), |this, tip| this.tooltip(tip))
-                .on_click(cx.listener(move |dock, _, window, cx| dock.select(id, true, window, cx)))
-                // Select and focus before Kit records the focus to restore.
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |dock, _, window, cx| dock.select_for_menu(id, window, cx)),
-                )
-                // A middle-click closes the tab, as in a browser.
-                .on_mouse_down(
-                    MouseButton::Middle,
-                    cx.listener(move |dock, _, window, cx| {
-                        cx.stop_propagation();
-                        dock.close_tab(id, window, cx);
-                    }),
-                );
-                // The popup inherits its trigger's text style. Keep it in
-                // the UI font, outside the selected tab's semibold label.
-                div()
-                    .id(format!("dock-tab-{id}-menu"))
-                    .font_family(cx.theme().font_family.clone())
-                    .font_weight(FontWeight::NORMAL)
-                    .child(tab)
-                    .context_menu(move |menu, window, cx| {
-                        let Ok(focus) = this.update(cx, |dock, cx| {
-                            if dock.open {
-                                dock.take_focus(window, cx);
-                            }
-                            dock.focus.clone()
-                        }) else {
-                            return menu;
-                        };
-                        Self::tab_menu(menu, Some(id), focus, this.clone(), window, cx)
-                    })
-                    .into_any_element()
-            }))
-            .into_any_element()
+        let items = self.tabs.iter().map(|tab| tab_strip::Item {
+            id: tab.id,
+            title: tab.title.clone(),
+            active: Some(tab.id) == self.selected,
+            tip: shell_tip(tab).map(|tip| Rc::new(tip) as tab_strip::Tip),
+        });
+        let this = cx.entity().downgrade();
+        let actions = tab_strip::Actions {
+            select: |dock: &mut Dock, id, window, cx| dock.select(id, true, window, cx),
+            close: Dock::close_tab,
+            press_for_menu: Dock::select_for_menu,
+            menu: Rc::new(move |menu, id, window, cx| {
+                let Ok(focus) = this.update(cx, |dock, cx| {
+                    if dock.open {
+                        dock.take_focus(window, cx);
+                    }
+                    dock.focus.clone()
+                }) else {
+                    return menu;
+                };
+                Self::tab_menu(menu, Some(id), focus, this.clone(), window, cx)
+            }),
+        };
+        tab_strip::row("dock-tab", &self.strip, items, active, &actions, cx)
     }
 
     fn select_for_menu(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
