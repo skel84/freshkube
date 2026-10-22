@@ -282,10 +282,29 @@ impl Plan {
             .kill_on_drop(false);
         #[cfg(unix)]
         command.process_group(0);
+        // No console window, and suspended: the child runs only once it is in
+        // its job, so nothing it starts can be outside it.
         #[cfg(windows)]
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        let child = command.spawn()?;
-        let group = ProcessGroup::of(&child)?;
+        command.creation_flags(0x0800_0000 | 0x0000_0004); // CREATE_NO_WINDOW | CREATE_SUSPENDED
+        let mut child = command.spawn()?;
+        let group = match ProcessGroup::of(&child) {
+            Ok(group) => group,
+            Err(error) => {
+                // Not in a job: it must not run.
+                let _ = child.start_kill();
+                return Err(error);
+            }
+        };
+        #[cfg(windows)]
+        let group = match group.resume(&child) {
+            Ok(group) => group,
+            Err(error) => {
+                let _ = child.start_kill();
+                return Err(error);
+            }
+        };
+        #[cfg(unix)]
+        group.watch_parent();
         Ok(Running { child, group })
     }
 }

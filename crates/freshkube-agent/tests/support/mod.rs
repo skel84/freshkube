@@ -223,6 +223,25 @@ pub fn alive(pid: i32) -> bool {
     unsafe { libc_kill(pid, 0) == 0 }
 }
 
+/// Whether a process is still running.
+#[cfg(windows)]
+pub fn alive(pid: i32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: plain Win32 calls on a handle opened and closed here.
+    unsafe {
+        let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
+        if handle.is_null() {
+            return false;
+        }
+        let running = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
+        CloseHandle(handle);
+        running
+    }
+}
+
 #[cfg(unix)]
 unsafe extern "C" {
     #[link_name = "kill"]

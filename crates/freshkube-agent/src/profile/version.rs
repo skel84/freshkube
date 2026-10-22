@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
-use super::{Data, Dirs, Host, Profile};
+use super::{Dirs, Host, Profile};
 use crate::investigation::clip;
 
 /// How long `<agent> --version` has to answer.
@@ -141,7 +141,7 @@ pub struct Checked {
 
 impl Checked {
     /// A proof without a check, for tests of what a start does next.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn for_tests(profile: &Profile) -> Self {
         Self {
             binary: profile.binary().to_path_buf(),
@@ -296,6 +296,7 @@ mod tests {
         use std::path::Path;
 
         use super::*;
+        use crate::profile::Data;
 
         fn script(dir: &Path, body: &str) -> Profile {
             let path = dir.join("opencode");

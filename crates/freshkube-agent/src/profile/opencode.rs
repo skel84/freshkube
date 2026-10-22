@@ -573,6 +573,7 @@ mod tests {
         drop(link);
     }
 
+    #[cfg(unix)]
     fn fake_proof(profile: &Profile) -> crate::profile::Checked {
         crate::profile::Checked::for_tests(profile)
     }
