@@ -270,6 +270,21 @@ async fn an_object_that_moves_after_preflight_is_refused_by_the_server_not_force
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_delete_of_an_object_created_again_after_preflight_is_refused_by_its_preconditions() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, fake::delete_web()).await;
+    cluster.recreate(fake::DEPLOYMENT);
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert_eq!(finished.headline(), Headline::Changed);
+    assert_eq!(
+        finished.objects[0].step,
+        Step::Changed(ChangedWhat::Recreated)
+    );
+    assert!(cluster.exists(fake::DEPLOYMENT));
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_dry_run_the_cluster_refuses_blocks_and_is_audited_but_nothing_is_written() {
     let (cluster, dir) = (Cluster::new(), tmp());
     cluster.refuse_dry_runs(
