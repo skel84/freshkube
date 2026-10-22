@@ -20,7 +20,7 @@ mod direct;
 mod hold;
 mod talos;
 
-pub use direct::DirectAccess;
+pub use direct::{DirectAccess, SIGN_IN_DEADLINE};
 pub use hold::Hold;
 pub use talos::{AppliedAccess, LiveSource, TalosAccess};
 

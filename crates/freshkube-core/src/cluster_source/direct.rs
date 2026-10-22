@@ -12,6 +12,9 @@ use futures::future::{BoxFuture, FutureExt, Shared};
 /// Loading credentials can run an auth plugin; anything slower is stuck.
 const CONNECT_DEADLINE: Duration = Duration::from_secs(30);
 
+/// When a person may be signing in through a browser, connecting waits for them.
+pub const SIGN_IN_DEADLINE: Duration = Duration::from_secs(300);
+
 type Attempt = Shared<BoxFuture<'static, Result<Connection, Failure>>>;
 type Connector = fn(Vec<PathBuf>, String) -> BoxFuture<'static, Result<Connection, Failure>>;
 
@@ -26,6 +29,7 @@ pub struct DirectAccess {
     identity: AccessIdentity,
     attempt: Arc<Mutex<Option<Attempt>>>,
     connector: Connector,
+    deadline: Duration,
 }
 
 impl DirectAccess {
@@ -54,7 +58,19 @@ impl DirectAccess {
             identity: AccessIdentity::new(AccessSessionId::new(), revision),
             attempt: Arc::default(),
             connector,
+            deadline: CONNECT_DEADLINE,
         }
+    }
+
+    /// Waits `deadline` for a connection instead of the usual 30 seconds, for
+    /// a context whose credential plugin may open a browser to sign in.
+    pub fn with_connect_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    pub fn connect_deadline(&self) -> Duration {
+        self.deadline
     }
 
     /// One session and inspected configuration revision. Recreating access
@@ -85,8 +101,9 @@ impl DirectAccess {
                 let sources = self.sources.clone();
                 let revision = self.revision();
                 let connecting = (self.connector)(self.sources.to_vec(), context.clone());
+                let deadline = self.deadline;
                 async move {
-                    tokio::time::timeout(CONNECT_DEADLINE, async move {
+                    tokio::time::timeout(deadline, async move {
                         check_revision(sources.clone(), revision).await?;
                         let connection = connecting.await?;
                         check_revision(sources, revision).await?;
