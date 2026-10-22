@@ -563,11 +563,18 @@ impl Pilot {
         self.open_waiting_links(window, cx);
     }
 
-    /// Whether the open cluster's identity is still being read.
+    /// Whether the open cluster's identity is not known yet: its read is
+    /// under way, or the window has a Kubernetes source it hasn't started
+    /// identifying (a Talos session installs its access before the summary
+    /// that does).
     pub(super) fn identifying(&self) -> bool {
-        match (&self.deep_link.identities.identifying, self.source().kube) {
-            (Some(reading), Some(source)) => *reading == source.id,
-            _ => false,
+        let identities = &self.deep_link.identities;
+        match self.source().kube {
+            Some(source) => {
+                identities.identified.as_deref() != Some(source.id.as_str())
+                    || identities.identifying.as_deref() == Some(source.id.as_str())
+            }
+            None => false,
         }
     }
 

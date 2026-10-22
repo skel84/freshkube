@@ -189,6 +189,29 @@ fn a_link_waits_for_the_open_clusters_read_before_it_is_matched(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
+fn a_link_waits_for_a_source_whose_cluster_is_not_being_identified_yet(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let text = made_in("prod-fra");
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            // The source is there, the summary that identifies it isn't yet.
+            pilot
+                .deep_link
+                .identities
+                .go_cold(std::time::Duration::ZERO);
+            pilot.open_external_link(text.clone(), window, cx);
+            assert_eq!(pilot.deep_link.waiting.len(), 1);
+            assert_ne!(pilot.navigation.page, Page::Etcd);
+            pilot.identify_open_cluster(window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!asking(cx, &view));
+    assert_eq!(page(cx, &view), Page::Etcd);
+}
+
+#[gpui_kit::test]
 fn a_cluster_never_opened_matches_on_the_ca_alone_and_asks(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let before = (active(cx, &view), page(cx, &view));
