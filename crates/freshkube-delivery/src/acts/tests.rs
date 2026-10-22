@@ -287,8 +287,8 @@ async fn a_protected_destination_asks_for_the_stage_s_name_though_kargo_s_cluste
     assert!(writes(&cluster).is_empty());
     // And a protected Kargo cluster asks for it with an open destination.
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-    let runner = runner(&cluster, dir.path(), Protection::Protected);
-    let verdict = runner.preflight(promote_action(Protection::Open)).await;
+    let protected = runner(&cluster, dir.path(), Protection::Protected);
+    let verdict = protected.preflight(promote_action(Protection::Open)).await;
     let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
         panic!("asks");
     };
