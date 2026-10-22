@@ -112,6 +112,8 @@ impl Fold {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Why {
     pub cause: Cause,
+    /// What it waits for has failed, so waiting won't move it.
+    pub blocked: bool,
 }
 
 impl Why {
@@ -875,6 +877,7 @@ fn item(
 /// Why `freight` isn't in `last` yet, from Kargo's record of the Stage that
 /// holds it.
 fn why(freight: &Freight, last: &Stage, in_stage: Option<&Stage>, ordered: &[&Stage]) -> Why {
+    let mut blocked = false;
     let cause = match in_stage {
         None => {
             let first: Vec<&str> = ordered
@@ -899,6 +902,7 @@ fn why(freight: &Freight, last: &Stage, in_stage: Option<&Stage>, ordered: &[&St
                     Cause::waiting(format!("a promotion from {} to {next}", stage.name))
                 }
                 (false, Some(phase @ ("Failed" | "Error" | "Aborted" | "Inconclusive"))) => {
+                    blocked = true;
                     Cause::waiting(format!(
                         "{}'s verification to pass; its last one {}",
                         stage.name,
@@ -915,7 +919,7 @@ fn why(freight: &Freight, last: &Stage, in_stage: Option<&Stage>, ordered: &[&St
             }
         }
     };
-    Why { cause }
+    Why { cause, blocked }
 }
 
 /// A pull request read from GitHub, kept for a Freight.

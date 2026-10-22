@@ -114,6 +114,8 @@ fn why_is_in_the_change_pages_cause_words() {
             "stage's verification to pass; its last one failed".into()
         )
     );
+    assert!(app_item(&waiting, "checkout", "merry-owl").why.blocked);
+    assert!(!app_item(&waiting, "checkout", "quiet-heron").why.blocked);
     assert_eq!(
         why("checkout", "wonky-otter"),
         ("Waiting", "a promotion from dev to stage".into())
