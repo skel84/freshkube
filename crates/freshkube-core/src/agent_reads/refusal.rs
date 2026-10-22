@@ -77,6 +77,10 @@ impl fmt::Display for Code {
 pub struct Refusal {
     pub code: Code,
     message: String,
+    /// The failure may be the shared client's fault (the server could not be
+    /// reached, or rejected its credentials), so the access should build it
+    /// again. A 403 is the person's role speaking, not the client's.
+    drops_client: bool,
 }
 
 impl Refusal {
@@ -84,6 +88,7 @@ impl Refusal {
         Self {
             code,
             message: scrub(message),
+            drops_client: false,
         }
     }
 
@@ -105,6 +110,11 @@ impl Refusal {
         &self.message
     }
 
+    /// Whether the access should forget the client this read used.
+    pub(super) fn drops_client(&self) -> bool {
+        self.drops_client
+    }
+
     /// A kind the cluster does not serve.
     pub fn not_served() -> Self {
         Self::new(Code::NotServed, "the cluster does not serve this kind")
@@ -122,7 +132,14 @@ impl Refusal {
             FailureKind::NotFound => Code::NotFound,
             FailureKind::Other => Code::Failed,
         };
-        Self::new(code, &failure.message)
+        let mut refusal = Self::new(code, &failure.message);
+        // Decided from the failure, not the code: both 401 and 403 are
+        // `refused`, and only the first says anything of the client.
+        refusal.drops_client = matches!(
+            failure.kind,
+            FailureKind::Unreachable | FailureKind::Unauthorized
+        );
+        refusal
     }
 
     /// A failure of looking up a kind, where a 404 means the API is not

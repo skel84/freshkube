@@ -8,16 +8,16 @@ use serde_json::Value;
 
 use super::answer::{Answer, Item};
 use super::call::{Events, Get, List, Logs, Request};
-use super::refusal::{Code, Refusal};
+use super::refusal::Refusal;
 use super::shape::{
     events_answer, get_answer, list_answer, logs_answer, missing, needs_namespace, scope,
 };
 use crate::cluster_source::ClusterAccess;
-use crate::constants::agent::{MAX_ITEMS, MAX_LOG_BYTES};
+use crate::constants::agent::{MAX_EVENT_PAGES, MAX_ITEMS, MAX_LOG_BYTES};
 use crate::failure::{Failure, FailureKind};
 use crate::resources::{
     JSON, ResourceKind, TABLE_ACCEPT, Table, get_metadata, json_get, list_metadata_page,
-    query_value, resolve_kind_key, row_tone,
+    query_value, resolve_kind_name, row_tone,
 };
 
 pub(super) async fn run(
@@ -37,7 +37,7 @@ pub(super) async fn run(
         Request::Events(events) => list_events(&client, entry, events).await,
     };
     if let Err(refusal) = &answer
-        && matches!(refusal.code, Code::Unreachable | Code::Refused)
+        && refusal.drops_client()
     {
         cluster.forget();
     }
@@ -45,7 +45,7 @@ pub(super) async fn run(
 }
 
 async fn resolve(client: &Client, asked: &str) -> Result<ResourceKind, Refusal> {
-    match resolve_kind_key(client, asked).await {
+    match resolve_kind_name(client, asked).await {
         Ok(Some(kind)) => Ok(kind),
         Ok(None) => Err(Refusal::not_served()),
         Err(failure) => Err(Refusal::from_kind_failure(&failure)),
@@ -187,11 +187,10 @@ async fn list_events(client: &Client, entry: &str, request: &Events) -> Result<A
         Some(asked) => Some(resolve(client, asked.as_str()).await?),
         None => None,
     };
-    let mut path = match &request.namespace {
+    let base = match &request.namespace {
         Some(namespace) => format!("/api/v1/namespaces/{}/events", namespace.as_str()),
         None => "/api/v1/events".to_owned(),
     };
-    path.push_str(&format!("?limit={MAX_ITEMS}"));
     let mut selectors = Vec::new();
     if let Some(kind) = &kind {
         selectors.push(format!("involvedObject.kind={}", kind.kind));
@@ -199,29 +198,46 @@ async fn list_events(client: &Client, entry: &str, request: &Events) -> Result<A
     if let Some(name) = &request.name {
         selectors.push(format!("involvedObject.name={}", name.as_str()));
     }
-    if !selectors.is_empty() {
-        path.push_str("&fieldSelector=");
-        path.push_str(&query_value(&selectors.join(",")));
+    let selector = if selectors.is_empty() {
+        String::new()
+    } else {
+        format!("&fieldSelector={}", query_value(&selectors.join(",")))
+    };
+    // The API lists events in no order of time, so the newest are found by
+    // reading the pages, up to a bound, and sorting here.
+    let mut items: Vec<Value> = Vec::new();
+    let mut next = String::new();
+    let mut more = false;
+    for page in 0..MAX_EVENT_PAGES {
+        let path = format!("{base}?limit={MAX_ITEMS}{selector}{next}");
+        let list: Value = client
+            .request(json_get(path, JSON).map_err(|failure| Refusal::from_failure(&failure))?)
+            .await
+            .map_err(|error| Refusal::from_failure(&Failure::from_kube(error)))?;
+        items.extend(
+            list.get("items")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .cloned(),
+        );
+        let token = list
+            .pointer("/metadata/continue")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if token.is_empty() {
+            break;
+        }
+        more = page + 1 == MAX_EVENT_PAGES;
+        next = format!("&continue={}", query_value(token));
     }
-    let list: Value = client
-        .request(json_get(path, JSON).map_err(|failure| Refusal::from_failure(&failure))?)
-        .await
-        .map_err(|error| Refusal::from_failure(&Failure::from_kube(error)))?;
-    let items = list
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let capped = list
-        .pointer("/metadata/continue")
-        .and_then(Value::as_str)
-        .is_some_and(|token| !token.is_empty());
+    let looked_at = more.then_some(items.len());
     events_answer(
         entry,
         kind.as_ref(),
         request,
         &items,
-        capped,
+        looked_at,
         chrono::Utc::now(),
     )
 }

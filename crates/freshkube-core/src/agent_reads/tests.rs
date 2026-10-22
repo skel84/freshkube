@@ -19,7 +19,8 @@ use crate::resources::ResourceKind;
 const ENTRY: &str = "cluster-a";
 const CONTEXT: &str = "ctx-a";
 
-struct Source(kube::Client, AtomicUsize);
+/// A shared client that counts the times it was asked for and dropped.
+struct Source(kube::Client, AtomicUsize, AtomicUsize);
 
 impl KubeClientSource for Source {
     fn client(&self) -> BoxFuture<'_, Result<kube::Client, Failure>> {
@@ -27,10 +28,14 @@ impl KubeClientSource for Source {
         let client = self.0.clone();
         Box::pin(async move { Ok(client) })
     }
+
+    fn forget(&self) {
+        self.2.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 fn target_on(client: kube::Client) -> (AgentTarget, Arc<Source>) {
-    let source = Arc::new(Source(client, AtomicUsize::new(0)));
+    let source = Arc::new(Source(client, AtomicUsize::new(0), AtomicUsize::new(0)));
     let target = AgentTarget {
         entry: ENTRY.into(),
         context: CONTEXT.into(),
@@ -944,4 +949,190 @@ fn the_wire_body_carries_its_read_id_and_the_design_shapes() {
         body.wire("r7"),
         json!({"read": "r7", "cluster": ENTRY, "events": [], "cut": null})
     );
+}
+
+#[tokio::test]
+async fn a_403_keeps_the_shared_client_and_a_401_or_a_dead_server_drops_it() {
+    let asking = request(
+        "get_object",
+        json!({"kind": "pods", "namespace": "shop", "name": "api-0"}),
+    );
+    let (target, _, source) = live(|_| status(403, "forbidden"));
+    for _ in 0..3 {
+        let refusal = read(&granted(), &target, &asking).await.unwrap_err();
+        assert_eq!(refusal.code, Code::Refused);
+    }
+    assert_eq!(
+        source.2.load(Ordering::SeqCst),
+        0,
+        "a 403 leaves the client cached"
+    );
+
+    let (target, _, source) = live(|_| status(401, "unauthorized"));
+    read(&granted(), &target, &asking).await.unwrap_err();
+    assert_eq!(source.2.load(Ordering::SeqCst), 1, "a 401 drops it");
+
+    let down = tower::service_fn(|_: HttpRequest<HttpBody>| async {
+        Err::<Response<HttpBody>, _>(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "refused",
+        ))
+    });
+    let (target, source) = target_on(kube::Client::new(down, "default"));
+    read(&granted(), &target, &asking).await.unwrap_err();
+    assert_eq!(
+        source.2.load(Ordering::SeqCst),
+        1,
+        "an unreachable server drops it"
+    );
+
+    let (target, _, source) = live(|_| status(404, "not found"));
+    read(&granted(), &target, &asking).await.unwrap_err();
+    assert_eq!(source.2.load(Ordering::SeqCst), 0, "a 404 keeps it");
+}
+
+#[tokio::test]
+async fn events_are_read_page_by_page_to_find_the_newest() {
+    let (target, recorder, _) = live(|r| {
+        let page: Value = if r.query.contains("continue=page-two") {
+            json!({"items": [event("Newest", 1)], "metadata": {}})
+        } else {
+            json!({"items": [event("Older", 30), event("Oldest", 50)], "metadata": {"continue": "page-two"}})
+        };
+        ok(page)
+    });
+    let answer = read(
+        &granted(),
+        &target,
+        &request("list_events", json!({"namespace": "shop", "limit": 2})),
+    )
+    .await
+    .unwrap();
+    let Body::Events { events, cut, .. } = &answer.body else {
+        panic!()
+    };
+    assert_eq!(
+        events.iter().map(|e| e.reason.as_str()).collect::<Vec<_>>(),
+        ["Newest", "Older"]
+    );
+    assert_eq!(*cut, Some(Cut::items(2)), "a third event did not fit");
+    assert_eq!(recorder.requests().len(), 2);
+    assert!(recorder.requests()[1].query.contains("continue=page-two"));
+}
+
+#[tokio::test]
+async fn events_the_pages_did_not_reach_make_the_answer_cut() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let (target, _, _) = live(move |_| {
+        let n = counted.fetch_add(1, Ordering::SeqCst);
+        ok(
+            json!({"items": [event(&format!("R{n}"), 1 + n as i64)], "metadata": {"continue": "more"}}),
+        )
+    });
+    let answer = read(
+        &granted(),
+        &target,
+        &request("list_events", json!({"namespace": "shop"})),
+    )
+    .await
+    .unwrap();
+    let Body::Events { events, cut, .. } = &answer.body else {
+        panic!()
+    };
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        crate::constants::agent::MAX_EVENT_PAGES
+    );
+    assert_eq!(events.len(), crate::constants::agent::MAX_EVENT_PAGES);
+    assert_eq!(
+        *cut,
+        Some(Cut::items(crate::constants::agent::MAX_EVENT_PAGES)),
+        "incomplete is said"
+    );
+}
+
+#[tokio::test]
+async fn a_secrets_last_applied_copy_never_reaches_the_answer() {
+    let copy = r#"{"apiVersion":"v1","data":{"password":"aHVudGVyMg=="},"kind":"Secret"}"#;
+    let annotated = json!({"kind":"PartialObjectMetadata","apiVersion":"meta.k8s.io/v1",
+        "metadata":{"name":"db","namespace":"shop","uid":"u-s",
+            "annotations":{"kubectl.kubernetes.io/last-applied-configuration": copy, "team": "payments"},
+            "managedFields":[{"manager":"kubectl"}]},
+        "data":{"password":"aHVudGVyMg=="}});
+    let (target, _, _) = live(move |_| ok(annotated.clone()));
+    let asking = request(
+        "get_object",
+        json!({"kind": "secrets", "namespace": "shop", "name": "db"}),
+    );
+    let answer = read(&granted(), &target, &asking).await.unwrap();
+    let text = wire(&answer);
+    for forbidden in [
+        "last-applied",
+        "aHVudGVyMg",
+        "password",
+        "managedFields",
+        "\"data\"",
+    ] {
+        assert!(!text.contains(forbidden), "{forbidden} in {text}");
+    }
+    assert!(text.contains("payments"), "other annotations stay");
+
+    // Example data takes the same rule.
+    struct Annotated;
+    impl ExampleObjects for Annotated {
+        fn objects(&self, _: &ResourceKind, _: Option<&str>) -> Vec<Value> {
+            vec![
+                json!({"apiVersion":"v1","kind":"Secret","data":{"password":"aHVudGVyMg=="},
+                "metadata":{"name":"db","namespace":"shop","uid":"u-s",
+                    "annotations":{"kubectl.kubernetes.io/last-applied-configuration": r#"{"data":{"password":"aHVudGVyMg=="}}"#}}}),
+            ]
+        }
+        fn log_lines(&self, _: &str, _: &str, _: Option<&str>, _: bool) -> Option<Vec<String>> {
+            None
+        }
+        fn events(&self, _: Option<&str>) -> Vec<Value> {
+            Vec::new()
+        }
+    }
+    let example = AgentTarget {
+        entry: ENTRY.into(),
+        context: CONTEXT.into(),
+        source: super::Source::Example(example_objects(Annotated)),
+    };
+    let answer = read(&granted(), &example, &asking).await.unwrap();
+    let text = wire(&answer);
+    assert!(
+        !text.contains("last-applied") && !text.contains("aHVudGVyMg"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn a_loose_kind_name_resolves_through_discovery_for_an_agent() {
+    let (target, _, _) = live(|r| match r.path.as_str() {
+        "/apis" => ok(
+            json!({"groups":[{"name":"cert-manager.io","versions":[{"version":"v1"}],
+            "preferredVersion":{"version":"v1"}}]}),
+        ),
+        "/apis/cert-manager.io/v1" => ok(
+            json!({"resources":[{"name":"certificates","kind":"Certificate",
+            "namespaced":true,"verbs":["list","watch"]}]}),
+        ),
+        p if p.ends_with("/certificates") => {
+            ok(json!({"kind":"Table","metadata":{},"columnDefinitions":[],"rows":[]}))
+        }
+        _ => None,
+    });
+    let answer = read(
+        &granted(),
+        &target,
+        &request(
+            "list_objects",
+            json!({"kind": "Certificate", "namespace": "shop"}),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer.place.kind, "certificates.cert-manager.io");
 }

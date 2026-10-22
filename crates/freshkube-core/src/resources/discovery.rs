@@ -130,17 +130,13 @@ pub async fn list_group_kinds(client: &Client, group: &ApiGroup) -> Result<Group
     group_kinds(&group.name, join_all(reads).await)
 }
 
-/// The kind a name kubectl takes names in this cluster: a kubectl key
-/// (`pods`, `certificates.cert-manager.io`), a plural, a singular or short
-/// name, or a Kind, in any case, with an optional `.group`. A built-in one
-/// resolves at once, else the one its API group's discovery serves. `None`
-/// means the cluster doesn't serve it, or the name fits two kinds; a failure
-/// means discovery couldn't be read.
+/// The kind a kubectl key (`pods`, `certificates.cert-manager.io`) names in
+/// this cluster: a built-in one at once, else the one its API group's
+/// discovery serves. `None` means the cluster doesn't serve it; a failure
+/// means discovery couldn't be read. Deep links resolve through this, and
+/// it asks nothing beyond that key's own group.
 pub async fn resolve_kind_key(client: &Client, key: &str) -> Result<Option<ResourceKind>, Failure> {
     if let Some(kind) = builtin(key) {
-        return Ok(Some(kind));
-    }
-    if let Some(kind) = find_named(key) {
         return Ok(Some(kind));
     }
     let groups = list_custom_groups(client).await?;
@@ -150,11 +146,35 @@ pub async fn resolve_kind_key(client: &Client, key: &str) -> Result<Option<Resou
             return Ok(Some(kind));
         }
     }
-    resolve_loose(client, &groups, key).await
+    Ok(None)
+}
+
+/// The kind anything kubectl takes names in this cluster: a key, a plural, a
+/// singular or short name, or a Kind, in any case, with an optional `.group`.
+/// A built-in one resolves at once, then a key by [`resolve_kind_key`], and
+/// only then is a bare name looked for in the groups discovery lists, at most
+/// [`LOOSE_GROUPS`] of them, read together. `None` means the cluster doesn't
+/// serve it, or the name fits two kinds; a failure means discovery couldn't be
+/// read. This is for an agent's reads; a link is strict.
+pub async fn resolve_kind_name(
+    client: &Client,
+    asked: &str,
+) -> Result<Option<ResourceKind>, Failure> {
+    if let Some(kind) = find_named(asked) {
+        return Ok(Some(kind));
+    }
+    let groups = list_custom_groups(client).await?;
+    for group in groups_for_key(&groups, asked) {
+        let kinds = list_group_kinds(client, group).await?;
+        if let Some(kind) = kinds.kinds.into_iter().find(|kind| kind.key() == asked) {
+            return Ok(Some(kind));
+        }
+    }
+    resolve_loose(client, &groups, asked).await
 }
 
 /// How many groups an unqualified name looks through.
-const LOOSE_GROUPS: usize = 64;
+const LOOSE_GROUPS: usize = 32;
 
 /// A name that is not a key: the plural or the kind in any case, in the group
 /// it names or, with none, in the first groups discovery lists. A group that
@@ -165,14 +185,14 @@ async fn resolve_loose(
     asked: &str,
 ) -> Result<Option<ResourceKind>, Failure> {
     let (name, group) = split_name(asked);
-    let wanted: Vec<&ApiGroup> = groups
+    let reads = groups
         .iter()
         .filter(|candidate| group.as_deref().is_none_or(|group| candidate.name == group))
         .take(LOOSE_GROUPS)
-        .collect();
+        .map(|candidate| list_group_kinds(client, candidate));
     let mut found: Vec<ResourceKind> = Vec::new();
-    for candidate in wanted {
-        match list_group_kinds(client, candidate).await {
+    for read in join_all(reads).await {
+        match read {
             Ok(kinds) => found.extend(
                 kinds
                     .kinds
@@ -310,6 +330,73 @@ mod tests {
         assert!(names(".dev").is_empty());
     }
     use super::*;
+
+    #[tokio::test]
+    async fn a_link_key_is_strict_and_a_loose_name_is_for_the_agent() {
+        let route = |request: &crate::fake_api::Recorded| match request.path.as_str() {
+            "/apis" => Some(crate::fake_api::json(
+                200,
+                r#"{"groups":[{"name":"cert-manager.io","versions":[{"version":"v1"}],"preferredVersion":{"version":"v1"}}]}"#,
+            )),
+            "/apis/cert-manager.io/v1" => Some(crate::fake_api::json(
+                200,
+                r#"{"resources":[{"name":"certificates","kind":"Certificate","namespaced":true,"verbs":["list","watch"]}]}"#,
+            )),
+            _ => None,
+        };
+        let (client, recorder) = crate::fake_api::client(route);
+        assert_eq!(resolve_kind_key(&client, "Certificate").await, Ok(None));
+        assert_eq!(resolve_kind_key(&client, "pod").await, Ok(None));
+        assert_eq!(
+            resolve_kind_key(&client, "certificates.cert-manager.io")
+                .await
+                .unwrap()
+                .unwrap()
+                .kind,
+            "Certificate"
+        );
+        // Only the key's own group is read for a link; a loose name is not.
+        recorder.assert_lines(&[
+            "GET /apis",
+            "GET /apis",
+            "GET /apis",
+            "GET /apis/cert-manager.io/v1",
+        ]);
+
+        let (client, recorder) = crate::fake_api::client(route);
+        for asked in ["Certificate", "certificate.cert-manager.io", "certificates"] {
+            let kind = resolve_kind_name(&client, asked).await.unwrap().unwrap();
+            assert_eq!(kind.key(), "certificates.cert-manager.io", "{asked}");
+        }
+        assert_eq!(
+            resolve_kind_name(&client, "Deploy")
+                .await
+                .unwrap()
+                .unwrap()
+                .key(),
+            "deployments.apps"
+        );
+        assert_eq!(resolve_kind_name(&client, "widget").await, Ok(None));
+        recorder.assert_all("discovery reads only", |r| r.method == http::Method::GET);
+    }
+
+    #[tokio::test]
+    async fn a_loose_name_reads_at_most_the_bounded_groups() {
+        let groups: Vec<String> = (0..40)
+            .map(|n| format!(r#"{{"name":"g{n}.example.com","versions":[{{"version":"v1"}}]}}"#))
+            .collect();
+        let body = format!(r#"{{"groups":[{}]}}"#, groups.join(","));
+        let (client, recorder) = crate::fake_api::client(move |request| {
+            if request.path == "/apis" {
+                Some(crate::fake_api::json(200, body.clone()))
+            } else {
+                Some(crate::fake_api::json(200, r#"{"resources":[]}"#))
+            }
+        });
+        assert_eq!(resolve_kind_name(&client, "widget").await, Ok(None));
+        let reads = recorder.requests().len();
+        assert_eq!(reads, 1 + LOOSE_GROUPS, "discovery plus the bounded groups");
+    }
 
     #[test]
     fn groups_leave_out_the_servers_own_and_put_the_preferred_version_first() {

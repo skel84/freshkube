@@ -254,12 +254,13 @@ fn event(raw: &Value) -> Event {
 }
 
 /// `list_events`: the newest events that match, at most the request's limit.
+/// `looked_at` is how many events were read when the server had more.
 pub(super) fn events_answer(
     cluster: &str,
     kind: Option<&ResourceKind>,
     request: &Events,
     raw: &[Value],
-    server_cut: bool,
+    looked_at: Option<usize>,
     now: DateTime<Utc>,
 ) -> Result<Answer, Refusal> {
     let since = now - Duration::seconds(request.since_seconds as i64);
@@ -282,7 +283,13 @@ pub(super) fn events_answer(
         .collect();
     events.sort_by_key(|event| std::cmp::Reverse(event.last));
     let limit = request.limit.min(MAX_ITEMS);
-    let mut cut = (server_cut || events.len() > limit).then(|| Cut::items(limit));
+    // `looked_at` is set when the server had more events than were read: the
+    // newest of them may be among those not read, so the answer says it is cut.
+    let mut cut = if events.len() > limit {
+        Some(Cut::items(limit))
+    } else {
+        looked_at.map(Cut::items)
+    };
     events.truncate(limit);
     if events.iter().any(|event| event.cut) {
         cut.get_or_insert(Cut::bytes(crate::constants::agent::MAX_EVENT_MESSAGE_BYTES));

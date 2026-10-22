@@ -87,6 +87,9 @@ pub mod agent {
     pub const MAX_SINCE_SECONDS: u64 = 86_400;
     /// How far back events reach when the agent names no age.
     pub const DEFAULT_EVENT_SINCE_SECONDS: u64 = 3_600;
+    /// Pages of 200 events one `list_events` read looks through to find the
+    /// newest, since the API lists them in no order of time.
+    pub const MAX_EVENT_PAGES: usize = 5;
     /// A log line is cut here.
     pub const MAX_LINE_BYTES: usize = 2 * 1024;
     /// An event message is cut here.

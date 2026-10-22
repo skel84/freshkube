@@ -97,7 +97,7 @@ fn list_events(
         kind.as_ref(),
         request,
         &raw,
-        false,
+        None,
         chrono::Utc::now(),
     )
 }
