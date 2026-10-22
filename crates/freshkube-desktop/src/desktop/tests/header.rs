@@ -141,12 +141,6 @@ fn header_is_one_row_of_controls_at_every_text_size(cx: &mut TestAppContext) {
                 close(id, bounds.size.height, dp(height));
                 close(id, bounds.center().y, middle);
             }
-            // The selected tab's underline sits on the hairline.
-            close(
-                "the tab's bottom",
-                window.find("section-dashboard").bounds().bottom(),
-                dp(44.) - px(1.),
-            );
         })
         .unwrap();
     }
@@ -221,4 +215,61 @@ fn long_context_names_keep_both_ends_and_wrap_in_the_popover(cx: &mut TestAppCon
         })
         .unwrap();
     }
+}
+
+/// The header has no section tabs (the rail covers navigation); Search
+/// everything is centred at 320 dp, and the switcher, Refresh and Settings
+/// stay.
+#[gpui_kit::test]
+fn header_has_no_section_tabs_and_centres_a_320_search(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for id in [
+            "section-dashboard",
+            "section-nodes",
+            "section-workloads",
+            "section-events",
+            "section-observability",
+        ] {
+            assert!(window.try_find(id).is_none(), "{id} is still drawn");
+        }
+        let dp = |n| crate::ui::dp_px(n, window);
+        let search = window.find("search-everything").bounds();
+        assert!(
+            (search.size.width - dp(320.)).abs() < px(0.5),
+            "search is {:?} wide",
+            search.size.width
+        );
+        assert!(
+            (search.center().x - px(1280.) / 2.).abs() < dp(2.),
+            "search is centred at {:?}",
+            search.center().x
+        );
+        for id in ["context-switcher", "refresh", "settings"] {
+            assert!(window.find(id).visible(), "{id} is missing");
+        }
+        assert!(window.find("context-switcher").bounds().right() < search.left());
+        assert!(window.find("refresh").bounds().left() > search.right());
+    })
+    .unwrap();
+}
+
+/// At the narrowest window and the largest text, the search gives way
+/// before anything overlaps.
+#[gpui_kit::test]
+fn narrow_header_shrinks_the_search_before_anything_overlaps(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let search = window.find("search-everything").bounds();
+        let switcher = window.find("context-switcher").bounds();
+        let settings = window.find("settings").bounds();
+        assert!(switcher.right() <= search.left(), "{switcher:?} {search:?}");
+        assert!(search.right() <= settings.left(), "{search:?} {settings:?}");
+        assert!(settings.right() <= px(760.));
+    })
+    .unwrap();
 }

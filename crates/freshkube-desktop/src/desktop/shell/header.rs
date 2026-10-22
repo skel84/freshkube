@@ -15,9 +15,12 @@ const SEARCH_KEY: &str = match Platform::current() {
 /// switcher keeps its glyph and leaves the word to the tooltip.
 const LEVEL_WORD_MIN_WIDTH: f32 = 900.;
 
+/// Search everything's width, in dp, when the header has the room.
+const SEARCH_FIELD_WIDTH: f32 = 320.;
+
 /// Below this window width, in dp, Search everything shrinks to its icon.
-/// Every page uses the same width: none adds controls to the header.
-const SEARCH_FIELD_MIN_WIDTH: f32 = 1180.;
+/// Above it the field gives up width before anything overlaps.
+const SEARCH_FIELD_MIN_WIDTH: f32 = 680.;
 
 impl Pilot {
     pub(in crate::desktop) fn render_header(
@@ -31,105 +34,48 @@ impl Pilot {
         // Clear of the window's controls: macOS's traffic lights keep their
         // size in points.
         let insets = freshkube_ui::platform::header_insets();
+        // Three parts on a row: the sides share what the search leaves, so
+        // the search sits in the middle. Each side keeps its content's
+        // width, so the search gives way first. The bar behind them is the
+        // window's drag region.
         TitleBar::new()
             .h(dp(APP_HEADER_HEIGHT))
             .bg(cx.theme().title_bar)
             .pl(insets.leading)
             .child(
                 h_flex()
-                    .gap(dp(if minimal { 6. } else { 14. }))
+                    .w_full()
                     .min_w_0()
+                    .gap(dp(6.))
                     .child(
                         h_flex()
-                            .gap(dp(8.))
+                            .flex_1()
+                            .gap(dp(if minimal { 6. } else { 8. }))
                             .children(self.render_menu_button(cx))
-                            .child(self.render_context_switcher(minimal, glyph_only_level, cx)),
+                            .child(self.render_context_switcher(minimal, glyph_only_level, cx))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .w(px(0.))
+                                    .h(px(0.))
+                                    .overflow_hidden()
+                                    .child(self.render_location(cx)),
+                            ),
                     )
-                    .child(self.render_section_tabs(window, cx))
-                    .child(
-                        div()
-                            .absolute()
-                            .w(px(0.))
-                            .h(px(0.))
-                            .overflow_hidden()
-                            .child(self.render_location(cx)),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap(dp(6.))
-                    .pl(dp(12.))
-                    .pr(insets.trailing)
-                    .flex_shrink_0()
                     .child(self.render_search_field(window, cx))
-                    .when(!minimal, |this| {
-                        this.child(self.render_refresh(cx))
-                            .child(self.render_appearance(cx))
-                    })
-                    .child(self.render_settings(cx)),
-            )
-            .into_any_element()
-    }
-
-    fn render_section_tabs(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let width = window.viewport_size().width / ui::dp_px(1., window);
-        let compact = width < 1120.;
-        let minimal = width < 680.;
-        h_flex()
-            .gap(dp(2.))
-            .children(
-                [
-                    (
-                        "dashboard",
-                        "Dashboard",
-                        Area::Overview,
-                        IconName::LayoutDashboard,
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .justify_end()
+                            .gap(dp(6.))
+                            .pl(dp(6.))
+                            .pr(insets.trailing)
+                            .when(!minimal, |this| {
+                                this.child(self.render_refresh(cx))
+                                    .child(self.render_appearance(cx))
+                            })
+                            .child(self.render_settings(cx)),
                     ),
-                    ("nodes", "Nodes", Area::Nodes, IconName::Server),
-                    (
-                        "workloads",
-                        "Workloads",
-                        Area::Group("workloads"),
-                        IconName::Boxes,
-                    ),
-                    ("events", "Events", Area::Events, IconName::Activity),
-                    (
-                        "observability",
-                        "Observability",
-                        Area::Observability,
-                        IconName::ChartLine,
-                    ),
-                ]
-                .into_iter()
-                .filter(|(_, _, area, _)| !minimal || self.navigation.area == *area)
-                .map(|(id, label, area, icon)| {
-                    let selected = self.navigation.area == area;
-                    Button::new(SharedString::from(format!("section-{id}")))
-                        .ghost()
-                        .small()
-                        .toggled(selected)
-                        // The header less its hairline: the underline sits on it.
-                        .h(ui::dp_px(APP_HEADER_HEIGHT, window) - px(1.))
-                        .rounded(px(0.))
-                        .border_b_2()
-                        .border_color(if selected {
-                            p.accent
-                        } else {
-                            gpui_kit::transparent_black()
-                        })
-                        .text_color(if selected { p.ink } else { p.muted })
-                        .when_else(
-                            compact,
-                            |button| button.icon(icon).w(dp(34.)).tooltip(label),
-                            |button| button.label(label).px(dp(10.)),
-                        )
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.show_area(area, window, cx)
-                            }),
-                        )
-                }),
             )
             .into_any_element()
     }
@@ -377,7 +323,13 @@ impl Pilot {
             .when(narrow, |this| {
                 this.w(dp(APP_HEADER_CONTROL)).justify_center()
             })
-            .when(!narrow, |this| this.w(dp(240.)).px(dp(10.)))
+            .when(!narrow, |this| {
+                this.w(dp(SEARCH_FIELD_WIDTH))
+                    .min_w(dp(APP_HEADER_CONTROL))
+                    .flex_shrink()
+                    .px(dp(10.))
+            })
+            .when(narrow, |this| this.flex_none())
             .gap(dp(8.))
             .rounded(px(8.))
             .border_1()
