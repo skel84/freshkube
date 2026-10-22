@@ -41,8 +41,15 @@ impl Why {
         }
     }
 
-    fn note(self) -> &'static str {
+    /// The words under the heading. `rows` tell whether one cluster matches
+    /// on the CA alone or several could be the one.
+    pub(super) fn note(self, rows: &[Row]) -> &'static str {
         match self {
+            Self::Choose if matches_alone(rows) => {
+                "One cluster matches this link on its CA alone, which doesn’t show it is the one \
+                 this link was made in. Opening reads it with your own access, and nothing \
+                 changes in the cluster."
+            }
             Self::Choose => {
                 "More than one cluster could be the one this link was made in. \
                  Opening reads it with your own access, and nothing changes in the cluster."
@@ -53,6 +60,15 @@ impl Why {
             }
         }
     }
+}
+
+/// Whether exactly one row matches, and on the CA alone.
+fn matches_alone(rows: &[Row]) -> bool {
+    let matching = rows
+        .iter()
+        .filter(|row| matches!(row.standing, Standing::Exact | Standing::CaOnly))
+        .count();
+    matching == 1 && rows.iter().any(|row| row.standing == Standing::CaOnly)
 }
 
 /// The rows the dialog shows for `link`.
@@ -105,7 +121,7 @@ impl LinkChoice {
             Standing::Exact => (Tone::Good, "Same cluster"),
             Standing::CaOnly => (Tone::Warn, "CA only"),
             Standing::Different => (Tone::Outline, "A different cluster"),
-            Standing::Unknown => (Tone::Outline, "Not the same, as far as known"),
+            Standing::Unknown => (Tone::Outline, "No match so far"),
         };
         let unchecked = matches!(row.checked, Checked::No | Checked::Failed(_));
         let failure = match &row.checked {
@@ -115,17 +131,20 @@ impl LinkChoice {
         let target = row.target.clone();
         let (pilot_open, pilot_check) = (self.pilot.clone(), self.pilot.clone());
         let check_context = row.context.clone();
+        // The name keeps a line's worth of room; the tags and buttons wrap
+        // under it when the dialog is narrow or the text large.
         h_flex()
             .id(SharedString::from(format!("link-choice-row-{id}")))
             .test_support()
             .w_full()
             .min_h(dp(36.))
             .gap(dp(8.))
+            .flex_wrap()
             .items_center()
             .child(
                 v_flex()
                     .flex_1()
-                    .min_w_0()
+                    .min_w(dp(160.))
                     .child(
                         div()
                             .truncate()
@@ -191,7 +210,18 @@ impl Render for LinkChoice {
             .aria_label(self.why.title())
             .gap(dp(10.))
             .text_size(dp(13.))
-            .child(div().text_color(p.muted).child(self.why.note()))
-            .children(rows)
+            .child(div().text_color(p.muted).child(self.why.note(&self.rows)))
+            // Rows scroll within the window's height, so the last one stays
+            // reachable at a small window or a large text size.
+            .child(
+                v_flex()
+                    .id("link-choice-rows")
+                    .test_support()
+                    .gap(dp(10.))
+                    .max_h(dp(320.))
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .children(rows),
+            )
     }
 }

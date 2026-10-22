@@ -178,7 +178,6 @@ fn attention_row(row: &AttentionRow, on_open: &OnOpen, cx: &App) -> AnyElement {
         .border_b_1()
         .border_color(p.line)
         .text_size(dp(12.5))
-        .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
         .child(table::glyph_slot(row.tone, cx))
         .child(
             div()
@@ -200,11 +199,15 @@ fn attention_row(row: &AttentionRow, on_open: &OnOpen, cx: &App) -> AnyElement {
         )
         .child(
             div()
+                .id("attention-reason")
                 .flex_1()
                 // Room for the reason before the name takes it all.
                 .min_w(dp(56.))
                 .truncate()
                 .text_color(p.muted)
+                // On the reason, not the row: the row's context menu is its
+                // child, and the row's tooltip would draw over the menu.
+                .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
                 .child(row.reason.clone()),
         )
         .child(

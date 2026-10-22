@@ -494,7 +494,21 @@ impl Pilot {
             uid: String::new(),
             connection: None,
         };
-        self.unless_shell(window, cx, move |this, window, cx| {
+        let leaving = shell::Leaving {
+            question: format!("Switch to {id} to open this link?"),
+            detail: format!(
+                "{id} opens as it does from the cluster list, then the link opens {}, read \
+                 with your own access. Port forwards keep running.",
+                super::deep_link::describe(&view)
+            ),
+            answer: "Switch".into(),
+        };
+        let pods = shell::running_anywhere(cx);
+        // A link switches without asking, unless a shell would end.
+        if pods.is_empty() {
+            return self.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx);
+        }
+        shell::asking(leaving, pods, window, cx, move |this, window, cx| {
             this.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx)
         });
     }

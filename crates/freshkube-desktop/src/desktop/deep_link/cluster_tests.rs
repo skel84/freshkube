@@ -226,6 +226,8 @@ fn a_cluster_never_opened_matches_on_the_ca_alone_and_asks(cx: &mut TestAppConte
         .expect("dev-fra is listed");
     assert_eq!((dev.1, &dev.2), (Standing::CaOnly, &Checked::No));
     assert!(drawn(cx, handle, "link-choice"));
+    // The rows scroll within the dialog, so every row stays reachable.
+    assert!(drawn(cx, handle, "link-choice-rows"));
     assert!(drawn(cx, handle, "link-choice-row-dev-fra"));
     assert!(drawn(cx, handle, "link-choice-check-dev-fra"));
     assert!(drawn(cx, handle, "link-choice-open-dev-fra"));
@@ -437,7 +439,13 @@ fn a_running_shell_is_asked_about_only_when_the_link_switches_the_cluster(cx: &m
     cx.read(|cx| assert!(!crate::resources::shell::running_anywhere(cx).is_empty()));
     // Another cluster: the shell question, and Cancel keeps everything.
     open_text(cx, handle, &view, &made_in("dev-fra"));
-    assert!(cx.pending_prompt().is_some());
+    let (question, detail) = cx.pending_prompt().expect("the shell question");
+    // It says what it is for, not only that a shell ends.
+    assert!(
+        question.contains("dev-fra") && question.contains("link"),
+        "{question}"
+    );
+    assert!(detail.contains("read with your own access"), "{detail}");
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert_eq!(active(cx, &view), SessionKey::Entry("core-fra".into()));
@@ -447,7 +455,7 @@ fn a_running_shell_is_asked_about_only_when_the_link_switches_the_cluster(cx: &m
     });
     // Agreeing ends the shell, switches and opens the view there.
     open_text(cx, handle, &view, &made_in("dev-fra"));
-    cx.simulate_prompt_answer("End the shell");
+    cx.simulate_prompt_answer("Switch and end the shell");
     cx.run_until_parked();
     assert_eq!(active(cx, &view), SessionKey::Entry("dev-fra".into()));
     assert_eq!(page(cx, &view), Page::Etcd);
@@ -609,6 +617,26 @@ fn a_link_without_a_fingerprint_still_opens_in_the_open_cluster(cx: &mut TestApp
     assert!(!asking(cx, &view));
     assert_eq!(page(cx, &view), Page::Etcd);
     assert!(notices.borrow().is_empty());
+}
+
+#[test]
+fn the_note_says_one_cluster_matches_on_the_ca_alone_when_only_one_does() {
+    use super::picker::{Row, Why};
+    let row = |standing| Row {
+        target: Target::Entry("a".into()),
+        context: "a".into(),
+        label: "a".into(),
+        standing,
+        checked: Checked::No,
+        open: false,
+        checking: false,
+    };
+    let one = [row(Standing::CaOnly), row(Standing::Unknown)];
+    assert!(Why::Choose.note(&one).starts_with("One cluster matches"));
+    let several = [row(Standing::CaOnly), row(Standing::CaOnly)];
+    assert!(Why::Choose.note(&several).starts_with("More than one"));
+    let exact_and_ca = [row(Standing::Exact), row(Standing::CaOnly)];
+    assert!(Why::Choose.note(&exact_and_ca).starts_with("More than one"));
 }
 
 #[test]
