@@ -25,8 +25,8 @@ fn cluster() -> Value {
 }
 
 fn tool(name: &'static str, description: &'static str, input: Map<String, Value>) -> Tool {
-    // Claude Code otherwise defers MCP tools behind its own ToolSearch, which a
-    // session without built-in tools lacks.
+    // Some MCP clients defer a server's tools behind a search tool of their
+    // own, which a session without built-in tools lacks.
     let mut meta = Map::new();
     meta.insert("anthropic/alwaysLoad".into(), Value::Bool(true));
     Tool::new(name, description, input).with_meta(meta.into())

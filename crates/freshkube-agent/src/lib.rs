@@ -15,6 +15,6 @@ pub mod endpoint;
 pub mod saved;
 pub mod session;
 
-pub use endpoint::{Endpoint, Outcome, ReadEvent, Targets};
+pub use endpoint::{Endpoint, Outcome, ReadEvent, Targets, Timeouts};
 pub use saved::Access;
 pub use session::{ReadId, SessionId, Token};

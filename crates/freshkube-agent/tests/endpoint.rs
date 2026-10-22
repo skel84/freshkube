@@ -3,7 +3,7 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use freshkube_agent::{Outcome, SessionId};
+use freshkube_agent::{Endpoint, Outcome, SessionId, Timeouts};
 use freshkube_core::agent_reads::{Code, TOOLS};
 use freshkube_nav::{
     KindKey, LinkPage, Name, Namespace, ObjectUid, ViewObject, ViewState, ViewTab,
@@ -235,6 +235,10 @@ async fn a_refused_read_gets_a_read_id_and_no_view() {
         let event = events.recv().await.unwrap();
         assert_eq!(event.view, None);
         assert_eq!(event.outcome, Outcome::Refused(code));
+        if code == Code::UnknownCluster {
+            // The id the agent typed is not told to the app.
+            assert_eq!(event.cluster, "unknown");
+        }
     }
 }
 
@@ -282,4 +286,151 @@ async fn a_session_has_its_own_ids_and_budget() {
     }
     assert_eq!(ea.recv().await.unwrap().read.to_string(), "r1");
     assert_eq!(eb.recv().await.unwrap().read.to_string(), "r1");
+}
+
+async fn raw(endpoint: &Endpoint, head: &str, send: &[u8]) -> tokio::net::TcpStream {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(endpoint.addr())
+        .await
+        .unwrap();
+    let _ = stream.write_all(head.as_bytes()).await;
+    let _ = stream.write_all(send).await;
+    stream
+}
+
+async fn answer(stream: &mut tokio::net::TcpStream, within: Duration) -> Option<String> {
+    use tokio::io::AsyncReadExt;
+    let mut text = Vec::new();
+    let mut buffer = [0u8; 1024];
+    let read = tokio::time::timeout(within, async {
+        loop {
+            match stream.read(&mut buffer).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    text.extend_from_slice(&buffer[..n]);
+                    if text.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+            }
+        }
+    })
+    .await;
+    read.ok()?;
+    Some(String::from_utf8_lossy(&text).into_owned())
+}
+
+#[tokio::test]
+async fn a_chunked_body_over_the_limit_is_refused_without_a_content_length() {
+    use tokio::io::AsyncWriteExt;
+    let (endpoint, _) = start(&granted()).await;
+    let head = format!(
+        "POST /mcp HTTP/1.1\r\nHost: {}\r\nAuthorization: {}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n",
+        endpoint.addr(),
+        bearer(&endpoint)
+    );
+    let mut stream = raw(&endpoint, &head, b"").await;
+    let chunk = [b' '; 8192];
+    for _ in 0..9 {
+        // 72 KiB in all; the server may answer and close before the last.
+        if stream.write_all(b"2000\r\n").await.is_err()
+            || stream.write_all(&chunk).await.is_err()
+            || stream.write_all(b"\r\n").await.is_err()
+        {
+            break;
+        }
+    }
+    let _ = stream.write_all(b"0\r\n\r\n").await;
+    let reply = answer(&mut stream, Duration::from_secs(5))
+        .await
+        .expect("an answer");
+    assert!(reply.starts_with("HTTP/1.1 413"), "{reply}");
+}
+
+#[tokio::test]
+async fn a_slow_header_or_body_is_dropped() {
+    let (events, _received) = tokio::sync::mpsc::unbounded_channel();
+    let endpoint = Endpoint::start_with(
+        SessionId::new(),
+        ENTRY,
+        &granted(),
+        std::sync::Arc::new(Example),
+        events,
+        Timeouts {
+            header: Duration::from_millis(300),
+            body: Duration::from_millis(300),
+        },
+    )
+    .await
+    .unwrap();
+
+    // Half a header, then silence: the connection is closed.
+    let mut stream = raw(&endpoint, "POST /mcp HTTP/1.1\r\nHost:", b"").await;
+    let closed = answer(&mut stream, Duration::from_secs(5)).await;
+    assert!(
+        closed.is_some_and(|text| !text.contains("200")),
+        "closed, not answered"
+    );
+
+    // A body that never finishes: 408.
+    let head = format!(
+        "POST /mcp HTTP/1.1\r\nHost: {}\r\nAuthorization: {}\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n",
+        endpoint.addr(),
+        bearer(&endpoint)
+    );
+    let mut stream = raw(&endpoint, &head, b"{\"jsonrpc\"").await;
+    let reply = answer(&mut stream, Duration::from_secs(5))
+        .await
+        .expect("an answer");
+    assert!(reply.starts_with("HTTP/1.1 408"), "{reply}");
+}
+
+#[tokio::test]
+async fn a_read_in_flight_when_the_endpoint_drops_sends_nothing() {
+    let held = freshkube_core::fake_api::held();
+    let (kube_client, recorder) = (held.client.clone(), held.recorder.clone());
+    let (events, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let endpoint = Endpoint::start(
+        SessionId::new(),
+        ENTRY,
+        &granted(),
+        std::sync::Arc::new(Held(kube_client)),
+        events,
+    )
+    .await
+    .unwrap();
+    let client = client(&endpoint).await;
+    let read = tokio::spawn(async move {
+        client
+            .call_tool(call(
+                "get_object",
+                json!({"kind": "pods", "namespace": "shop", "name": "api-0"}),
+            ))
+            .await
+    });
+    for _ in 0..500 {
+        if !recorder.requests().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        recorder.requests().len(),
+        1,
+        "the read reached the held cluster"
+    );
+
+    drop(endpoint);
+    // The read is given up with the endpoint, not left to run its 20 s.
+    for _ in 0..500 {
+        if held.abandoned() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(held.abandoned(), 1, "the request in flight was given up");
+    if let Ok(Some(event)) = tokio::time::timeout(Duration::from_secs(1), received.recv()).await {
+        panic!("a ReadEvent was sent after the drop: {event:?}");
+    }
+    read.abort();
 }

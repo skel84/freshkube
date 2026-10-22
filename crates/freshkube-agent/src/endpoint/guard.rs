@@ -3,6 +3,7 @@
 //! a probe learns nothing from the body.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -23,6 +24,8 @@ pub(super) struct Guard {
     /// Cancelled when the endpoint is dropped: the token is dead from then
     /// on, even for a connection that was kept open.
     pub(super) ended: CancellationToken,
+    /// How long a request's body may take to arrive.
+    pub(super) body_timeout: Duration,
 }
 
 pub(super) async fn check(
@@ -55,8 +58,15 @@ pub(super) async fn check(
     }
     // A chunked body has no length to declare, so it is read to the limit.
     let (parts, body) = request.into_parts();
-    let Ok(bytes) = axum::body::to_bytes(body, MAX_BODY_BYTES).await else {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    let bytes = match tokio::time::timeout(
+        guard.body_timeout,
+        axum::body::to_bytes(body, MAX_BODY_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await

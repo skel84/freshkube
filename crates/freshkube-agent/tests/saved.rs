@@ -166,3 +166,45 @@ async fn turning_a_cluster_off_ends_a_session_endpoints_reads() {
         "not_enabled"
     );
 }
+
+#[tokio::test]
+async fn turning_access_off_fails_closed_even_when_the_save_or_the_audit_fails() {
+    // The audit line cannot be written.
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access.set_access(ENTRY, CONTEXT, true, "settings").unwrap();
+    assert!(can_read(&gate).await);
+    std::fs::remove_dir_all(dir.path().join("audit")).unwrap();
+    std::fs::write(dir.path().join("audit"), "in the way").unwrap();
+    assert!(
+        access
+            .set_access(ENTRY, CONTEXT, false, "settings")
+            .is_err()
+    );
+    assert!(
+        !can_read(&gate).await,
+        "a failed audit does not keep access on"
+    );
+    assert!(access.grants().is_empty());
+
+    // The file cannot be saved: a directory sits where it should be.
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access.set_access(ENTRY, CONTEXT, true, "settings").unwrap();
+    std::fs::remove_file(access.file_path()).unwrap();
+    std::fs::create_dir(access.file_path()).unwrap();
+    assert!(
+        access
+            .set_access(ENTRY, CONTEXT, false, "settings")
+            .is_err()
+    );
+    assert!(
+        !can_read(&gate).await,
+        "a failed save does not keep access on"
+    );
+    assert!(access.grants().is_empty());
+}

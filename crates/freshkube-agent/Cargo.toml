@@ -26,10 +26,13 @@ tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
 getrandom = "0.3"
 http = "1"
-# The MCP Streamable HTTP server, pinned exactly: Claude Code and rmcp disagree on
-# the 2026-07-28 revision, so a bump is checked against each agent (spikes/agent).
+# The MCP Streamable HTTP server, pinned exactly: some MCP clients and rmcp disagree
+# on the 2026-07-28 revision, so a bump is checked against each agent (spikes/agent).
 rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
+# The accept loop, so a connection can be timed out and ended with the endpoint.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "service"] }
 
 [dev-dependencies]
 freshkube-core = { workspace = true, features = ["testing"] }
@@ -37,3 +40,5 @@ rmcp = { version = "=3.5.0", default-features = false, features = ["server", "cl
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 tempfile = "3"
 tracing-subscriber.workspace = true
+kube.workspace = true
+futures.workspace = true

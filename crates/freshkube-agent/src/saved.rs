@@ -7,8 +7,9 @@
 //! grants nothing.
 //!
 //! [`Access::set_access`] is the one way to change a grant. It saves the file,
-//! appends to `<preferences>/audit/agent.jsonl` and updates the gate, and does
-//! all three or none.
+//! appends to `<preferences>/audit/agent.jsonl` and updates the gate. Turning
+//! access on does all three or none; turning it off ends access first and
+//! reports a failed save, never keeping access on.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -105,9 +106,15 @@ impl Access {
     }
 
     /// Turns agent access for `entry`, opening `context`, on or off. `from`
-    /// says where the change was made. The file, the audit line and the gate
-    /// all change, or the error is returned and none does. Turning a cluster
-    /// off ends the reads in flight on it.
+    /// says where the change was made.
+    ///
+    /// **On is all or none:** the file, the audit line and the gate all
+    /// change, or the error is returned, the file is put back and the gate is
+    /// unchanged. **Off fails closed:** the gate is turned off first, which
+    /// ends the reads in flight on the cluster, and then the file and the
+    /// audit line are written; if either fails the error is returned but
+    /// access stays off, and the saved state in memory drops the grant so the
+    /// next save writes it out.
     pub fn set_access(&self, entry: &str, context: &str, on: bool, from: &str) -> io::Result<()> {
         let mut saved = self.state();
         let before = saved.clone();
@@ -120,7 +127,6 @@ impl Access {
                 since: Utc::now(),
             });
         }
-        self.document.save(&after)?;
         let line = AuditLine {
             at: Utc::now(),
             entry: entry.to_owned(),
@@ -128,6 +134,14 @@ impl Access {
             access: if on { "on" } else { "off" }.to_owned(),
             from: from.to_owned(),
         };
+        if !on {
+            self.gate.revoke(entry);
+            *saved = after.clone();
+            let written = self.document.save(&after);
+            let audited = self.audit.append_json(&line);
+            return written.and(audited);
+        }
+        self.document.save(&after)?;
         if let Err(error) = self.audit.append_json(&line) {
             // The change is not made without its line.
             if let Err(undo) = self.document.save(&before) {
@@ -135,11 +149,7 @@ impl Access {
             }
             return Err(error);
         }
-        if on {
-            self.gate.allow(entry, context);
-        } else {
-            self.gate.revoke(entry);
-        }
+        self.gate.allow(entry, context);
         *saved = after;
         Ok(())
     }

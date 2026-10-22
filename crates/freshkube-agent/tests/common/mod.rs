@@ -8,6 +8,8 @@ use freshkube_agent::{Endpoint, ReadEvent, SessionId, Targets};
 use freshkube_core::agent_reads::{
     AgentAccess, AgentTarget, EntryId, ExampleObjects, Source, example_objects,
 };
+use freshkube_core::cluster_source::{ClusterAccess, KubeClientSource};
+use freshkube_core::failure::Failure;
 use freshkube_core::resources::ResourceKind;
 use rmcp::ServiceExt;
 use rmcp::service::{RoleClient, RunningService};
@@ -94,4 +96,24 @@ pub async fn client(endpoint: &Endpoint) -> RunningService<RoleClient, ()> {
     ))
     .await
     .expect("the client connects")
+}
+
+/// Targets whose cluster takes every request and never answers.
+pub struct Held(pub kube::Client);
+
+impl KubeClientSource for Held {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, Failure>> {
+        let client = self.0.clone();
+        Box::pin(async move { Ok(client) })
+    }
+}
+
+impl Targets for Held {
+    fn resolve(&self, _: Option<&EntryId>) -> Option<AgentTarget> {
+        Some(AgentTarget {
+            entry: ENTRY.into(),
+            context: CONTEXT.into(),
+            source: Source::Live(ClusterAccess::Live(Arc::new(Held(self.0.clone())))),
+        })
+    }
 }

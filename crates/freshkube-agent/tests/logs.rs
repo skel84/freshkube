@@ -36,6 +36,15 @@ async fn the_token_never_reaches_debug_or_logs() {
         .await
         .unwrap();
 
+    // A cluster the session cannot read, named by an id the agent typed.
+    client
+        .call_tool(call(
+            "list_objects",
+            json!({"kind": "pods", "cluster": "cluster-zzz"}),
+        ))
+        .await
+        .unwrap();
+
     for printed in [
         format!("{endpoint:?}"),
         format!("{:?}", endpoint.token()),
@@ -59,7 +68,7 @@ async fn the_token_never_reaches_debug_or_logs() {
         .lines()
         .filter(|line| line.contains("agent read"))
         .collect();
-    assert_eq!(lines.len(), 2, "one line per read: {log}");
+    assert_eq!(lines.len(), 3, "one line per read: {log}");
     let first = lines[0];
     for expected in [
         endpoint.session().short().as_str(),
@@ -72,13 +81,18 @@ async fn the_token_never_reaches_debug_or_logs() {
         assert!(first.contains(expected), "{expected} missing from {first}");
     }
     assert!(lines[1].contains("code=\"invalid\""), "{}", lines[1]);
+    assert!(
+        lines[2].contains("entry=unknown") && lines[2].contains("code=\"unknown_cluster\""),
+        "{}",
+        lines[2]
+    );
     // The dependencies log at trace too, with ports and times; the rule is
     // about what this crate says.
     let ours: String = log
         .lines()
         .filter(|line| line.contains("freshkube"))
         .collect();
-    for value in ["12345", "SecretShop"] {
+    for value in ["12345", "SecretShop", "cluster-zzz"] {
         assert!(!ours.contains(value), "{value} was logged: {ours}");
     }
     assert!(!ours.contains("Running"), "no answer data in the log");

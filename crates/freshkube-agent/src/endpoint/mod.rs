@@ -11,11 +11,14 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use freshkube_core::agent_reads::{
     AgentAccess, AgentTarget, Call, Code, Cut, EntryId, Refusal, Request, TOOLS,
 };
 use freshkube_nav::ViewState;
+use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper_util::service::TowerToHyperService;
 use rmcp::model::{
     CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
     Implementation, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
@@ -67,7 +70,31 @@ pub struct ReadEvent {
     pub outcome: Outcome,
 }
 
+/// How long a connection may take to send its headers, and a request its
+/// body, before it is dropped. A client on loopback sends both at once.
+#[derive(Clone, Copy, Debug)]
+pub struct Timeouts {
+    pub header: Duration,
+    pub body: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            header: Duration::from_secs(10),
+            body: Duration::from_secs(10),
+        }
+    }
+}
+
+/// What the endpoint says of a cluster id the session cannot read, in place
+/// of the agent's own text.
+const UNKNOWN_CLUSTER: &str = "unknown";
+
 struct Shared {
+    /// Cancelled when the endpoint is dropped: a read in flight ends and
+    /// publishes nothing.
+    stop: CancellationToken,
     session: SessionId,
     /// The session's own entry.
     entry: String,
@@ -96,12 +123,25 @@ impl Endpoint {
         targets: Arc<dyn Targets>,
         events: UnboundedSender<ReadEvent>,
     ) -> std::io::Result<Self> {
+        Self::start_with(session, entry, access, targets, events, Timeouts::default()).await
+    }
+
+    /// As [`start`](Self::start), with the connection's time limits named.
+    pub async fn start_with(
+        session: SessionId,
+        entry: &str,
+        access: &AgentAccess,
+        targets: Arc<dyn Targets>,
+        events: UnboundedSender<ReadEvent>,
+        timeouts: Timeouts,
+    ) -> std::io::Result<Self> {
         let token = Token::generate()?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let stop = CancellationToken::new();
         let handler = Handler {
             shared: Arc::new(Shared {
+                stop: stop.clone(),
                 session,
                 entry: entry.to_owned(),
                 access: access.for_session(),
@@ -121,16 +161,12 @@ impl Endpoint {
             token: token.clone(),
             host: addr.to_string(),
             ended: stop.clone(),
+            body_timeout: timeouts.body,
         });
         let router = axum::Router::new()
             .nest_service("/mcp", service)
             .layer(axum::middleware::from_fn_with_state(guard, guard::check));
-        let until = stop.clone();
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, router)
-                .with_graceful_shutdown(until.cancelled_owned())
-                .await;
-        });
+        tokio::spawn(serve(listener, router, stop.clone(), timeouts.header));
         Ok(Self {
             addr,
             token,
@@ -173,6 +209,40 @@ impl std::fmt::Debug for Endpoint {
     }
 }
 
+/// Accepts connections until `stop`, then closes the port and every
+/// connection still open, so nothing outlives the endpoint. A connection that
+/// is slow to send its headers is dropped.
+async fn serve(
+    listener: tokio::net::TcpListener,
+    router: axum::Router,
+    stop: CancellationToken,
+    header_timeout: Duration,
+) {
+    loop {
+        let accepted = tokio::select! {
+            biased;
+            () = stop.cancelled() => return,
+            accepted = listener.accept() => accepted,
+        };
+        let Ok((stream, _)) = accepted else {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            continue;
+        };
+        let service = TowerToHyperService::new(router.clone());
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            let connection = hyper::server::conn::http1::Builder::new()
+                .timer(TokioTimer::new())
+                .header_read_timeout(header_timeout)
+                .serve_connection(TokioIo::new(stream), service);
+            tokio::select! {
+                () = stop.cancelled() => {}
+                _ = connection => {}
+            }
+        });
+    }
+}
+
 #[derive(Clone)]
 struct Handler {
     shared: Arc<Shared>,
@@ -201,13 +271,11 @@ impl Shared {
             }
         };
         let target_text = describe(&call.request);
-        let cluster = call
-            .cluster
-            .as_ref()
-            .map_or_else(|| self.entry.clone(), |id| id.as_str().to_owned());
         let Some(target) = self.targets.resolve(call.cluster.as_ref()) else {
+            // The id is the agent's text: neither the log nor the app is
+            // told it.
             return Done {
-                cluster,
+                cluster: UNKNOWN_CLUSTER.to_owned(),
                 target: target_text,
                 view: None,
                 result: Err(Refusal::new(
@@ -284,8 +352,8 @@ impl ServerHandler for Handler {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        // Claude Code's MCP 2026-07-28 client rejects a list without a
-        // lifetime and cache scope, which rmcp leaves out unless set.
+        // An MCP 2026-07-28 client may reject a list without a lifetime and
+        // cache scope, which rmcp leaves out unless set.
         Ok(ListToolsResult::with_all_items(self.tools.to_vec())
             .with_ttl_ms(3_600_000)
             .with_cache_scope(CacheScope::Private))
@@ -294,13 +362,24 @@ impl ServerHandler for Handler {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let shared = &self.shared;
         let read = shared.ids.next();
         let tool = known_tool(&request.name);
         let arguments = Value::Object(request.arguments.unwrap_or_default());
-        let done = shared.run(&request.name, arguments, read).await;
+        // A read ends with the endpoint or with the client's own cancel, and
+        // then nothing is logged, told to the app or answered.
+        let done = tokio::select! {
+            biased;
+            () = shared.stop.cancelled() => {
+                return Err(ErrorData::internal_error("the endpoint is closed", None));
+            }
+            () = context.ct.cancelled() => {
+                return Err(ErrorData::internal_error("the call was cancelled", None));
+            }
+            done = shared.run(&request.name, arguments, read) => done,
+        };
         let (wire, outcome, code) = match done.result {
             Ok((wire, cut)) => (wire, Outcome::Answered { cut }, "ok"),
             Err(refusal) => (

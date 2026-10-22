@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -119,23 +118,10 @@ async fn a_cluster_without_agent_access_refuses_before_any_request() {
     assert_eq!(source.1.load(Ordering::SeqCst), 0, "no client was built");
 }
 
-/// A client whose server never answers, recording what it was asked.
-fn held_client() -> (kube::Client, Recorder) {
-    let recorder = Recorder::default();
-    let log = recorder.clone();
-    let service = tower::service_fn(move |request: HttpRequest<HttpBody>| {
-        log.record(&request);
-        async {
-            std::future::pending::<()>().await;
-            Ok::<Response<HttpBody>, Infallible>(fake_api::response((500, String::new())))
-        }
-    });
-    (kube::Client::new(service, "default"), recorder)
-}
-
 #[tokio::test]
 async fn turning_access_off_ends_a_read_in_flight() {
-    let (client, recorder) = held_client();
+    let held = fake_api::held();
+    let (client, recorder) = (held.client.clone(), held.recorder.clone());
     let (target, _) = target_on(client);
     let access = granted();
     let asking = request(
@@ -638,7 +624,7 @@ async fn failures_map_to_their_codes() {
 
 #[tokio::test(start_paused = true)]
 async fn a_read_past_its_deadline_times_out() {
-    let (client, _) = held_client();
+    let client = fake_api::held().client;
     let (target, _) = target_on(client);
     let refusal = read(
         &granted(),
