@@ -52,10 +52,12 @@ fn check_with_no_cluster_is_a_usage_error_that_leaves_nothing_behind() {
 }
 
 #[test]
-fn a_log_file_option_is_refused_beside_a_command_and_nothing_is_created() {
+fn a_log_file_option_is_refused_after_a_command_and_nothing_is_created() {
     let home = tempfile::tempdir().unwrap();
     let log = home.path().join("run.log");
-    let output = freshkube(home.path(), &["--log-file", log.to_str().unwrap(), "check"]);
+    // Before the command, `check` would read as the positional link and
+    // start the app; after it, the command takes no such option.
+    let output = freshkube(home.path(), &["check", "--log-file", log.to_str().unwrap()]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(!log.exists());
     assert_eq!(left_behind(home.path()), Vec::<String>::new());
