@@ -119,7 +119,7 @@ pub fn load(writes: &AuditStore, operations_dir: &Path) -> History {
                         .join(", "),
                     phase: phase_word(record.phase),
                     fields: record.objects.into_iter().flat_map(|o| o.fields).collect(),
-                    result: record.result,
+                    result: scrub(&record.result),
                 }
             }));
         }
@@ -232,6 +232,45 @@ mod tests {
         assert_eq!(
             load(&AuditStore::new(dir.path().join("none")), dir.path()).unreadable,
             1
+        );
+    }
+
+    #[test]
+    fn a_hand_edited_line_shows_no_value_on_the_page() {
+        use crate::write::audit::{AuditObject, AuditRequest, Phase, Record, SCHEMA};
+        let dir = tempfile::tempdir().unwrap();
+        let store = AuditStore::new(dir.path().join("audit"));
+        store
+            .append(&Record {
+                schema: SCHEMA,
+                at: chrono::Utc::now(),
+                run: "r".into(),
+                entry: "e".into(),
+                context: "c".into(),
+                actor: "a".into(),
+                action: "set-image".into(),
+                tier: "spec-change".into(),
+                protection: "guarded".into(),
+                objects: vec![AuditObject {
+                    group: "apps".into(),
+                    resource: "deployments".into(),
+                    namespace: None,
+                    name: "web".into(),
+                    uid: "u".into(),
+                    fields: vec![],
+                }],
+                request: AuditRequest {
+                    sentence: "x".into(),
+                },
+                phase: Phase::Refused,
+                result: "env[0].value: Invalid value: \"hunter2-pass\": no".into(),
+            })
+            .unwrap();
+        let history = load(&store, dir.path());
+        assert!(
+            !history.rows[0].result.contains("hunter2"),
+            "{}",
+            history.rows[0].result
         );
     }
 }
