@@ -111,6 +111,10 @@ pub struct DebugOptions {
     /// `FRESHKUBE_TEXT_SIZE`: a step of `text_size::STEPS`, not saved; anything
     /// else is ignored. Debug builds only.
     pub(crate) text_size: Option<f32>,
+    /// `FRESHKUBE_FOLLOWS`: the shape of the followed items and the bell's
+    /// example (`freshkube_followed::example::Shape`); anything else plays
+    /// the example story. Needs `--fixture`.
+    pub(crate) follows: Option<freshkube_followed::example::Shape>,
 }
 
 impl DebugOptions {
@@ -191,6 +195,9 @@ impl DebugOptions {
             },
             text_size: text("FRESHKUBE_TEXT_SIZE")
                 .and_then(|size| freshkube_ui::text_size::parse(&size)),
+            follows: text("FRESHKUBE_FOLLOWS")
+                .as_deref()
+                .and_then(freshkube_followed::example::Shape::parse),
         }
     }
 
@@ -237,6 +244,29 @@ mod tests {
             documented_knobs(),
             "AGENTS.md's knob table and DebugOptions::parse disagree"
         );
+    }
+
+    #[test]
+    fn follows_names_the_shape_of_the_bell_and_ignores_anything_else() {
+        use freshkube_followed::example::Shape;
+        for (value, shape) in [
+            ("bell", Shape::Bell),
+            ("states", Shape::States),
+            ("quiet", Shape::Quiet),
+            ("hidden", Shape::Hidden),
+            ("full", Shape::Full),
+            ("unwatched", Shape::Unwatched),
+            ("grouped", Shape::Grouped),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_FOLLOWS", value)]).follows, Some(shape));
+        }
+        for bad in ["", "Bell", "nothing"] {
+            assert_eq!(
+                parse(&[("FRESHKUBE_FOLLOWS", bad)]).follows,
+                None,
+                "{bad:?}"
+            );
+        }
     }
 
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {

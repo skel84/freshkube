@@ -470,6 +470,22 @@ impl ObservabilityPage {
         }
         self.disconnect(window, cx);
     }
+    /// The project Coroot is read through, once connected to one, for the
+    /// app's follows to compare cheaply. `None` until then.
+    pub fn follow_source(&self) -> Option<&api::Source> {
+        if self.live.provider_only {
+            return None;
+        }
+        self.live.provider.as_ref()?;
+        self.live.source.as_ref()
+    }
+    /// As [`Self::follow_source`], with the provider.
+    pub fn follow_reader(&self) -> Option<(api::Provider, api::Source)> {
+        if self.live.provider_only {
+            return None;
+        }
+        Some((self.live.provider.clone()?, self.live.source.clone()?))
+    }
     /// Where the connection stands.
     pub fn connection_state(&self) -> ConnectionState {
         if self.live.connecting {

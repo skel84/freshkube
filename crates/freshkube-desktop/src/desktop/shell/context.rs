@@ -79,14 +79,12 @@ impl Pilot {
             .unwrap_or_else(|| "No context".into())
     }
 
-    /// The level the window works under: the active workspace entry's, with
-    /// the stricter of any entry naming the same kubeconfig context, else
-    /// guarded, else what a skipped row locked it to. The entry is the
-    /// source, not the name the header shows: the applied context can be a
-    /// Talos context that no entry's `context` names. With no entry active,
-    /// the context shown decides. Prepared on a source change and when the
-    /// setup changes, never while drawing.
-    pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
+    /// The level the window works under right now, from the entry and the
+    /// context as they stand: see [`Self::prepare_protection`], which keeps
+    /// it for drawing. The app's follows are offered this and the
+    /// connection in one call, so a level never reaches another cluster's
+    /// follows.
+    pub(in crate::desktop) fn current_level(&self, cx: &App) -> Protection {
         let shown = self.display_context(cx);
         let settings = self.settings_page.read(cx);
         let workspace = settings.workspace();
@@ -94,9 +92,21 @@ impl Pilot {
             .switch
             .active_cluster()
             .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id));
-        // Every entry's level, so a write to an entry the window doesn't show
-        // follows a change made in Settings as the window's own does.
-        let levels: Vec<(String, Protection)> = workspace
+        match active {
+            Some(entry) => workspace
+                .level_of(&entry.context, &settings.source_recovery)
+                .stricter(entry.level()),
+            None => workspace.level_of(&shown, &settings.source_recovery),
+        }
+    }
+
+    /// Every workspace entry's level, by its id: what it sets, with the
+    /// stricter of any entry naming the same context and what a skipped row
+    /// locked it to.
+    fn entry_levels(&self, cx: &App) -> Vec<(String, Protection)> {
+        let settings = self.settings_page.read(cx);
+        let workspace = settings.workspace();
+        workspace
             .clusters
             .iter()
             .map(|entry| {
@@ -107,14 +117,21 @@ impl Pilot {
                         .stricter(entry.level()),
                 )
             })
-            .collect();
-        let level = match active {
-            Some(entry) => workspace
-                .level_of(&entry.context, &settings.source_recovery)
-                .stricter(entry.level()),
-            None => workspace.level_of(&shown, &settings.source_recovery),
-        };
-        crate::mutation::set_entry_levels(levels, cx);
+            .collect()
+    }
+
+    /// The level the window works under: the active workspace entry's, with
+    /// the stricter of any entry naming the same kubeconfig context, else
+    /// guarded, else what a skipped row locked it to. The entry is the
+    /// source, not the name the header shows: the applied context can be a
+    /// Talos context that no entry's `context` names. With no entry active,
+    /// the context shown decides. Prepared on a source change and when the
+    /// setup changes, never while drawing.
+    pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
+        let level = self.current_level(cx);
+        // Every entry's level, so a write to an entry the window doesn't show
+        // follows a change made in Settings as the window's own does.
+        crate::mutation::set_entry_levels(self.entry_levels(cx), cx);
         if level == self.context_display.level && !self.context_display.level_words.is_empty() {
             return false;
         }
@@ -125,6 +142,8 @@ impl Pilot {
         self.pages
             .dock
             .update(cx, |dock, cx| dock.set_read_only(level.is_read_only(), cx));
+        // Hide details defaults on for a protected or read-only cluster.
+        self.offer_followed(cx);
         true
     }
 

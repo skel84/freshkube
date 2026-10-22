@@ -77,12 +77,12 @@ impl Pilot {
                     .unwrap_or_else(|| Entry::new(id, Role::Cicd, self.display_context(cx)))
             }
             KargoAt::Example => self
-                .entry_named(&act.change.kargo_cluster, cx)
+                .entry_named(&act.change.kargo_context, cx)
                 .unwrap_or_else(|| {
                     Entry::new(
-                        act.change.kargo_cluster.clone(),
+                        act.change.kargo_context.clone(),
                         Role::Cicd,
-                        act.change.kargo_cluster.clone(),
+                        act.change.kargo_context.clone(),
                     )
                 }),
         };

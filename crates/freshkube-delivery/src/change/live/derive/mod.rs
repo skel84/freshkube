@@ -269,7 +269,7 @@ pub fn derive(
             .alias
             .clone()
             .unwrap_or_else(|| freight.name.clone()),
-        kargo_cluster: sides.kargo.label.clone(),
+        kargo_context: sides.kargo.context.clone().unwrap_or_default(),
         observed_at: evidence.observed_at,
         page: links::freight_page(pages, freight),
         origin: origin(evidence, freight),

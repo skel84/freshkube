@@ -30,8 +30,9 @@ pub struct Change {
     pub project: String,
     /// The Freight, the page's title.
     pub freight: String,
-    /// The cluster Kargo runs in.
-    pub kargo_cluster: String,
+    /// The Kubernetes context Kargo runs in, which a follow of its objects is
+    /// keyed by; empty when no cluster holds Kargo.
+    pub kargo_context: String,
     /// When it was all read.
     pub observed_at: DateTime<Utc>,
     /// The Freight's page in Kargo, which the header opens and copies; why

@@ -585,7 +585,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
     Change {
         project: project.into(),
         freight: freight.into(),
-        kargo_cluster: CICD.into(),
+        kargo_context: CICD.into(),
         observed_at: now,
         page: Err("Example data has no Kargo page for this Freight".into()),
         origin: Origin {

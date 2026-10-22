@@ -1933,6 +1933,78 @@ fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppC
     .unwrap();
 }
 
+/// "Notify me" opens below its button, so it never covers the page header,
+/// the search or the button itself.
+#[gpui_kit::test]
+fn the_notify_me_popover_opens_below_its_button(cx: &mut TestAppContext) {
+    let followed_runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: followed_runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("change-follow-trigger", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let trigger = window.find("change-follow-trigger").bounds();
+        let panel = window.find("change-follow-panel").bounds();
+        assert!(
+            panel.top() >= trigger.bottom(),
+            "the panel {panel:?} opens below its button {trigger:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// A toast draws under an open popover, so turning a switch on closes the
+/// popover before its confirmation shows.
+#[gpui_kit::test]
+fn turning_a_notify_me_switch_on_closes_the_popover_and_toasts(cx: &mut TestAppContext) {
+    let followed_runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: followed_runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        use gpui_kit::component::WindowExt as _;
+        window.render_frame(cx);
+        window.click("change-follow-trigger", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("change-follow-panel").is_some(), "open");
+        let toasts = window.notifications(cx).len();
+        window.click("change-follow-switch-0", cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("change-follow-panel").is_none(),
+            "the popover closed"
+        );
+        assert_eq!(
+            window.notifications(cx).len(),
+            toasts + 1,
+            "the confirmation"
+        );
+    })
+    .unwrap();
+}
+
 /// Stage actions on example data: the dialog at each level, with a runner
 /// that sends nothing because there is no cluster.
 fn stage_action(
