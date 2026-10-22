@@ -93,7 +93,11 @@ fn backup(backup: &Backup, inv: &Inventory) -> Row {
         cells: vec![
             backup.identity.name.clone().into(),
             database_name(backup.cluster.as_ref()).into(),
-            backup.state.label().into(),
+            if kept {
+                format!("{} · last read retained", backup.state.label()).into()
+            } else {
+                backup.state.label().into()
+            },
             finished.into(),
         ],
         tips: vec![None, Some(relationship.into()), None, None],
@@ -172,7 +176,11 @@ fn schedule(schedule: &Schedule, inv: &Inventory) -> Row {
             schedule.identity.name.clone().into(),
             database_name(schedule.cluster.as_ref()).into(),
             words.clone().into(),
-            state.into(),
+            if kept {
+                format!("{state} · last read retained").into()
+            } else {
+                state.into()
+            },
         ],
         tips: vec![None, Some(relationship.into()), raw.map(Into::into), None],
         tone,

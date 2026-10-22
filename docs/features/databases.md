@@ -195,7 +195,12 @@ full text in a tooltip. Inspector prose uses the normal font; identifiers,
 cron expressions and reported values use mono. Complete schedule coverage
 distinguishes active, suspended and unknown suspension counts.
 Only a failed refresh with retained data says
-last read retained. Times use the shared clock format.
+last read retained: a kept Clusters row opens in the Inspector as
+"Unknown · last read retained", and a kept Backups or Schedules row says it in
+its State cell too. The status segment keeps the row count and "coverage
+incomplete" as one toned part, which a narrow bar never drops. A backup whose
+cluster read was refused reads Unknown ("its database could not be checked").
+Times use the shared clock format.
 The Inspector shows at most 128 fields plus an explicit count of omitted fields;
 Open in Resources retains access to the full object status.
 

@@ -516,6 +516,14 @@ impl ScreenPanel for DatabasesScreen {
     }
     fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync();
+        // The count and the coverage warning are one toned part: a narrow
+        // bar never drops it, so the warning never loses its count.
+        let counted = if self.display.notice.is_some() {
+            Part::new(format!("{} · coverage incomplete", self.display.summary))
+                .tone(ui::Tone::Warn)
+        } else {
+            Part::new(self.display.summary.clone())
+        };
         let mut parts = vec![
             Part::new(
                 self.namespace
@@ -523,12 +531,9 @@ impl ScreenPanel for DatabasesScreen {
                     .map(|namespace| format!("Namespace · {namespace}"))
                     .unwrap_or_else(|| "All namespaces".into()),
             ),
-            Part::new(self.display.summary.clone()),
+            counted,
         ];
         parts.extend(self.display.attention.clone().map(Part::new));
-        if self.display.notice.is_some() {
-            parts.push(Part::new("coverage incomplete").tone(ui::Tone::Warn));
-        }
         if self.loader.is_loading() {
             parts.push(Part::new("Reading…"))
         }

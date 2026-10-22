@@ -1115,3 +1115,80 @@ fn the_status_segment_counts_rows_and_names_incomplete_coverage_for_a_stale_read
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn every_narrower_status_line_keeps_the_count_with_the_coverage_warning(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        for shape in ["stale", "engine-refused"] {
+            for mode in [Mode::Clusters, Mode::Backups, Mode::Schedules] {
+                page.update(cx, |page, cx| {
+                    page.loader.resolve(
+                        page.identity().unwrap(),
+                        Ok(databases::example::shaped(at(), shape)),
+                    );
+                    page.mode(mode, cx);
+                });
+                window.render_frame(cx);
+                let (lines, count) = page.update(cx, |page, cx| {
+                    let lines = page.status(cx).unwrap().lines(None);
+                    (lines, page.display.summary.clone())
+                });
+                // The bar draws one of these lines, however narrow it is.
+                for line in lines {
+                    assert!(
+                        line.contains(&format!("{count} · coverage incomplete")),
+                        "{shape} {}: {line}",
+                        mode.label()
+                    );
+                }
+            }
+        }
+    })
+    .unwrap();
+}
+
+#[test]
+fn kept_rows_say_so_in_the_row_and_the_inspector() {
+    for shape in ["stale", "engine-refused"] {
+        let inv = databases::example::shaped(at(), shape);
+        let clusters = display_of(&inv, Mode::Clusters);
+        let ledger = clusters
+            .rows
+            .iter()
+            .find(|row| row.identity.name == "ledger-db")
+            .unwrap();
+        assert_eq!(ledger.verdict.tone, crate::ui::Tone::Unknown, "{shape}");
+        assert_eq!(
+            ledger.verdict.headline, "Unknown · last read retained",
+            "{shape}"
+        );
+        let kept = |mode, name: &str, cell: usize| {
+            let display = display_of(&inv, mode);
+            let row = display
+                .rows
+                .iter()
+                .find(|row| row.identity.name == name)
+                .unwrap();
+            row.cells[cell].to_string()
+        };
+        assert!(
+            kept(Mode::Backups, "ledger-manual", 2).ends_with(" · last read retained"),
+            "{shape}"
+        );
+        assert!(
+            kept(Mode::Schedules, "ledger-nightly", 3).ends_with(" · last read retained"),
+            "{shape}"
+        );
+    }
+    // The cluster read was refused: a backup cannot be checked against it.
+    let inv = databases::example::shaped(at(), "engine-refused");
+    let backups = display_of(&inv, Mode::Backups);
+    let archive = backups
+        .rows
+        .iter()
+        .find(|row| row.identity.name == "archive-old")
+        .unwrap();
+    assert_eq!(archive.tone, crate::ui::Tone::Unknown);
+    assert!(archive.verdict.headline.contains("could not be checked"));
+}

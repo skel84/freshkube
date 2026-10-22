@@ -157,7 +157,7 @@ fn row(
             // Kept from an earlier read: nothing here says how it is now.
             Verdict {
                 tone: tone_of(HealthIndicator::Unknown),
-                headline: "Unknown: this read failed, the last good read is kept".into(),
+                headline: "Unknown · last read retained".into(),
                 source: None,
                 why: Vec::new(),
                 next: vec!["Refresh, or open the object in Resources".into()],
