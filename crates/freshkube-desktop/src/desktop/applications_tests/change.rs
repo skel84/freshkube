@@ -1932,3 +1932,60 @@ fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+/// #887: with the fix bar and both banners up in a short window at the
+/// largest text size, the trail keeps at least three rows in view or
+/// reachable by scrolling the page, and every banner still says why.
+#[gpui_kit::test]
+fn banners_leave_the_trail_three_rows_in_a_short_window(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_some());
+        assert!(freshkube_ui::page::is_short(window));
+        for id in ["change-missing", "change-pull"] {
+            let banner = window.find(id);
+            assert!(
+                banner.label().is_some_and(|words| !words.is_empty()),
+                "{id}"
+            );
+        }
+        let notes = window.find("change-notes").bounds();
+        let table = window.find("change-table-scroll").bounds();
+        // Nothing overlaps: the banners end where the trail begins.
+        assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+        // The trail keeps three rows' height in the page, which scrolls.
+        let key = change(&view, cx)
+            .unwrap()
+            .read(cx)
+            .selected()
+            .cloned()
+            .unwrap();
+        let row = window.find(hop(&key)).bounds().size.height;
+        assert!(
+            table.size.height >= row * 3.,
+            "table {table:?} for rows of {row:?}"
+        );
+        // And the first of them is in view before any scrolling, the banners
+        // having left it room under the fix bar.
+        let page = window.find("change-page").bounds();
+        assert!(
+            table.top() + row <= page.bottom(),
+            "table {table:?} starts below the page {page:?}"
+        );
+    })
+    .unwrap();
+}

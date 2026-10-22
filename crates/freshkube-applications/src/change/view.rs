@@ -5,11 +5,15 @@
 use super::*;
 use crate::ui::{self, dp};
 use freshkube_ui::page::{self, PageHeader};
+use freshkube_ui::palette::palette;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Sizable,
     button::{Button, ButtonVariants},
 };
+
+/// The tallest the banners under the fix bar grow, in dp, before they scroll.
+const NOTES_MAX_HEIGHT: f32 = 72.;
 
 impl ChangePage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -176,6 +180,14 @@ impl ChangePage {
         Some(
             page::inset()
                 .id("change-notes")
+                .test_support()
+                // Capped, so the banners leave the trail its room in a short
+                // window; the bottom edge reads a clipped block as scrollable.
+                .border_b_1()
+                .border_color(palette(cx).line)
+                .max_h(dp(NOTES_MAX_HEIGHT))
+                .overflow_y_scroll()
+                .restrict_scroll_to_axis()
                 .flex()
                 .flex_col()
                 .gap(dp(page::PANE_PADDING_Y))
@@ -249,6 +261,10 @@ impl Render for ChangePage {
             None => self.render_table(window, cx),
         };
         let short = page::is_short(window);
+        let least = self.split.short_height(
+            page::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.selected().is_some(),
+        );
         // The keys live on a wrapper drawn in every state.
         div()
             .key_context(CONTEXT)
@@ -291,7 +307,7 @@ impl Render for ChangePage {
                             .flex_col()
                             .flex_1()
                             .min_h_0()
-                            .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
+                            .when(short, |this| this.min_h(dp(least)))
                             .child(body),
                     ),
             )
