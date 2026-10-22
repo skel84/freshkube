@@ -6,6 +6,14 @@ pub enum Engine {
     MariaDb,
 }
 impl Engine {
+    /// The operator an object's API group belongs to.
+    pub fn of_group(group: &str) -> Option<Self> {
+        match group {
+            "postgresql.cnpg.io" => Some(Self::CloudNativePg),
+            "k8s.mariadb.com" => Some(Self::MariaDb),
+            _ => None,
+        }
+    }
     /// The operator, as the Sources group and the Engine tooltip name it.
     pub fn label(self) -> &'static str {
         match self {
@@ -383,13 +391,6 @@ impl Inventory {
     /// An operator that answered before and fails now keeps its last good
     /// records beside the other's fresh ones, marked in [`retained`](Self::retained).
     fn retain_failed_engines(&mut self, previous: &Self) {
-        fn engine_of(group: &str) -> Option<Engine> {
-            match group {
-                "postgresql.cnpg.io" => Some(Engine::CloudNativePg),
-                "k8s.mariadb.com" => Some(Engine::MariaDb),
-                _ => None,
-            }
-        }
         fn keep<T: Clone>(
             new: &mut Read<T>,
             old: &Read<T>,
@@ -399,21 +400,22 @@ impl Inventory {
             if new
                 .items
                 .iter()
-                .any(|i| engine_of(group(i)) == Some(engine))
+                .any(|i| Engine::of_group(group(i)) == Some(engine))
             {
                 return;
             }
             new.items.extend(
                 old.items
                     .iter()
-                    .filter(|i| engine_of(group(i)) == Some(engine))
+                    .filter(|i| Engine::of_group(group(i)) == Some(engine))
                     .cloned(),
             );
         }
         for (engine, before) in &previous.engines {
             let now = self.engines.iter().find(|(e, _)| e == engine);
             let failed = matches!(now, Some((_, c)) if *c != Coverage::Complete && *c != Coverage::NotServed);
-            if *before != Coverage::Complete || !failed || self.retained.contains(engine) {
+            let eligible = *before == Coverage::Complete || previous.retained.contains(engine);
+            if !eligible || !failed || self.retained.contains(engine) {
                 continue;
             }
             keep(&mut self.databases, &previous.databases, *engine, |d| {

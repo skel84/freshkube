@@ -560,3 +560,51 @@ fn a_refused_engine_keeps_its_last_good_rows_as_retained_while_the_other_answers
     assert!(absent.retained.is_empty());
     assert_eq!(absent.databases.items.len(), 1);
 }
+
+#[test]
+fn a_second_failed_refresh_still_retains_the_rows() {
+    let at = now();
+    let first_good = example::inventory(at);
+    let refused = || {
+        let mut fresh = example::inventory(at);
+        fresh.engines[1].1 = Coverage::Refused;
+        fresh.databases.items.remove(1);
+        fresh
+            .backups
+            .items
+            .retain(|b| b.identity.group != "k8s.mariadb.com");
+        fresh
+            .schedules
+            .items
+            .retain(|s| s.identity.group != "k8s.mariadb.com");
+        fresh.databases.coverage = Coverage::Refused;
+        fresh
+    };
+    let mut one = refused();
+    one.retain(&first_good);
+    let mut two = refused();
+    two.retain(&one);
+    assert_eq!(two.retained, vec![Engine::MariaDb]);
+    assert!(
+        two.databases
+            .items
+            .iter()
+            .any(|d| d.identity.name == "ledger-db")
+    );
+    assert!(
+        two.backups
+            .items
+            .iter()
+            .any(|b| b.identity.name == "ledger-manual")
+    );
+    assert!(
+        two.schedules
+            .items
+            .iter()
+            .any(|s| s.identity.name == "ledger-nightly")
+    );
+    // And once the operator answers, nothing is kept.
+    let mut back = example::inventory(at);
+    back.retain(&two);
+    assert!(back.retained.is_empty());
+}

@@ -14,6 +14,12 @@ fn reference(value: Option<&ClusterRef>, inventory: &Inventory) -> &'static str 
     }
 }
 
+/// Whether the object is kept from an earlier read of an operator that failed.
+fn retained(inv: &Inventory, identity: &databases::Identity) -> bool {
+    databases::Engine::of_group(&identity.group)
+        .is_some_and(|engine| inv.retained.contains(&engine))
+}
+
 fn database_name(value: Option<&ClusterRef>) -> String {
     value.map_or_else(|| "Unknown".into(), |r| r.name.clone())
 }
@@ -30,7 +36,11 @@ fn backup(backup: &Backup, inv: &Inventory) -> Row {
         .as_ref()
         .map_or("Unknown", |r| r.engine.label());
     let (key, id) = identity_key(&backup.identity);
+    let kept = retained(inv, &backup.identity);
     let mut tone = tone_of(freshkube_core::HasHealth::health(&backup.state));
+    if kept {
+        tone = ui::Tone::Unknown;
+    }
     let mut headline = backup.state.label().to_string();
     let mut why = Vec::new();
     let mut next = Vec::new();
@@ -42,6 +52,11 @@ fn backup(backup: &Backup, inv: &Inventory) -> Row {
         next.extend(finding.next.clone().map(SharedString::from));
     } else if backup.state == BackupState::Failed {
         why.push("The backup attempt failed".into());
+    }
+    if kept {
+        // Kept from an earlier read: not evidence of how it is now.
+        tone = ui::Tone::Unknown;
+        headline = format!("{headline} · last read retained");
     }
     let fields = vec![
         Field::prose("Database", database_name(backup.cluster.as_ref())),
@@ -120,8 +135,9 @@ fn schedule(schedule: &Schedule, inv: &Inventory) -> Row {
         Fact::Known(false) => "Active",
         Fact::Unknown => "Unknown",
     };
+    let kept = retained(inv, &schedule.identity);
     let tone = match schedule.suspended {
-        Fact::Known(false) => tone_of(HealthIndicator::Healthy),
+        Fact::Known(false) if !kept => tone_of(HealthIndicator::Healthy),
         _ => ui::Tone::Unknown,
     };
     let relationship = reference(schedule.cluster.as_ref(), inv);
@@ -166,7 +182,11 @@ fn schedule(schedule: &Schedule, inv: &Inventory) -> Row {
         engine: engine.label().into(),
         verdict: Verdict {
             tone,
-            headline: format!("{state} · {words}").into(),
+            headline: format!(
+                "{state} · {words}{}",
+                if kept { " · last read retained" } else { "" }
+            )
+            .into(),
             source: None,
             why: Vec::new(),
             next: Vec::new(),

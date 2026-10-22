@@ -953,3 +953,45 @@ fn a_failed_operator_keeps_stale_rows_that_say_so_and_never_read_healthy() {
         "{notice}"
     );
 }
+
+#[test]
+fn retained_rows_stay_unknown_with_the_banner_after_two_failed_refreshes_in_every_view() {
+    let previous = databases::example::inventory(at());
+    let refused = |previous: &Inventory| {
+        let mut fresh = databases::example::inventory(at());
+        fresh.engines[1].1 = Coverage::Refused;
+        fresh.databases.items.remove(1);
+        fresh
+            .backups
+            .items
+            .retain(|b| b.identity.group != "k8s.mariadb.com");
+        fresh
+            .schedules
+            .items
+            .retain(|s| s.identity.group != "k8s.mariadb.com");
+        fresh.databases.coverage = Coverage::Refused;
+        fresh.retain(previous);
+        fresh
+    };
+    let once = refused(&previous);
+    let twice = refused(&once);
+    for mode in [Mode::Clusters, Mode::Backups, Mode::Schedules] {
+        let display = display_of(&twice, mode);
+        let kept = display
+            .rows
+            .iter()
+            .find(|row| row.identity.group == "k8s.mariadb.com")
+            .unwrap_or_else(|| panic!("{}", mode.label()));
+        assert_eq!(kept.tone, crate::ui::Tone::Unknown, "{}", mode.label());
+        if mode != Mode::Clusters {
+            assert!(kept.verdict.headline.contains("last read retained"));
+        }
+        assert!(
+            display
+                .notice
+                .as_ref()
+                .unwrap()
+                .contains("last read retained")
+        );
+    }
+}
