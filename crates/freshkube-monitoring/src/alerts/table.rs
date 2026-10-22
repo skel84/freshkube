@@ -108,7 +108,7 @@ fn chips(prefix: &str, key: &str, chips: &Chips, cx: &App) -> AnyElement {
         .children(chips.shown.iter().map(|chip| {
             div()
                 .min_w_0()
-                .truncate()
+                .overflow_hidden()
                 .h(dp(18.))
                 .px(dp(5.))
                 .flex()
@@ -120,7 +120,8 @@ fn chips(prefix: &str, key: &str, chips: &Chips, cx: &App) -> AnyElement {
                 .text_size(dp(11.))
                 .font_family(MONO_FONT)
                 .text_color(p.ink_2)
-                .child(chip.clone())
+                // The ellipsis belongs to the text's own box, not the flex chip.
+                .child(div().min_w_0().truncate().child(chip.clone()))
         }))
         .when(chips.more > 0, |this| {
             this.child(
