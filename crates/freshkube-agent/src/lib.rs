@@ -13,6 +13,10 @@
 //! Docs: `docs/features/agent.md`.
 
 pub mod acp;
+mod child;
 pub mod investigation;
 pub mod profile;
 pub mod scripted;
+pub mod tools;
+
+pub use child::Link;
