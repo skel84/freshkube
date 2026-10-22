@@ -185,6 +185,7 @@ impl DatabasesScreen {
                     .id("databases-detail-title")
                     .aria_label(row.identity.name.clone())
                     .test_support()
+                    .truncate()
                     .child(row.identity.name.clone()),
             )
             // The engine shows here when the table has no room for its column.
@@ -195,6 +196,7 @@ impl DatabasesScreen {
                     .test_support()
                     .text_size(dp(12.))
                     .text_color(p.muted)
+                    .truncate()
                     .child(row.engine.clone())
             }));
         let observe = row.observe.is_some().then(|| {
