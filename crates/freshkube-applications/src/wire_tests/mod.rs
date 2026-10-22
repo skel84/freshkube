@@ -1,6 +1,7 @@
 //! The app constructor, setup hand-off and both delivery read jobs on
 //! invented data. The signature is the existing offline cosign fixture.
 mod fake;
+mod results_forward;
 
 use super::{ApplicationsPage, ChangesPage, Clusters, Variant, change::ChangePage};
 use freshkube_core::secrets::{MemoryStore, SecretStore, Secrets};
@@ -49,7 +50,27 @@ fn mount(
     secrets: Option<Secrets>,
     live_runs: bool,
     gate: Arc<fake::Gate>,
-) -> (AnyWindowHandle, Entity<ApplicationsPage>, fake::Reads) {
+) -> (
+    AnyWindowHandle,
+    Entity<ApplicationsPage>,
+    Option<fake::Reads>,
+) {
+    mount_access(cx, runtime, setup, secrets, live_runs, gate, None)
+}
+
+fn mount_access(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    setup: &Setup,
+    secrets: Option<Secrets>,
+    live_runs: bool,
+    gate: Arc<fake::Gate>,
+    access: Option<freshkube_core::cluster_source::ClusterAccess>,
+) -> (
+    AnyWindowHandle,
+    Entity<ApplicationsPage>,
+    Option<fake::Reads>,
+) {
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -60,7 +81,13 @@ fn mount(
     });
     let (access, reads) = {
         let _entered = runtime.enter();
-        fake::access(live_runs, gate)
+        match access {
+            Some(access) => (access, None),
+            None => {
+                let (access, reads) = fake::access(live_runs, gate);
+                (access, Some(reads))
+            }
+        }
     };
     let mut app = None;
     let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {

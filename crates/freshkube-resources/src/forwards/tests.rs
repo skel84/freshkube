@@ -631,3 +631,81 @@ async fn closing_the_window_asks_then_stops_every_forward(cx: &mut TestAppContex
     assert_eq!(cx.read(running), 0);
     assert!(freed(port), "the port is free once it closes");
 }
+
+#[path = "matching_tests.rs"]
+mod matching;
+
+#[gpui_kit::test]
+fn results_example_listens_and_stops_without_calling_the_socket_binder(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let forwards = mount(cx);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let recorded = calls.clone();
+    cx.update(|cx| {
+        forwards.list.update(cx, |list, _| {
+            list.listen = Arc::new(move |_, _| {
+                recorded.fetch_add(1, Ordering::SeqCst);
+                Err(ForwardFailure::new(
+                    ForwardFailureKind::NoPods,
+                    "Socket binder must not run for Results example",
+                ))
+            });
+        })
+    });
+    let spec = ForwardSpec {
+        runtime: forwards.runtime.handle().clone(),
+        access: ClusterAccess::EXAMPLE,
+        identity: ResourceIdentity {
+            connection: "invented-builds".into(),
+            resource: "services".into(),
+            namespace: "acme".into(),
+            name: "results".into(),
+            uid: String::new(),
+        },
+        target: ForwardTarget::Service {
+            name: "results".into(),
+        },
+        context: "cicd-fra".into(),
+        port: 8443,
+        local_port: None,
+    };
+    let owner = cx.update(|cx| forwards.list.update(cx, |list, cx| list.start(spec, cx)));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| owner.read(cx).snapshot().state),
+        super::State::Starting
+    );
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(matches!(
+            owner.read(cx).snapshot().state,
+            super::State::Listening(_)
+        ));
+        assert!(
+            owner.read(cx).address().is_none(),
+            "no browser or copy address for a virtual transport"
+        );
+        assert!(owner.read(cx).display.route.contains("no socket"));
+        let id = owner.read(cx).id;
+        forwards.list.update(cx, |list, cx| list.stop(id, cx));
+        assert_eq!(
+            owner.read(cx).snapshot().state,
+            super::State::Ended(ForwardEnd::Stopped)
+        );
+
+        forwards
+            .list
+            .update(cx, |list, cx| list.start_again(id, cx));
+        assert_eq!(owner.read(cx).snapshot().state, super::State::Starting);
+        forwards.list.update(cx, |list, cx| list.stop(id, cx));
+    });
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.read(|cx| owner.read(cx).snapshot().state),
+        super::State::Ended(ForwardEnd::Stopped)
+    );
+    assert_eq!(cx.read(running), 0);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

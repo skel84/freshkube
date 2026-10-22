@@ -295,7 +295,13 @@ impl Render for ChangePage {
                             .flex_col()
                             .flex_1()
                             .min_h_0()
-                            .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
+                            // A short page scrolls the complete split, including the
+                            // Inspector footer; shrinking this wrapper hides its tail.
+                            .when(short, |this| {
+                                let beside = page::page_width(window) >= inspector::SPLIT_WIDTH;
+                                this.flex_none()
+                                    .h(dp(self.split.short_height(beside, self.detail.is_some())))
+                            })
                             .child(body),
                     ),
             )

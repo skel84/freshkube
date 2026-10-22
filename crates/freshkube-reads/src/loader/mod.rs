@@ -60,6 +60,17 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         self.visible = visible;
     }
 
+    /// Invalidates a changed route of the same logical target, retaining its
+    /// evidence as stale. Never use for access/source/setup replacement.
+    pub fn retain_stale(&mut self, identity: I) {
+        self.job = None;
+        self.task = None;
+        self.cut = true;
+        self.answered = None;
+        self.state.begin_retaining(identity);
+        self.revision += 1;
+    }
+
     /// Hiding drops the read in flight and keeps the data as last known;
     /// showing again returns whether the owner should read again, as
     /// `on_show` says, by the age of the last successful answer. A failed

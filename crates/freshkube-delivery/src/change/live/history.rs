@@ -59,6 +59,7 @@ pub(super) fn reason(evidence: &Evidence, entry: &str) -> Option<String> {
         Err(Error::Off | Error::Skipped(Skip::LiveFailed)) => return None,
         Err(Error::BuildNamespace(why)) => format!("{prefix} wasn't read: {why}"),
         Err(Error::Skipped(why)) => format!("{prefix} wasn't read: {why}"),
+        Err(Error::ForwardWaiting(wait)) => wait.words().into(),
         Err(Error::NotForwarded) => format!("{prefix} isn't forwarded yet"),
         Err(Error::ForwardEnded(why)) => format!("the Tekton Results forward on {entry} ended: {why}"),
         Err(Error::NotInstalled) => format!("{prefix} isn't installed or served"),
