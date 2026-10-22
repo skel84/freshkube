@@ -81,16 +81,28 @@ fn values(
     .unwrap()
 }
 
-/// Scrolls the Inspector's body to its end, where the Metrics group is.
+/// Scrolls the Inspector's body down until the Metrics group's Save is in
+/// view: the read-only Fingerprint group is below it.
 fn to_metrics(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.scroll(
-            "settings-detail-body",
-            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-4000.))),
-            cx,
-        );
-        window.render_frame(cx);
+        for _ in 0..40 {
+            if window
+                .try_find("settings-metrics-save")
+                .is_some_and(|save| save.visible())
+            {
+                break;
+            }
+            window.scroll(
+                "settings-detail-body",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-60.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+        }
     })
     .unwrap();
 }

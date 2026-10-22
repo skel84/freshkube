@@ -218,6 +218,8 @@ pub struct ResourcesScreen {
     tick: Option<Task<()>>,
     /// The selected object in full, in the drawer over the list.
     detail: Entity<DetailPane>,
+    /// Why a link opened nothing, in the drawer's slot (#873).
+    link_outcome: Option<LinkOutcomeCard>,
     /// The drawer's width in dp, one for every kind, as the user left it;
     /// remembered in `navigation.json` under `drawer`.
     drawer: SplitSize,
@@ -405,6 +407,7 @@ impl ResourcesScreen {
             namespace_read: Loader::default(),
             tick: None,
             detail,
+            link_outcome: None,
             drawer: SplitSize::new(crate::DRAWER_WIDTH, drawer::WIDTH, drawer::MIN_WIDTH, cx),
             body_width: Default::default(),
             list_view: ListView::default(),
@@ -456,7 +459,7 @@ impl ResourcesScreen {
     pub fn field_selector_value(&self) -> Option<&str> {
         self.field_selector.as_deref()
     }
-    #[cfg(any(test, feature = "testing"))]
+    /// The pane's open tab.
     pub fn detail_tab(&self, cx: &App) -> crate::Tab {
         self.detail.read(cx).tab()
     }
@@ -1005,6 +1008,7 @@ impl ResourcesScreen {
             .get(&identity)
             .map(|row| row.resource_version.clone())
             .unwrap_or_default();
+        self.link_outcome = None;
         let target = DetailTarget {
             identity,
             kind: self.kind.clone(),
@@ -1054,6 +1058,7 @@ impl ResourcesScreen {
     /// Closes the pane, keeping the row it showed selected, so Enter
     /// opens it again.
     fn hide_detail(&mut self, cx: &mut Context<Self>) {
+        self.link_outcome = None;
         self.detail.update(cx, |detail, cx| detail.close(cx));
         self.page_scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
@@ -1409,6 +1414,8 @@ impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 mod cells;
 mod controls;
 mod layout;
+mod link_outcome;
+pub use link_outcome::LinkOutcomeCard;
 mod menu;
 mod pods;
 mod source;

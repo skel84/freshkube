@@ -41,7 +41,7 @@ pub use contexts::{
     KubeContext, KubeconfigReport, context_servers, discover_contexts, kubeconfig_sources,
     load as load_kubeconfigs,
 };
-pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds};
+pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds, resolve_kind_key};
 pub use events::{EventScope, EventUpdate, ObjectEvent, watch_object_events};
 pub use exec::{
     BATCH_BYTES, BATCH_TIME, ExecEnd, ExecFailure, ExecFailureKind, ExecGuard, ExecInput,

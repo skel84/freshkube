@@ -21,6 +21,7 @@ mod history;
 mod history_recovery;
 mod markers;
 mod reads;
+mod remembered;
 mod scope;
 mod settings;
 mod states;

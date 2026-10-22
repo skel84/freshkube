@@ -2,6 +2,7 @@
 //! found a problem in it.
 use super::*;
 use crate::presentation::overview::{Card, CardTarget};
+use freshkube_core::monitoring::alerts::State;
 use std::collections::HashMap;
 
 /// The rail's problem dots and the column's marks, and what each one is
@@ -18,6 +19,8 @@ pub(in crate::desktop) struct RailMarks {
 pub(in crate::desktop) enum RowTarget {
     Page(Page),
     Kind(&'static str),
+    /// Monitoring's Alerts, Rules or Silences row.
+    Alerts(crate::monitoring::alerts::Which),
 }
 
 impl RailMarks {
@@ -75,6 +78,58 @@ impl RailMarks {
                 .map(|(area, (tone, lines))| (area, (tone, lines.join("\n").into())))
                 .collect(),
             rows,
+        }
+    }
+
+    /// Marks Monitoring from the session alert read: a current critical or
+    /// warning alert is a problem; a source that couldn't be read, or whose
+    /// last read is stale, is Unknown. Quiet, not found and not read yet
+    /// mark nothing, and a source that wasn't read is never quiet.
+    pub(in crate::desktop) fn set_alerts(&mut self, state: Option<&State>) {
+        use freshkube_core::monitoring::alerts::{Counts, Health, Unknown};
+        let Some(state) = state else {
+            return;
+        };
+        let mark = match (state.health(), state) {
+            (Health::Alerting(counts), _) if counts.critical + counts.warning > 0 => {
+                Some((counts_tone(counts), alerts_words(counts)))
+            }
+            (_, State::Stale { why, .. }) => {
+                Some((Tone::Unknown, format!("Alerts: last read is stale ({why})")))
+            }
+            // Everything but a cluster with no alert source at all is a
+            // source whose alerts aren't known.
+            (_, State::Unknown(unknown)) if !matches!(unknown, Unknown::NotFound(_)) => {
+                Some((Tone::Unknown, unknown.words()))
+            }
+            _ => None,
+        };
+        let Some((tone, why)) = mark else {
+            return;
+        };
+        let why: SharedString = why.into();
+        self.areas.insert(Area::Monitoring, (tone, why.clone()));
+        self.rows.insert(
+            RowTarget::Alerts(crate::monitoring::alerts::Which::Alerts),
+            (tone, why),
+        );
+
+        fn counts_tone(counts: Counts) -> Tone {
+            if counts.critical > 0 {
+                Tone::Crit
+            } else {
+                Tone::Warn
+            }
+        }
+        fn alerts_words(counts: Counts) -> String {
+            let mut parts = Vec::new();
+            if counts.critical > 0 {
+                parts.push(format!("{} critical", counts.critical));
+            }
+            if counts.warning > 0 {
+                parts.push(format!("{} warning", counts.warning));
+            }
+            format!("Alerts: {}", parts.join(" · "))
         }
     }
 
@@ -201,10 +256,11 @@ impl Pilot {
         let mark = self.navigation.rail_marks.areas.get(&area).cloned();
         let why = mark.as_ref().map(|(_, why)| why.clone());
         let tone = mark.map(|(tone, _)| {
-            if tone == Tone::Crit {
-                Tone::Crit
-            } else {
-                Tone::Warn
+            match tone {
+                Tone::Crit => Tone::Crit,
+                // What isn't known is neither a warning nor fine.
+                Tone::Unknown => Tone::Unknown,
+                _ => Tone::Warn,
             }
         });
         h_flex()

@@ -146,9 +146,13 @@ impl Switcher {
 
     pub(super) fn stop_summary(&mut self) {
         self.registry.summary_watch.stop();
+        // The alert read goes with the session: nothing of the old
+        // identity publishes once the next one starts.
+        self.registry.alerts_watch.stop();
         let session = self.registry.active_mut();
         session.summary_fixture = None;
         session.summary_session = None;
+        session.alerts = None;
     }
 }
 
@@ -205,6 +209,8 @@ pub(super) enum LinkWork {
     /// An owner named by API version and kind, resolved against the entry
     /// it belongs to, never the one the link was made in.
     Owner { api_version: String, kind: String },
+    /// A deep link's view, opened in the entry the reader chose (#873).
+    View(freshkube_nav::ViewState),
 }
 
 /// A link waiting for the entry it names to open: held from the moment the
@@ -466,6 +472,51 @@ impl Pilot {
         self.switch_cluster_for(id, None, window, cx);
     }
 
+    /// Switches to the entry `id` to open a deep link's view there, after any
+    /// running shell is ended or kept by the user's answer. The view is held
+    /// until the entry has its own connection; Cancel holds nothing.
+    pub(super) fn switch_cluster_to_view(
+        &mut self,
+        id: String,
+        view: freshkube_nav::ViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.config_loading {
+            self.tell(
+                "Still reading the configuration; open the link again in a moment".into(),
+                window,
+                cx,
+            );
+            return;
+        }
+        // Made by the cluster, not by a connection: it opens on whichever
+        // connection the entry opens with.
+        let nameless = resources::model::ObjectRef {
+            namespace: String::new(),
+            name: String::new(),
+            uid: String::new(),
+            connection: None,
+        };
+        let leaving = shell::Leaving {
+            question: format!("Switch to {id} to open this link?"),
+            detail: format!(
+                "{id} opens as it does from the cluster list, then the link opens {}, read \
+                 with your own access. Port forwards keep running.",
+                super::deep_link::describe(&view)
+            ),
+            answer: "Switch".into(),
+        };
+        let pods = shell::running_anywhere(cx);
+        // A link switches without asking, unless a shell would end.
+        if pods.is_empty() {
+            return self.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx);
+        }
+        shell::asking(leaving, pods, window, cx, move |this, window, cx| {
+            this.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx)
+        });
+    }
+
     /// `switch_cluster`, holding `link` for the entry once the user has
     /// agreed. Cancel at the shell question holds nothing.
     fn switch_cluster_for(
@@ -692,6 +743,7 @@ impl Pilot {
             LinkWork::Owner { api_version, kind } => {
                 self.resolve_owner_remote(source, api_version, kind, object, window, cx)
             }
+            LinkWork::View(view) => self.apply_view(&view, window, cx),
         }
     }
 

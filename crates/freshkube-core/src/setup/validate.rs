@@ -20,6 +20,11 @@ pub(super) fn entry_fields(entry: &Entry) -> Result<(), Fault> {
 }
 
 fn entry_at(entry: &Entry, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
+    if let Some(fingerprint) = &entry.fingerprint
+        && !crate::fingerprint::valid_override(fingerprint)
+    {
+        return Err(Fault::Fingerprint(at("fingerprint")));
+    }
     if let Some(results) = &entry.results {
         results_of(results, at)?;
     }

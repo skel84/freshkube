@@ -37,6 +37,7 @@ impl Pilot {
                 .pages
                 .dock
                 .update(cx, |dock, cx| dock.open_shell(request, window, cx)),
+            ResourceLink::CopyLink => self.copy_link(window, cx),
             ResourceLink::Node(name, tab) => {
                 self.pages
                     .resources
