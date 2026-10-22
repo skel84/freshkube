@@ -585,9 +585,11 @@ impl Pilot {
             display = display.talos_stale(reason.to_owned().into());
         }
         self.navigation.column_changed();
+        let alerts = self.alert_state().cloned();
         self.navigation.rail_marks =
             crate::desktop::shell::RailMarks::from_cards(&display.cards, self.mode().is_example());
-        let attention = Arc::new(crate::presentation::attention::build(
+        self.navigation.rail_marks.set_alerts(alerts.as_deref());
+        let attention = Arc::new(crate::presentation::attention::build_with_alerts(
             &rows,
             self.switch
                 .registry
@@ -597,6 +599,7 @@ impl Pilot {
                 .map(|summary| summary.as_ref()),
             self.overview.data(),
             self.source().kube_identity.as_deref(),
+            alerts.as_deref(),
             chrono::Utc::now(),
         ));
         self.pages
