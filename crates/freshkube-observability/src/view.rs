@@ -229,6 +229,24 @@ impl ObservabilityPage {
     }
 }
 
+impl ObservabilityPage {
+    /// Shows `app`'s page, on `report` when it names one (as Coroot labels
+    /// it, such as `Postgres`). Shown or not, the page reads only as it
+    /// would for the application's page; hidden, it looks once it shows.
+    pub fn open_application(
+        &mut self,
+        app: freshkube_core::coroot::AppId,
+        report: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(report) = report {
+            self.report_name = report.to_owned();
+        }
+        self.choose_app(app, cx);
+        self.open(Destination::Application, cx);
+    }
+}
+
 /// One application in the Traces and Profiling picker.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct AppChoice {

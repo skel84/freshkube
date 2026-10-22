@@ -373,6 +373,12 @@ impl Pilot {
         (self.pages.applications.clone(), self.navigation.page)
     }
 
+    /// The Databases page, for tests of what it reads and links to.
+    #[cfg(test)]
+    pub(crate) fn databases(&self) -> Entity<crate::screens::DatabasesScreen> {
+        self.pages.databases.clone()
+    }
+
     /// The Observability page, for tests of the links that open it.
     #[cfg(test)]
     pub(crate) fn observability(&self) -> Entity<crate::observability::ObservabilityPage> {

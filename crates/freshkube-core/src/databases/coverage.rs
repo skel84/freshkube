@@ -8,19 +8,29 @@ pub enum LinkState {
     Orphaned,
     Unknown,
 }
-/// Never call a reference orphaned after a refused, capped or stale Cluster read.
+/// Never call a reference orphaned after a refused, capped or stale Cluster
+/// read; a database that read does list still matches.
 pub fn link(reference: Option<&ClusterRef>, databases: &Read<Database>) -> LinkState {
     let Some(reference) = reference else {
         return LinkState::Unknown;
     };
-    if !databases.complete() {
-        return LinkState::Unknown;
-    }
     let database = databases.items.iter().find(|db| {
         db.engine == reference.engine
             && db.identity.namespace == reference.namespace
             && db.identity.name == reference.name
     });
+    if !databases.complete() {
+        // A database present in a fresh partial list still matches; one that
+        // is absent, or kept from an older read, may only be missing from it.
+        return match database {
+            Some(db) if !databases.stale => match &reference.uid {
+                Some(uid) if *uid == db.identity.uid => LinkState::Matched,
+                None => LinkState::NameOnly,
+                Some(_) => LinkState::Unknown,
+            },
+            _ => LinkState::Unknown,
+        };
+    }
     match database {
         None => LinkState::Orphaned,
         Some(db) => match &reference.uid {
@@ -156,6 +166,15 @@ pub fn coverage<'a>(
         .items
         .iter()
         .any(|schedule| uncertain(schedule.cluster.as_ref(), db, schedule.created));
+    // The MariaDB operator records a scheduled Backup's runs as Jobs, which
+    // are not read, and its status keeps no time of a run: with a schedule
+    // and no run Backup the last good backup is unknown, not absent.
+    let freshness =
+        if freshness == Freshness::None && db.engine == Engine::MariaDb && !schedules.is_empty() {
+            Freshness::Unknown
+        } else {
+            freshness
+        };
     let no_schedule = schedules.is_empty() && inventory.schedules.complete() && !uncertain_schedule;
     let restore = if freshness == Freshness::None {
         Restore::NoCompletedBackup
@@ -172,4 +191,93 @@ pub fn coverage<'a>(
         no_schedule,
         restore,
     }
+}
+
+/// Whether WAL is archived, from the operator's `ContinuousArchiving`
+/// condition joined with Coroot's check.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Archiving {
+    Ok,
+    Failing,
+    /// The operator and Coroot answer differently.
+    Disagree,
+    Unknown,
+}
+impl Archiving {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "WAL archiving working",
+            Self::Failing => "WAL archiving failing",
+            Self::Disagree => "The operator and Coroot disagree on WAL archiving",
+            Self::Unknown => "WAL archiving unknown",
+        }
+    }
+}
+
+/// The operator's side: a current `ContinuousArchiving` condition.
+pub(super) fn operator_archiving(db: &Database) -> Option<bool> {
+    let condition = db
+        .conditions
+        .iter()
+        .find(|condition| condition.kind == "ContinuousArchiving" && condition.current)?;
+    match condition.status.as_str() {
+        "True" => Some(true),
+        "False" => Some(false),
+        _ => None,
+    }
+}
+pub(super) fn coroot_archiving(report: Option<&super::coroot::DatabaseReport>) -> Option<bool> {
+    use crate::coroot::Status;
+    match report?.archiving? {
+        Status::Ok | Status::Info => Some(true),
+        Status::Warning | Status::Critical => Some(false),
+        Status::Unknown => None,
+    }
+}
+/// Joins the two answers. One alone stands; both must agree to be Ok.
+pub fn archiving(db: &Database, coroot: Option<&super::coroot::DatabaseReport>) -> Archiving {
+    match (operator_archiving(db), coroot_archiving(coroot)) {
+        (Some(a), Some(b)) if a != b => Archiving::Disagree,
+        (Some(true), _) | (None, Some(true)) => Archiving::Ok,
+        (Some(false), _) | (None, Some(false)) => Archiving::Failing,
+        (None, None) => Archiving::Unknown,
+    }
+}
+
+/// How far a restore can reach: from the oldest completed backup observed
+/// to the newest, or to now while WAL is known to be archived.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RestoreWindow {
+    pub from: DateTime<Utc>,
+    pub until: DateTime<Utc>,
+    /// Reaches the present through archived WAL.
+    pub to_now: bool,
+}
+pub fn restore_window(
+    db: &Database,
+    inventory: &Inventory,
+    found: &BackupCoverage,
+    archiving: Archiving,
+    now: DateTime<Utc>,
+) -> Option<RestoreWindow> {
+    let latest = found.completed?.completed?;
+    if found.freshness == Freshness::Unknown {
+        return None;
+    }
+    let from = inventory
+        .backups
+        .items
+        .iter()
+        .filter(|backup| {
+            backup.state == BackupState::Completed
+                && belongs(backup.cluster.as_ref(), db, backup.created)
+        })
+        .filter_map(|backup| backup.completed)
+        .min()?;
+    let to_now = archiving == Archiving::Ok && latest <= now;
+    Some(RestoreWindow {
+        from,
+        until: if to_now { now } else { latest },
+        to_now,
+    })
 }
