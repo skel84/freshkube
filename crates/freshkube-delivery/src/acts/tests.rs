@@ -36,7 +36,7 @@ fn kargo() -> Cluster {
     ])
 }
 
-fn runner(cluster: &Cluster, dir: &std::path::Path, level: Protection) -> Runner {
+fn kargo_runner(cluster: &Cluster, dir: &std::path::Path, level: Protection) -> Runner {
     Runner::new(
         cluster.client.clone(),
         AuditStore::new(dir.join("audit")),
@@ -99,7 +99,7 @@ fn writes(cluster: &Cluster) -> Vec<freshkube_core::fake_api::Recorded> {
 async fn refresh_sets_the_annotation_asks_nothing_at_any_writable_level_and_is_audited() {
     for level in [Protection::Protected, Protection::Guarded, Protection::Open] {
         let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-        let runner = runner(&cluster, dir.path(), level);
+        let runner = kargo_runner(&cluster, dir.path(), level);
         let verdict = runner
             .preflight(refresh_stage(&acts(), "2026-10-22T10:00:00Z"))
             .await;
@@ -136,7 +136,7 @@ async fn refresh_sets_the_annotation_asks_nothing_at_any_writable_level_and_is_a
 #[tokio::test(start_paused = true)]
 async fn refresh_of_the_warehouse_and_reverify_go_on_their_own_objects() {
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-    let runner = runner(&cluster, dir.path(), Protection::Guarded);
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let mut stage = acts();
     stage.verification = Some("ver-prod-ams-1".into());
     for (action, path, key, value) in [
@@ -184,7 +184,7 @@ async fn read_only_blocks_every_stage_action_and_asks_the_cluster_nothing() {
     ];
     for action in all {
         let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-        let runner = runner(&cluster, dir.path(), Protection::ReadOnly);
+        let runner = kargo_runner(&cluster, dir.path(), Protection::ReadOnly);
         let kind = action.kind.clone();
         assert!(
             matches!(
@@ -201,7 +201,7 @@ async fn read_only_blocks_every_stage_action_and_asks_the_cluster_nothing() {
 #[tokio::test(start_paused = true)]
 async fn a_read_only_destination_blocks_a_promotion_the_kargo_cluster_would_allow() {
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-    let runner = runner(&cluster, dir.path(), Protection::Open);
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Open);
     assert!(matches!(
         runner.preflight(promote_action(Protection::ReadOnly)).await,
         Verdict::Blocked(Block::ReadOnly(_))
@@ -212,7 +212,7 @@ async fn a_read_only_destination_blocks_a_promotion_the_kargo_cluster_would_allo
 #[tokio::test(start_paused = true)]
 async fn promote_creates_a_promotion_and_the_dialog_names_the_destination_and_the_preview() {
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-    let runner = runner(&cluster, dir.path(), Protection::Guarded);
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let verdict = runner.preflight(promote_action(Protection::Guarded)).await;
     // No GET of the Promotion that doesn't exist yet; nothing written.
     cluster.recorder.assert_lines(&[
@@ -263,7 +263,7 @@ async fn promote_creates_a_promotion_and_the_dialog_names_the_destination_and_th
 #[tokio::test(start_paused = true)]
 async fn a_protected_destination_asks_for_the_stage_s_name_though_kargo_s_cluster_is_guarded() {
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-    let runner = runner(&cluster, dir.path(), Protection::Guarded);
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let verdict = runner
         .preflight(promote_action(Protection::Protected))
         .await;
@@ -287,7 +287,7 @@ async fn a_protected_destination_asks_for_the_stage_s_name_though_kargo_s_cluste
     assert!(writes(&cluster).is_empty());
     // And a protected Kargo cluster asks for it with an open destination.
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-    let protected = runner(&cluster, dir.path(), Protection::Protected);
+    let protected = kargo_runner(&cluster, dir.path(), Protection::Protected);
     let verdict = protected.preflight(promote_action(Protection::Open)).await;
     let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
         panic!("asks");
@@ -299,7 +299,7 @@ async fn a_protected_destination_asks_for_the_stage_s_name_though_kargo_s_cluste
 async fn several_stages_type_once_and_the_dialog_names_the_protected_ones() {
     // A create reads nothing, so the cluster needs no objects.
     let (cluster, dir) = (Cluster::with(vec![]), tempfile::tempdir().unwrap());
-    let runner = runner(&cluster, dir.path(), Protection::Guarded);
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let (dev, prod) = (example_acts("dev"), example_acts("prod-ams"));
     let action = promote(
         &change(),
@@ -348,7 +348,7 @@ async fn abort_marks_the_promotion_counts_down_and_says_what_already_ran() {
     let action = abort(&stage, &running(), &change());
     assert_eq!(action.tier, Tier::Destructive);
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
-    let runner = runner(&cluster, dir.path(), Protection::Protected);
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Protected);
     let verdict = runner.preflight(action.clone()).await;
     let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
         panic!("asks");
