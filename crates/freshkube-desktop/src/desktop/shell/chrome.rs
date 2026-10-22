@@ -21,7 +21,8 @@ use crate::desktop::probe;
 use crate::forwards::ForwardsIndicator;
 use freshkube_prefs::{Document, Layout};
 use freshkube_ui::platform::{
-    About, AppMenu, OpenAppMenu, OpenClustersSettings, OpenCorootSettings, OpenSettings,
+    About, AppMenu, OpenAppMenu, OpenClustersSettings, OpenCorootSettings,
+    OpenDestinationsSettings, OpenSettings, OpenSourcesSettings,
 };
 use gpui_kit::component::{Theme, ThemeMode};
 use std::path::{Path, PathBuf};
@@ -241,6 +242,14 @@ impl Chrome {
         .on_action(cx.listener(|view, _: &OpenClustersSettings, window, cx| {
             view.show_settings(SettingsSection::Clusters, window, cx)
         }))
+        .on_action(cx.listener(|view, _: &OpenSourcesSettings, window, cx| {
+            view.show_settings(SettingsSection::Sources, window, cx)
+        }))
+        .on_action(
+            cx.listener(|view, _: &OpenDestinationsSettings, window, cx| {
+                view.show_settings(SettingsSection::Destinations, window, cx)
+            }),
+        )
         .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
         .on_action(cx.listener(|view, _: &UseSystemAppearance, window, cx| {
             view.choose_appearance(Appearance::System, window, cx)

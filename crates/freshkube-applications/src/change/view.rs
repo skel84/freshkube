@@ -25,18 +25,25 @@ impl ChangePage {
         );
         let chips = kit::status_chips(
             header.id("tally"),
-            TONES.iter().enumerate().map(|(ix, (tone, id, what))| {
-                let tone = *tone;
-                kit::status_chip(
-                    header.id(&format!("tally-{id}")),
-                    tone,
-                    self.counts[ix],
-                    what,
-                    self.filter == Some(tone),
-                    cx,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_filter(tone, cx)))
-            }),
+            TONES
+                .iter()
+                .enumerate()
+                .filter(|(ix, (tone, ..))| {
+                    // A chip shows only what it counts, and while it filters.
+                    self.counts[*ix] > 0 || self.filter == Some(*tone)
+                })
+                .map(|(ix, (tone, id, what))| {
+                    let tone = *tone;
+                    kit::status_chip(
+                        header.id(&format!("tally-{id}")),
+                        tone,
+                        self.counts[ix],
+                        what,
+                        self.filter == Some(tone),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_filter(tone, cx)))
+                }),
             cx,
         );
         let reading = self.loader.is_loading();
@@ -234,6 +241,7 @@ impl Render for ChangePage {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
         let notes = self.render_notes(cx);
+        let summary = self.render_summary(window, cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,
             None if self.view == ChangeView::Chain
@@ -269,13 +277,17 @@ impl Render for ChangePage {
             .flex_col()
             .size_full()
             .min_h_0()
+            .min_w_0()
             .child(
                 page::page("change-page")
+                    .min_w_0()
+                    .w_full()
                     .track_scroll(&self.page_scroll)
                     .when(short, |this| {
                         this.overflow_y_scroll().restrict_scroll_to_axis()
                     })
                     .child(page::toolbar(cx).child(header))
+                    .children(summary)
                     .children(notes)
                     .child(
                         div()

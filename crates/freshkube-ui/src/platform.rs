@@ -31,6 +31,11 @@ gpui_kit::actions!(
         /// Opens Settings on its Clusters section, where each entry's
         /// Coroot link is.
         OpenClustersSettings,
+        /// Opens Settings on its Delivery sources section, where the setup
+        /// file's delivery keys are shown.
+        OpenSourcesSettings,
+        /// Opens Settings on its Argo CD destinations section.
+        OpenDestinationsSettings,
         /// Hides the app (macOS).
         Hide,
         /// Hides every other app (macOS).

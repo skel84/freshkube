@@ -4,6 +4,25 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.18.0 (2026-10-22)
+
+0.17.1 was tagged but never released, so this release also carries its changes, listed under 0.17.1 below.
+
+### Other changes
+
+- **Settings:** Monitoring's Central metrics source can check its entries: one query of the store says which entries' label values have series now, suggests an entry's context name as its `metrics.value` when that is where its series are, and writes nothing until Accept.
+- **Settings:** a form row can take a click anywhere on it, its label included (`form::Row::on_click`).
+- **Settings:** in Check entries, clicking an entry's name selects it, not only its text.
+- **Settings:** Delivery sources can find the build namespace: Find counts PipelineRuns by namespace (names only) and reads Kargo's project names, then suggests a `{project}` template when the namespaces line up with the projects, or the one namespace that holds every run. Nothing is written until Accept.
+- **GitHub pull request card read:** the change page reads a pull request's reviews and checks from GitHub while it shows, and shows them as one plain line until the card is designed. Hiding the page drops the read. Avatars are fetched and kept on disk by a client that never holds a token, ready for the card to draw.
+- **Change page:** a headline sentence says where the change runs and what can't be confirmed, and a fix bar lists each unconfirmed hop as a chip that selects it, with the rest behind a `+N` menu. The Inspector leads with Why, Needs and Fix, and each next step is a button: Copy access request, Retry, Open Settings, Check sources, Open in Kargo. The status chips count Stages (and the start) at their weakest state. An unresolved `delivery.build_namespace` is now Not set up and names that setting.
+- **Databases:** inspect CloudNativePG clusters, backups and schedules from Storage, with reported topology, 24-hour backup freshness, explicit read coverage and restore-prerequisite limits. The collapsed Storage column retains Databases, failure states use a compact Retry action, and clipped table text has ellipses and full tooltips.
+- **Protection field:** a cluster in `freshkube.yaml` can set `protection` (`read-only`, `protected`, `guarded` or `open`; none is guarded). An unknown value skips that cluster with a warning and leaves its context read-only. The write model it belongs to is in [WRITE_MODEL.md](docs/WRITE_MODEL.md).
+- **Protection levels:** a cluster's protection level is shown in the header and the status bar, and edited in Settings' Clusters Inspector. A read-only cluster disables a shell's Start, Operations' Review and a service's Restart.
+- **Tests:** fake API guards now fail on a forbidden request instead of panicking inside the kube client.
+- **Development:** the same guard also refuses a link to an agent session.
+- **Development:** agent sessions in this repository can no longer post a tool footer or a co-author trailer, in a command or in a body file it names.
+
 ## 0.17.1 (2026-10-21)
 
 ### Other changes

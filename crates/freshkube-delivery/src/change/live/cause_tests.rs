@@ -228,3 +228,48 @@ fn pods_of_an_unread_entry_can_be_read_again() {
     );
     assert!(matches!(pods.cause, Some(Cause::CantRead { .. })));
 }
+
+/// A template that doesn't resolve for the project: a setup problem, not a
+/// refusal of the cluster.
+fn unresolved_build_namespace() -> super::Place {
+    let mut place = place("f-new");
+    place.build_namespace = Some(format!("{{project}}-{}", "c".repeat(60)));
+    place
+}
+
+#[tokio::test]
+async fn an_unresolved_build_namespace_is_not_set_up_not_a_refusal() {
+    let reader = one_cluster(|_| {});
+    let change = read(&reader, &unresolved_build_namespace(), observed_at())
+        .await
+        .expect("read");
+    let build = change
+        .hops
+        .iter()
+        .find(|hop| hop.key.starts_with("build-run"))
+        .expect("the build hop");
+    let cause = build.cause.as_ref().expect("a cause");
+    assert!(matches!(cause, Cause::NotSetUp { .. }), "{cause:?}");
+    assert_eq!(
+        cause.next(),
+        [Next::OpenSettings(SettingsField::BUILD_NAMESPACE)]
+    );
+    // No Role is asked for: nothing was refused.
+    let super::super::Shows::Hop(detail) = &build.shows else {
+        panic!("a hop");
+    };
+    assert_eq!(
+        detail.link.as_ref().and_then(|link| link.cause.clone()),
+        build.cause
+    );
+}
+
+#[tokio::test]
+async fn a_refused_pipelineruns_list_still_asks_for_its_role() {
+    let reader = one_cluster(|world| {
+        world.tekton = std::mem::take(&mut world.tekton).refusing("pipelineruns");
+    });
+    let change = change_of(&reader).await;
+    let build = hop(&change, "build-run-0");
+    assert!(matches!(build.cause, Some(Cause::CantRead { .. })));
+}
