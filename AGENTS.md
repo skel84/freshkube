@@ -9,6 +9,7 @@ crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-cli/       the read commands of the binary: check and get, JSON and exit codes; no GPUI
 ├── freshkube-core/      domain logic shared by every screen, no UI types
+├── freshkube-agent/     the agent's loopback read endpoint, its session token and the saved per-cluster access; no GPUI
 ├── freshkube-followed/  what the user follows (a pod, a change, an incident): the app-wide owner, its rules, the toasts and the bell; no desktop types
 ├── freshkube-delivery/  the delivery chain (Kargo, Argo CD, builds → pods) and its applications; no UI types
 ├── freshkube-prefs/     the preferences files: a typed JSON Document per file, saved atomically
@@ -261,6 +262,7 @@ Diagnostic checks follow these rules; [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 Behaviour that is not a rule lives in one doc per feature, each starting with its module paths and the tests that prove it ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#feature-docs)).
 
 - The command line, `freshkube check` and `freshkube get` (`crates/freshkube-cli/`): [docs/features/cli.md](docs/features/cli.md). Read-only; the cluster is always named, never the current context; Secret values are never requested or printed.
+- The agent's reads, the per-cluster access gate and the loopback endpoint (`freshkube-core`'s `agent_reads/`, `crates/freshkube-agent/`): [docs/features/agent.md](docs/features/agent.md). Read-only (`get`, `list`, the `log` subresource); Secrets as metadata; off for every cluster until a person turns it on; no UI and no desktop dependency yet.
 - Databases (`core/databases/`, `screens/databases/`): [docs/features/databases.md](docs/features/databases.md). CloudNativePG first; no Secret or credential reads or mutations.
 - View tabs (`desktop/tabs/`, `freshkube_ui::tab_strip`): [docs/features/tabs.md](docs/features/tabs.md). Rules kept here: a tab is a `ViewState` of the cluster that is open and nothing else is saved; every link still goes through `Pilot::open_object_in` and its guard first; the strip is a cached view beside the page and the shell draws again only when its layout or answers change; frozen rows are bounded (8 tabs, 5,000 rows each, 64 MiB) and make a row action wait.
 - Resources, the dock, shells and ports (`crates/freshkube-resources/`, `desktop/dock/`): [docs/features/resources.md](docs/features/resources.md). Rules kept here: a dock log tab reads while it is open, on any page, and so does a followed item (below), and nothing else reads out of sight; Resources reads only while its page shows; Secret values never reach the detail pane's document, search or a link's resolution (metadata-only reads).
