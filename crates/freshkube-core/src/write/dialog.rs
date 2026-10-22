@@ -235,6 +235,7 @@ impl Finished {
                 super::run::Status::NotSent(NotSent::Moved(what)) => format!(
                     "{what} It changed after you were asked, so nothing was sent; open it again."
                 ),
+                super::run::Status::NotSent(NotSent::Unchecked(text)) => text.clone(),
                 super::run::Status::NotSent(NotSent::Example) => {
                     "Example data: there is no cluster, so nothing was sent.".to_owned()
                 }

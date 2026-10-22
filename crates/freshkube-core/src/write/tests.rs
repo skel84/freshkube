@@ -1632,3 +1632,64 @@ async fn a_conflict_answering_a_read_is_no_answer_not_a_panic() {
         }
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_recheck_that_could_not_be_made_says_so_and_sends_nothing() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, fake::create_note_after_web()).await;
+    // The access review fails when asked again: nothing is known.
+    cluster.break_access_review();
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    match &finished.status {
+        Status::NotSent(NotSent::Unchecked(text)) => {
+            assert!(text.contains("couldn't be checked again"), "{text}");
+            assert!(!text.contains("changed after you were asked"), "{text}");
+        }
+        other => panic!("{other:?}"),
+    }
+    cluster.assert_nothing_written();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancel_pressed_during_the_recheck_is_honoured() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, fake::create_note_after_web()).await;
+    // Not cancelled when first asked; cancelled by the time the recheck is done.
+    let asked = AtomicUsize::new(0);
+    let finished = runner
+        .execute(
+            *prepared,
+            Confirmation::Confirmed,
+            || asked.fetch_add(1, Ordering::SeqCst) >= 1,
+            |_| {},
+        )
+        .await;
+    assert_eq!(finished.status, Status::Cancelled);
+    cluster.assert_nothing_written();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancel_on_example_data_writes_nothing_to_any_audit_log() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = Runner::example(
+        cluster.client.clone(),
+        AuditStore::new(dir.path().join("audit")),
+        Who {
+            entry: "e".into(),
+            context: "c".into(),
+            protection: Protection::Guarded,
+            actor: "t".into(),
+        },
+    );
+    let prepared = ready(&runner, fake::delete_web()).await;
+    // Cancelled during the countdown.
+    let finished = runner
+        .execute(*prepared, Confirmation::Confirmed, || true, |_| {})
+        .await;
+    assert_eq!(finished.status, Status::Cancelled);
+    assert!(cluster.recorder.requests().is_empty());
+    assert!(phases(&AuditStore::new(dir.path().join("audit"))).is_empty());
+}

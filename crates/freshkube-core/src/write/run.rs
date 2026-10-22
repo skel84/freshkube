@@ -11,7 +11,7 @@ use super::{
     action::{ActionDescription, Inverse, ObjectChange, Target},
     audit::{AuditObject, AuditRequest, AuditStore, Record, RunId, SCHEMA, scrub},
     outcome::{Accepted, Observed, Watching, observe},
-    preflight::{Prepared, Who},
+    preflight::{Block, Prepared, Who},
     requirement::{Confirmation, UNDO_WINDOW},
     send::{ChangedWhat, Conflict, Refusal, send},
     undo::UndoOffer,
@@ -64,6 +64,10 @@ pub enum NotSent {
     /// Something the write depends on (a Stage that runs other Freight now)
     /// is no longer as the person was shown, so nothing was sent.
     Moved(String),
+    /// What the write depends on could not be checked again just before the
+    /// send (no answer, an access review that failed, or a refusal), so
+    /// nothing was sent. The text says why.
+    Unchecked(String),
 }
 
 /// What happened to one object.
@@ -356,16 +360,22 @@ impl Runner {
         // The one reading the send is decided on, and the level every audit
         // line of this run records.
         let level = self.level_for(&description);
+        // Cancelled before anything is sent. Example data audits nothing.
+        let cancelled = || {
+            if !self.example {
+                let _ = self.record(
+                    &run,
+                    &description,
+                    level,
+                    &all,
+                    Phase::Cancelled,
+                    "Cancelled before sending.",
+                );
+            }
+            finished(Status::Cancelled, vec![], None, None)
+        };
         if cancel() {
-            let _ = self.record(
-                &run,
-                &description,
-                level,
-                &all,
-                Phase::Cancelled,
-                "Cancelled before sending.",
-            );
-            return finished(Status::Cancelled, vec![], None, None);
+            return cancelled();
         }
         if let Some(not_sent) = refused_at(level) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
@@ -376,13 +386,22 @@ impl Runner {
         if !self.example {
             for depends in description.changes.iter().flat_map(|c| &c.depends) {
                 if let Err(block) = self.check_depends(depends).await {
-                    return finished(
-                        Status::NotSent(NotSent::Moved(block.text())),
-                        vec![],
-                        None,
-                        None,
-                    );
+                    let not_sent = match &block {
+                        Block::Changed { .. } => NotSent::Moved(block.text()),
+                        Block::NoAnswer { .. } | Block::AccessUnknown { .. } => {
+                            NotSent::Unchecked(format!(
+                                "{} It couldn't be checked again, so nothing was sent.",
+                                block.text()
+                            ))
+                        }
+                        other => NotSent::Unchecked(format!("{} Nothing was sent.", other.text())),
+                    };
+                    return finished(Status::NotSent(not_sent), vec![], None, None);
                 }
+            }
+            // The check made requests after the last look at Cancel.
+            if cancel() {
+                return cancelled();
             }
         }
         // Example data has no cluster to send to; everything the level and the
