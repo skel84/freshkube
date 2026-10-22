@@ -581,7 +581,11 @@ fn a_worker_that_died_reads_as_unknown_and_never_as_not_sent(_cx: &mut TestAppCo
     let finished = super::report::stopped();
     assert_eq!(finished.headline(), Headline::Unknown);
     assert!(!matches!(finished.status, Status::NotSent(_)));
-    assert!(finished.message().contains("It is not known whether it accepted the write"));
+    assert!(
+        finished
+            .message()
+            .contains("It is not known whether it accepted the write")
+    );
 }
 
 #[gpui_kit::test]
