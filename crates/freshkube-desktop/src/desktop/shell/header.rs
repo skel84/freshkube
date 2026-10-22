@@ -12,8 +12,9 @@ const SEARCH_KEY: &str = match Platform::current() {
 };
 
 /// Below this window width, in dp, the protection level's tag in the
-/// switcher keeps its glyph and leaves the word to the tooltip.
-const LEVEL_WORD_MIN_WIDTH: f32 = 900.;
+/// switcher keeps its glyph and leaves the word to the tooltip: the same
+/// width under which the switcher is a fixed 180 dp, so its name keeps room.
+const LEVEL_WORD_MIN_WIDTH: f32 = SWITCHER_FIXED_BELOW;
 
 /// Below this window width, in dp, the switcher is a fixed width of
 /// [`SWITCHER_WIDTH`], its name cut to fit, so the room the left side needs
