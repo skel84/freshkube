@@ -7,7 +7,7 @@
 //!   lock-down, where opencode is found and which versions are supported.
 //! - [`investigation`]: the transcript the agent's session updates become,
 //!   bounded in every dimension.
-//! - [`scripted`]: an ACP agent that follows a script, for tests and for the
+//! - `scripted` (feature `scripted`): an ACP agent that follows a script, for tests and for the
 //!   fixture; in process over a pipe, or as the `fake_acp_agent` binary.
 //!
 //! Docs: `docs/features/agent.md`.
@@ -16,6 +16,7 @@ pub mod acp;
 mod child;
 pub mod investigation;
 pub mod profile;
+#[cfg(feature = "scripted")]
 pub mod scripted;
 pub mod tools;
 

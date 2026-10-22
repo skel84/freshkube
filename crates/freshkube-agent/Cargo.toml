@@ -11,8 +11,9 @@ description = "The agent in the dock: an ACP client over a child's stdio, the op
 [dependencies]
 agent-client-protocol = "=2.2.0"
 futures.workspace = true
-# The scripted agent reads through the MCP endpoint it is handed, as the real agents do.
-rmcp = { version = "=3.5.0", default-features = false, features = [
+# The scripted agent reads through the MCP endpoint it is handed, as the real
+# agents do; only it needs an MCP client, so the app's build does not.
+rmcp = { version = "=3.5.0", optional = true, default-features = false, features = [
     "client",
     "transport-streamable-http-client-reqwest",
 ] }
@@ -32,7 +33,19 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+# The scripted agent: in process (`scripted::in_process`, for the dock's UI tests
+# and `--fixture`) and as the `fake_acp_agent` binary. A crate that wants it
+# turns this feature on; the tests here do from their own dev-dependency.
+[features]
+scripted = ["dep:rmcp"]
+
+[[bin]]
+name = "fake_acp_agent"
+path = "src/bin/fake_acp_agent.rs"
+required-features = ["scripted"]
+
 [dev-dependencies]
+freshkube-agent = { path = ".", features = ["scripted"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

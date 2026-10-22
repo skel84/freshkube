@@ -2607,6 +2607,7 @@ version = "0.18.0"
 dependencies = [
  "agent-client-protocol",
  "axum 0.8.9",
+ "freshkube-agent",
  "futures",
  "libc",
  "rmcp",
