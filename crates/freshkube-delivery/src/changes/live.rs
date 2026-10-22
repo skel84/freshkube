@@ -36,7 +36,7 @@ use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 
 /// How many projects, then changes, are read at once.
-const AT_ONCE: usize = 4;
+pub(crate) const AT_ONCE: usize = 4;
 
 /// How long a read may take before what hasn't answered is left out.
 pub const BUDGET: Duration = Duration::from_secs(90);
@@ -96,7 +96,7 @@ impl Where {
     }
 
     /// The name of the cluster Kargo is read on, which the notes name.
-    fn kargo(&self) -> String {
+    pub(crate) fn kargo(&self) -> String {
         match self.sources.get(Part::Kargo) {
             Chosen::Entry { entry, .. } if self.mapping.open.as_deref() != Some(&entry.id) => {
                 entry.id.clone()
@@ -107,7 +107,7 @@ impl Where {
 }
 
 /// Why a part wasn't read: the budget ran out first, as the pool says it.
-fn late(budget: Duration) -> String {
+pub(crate) fn late(budget: Duration) -> String {
     format!("no answer within the read's {} s", budget.as_secs())
 }
 

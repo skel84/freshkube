@@ -35,21 +35,30 @@ const MOST_RESULT_TASKS: usize = PAGE_LIMIT as usize * MAX_PAGES as usize;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Supplied by the forward's owner; this client never starts or replaces one.
-#[derive(Clone, Copy)]
-pub(crate) enum Route {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Route {
+    #[default]
     Address,
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "forward slice 2 supplies the route")
-    )]
     Forward {
         local_port: NonZeroU16,
     },
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "forward slice 2 supplies the route")
-    )]
     Ended(&'static str),
+    Waiting(Wait),
+}
+
+/// Nonterminal owner states that have no usable route; they perform no I/O.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wait {
+    Starting,
+    NoReadyPod,
+}
+impl Wait {
+    pub fn words(self) -> &'static str {
+        match self {
+            Self::Starting => "Tekton Results forward is starting",
+            Self::NoReadyPod => "Tekton Results forward has no ready pod",
+        }
+    }
 }
 
 /// Deliberately has no Debug: neither an address nor an authorization header
@@ -119,6 +128,7 @@ pub(crate) enum State {
     Loading,
     NotForwarded,
     ForwardEnded,
+    ForwardWaiting,
     NotInstalled,
     Unreachable,
     Refused,
@@ -137,6 +147,7 @@ pub(crate) enum Error {
     Skipped(Skip),
     NotForwarded,
     ForwardEnded(&'static str),
+    ForwardWaiting(Wait),
     NotInstalled,
     LogsNotServed,
     LogMissing,
@@ -196,6 +207,7 @@ impl Error {
             Self::Skipped(_) => State::Skipped,
             Self::NotForwarded => State::NotForwarded,
             Self::ForwardEnded(_) => State::ForwardEnded,
+            Self::ForwardWaiting(_) => State::ForwardWaiting,
             Self::NotInstalled | Self::LogsNotServed => State::NotInstalled,
             Self::LogMissing => State::Empty,
             Self::Unreachable(_) => State::Unreachable,
@@ -212,6 +224,7 @@ impl std::fmt::Display for Error {
             Self::BuildNamespace(why) => f.write_str(why),
             Self::Skipped(why) => write!(f, "Tekton Results wasn't read: {why}"),
             Self::NotForwarded => f.write_str("Tekton Results isn't forwarded yet"),
+            Self::ForwardWaiting(wait) => f.write_str(wait.words()),
             Self::ForwardEnded(why) => write!(f, "the Tekton Results forward ended: {why}"),
             Self::NotInstalled => {
                 f.write_str("the Tekton Results API isn't installed or served here")
@@ -298,6 +311,7 @@ impl Client {
                 (transport::base_url(address)?, token_account(address)?, None)
             }
             (None, Some(_), Route::Address) => return Err(Error::NotForwarded),
+            (None, Some(_), Route::Waiting(wait)) => return Err(Error::ForwardWaiting(wait)),
             (None, Some(_), Route::Ended(why)) => return Err(Error::ForwardEnded(why)),
             (None, Some(forward), Route::Forward { local_port }) => {
                 transport::segment(&forward.namespace)?;

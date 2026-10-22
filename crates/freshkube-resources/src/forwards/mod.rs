@@ -14,12 +14,15 @@ use gpui_kit::*;
 use tokio::task::JoinHandle;
 
 mod example;
+mod example_results;
 mod indicator;
+mod matching;
 #[cfg(test)]
 mod tests;
 mod view;
 
 pub use indicator::{ForwardsIndicator, render_forward};
+pub use matching::{Epoch, Snapshot, State};
 #[cfg(test)]
 pub(crate) use view::Phase;
 pub use view::{ForwardSpec, ForwardView, Row};
@@ -159,7 +162,7 @@ impl ForwardList {
         }
     }
 
-    pub(crate) fn start_again(&mut self, id: u64, cx: &mut Context<Self>) {
+    pub fn start_again(&mut self, id: u64, cx: &mut Context<Self>) {
         if let Some(view) = self.get(id, cx) {
             view.update(cx, |view, cx| view.start_again(cx));
         }

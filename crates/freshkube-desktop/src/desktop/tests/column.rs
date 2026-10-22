@@ -361,7 +361,7 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("section-observability", cx);
+        window.click("nav-observability", cx);
         assert_eq!(pilot.read(cx).navigation.page, Page::Observability);
         window.render_frame(cx);
         assert!(window.find("refresh").visible());

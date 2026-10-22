@@ -481,16 +481,21 @@ fn the_row_doesnt_move_the_trail_or_the_inspector_sideways(cx: &mut TestAppConte
             cx.read(|cx| page.read(cx).pull_line().map(str::to_owned)),
             None
         );
-        // The same columns, the same bottom edge: only the top moved, down
-        // by the row, so the trail and the Inspector are as wide and as
-        // far from the sides as they were.
+        // The same columns: the trail and Inspector stay as wide and as
+        // far from the sides as they were. A short page scrolls the whole
+        // split at its full height to keep the Inspector footer reachable;
+        // a taller page keeps the bottom edge and gives the row its space.
         for (with, without) in [(with_split, without_split), (with_table, without_table)] {
             assert_eq!(
                 (with.left(), with.right()),
                 (without.left(), without.right()),
                 "{width}"
             );
-            assert_eq!(with.bottom(), without.bottom(), "{width}");
+            if height < freshkube_ui::page::SHORT_HEIGHT {
+                assert_eq!(with.size.height, without.size.height, "{width}");
+            } else {
+                assert_eq!(with.bottom(), without.bottom(), "{width}");
+            }
             assert!(with.top() >= without.top(), "{width}");
             // Only the row, in its block's padding, was added above them: the
             // top moved down by the row and a little more, never by a whole
