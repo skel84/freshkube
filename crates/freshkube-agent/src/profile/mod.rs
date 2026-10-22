@@ -124,7 +124,7 @@ impl Dirs {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub(super) enum Kind {
     Opencode,
     /// Any ACP agent command, such as the scripted one: the locked
     /// environment, no switches of its own.
@@ -136,7 +136,7 @@ pub struct Profile {
     name: &'static str,
     command: PathBuf,
     args: Vec<String>,
-    kind: Kind,
+    pub(super) kind: Kind,
     data: Data,
 }
 
@@ -207,26 +207,10 @@ impl Profile {
     /// and removes the directories. `checked` is the proof [`Profile::check`]
     /// gave for this profile's binary; one for another binary is refused.
     pub fn spawn(&self, host: &Host, checked: &Checked) -> io::Result<Link> {
-        if checked.binary() != self.binary() {
-            return Err(io::Error::other(
-                "the version check was made on another binary",
-            ));
-        }
+        checked.is_for(self).map_err(io::Error::other)?;
         if self.kind == Kind::Opencode {
             self.data.prepare(host)?;
-            if self.data == Data::Shared
-                && host
-                    .data_home
-                    .as_deref()
-                    .is_some_and(|dir| organisation_sources(dir) == Sources::Seen)
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "opencode's own data lists organisation config sources, which load after \
-                     Freshkube's lock-down and can turn tools back on; use Freshkube's own \
-                     data directory for the agent instead",
-                ));
-            }
+            self.data.check_sources(host)?;
         }
         let dirs = Dirs::create()?;
         let plan = self.plan(&dirs, host);

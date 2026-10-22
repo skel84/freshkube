@@ -2,11 +2,11 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tokio::io::AsyncReadExt;
 
-use super::{Dirs, Host, Profile};
+use super::{Dirs, Host, Kind, Profile};
 use crate::investigation::clip;
 
 /// How long `<agent> --version` has to answer.
@@ -132,11 +132,45 @@ impl VersionState {
 /// session never starts on a version the profile doesn't support: another
 /// version may read its permissions under other keys and fall back to
 /// defaults that allow a shell.
+///
+/// The proof is for one profile kind and range, and for the file that was
+/// run, not only its path: a binary replaced since (an upgrade between the
+/// check and the start) is refused until it is checked again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checked {
     binary: PathBuf,
+    file: FileId,
+    kind: Kind,
+    range: Option<Range>,
     /// None for a command with no version range.
     state: Option<VersionState>,
+}
+
+/// What names a file, beyond its path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileId {
+    len: u64,
+    modified: Option<SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+
+impl FileId {
+    fn of(path: &Path) -> Option<Self> {
+        let meta = std::fs::metadata(path).ok()?;
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Some(Self {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            #[cfg(unix)]
+            device: meta.dev(),
+            #[cfg(unix)]
+            inode: meta.ino(),
+        })
+    }
 }
 
 impl Checked {
@@ -145,6 +179,9 @@ impl Checked {
     pub(crate) fn for_tests(profile: &Profile) -> Self {
         Self {
             binary: profile.binary().to_path_buf(),
+            file: FileId::of(profile.binary()).unwrap(),
+            kind: profile.kind,
+            range: profile.range(),
             state: None,
         }
     }
@@ -158,6 +195,21 @@ impl Checked {
     /// command with no range.
     pub fn state(&self) -> Option<&VersionState> {
         self.state.as_ref()
+    }
+
+    /// Whether this proof is for `profile` as it is now: the same kind and
+    /// range, the same path, and the same file at that path.
+    pub(super) fn is_for(&self, profile: &Profile) -> Result<(), &'static str> {
+        if self.kind != profile.kind || self.range != profile.range() {
+            return Err("the version check was made for another kind of agent");
+        }
+        if self.binary != profile.binary() {
+            return Err("the version check was made on another binary");
+        }
+        if FileId::of(profile.binary()).as_ref() != Some(&self.file) {
+            return Err("the binary changed since its version was checked; check it again");
+        }
+        Ok(())
     }
 }
 
@@ -173,18 +225,26 @@ impl Profile {
         host: &Host,
         timeout: Duration,
     ) -> Result<Checked, VersionState> {
+        let Some(file) = FileId::of(self.binary()) else {
+            return Err(VersionState::NotInstalled);
+        };
+        let checked = |state| Checked {
+            binary: self.binary().to_path_buf(),
+            file: file.clone(),
+            kind: self.kind,
+            range: self.range(),
+            state,
+        };
         if self.range().is_none() {
-            return Ok(Checked {
-                binary: self.binary().to_path_buf(),
-                state: None,
-            });
+            return Ok(checked(None));
         }
         let state = self.check_version_within(host, timeout).await;
+        // A file replaced while it was being run is not the one that answered.
+        if FileId::of(self.binary()).as_ref() != Some(&file) {
+            return Err(VersionState::NotInstalled);
+        }
         if state.can_start() {
-            Ok(Checked {
-                binary: self.binary().to_path_buf(),
-                state: Some(state),
-            })
+            Ok(checked(Some(state)))
         } else {
             Err(state)
         }
@@ -392,6 +452,55 @@ mod tests {
             assert!(error.to_string().contains("another binary"), "{error}");
             // And for the right one it starts.
             assert!(supported.spawn(&host, &checked).is_ok());
+        }
+
+        #[tokio::test]
+        async fn a_proof_for_another_kind_of_agent_is_refused() {
+            let host = Host::default();
+            let dir = tempfile::tempdir().unwrap();
+            let opencode = script(dir.path(), "echo 2.0.9");
+            // A generic command needs no version, so its proof says none was checked.
+            let generic = Profile::command("generic", opencode.binary(), ["acp"]);
+            let proof = generic
+                .check(&host)
+                .await
+                .expect("a generic command passes");
+            assert_eq!(proof.state(), None);
+            let error = opencode.spawn(&host, &proof).err().expect("refused");
+            assert!(
+                error.to_string().contains("another kind of agent"),
+                "{error}"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_binary_replaced_after_its_check_is_refused() {
+            let host = Host::default();
+            let dir = tempfile::tempdir().unwrap();
+            let profile = script(dir.path(), "echo 2.1.3");
+            let checked = profile.check(&host).await.unwrap();
+            assert!(profile.spawn(&host, &checked).is_ok());
+            // An upgrade in place: the same path, another file.
+            let path = profile.binary().to_path_buf();
+            std::fs::write(&path, "#!/bin/sh\necho 9.9.9 # upgraded\n").unwrap();
+            let error = profile.spawn(&host, &checked).err().expect("refused");
+            assert!(error.to_string().contains("changed since"), "{error}");
+            // Checked again, it is judged on what it is now.
+            assert!(matches!(
+                profile.check(&host).await,
+                Err(VersionState::Unsupported { .. })
+            ));
+            // A file renamed over the path is another file too.
+            let again = script(dir.path(), "echo 2.1.3");
+            let checked = again.check(&host).await.unwrap();
+            let other = dir.path().join("other");
+            std::fs::write(&other, "#!/bin/sh\necho 2.1.3\n").unwrap();
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            std::fs::rename(&other, again.binary()).unwrap();
+            assert!(again.spawn(&host, &checked).is_err());
         }
     }
 }

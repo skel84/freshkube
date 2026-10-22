@@ -222,6 +222,45 @@ impl Data {
         }
     }
 
+    /// Refuses a start when saved organisation config sources are seen in
+    /// the data directory opencode will use, or when that cannot be told:
+    /// they load after our configuration and their rules win. Both modes are
+    /// checked, since a login to an organisation inside the owned directory
+    /// saves its source there.
+    pub(super) fn check_sources(&self, host: &Host) -> io::Result<()> {
+        let data_home = match self {
+            Self::Own(dir) => Some(dir.join("data")),
+            Self::Shared => host.data_home.clone(),
+        };
+        let Some(data_home) = data_home else {
+            return Ok(());
+        };
+        let whose = match self {
+            Self::Own(_) => "Freshkube's own opencode data",
+            Self::Shared => "opencode's own data",
+        };
+        let fix = match self {
+            Self::Own(_) => {
+                "remove Freshkube's agent data directory and sign in to the model provider again"
+            }
+            Self::Shared => "use Freshkube's own data directory for the agent instead",
+        };
+        let refuse =
+            |message: String| Err(io::Error::new(io::ErrorKind::PermissionDenied, message));
+        match organisation_sources(&data_home) {
+            Sources::None => Ok(()),
+            Sources::Seen => refuse(format!(
+                "{whose} lists organisation config sources, which load after Freshkube's \
+                 lock-down and can turn tools back on; {fix}"
+            )),
+            Sources::Unknown => refuse(format!(
+                "Freshkube could not tell whether {whose} lists organisation config sources \
+                 (a database file could not be read or is larger than the scan limit), and \
+                 they would load after its lock-down and can turn tools back on; {fix}"
+            )),
+        }
+    }
+
     /// Creates the owned directories, private to the person. Shared has none
     /// to make.
     pub(super) fn prepare(&self, host: &Host) -> io::Result<()> {
@@ -278,6 +317,10 @@ pub enum Sources {
 /// source that was removed and left the key behind still counts, because
 /// reading the value takes a SQLite reader.
 pub fn organisation_sources(data_home: &Path) -> Sources {
+    organisation_sources_within(data_home, MAX_SCAN_BYTES)
+}
+
+fn organisation_sources_within(data_home: &Path, limit: u64) -> Sources {
     use std::io::Read;
     let dir = data_home.join("opencode");
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -294,7 +337,7 @@ pub fn organisation_sources(data_home: &Path) -> Sources {
             unknown = true;
             continue;
         };
-        let mut reader = file.take(MAX_SCAN_BYTES);
+        let mut reader = file.take(limit);
         let mut window: Vec<u8> = Vec::new();
         let mut buffer = vec![0u8; 256 * 1024];
         let mut read_total = 0u64;
@@ -318,7 +361,7 @@ pub fn organisation_sources(data_home: &Path) -> Sources {
                 window.drain(..window.len() - keep);
             }
         }
-        if read_total >= MAX_SCAN_BYTES {
+        if read_total >= limit {
             unknown = true;
         }
     }
@@ -640,5 +683,79 @@ mod tests {
         let (_keep, data) = own();
         let own_profile = Profile::opencode(&binary, data);
         assert!(own_profile.spawn(&host, &fake_proof(&own_profile)).is_ok());
+    }
+
+    #[test]
+    fn a_database_that_cannot_be_read_or_is_past_the_limit_is_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        // A directory where a database should be cannot be read.
+        std::fs::create_dir_all(root.path().join("opencode").join("opencode.db")).unwrap();
+        assert_eq!(organisation_sources(root.path()), Sources::Unknown);
+        let other = tempfile::tempdir().unwrap();
+        database(other.path(), "opencode.db", &vec![b'x'; 10_000]);
+        assert_eq!(
+            organisation_sources_within(other.path(), 4096),
+            Sources::Unknown
+        );
+        assert_eq!(
+            organisation_sources_within(other.path(), 20_000),
+            Sources::None
+        );
+        // The key is still seen inside the limit.
+        let seen = tempfile::tempdir().unwrap();
+        let mut content = b"wellknown:sources".to_vec();
+        content.extend(vec![b'x'; 10_000]);
+        database(seen.path(), "opencode.db", &content);
+        assert_eq!(
+            organisation_sources_within(seen.path(), 4096),
+            Sources::Seen
+        );
+    }
+
+    #[test]
+    fn a_start_is_refused_when_the_scan_cannot_tell_in_either_mode() {
+        let root = tempfile::tempdir().unwrap();
+        let shared_home = root.path().join("share");
+        std::fs::create_dir_all(shared_home.join("opencode").join("opencode.db")).unwrap();
+        let host = Host {
+            data_home: Some(shared_home),
+            ..Host::default()
+        };
+        let error = Data::Shared.check_sources(&host).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(error.to_string().contains("could not tell"), "{error}");
+        let owned = Data::Own(root.path().join("own"));
+        std::fs::create_dir_all(root.path().join("own/data/opencode/opencode.db")).unwrap();
+        let error = owned.check_sources(&Host::default()).unwrap_err();
+        assert!(error.to_string().contains("could not tell"), "{error}");
+    }
+
+    #[test]
+    fn the_own_mode_checks_its_own_database_for_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let own_dir = root.path().join("own");
+        let data = Data::Own(own_dir.clone());
+        // Clean, then a login to an organisation inside the owned directory saves a source.
+        assert!(data.check_sources(&Host::default()).is_ok());
+        database(
+            &own_dir.join("data"),
+            "opencode.db",
+            b"..wellknown:sources..",
+        );
+        let error = data.check_sources(&Host::default()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            error
+                .to_string()
+                .contains("Freshkube's own opencode data lists"),
+            "{error}"
+        );
+        // The real directories are not what it looked at.
+        let host = Host {
+            data_home: Some(root.path().join("elsewhere")),
+            ..Host::default()
+        };
+        assert!(data.check_sources(&host).is_err());
+        assert!(Data::Shared.check_sources(&host).is_ok());
     }
 }
