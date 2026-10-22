@@ -442,15 +442,12 @@ fn named_of(item: &Item) -> Named {
         };
     }
     if let Some(PullRead::Unread { rate_limit, why }) = &item.pull {
+        // `not read`, and beside it, as a pull request's state is, where the
+        // read was skipped.
         return Named {
-            text: if *rate_limit {
-                "not read (rate limit)"
-            } else {
-                "not read"
-            }
-            .into(),
+            text: "not read".into(),
             by_commit: false,
-            state: None,
+            state: rate_limit.then(|| "(rate limit)".into()),
             stale: true,
             note: Some(why.clone().into()),
         };
@@ -513,7 +510,10 @@ fn item_row(
     let why = format!("{} {}", item.why.word(), item.why.needs());
     let label = format!(
         "{} {title} · {} · {}, waited {waited} · {why}",
-        named.text,
+        match &named.state {
+            Some(state) => format!("{} {state}", named.text),
+            None => named.text.to_string(),
+        },
         app.name,
         if item.in_stage.is_some() {
             format!("in {stage}")

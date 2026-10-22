@@ -555,16 +555,23 @@ fn a_pull_request_that_was_not_read_says_so_never_the_bare_commit(cx: &mut TestA
                 .rows
                 .iter()
                 .find(|row| row.key.as_ref() == key)
-                .map(|row| (row.named.to_string(), row.by_commit))
+                .map(|row| {
+                    let state = row.pull.as_ref().map(|state| state.to_string());
+                    (row.named.to_string(), state, row.by_commit)
+                })
                 .unwrap()
         };
+        // `not read`, with `(rate limit)` beside it where the read was skipped.
         assert_eq!(
             named("checkout/wonky-otter"),
-            ("not read (rate limit)".into(), false)
+            ("not read".into(), Some("(rate limit)".into()), false)
         );
-        assert_eq!(named("checkout/tidy-badger"), ("not read".into(), false));
+        assert_eq!(
+            named("checkout/tidy-badger"),
+            ("not read".into(), None, false)
+        );
         // A pull request GitHub answered it names none for shows the commit.
-        assert_eq!(named("catalog/plucky-newt"), ("0c4e8b1".into(), true));
+        assert_eq!(named("catalog/plucky-newt"), ("0c4e8b1".into(), None, true));
         // The cause is the Inspector's.
         let row = page
             .display

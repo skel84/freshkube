@@ -56,12 +56,12 @@ pub(super) fn columns() -> (Vec<Column>, f32) {
     };
     let columns = vec![
         column(Field::Glyph, "", kit::GLYPH_WIDTH),
-        column(Field::Named, "PR", 148.),
-        column(Field::Change, "Change", 84.),
+        column(Field::Named, "PR", 172.),
+        column(Field::Change, "Change", 72.),
         column(Field::Merged, "Merged", 60.),
-        column(Field::Stage, "In", 66.),
-        column(Field::Waiting, "Waiting", 60.),
-        column(Field::Why, "Why", 88.),
+        column(Field::Stage, "In", 62.),
+        column(Field::Waiting, "Waiting", 56.),
+        column(Field::Why, "Why", 64.),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
@@ -195,21 +195,15 @@ impl TableSource for WaitingPage {
                 .aria_label(format!("{} {}", row.why_word, row.why))
                 .flex()
                 .items_center()
-                .gap(dp(4.))
                 .overflow_hidden()
                 .follow_tooltip(format!("{} {}", row.why_word, row.why))
-                .child(
-                    div()
-                        .flex_none()
-                        .text_color(p.ink_2)
-                        .child(row.why_word.clone()),
-                )
+                // One line, so the cut shows its `…` whichever part it falls in.
                 .child(
                     div()
                         .min_w_0()
                         .truncate()
-                        .text_color(p.muted)
-                        .child(row.why.clone()),
+                        .text_color(p.ink_2)
+                        .child(format!("{} {}", row.why_word, row.why)),
                 )
                 .into_any_element(),
         }
