@@ -106,7 +106,7 @@ use gpui_kit::*;
 use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
 use change::{ChangeEvent, ChangePage, Changes, Coroot};
-pub use change::{Links as CorootLinks, Live as CorootLive, OutcomeKind};
+pub use change::{ActKind, KargoAt, Links as CorootLinks, Live as CorootLive, OutcomeKind, StageAct};
 use changes::ChangesEvent;
 pub use changes::ChangesPage;
 pub use column::Column;
@@ -396,6 +396,7 @@ pub struct ApplicationsPage {
 /// A part to open in Resources, from the open application's page.
 impl EventEmitter<ResourceLink> for ApplicationsPage {}
 impl EventEmitter<SwitchLink> for ApplicationsPage {}
+impl EventEmitter<StageAct> for ApplicationsPage {}
 impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
@@ -429,6 +430,7 @@ impl ApplicationsPage {
                 link: link.as_ref().clone(),
             }),
             ChangesEvent::Revision(link) => cx.emit(link.clone()),
+            ChangesEvent::Act(act) => cx.emit(act.as_ref().clone()),
         });
         Self {
             runtime,
@@ -1153,6 +1155,7 @@ impl ApplicationsPage {
                     link: link.as_ref().clone(),
                 }),
                 ChangeEvent::Revision(link) => cx.emit(link.clone()),
+                ChangeEvent::Act(act) => cx.emit(act.as_ref().clone()),
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.change = Some((page, subscription));

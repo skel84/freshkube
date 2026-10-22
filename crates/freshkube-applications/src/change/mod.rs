@@ -17,6 +17,7 @@
 //! object link does; the page never approves, promotes or syncs.
 #[cfg(test)]
 mod cause_tests;
+mod act;
 mod chain;
 mod changes;
 mod detail;
@@ -54,6 +55,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::links::Connections;
+pub use act::{ActKind, KargoAt, StageAct};
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{LogsAt, LogsRequest, ResourceLink, Tab, model::ObjectRef};
@@ -107,6 +109,8 @@ pub enum ChangeEvent {
     Switch(SharedString, Box<ResourceLink>),
     /// A Deployment's revision to show in Observability.
     Revision(crate::observability::RevisionLink),
+    /// A Stage action to describe and run: Refresh, Reverify, Promote, Abort.
+    Act(Box<StageAct>),
 }
 
 /// Stacked, the trail and the Inspector share the height evenly: the

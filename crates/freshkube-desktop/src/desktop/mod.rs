@@ -37,6 +37,7 @@ mod shell;
 mod source;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
+mod stage_acts;
 mod states;
 mod switch;
 #[cfg(test)]

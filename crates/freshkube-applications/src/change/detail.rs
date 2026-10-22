@@ -3,7 +3,9 @@
 //! leads. A gate row shows its Stage, with its three gates apart: whether
 //! the Freight is eligible, how it is promoted, and the verification after.
 //!
-//! Every action leads out and changes nothing. One into Resources or to a
+//! An action leads out and changes nothing, except a Stage's own (Refresh,
+//! Reverify, Promote, Abort; `act.rs`), which asks the shell to describe the
+//! write and send it through core's write module. One into Resources or to a
 //! step's logs names its cluster, and is greyed out with why for a cluster
 //! that isn't open; a tool's own page opens in the browser at the address
 //! core made from what the cluster records, and is greyed out with why
@@ -180,12 +182,12 @@ struct CheckLine {
 
 /// An action's button: its label, why it can't be pressed, and where it
 /// leads when it can.
-struct ActionLine {
-    label: SharedString,
-    why: Option<SharedString>,
+pub(super) struct ActionLine {
+    pub(super) label: SharedString,
+    pub(super) why: Option<SharedString>,
     /// Its address, shown in the tooltip.
-    tooltip: Option<SharedString>,
-    leads: Option<Leads>,
+    pub(super) tooltip: Option<SharedString>,
+    pub(super) leads: Option<Leads>,
 }
 
 /// Where a button leads.
@@ -196,6 +198,9 @@ pub(super) enum Leads {
     Logs(Object, Option<String>),
     /// A Deployment's revision in Observability, by its pod-template hash.
     Revision(Object, String),
+    /// A Stage action, for the Stage of this name: the shell describes it
+    /// and core's write module sends it.
+    Act(super::ActKind, String),
 }
 
 impl ChangePage {
@@ -335,7 +340,11 @@ impl ChangePage {
             fix: None,
             leading_link: None,
             after: None,
-            actions: self.buttons(&[open]),
+            actions: {
+                let mut actions = self.buttons(&[open]);
+                actions.extend(self.stage_actions(stage));
+                actions
+            },
         }
     }
 
@@ -584,6 +593,7 @@ impl ChangePage {
                     Leads::Browser(address) => cx.open_url(address),
                     Leads::Logs(pod, container) => this.open_logs(pod, container.clone(), cx),
                     Leads::Revision(deployment, hash) => this.open_revision(deployment, hash, cx),
+                    Leads::Act(kind, stage) => this.act(*kind, stage, cx),
                 })),
                 None => button,
             };

@@ -94,12 +94,27 @@ impl Pilot {
             .switch
             .active_cluster()
             .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id));
+        // Every entry's level, so a write to an entry the window doesn't show
+        // follows a change made in Settings as the window's own does.
+        let levels: Vec<(String, Protection)> = workspace
+            .clusters
+            .iter()
+            .map(|entry| {
+                (
+                    entry.id.clone(),
+                    workspace
+                        .level_of(&entry.context, &settings.source_recovery)
+                        .stricter(entry.level()),
+                )
+            })
+            .collect();
         let level = match active {
             Some(entry) => workspace
                 .level_of(&entry.context, &settings.source_recovery)
                 .stricter(entry.level()),
             None => workspace.level_of(&shown, &settings.source_recovery),
         };
+        crate::mutation::set_entry_levels(levels, cx);
         if level == self.context_display.level && !self.context_display.level_words.is_empty() {
             return false;
         }

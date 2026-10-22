@@ -229,6 +229,16 @@ impl Runner {
         }
     }
 
+    /// [`Self::example`] with a client that reaches nothing, for a window
+    /// that has no cluster behind the example data. Call it where a Tokio
+    /// runtime is entered.
+    pub fn example_offline(audit: AuditStore, who: Who) -> Self {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let config = kube::Config::new("http://127.0.0.1:9".parse().expect("a static address"));
+        let client = crate::kube_client::client(config).expect("a client that reaches nothing");
+        Self::example(client, audit, who)
+    }
+
     pub fn is_example(&self) -> bool {
         self.example
     }

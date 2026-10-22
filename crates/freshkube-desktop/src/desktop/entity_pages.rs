@@ -23,7 +23,7 @@ use super::pages::PageId;
 use super::settings::{SettingsEvent, SettingsPage, SettingsSection};
 use super::system_services::{ServiceEvent, SystemServices};
 use super::{Page, Pilot, nodes};
-use crate::applications::{ApplicationsPage, SwitchLink};
+use crate::applications::{ApplicationsPage, StageAct, SwitchLink};
 use crate::monitoring::page::{MonitoringEvent, MonitoringPage, Scope};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
 use crate::resources::{self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen};
@@ -306,6 +306,7 @@ impl ScreenPanel for ApplicationsPage {
             hear::<_, ResourceLink>(this, &on_event, window, cx),
             hear::<_, RevisionLink>(this, &on_event, window, cx),
             hear::<_, SwitchLink>(this, &on_event, window, cx),
+            hear::<_, StageAct>(this, &on_event, window, cx),
         ]
     }
 
@@ -413,6 +414,7 @@ impl Pilot {
             PageEvent::Screen(event) => self.screen_event(event, window, cx),
             PageEvent::Link(link) => self.resource_link(link.clone(), window, cx),
             PageEvent::Revision(link) => self.open_revision(link.clone(), window, cx),
+            PageEvent::Stage(act) => self.stage_act(act, window, cx),
             // One in another workspace entry's cluster, after a switch.
             PageEvent::Switch(link) => {
                 self.open_on_entry(link.entry.to_string(), link.link.clone(), window, cx)

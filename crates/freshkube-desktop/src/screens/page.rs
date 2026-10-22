@@ -14,7 +14,7 @@ use freshkube_core::resources::ResourceKind;
 use gpui_kit::{App, FocusHandle, Subscription, Window};
 
 use super::{ScreenEvent, ScreenHandle, ScreenSource};
-use crate::applications::SwitchLink;
+use crate::applications::{StageAct, SwitchLink};
 use crate::desktop::dock::DockEvent;
 use crate::desktop::{OverviewEvent, ServiceEvent, SettingsEvent};
 use crate::monitoring::page::MonitoringEvent;
@@ -37,6 +37,8 @@ pub(crate) enum PageEvent {
     Revision(RevisionLink),
     /// Open a part once the window has switched to its workspace entry.
     Switch(SwitchLink),
+    /// A Stage action of the change page: Refresh, Reverify, Promote, Abort.
+    Stage(Box<StageAct>),
     /// The node pane's Pods list opens this object in Resources.
     OpenPod(crate::resources::model::ResourceIdentity),
     /// The keyboard leaves the dock, for what had it before, if the shell
@@ -78,6 +80,12 @@ impl From<RevisionLink> for PageEvent {
 impl From<SwitchLink> for PageEvent {
     fn from(link: SwitchLink) -> Self {
         Self::Switch(link)
+    }
+}
+
+impl From<StageAct> for PageEvent {
+    fn from(act: StageAct) -> Self {
+        Self::Stage(Box::new(act))
     }
 }
 

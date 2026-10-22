@@ -237,6 +237,36 @@ impl WriteFlow {
                     .aria_label(ask.sentence.clone())
                     .child(ask.sentence.clone()),
             )
+            .when(!ask.destinations.is_empty(), |this| {
+                let levels = ask
+                    .destinations
+                    .iter()
+                    .map(|(entry, level)| format!("{entry} ({})", level.label()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                this.child(
+                    div()
+                        .id("write-destinations")
+                        .test_support()
+                        .aria_label(format!("Deploys to {levels}"))
+                        .text_color(p.muted)
+                        .child(format!("Deploys to {levels}. The stricter level applies.")),
+                )
+            })
+            .children(ask.preview.iter().enumerate().map(|(ix, section)| {
+                v_flex()
+                    .id(SharedString::from(format!("write-preview-{ix}")))
+                    .test_support()
+                    .aria_label(format!("{}: {}", section.title, section.lines.join("; ")))
+                    .gap(dp(2.))
+                    .child(div().text_color(p.muted).child(section.title.clone()))
+                    .children(
+                        section
+                            .lines
+                            .iter()
+                            .map(|line| div().text_size(dp(12.)).child(line.clone())),
+                    )
+            }))
             .when(!ask.diff.is_empty(), |this| {
                 this.child(
                     v_flex()
@@ -287,6 +317,27 @@ impl WriteFlow {
                                 .test_support()
                                 .aria_label(format!("Type {expected} to confirm"))
                                 .child(format!("Type {expected} to confirm.")),
+                        )
+                        .when(
+                            ask.protected.len() > 0 && ask.subjects.len() > 1,
+                            |this| {
+                                this.child(
+                                    div()
+                                        .id("write-type-once")
+                                        .test_support()
+                                        .aria_label(format!(
+                                            "Typed once for {}. Protected: {}",
+                                            ask.subjects.join(", "),
+                                            ask.protected.join(", ")
+                                        ))
+                                        .text_color(p.muted)
+                                        .child(format!(
+                                            "Typed once for {}. Protected: {}.",
+                                            ask.subjects.join(", "),
+                                            ask.protected.join(", ")
+                                        )),
+                                )
+                            },
                         )
                         .child(Input::new(&input).small().id("write-type-name")),
                 )

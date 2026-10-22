@@ -80,6 +80,7 @@ pub(crate) enum ChangesEvent {
     Open(Box<ResourceLink>),
     Switch(SharedString, Box<ResourceLink>),
     Revision(crate::observability::RevisionLink),
+    Act(Box<crate::change::StageAct>),
 }
 
 /// One read: the list, and when example data's times count from.
@@ -745,6 +746,7 @@ impl ChangesPage {
                     cx.emit(ChangesEvent::Switch(entry.clone(), link.clone()))
                 }
                 ChangeEvent::Revision(link) => cx.emit(ChangesEvent::Revision(link.clone())),
+                ChangeEvent::Act(act) => cx.emit(ChangesEvent::Act(act.clone())),
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.change = Some((page, subscription));
