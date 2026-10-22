@@ -25,7 +25,8 @@ mod tests;
 use serde_json::{Value, json};
 
 use freshkube_core::write::{
-    ActionDescription, Change, Destination, ObjectChange, Observation, Preview, Target, Tier,
+    ActionDescription, Change, Destination, ObjectChange, Observation, Preview, Protection, Target,
+    Tier,
 };
 
 use crate::{change, digest::Digest, kargo};
@@ -277,6 +278,9 @@ pub fn abort(acts: &StageActs, running: &Promoting, change: &change::Change) -> 
     }
 }
 
+/// How a destination that isn't known is named in the dialog.
+pub const UNKNOWN_DESTINATION: &str = "an unknown cluster";
+
 /// One Stage a Promote is for, and the destination level that holds it.
 pub struct Pick<'a> {
     pub acts: &'a StageActs,
@@ -322,9 +326,15 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
     let names: Vec<String> = picks.iter().map(|p| p.acts.stage.name.clone()).collect();
     let mut destinations: Vec<Destination> = vec![];
     for pick in picks {
-        let Some(destination) = &pick.destination else {
-            continue;
+        // A destination that isn't known is held to `guarded` at least, the
+        // level a cluster entry without one gets, never to nothing.
+        let unknown = Destination {
+            entry: UNKNOWN_DESTINATION.into(),
+            protection: Protection::Guarded,
+            cell: None,
+            covers: vec![],
         };
+        let destination = pick.destination.as_ref().unwrap_or(&unknown);
         match destinations
             .iter_mut()
             .find(|known| known.entry == destination.entry)
@@ -405,9 +415,8 @@ fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
                     destination.level().label()
                 ));
             }
-            None => lines.push(
-                "Where it deploys isn't known, so only Kargo's cluster's level applies.".into(),
-            ),
+            None => lines
+                .push("Where it deploys isn't known, so it is held to Guarded at least.".into()),
         }
         if let Some(model) = model {
             if !model.steps.is_empty() {

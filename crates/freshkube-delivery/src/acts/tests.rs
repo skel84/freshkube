@@ -437,3 +437,44 @@ fn a_promotion_name_has_a_lowercase_ulid_that_sorts_by_time_as_kargo_s_do() {
     let ours_now = format!("prod-ams.{}.wonky-o", new_ulid(now));
     assert!(ours_now > kargo);
 }
+
+fn promote_to_unknown() -> ActionDescription {
+    let acts = acts();
+    promote(
+        &change(),
+        &[Pick {
+            acts: &acts,
+            destination: None,
+        }],
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unknown_destination_counts_as_guarded_and_never_as_nothing() {
+    let action = promote_to_unknown();
+    // Kargo's cluster open: still guarded. Stricter levels are kept.
+    assert_eq!(action.level(Protection::Open), Protection::Guarded);
+    assert_eq!(action.level(Protection::Protected), Protection::Protected);
+    assert_eq!(action.level(Protection::ReadOnly), Protection::ReadOnly);
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Open);
+    let verdict = runner.preflight(action).await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
+        panic!("the preview shows; it doesn't go on the toast alone");
+    };
+    assert_eq!(ask.type_name, None);
+    assert_eq!(
+        ask.destinations,
+        [(UNKNOWN_DESTINATION.to_owned(), Protection::Guarded)]
+    );
+    let lines = ask.preview[0].lines.join("\n");
+    assert!(lines.contains("held to Guarded at least"), "{lines}");
+    // And a protected Kargo cluster asks for the name, as with any destination.
+    let protected = kargo_runner(&cluster, dir.path(), Protection::Protected);
+    let verdict = protected.preflight(promote_to_unknown()).await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
+        panic!("asks");
+    };
+    assert_eq!(ask.type_name.as_deref(), Some("prod-ams"));
+}
