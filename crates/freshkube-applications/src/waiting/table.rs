@@ -56,12 +56,12 @@ pub(super) fn columns() -> (Vec<Column>, f32) {
     };
     let columns = vec![
         column(Field::Glyph, "", kit::GLYPH_WIDTH),
-        column(Field::Named, "PR", 128.),
-        column(Field::Change, "Change", 110.),
-        column(Field::Merged, "Merged", 56.),
-        column(Field::Stage, "In", 72.),
+        column(Field::Named, "PR", 148.),
+        column(Field::Change, "Change", 84.),
+        column(Field::Merged, "Merged", 60.),
+        column(Field::Stage, "In", 66.),
         column(Field::Waiting, "Waiting", 60.),
-        column(Field::Why, "Why", 140.),
+        column(Field::Why, "Why", 88.),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)

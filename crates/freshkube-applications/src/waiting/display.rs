@@ -779,7 +779,13 @@ fn ship_lines(app: &App) -> Vec<SharedString> {
 
 fn item_detail(waiting: &Waiting, app: &App, item: &Item, now: DateTime<Utc>) -> Detail {
     let title = item.title.clone().unwrap_or_else(|| item.freight.clone());
-    let named = named_of(item).text;
+    // The heading names the change: its pull request, else its commit, never
+    // the PR cell's words about a pull request that wasn't read.
+    let named: SharedString = match (item.pull(), &item.commit) {
+        (Some(pull), _) => format!("#{}", pull.number).into(),
+        (None, Some(commit)) => commit.chars().take(7).collect::<String>().into(),
+        (None, None) => "–".into(),
+    };
     let pull = item.pull();
     let mut fields: Vec<(&'static str, SharedString, bool)> = vec![
         ("Application", app.name.clone().into(), true),
@@ -821,8 +827,10 @@ fn item_detail(waiting: &Waiting, app: &App, item: &Item, now: DateTime<Utc>) ->
         Some(PullRead::Unread { rate_limit, why }) => fields.push((
             "Pull request",
             format!(
-                "Not read{}: {why}",
-                if *rate_limit { " (rate limit)" } else { "" }
+                "Not read{}: {}",
+                if *rate_limit { " (rate limit)" } else { "" },
+                why.strip_prefix("Pull requests weren't read: ")
+                    .unwrap_or(why)
             )
             .into(),
             false,

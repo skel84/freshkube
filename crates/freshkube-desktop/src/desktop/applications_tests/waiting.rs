@@ -572,9 +572,15 @@ fn a_pull_request_that_was_not_read_says_so_never_the_bare_commit(cx: &mut TestA
             .iter()
             .find(|row| row.key.as_ref() == "checkout/wonky-otter")
             .unwrap();
+        // The heading names the change, and the field says it once.
+        assert_eq!(
+            row.detail.heading.as_ref(),
+            "a1f3c9e Retry idempotency keys"
+        );
         assert!(
             row.detail.fields.iter().any(|(label, value, _)| {
-                *label == "Pull request" && value.starts_with("Not read (rate limit): ")
+                *label == "Pull request"
+                    && value.starts_with("Not read (rate limit): GitHub's limit is low")
             }),
             "{:?}",
             row.detail.fields
@@ -675,6 +681,27 @@ fn with_github_not_set_up_a_row_keeps_its_commit_and_the_inspector_says_why(
             }),
             "{:?}",
             row.detail.fields
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_table_keeps_beside_the_inspector_at_1280_without_scrolling_sideways(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        waiting(&view, cx).update(cx, |page, cx| {
+            page.select("checkout/quiet-heron", window, cx)
+        });
+        window.render_frame(cx);
+        let least = waiting(&view, cx).read(cx).table_width();
+        let table = f32::from(window.find("waiting-table").bounds().size.width);
+        assert!(
+            table >= least,
+            "the table is {table} wide, its columns {least}"
         );
     })
     .unwrap();

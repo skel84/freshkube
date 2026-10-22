@@ -594,6 +594,12 @@ impl WaitingPage {
             .collect()
     }
 
+    /// The columns' least width in dp, which the table keeps beside the
+    /// Inspector at 1280.
+    pub fn table_width(&self) -> f32 {
+        self.width
+    }
+
     pub fn selected(&self) -> Option<&SharedString> {
         self.selected.as_ref()
     }
