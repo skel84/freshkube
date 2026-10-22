@@ -33,7 +33,9 @@ pub use node_facts::{NodeFacts, NodeMemory};
 pub use pane::{DetailEvent, DetailPane, Tab};
 #[cfg(any(test, feature = "testing"))]
 pub use screen::row_id;
-pub use screen::{ClusterAccess, ClusterSource, NodePodsEvent, NotServed, ResourcesScreen, title};
+pub use screen::{
+    ClusterAccess, ClusterSource, LinkOutcomeCard, NodePodsEvent, NotServed, ResourcesScreen, title,
+};
 
 /// The drawer's width: one for the page, whatever kind it shows, kept in
 /// the navigation file.

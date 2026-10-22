@@ -106,7 +106,7 @@ impl ChangePage {
         header: &PageHeader,
         cx: &mut Context<Self>,
     ) -> (Button, page::MenuItems) {
-        let label = "Copy link";
+        let label = "Copy Kargo link";
         let copy = page::handler(cx, |this: &mut Self, _, cx| this.copy_link(cx));
         let (icon, shown, said) = if self.copied {
             (

@@ -31,6 +31,14 @@ pub struct GpuiOptions {
     /// reads them here, never from the environment.
     #[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
     debug: DebugOptions,
+    /// A `freshkube://open?…` link to open once the window is up (#873).
+    open_link: Option<String>,
+    /// Links the operating system hands the running app, as they arrive
+    /// (macOS's open-URL event); the app makes the channel itself, and a test
+    /// brings its own (`with_urls`).
+    urls: Option<
+        std::sync::Arc<std::sync::Mutex<Option<futures::channel::mpsc::UnboundedReceiver<String>>>>,
+    >,
 }
 
 impl GpuiOptions {
@@ -50,7 +58,24 @@ impl GpuiOptions {
             keyring: false,
             setup_notice: None,
             debug: DebugOptions::default(),
+            open_link: None,
+            urls: None,
         }
+    }
+    /// Where links the operating system opens us with arrive.
+    #[cfg(test)]
+    pub(crate) fn with_urls(
+        mut self,
+        urls: futures::channel::mpsc::UnboundedReceiver<String>,
+    ) -> Self {
+        self.urls = Some(std::sync::Arc::new(std::sync::Mutex::new(Some(urls))));
+        self
+    }
+
+    /// A link to open at launch (a URL argument, or `--open-link`).
+    pub fn with_open_link(mut self, link: Option<String>) -> Self {
+        self.open_link = link;
+        self
     }
     /// Hands in the debug knobs, which only a debug or stress build parses.
     pub fn with_debug(mut self, debug: DebugOptions) -> Self {

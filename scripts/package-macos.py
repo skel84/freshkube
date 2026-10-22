@@ -15,6 +15,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_ID = "io.github.skel84.freshkube"
+# The scheme of a deep link (docs/features/deep-links.md).
+URL_SCHEME = "freshkube"
 MINIMUM_MACOS = "15.0"
 # Made from packaging/icon/freshkube.svg by scripts/app-icon.sh.
 ICON = ROOT / "packaging/icon/freshkube.icns"
@@ -86,6 +88,9 @@ def verify_bundle(app, target, version):
     icon = app / "Contents/Resources" / info.get("CFBundleIconFile", "")
     if not icon.is_file() or icon.read_bytes()[:4] != b"icns":
         raise ValueError(f"CFBundleIconFile does not name an icon in Resources: {icon}")
+    schemes = [scheme for kind in info.get("CFBundleURLTypes", []) for scheme in kind.get("CFBundleURLSchemes", [])]
+    if schemes != [URL_SCHEME]:
+        raise ValueError(f"CFBundleURLTypes must register {URL_SCHEME}:// alone: {schemes}")
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app))
     stray = stray_executables(app)
     if stray:
@@ -143,6 +148,13 @@ def package(args):
             "CFBundlePackageType": "APPL",
             "CFBundleShortVersionString": short_version,
             "CFBundleVersion": build_number,
+            # freshkube:// links open here (#873); GPUI hands them to the app.
+            "CFBundleURLTypes": [
+                {
+                    "CFBundleURLName": BUNDLE_ID,
+                    "CFBundleURLSchemes": [URL_SCHEME],
+                }
+            ],
             "LSMinimumSystemVersion": MINIMUM_MACOS,
             "LSApplicationCategoryType": "public.app-category.developer-tools",
             "NSHighResolutionCapable": True,

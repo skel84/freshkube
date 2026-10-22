@@ -11,7 +11,7 @@ use tokio::runtime::Runtime;
 use super::{Connection, Event, Followed, Options, install, stop_all};
 use crate::example::{Script, Shape};
 use crate::model::{MAX_FOLLOWS, Refused, Subject, WatchKey};
-use crate::notice::Quiet;
+use crate::notice::{Notice, Quiet};
 use crate::owner::feeds::FeedKey;
 use crate::rules::{IncidentSeen, PodSeen, Seen, StageSeen, Status};
 
@@ -677,6 +677,17 @@ fn a_level_change_on_one_context_reaches_the_follows_made_under_the_old_one(
     h.follow(cx, pod("web"), connection("dev-fra", false))
         .unwrap();
     assert_eq!(sensitive(cx), [false, false]);
+    // A notice told while protected keeps its flag in the bell.
+    let told = cx.read(|cx| {
+        let inbox = h.followed.read(cx).inbox();
+        inbox
+            .new
+            .iter()
+            .chain(inbox.earlier.iter())
+            .map(Notice::sensitive)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(told, [true], "the notice told under protected stays hidden");
     h.deliver(cx, &pod_key("api"), crash(true, false));
     cx.executor().advance_clock(Duration::from_secs(5 * 60 + 1));
     h.deliver(cx, &pod_key("api"), crash(true, false));

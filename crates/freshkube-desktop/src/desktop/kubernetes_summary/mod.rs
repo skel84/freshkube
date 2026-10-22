@@ -92,6 +92,11 @@ impl Pilot {
         self.ensure_summary_session(window, cx);
         // A link into this entry waits for its source, which is known here.
         self.open_pending_link(window, cx);
+        // The open cluster's identity, for Copy link, and a deep link's view
+        // held for the context the reader chose.
+        self.identify_open_cluster(window, cx);
+        self.apply_held_view(window, cx);
+        self.open_waiting_links(window, cx);
     }
 
     fn ensure_summary_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {

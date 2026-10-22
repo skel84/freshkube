@@ -9,6 +9,11 @@ pub const HIGH_RESTART_THRESHOLD: i32 = 5;
 /// Upper bound for one screen request, including Kubernetes client setup.
 pub const SCREEN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// The salt of a deep link's cluster fingerprint (#873). Public on purpose:
+/// it only separates this use of a hash from any other, so a link is never a
+/// raw namespace UID. A per-install salt would stop two people matching.
+pub const FINGERPRINT_SALT: &str = "freshkube/deep-link/v1";
+
 /// Maximum log entries to retain in memory
 pub const MAX_LOG_ENTRIES: usize = 5000;
 

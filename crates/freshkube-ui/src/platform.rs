@@ -172,6 +172,15 @@ impl Platform {
         }
     }
 
+    /// The Copy link shortcut as a tooltip names it: Shift-Command-C on
+    /// macOS, Ctrl-Shift-C elsewhere (the keymap binds `secondary-shift-c`).
+    pub const fn copy_link_tooltip(self) -> &'static str {
+        match self {
+            Platform::MacOs => "Copy link (Shift-Command-C)",
+            Platform::Windows | Platform::Linux => "Copy link (Ctrl-Shift-C)",
+        }
+    }
+
     /// The terminal's own shortcuts: Command on macOS; elsewhere plain
     /// Control keys are the shell's, so they take Control with Shift.
     pub const fn terminal_keys(self) -> TerminalKeys {
@@ -278,6 +287,11 @@ pub const fn primary_modifier() -> &'static str {
     Platform::current().primary_modifier()
 }
 
+/// The Copy link tooltip on this platform ([`Platform::copy_link_tooltip`]).
+pub const fn copy_link_tooltip() -> &'static str {
+    Platform::current().copy_link_tooltip()
+}
+
 /// The terminal's shortcuts on this platform ([`Platform::terminal_keys`]).
 pub const fn terminal_keys() -> TerminalKeys {
     Platform::current().terminal_keys()
@@ -371,6 +385,15 @@ fn traffic_light_position(rem: f32) -> Point<Pixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_copy_link_tooltip_names_each_platforms_keys() {
+        assert!(Platform::MacOs.copy_link_tooltip().contains("Command"));
+        for other in [Platform::Linux, Platform::Windows] {
+            assert!(other.copy_link_tooltip().contains("Ctrl-Shift-C"));
+        }
+        assert_eq!(copy_link_tooltip(), Platform::current().copy_link_tooltip());
+    }
 
     #[test]
     fn default_button_follows_each_platforms_order() {

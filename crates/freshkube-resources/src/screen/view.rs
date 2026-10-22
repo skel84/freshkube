@@ -504,7 +504,7 @@ impl ResourcesScreen {
     /// header or under the rows, closes the drawer and keeps the row
     /// selected; a row swaps its object.
     fn body(&self, list: AnyElement, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let open = self.detail.read(cx).target_identity().is_some();
+        let open = self.detail.read(cx).target_identity().is_some() || self.link_outcome.is_some();
         // A short page scrolls its frame and the list keeps a few rows in
         // it. The drawer scrolls itself, so it takes no more: taller, it
         // would push its own header and the toolbar out of sight.
@@ -547,7 +547,9 @@ impl ResourcesScreen {
     /// The width in dp the drawer leaves the list in sight, while it is
     /// open beside it.
     fn room_beside_drawer(&self, cx: &App) -> Option<f32> {
-        self.detail.read(cx).target_identity()?;
+        if self.link_outcome.is_none() {
+            self.detail.read(cx).target_identity()?;
+        }
         let body = self.body_width.get()?;
         let fit = drawer::fit(self.drawer.size(), body);
         (!fit.full).then_some(body - fit.width)
@@ -586,9 +588,12 @@ impl ResourcesScreen {
             label: "Details".into(),
             fit: drawer::fit(self.drawer.size(), self.drawer_room(window)),
             // Cached: list updates and age ticks don't redraw the pane.
-            body: AnyView::from(self.detail.clone())
-                .cached(StyleRefinement::default().size_full())
-                .into_any_element(),
+            body: match &self.link_outcome {
+                Some(card) => self.render_link_outcome(card, cx),
+                None => AnyView::from(self.detail.clone())
+                    .cached(StyleRefinement::default().size_full())
+                    .into_any_element(),
+            },
             on_resize: Rc::new(move |width, window, cx| {
                 _ = this.update(cx, |view, cx| view.resize_drawer(width, window, cx));
             }),
