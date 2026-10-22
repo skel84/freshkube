@@ -19,6 +19,7 @@ use freshkube_delivery::change::{
 };
 use freshkube_ui::inspector::Inspector;
 use freshkube_ui::palette::palette;
+use freshkube_ui::platform::{OpenDestinationsSettings, OpenSourcesSettings};
 use gpui_kit::component::{Disableable as _, Sizable, button::Button, h_flex, v_flex};
 
 /// The width of a field's label.
@@ -32,6 +33,9 @@ pub(super) struct Detail {
     state: SharedString,
     pub(super) banner: Option<(Tone, SharedString, SharedString)>,
     body: Body,
+    /// Why the hop can't be confirmed, what would confirm it and what to
+    /// do, before the fields; `None` for a hop with no cause.
+    fix: Option<FixBlock>,
     /// What Coroot found after the deploy, for a Deployment's hop.
     after: Option<super::outcome::Section>,
     leading_link: Option<LinkLines>,
@@ -54,10 +58,77 @@ impl Detail {
         ))
     }
 
+    /// The block's cause in words and what would confirm it, for the
+    /// page's tests.
+    #[cfg(test)]
+    pub(super) fn fix_words(&self) -> Option<(String, String)> {
+        self.fix
+            .as_ref()
+            .map(|fix| (fix.word.to_owned(), fix.needs.to_string()))
+    }
+
     /// The outcome section in words, for the page's tests.
     #[cfg(any(test, feature = "testing"))]
     pub(super) fn after_words(&self) -> Option<String> {
         self.after.as_ref().map(|section| section.words())
+    }
+}
+
+/// The Why / Needs / Fix block of a hop with a cause.
+struct FixBlock {
+    word: &'static str,
+    /// Whether something is wrong; Waiting is not.
+    problem: bool,
+    tone: Tone,
+    why: SharedString,
+    needs: SharedString,
+    steps: Vec<Step>,
+}
+
+/// One next step of a cause, as a button with its words. A label or a
+/// state that follows the page (Copied, Reading…) is worked out when it is
+/// drawn, from the page, never kept in the detail derived with the
+/// selection.
+struct Step {
+    id: &'static str,
+    label: SharedString,
+    tooltip: Option<SharedString>,
+    /// Why it can't be pressed.
+    why: Option<SharedString>,
+    words: SharedString,
+    does: Does,
+}
+
+/// What a step runs. None changes anything in a cluster.
+#[derive(Clone)]
+enum Does {
+    /// The Freight's page in Kargo, in the browser.
+    OpenKargo(SharedString),
+    /// The read-only Role, to the clipboard.
+    CopyAccess(String),
+    /// Reads the change again.
+    Retry,
+    /// Settings, on the section that holds the setup file's key.
+    Settings(Opens),
+    /// Nothing: the step is greyed out with why.
+    Nothing,
+}
+
+/// The Settings sections a step opens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Opens {
+    Sources,
+    Destinations,
+}
+
+impl Opens {
+    /// The section a Settings page slug names, when a step opens it.
+    fn of(slug: &str) -> Option<Self> {
+        match slug {
+            "settings-sources" => Some(Self::Sources),
+            "settings-destinations" => Some(Self::Destinations),
+            _ => None,
+        }
     }
 }
 
@@ -132,15 +203,14 @@ impl ChangePage {
     pub(super) fn derive_detail(&self) -> Option<Detail> {
         let hop = self.change.hop(self.selected.as_ref()?)?;
         let mut detail = match &hop.shows {
-            Shows::Hop(detail) => {
-                self.hop_detail(&hop.key, hop_tone(hop), hop.cause.as_ref(), detail)
-            }
+            Shows::Hop(detail) => self.hop_detail(&hop.key, hop_tone(hop), detail),
             Shows::Stage(stage) => self.stage_detail(&self.change.stages[*stage]),
         };
-        // A gate row has no notice of its own: a cause says what it waits
-        // for, or why it can't be said.
-        if matches!(hop.shows, Shows::Stage(_)) && detail.banner.is_none() {
-            detail.banner = cause_banner(hop.cause.as_ref(), None);
+        // A hop with a cause says it in the Why / Needs / Fix block, in
+        // place of a banner.
+        detail.fix = hop.cause.as_ref().map(|cause| self.fix_block(hop, cause));
+        if detail.fix.is_some() {
+            detail.banner = None;
         }
         if self.link_selected {
             detail.leading_link = match &hop.shows {
@@ -177,18 +247,19 @@ impl ChangePage {
         Some(detail)
     }
 
-    fn hop_detail(&self, key: &str, tone: Tone, cause: Option<&Cause>, hop: &HopDetail) -> Detail {
+    fn hop_detail(&self, key: &str, tone: Tone, hop: &HopDetail) -> Detail {
         Detail {
             kind: hop.kind.clone().into(),
             title: hop.title.clone().into(),
             tone,
             state: hop.state.clone().into(),
-            banner: cause_banner(cause, hop.notice.as_ref()),
+            banner: notice_banner(hop.notice.as_ref()),
             body: Body::Hop {
                 fields: hop.fields.iter().map(field_line).collect(),
                 link: hop.link.as_ref().map(link_lines),
                 unlinked: hop.unlinked.clone().map(Into::into),
             },
+            fix: None,
             leading_link: None,
             after: self.section(key),
             actions: self.buttons(&hop.actions),
@@ -261,6 +332,7 @@ impl ChangePage {
                 steps: stage.steps.iter().map(check_line).collect(),
                 analyses: stage.verification.iter().map(check_line).collect(),
             },
+            fix: None,
             leading_link: None,
             after: None,
             actions: self.buttons(&[open]),
@@ -361,6 +433,8 @@ impl ChangePage {
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
             }));
+        let fix = detail.fix.as_ref().map(|fix| self.render_fix(fix, cx));
+        let inspector = inspector.children(fix);
         let inspector = inspector.children(
             detail
                 .leading_link
@@ -399,6 +473,103 @@ impl ChangePage {
         )
     }
 
+    /// Why, Needs and Fix: the cause in a tag, what would confirm it, and
+    /// each next step as a button with its words.
+    fn render_fix(&self, fix: &FixBlock, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let reading = self.loader.is_loading();
+        let steps = fix.steps.iter().map(|step| {
+            let does = step.does.clone();
+            // What follows the page is worked out here, not when the
+            // selection's detail was derived.
+            let (label, held): (SharedString, Option<SharedString>) = match &step.does {
+                Does::CopyAccess(_) if self.copied_request == self.selected => {
+                    ("Copied".into(), None)
+                }
+                Does::Retry if reading => ("Reading…".into(), Some("Reading…".into())),
+                _ => (step.label.clone(), step.why.clone()),
+            };
+            let button = Button::new(step.id)
+                .outline()
+                .xsmall()
+                .label(label.clone())
+                .accessibility_label(label)
+                .on_click(cx.listener(move |this, _, window, cx| this.run_step(&does, window, cx)));
+            let button = match (held, step.tooltip.clone()) {
+                (Some(why), _) => button.disabled(true).tooltip(why),
+                (None, Some(tooltip)) => button.tooltip(tooltip),
+                (None, None) => button,
+            };
+            // The words sit beside the button when they fit, so the next
+            // step takes one line, and under it when they don't.
+            h_flex()
+                .flex_wrap()
+                .items_center()
+                .gap_x(dp(8.))
+                .gap_y(dp(3.))
+                .child(button)
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{}-words", step.id)))
+                        .test_support()
+                        .aria_label(step.words.clone())
+                        .text_color(p.muted)
+                        .child(step.words.clone()),
+                )
+        });
+        section(
+            if fix.problem {
+                "Why this can't be confirmed"
+            } else {
+                "Why it waits"
+            },
+            cx,
+        )
+        .id("change-fix")
+        .test_support()
+        .child(
+            h_flex()
+                .id("change-fix-cause")
+                .test_support()
+                .aria_label(SharedString::from(fix.word))
+                .child(ui::tag(fix.tone, None, fix.word, cx)),
+        )
+        .child(field(
+            "Why",
+            div().child(
+                div()
+                    .id("change-fix-why")
+                    .test_support()
+                    .aria_label(fix.why.clone())
+                    .child(fix.why.clone()),
+            ),
+            cx,
+        ))
+        .child(field(
+            "Needs",
+            div().child(
+                div()
+                    .id("change-fix-needs")
+                    .test_support()
+                    .aria_label(fix.needs.clone())
+                    .child(fix.needs.clone()),
+            ),
+            cx,
+        ))
+        .child(field(
+            "Fix",
+            div().child(
+                v_flex()
+                    .id("change-fix-steps")
+                    .test_support()
+                    .gap(dp(7.))
+                    .children(steps),
+            ),
+            cx,
+        ))
+        .into_any_element()
+    }
+
     /// The hop's buttons: into Resources on its cluster, greyed out with
     /// why where it can't lead yet.
     fn render_actions(&self, actions: &[ActionLine], cx: &mut Context<Self>) -> AnyElement {
@@ -432,6 +603,132 @@ impl ChangePage {
     }
 }
 
+impl ChangePage {
+    /// Why a hop can't be confirmed, what would confirm it, and each next
+    /// step as an action. The reason is what the hop already said.
+    fn fix_block(&self, hop: &Hop, cause: &Cause) -> FixBlock {
+        let why = match &hop.shows {
+            Shows::Hop(shown) => shown
+                .notice
+                .as_ref()
+                .map(|notice| notice.body.clone())
+                .or_else(|| shown.link.as_ref().map(|link| link.why.clone()))
+                .unwrap_or_else(|| hop.detail.clone()),
+            Shows::Stage(_) => hop.detail.clone(),
+        };
+        FixBlock {
+            word: cause.word(),
+            problem: cause.is_problem(),
+            tone: if cause.is_problem() {
+                Tone::Unknown
+            } else {
+                Tone::Waiting
+            },
+            why: why.into(),
+            needs: format!("{}.", cause.needs()).into(),
+            steps: cause.next().iter().map(|next| self.step_of(next)).collect(),
+        }
+    }
+
+    fn step_of(&self, next: &Next) -> Step {
+        let words: SharedString = next_words(next).into();
+        match next {
+            Next::OpenInKargo => {
+                let (tooltip, why, address) = match &self.page_link {
+                    Ok(address) => (Some(address.clone()), None, address.clone()),
+                    Err(why) => (None, Some(why.clone()), SharedString::default()),
+                };
+                Step {
+                    id: "change-fix-kargo",
+                    label: "Open in Kargo ↗".into(),
+                    tooltip,
+                    why,
+                    words,
+                    does: Does::OpenKargo(address),
+                }
+            }
+            Next::CopyAccessRequest(role) => Step {
+                id: "change-fix-copy",
+                label: "Copy access request".into(),
+                tooltip: Some(
+                    format!(
+                        "Copies a read-only Role: get, list and watch on {}",
+                        role.resource
+                    )
+                    .into(),
+                ),
+                why: None,
+                words,
+                does: Does::CopyAccess(role.manifest()),
+            },
+            Next::Retry => Step {
+                id: "change-fix-retry",
+                label: "Retry".into(),
+                tooltip: Some("Read the change again".into()),
+                why: None,
+                words,
+                does: Does::Retry,
+            },
+            Next::OpenSettings(field) => {
+                let opens = Opens::of(field.section);
+                Step {
+                    id: "change-fix-settings",
+                    label: "Open Settings".into(),
+                    tooltip: Some(
+                        format!(
+                            "Set {} in Settings › {}",
+                            field.field,
+                            settings_title(field.section)
+                        )
+                        .into(),
+                    ),
+                    why: opens
+                        .is_none()
+                        .then(|| format!("Settings has no section for {}", field.field).into()),
+                    words,
+                    does: opens.map_or(Does::Nothing, Does::Settings),
+                }
+            }
+            Next::CheckSources => Step {
+                id: "change-fix-sources",
+                label: "Check sources".into(),
+                tooltip: Some(
+                    format!("Open Settings › {}", settings_title("settings-sources")).into(),
+                ),
+                why: None,
+                words,
+                does: Does::Settings(Opens::Sources),
+            },
+        }
+    }
+
+    /// Runs a step: it opens a page, copies, or reads again, and changes
+    /// nothing in a cluster.
+    fn run_step(&mut self, does: &Does, window: &mut Window, cx: &mut Context<Self>) {
+        match does {
+            Does::OpenKargo(address) => cx.open_url(address),
+            Does::CopyAccess(manifest) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(manifest.clone()));
+                self.copied_request = self.selected.clone();
+                cx.notify();
+            }
+            Does::Retry => {
+                if !self.loader.is_loading() {
+                    self.refresh(cx);
+                    cx.notify();
+                }
+            }
+            Does::Settings(Opens::Sources) => {
+                window.dispatch_action(Box::new(OpenSourcesSettings), cx)
+            }
+            Does::Settings(Opens::Destinations) => {
+                window.dispatch_action(Box::new(OpenDestinationsSettings), cx)
+            }
+            Does::Nothing => {}
+        }
+    }
+}
+
 fn field_line(field: &Field) -> FieldLine {
     let (value, mono) = match &field.value {
         Value::Text(text) => (text.clone(), false),
@@ -445,41 +742,18 @@ fn field_line(field: &Field) -> FieldLine {
     }
 }
 
-/// The banner under a hop's heading. A hop with a cause leads with it, as
-/// the table's Link column does, and says what would confirm it and what to
-/// do next; Waiting is no problem, so it is a note, not a warning.
-fn cause_banner(
-    cause: Option<&Cause>,
+/// The banner under a hop's heading: its notice. A hop with a cause says
+/// it in its [`FixBlock`] instead.
+fn notice_banner(
     notice: Option<&freshkube_delivery::change::Notice>,
 ) -> Option<(Tone, SharedString, SharedString)> {
-    let Some(cause) = cause else {
-        return notice.map(|notice| {
-            (
-                tone(notice.state),
-                notice.lead.clone().into(),
-                notice.body.clone().into(),
-            )
-        });
-    };
-    let mut body = notice.map(|notice| notice.body.clone()).unwrap_or_default();
-    if !body.is_empty() {
-        body.push(' ');
-    }
-    body.push_str(&format!("Needs {}.", cause.needs()));
-    for next in cause.next() {
-        body.push(' ');
-        body.push_str(&next_words(&next));
-    }
-    let banner_tone = if cause.is_problem() {
-        notice.map_or(Tone::Warn, |notice| tone(notice.state))
-    } else {
-        Tone::Info
-    };
-    Some((
-        banner_tone,
-        format!("{}.", cause.word()).into(),
-        body.into(),
-    ))
+    notice.map(|notice| {
+        (
+            tone(notice.state),
+            notice.lead.clone().into(),
+            notice.body.clone().into(),
+        )
+    })
 }
 
 fn link_lines(link: &LinkDetail) -> LinkLines {
@@ -493,9 +767,19 @@ fn link_lines(link: &LinkDetail) -> LinkLines {
         )
         .into(),
         before: link.before.clone().into(),
-        before_says: link.before_says.clone().into(),
-        here_says: link.here_says.clone().into(),
+        before_says: says(&link.before_says),
+        here_says: says(&link.here_says),
         why: link.why.clone().into(),
+    }
+}
+
+/// What a side of a link says; a side that was not found says so, in place
+/// of an empty line.
+fn says(text: &str) -> SharedString {
+    if text.is_empty() {
+        "Nothing found".into()
+    } else {
+        text.to_owned().into()
     }
 }
 

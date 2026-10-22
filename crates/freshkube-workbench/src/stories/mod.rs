@@ -9,6 +9,7 @@ pub mod change;
 pub mod data_table;
 pub mod dock;
 pub mod drawer;
+pub mod fix_bar;
 mod form;
 pub mod graph;
 pub mod motion;
@@ -46,6 +47,12 @@ pub const STORIES: &[Story] = &[
         title: "Graph layout",
         icon: || IconName::Network,
         build: graph::build,
+    },
+    Story {
+        slug: "fix-bar",
+        title: "Fix bar",
+        icon: || IconName::Wrench,
+        build: fix_bar::build,
     },
     Story {
         slug: "dock",
