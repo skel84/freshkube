@@ -206,6 +206,7 @@ impl Profile {
             writer: Box::new(writer),
             workspace,
             guard,
+            name: self.name,
         })
     }
 }

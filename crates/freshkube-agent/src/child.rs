@@ -7,6 +7,7 @@
 use std::any::Any;
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,12 +23,15 @@ pub struct Link {
     pub(crate) writer: Box<dyn AsyncWrite + Send + Unpin>,
     pub(crate) workspace: PathBuf,
     pub(crate) guard: Guard,
+    /// What the agent is called in messages, such as "opencode".
+    pub(crate) name: &'static str,
 }
 
 impl Link {
     /// A link over pipes to an agent that runs in this process; `task` is
     /// aborted when the session ends.
     pub fn in_process(
+        name: &'static str,
         reader: impl AsyncRead + Send + Unpin + 'static,
         writer: impl AsyncWrite + Send + Unpin + 'static,
         workspace: PathBuf,
@@ -40,6 +44,7 @@ impl Link {
             writer: Box::new(writer),
             workspace,
             guard,
+            name,
         }
     }
 }
@@ -51,6 +56,7 @@ pub struct Guard(Arc<Inner>);
 
 #[derive(Default)]
 struct Inner {
+    ended: AtomicBool,
     group: Mutex<Option<ProcessGroup>>,
     abort: Mutex<Option<AbortHandle>>,
     /// Kept alive until the process is gone (the temporary directories).
@@ -68,10 +74,17 @@ impl Guard {
     pub(crate) fn end(&self) {
         self.0.end();
     }
+
+    /// Whether the session ended the agent, as opposed to the agent ending
+    /// on its own.
+    pub(crate) fn is_ended(&self) -> bool {
+        self.0.ended.load(Ordering::SeqCst)
+    }
 }
 
 impl Inner {
     fn end(&self) {
+        self.ended.store(true, Ordering::SeqCst);
         if let Some(task) = self.abort.lock().unwrap().take() {
             task.abort();
         }

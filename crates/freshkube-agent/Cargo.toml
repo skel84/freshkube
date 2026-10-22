@@ -33,6 +33,7 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
 rmcp = { version = "=3.5.0", default-features = false, features = [
     "server",
