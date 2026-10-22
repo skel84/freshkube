@@ -40,7 +40,7 @@ async fn only_freshkube_tools_are_allowed() {
             .iter()
             .all(|(_, state)| *state == StepState::Failed)
     );
-    assert_eq!(states.len(), 8);
+    assert_eq!(states.len(), 11);
     // Each refusal says what was refused.
     assert_eq!(
         notes(&inv),
@@ -52,6 +52,9 @@ async fn only_freshkube_tools_are_allowed() {
             "Refused: other_get_object",
             "Refused: freshkube_get_object_extra",
             "Refused: curl http://169.254.169.254/",
+            "Refused: curl http://169.254.169.254/latest",
+            "Refused: cat /etc/passwd",
+            "Refused: freshkube_get_object",
             "Refused: never-announced",
         ]
     );

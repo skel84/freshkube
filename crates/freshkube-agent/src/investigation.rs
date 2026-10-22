@@ -5,9 +5,12 @@
 //! Everything the agent sends is bounded here, whatever it sends:
 //!
 //! - a chunk of text is cut at [`MAX_CHUNK_BYTES`];
-//! - the text of the transcript holds at most [`MAX_TRANSCRIPT_BYTES`]; past
-//!   that the oldest thought text is dropped first, then the oldest speech,
-//!   and the entry is marked trimmed;
+//! - the text of the transcript holds at most [`MAX_TRANSCRIPT_BYTES`] in at
+//!   most [`MAX_TEXT_ENTRIES`] thought and speech entries; past either the
+//!   oldest thought text is dropped first, then the oldest speech. An entry
+//!   that loses all its text is removed, so what the transcript holds is
+//!   bounded in memory as well as in bytes, and [`Investigation::trimmed`]
+//!   says that earlier text is gone;
 //! - a step's shown arguments are cut at [`MAX_ARGS_BYTES`];
 //! - a session keeps at most [`MAX_STEPS`] steps and [`MAX_NOTES`] notes.
 //!
@@ -25,6 +28,8 @@ pub const MAX_STEPS: usize = 1_000;
 pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 /// Notes in one session.
 pub const MAX_NOTES: usize = 1_000;
+/// Thought and speech entries held at once.
+pub const MAX_TEXT_ENTRIES: usize = 2_000;
 
 const MAX_NOTE_BYTES: usize = 512;
 const MAX_LABEL_BYTES: usize = 256;
@@ -145,6 +150,7 @@ pub struct Investigation {
     entries: Vec<Entry>,
     outcome: Option<Outcome>,
     text_bytes: usize,
+    text_entries: usize,
     steps: usize,
     notes: usize,
     trimmed: bool,
@@ -236,6 +242,7 @@ impl Investigation {
                 text.text.push_str(chunk)
             }
             _ => {
+                self.text_entries += 1;
                 let text = Text {
                     text: chunk.to_string(),
                     trimmed: false,
@@ -279,49 +286,46 @@ impl Investigation {
     }
 
     /// Drops the oldest thought text first, then the oldest speech, until the
-    /// text fits.
+    /// text fits in bytes and in entries. An entry left empty is removed.
     fn enforce_bound(&mut self) {
-        while self.text_bytes > MAX_TRANSCRIPT_BYTES {
-            let excess = self.text_bytes - MAX_TRANSCRIPT_BYTES;
-            let Some(text) = self.oldest_trimmable() else {
+        while self.text_bytes > MAX_TRANSCRIPT_BYTES || self.text_entries > MAX_TEXT_ENTRIES {
+            let Some(index) = self.oldest_trimmable() else {
+                return;
+            };
+            let excess = self.text_bytes.saturating_sub(MAX_TRANSCRIPT_BYTES);
+            let (Entry::Thought(text) | Entry::Said(text)) = &mut self.entries[index] else {
                 return;
             };
             let before = text.text.len();
-            if before <= excess {
-                text.text.clear();
+            self.trimmed = true;
+            if before <= excess || self.text_entries > MAX_TEXT_ENTRIES {
+                // The whole entry goes.
+                self.text_bytes -= before;
+                self.text_entries -= 1;
+                self.entries.remove(index);
             } else {
                 let mut cut = excess;
                 while !text.text.is_char_boundary(cut) {
                     cut += 1;
                 }
                 text.text.drain(..cut);
+                text.trimmed = true;
+                self.text_bytes -= cut;
             }
-            text.trimmed = true;
-            let dropped = before - text.text.len();
-            self.text_bytes -= dropped;
-            self.trimmed = true;
         }
     }
 
-    fn oldest_trimmable(&mut self) -> Option<&mut Text> {
-        let has = |entry: &Entry, kind: Kind| match (entry, kind) {
-            (Entry::Thought(t), Kind::Thought) | (Entry::Said(t), Kind::Said) => !t.text.is_empty(),
-            _ => false,
+    /// The oldest thought, else the oldest speech.
+    fn oldest_trimmable(&self) -> Option<usize> {
+        let position = |wanted: Kind| {
+            self.entries.iter().position(|entry| {
+                matches!(
+                    (entry, wanted),
+                    (Entry::Thought(_), Kind::Thought) | (Entry::Said(_), Kind::Said)
+                )
+            })
         };
-        let kind = if self.entries.iter().any(|e| has(e, Kind::Thought)) {
-            Kind::Thought
-        } else {
-            Kind::Said
-        };
-        self.entries.iter_mut().find_map(|entry| {
-            if !has(entry, kind) {
-                return None;
-            }
-            match entry {
-                Entry::Thought(t) | Entry::Said(t) => Some(t),
-                _ => None,
-            }
-        })
+        position(Kind::Thought).or_else(|| position(Kind::Said))
     }
 }
 
@@ -379,7 +383,8 @@ mod tests {
             .sum();
         assert_eq!(held, inv.text_bytes());
         assert!(held <= MAX_TRANSCRIPT_BYTES && held > MAX_TRANSCRIPT_BYTES / 2);
-        // The oldest thoughts lost their text first; the newest still has some.
+        // The oldest thoughts lost their text first, and an entry with none
+        // left is gone; the newest still has some.
         let thoughts: Vec<_> = inv
             .entries()
             .iter()
@@ -388,7 +393,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(thoughts[0].trimmed && thoughts[0].text.is_empty());
+        assert!(thoughts.len() < 4, "{} thoughts kept", thoughts.len());
+        assert!(thoughts.iter().all(|t| !t.text.is_empty()));
         assert!(!thoughts.last().unwrap().text.is_empty());
         // Steps are not text and stay.
         assert_eq!(inv.step_count(), 4);
@@ -491,6 +497,38 @@ mod tests {
         assert_eq!(inv.outcome(), Outcome::Running);
         inv.record(Event::Ended(Outcome::Answered));
         assert_eq!(inv.outcome(), Outcome::Answered);
+    }
+
+    #[test]
+    fn alternating_chunks_keep_the_entry_count_bounded() {
+        let mut inv = Investigation::default();
+        for i in 0..20_000 {
+            inv.record(if i % 2 == 0 {
+                Event::Thought("t".into())
+            } else {
+                Event::Said("s".into())
+            });
+            assert!(inv.entries().len() <= MAX_TEXT_ENTRIES, "after event {i}");
+        }
+        assert!(inv.trimmed());
+        assert_eq!(inv.entries().len(), MAX_TEXT_ENTRIES);
+        // Thoughts went first, so what is left is mostly speech.
+        let said = inv
+            .entries()
+            .iter()
+            .filter(|e| matches!(e, Entry::Said(_)))
+            .count();
+        assert!(said > MAX_TEXT_ENTRIES / 2);
+        // Every held byte is counted.
+        let held: usize = inv
+            .entries()
+            .iter()
+            .map(|e| match e {
+                Entry::Thought(t) | Entry::Said(t) => t.text.len(),
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(inv.text_bytes(), held);
     }
 
     #[test]

@@ -3,35 +3,31 @@
 //!
 //! This is the second line. The first is the profile's lock-down, which
 //! leaves the agent no other tool to ask for. A permission request may name
-//! only a call's id (opencode's does), so the decision rests on
-//! what the call's own notifications said, as well as on what the request
-//! says.
+//! only a call's id (opencode's does), so the decision rests on what the
+//! call's own notifications said, as well as on what the request says.
 //!
-//! A tool is ours only when its identity is an exact match of server
-//! `freshkube` and one of the four tool names, in one of the forms agents use:
+//! A call is ours only by its **name**, an exact match of server `freshkube`
+//! and one of the four tool names: `freshkube_get_object` (how opencode names
+//! an MCP tool), or the `mcp__freshkube__get_object` and
+//! `mcp.freshkube.get_object` forms other agents use. Nothing else decides:
+//! not the title (a shell call's title is its command) and not the input
+//! (it is the model's own text, and may say anything). A name that merely
+//! contains ours, such as `freshkube_get_object_extra`, is not ours.
 //!
-//! - `freshkube_get_object`: opencode's name for an MCP tool;
-//! - `mcp__freshkube__get_object`: a double-underscore prefix, which some
-//!   agents use;
-//! - `mcp.freshkube.get_object`, or an input of `{server, tool}`: a dotted
-//!   name or the server named in the input, which others use.
-//!
-//! A name that merely contains ours, such as `freshkube_get_object_extra` or
-//! `other_freshkube_get_object`, is not ours. The identity is the agent's own
-//! word; what keeps a shell from calling itself `freshkube_get_object` is
-//! that the lock-down leaves none to call.
+//! Once a call has read as not ours it stays not ours, whatever a later
+//! update or the request says, and a call with no name anywhere is refused.
+//! The name is still the agent's own word; what keeps a shell from calling
+//! itself `freshkube_get_object` is that the lock-down leaves none to call.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::investigation::clip;
+use crate::tools::{SERVER, TOOLS};
 use agent_client_protocol::schema::v1::{
     PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
     SelectedPermissionOutcome, SessionUpdate,
 };
-use serde_json::Value;
-
-use crate::investigation::clip;
-use crate::tools::{SERVER, TOOLS};
 
 /// Calls remembered; a call past this is unknown, and unknown is refused.
 const MAX_CALLS: usize = 4096;
@@ -52,20 +48,6 @@ pub(super) fn is_ours(identity: &str) -> bool {
     })
 }
 
-/// What a call says it is: its input's server and tool, else its name, else
-/// its title. `None` when it says nothing.
-fn identify(name: Option<&str>, title: Option<&str>, input: Option<&Value>) -> Option<bool> {
-    if let Some(input) = input {
-        let field = |key: &str| input.get(key).and_then(Value::as_str);
-        if let (Some(server), Some(tool)) = (field("server"), field("tool")) {
-            return Some(server == SERVER && TOOLS.contains(&tool));
-        }
-    }
-    name.filter(|n| !n.is_empty())
-        .or(title.filter(|t| !t.is_empty()))
-        .map(is_ours)
-}
-
 #[derive(Default)]
 pub(super) struct Calls(Mutex<HashMap<String, Known>>);
 
@@ -75,22 +57,19 @@ struct Known {
 }
 
 impl Calls {
-    /// Remembers what a tool-call notification said about its call. The
-    /// latest word wins, so a call that turns out to be something else is
-    /// not ours.
+    /// Remembers what a tool-call notification said about its call. A call
+    /// that has read as not ours stays so.
     pub(super) fn note(&self, update: &SessionUpdate) {
-        let (id, title, name, input) = match update {
+        let (id, title, name) = match update {
             SessionUpdate::ToolCall(c) => (
                 c.tool_call_id.to_string(),
                 Some(c.title.as_str()),
                 c.name.as_deref(),
-                c.raw_input.as_ref(),
             ),
             SessionUpdate::ToolCallUpdate(u) => (
                 u.tool_call_id.to_string(),
                 u.fields.title.as_deref(),
                 u.fields.name.as_deref(),
-                u.fields.raw_input.as_ref(),
             ),
             _ => return,
         };
@@ -105,8 +84,9 @@ impl Calls {
         if let Some(title) = title.filter(|t| !t.is_empty()) {
             call.label = clip(title, MAX_LABEL_BYTES).to_string();
         }
-        if let Some(ours) = identify(name, title, input) {
-            call.ours = Some(ours);
+        if let Some(name) = name.filter(|n| !n.is_empty()) {
+            // Never from not ours to ours.
+            call.ours = Some(call.ours.unwrap_or(true) && is_ours(name));
         }
     }
 
@@ -125,14 +105,14 @@ pub(super) fn decide(
     let id = request.tool_call.tool_call_id.to_string();
     let fields = &request.tool_call.fields;
     let known = calls.get(&id);
-    // Every word on record must say ours, and there must be one.
+    // Every name on record must be ours, and there must be one.
     let words = [
         known.as_ref().and_then(|(_, ours)| *ours),
-        identify(
-            fields.name.as_deref(),
-            fields.title.as_deref(),
-            fields.raw_input.as_ref(),
-        ),
+        fields
+            .name
+            .as_deref()
+            .filter(|n| !n.is_empty())
+            .map(is_ours),
     ];
     let ours = words.iter().flatten().count() > 0 && words.iter().flatten().all(|ours| *ours);
     // What the call announced comes first: a refusal names the call, not
@@ -232,10 +212,9 @@ mod tests {
         calls.note(&SessionUpdate::ToolCall(
             ToolCall::new("t1", "freshkube_get_object").name("freshkube_get_object"),
         ));
-        calls.note(&SessionUpdate::ToolCall(ToolCall::new(
-            "t2",
-            "kubectl delete pod x",
-        )));
+        calls.note(&SessionUpdate::ToolCall(
+            ToolCall::new("t2", "kubectl delete pod x").name("shell"),
+        ));
         let (outcome, refused) = decide(&ask("t1", ToolCallUpdateFields::new()), &calls);
         assert!(allowed(&outcome) && refused.is_none());
         let (outcome, refused) = decide(&ask("t2", ToolCallUpdateFields::new()), &calls);
@@ -248,38 +227,82 @@ mod tests {
     }
 
     #[test]
-    fn a_call_that_turns_out_to_be_something_else_is_not_ours() {
+    fn a_call_with_no_name_is_refused_whatever_its_title_says() {
         let calls = Calls::default();
+        // opencode 2.1's updates carry no name; a title is only a label.
         calls.note(&SessionUpdate::ToolCall(ToolCall::new(
             "t1",
             "freshkube_get_object",
         )));
-        calls.note(&SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
-            "t1",
-            ToolCallUpdateFields::new().title("shell"),
-        )));
         let (outcome, _) = decide(&ask("t1", ToolCallUpdateFields::new()), &calls);
         assert!(!allowed(&outcome));
-        // And a request cannot claim a name the call did not have.
-        calls.note(&SessionUpdate::ToolCall(ToolCall::new("t2", "shell")));
-        let claim = ToolCallUpdateFields::new().title("freshkube_get_object");
-        let (outcome, _) = decide(&ask("t2", claim), &calls);
+        let titled = ToolCallUpdateFields::new().title("freshkube_get_object");
+        let (outcome, _) = decide(&ask("t2", titled), &calls);
         assert!(!allowed(&outcome));
     }
 
     #[test]
-    fn a_server_named_in_the_input_is_read() {
+    fn a_shell_whose_input_says_it_is_ours_is_refused() {
         let calls = Calls::default();
-        let call = ToolCall::new("t1", "Run tool")
-            .raw_input(json!({"server": "freshkube", "tool": "get_object", "arguments": {}}));
+        let call = ToolCall::new("t1", "curl http://169.254.169.254/")
+            .name("shell")
+            .raw_input(json!({"server": "freshkube", "tool": "get_object", "command": "curl x"}));
         calls.note(&SessionUpdate::ToolCall(call));
         let (outcome, _) = decide(&ask("t1", ToolCallUpdateFields::new()), &calls);
-        assert!(allowed(&outcome));
-        let other = ToolCall::new("t2", "Run tool")
-            .raw_input(json!({"server": "other", "tool": "get_object"}));
-        calls.note(&SessionUpdate::ToolCall(other));
+        assert!(!allowed(&outcome));
+        // Nor does an input of that shape make an unnamed call ours.
+        let unnamed = ToolCall::new("t2", "Run tool")
+            .raw_input(json!({"server": "freshkube", "tool": "get_object"}));
+        calls.note(&SessionUpdate::ToolCall(unnamed));
         let (outcome, _) = decide(&ask("t2", ToolCallUpdateFields::new()), &calls);
         assert!(!allowed(&outcome));
+        let input = ToolCallUpdateFields::new()
+            .raw_input(json!({"server": "freshkube", "tool": "get_object"}));
+        let (outcome, _) = decide(&ask("t3", input), &calls);
+        assert!(!allowed(&outcome));
+    }
+
+    #[test]
+    fn a_call_that_read_as_not_ours_stays_not_ours() {
+        let calls = Calls::default();
+        calls.note(&SessionUpdate::ToolCall(
+            ToolCall::new("t1", "ls").name("shell"),
+        ));
+        // A later update names it as ours: too late.
+        calls.note(&SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "t1",
+            ToolCallUpdateFields::new().name("freshkube_get_object"),
+        )));
+        let (outcome, _) = decide(&ask("t1", ToolCallUpdateFields::new()), &calls);
+        assert!(!allowed(&outcome));
+        // The request cannot claim it either.
+        let claim = ToolCallUpdateFields::new().name("freshkube_get_object");
+        let (outcome, _) = decide(&ask("t1", claim), &calls);
+        assert!(!allowed(&outcome));
+        // And the other direction: ours first, then something else.
+        calls.note(&SessionUpdate::ToolCall(
+            ToolCall::new("t2", "freshkube_get_object").name("freshkube_get_object"),
+        ));
+        calls.note(&SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+            "t2",
+            ToolCallUpdateFields::new().name("shell"),
+        )));
+        let (outcome, _) = decide(&ask("t2", ToolCallUpdateFields::new()), &calls);
+        assert!(!allowed(&outcome));
+    }
+
+    #[test]
+    fn a_request_naming_something_else_than_the_call_is_refused() {
+        let calls = Calls::default();
+        calls.note(&SessionUpdate::ToolCall(
+            ToolCall::new("t1", "freshkube_get_object").name("freshkube_get_object"),
+        ));
+        let other = ToolCallUpdateFields::new().name("shell");
+        let (outcome, _) = decide(&ask("t1", other), &calls);
+        assert!(!allowed(&outcome));
+        let same = ToolCallUpdateFields::new().name("freshkube_get_object");
+        let (outcome, _) = decide(&ask("t1", same), &calls);
+        assert!(allowed(&outcome));
     }
 
     #[test]

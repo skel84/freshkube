@@ -31,7 +31,9 @@ use agent_client_protocol::schema::v1::{
     StopReason, TextContent,
 };
 use agent_client_protocol::{ByteStreams, Client, ConnectionTo};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{
+    Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
+};
 use tokio::sync::watch;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
@@ -45,6 +47,10 @@ use crate::tools::SERVER;
 pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long a cancelled prompt has to answer before the agent is ended.
 pub const CANCEL_GRACE: Duration = Duration::from_secs(5);
+
+/// Events waiting for the reader. The agent is slowed to the reader's pace
+/// rather than buffered without end, so the reader must drain them.
+pub const EVENT_BUFFER: usize = 1024;
 
 const MODEL_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_MODELS: usize = 1_000;
@@ -180,8 +186,8 @@ impl AcpSession {
     /// Starts the session on the current Tokio runtime. What happens comes
     /// back as events; a session that can't start, or that dies in a prompt,
     /// ends that turn as failed.
-    pub fn start(link: Link, endpoint: Endpoint) -> (Self, UnboundedReceiver<Event>) {
-        let (events, rx) = unbounded_channel();
+    pub fn start(link: Link, endpoint: Endpoint) -> (Self, Receiver<Event>) {
+        let (events, rx) = channel(EVENT_BUFFER);
         let (commands, command_rx) = unbounded_channel();
         let (models_tx, models) = watch::channel(Models::default());
         let guard = link.guard.clone();
@@ -204,7 +210,9 @@ impl AcpSession {
                 // Startup failed, or the agent died: a turn that was running
                 // ends as failed. Anything else ended quietly.
                 if reason.starting || turn.swap(false, Ordering::SeqCst) {
-                    let _ = events.send(Event::Ended(Outcome::failed(reason.text(name))));
+                    let _ = events
+                        .send(Event::Ended(Outcome::failed(reason.text(name))))
+                        .await;
                 }
             }
         });
@@ -270,7 +278,7 @@ impl Failure {
 
 struct Run {
     endpoint: Endpoint,
-    events: UnboundedSender<Event>,
+    events: Sender<Event>,
     commands: UnboundedReceiver<Command>,
     models: watch::Sender<Models>,
     guard: Guard,
@@ -306,7 +314,7 @@ impl Run {
                 async move |notification: SessionNotification, _cx| {
                     seen.note(&notification.update);
                     for event in updates::events(notification.update) {
-                        let _ = updates.send(event);
+                        let _ = updates.send(event).await;
                     }
                     Ok(())
                 },
@@ -316,7 +324,7 @@ impl Run {
                 async move |request: RequestPermissionRequest, responder, _cx| {
                     let (outcome, refused) = decide(&request, &calls);
                     if let Some(what) = refused {
-                        let _ = refusals.send(Event::Note(format!("Refused: {what}")));
+                        let _ = refusals.send(Event::Note(format!("Refused: {what}"))).await;
                     }
                     responder.respond(RequestPermissionResponse::new(outcome))
                 },
@@ -441,7 +449,7 @@ impl Run {
         text: String,
         pending: &mut VecDeque<Command>,
     ) -> bool {
-        let _ = self.events.send(Event::Prompt(text.clone()));
+        let _ = self.events.send(Event::Prompt(text.clone())).await;
         self.turn.store(true, Ordering::SeqCst);
         let answer = cx
             .send_request(PromptRequest::new(
@@ -465,7 +473,7 @@ impl Run {
                 },
                 () = async { grace.as_mut().expect("guarded").await }, if grace.is_some() => {
                     self.guard.end();
-                    self.finish(Outcome::Cancelled);
+                    self.finish(Outcome::Cancelled).await;
                     return false;
                 }
             }
@@ -476,20 +484,22 @@ impl Run {
                     StopReason::EndTurn => Outcome::Answered,
                     StopReason::Cancelled => Outcome::Cancelled,
                     other => Outcome::failed(format!("stopped: {other:?}")),
-                });
+                })
+                .await;
                 true
             }
             Err(error) => {
-                self.finish(Outcome::failed(format!("{} stopped: {error}", self.name)));
+                self.finish(Outcome::failed(format!("{} stopped: {error}", self.name)))
+                    .await;
                 false
             }
         }
     }
 
     /// Ends the turn once, whoever gets there first.
-    fn finish(&self, outcome: Outcome) {
+    async fn finish(&self, outcome: Outcome) {
         if self.turn.swap(false, Ordering::SeqCst) {
-            let _ = self.events.send(Event::Ended(outcome));
+            let _ = self.events.send(Event::Ended(outcome)).await;
         }
     }
 }

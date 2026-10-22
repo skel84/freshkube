@@ -146,25 +146,35 @@ fn grandchild(turn: &Turn<'_>) -> agent_client_protocol::Result<StopReason> {
 struct Call<'a> {
     id: &'a str,
     title: &'a str,
-    name: &'a str,
+    /// None: the notification names nothing, as an opencode update doesn't.
+    name: Option<&'a str>,
     kind: ToolKind,
     input: Value,
     /// A claim the permission request makes about the call.
     claim: Option<&'a str>,
+    /// A later update that names the call.
+    rename: Option<&'a str>,
 }
 
 async fn attempt(turn: &Turn<'_>, call: Call<'_>) -> agent_client_protocol::Result<bool> {
-    send(
-        turn.cx,
-        turn.session,
-        SessionUpdate::ToolCall(
-            ToolCall::new(call.id.to_string(), call.title.to_string())
-                .name(call.name.to_string())
-                .kind(call.kind)
-                .status(ToolCallStatus::Pending)
-                .raw_input(call.input),
-        ),
-    )?;
+    let mut announced = ToolCall::new(call.id.to_string(), call.title.to_string())
+        .kind(call.kind)
+        .status(ToolCallStatus::Pending)
+        .raw_input(call.input);
+    if let Some(name) = call.name {
+        announced = announced.name(name.to_string());
+    }
+    send(turn.cx, turn.session, SessionUpdate::ToolCall(announced))?;
+    if let Some(name) = call.rename {
+        send(
+            turn.cx,
+            turn.session,
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                call.id.to_string(),
+                ToolCallUpdateFields::new().name(name.to_string()),
+            )),
+        )?;
+    }
     let fields = match call.claim {
         Some(claim) => ToolCallUpdateFields::new().title(claim.to_string()),
         None => ToolCallUpdateFields::new(),
@@ -219,67 +229,105 @@ async fn tools(turn: &Turn<'_>) -> agent_client_protocol::Result<StopReason> {
         Call {
             id: "ours",
             title: "freshkube_get_object",
-            name: "freshkube_get_object",
+            name: Some("freshkube_get_object"),
             kind: ToolKind::Other,
             input: get_object.clone(),
             claim: None,
+            rename: None,
         },
         Call {
             id: "shell",
             title: "kubectl delete pod checkout-7c9d8f6b4-q8zxk",
-            name: "shell",
+            name: Some("shell"),
             kind: ToolKind::Execute,
             input: json!({"command": "kubectl delete pod checkout-7c9d8f6b4-q8zxk"}),
             claim: None,
+            rename: None,
         },
         Call {
             id: "read",
             title: "~/.kube/config",
-            name: "read",
+            name: Some("read"),
             kind: ToolKind::Read,
             input: json!({"filePath": "~/.kube/config"}),
             claim: None,
+            rename: None,
         },
         Call {
             id: "edit",
             title: "/etc/hosts",
-            name: "edit",
+            name: Some("edit"),
             kind: ToolKind::Edit,
             input: json!({"filePath": "/etc/hosts"}),
             claim: None,
+            rename: None,
         },
         Call {
             id: "fetch",
             title: "https://example.com/payload",
-            name: "webfetch",
+            name: Some("webfetch"),
             kind: ToolKind::Fetch,
             input: json!({"url": "https://example.com/payload"}),
             claim: None,
+            rename: None,
         },
         Call {
             id: "other",
             title: "other_get_object",
-            name: "other_get_object",
+            name: Some("other_get_object"),
             kind: ToolKind::Other,
             input: get_object.clone(),
             claim: None,
+            rename: None,
         },
         Call {
             id: "extra",
             title: "freshkube_get_object_extra",
-            name: "freshkube_get_object_extra",
+            name: Some("freshkube_get_object_extra"),
             kind: ToolKind::Other,
             input: get_object.clone(),
             claim: None,
+            rename: None,
         },
         // Announced as a shell, then asked about under our name.
         Call {
             id: "claim",
             title: "curl http://169.254.169.254/",
-            name: "shell",
+            name: Some("shell"),
             kind: ToolKind::Execute,
             input: json!({"command": "curl http://169.254.169.254/"}),
             claim: Some("freshkube_get_object"),
+            rename: None,
+        },
+        // A shell whose input says it is ours.
+        Call {
+            id: "spoof",
+            title: "curl http://169.254.169.254/latest",
+            name: Some("shell"),
+            kind: ToolKind::Execute,
+            input: json!({"server": "freshkube", "tool": "get_object", "command": "curl x"}),
+            claim: None,
+            rename: None,
+        },
+        // A shell that a later update names as ours.
+        Call {
+            id: "flip",
+            title: "cat /etc/passwd",
+            name: Some("shell"),
+            kind: ToolKind::Execute,
+            input: json!({"command": "cat /etc/passwd"}),
+            claim: None,
+            rename: Some("freshkube_get_object"),
+        },
+        // A call that names nothing, whatever its title says.
+        Call {
+            id: "unnamed",
+            title: "freshkube_get_object",
+            name: None,
+            kind: ToolKind::Other,
+            input: get_object.clone(),
+            claim: None,
+            rename: None,
         },
     ];
     for call in calls {
@@ -356,10 +404,11 @@ async fn investigate(turn: &Turn<'_>) -> agent_client_protocol::Result<StopReaso
         Call {
             id: "t2",
             title: "kubectl delete pod checkout-7c9d8f6b4-q8zxk",
-            name: "shell",
+            name: Some("shell"),
             kind: ToolKind::Execute,
             input: json!({"command": "kubectl -n shop delete pod checkout-7c9d8f6b4-q8zxk"}),
             claim: None,
+            rename: None,
         },
     )
     .await?;

@@ -24,7 +24,7 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
 use serde_json::{Value, json};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::Receiver;
 use tokio_util::sync::CancellationToken;
 
 pub const TOKEN: &str = "stub-session-token-0123456789abcdef";
@@ -156,19 +156,19 @@ pub fn scripted_binary(args: &[&str]) -> Profile {
     )
 }
 
-pub fn start_binary(args: &[&str], endpoint: Endpoint) -> (AcpSession, UnboundedReceiver<Event>) {
+pub fn start_binary(args: &[&str], endpoint: Endpoint) -> (AcpSession, Receiver<Event>) {
     let link = scripted_binary(args)
         .spawn(&Host::default())
         .expect("the scripted agent starts");
     AcpSession::start(link, endpoint)
 }
 
-pub fn start_in_process(endpoint: Endpoint) -> (AcpSession, UnboundedReceiver<Event>) {
+pub fn start_in_process(endpoint: Endpoint) -> (AcpSession, Receiver<Event>) {
     AcpSession::start(scripted::in_process(Script::default()), endpoint)
 }
 
 /// Records events until the turn ends; panics if it doesn't within 20 s.
-pub async fn until_ended(rx: &mut UnboundedReceiver<Event>, inv: &mut Investigation) {
+pub async fn until_ended(rx: &mut Receiver<Event>, inv: &mut Investigation) {
     loop {
         let event = tokio::time::timeout(Duration::from_secs(20), rx.recv())
             .await
