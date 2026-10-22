@@ -187,18 +187,20 @@ fn the_level_follows_the_active_entry_when_the_applied_context_is_another_name(
 /// glyph there too, so the name is not cut away to keep the word.
 #[gpui_kit::test]
 fn just_under_1000_dp_the_tag_is_a_glyph_and_the_name_has_room(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 980., 800.);
-    switch(cx, handle, &view, "prod-ams");
+    let (_runtime, handle, _view) = fixture(cx, 980., 800.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let dp = |px: gpui_kit::Pixels| f32::from(px) / f32::from(crate::ui::dp_px(1., window));
         let tag = window.find("header-protection").bounds();
         assert!((dp(tag.size.width) - 20.).abs() < 0.5, "the tag is a glyph");
-        let name = window.find("context-short-name").bounds();
+        let name = window.find("context-short-name");
+        assert_eq!(name.label(), Some("prod-fra"), "the name is whole");
+        // Eight characters at 13 semibold need about 55 dp; an ellipsis
+        // alone would take 10.
         assert!(
-            dp(name.size.width) > 60.,
+            dp(name.bounds().size.width) > 55.,
             "the name is {} dp wide",
-            dp(name.size.width)
+            dp(name.bounds().size.width)
         );
     })
     .unwrap();
