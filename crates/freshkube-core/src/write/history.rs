@@ -156,7 +156,7 @@ pub fn load(writes: &AuditStore, operations_dir: &Path) -> History {
             Err(_) => history.unreadable += 1,
         }
     }
-    history.rows.sort_by(|a, b| b.at.cmp(&a.at));
+    history.rows.sort_by_key(|row| std::cmp::Reverse(row.at));
     history
 }
 
