@@ -328,7 +328,7 @@ fn backups(
             } else if window.from == window.until {
                 // One completed backup, and nothing after it is confirmed.
                 format!(
-                    "{} only (the last backup; WAL not confirmed)",
+                    "Last backup {}; WAL not confirmed",
                     time(Some(window.until))
                 )
             } else {

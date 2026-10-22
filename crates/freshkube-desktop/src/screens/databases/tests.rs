@@ -1053,9 +1053,7 @@ fn a_lone_backup_restore_window_and_unknown_readiness_read_plainly() {
         value("ledger-db", "Instances ready"),
         "Not reported by the operator (3 wanted)"
     );
-    assert!(
-        value("ledger-db", "Restore window").contains("only (the last backup; WAL not confirmed)")
-    );
+    assert!(value("ledger-db", "Restore window").contains("Last backup"));
     let none = databases::example::shaped(at(), "no-primary");
     let display = display_of(&none, Mode::Clusters);
     assert_eq!(
@@ -1065,4 +1063,36 @@ fn a_lone_backup_restore_window_and_unknown_readiness_read_plainly() {
             .next(),
         Some("Role unknown")
     );
+}
+
+#[gpui_kit::test]
+fn the_status_segment_counts_rows_and_names_incomplete_coverage_for_a_stale_read(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        for mode in [Mode::Clusters, Mode::Backups, Mode::Schedules] {
+            page.update(cx, |page, cx| {
+                page.loader.resolve(
+                    page.identity().unwrap(),
+                    Ok(databases::example::shaped(at(), "stale")),
+                );
+                page.mode(mode, cx);
+            });
+            window.render_frame(cx);
+            let text = page.update(cx, |page, cx| {
+                page.status(cx).unwrap().text(None).to_string()
+            });
+            assert!(
+                text.contains("coverage incomplete"),
+                "{}: {text}",
+                mode.label()
+            );
+            assert!(
+                text.contains(&format!("{} ", page.read(cx).display.rows.len())),
+                "{text}"
+            );
+        }
+    })
+    .unwrap();
 }
