@@ -186,7 +186,7 @@ Headless UI tests render the real app, find elements by id and click or type int
 
 ### Smoke tests
 
-**Every change a person would notice in the app — a page, a control, a flow, a layout — gets a smoke test in the running app before it is called done.** UI tests prove the logic; a smoke test proves it looks and works right on screen. Use the helper, `scripts/smoke.sh`, don't improvise one; [docs/SMOKE.md](docs/SMOKE.md) has its commands, the rules in full, captures on an Intel Mac and `scripts/browser.sh`.
+**Every change a person would notice in the app — a page, a control, a flow, a layout — gets a smoke test in the running app before it is called done.** UI tests prove the logic; a smoke test proves it looks and works right on screen. Use the helper, `scripts/smoke.sh`, don't improvise one; [docs/SMOKE.md](docs/SMOKE.md) has its commands, the rules in full, captures from a CI-built debug binary (`freshkube-debug-<architecture>-apple-darwin-<short-sha>`, `aarch64` or `x86_64`) and `scripts/browser.sh`.
 
 ```sh
 scripts/smoke.sh start --page <slug>    # builds, launches with --fixture, waits for the window

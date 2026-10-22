@@ -1,1 +1,0 @@
-- **Settings:** a form row can take a click anywhere on it, its label included (`form::Row::on_click`).

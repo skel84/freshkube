@@ -20,7 +20,8 @@
 # For a live check, pass the context the user
 # chose (`-- --config … --context … --kubeconfig …`); only look and navigate,
 # never press Operations or maintenance actions.
-# FRESHKUBE_SMOKE_BINARY selects a saved executable without rebuilding it.
+# FRESHKUBE_SMOKE_BINARY selects a saved executable without rebuilding it; it
+# must be built for this machine's architecture.
 # An exported FRESHKUBE_THEME or FRESHKUBE_WINDOW_SIZE is the default for
 # --theme and --size, in start and in pages.
 #
@@ -45,6 +46,26 @@ mkdir -p "$OUT" "$(dirname "$HELPER")"
 PAGES=(overview nodes health resources databases etcd system-services security lifecycle operations monitoring
   observability-applications observability-service-map observability-incidents
   observability-traces observability-profiling observability-deployments)
+
+# The architectures a saved executable holds, as lipo names them (arm64, x86_64).
+binary_archs() {
+  if command -v lipo >/dev/null 2>&1; then
+    lipo -archs "$1" 2>/dev/null && return
+  fi
+  local d; d=$(file -b "$1" 2>/dev/null) || return 0
+  [[ $d == *arm64* || $d == *aarch64* ]] && printf 'arm64 '
+  [[ $d == *x86_64* || $d == *x86-64* ]] && printf 'x86_64 '
+  return 0
+}
+
+# Refuse a saved executable built for another architecture than this machine's.
+check_binary_arch() {
+  local host archs; host=$(uname -m); archs=$(binary_archs "$1")
+  [[ $host == aarch64 ]] && host=arm64
+  [[ -z $archs || " $archs " == *" $host "* ]] && return 0
+  echo "smoke: FRESHKUBE_SMOKE_BINARY is built for ${archs% }, but this machine is $host; download the $( [[ $host == arm64 ]] && echo aarch64 || echo "$host" )-apple-darwin capture artifact: $1" >&2
+  exit 1
+}
 
 helper() {
   if [[ ! -x $HELPER || $ROOT/scripts/smoke/window.swift -nt $HELPER ]]; then
@@ -111,6 +132,7 @@ start() {
       echo "smoke: FRESHKUBE_SMOKE_BINARY must name an executable file: $binary" >&2
       exit 1
     fi
+    check_binary_arch "$binary"
   elif [[ $profile == release ]]; then
     cargo build -q --release --manifest-path "$ROOT/Cargo.toml" -p "$package" --bin "$bin"
   else

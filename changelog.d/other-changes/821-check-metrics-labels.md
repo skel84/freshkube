@@ -1,1 +1,0 @@
-- **Settings:** Monitoring's Central metrics source can check its entries: one query of the store says which entries' label values have series now, suggests an entry's context name as its `metrics.value` when that is where its series are, and writes nothing until Accept.
