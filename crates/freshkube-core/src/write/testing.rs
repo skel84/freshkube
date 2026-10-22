@@ -245,6 +245,9 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
         );
     }
     let path = request.path.as_str();
+    if request.method == "POST" {
+        return (create(state, request, dry), false);
+    }
     if !state.objects.contains_key(path) {
         return (
             if state.objects.is_empty() {
@@ -333,6 +336,30 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
     }
 }
 
+/// A create: the object goes under the collection's path, by its name.
+fn create(state: &mut State, request: &Recorded, dry: bool) -> (u16, String) {
+    let mut body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+    let name = body["metadata"]["name"].as_str().unwrap_or_default();
+    let key = format!("{}/{name}", request.path);
+    if state.objects.contains_key(&key) {
+        return status(409, "AlreadyExists", &format!("{name} already exists"));
+    }
+    if dry {
+        if let Some((code, message)) = &state.fail_dry_run {
+            return status(*code, "Invalid", message);
+        }
+    } else if let Some((code, message)) = &state.fail_write {
+        return status(*code, "Invalid", message);
+    }
+    state.next_version += 1;
+    body["metadata"]["uid"] = json!(format!("uid-created-{}", state.next_version));
+    body["metadata"]["resourceVersion"] = json!(state.next_version.to_string());
+    if !dry {
+        state.objects.insert(key, body.clone());
+    }
+    fake_api::json(201, body)
+}
+
 /// The `web` Deployment as the person saw it at the start.
 pub fn web() -> Target {
     Target {
@@ -378,7 +405,10 @@ pub fn scale(count: u64) -> ActionDescription {
         verb: "Scale".into(),
         tier: Tier::Reversible,
         sentence: format!("Scale web to {count}"),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
             target: web(),
             change: Change::Apply(
@@ -409,7 +439,10 @@ pub fn set_image(image: &str) -> ActionDescription {
         verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Change web's image".into(),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
             target: web(),
             change: Change::Apply(json!({"apiVersion": "apps/v1", "kind": "Deployment",
@@ -431,7 +464,10 @@ pub fn delete_web() -> ActionDescription {
         verb: "Delete".into(),
         tier: Tier::Destructive,
         sentence: "Delete web".into(),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
             target: web(),
             change: Change::Delete,
@@ -448,7 +484,10 @@ pub fn rotate_password() -> ActionDescription {
         verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Rotate db's password".into(),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
             target: db(),
             change: Change::Apply(json!({"apiVersion": "v1", "kind": "Secret",
@@ -468,6 +507,73 @@ pub fn scale_and_delete() -> ActionDescription {
     action.tier = Tier::Destructive;
     action.changes.extend(rotate_password().changes);
     action
+}
+
+/// A ConfigMap that does not exist yet, as a create sees it: no UID and no
+/// version to have seen.
+pub fn new_note(name: &str) -> Target {
+    Target {
+        group: String::new(),
+        version: "v1".into(),
+        kind: "ConfigMap".into(),
+        resource: "configmaps".into(),
+        namespace: Some("shop".into()),
+        name: name.into(),
+        uid: String::new(),
+        resource_version: String::new(),
+        subresource: None,
+    }
+}
+
+/// A spec change that creates one ConfigMap per name, each for a subject
+/// (a Stage, say) of the same name: the shape of a promotion to several Stages.
+pub fn create_notes(names: &[&str]) -> ActionDescription {
+    ActionDescription {
+        kind: "test-create".into(),
+        verb: "Create".into(),
+        tier: Tier::SpecChange,
+        sentence: "Create notes".into(),
+        destinations: vec![],
+        no_confirmation: false,
+        subjects: names.iter().map(|name| (*name).to_owned()).collect(),
+        preview: vec![],
+        changes: names
+            .iter()
+            .map(|name| ObjectChange {
+                target: new_note(&format!("{name}.1")),
+                change: Change::Create(json!({"apiVersion": "v1", "kind": "ConfigMap",
+                    "metadata": {"name": format!("{name}.1"), "namespace": "shop"},
+                    "data": {"stage": name}})),
+                observe: Observation::Exists,
+                inverse: None,
+            })
+            .collect(),
+    }
+}
+
+/// An action that only adds an annotation, and says it needs no confirmation.
+pub fn annotate_web() -> ActionDescription {
+    ActionDescription {
+        kind: "test-annotate".into(),
+        verb: "Refresh".into(),
+        tier: Tier::Reversible,
+        sentence: "Ask web to refresh".into(),
+        destinations: vec![],
+        no_confirmation: true,
+        subjects: vec![],
+        preview: vec![],
+        changes: vec![ObjectChange {
+            target: web(),
+            change: Change::MergePatch(
+                json!({"metadata": {"annotations": {"example.com/refresh": "t1"}}}),
+            ),
+            observe: Observation::FieldEquals {
+                pointer: "/metadata/annotations/example.com~1refresh".into(),
+                value: json!("t1"),
+            },
+            inverse: None,
+        }],
+    }
 }
 
 /// A runner over the fake, auditing under `dir`.

@@ -310,7 +310,7 @@ impl Runner {
         if let Some(not_sent) = refused_at(self.level_for(&description)) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
         }
-        if !requirement.satisfied_by(&confirmation, &description.names(), &self.who.entry) {
+        if !requirement.satisfied_by(&confirmation, &description.subject_names(), &self.who.entry) {
             return finished(Status::NotSent(NotSent::Unconfirmed), vec![], None, None);
         }
         if let Some(window) = requirement.cancel_window {
@@ -549,7 +549,7 @@ impl Runner {
             action: description.kind.clone(),
             sentence: description.sentence.clone(),
             window: UNDO_WINDOW,
-            destination: description.destination.clone(),
+            destinations: description.destinations.clone(),
             items,
         })
     }

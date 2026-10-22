@@ -102,6 +102,7 @@ fn look(observation: &Observation, target: &Target, now: Result<Value, Refusal>)
                 Look::Waiting
             }
         }
+        Observation::Exists => Look::Reached,
         Observation::Gone | Observation::Unobservable => Look::Waiting,
     }
 }

@@ -6,10 +6,10 @@
 use super::{
     Protection,
     access::{self, Access},
-    action::{ActionDescription, Inverse, ObjectChange},
+    action::{ActionDescription, Change, Inverse, ObjectChange},
     audit::{Phase, RunId, scrub},
     diff::{FieldChange, diff},
-    requirement::{Requirement, Tier, expected_name, requirement},
+    requirement::{Requirement, Tier, expected_name, requirement_for},
     run::Runner,
     send::{ChangedWhat, Conflict, Refusal, get, send},
 };
@@ -103,6 +103,9 @@ pub struct Prepared {
     pub(super) undo: bool,
     /// The level it was prepared under; a stricter one at send time sends nothing.
     pub(super) level: Protection,
+    /// The level of the cluster its objects are in alone, to tell which
+    /// subjects a protected destination covers.
+    pub(super) own: Protection,
     /// The way back for each object, worked out from the object read here.
     pub(super) inverses: Vec<Option<Inverse>>,
 }
@@ -137,7 +140,13 @@ impl Prepared {
 
     /// What a protected dialog asks to be typed.
     pub fn expected_name(&self, entry: &str) -> String {
-        expected_name(&self.description.names(), entry).to_owned()
+        expected_name(&self.description.subject_names(), entry).to_owned()
+    }
+
+    /// The subjects held to `protected`, which a typed name for several
+    /// names so the person knows why.
+    pub fn protected_subjects(&self) -> Vec<String> {
+        self.description.protected_subjects(self.own)
     }
 }
 
@@ -154,7 +163,7 @@ impl Runner {
     /// resourceVersion, and the dry run.
     pub async fn preflight(&self, action: ActionDescription) -> Verdict {
         let level = self.level_for(&action);
-        let requirement = requirement(action.tier, level);
+        let requirement = requirement_for(&action, level);
         self.preflight_with(action, requirement, level, false).await
     }
 
@@ -199,6 +208,7 @@ impl Runner {
             diffs,
             undo,
             level,
+            own: self.level.get(),
             inverses,
         }))
     }
@@ -210,6 +220,7 @@ impl Runner {
         let target = &change.target;
         let object = target.label();
         let verb = change.change.verb();
+        let creates = matches!(change.change, Change::Create(_));
         match access::review(&self.client, target, verb).await {
             Access::Allowed => {}
             Access::Denied { reason } => {
@@ -221,7 +232,13 @@ impl Runner {
             }
             Access::Unknown { message } => return Err(Block::AccessUnknown { object, message }),
         }
-        let before = match get(&self.client, target).await {
+        // A new object has nothing to read and no version to have seen.
+        let before = if creates {
+            Ok(serde_json::json!({}))
+        } else {
+            get(&self.client, target).await
+        };
+        let before = match before {
             Ok(before) => before,
             Err(Refusal::Changed(what)) => return Err(Block::Changed { object, what }),
             Err(Refusal::Denied(reason)) => {
@@ -236,13 +253,15 @@ impl Runner {
             }
             Err(Refusal::Conflict(_)) => unreachable!("a read does not conflict"),
         };
-        if before["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
+        if !creates && before["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
             return Err(Block::Changed {
                 object,
                 what: ChangedWhat::Recreated,
             });
         }
-        if before["metadata"]["resourceVersion"].as_str() != Some(target.resource_version.as_str())
+        if !creates
+            && before["metadata"]["resourceVersion"].as_str()
+                != Some(target.resource_version.as_str())
         {
             return Err(Block::Changed {
                 object,

@@ -5,7 +5,7 @@
 
 use kube::{
     Api,
-    api::{DeleteParams, DynamicObject, Patch, PatchParams, Preconditions},
+    api::{DeleteParams, DynamicObject, Patch, PatchParams, PostParams, Preconditions},
 };
 use serde_json::{Value, json};
 
@@ -130,6 +130,31 @@ pub async fn send(
                 None => api.patch(&target.name, &params, &Patch::Merge(&body)).await,
             }
             .map(|object| serde_json::to_value(object).unwrap_or(Value::Null))
+        }
+        Change::Create(body) => {
+            let params = PostParams {
+                dry_run,
+                field_manager: Some(FIELD_MANAGER.to_owned()),
+            };
+            // A new object has no version to check; a name taken is a plain
+            // refusal, not a modified object.
+            let object: DynamicObject = match serde_json::from_value(body.clone()) {
+                Ok(object) => object,
+                Err(error) => {
+                    return Err(Refusal::Rejected {
+                        code: 400,
+                        message: scrub(&error.to_string()),
+                    });
+                }
+            };
+            return match api.create(&params, &object).await {
+                Ok(created) => Ok(serde_json::to_value(created).unwrap_or(Value::Null)),
+                Err(kube::Error::Api(response)) if response.code == 409 => Err(Refusal::Rejected {
+                    code: 409,
+                    message: scrub(&response.message),
+                }),
+                Err(error) => Err(classify(error)),
+            };
         }
         Change::Delete => {
             let params = DeleteParams {

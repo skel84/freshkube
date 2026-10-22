@@ -104,8 +104,8 @@ pub(crate) struct WriteFlow {
 /// Opens the flow for `request`: the dialog when the level asks anything,
 /// otherwise nothing until there is something to say.
 pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) -> Entity<WriteFlow> {
-    let asks = freshkube_core::write::requirement(
-        request.action.tier,
+    let asks = freshkube_core::write::requirement_for(
+        &request.action,
         request.runner.level_for(&request.action),
     );
     let flow = cx.new(|_| WriteFlow {

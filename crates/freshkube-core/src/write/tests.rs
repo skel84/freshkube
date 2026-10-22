@@ -833,10 +833,11 @@ async fn the_level_is_the_strictest_of_the_cluster_and_the_destination() {
     use Protection::*;
     let with_destination = |protection| {
         let mut action = fake::scale(3);
-        action.destination = Some(Destination {
+        action.destinations = vec![Destination {
             entry: "prod-ams".into(),
             protection,
-        });
+            covers: vec![],
+        }];
         action
     };
     // Own guarded, destination read-only: blocked, with no request at all.
@@ -1134,4 +1135,211 @@ fn a_partial_write_names_each_objects_own_outcome() {
         "{message}"
     );
     assert!(!message.contains("were not changed"));
+}
+
+// ---- #855: create, the typed name for several subjects, no confirmation ----
+
+#[tokio::test(start_paused = true)]
+async fn a_create_has_no_object_to_get_and_is_checked_by_review_and_dry_run() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, fake::create_notes(&["stage-a"])).await;
+    // No GET of the new object (it would be a 404), no write; the dry run is
+    // a POST to the collection, and the access review names no object.
+    cluster.assert_nothing_written();
+    cluster.recorder.assert_lines(&[
+        "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+        "POST /api/v1/namespaces/shop/configmaps?&dryRun=All&fieldManager=freshkube",
+    ]);
+    assert!(
+        cluster.recorder.requests()[0]
+            .body
+            .contains("\"verb\":\"create\""),
+        "the review asks about create"
+    );
+    assert!(!cluster.recorder.requests()[0].body.contains("stage-a.1"));
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert_eq!(finished.headline(), Headline::Done);
+    let writes = cluster.writes();
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    assert_eq!(writes[0].method, "POST");
+    assert!(writes[0].query.contains("fieldManager=freshkube"));
+    // A new object carries no version to have seen.
+    assert!(!writes[0].body.contains("resourceVersion"));
+    assert!(cluster.exists("/api/v1/namespaces/shop/configmaps/stage-a.1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_create_whose_name_is_taken_is_refused_by_the_dry_run_and_sends_nothing() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Open);
+    let first = ready(&runner, fake::create_notes(&["stage-a"])).await;
+    run(&runner, first, Confirmation::Confirmed).await;
+    let writes = cluster.writes().len();
+    match runner.preflight(fake::create_notes(&["stage-a"])).await {
+        Verdict::Blocked(Block::DryRunFailed { message, .. }) => {
+            assert!(message.contains("already exists"), "{message}")
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(cluster.writes().len(), writes);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_create_that_is_denied_is_blocked_before_the_dry_run() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.deny_access();
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    match runner.preflight(fake::create_notes(&["stage-a"])).await {
+        Verdict::Blocked(Block::AccessDenied { verb, .. }) => assert_eq!(verb, "create"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(cluster.recorder.requests().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_action_that_declares_no_confirmation_asks_nothing_at_any_writable_level() {
+    for level in [Protection::Protected, Protection::Guarded, Protection::Open] {
+        let (cluster, dir) = (Cluster::new(), tmp());
+        let runner = fake::runner(&cluster, dir.path(), level);
+        let prepared = ready(&runner, fake::annotate_web()).await;
+        assert!(
+            !prepared.requirement().confirm && !prepared.requirement().type_name,
+            "{level:?}"
+        );
+        let verdict = Verdict::Ready(prepared);
+        assert_eq!(
+            Dialog::for_verdict(&verdict, "prod-fra"),
+            Dialog::SendWithoutAsking {
+                notice: ANNOTATION_NOTICE
+            }
+        );
+        let Verdict::Ready(prepared) = verdict else {
+            unreachable!()
+        };
+        let finished = run(&runner, prepared, Confirmation::NotAsked).await;
+        assert_eq!(finished.headline(), Headline::Done, "{level:?}");
+        // Still audited, from the line before the send to the observation.
+        assert_eq!(
+            phases(&AuditStore::new(dir.path().join("audit"))),
+            [Phase::Sending, Phase::Accepted, Phase::Observed]
+        );
+        assert_eq!(
+            cluster.object(fake::DEPLOYMENT)["metadata"]["annotations"]["example.com/refresh"],
+            "t1"
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_declared_mark_is_the_action_s_and_the_same_action_without_it_asks() {
+    // Without the mark the same reversible action asks, as its tier says.
+    let mut action = fake::annotate_web();
+    action.no_confirmation = false;
+    assert!(requirement_for(&action, Protection::Guarded).confirm);
+    assert!(requirement_for(&action, Protection::Protected).type_name);
+    // With it, only read-only still blocks.
+    let marked = fake::annotate_web();
+    assert!(!requirement_for(&marked, Protection::Protected).confirm);
+    assert!(
+        requirement_for(&marked, Protection::ReadOnly)
+            .blocked
+            .is_some()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn read_only_blocks_an_unconfirmed_action_and_a_create_with_no_request_at_all() {
+    for action in [fake::annotate_web(), fake::create_notes(&["stage-a"])] {
+        let (cluster, dir) = (Cluster::new(), tmp());
+        let runner = fake::runner(&cluster, dir.path(), Protection::ReadOnly);
+        assert!(matches!(
+            runner.preflight(action).await,
+            Verdict::Blocked(Block::ReadOnly(_))
+        ));
+        assert!(cluster.recorder.requests().is_empty());
+        assert!(phases(&AuditStore::new(dir.path().join("audit"))).is_empty());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_typed_name_is_the_subject_and_is_typed_once_for_several() {
+    use Protection::*;
+    let covering = |names: &[&str], protection| {
+        let mut action = fake::create_notes(&["stage-a", "stage-b"]);
+        action.destinations = vec![Destination {
+            entry: "prod-ams".into(),
+            protection,
+            covers: names.iter().map(|n| (*n).to_owned()).collect(),
+        }];
+        action
+    };
+    // One subject: its own name, not the generated object's.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protected);
+    let one = ready(&runner, fake::create_notes(&["stage-a"])).await;
+    assert!(one.requirement().type_name);
+    assert_eq!(one.expected_name("prod-fra"), "stage-a");
+    // Several: typed once, for the entry; the dialog names which are protected.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Guarded);
+    let verdict = runner.preflight(covering(&["stage-b"], Protected)).await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "prod-fra") else {
+        panic!("asks");
+    };
+    assert_eq!(ask.type_name.as_deref(), Some("prod-fra"));
+    assert_eq!(ask.protected, ["stage-b"]);
+    assert_eq!(ask.subjects, ["stage-a", "stage-b"]);
+    assert_eq!(ask.destinations, [("prod-ams".to_owned(), Protected)]);
+    let Verdict::Ready(prepared) = verdict else {
+        panic!("ready")
+    };
+    // A guess at one Stage's name unlocks nothing; the one name unlocks both.
+    let again = ready(&runner, covering(&["stage-b"], Protected)).await;
+    let wrong = run(&runner, again, Confirmation::Typed("stage-b".into())).await;
+    assert_eq!(wrong.status, Status::NotSent(NotSent::Unconfirmed));
+    cluster.assert_nothing_written();
+    let finished = run(&runner, prepared, Confirmation::Typed("prod-fra".into())).await;
+    assert_eq!(finished.headline(), Headline::Done);
+    assert_eq!(cluster.writes().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn guarded_on_both_clusters_shows_the_preview_without_typing() {
+    use Protection::*;
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Guarded);
+    let mut action = fake::create_notes(&["stage-a"]);
+    action.preview = vec![Preview {
+        title: "Runs now".into(),
+        lines: vec!["freight-1".into()],
+    }];
+    action.destinations = vec![Destination {
+        entry: "prod-ams".into(),
+        protection: Guarded,
+        covers: vec!["stage-a".into()],
+    }];
+    let verdict = runner.preflight(action).await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "prod-fra") else {
+        panic!("asks");
+    };
+    assert_eq!(ask.type_name, None);
+    assert!(ask.protected.is_empty());
+    assert_eq!(ask.preview[0].title, "Runs now");
+    // And a destination stricter than the cluster it is written on wins.
+    let mut stricter = fake::create_notes(&["stage-a"]);
+    stricter.destinations = vec![
+        Destination {
+            entry: "dev-fra".into(),
+            protection: Open,
+            covers: vec![],
+        },
+        Destination {
+            entry: "prod-ams".into(),
+            protection: Protected,
+            covers: vec!["stage-a".into()],
+        },
+    ];
+    assert_eq!(stricter.level(Open), Protected);
+    assert_eq!(stricter.level(ReadOnly), ReadOnly);
 }

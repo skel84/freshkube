@@ -6,7 +6,8 @@
 use std::time::Duration;
 
 use super::{
-    action::ActionDescription,
+    Protection,
+    action::{ActionDescription, Preview},
     outcome::Observed,
     run::Runner,
     send::{Refusal, get},
@@ -39,6 +40,16 @@ pub struct Ask {
     pub cancel_window: Option<Duration>,
     /// The confirm is drawn as dangerous.
     pub danger: bool,
+    /// What the action shows under the sentence (a preview, a note).
+    pub preview: Vec<Preview>,
+    /// The other clusters the action reaches, named in the dialog, with the
+    /// level each holds it to.
+    pub destinations: Vec<(String, Protection)>,
+    /// With a typed name for several subjects, the ones a `protected`
+    /// cluster asks it for, so the dialog says which.
+    pub protected: Vec<String>,
+    /// The subjects the typed name is for.
+    pub subjects: Vec<String>,
 }
 
 /// What the dialog is, from the person's side.
@@ -70,6 +81,9 @@ pub enum Dialog {
 /// The toast's wording when nothing was asked because the cluster is open.
 pub const OPEN_NOTICE: &str = "Sent without asking because this cluster is open.";
 
+/// The toast's wording for an action that declares it needs no confirmation.
+pub const ANNOTATION_NOTICE: &str = "Sent without asking: it only adds an annotation.";
+
 pub const REVIEW_LABEL: &str = "Review the new version";
 
 fn ask(prepared: &Prepared, entry: &str) -> Ask {
@@ -89,6 +103,22 @@ fn ask(prepared: &Prepared, entry: &str) -> Ask {
         impact: if requirement.impact { objects } else { vec![] },
         cancel_window: requirement.cancel_window,
         danger: requirement.cancel_window.is_some(),
+        preview: action.preview.clone(),
+        destinations: action
+            .destinations
+            .iter()
+            .map(|destination| (destination.entry.clone(), destination.protection))
+            .collect(),
+        protected: if requirement.type_name {
+            prepared.protected_subjects()
+        } else {
+            vec![]
+        },
+        subjects: action
+            .subject_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
     }
 }
 
@@ -116,8 +146,12 @@ impl Dialog {
             Verdict::Ready(prepared) if prepared.requirement().confirm => {
                 Dialog::Ask(ask(prepared, entry))
             }
-            Verdict::Ready(_) => Dialog::SendWithoutAsking {
-                notice: OPEN_NOTICE,
+            Verdict::Ready(prepared) => Dialog::SendWithoutAsking {
+                notice: if prepared.description().no_confirmation {
+                    ANNOTATION_NOTICE
+                } else {
+                    OPEN_NOTICE
+                },
             },
             Verdict::Blocked(Block::ReadOnly(reason)) => Dialog::Disabled {
                 reason: (*reason).to_owned(),
@@ -224,6 +258,10 @@ impl Runner {
         mut action: ActionDescription,
     ) -> Result<ActionDescription, Block> {
         for change in &mut action.changes {
+            // A new object has no version to take again.
+            if matches!(change.change, super::action::Change::Create(_)) {
+                continue;
+            }
             let target = &mut change.target;
             let object = target.label();
             match get(&self.client, target).await {
