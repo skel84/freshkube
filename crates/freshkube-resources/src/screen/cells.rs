@@ -6,11 +6,11 @@
 use freshkube_core::pluralize;
 use std::sync::Arc;
 
-use freshkube_core::resources::Amounts;
+use freshkube_core::resources::{Amounts, PodVerdict};
 use gpui_kit::component::tooltip::Tooltip;
 
 use super::super::model::ResourceRow;
-use super::super::rows::{Emphasis, PodRow, PodState, RowOwner, died};
+use super::super::rows::{Emphasis, PodRow, PodState, RowOwner};
 use super::layout::DisplayColumn;
 use super::*;
 use crate::palette::Palette;
@@ -26,13 +26,12 @@ const SUFFIX_SHRINK: f32 = 1000.;
 /// stopped, the critical disc where the pod can't run. A pod on a node
 /// that isn't ready can't be confirmed, so it warns.
 pub(super) fn pod_tone(pod: &PodRow, node_ready: bool) -> ui::Tone {
-    match pod.state {
-        PodState::Failing if died(&pod.status) => ui::Tone::Died,
-        PodState::Failing => ui::Tone::Crit,
-        PodState::NotReady => ui::Tone::Warn,
-        _ if !node_ready => ui::Tone::Warn,
-        PodState::Running | PodState::Completed => ui::Tone::Good,
-        PodState::Pending | PodState::Terminating | PodState::Unknown => ui::Tone::Unknown,
+    match freshkube_core::resources::pod_verdict(pod.state, &pod.status, node_ready) {
+        PodVerdict::Good => ui::Tone::Good,
+        PodVerdict::Warn => ui::Tone::Warn,
+        PodVerdict::Crit => ui::Tone::Crit,
+        PodVerdict::Died => ui::Tone::Died,
+        PodVerdict::Unknown => ui::Tone::Unknown,
     }
 }
 

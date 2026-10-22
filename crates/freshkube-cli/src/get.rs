@@ -7,7 +7,7 @@ use crate::Report;
 use crate::args::GetArgs;
 use crate::cluster::{Stop, Target};
 use crate::exit::Findings;
-use crate::read::{self, Listing, Row, list, view};
+use crate::read::{self, Class, Listing, Problem, Read, Row, list, view};
 
 const NEVER: &str = "Secret values are never requested or printed.";
 
@@ -68,7 +68,27 @@ pub async fn run(args: &GetArgs, target: &Target) -> Result<Report, Stop> {
     let Wanted { kind, name, wide } = wanted(args)?;
     let namespace = args.namespace.as_deref().filter(|_| kind.namespaced);
     let selector = name.as_ref().map(|name| format!("metadata.name={name}"));
-    let result = list(target, &kind, namespace, selector.as_deref(), wide).await;
+    // A pod on a node that is not ready warns, as in the pods list; the
+    // nodes are read for that alone, and a node list that fails changes nothing.
+    let (result, nodes) = if kind.is_pod() {
+        let nodes_kind = find_kind("nodes").expect("a built-in kind");
+        let (result, nodes) = futures::join!(
+            list(target, &kind, namespace, selector.as_deref(), wide),
+            list(target, &nodes_kind, None, None, false)
+        );
+        (result, nodes.ok())
+    } else {
+        (
+            list(target, &kind, namespace, selector.as_deref(), wide).await,
+            None,
+        )
+    };
+    let result = result.map(|mut listing| {
+        if let Some(nodes) = &nodes {
+            listing.note_nodes(&nodes.not_ready_nodes());
+        }
+        listing
+    });
     let mut json = Map::new();
     json.insert(
         "kind".into(),
@@ -80,17 +100,27 @@ pub async fn run(args: &GetArgs, target: &Target) -> Result<Report, Stop> {
         Ok(listing) => {
             json.insert("columns".into(), json!(listing.columns));
             json.insert("items".into(), Value::Array(items(&kind, &listing)));
-            if name.is_some() && listing.rows.is_empty() {
-                findings.failed = true;
-                json.insert("problems".into(), json!([]));
-                format!(
-                    "not found: {} \"{}\"\n",
-                    kind.key(),
-                    name.unwrap_or_default()
-                )
-            } else {
-                json.insert("problems".into(), json!([]));
-                table(&kind, &listing, namespace)
+            match name.as_ref().filter(|_| listing.rows.is_empty()) {
+                Some(name) => {
+                    let problem = Problem {
+                        class: Class::NotFound,
+                        read: Box::new(Read {
+                            verb: "get",
+                            kind: kind.key(),
+                            namespaced: kind.namespaced,
+                            namespace: namespace.map(str::to_owned),
+                            context: target.context.clone(),
+                        }),
+                        message: format!("{} \"{name}\" not found", kind.key()),
+                    };
+                    findings = problem.findings();
+                    json.insert("problems".into(), json!([problem.json()]));
+                    format!("{}\n", problem.sentence())
+                }
+                None => {
+                    json.insert("problems".into(), json!([]));
+                    table(&kind, &listing, namespace)
+                }
             }
         }
         Err(problem) => {

@@ -2,6 +2,7 @@
 //! page shows, with what to do about each failure.
 
 use freshkube_core::resources::{ResourceKind, StatusTone, find_kind};
+use futures::future::join_all;
 use serde_json::{Map, Value, json};
 
 use crate::Report;
@@ -123,50 +124,71 @@ struct Outcome {
 }
 
 pub async fn run(args: &CheckArgs, target: &Target) -> Result<Report, Stop> {
-    let mut outcomes = Vec::new();
-    for spec in &SPECS {
+    // All the reads go out together, so a hung cluster costs one deadline.
+    let reads = SPECS.iter().map(|spec| async {
         let kind = find_kind(spec.kind).expect("a built-in kind");
         let namespace = args.namespace.as_deref().filter(|_| kind.namespaced);
-        let result = list(target, &kind, namespace, None, false)
-            .await
-            .map(|listing| {
-                let judged: Vec<_> = listing
-                    .rows
-                    .iter()
-                    .map(|row| {
-                        let (severity, fix) = (spec.judge)(row);
-                        (row.clone(), severity, fix)
-                    })
-                    .collect();
-                (listing, judged)
-            });
-        let (state, severity) = match &result {
-            Ok((_, judged)) => {
-                let worst = judged
-                    .iter()
-                    .map(|(_, severity, _)| *severity)
-                    .max()
-                    .unwrap_or(Severity::Pass);
-                (worst.word().to_owned(), Some(worst))
-            }
-            Err(problem) => (
-                match problem.class {
-                    Class::Failed => "fail".to_owned(),
-                    other => other.word().to_owned(),
-                },
-                None,
-            ),
-        };
-        outcomes.push(Outcome {
-            id: spec.id,
-            title: spec.title,
-            kind,
-            result,
-            state,
-            severity,
-        });
+        let listed = list(target, &kind, namespace, None, false).await;
+        (kind, listed)
+    });
+    let mut listed = join_all(reads).await;
+    // A pod on a node that is not ready warns, as in the pods list.
+    let not_ready = listed
+        .iter()
+        .find(|(kind, _)| kind.key() == "nodes")
+        .and_then(|(_, result)| result.as_ref().ok())
+        .map(|listing| listing.not_ready_nodes())
+        .unwrap_or_default();
+    for (kind, result) in &mut listed {
+        if let (true, Ok(listing)) = (kind.is_pod(), result) {
+            listing.note_nodes(&not_ready);
+        }
     }
+    let outcomes = SPECS
+        .iter()
+        .zip(listed)
+        .map(|(spec, (kind, result))| outcome(spec, kind, result))
+        .collect();
     Ok(report(args, outcomes))
+}
+
+fn outcome(spec: &Spec, kind: ResourceKind, result: Result<Listing, Problem>) -> Outcome {
+    let result = result.map(|listing| {
+        let judged: Vec<_> = listing
+            .rows
+            .iter()
+            .map(|row| {
+                let (severity, fix) = (spec.judge)(row);
+                (row.clone(), severity, fix)
+            })
+            .collect();
+        (listing, judged)
+    });
+    let (state, severity) = match &result {
+        Ok((_, judged)) => {
+            let worst = judged
+                .iter()
+                .map(|(_, severity, _)| *severity)
+                .max()
+                .unwrap_or(Severity::Pass);
+            (worst.word().to_owned(), Some(worst))
+        }
+        Err(problem) => (
+            match problem.class {
+                Class::Failed | Class::NotFound => "fail".to_owned(),
+                other => other.word().to_owned(),
+            },
+            None,
+        ),
+    };
+    Outcome {
+        id: spec.id,
+        title: spec.title,
+        kind,
+        result,
+        state,
+        severity,
+    }
 }
 
 fn report(args: &CheckArgs, outcomes: Vec<Outcome>) -> Report {
@@ -255,7 +277,7 @@ fn describe(outcome: &Outcome) -> (&'static str, String, Vec<Value>, Option<Prob
         Err(problem) => {
             let glyph = match problem.class {
                 Class::Unknown => "?",
-                Class::Refused | Class::SignIn | Class::Failed => "x",
+                Class::Refused | Class::SignIn | Class::Failed | Class::NotFound => "x",
             };
             (
                 glyph,

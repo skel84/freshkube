@@ -12,11 +12,11 @@ freshkube-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 freshkube-core = { workspace = true, features = ["testing"] }
 tempfile = "3"
 kube.workspace = true
-futures.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

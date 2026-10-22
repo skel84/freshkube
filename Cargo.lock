@@ -2418,6 +2418,7 @@ dependencies = [
  "freshkube-desktop",
  "freshkube-probe",
  "rust-embed",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

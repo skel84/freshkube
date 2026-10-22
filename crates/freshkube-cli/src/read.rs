@@ -5,7 +5,12 @@ use std::time::Duration;
 
 use freshkube_core::constants::SCREEN_DEADLINE;
 use freshkube_core::failure::{Failure, FailureKind};
-use freshkube_core::resources::{ResourceKind, StatusTone, Table, list_table, row_tone};
+use std::collections::HashSet;
+
+use freshkube_core::resources::{
+    PodState, PodVerdict, ResourceKind, StatusTone, Table, list_table, pod_state, pod_verdict,
+    row_tone,
+};
 use serde_json::{Value, json};
 
 use crate::cluster::Target;
@@ -15,6 +20,8 @@ use crate::exit::Findings;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Class {
     Failed,
+    /// A named object that is not there.
+    NotFound,
     Refused,
     SignIn,
     Unknown,
@@ -33,6 +40,7 @@ impl Class {
     pub fn word(self) -> &'static str {
         match self {
             Class::Failed => "failed",
+            Class::NotFound => "not-found",
             Class::Refused => "refused",
             Class::SignIn => "sign-in",
             Class::Unknown => "unknown",
@@ -61,7 +69,7 @@ impl Problem {
     pub fn findings(&self) -> Findings {
         let mut findings = Findings::default();
         match self.class {
-            Class::Failed => findings.failed = true,
+            Class::Failed | Class::NotFound => findings.failed = true,
             Class::Refused => findings.refused = true,
             Class::SignIn => findings.sign_in = true,
             Class::Unknown => findings.unknown = true,
@@ -107,6 +115,39 @@ pub struct Row {
     pub name: String,
     pub cells: Vec<String>,
     pub tone: Option<(StatusTone, String)>,
+    /// A pod's own state, which the page draws its glyph from too.
+    pub pod: Option<PodInfo>,
+}
+
+/// What a pod's verdict is worked out from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PodInfo {
+    pub state: PodState,
+    pub status: String,
+    pub ready: String,
+    pub node: String,
+}
+
+impl PodInfo {
+    /// The pod's tone and reason, as the pods list draws them. A pod on a
+    /// node that is not ready warns, unless it is failing anyway.
+    pub fn tone(&self, node_ready: bool) -> (StatusTone, String) {
+        let verdict = pod_verdict(self.state, &self.status, node_ready);
+        let tone = match verdict {
+            PodVerdict::Good => StatusTone::Success,
+            PodVerdict::Warn => StatusTone::Warning,
+            PodVerdict::Crit | PodVerdict::Died => StatusTone::Danger,
+            PodVerdict::Unknown => StatusTone::Neutral,
+        };
+        let reason = match (self.state, node_ready) {
+            (PodState::NotReady, _) => format!("Running · {} ready", self.ready),
+            (_, false) if verdict == PodVerdict::Warn => {
+                format!("{} · its node isn't ready", self.status)
+            }
+            _ => self.status.clone(),
+        };
+        (tone, reason)
+    }
 }
 
 impl Row {
@@ -182,47 +223,73 @@ pub fn listing(kind: &ResourceKind, table: Table, wide: bool) -> Listing {
             let namespace = metadata
                 .and_then(|m| m.namespace.clone())
                 .filter(|namespace| !namespace.is_empty());
-            let tone = row_tone(&columns, &cells).map(|found| {
-                if kind.is_pod() {
-                    pod_tone(&columns, &cells, found)
+            let pod = kind.is_pod().then(|| {
+                let cell = |wanted: &str| {
+                    columns
+                        .iter()
+                        .position(|name| name.eq_ignore_ascii_case(wanted))
+                        .and_then(|ix| cells.get(ix))
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                let facts = row.pod().unwrap_or_default();
+                let terminating = metadata.is_some_and(|m| m.deletion_timestamp.is_some());
+                let status = match cell("Status") {
+                    status if !status.is_empty() => status,
+                    _ if terminating => "Terminating".to_owned(),
+                    _ => facts.phase.clone(),
+                };
+                let ready = cell("Ready");
+                let state = if terminating {
+                    PodState::Terminating
                 } else {
-                    found
+                    pod_state(&status, &ready)
+                };
+                PodInfo {
+                    state,
+                    status,
+                    ready,
+                    node: facts.node,
                 }
             });
+            let tone = match &pod {
+                Some(pod) => Some(pod.tone(true)),
+                None => row_tone(&columns, &cells),
+            };
             Row {
                 namespace,
                 name,
                 cells,
                 tone,
+                pod,
             }
         })
         .collect();
     Listing { columns, rows }
 }
 
-fn pod_tone(
-    columns: &[String],
-    cells: &[String],
-    (tone, label): (StatusTone, String),
-) -> (StatusTone, String) {
-    if tone != StatusTone::Success || label != "Running" {
-        return (tone, label);
+impl Listing {
+    /// The names of the nodes this listing says are not ready.
+    pub fn not_ready_nodes(&self) -> HashSet<String> {
+        self.rows
+            .iter()
+            .filter(|row| {
+                row.tone
+                    .as_ref()
+                    .is_some_and(|(_, reason)| reason.starts_with("NotReady"))
+            })
+            .map(|row| row.name.clone())
+            .collect()
     }
-    let ready = columns
-        .iter()
-        .position(|name| name.eq_ignore_ascii_case("ready"))
-        .and_then(|ix| cells.get(ix))
-        .and_then(|text| freshkube_core::resources::ready_tone(text));
-    match ready {
-        Some(StatusTone::Success) | None => (tone, label),
-        Some(not_ready) => (
-            if not_ready == StatusTone::Danger {
-                StatusTone::Warning
-            } else {
-                not_ready
-            },
-            "Running, not ready".to_owned(),
-        ),
+
+    /// Redraws the pods' tones knowing which nodes are not ready.
+    pub fn note_nodes(&mut self, not_ready: &HashSet<String>) {
+        for row in &mut self.rows {
+            if let Some(pod) = &row.pod {
+                let node_ready = pod.node.is_empty() || !not_ready.contains(&pod.node);
+                row.tone = Some(pod.tone(node_ready));
+            }
+        }
     }
 }
 
