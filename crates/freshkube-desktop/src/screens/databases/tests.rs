@@ -1206,55 +1206,63 @@ fn kept_rows_say_so_in_the_row_and_the_inspector() {
 
 #[gpui_kit::test]
 fn the_stacked_inspector_stays_reachable_under_a_long_coverage_banner(cx: &mut TestAppContext) {
-    // The shell applies the text size to the window; a bare page does not.
-    let (_runtime, window, pilot) = crate::desktop::tests::fixture(cx, 760., 560.);
-    cx.update_window(window, |_, window, cx| {
-        crate::text_size::set(20., cx);
-        window.press("secondary-shift-d", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    let page = cx.read(|cx| pilot.read(cx).databases());
-    cx.update_window(window, |_, window, cx| {
-        page.update(cx, |page, cx| {
-            page.shape = "engine-refused".into();
-            page.loader.reset();
-            page.read(cx);
-        });
-        window.render_frame(cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(window, |_, window, cx| {
-        window.render_frame(cx);
-        let id = row_id(&page, "ledger-db", cx);
-        window.click(id, cx);
-        window.render_frame(cx);
-        assert_eq!(window.rem_size(), px(20.));
-        let banner = window.find("databases-notices").bounds();
-        let before = window.find("databases-detail").bounds().origin.y;
-        window.scroll(
-            "databases-notices",
-            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-300.))),
-            cx,
-        );
-        window.render_frame(cx);
-        let after = window.find("databases-detail").bounds().origin.y;
-        assert!(
-            after < before,
-            "the page scrolls to the Inspector: {before:?} then {after:?}"
-        );
-        let inspector = window.find("databases-detail").bounds();
-        assert!(
-            banner.size.height <= px(72. * 20. / 13.) + px(1.),
-            "banner {banner:?}"
-        );
-        // The split keeps its least height and the page scrolls instead.
-        let least = px(freshkube_ui::inspector::MIN_HEIGHT * 20. / 13.) - px(1.);
-        assert!(
-            inspector.size.height >= least,
-            "the Inspector was squeezed: {inspector:?} (banner {banner:?})"
-        );
-    })
-    .unwrap();
+    for shape in ["stale", "engine-refused"] {
+        // The shell applies the text size to the window; a bare page does not.
+        let (_runtime, window, pilot) = crate::desktop::tests::fixture(cx, 760., 560.);
+        cx.update_window(window, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            window.press("secondary-shift-d", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let page = cx.read(|cx| pilot.read(cx).databases());
+        cx.update_window(window, |_, window, cx| {
+            page.update(cx, |page, cx| {
+                page.shape = shape.into();
+                page.loader.reset();
+                page.read(cx);
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let id = page.read(cx).display.rows[0].id.clone();
+            window.click(id, cx);
+            window.render_frame(cx);
+            assert_eq!(window.rem_size(), px(20.));
+            let banner = window.find("databases-notices").bounds();
+            assert!(
+                banner.size.height <= px(72. * 20. / 13.) + px(1.),
+                "{shape}: banner {banner:?}"
+            );
+            let before = window.find("databases-detail").bounds().origin.y;
+            window.scroll(
+                "databases-notices",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-2000.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let inspector = window.find("databases-detail").bounds();
+            assert!(
+                inspector.origin.y < before,
+                "{shape}: the page scrolls to the Inspector: {before:?} then {:?}",
+                inspector.origin.y
+            );
+            // The split keeps its least height and the page scrolls instead.
+            let least = px(freshkube_ui::inspector::MIN_HEIGHT * 20. / 13.) - px(1.);
+            assert!(
+                inspector.size.height >= least,
+                "{shape}: the Inspector was squeezed: {inspector:?}"
+            );
+            // The first thing under the heading comes fully into view.
+            let verdict = window.find("databases-detail-verdict").bounds();
+            assert!(
+                verdict.top() >= px(0.) && verdict.bottom() <= px(560.),
+                "{shape}: the verdict is out of the window: {verdict:?}"
+            );
+        })
+        .unwrap();
+    }
 }

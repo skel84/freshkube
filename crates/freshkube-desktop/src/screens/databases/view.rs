@@ -353,6 +353,10 @@ impl Render for DatabasesScreen {
                         // the Inspector their room in a short window.
                         this.child(
                             page::inset()
+                                // A bottom edge, so a clipped banner reads as
+                                // scrollable, not cut off by the table.
+                                .border_b_1()
+                                .border_color(palette(cx).line)
                                 .max_h(dp(72.))
                                 .id("databases-notices")
                                 .test_support()
