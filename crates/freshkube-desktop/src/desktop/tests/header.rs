@@ -322,3 +322,30 @@ fn header_at_548_dp_shrinks_the_search_field_before_anything_overlaps(cx: &mut T
     })
     .unwrap();
 }
+
+/// At 760 px and text size 13 the switcher's side needs more than half of
+/// what the search leaves, so the search shrinks around the window's middle
+/// instead of sliding right: narrower than 320 dp, no narrower than 200, and
+/// centred.
+#[gpui_kit::test]
+fn a_wide_switcher_shrinks_the_search_around_the_middle_at_760(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let dp = |n| crate::ui::dp_px(n, window);
+        let search = window.find("search-everything").bounds();
+        assert!(
+            search.size.width < dp(320.) - px(1.) && search.size.width >= dp(200.) - px(0.5),
+            "search is {:?} wide",
+            search.size.width
+        );
+        assert!(
+            (search.center().x - px(760.) / 2.).abs() < dp(1.5),
+            "search is centred at {:?}",
+            search.center().x
+        );
+        assert!(window.find("context-switcher").bounds().right() <= search.left());
+        assert!(search.right() <= window.find("refresh").bounds().left());
+    })
+    .unwrap();
+}

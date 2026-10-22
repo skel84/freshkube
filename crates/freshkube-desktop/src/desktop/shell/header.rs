@@ -15,6 +15,18 @@ const SEARCH_KEY: &str = match Platform::current() {
 /// switcher keeps its glyph and leaves the word to the tooltip.
 const LEVEL_WORD_MIN_WIDTH: f32 = 900.;
 
+/// Below this window width, in dp, the switcher is a fixed width of
+/// [`SWITCHER_WIDTH`], its name cut to fit, so the room the left side needs
+/// is known and the search can stay centred.
+const SWITCHER_FIXED_BELOW: f32 = 1000.;
+
+/// The switcher's width, in dp, in a window under [`SWITCHER_FIXED_BELOW`].
+const SWITCHER_WIDTH: f32 = 180.;
+
+/// The least width of the search field, in dp, before it moves off centre
+/// to leave room to the sides.
+const SEARCH_FIELD_LEAST_WIDTH: f32 = 200.;
+
 /// Search everything's width, in dp, when the header has the room.
 const SEARCH_FIELD_WIDTH: f32 = 320.;
 
@@ -35,6 +47,47 @@ impl Pilot {
         // size in points.
         let insets = freshkube_ui::platform::header_insets_in(window);
         let centring = freshkube_ui::platform::centring_padding(insets, window.rem_size());
+        let one_dp = ui::dp_px(1., window);
+        let narrow_search = width < SEARCH_FIELD_MIN_WIDTH;
+        let fixed_switcher = width < SWITCHER_FIXED_BELOW;
+        // What the sides need is known because the switcher is a fixed width
+        // where the room is short: the app menu's button, the switcher, and
+        // on the other side the controls that are shown.
+        let menu_width =
+            if self.chrome.menu_platform.app_menu() == freshkube_ui::platform::AppMenu::Button {
+                24. + if minimal { 6. } else { 8. }
+            } else {
+                0.
+            };
+        let leading_need = menu_width
+            + if fixed_switcher {
+                SWITCHER_WIDTH
+            } else {
+                f32::INFINITY
+            };
+        let trailing_need = if minimal {
+            24.
+        } else {
+            APP_HEADER_CONTROL + 24. + 24. + 12.
+        };
+        let row = freshkube_ui::platform::HeaderRow {
+            bar: (window.viewport_size().width
+                - insets.leading.to_pixels(px(0.).into(), window.rem_size())
+                - insets.controls
+                - insets.trailing.to_pixels(px(0.).into(), window.rem_size()))
+                / one_dp,
+            leading: leading_need,
+            trailing: trailing_need,
+            leading_pad: centring.leading_side / one_dp,
+            trailing_pad: centring.trailing_side / one_dp,
+            gap: 6.,
+            search_least: if narrow_search {
+                APP_HEADER_CONTROL
+            } else {
+                SEARCH_FIELD_LEAST_WIDTH
+            },
+        };
+        let share = row.centred_share();
         // Three parts on a row: the sides share what the search leaves, so
         // the search sits in the middle. Each side pads its inner edge so the
         // two differ by as much as the window's edges do, and the search is
@@ -54,10 +107,17 @@ impl Pilot {
                     .child(
                         h_flex()
                             .flex_1()
+                            .when_some(share, |this, share| {
+                                this.min_w(one_dp * share + centring.leading_side)
+                            })
                             .pr(centring.leading_side)
                             .gap(dp(if minimal { 6. } else { 8. }))
                             .children(self.render_menu_button(cx))
-                            .child(self.render_context_switcher(minimal, glyph_only_level, cx))
+                            .child(self.render_context_switcher(
+                                fixed_switcher,
+                                glyph_only_level,
+                                cx,
+                            ))
                             .child(
                                 div()
                                     .absolute()
@@ -72,6 +132,9 @@ impl Pilot {
                         h_flex()
                             .flex_1()
                             .justify_end()
+                            .when_some(share, |this, share| {
+                                this.min_w(one_dp * share + centring.trailing_side)
+                            })
                             .pl(centring.trailing_side)
                             .gap(dp(6.))
                             .when(!minimal, |this| {
@@ -185,7 +248,7 @@ impl Pilot {
             .trigger(
                 Button::new("context-switcher")
                     .ghost()
-                    .when(compact, |button| button.max_w(dp(180.)))
+                    .when(compact, |button| button.w(dp(SWITCHER_WIDTH)))
                     .h(dp(APP_HEADER_CONTROL))
                     .pl(dp(4.))
                     .pr(dp(8.))
@@ -331,7 +394,7 @@ impl Pilot {
                 // A basis, not a width: a width counts whole towards the
                 // bar's minimum, so the bar would outgrow a narrow window.
                 this.flex_basis(dp(SEARCH_FIELD_WIDTH))
-                    .min_w(dp(APP_HEADER_CONTROL))
+                    .min_w(dp(SEARCH_FIELD_LEAST_WIDTH))
                     .flex_grow_0()
                     .flex_shrink_1()
                     .px(dp(10.))

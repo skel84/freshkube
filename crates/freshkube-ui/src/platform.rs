@@ -251,6 +251,47 @@ pub struct HeaderInsets {
     pub controls: Pixels,
 }
 
+/// What the header's row is made of, in dp.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeaderRow {
+    /// Between the leading inset and the trailing controls less the
+    /// trailing inset: the room the three parts share.
+    pub bar: f32,
+    /// What the leading side's content needs.
+    pub leading: f32,
+    /// What the trailing side's content needs.
+    pub trailing: f32,
+    /// The inner-edge paddings from `platform::centring_padding`.
+    pub leading_pad: f32,
+    pub trailing_pad: f32,
+    /// Between the three parts.
+    pub gap: f32,
+    /// The least the search may shrink to.
+    pub search_least: f32,
+}
+
+impl HeaderRow {
+    /// The width each side's content box must at least keep so that the
+    /// search is centred on the window, or `None` when the sides need so
+    /// much that even the search at its least width would not be: then it
+    /// moves right of the middle rather than shrink further. Both sides keep
+    /// this much, so the search takes what remains: the bar less twice the
+    /// share, the paddings and the gaps. Its centre is the window's middle
+    /// whatever the paddings, since they differ by what the window's edges
+    /// take (`platform::centring_padding`).
+    pub fn centred_share(self) -> Option<f32> {
+        let share = self.leading.max(self.trailing);
+        let used = 2. * share + self.leading_pad + self.trailing_pad + 2. * self.gap;
+        (used + self.search_least <= self.bar).then_some(share)
+    }
+
+    /// The search's width then: the room left, up to its own width.
+    pub fn centred_search(self, share: f32, widest: f32) -> f32 {
+        let room = self.bar - 2. * share - self.leading_pad - self.trailing_pad - 2. * self.gap;
+        room.min(widest)
+    }
+}
+
 /// One of Kit's caption buttons is as wide as its title bar is high, in
 /// pixels whatever the text size.
 const CAPTION_BUTTON_WIDTH: f32 = 34.;
@@ -570,6 +611,50 @@ mod tests {
         assert_eq!(Platform::Windows.header_insets().controls, px(102.));
         assert_eq!(Platform::MacOs.header_insets().controls, px(0.));
         assert_eq!(Platform::Linux.header_insets().controls, px(0.));
+    }
+
+    fn row(leading: f32, trailing: f32, leading_pad: f32, trailing_pad: f32) -> HeaderRow {
+        HeaderRow {
+            bar: 736.,
+            leading,
+            trailing,
+            leading_pad,
+            trailing_pad,
+            gap: 6.,
+            search_least: 200.,
+        }
+    }
+
+    /// A leading side wider than half of what the search leaves makes the
+    /// search shrink around the middle, not slide: both sides keep the
+    /// wider one's share.
+    #[test]
+    fn a_wide_leading_side_shrinks_the_search_around_the_middle() {
+        let row = row(212., 88., 12., 12.);
+        let share = row.centred_share().expect("there is room to centre");
+        assert_eq!(share, 212.);
+        let width = row.centred_search(share, 320.);
+        assert_eq!(width, 736. - 424. - 24. - 12.);
+        assert!((200. ..320.).contains(&width));
+    }
+
+    /// With room to spare the search keeps its own width.
+    #[test]
+    fn a_narrow_leading_side_leaves_the_search_its_width() {
+        let row = row(100., 88., 12., 12.);
+        let share = row.centred_share().unwrap();
+        assert_eq!(row.centred_search(share, 320.), 320.);
+    }
+
+    /// Past its least width the search moves rather than shrink: there is
+    /// no share to keep, and the sides keep their content's width.
+    #[test]
+    fn past_its_least_width_the_search_gives_up_the_middle() {
+        assert_eq!(row(300., 88., 12., 12.).centred_share(), None);
+        // The edges count: the same sides with unequal paddings (macOS's
+        // traffic lights, Windows' caption buttons) need more room.
+        assert!(row(212., 88., 12., 12.).centred_share().is_some());
+        assert_eq!(row(212., 88., 114., 80.).centred_share(), None);
     }
 
     /// Every key the module names parses, and each platform's keys and
