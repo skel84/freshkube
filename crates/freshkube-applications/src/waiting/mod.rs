@@ -245,12 +245,6 @@ impl WaitingPage {
         }
     }
 
-    /// GitHub's client the page reads through, for tests.
-    #[cfg(test)]
-    pub(crate) fn github(&self) -> Option<&freshkube_delivery::github::Handle> {
-        self.across.github.as_ref()
-    }
-
     pub(crate) fn set_setup_problem(
         &mut self,
         problem: Option<SharedString>,

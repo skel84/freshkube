@@ -498,7 +498,7 @@ fn finals<'a>(stages: &[&'a Stage]) -> Vec<&'a Stage> {
         .filter(|stage| {
             !stages
                 .iter()
-                .any(|other| other.upstream.iter().any(|name| *name == stage.name))
+                .any(|other| other.upstream.contains(&stage.name))
         })
         .collect()
 }

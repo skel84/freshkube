@@ -216,7 +216,7 @@ impl Display {
                 if found.is_empty() {
                     continue;
                 }
-                let group = self.group_of(app, Fold::Waiting, found.len(), true);
+                let group = self.group_of(app, Fold::Waiting, found.len());
                 for freight in found {
                     self.push_found(waiting, ix, app, freight, group, now);
                 }
@@ -226,7 +226,7 @@ impl Display {
         for (ix, app) in waiting.apps.iter().enumerate() {
             match app.fold() {
                 Fold::Waiting => {
-                    let group = self.group_of(app, Fold::Waiting, app.items.len(), false);
+                    let group = self.group_of(app, Fold::Waiting, app.items.len());
                     for item in 0..app.items.len() {
                         self.push_item(waiting, ix, item, group, now);
                     }
@@ -266,25 +266,19 @@ impl Display {
     }
 
     /// An application's own group: its name, and its gap to production.
-    fn group_of(&mut self, app: &App, fold: Fold, rows: usize, searching: bool) -> usize {
+    fn group_of(&mut self, app: &App, fold: Fold, rows: usize) -> usize {
         let behind = app.gap().map(|gap| {
             format!(
-                "{} {} ahead of {}{}",
+                "{} Freight ahead of {}{}",
                 gap.ahead.len(),
-                if gap.ahead.len() == 1 {
-                    "Freight"
-                } else {
-                    "Freight"
-                },
                 gap.stage,
                 if gap.at_least { " or more" } else { "" },
             )
         });
-        let detail = match (&app.state, searching) {
-            (State::Waiting, false) => behind.into_iter().collect(),
-            (State::Waiting, true) => behind.into_iter().collect(),
-            (State::CaughtUp, _) => vec!["caught up".to_owned()],
-            (State::NotRead { .. }, _) => vec!["not read".to_owned()],
+        let detail = match &app.state {
+            State::Waiting => behind.into_iter().collect(),
+            State::CaughtUp => vec!["caught up".to_owned()],
+            State::NotRead { .. } => vec!["not read".to_owned()],
         };
         let tone = match app.state {
             State::Waiting => Tone::Waiting,
@@ -667,14 +661,14 @@ fn production_lines(app: &App) -> Vec<SharedString> {
     for gap in &app.finals {
         lines.push(
             format!(
-                "{} runs {}; {} ahead{}",
+                "{} runs {}; {} Freight ahead{}",
                 gap.stage,
                 if gap.runs.is_empty() {
                     "nothing".to_owned()
                 } else {
                     gap.runs.join(", ")
                 },
-                plural(gap.ahead.len(), "Freight", "Freight"),
+                gap.ahead.len(),
                 if gap.at_least {
                     " (at least: what it runs isn't among those read)"
                 } else {
@@ -702,10 +696,10 @@ fn ship_lines(app: &App) -> Vec<SharedString> {
         .iter()
         .map(|gap| match &gap.next {
             Some(next) => format!(
-                "{}: {} brings {}",
+                "{}: {} brings {} Freight",
                 gap.stage,
                 next.freight,
-                plural(next.brings.len(), "Freight", "Freight")
+                next.brings.len()
             ),
             None if gap.ahead.is_empty() => format!("{}: nothing, it is caught up", gap.stage),
             None => format!(
