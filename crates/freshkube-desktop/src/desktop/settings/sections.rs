@@ -20,6 +20,8 @@ pub(crate) enum SettingsSection {
     Connection,
     Monitoring,
     Coroot,
+    /// What the app wrote to clusters, with Operations' log beside it.
+    AuditLog,
     /// The workspace's clusters; `settings` opens it.
     #[default]
     Clusters,
@@ -52,6 +54,7 @@ impl SettingsSection {
                 Self::Connection,
                 Self::Monitoring,
                 Self::Coroot,
+                Self::AuditLog,
             ],
         ),
         (
@@ -66,6 +69,7 @@ impl SettingsSection {
             Self::Connection => "connection",
             Self::Monitoring => "monitoring",
             Self::Coroot => "coroot",
+            Self::AuditLog => "audit-log",
             Self::Clusters => "clusters",
             Self::Destinations => "destinations",
             Self::Sources => "sources",
@@ -78,6 +82,7 @@ impl SettingsSection {
             Self::Connection => "Connection",
             Self::Monitoring => "Monitoring",
             Self::Coroot => "Coroot",
+            Self::AuditLog => "Audit log",
             Self::Clusters => "Clusters",
             Self::Destinations => "Argo CD destinations",
             Self::Sources => "Delivery sources",
@@ -90,6 +95,7 @@ impl SettingsSection {
             Self::Connection => IconName::KeyRound,
             Self::Monitoring => IconName::ChartLine,
             Self::Coroot => IconName::Radar,
+            Self::AuditLog => IconName::ScrollText,
             Self::Clusters => IconName::Server,
             Self::Destinations => IconName::Waypoints,
             Self::Sources => IconName::Database,

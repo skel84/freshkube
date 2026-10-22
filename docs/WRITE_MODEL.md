@@ -4,7 +4,7 @@ How Freshkube decides what a person may change in a cluster, and what it asks fi
 
 ## What is enforced today
 
-Nothing in the app changes a Kubernetes object yet, so there is no tier to apply to one. What the level does today:
+The framework that sends changes to Kubernetes objects exists ([How a write goes](#how-a-write-goes-853)), but no page offers an action through it yet, so no tier applies to a real object. What the level does today:
 
 | Writer | `read-only` | `protected`, `guarded`, `open` |
 |--------|-------------|--------------------------------|
@@ -73,21 +73,41 @@ The tag always has its glyph and its word, so it is never colour alone, and it d
 
 ## How a write goes (#853)
 
-For the changes to Kubernetes objects that [#853](https://github.com/skel84/freshkube/issues/853) adds, core's `write` module is the one path:
+For the changes to Kubernetes objects that [#853](https://github.com/skel84/freshkube/issues/853) adds, core's `write` module (`crates/freshkube-core/src/write/`) is the one path, and it has no UI types. The tier and the level decide what is asked there (`requirement`, `Dialog::for_verdict`); a page describes an action and draws the answer.
 
-1. The action describes itself: its tier, the objects, how its outcome is observed.
-2. Preflight: the access review, the UID and resourceVersion the user saw, and for a spec change a server-side dry run with its diff.
-3. The level's requirement is met (the typed name, the confirmation, the preview, the cancel window).
-4. The `sending` line goes into the audit log. If it can't be written, nothing is sent.
-5. Server-side apply with field manager `freshkube` and no forced takeover, or a patch where apply doesn't fit. A conflict is shown, not overridden.
-6. The API accepting the write is shown apart from the cluster reaching the new state. An outcome never observed says so after a bounded wait of 30 s; it never claims success.
-7. Undo, for a reversible action, for 30 s, through the same path and audited as its own write.
+1. **The action describes itself** (`ActionDescription`): its tier, a verb and a sentence, and for each object (`ObjectChange`) the target as the person saw it (group, resource, namespace, name, UID, resourceVersion), what is sent (`Change::Apply`, `MergePatch` or `Delete`), how the outcome is observed (`Observation`) and, for a reversible action, the way back (`Inverse`).
+2. **Preflight** (`Runner::preflight`), none of it skippable at any level, none of it writing: the level's block (no request at all under `read-only`), then for each object a `SelfSubjectAccessReview`, a read that the UID and resourceVersion are still the ones the person saw, and a server-side dry run, whose reply is diffed against the object as it is. The diff is changed field paths and their kinds (added, changed, removed) and **never a value, for every kind**: an `env[].value`, a ConfigMap holding credentials, a custom resource's token and the `last-applied-configuration` annotation are as secret as a Secret. A refused review, a changed object, a dry run the cluster refuses and a server-side apply conflict each block, with a reason. Error text from the cluster is shown with the values it echoes (`Invalid value: "…"`) removed. A session action (exec, port forwarding) is refused here: those keep their own owners.
+3. **The level's requirement is met** (`Requirement`, which is the table above as a function and is tested against it): nothing (`open`, reversible; the toast says it was sent without asking because the cluster is open), a confirmation, the typed name (pasting is allowed, since it is about attention; for several objects the entry's id, typed once), the diff, the impact list, and for a destructive action a 5 s cancel window run by the runner, with Cancel in the dialog where the confirm was.
+4. **The `sending` line goes into the audit log.** If it can't be written, nothing is sent.
+5. **Server-side apply** with field manager `freshkube` and never `force`, a merge patch where apply doesn't fit (a subresource such as `scale`), or a delete with the UID and resourceVersion as preconditions. The resourceVersion the person saw is in the body, so the server itself refuses a write to an object that moved after preflight. A conflict (409) is shown with the field manager and the fields, never retried, and says the rest of the write was not sent; "Changed since you opened it" offers only "Review the new version", which re-bases on the object as it is and runs the dry run again, never "send anyway". Objects are sent in order and the first failure stops the rest.
+6. **Accepted is not observed.** The API accepting the write (`Accepted`) is shown apart from the cluster reaching the state (`Observed::Reached`). The runner looks for 30 s (2 min at most); a timeout says "not seen to take effect" and an object that is no longer the one written says so. Neither is success, and both, like Unknown, stay in the toast until closed. Only an observed success may go away by itself, and a toast with Undo stays while Undo is offered.
+7. **Undo** for a reversible action, for 30 s, with the time left on the button. Its way back is worked out from the object preflight read (so after "Review the new version" it is worked out again from the new version, never kept from the old), and it is a write like any other at its level: the same preflight and runner, audited as its own write, and the same requirement, so a protected cluster asks for the name and a guarded one for a confirmation. A guard that cannot be checked counts as not holding. It is not sent if someone else has written the fields it would put back; the toast then says who (`Can't undo: Deployment/web was changed by hpa since.`). The button is replaced by the reason, never just dropped. `read-only` blocks Undo.
 
-A submitted write outlives its page, is never replayed (after a transport error with no answer its result is "unknown", and nothing is resent) and is counted once.
+**The level is the strictest that applies.** An action may name a destination cluster (`ActionDescription::destination`); it is held to the stricter of that and the cluster its objects are in. The runner follows the cluster's level live (`LevelCell`) and reads it again just before the send: if it got stricter since the dialog opened, nothing is sent, the dialog is shown again under the new requirement, and the audit line records the level at send time.
+
+A submitted write outlives its page, is never replayed (after a transport error with no answer its result is "unknown", and nothing is resent) and is counted once ([STATE_LIFETIMES.md](STATE_LIFETIMES.md#kubernetes-writes)).
+
+### The dialog at each level
+
+| State | Shown | Offers |
+|-------|-------|--------|
+| `read-only` (any tier) | the reason, "This cluster is read-only." | Close; nothing is sent, no request is made |
+| `open`, reversible | no dialog | the toast says nothing was asked because the cluster is open, with Undo |
+| `guarded`, reversible | the sentence | confirm, Cancel |
+| `protected`, any confirming tier, and Undo | the sentence and a field for the name | confirm, enabled only when the name matches exactly |
+| spec change | the dry run's changed paths | confirm, Cancel |
+| destructive | the impact list; after confirming, the 5 s countdown | Cancel in the confirm's place |
+| changed since opened | what moved | "Review the new version" only (nothing when the object is gone or is a different one) |
+| apply conflict | the manager and the fields | Close; no force |
+| refused access, dry run or answer | the reason | Close |
 
 ### The audit log
 
-One JSON object per line in `<preferences>/audit/writes.jsonl`: when, the entry and context, the actor, the action and tier, the level at that moment, the objects, a summary of the request, the phase and the result. It holds field paths, never values, and no credentials or Secret values. It rotates at 5 MiB and keeps three older files. Talos Operations keep their own audit file.
+One JSON object per line in `<preferences>/audit/writes.jsonl` (schema 1, mode 0600): `at`, `run`, `entry` and `context`, `actor`, `action`, `tier`, `protection` at that moment, `objects` (group, resource, namespace, name, UID and the field paths the request changes), `request` (a sentence), `phase` and `result`. The phases are `sending`, `accepted`, `refused`, `conflict`, `dry_run_failed`, `observed`, `not_observed`, `unknown`, `undo_offered`, `undo_sent` and `cancelled`. It holds field paths, never values, and no credentials or Secret values (a Secret write records which keys); API error text is scrubbed of bearer tokens, `key=value` credentials and long opaque strings, and cut to 512 characters. Quoted values (in double or single quotes or backticks) and whatever follows `value:` (`Invalid value: "…"`) are stripped from it before it reaches the dialog, a toast or the audit log (`audit.rs` `strip_values`): an error names the field and the reason, never the value. It rotates at 5 MiB and keeps three older files. Talos Operations keep their own file. Settings › Audit log reads both across contexts with a Source filter ([settings.md](features/settings.md#audit-log)).
+
+### Tests
+
+Core's `write/tests.rs` drives the whole framework on the recording fake API (`fake_api::Recorder`, `write::testing`) with test-only actions and asserts on the recorded requests: the requirement table, a refused review, a stale UID, a dry-run failure, a conflict with no force on the wire, a write to an object that moved after preflight (the fake enforces the resourceVersion as a server does), the strictest level with a destination, a level that got stricter after preflight, a session action refused, values that never reach a diff, an error or the log, an accepted write never observed, a write with no answer, no replay, Undo and its refusals, and an audit log without values. Desktop's `write_flow/tests.rs` shows each dialog state at each level in a window and asserts that a blocked, cancelled or unconfirmed action sends no request.
 
 ## Example data
 
