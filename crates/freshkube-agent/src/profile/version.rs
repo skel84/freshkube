@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
-use super::{Dirs, Host, Profile};
+use super::{Data, Dirs, Host, Profile};
 use crate::investigation::clip;
 
 /// How long `<agent> --version` has to answer.
@@ -140,6 +140,15 @@ pub struct Checked {
 }
 
 impl Checked {
+    /// A proof without a check, for tests of what a start does next.
+    #[cfg(test)]
+    pub(crate) fn for_tests(profile: &Profile) -> Self {
+        Self {
+            binary: profile.binary().to_path_buf(),
+            state: None,
+        }
+    }
+
     /// The binary that was checked.
     pub fn binary(&self) -> &Path {
         &self.binary
@@ -292,7 +301,7 @@ mod tests {
             let path = dir.join("opencode");
             std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            Profile::opencode(path)
+            Profile::opencode(path, Data::Shared)
         }
 
         #[tokio::test]
@@ -316,7 +325,7 @@ mod tests {
         async fn a_missing_binary_a_failing_one_and_a_hanging_one_are_not_installed() {
             let dir = tempfile::tempdir().unwrap();
             let host = Host::default();
-            let missing = Profile::opencode(dir.path().join("nothing"));
+            let missing = Profile::opencode(dir.path().join("nothing"), Data::Shared);
             assert_eq!(
                 missing.check_version(&host).await,
                 VersionState::NotInstalled
@@ -357,7 +366,7 @@ mod tests {
                 unsupported.check(&host).await,
                 Err(VersionState::Unsupported { .. })
             ));
-            let missing = Profile::opencode(old.path().join("nothing"));
+            let missing = Profile::opencode(old.path().join("nothing"), Data::Shared);
             assert_eq!(missing.check(&host).await, Err(VersionState::NotInstalled));
 
             let new = tempfile::tempdir().unwrap();

@@ -9,6 +9,8 @@
 //! separate step; nothing here has been run against opencode.
 
 use std::collections::BTreeMap;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -59,7 +61,7 @@ pub const BUILTIN_TOOLS: [&str; 20] = [
 /// Where opencode reads each switch, at the commit that released 2.1.3
 /// (`e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b`). Each entry is
 /// (switch, what it does, path under the repository).
-pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 12] = [
+pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 14] = [
     (
         "`opencode acp` starts a private server",
         "The `acp` command always starts its own server; it has no flag to attach to the shared service, and the shared-service resolution (`server-connection.ts`) is not on its path. The private server is `serve --stdio --port 0`, a random password in `OPENCODE_PASSWORD`, an environment inherited from the child.",
@@ -86,8 +88,13 @@ pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 12] = [
         "packages/core/src/tool/plugin/*.ts",
     ),
     (
-        "`plugins: []`, `commands`, `agents`, `skills`, `instructions`, `mcp`, `lsp`, `formatter`, `websearch`, `snapshots`, `update`, `share`",
-        "The inline configuration is read as a config document. Our MCP server arrives in `session/new`, which opencode accepts over HTTP.",
+        "`agents.<name>.permissions` for every built-in agent, and `default_agent`",
+        "An agent's own rules come after the global ones in the order, so a source loaded after ours that sets them would win; the same list is written under each built-in agent (`build`, `plan`, `general`, `explore`, `compaction`, `title`, `summary`).",
+        "packages/schema/src/config/agent.ts, packages/core/src/agent.ts, packages/core/src/plugin/agent.ts",
+    ),
+    (
+        "`plugins`, `mcp`, `commands`, `skills`, `instructions`, `references`, `lsp`, `formatter`, `websearch`, `snapshots`, `update`, `share`",
+        "The inline configuration is read as a config document. The empty and false values are starting values, not removals: a source that loads later can add to them. Our MCP server arrives in `session/new`, which opencode accepts over HTTP.",
         "packages/schema/src/config.ts, packages/cli/src/acp/service.ts (`supportedMcpServers`)",
     ),
     (
@@ -102,7 +109,7 @@ pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 12] = [
     ),
     (
         "`OPENCODE_CONFIG_PROJECT_DISABLE` and `OPENCODE_DISABLE_CLAUDE_CODE`",
-        "No project configuration, and no `.claude` instructions or skills. `HOME` is an empty directory, so the global instruction files in the home directory are not there either, and the working directory is empty.",
+        "No project configuration, and no instructions or skills read from other coding tools' directories. `HOME` is an empty directory, so the global instruction files in the home directory are not there either, and the working directory is empty.",
         "packages/cli/src/server-process.ts (`config.project`, `config.claude`)",
     ),
     (
@@ -116,31 +123,62 @@ pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 12] = [
         "packages/cli/src/server-process.ts (`fs.filewatcher`, `models.fetch`), packages/core/src/models-dev.ts (`bundledSnapshot`)",
     ),
     (
-        "Logins are kept: `XDG_DATA_HOME` is the real data directory",
-        "Logins live in the database under `$XDG_DATA_HOME/opencode`. The cache and state directories are the real ones too, so the session starts quickly.",
-        "packages/util/src/global-roots.ts, packages/core/src/credential.ts",
+        "`XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`: Freshkube's own directory, or the real ones",
+        "Logins, session history and the saved organisation config sources live in the database under `$XDG_DATA_HOME/opencode`. In the default (`Data::Own`) all three are inside a directory Freshkube owns, mode 0700; in `Data::Shared` they are the person's real ones.",
+        "packages/util/src/global-roots.ts, packages/core/src/credential.ts, packages/core/src/wellknown.ts (`wellknown:sources`)",
+    ),
+    (
+        "Configs that load after ours and win",
+        "The system directory (`/Library/Application Support/opencode`, `/etc/opencode`, `%ProgramData%\\opencode`) and macOS managed preferences are administrators' own, load after the inline config, and are not changed by the profile.",
+        "packages/core/src/config/discovery.ts",
     ),
 ];
 
-/// The configuration handed to opencode inline.
-pub fn config() -> Value {
+/// The agents opencode defines itself. A saved organisation config is loaded
+/// after ours and can set an agent's own `permissions`, which come later in
+/// the order and win; so the same list is written under every one of them.
+pub const BUILTIN_AGENTS: [&str; 7] = [
+    "build",
+    "plan",
+    "general",
+    "explore",
+    "compaction",
+    "title",
+    "summary",
+];
+
+/// The permission rules: deny every action, deny each built-in by name, and
+/// allow our four last, since opencode takes the last matching rule.
+fn permissions() -> Value {
     let rule =
         |action: &str, effect: &str| json!({"action": action, "resource": "*", "effect": effect});
-    let mut permissions = vec![rule("*", "deny")];
-    permissions.extend(BUILTIN_TOOLS.iter().map(|tool| rule(tool, "deny")));
-    // Last, so they win: opencode takes the last matching rule.
-    permissions.extend(
+    let mut rules = vec![rule("*", "deny")];
+    rules.extend(BUILTIN_TOOLS.iter().map(|tool| rule(tool, "deny")));
+    rules.extend(
         TOOLS
             .iter()
             .map(|tool| rule(&format!("{SERVER}_{tool}"), "allow")),
     );
+    Value::Array(rules)
+}
+
+/// The configuration handed to opencode inline.
+pub fn config() -> Value {
+    let agents: serde_json::Map<String, Value> = BUILTIN_AGENTS
+        .iter()
+        .map(|agent| (agent.to_string(), json!({"permissions": permissions()})))
+        .collect();
     json!({
         "update": "disable",
         "share": "disabled",
-        "permissions": permissions,
+        "permissions": permissions(),
+        "default_agent": "build",
+        "agents": agents,
+        // Nothing is added by these: they start empty or off. A source that
+        // loads after this configuration can still add to them; see the
+        // module docs and the data mode.
         "plugins": [],
         "mcp": {},
-        "agents": {},
         "commands": {},
         "skills": [],
         "instructions": [],
@@ -152,8 +190,147 @@ pub fn config() -> Value {
     })
 }
 
+/// Where opencode keeps its data, state and cache: its logins, its session
+/// history and the organisation config sources saved in its database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Data {
+    /// A directory Freshkube owns (`opencode/` under the app's data
+    /// directory, mode 0700). The person signs in to their provider once
+    /// inside it; their own opencode history and saved organisation configs
+    /// are never read or written. The default.
+    Own(PathBuf),
+    /// The person's real directories, as opencode itself would use them:
+    /// their logins are there, investigations land in their opencode history,
+    /// and any organisation config saved there loads. A start is refused if
+    /// such a source can be seen ([`organisation_sources`]).
+    Shared,
+}
+
+impl Data {
+    pub(super) fn dirs(&self, host: &Host) -> [(&'static str, Option<PathBuf>); 3] {
+        match self {
+            Self::Own(dir) => [
+                ("XDG_DATA_HOME", Some(dir.join("data"))),
+                ("XDG_STATE_HOME", Some(dir.join("state"))),
+                ("XDG_CACHE_HOME", Some(dir.join("cache"))),
+            ],
+            Self::Shared => [
+                ("XDG_DATA_HOME", host.data_home.clone()),
+                ("XDG_STATE_HOME", host.state_home.clone()),
+                ("XDG_CACHE_HOME", host.cache_home.clone()),
+            ],
+        }
+    }
+
+    /// Creates the owned directories, private to the person. Shared has none
+    /// to make.
+    pub(super) fn prepare(&self, host: &Host) -> io::Result<()> {
+        if let Self::Own(_) = self {
+            for (_, dir) in self.dirs(host) {
+                if let Some(dir) = dir {
+                    create_private(&dir)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn create_private(dir: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // A directory that was there keeps its owner's mode otherwise.
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// The key opencode saves its organisation config sources under in its
+/// database (`wellknown:sources`, `packages/core/src/wellknown.ts`). Its
+/// sources load after our configuration, fetch their URLs when it starts and
+/// every ten minutes, and their per-agent rules win over ours.
+const SOURCES_KEY: &[u8] = b"wellknown:sources";
+/// The most of one database file that is read looking for the key.
+const MAX_SCAN_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// What looking for saved organisation sources found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sources {
+    /// Not in any database file under the data directory.
+    None,
+    /// The key is in a database file.
+    Seen,
+    /// A file could not be read or was past the scan limit: not known.
+    Unknown,
+}
+
+/// Looks in opencode's database files under `data_home` for the key its
+/// organisation sources are saved under. It finds the key, not its value: a
+/// source that was removed and left the key behind still counts, because
+/// reading the value takes a SQLite reader.
+pub fn organisation_sources(data_home: &Path) -> Sources {
+    use std::io::Read;
+    let dir = data_home.join("opencode");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        // No directory: opencode never ran there, so nothing is saved.
+        return Sources::None;
+    };
+    let mut unknown = false;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("opencode") || !(name.contains(".db")) {
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(entry.path()) else {
+            unknown = true;
+            continue;
+        };
+        let mut reader = file.take(MAX_SCAN_BYTES);
+        let mut window: Vec<u8> = Vec::new();
+        let mut buffer = vec![0u8; 256 * 1024];
+        let mut read_total = 0u64;
+        loop {
+            let n = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => {
+                    unknown = true;
+                    break;
+                }
+            };
+            read_total += n as u64;
+            window.extend_from_slice(&buffer[..n]);
+            if window.windows(SOURCES_KEY.len()).any(|w| w == SOURCES_KEY) {
+                return Sources::Seen;
+            }
+            // Keep the end, in case the key straddles two reads.
+            let keep = SOURCES_KEY.len() - 1;
+            if window.len() > keep {
+                window.drain(..window.len() - keep);
+            }
+        }
+        if read_total >= MAX_SCAN_BYTES {
+            unknown = true;
+        }
+    }
+    if unknown {
+        Sources::Unknown
+    } else {
+        Sources::None
+    }
+}
+
 /// The variables opencode reads, on top of the locked base environment.
-pub(super) fn environment(dirs: &Dirs, host: &Host) -> BTreeMap<String, String> {
+pub(super) fn environment(dirs: &Dirs, host: &Host, data: &Data) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     let mut set = |name: &str, value: String| {
         env.insert(name.to_string(), value);
@@ -172,12 +349,7 @@ pub(super) fn environment(dirs: &Dirs, host: &Host) -> BTreeMap<String, String> 
     ] {
         set(switch, "1".into());
     }
-    // The person's logins, the cache and the state: the real directories.
-    for (name, dir) in [
-        ("XDG_DATA_HOME", &host.data_home),
-        ("XDG_CACHE_HOME", &host.cache_home),
-        ("XDG_STATE_HOME", &host.state_home),
-    ] {
+    for (name, dir) in data.dirs(host) {
         if let Some(dir) = dir {
             set(name, dir.to_string_lossy().into_owned());
         }
@@ -226,7 +398,7 @@ mod tests {
     #[test]
     fn the_opencode_profile_locks_down() {
         let dirs = Dirs::create().unwrap();
-        let profile = Profile::opencode("/opt/homebrew/bin/opencode");
+        let profile = Profile::opencode("/opt/homebrew/bin/opencode", Data::Shared);
         let plan = profile.plan(&dirs, &host());
         assert_eq!(plan.command, PathBuf::from("/opt/homebrew/bin/opencode"));
         // `acp` runs on a private server: it has no flag, and no URL to attach to.
@@ -270,10 +442,18 @@ mod tests {
         for action in &allowed {
             assert_eq!(effect(&config, action), "allow");
         }
+        // Every built-in agent carries the same rules, since an agent's own
+        // rules come later and win, and the default agent is named.
+        assert_eq!(config["default_agent"], "build");
+        for agent in BUILTIN_AGENTS {
+            assert_eq!(
+                config["agents"][agent]["permissions"], config["permissions"],
+                "{agent}"
+            );
+        }
         // Plugins, user and project config, other MCP servers, sharing and updates are off.
         assert_eq!(config["plugins"], json!([]));
         assert_eq!(config["mcp"], json!({}));
-        assert_eq!(config["agents"], json!({}));
         assert_eq!(config["commands"], json!({}));
         assert_eq!(config["instructions"], json!([]));
         assert_eq!(config["skills"], json!([]));
@@ -320,7 +500,7 @@ mod tests {
         let dirs = Dirs::create().unwrap();
         let mut host = host();
         host.lang = Some("C".into());
-        let plan = Profile::opencode("/usr/bin/opencode").plan(&dirs, &host);
+        let plan = Profile::opencode("/usr/bin/opencode", Data::Shared).plan(&dirs, &host);
         assert_eq!(plan.env["LANG"], "en_US.UTF-8");
     }
 
@@ -342,5 +522,122 @@ mod tests {
         ] {
             assert!(doc.contains(switch), "{switch} has no source");
         }
+    }
+
+    fn own() -> (tempfile::TempDir, Data) {
+        let root = tempfile::tempdir().unwrap();
+        let data = Data::Own(root.path().join("opencode"));
+        (root, data)
+    }
+
+    #[test]
+    fn the_own_mode_keeps_every_xdg_directory_inside_the_owned_one() {
+        let (root, data) = own();
+        let dirs = Dirs::create().unwrap();
+        let plan = Profile::opencode("/usr/bin/opencode", data).plan(&dirs, &host());
+        let owned = root.path().join("opencode");
+        for name in ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] {
+            let dir = PathBuf::from(&plan.env[name]);
+            assert!(dir.starts_with(&owned), "{name} is {dir:?}");
+            assert!(!plan.env[name].contains("/Users/ada"), "{name}");
+        }
+        // The config home is still the empty temporary one.
+        assert!(!PathBuf::from(&plan.env["XDG_CONFIG_HOME"]).starts_with(&owned));
+    }
+
+    #[test]
+    fn the_shared_mode_uses_the_real_directories() {
+        let dirs = Dirs::create().unwrap();
+        let plan = Profile::opencode("/usr/bin/opencode", Data::Shared).plan(&dirs, &host());
+        assert_eq!(plan.env["XDG_DATA_HOME"], "/Users/ada/.local/share");
+        assert_eq!(plan.env["XDG_STATE_HOME"], "/Users/ada/.local/state");
+        assert_eq!(plan.env["XDG_CACHE_HOME"], "/Users/ada/.cache");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_owned_directory_is_made_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, data) = own();
+        let binary = root.path().join("opencode-bin");
+        std::fs::write(&binary, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let profile = Profile::opencode(&binary, data);
+        let host = Host::default();
+        let link = profile.spawn(&host, &fake_proof(&profile)).unwrap();
+        for dir in ["data", "state", "cache"] {
+            let meta = std::fs::metadata(root.path().join("opencode").join(dir)).unwrap();
+            assert!(meta.is_dir());
+            assert_eq!(meta.permissions().mode() & 0o777, 0o700, "{dir}");
+        }
+        drop(link);
+    }
+
+    fn fake_proof(profile: &Profile) -> crate::profile::Checked {
+        crate::profile::Checked::for_tests(profile)
+    }
+
+    fn database(data_home: &Path, name: &str, content: &[u8]) {
+        let dir = data_home.join("opencode");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name), content).unwrap();
+    }
+
+    #[test]
+    fn saved_organisation_sources_are_seen_in_the_database() {
+        let root = tempfile::tempdir().unwrap();
+        // No directory, an unrelated database, and a database with the key.
+        assert_eq!(organisation_sources(root.path()), Sources::None);
+        database(
+            root.path(),
+            "opencode.db",
+            b"SQLite format 3\0 sessions only",
+        );
+        assert_eq!(organisation_sources(root.path()), Sources::None);
+        database(
+            root.path(),
+            "opencode.db-wal",
+            b"....kv....wellknown:sources....[\"https://config.example.test\"]",
+        );
+        assert_eq!(organisation_sources(root.path()), Sources::Seen);
+    }
+
+    #[test]
+    fn a_key_that_straddles_two_reads_is_seen() {
+        let root = tempfile::tempdir().unwrap();
+        let mut content = vec![b'x'; 256 * 1024 - 5];
+        content.extend_from_slice(b"wellknown:sources");
+        database(root.path(), "opencode-dev.db", &content);
+        assert_eq!(organisation_sources(root.path()), Sources::Seen);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_shared_start_is_refused_when_sources_are_saved() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let data_home = root.path().join("share");
+        database(&data_home, "opencode.db", b"..wellknown:sources..");
+        let binary = root.path().join("opencode-bin");
+        std::fs::write(&binary, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let host = Host {
+            data_home: Some(data_home),
+            ..Host::default()
+        };
+        let shared = Profile::opencode(&binary, Data::Shared);
+        let error = shared
+            .spawn(&host, &fake_proof(&shared))
+            .err()
+            .expect("refused");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            error.to_string().contains("organisation config sources"),
+            "{error}"
+        );
+        // The owned directory never reads the real one.
+        let (_keep, data) = own();
+        let own_profile = Profile::opencode(&binary, data);
+        assert!(own_profile.spawn(&host, &fake_proof(&own_profile)).is_ok());
     }
 }

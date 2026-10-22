@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 pub use locate::{locate, search_dirs};
-pub use opencode::{BUILTIN_TOOLS, LOCKDOWN_SOURCES, SUPPORTED};
+pub use opencode::{
+    BUILTIN_AGENTS, BUILTIN_TOOLS, Data, LOCKDOWN_SOURCES, SUPPORTED, Sources, organisation_sources,
+};
 pub use version::{CHECK_TIMEOUT, Checked, Range, Version, VersionState};
 
 use crate::child::{Guard, Link, ProcessGroup};
@@ -135,17 +137,26 @@ pub struct Profile {
     command: PathBuf,
     args: Vec<String>,
     kind: Kind,
+    data: Data,
 }
 
 impl Profile {
-    /// opencode at `binary`, started as `opencode acp`.
-    pub fn opencode(binary: impl Into<PathBuf>) -> Self {
+    /// opencode at `binary`, started as `opencode acp`, keeping its data in
+    /// `data`.
+    pub fn opencode(binary: impl Into<PathBuf>, data: Data) -> Self {
         Self {
             name: "opencode",
             command: binary.into(),
             args: vec!["acp".into()],
             kind: Kind::Opencode,
+            data,
         }
+    }
+
+    /// Which data directories the profile runs on, or none for a command
+    /// that has no data of its own.
+    pub fn data(&self) -> Option<&Data> {
+        (self.kind == Kind::Opencode).then_some(&self.data)
     }
 
     /// Any ACP agent: the locked environment and workspace, and none of an
@@ -160,6 +171,7 @@ impl Profile {
             command: command.into(),
             args: args.into_iter().map(Into::into).collect(),
             kind: Kind::Generic,
+            data: Data::Shared,
         }
     }
 
@@ -181,7 +193,7 @@ impl Profile {
     pub fn plan(&self, dirs: &Dirs, host: &Host) -> Plan {
         let mut env = base_environment(dirs, host, &self.command);
         if self.kind == Kind::Opencode {
-            env.extend(opencode::environment(dirs, host));
+            env.extend(opencode::environment(dirs, host, &self.data));
         }
         Plan {
             command: self.command.clone(),
@@ -199,6 +211,22 @@ impl Profile {
             return Err(io::Error::other(
                 "the version check was made on another binary",
             ));
+        }
+        if self.kind == Kind::Opencode {
+            self.data.prepare(host)?;
+            if self.data == Data::Shared
+                && host
+                    .data_home
+                    .as_deref()
+                    .is_some_and(|dir| organisation_sources(dir) == Sources::Seen)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "opencode's own data lists organisation config sources, which load after \
+                     Freshkube's lock-down and can turn tools back on; use Freshkube's own \
+                     data directory for the agent instead",
+                ));
+            }
         }
         let dirs = Dirs::create()?;
         let plan = self.plan(&dirs, host);
