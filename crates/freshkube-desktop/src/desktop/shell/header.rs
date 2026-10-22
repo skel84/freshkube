@@ -90,9 +90,13 @@ impl Pilot {
             search_floor: APP_HEADER_CONTROL,
         };
         let share = row.centred_share();
-        // Once the search has given up the middle the sides pad nothing: the
-        // padding only adds to their minimum, and centres nothing.
-        let centring = if share.is_some() {
+        // Where the switcher is not a fixed width (1000 dp and over) the
+        // room is plenty: the sides keep the cross-padding that centres the
+        // search and need no minimum. Under 1000 dp, once the search has
+        // given up the middle, the sides pad nothing: the padding only adds
+        // to their minimum, and centres nothing.
+        let centred = row.keeps_centring_padding(fixed_switcher);
+        let centring = if centred {
             centring
         } else {
             freshkube_ui::platform::CentringPadding {
@@ -100,7 +104,7 @@ impl Pilot {
                 trailing_side: px(0.),
             }
         };
-        let search_least = if share.is_some() {
+        let search_least = if centred {
             row.search_least
         } else {
             row.search_floor
