@@ -193,6 +193,28 @@ fn apps_that_were_not_read_are_shown_with_why_never_left_out() {
 }
 
 #[test]
+fn the_example_has_a_capped_project_and_a_limit_that_skipped_the_newest() {
+    let waiting = example();
+    assert_eq!(app(&waiting, "catalog").older, 4);
+    assert_eq!(app(&waiting, "checkout").older, 0);
+    let limited = derive(&example::read_shaped(now(), Shape::GitHubLimited));
+    let skipped = |freight| {
+        matches!(
+            app_item(&limited, "checkout", freight).pull,
+            Some(PullRead::Unread {
+                rate_limit: true,
+                ..
+            })
+        )
+    };
+    assert!(skipped("tidy-badger") && skipped("wonky-otter"));
+    assert!(
+        !skipped("quiet-heron"),
+        "older pull requests are kept, stale"
+    );
+}
+
+#[test]
 fn caught_up_apps_fold_into_one_group_at_the_bottom() {
     let waiting = example();
     let order: Vec<(Fold, &str)> = waiting
@@ -315,7 +337,7 @@ fn github_trouble_keeps_or_withholds_pull_requests_without_hiding_the_gap() {
             .any(|note| note.text.contains("refused"))
     );
     let limited = derive(&example::read_shaped(now(), Shape::GitHubLimited));
-    let pull = app_item(&limited, "checkout", "wonky-otter")
+    let pull = app_item(&limited, "checkout", "quiet-heron")
         .pull()
         .unwrap();
     assert!(pull.stale.as_deref().unwrap().contains("rate limit"));

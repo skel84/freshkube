@@ -181,9 +181,20 @@ impl Display {
             ..Self::default()
         };
         display.fill(waiting, now, text);
-        display.missing = (!waiting.notes.is_empty()).then(|| {
-            let text = waiting
-                .notes
+        // An application that wasn't read says why in its own row.
+        let shown: Vec<_> = waiting
+            .notes
+            .iter()
+            .filter(|note| {
+                !note.project.as_ref().is_some_and(|project| {
+                    waiting.apps.iter().any(|app| {
+                        &app.name == project && matches!(app.state, State::NotRead { .. })
+                    })
+                })
+            })
+            .collect();
+        display.missing = (!shown.is_empty()).then(|| {
+            let text = shown
                 .iter()
                 .map(|note| note.text.as_str())
                 .collect::<Vec<_>>()
@@ -491,7 +502,7 @@ fn item_row(
         Tone::Waiting
     };
     let state: SharedString = if item.why.blocked {
-        "Stuck: what it waits for has failed".into()
+        "Waiting: what it waits for has failed".into()
     } else {
         "Waiting: not in production yet".into()
     };
@@ -848,7 +859,7 @@ fn item_detail(waiting: &Waiting, app: &App, item: &Item, now: DateTime<Utc>) ->
             } else {
                 Tone::Waiting
             },
-            if item.why.blocked { "Stuck" } else { "Waiting" }.into(),
+            "Waiting".into(),
         ),
         fields,
         why: Some(format!("{} · {}", item.why.word(), item.why.needs()).into()),

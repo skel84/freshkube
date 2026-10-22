@@ -302,6 +302,14 @@ fn pull_read(invented: &Invented, now: DateTime<Utc>, shape: Shape, pulls_exist:
         return PullRead::NoPull;
     };
     let trouble = shape.github();
+    // Past the limit, the sparing client skips the newest, which no earlier
+    // read holds; the older ones keep what was read before.
+    if trouble == Some(Trouble::Limited) && invented.minutes < 2 * 60 {
+        return PullRead::Unread {
+            rate_limit: true,
+            why: format!("Pull requests weren't read: {}", Trouble::Limited.words()),
+        };
+    }
     if trouble == Some(Trouble::Refused) {
         return PullRead::Unread {
             rate_limit: false,
@@ -319,6 +327,24 @@ fn pull_read(invented: &Invented, now: DateTime<Utc>, shape: Shape, pulls_exist:
         merge: Some(invented.commit.to_owned()),
         stale: trouble.map(|trouble| format!("{}; showing what was read earlier", trouble.words())),
     })
+}
+
+/// `catalog` has more Freight than a project lists: its 50 newest are read,
+/// and the 4 oldest are counted.
+fn catalog(now: DateTime<Utc>, shape: Shape) -> Project {
+    let mut project = project(now, shape, CATALOG, &CATALOG_FREIGHT, &CATALOG_STAGES);
+    if let Source::Read(freight) = &mut project.freight {
+        let template = freight[0].clone();
+        for n in 0..52_i64 {
+            let mut older = template.clone();
+            older.name = format!("catalog-old-{n}");
+            older.alias = None;
+            older.created = Some(now - Duration::days(20 + n));
+            older.verified_in = vec!["dev".into(), "prod".into()];
+            freight.push(older);
+        }
+    }
+    project
 }
 
 fn project(
@@ -375,7 +401,7 @@ pub fn read_shaped(now: DateTime<Utc>, shape: Shape) -> Read {
     }
     let mut projects = vec![
         project(now, shape, CHECKOUT, &CHECKOUT_FREIGHT, &CHECKOUT_STAGES),
-        project(now, shape, CATALOG, &CATALOG_FREIGHT, &CATALOG_STAGES),
+        catalog(now, shape),
         project(now, shape, CART, &CART_FREIGHT, &CART_STAGES),
         project(now, shape, SEARCH, &SEARCH_FREIGHT, &SEARCH_STAGES),
     ];

@@ -37,7 +37,7 @@ impl TableColumn for Column {
     }
 
     fn flexible(&self) -> bool {
-        self.field == Field::Change
+        matches!(self.field, Field::Change | Field::Why)
     }
 
     /// The glyph and what names the change stay in view when the table
@@ -56,12 +56,12 @@ pub(super) fn columns() -> (Vec<Column>, f32) {
     };
     let columns = vec![
         column(Field::Glyph, "", kit::GLYPH_WIDTH),
-        column(Field::Named, "PR", 140.),
-        column(Field::Change, "Change", 140.),
-        column(Field::Merged, "Merged", 64.),
-        column(Field::Stage, "In", 84.),
-        column(Field::Waiting, "Waiting", 72.),
-        column(Field::Why, "Why", 250.),
+        column(Field::Named, "PR", 128.),
+        column(Field::Change, "Change", 110.),
+        column(Field::Merged, "Merged", 56.),
+        column(Field::Stage, "In", 72.),
+        column(Field::Waiting, "Waiting", 60.),
+        column(Field::Why, "Why", 140.),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
@@ -155,6 +155,8 @@ impl TableSource for WaitingPage {
                 })
                 .child(
                     div()
+                        .min_w_0()
+                        .truncate()
                         .when(row.by_commit, |cell| {
                             cell.font_family(MONO_FONT).text_color(p.ink_2)
                         })

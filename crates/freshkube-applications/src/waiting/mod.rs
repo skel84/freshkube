@@ -150,9 +150,7 @@ impl WaitingPage {
         // The page starts hidden, and so does its read.
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
-        let find = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Pull request or commit: did it ship?")
-        });
+        let find = cx.new(|cx| InputState::new(window, cx).placeholder("PR or commit"));
         let subscription = cx.subscribe(&find, |this, _, event, cx| {
             if matches!(event, InputEvent::Change) {
                 this.show_read(cx);

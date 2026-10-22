@@ -10,9 +10,7 @@ use crate::applications::testing::waiting::Body;
 use crate::applications::{ApplicationsPage, WaitingPage};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 
-use gpui_kit::{
-    AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext, test::TestWindowExt,
-};
+use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, test::TestWindowExt};
 
 const WAITING: layout_check::TablePage = layout_check::TablePage {
     page: "waiting-page",
@@ -502,15 +500,26 @@ fn a_failed_read_offers_retry_and_a_failed_refresh_keeps_the_rows(cx: &mut TestA
 }
 
 #[gpui_kit::test]
-fn what_may_be_missing_is_a_banner_beside_the_rows(cx: &mut TestAppContext) {
+fn what_may_be_missing_is_a_banner_and_a_row_that_says_why_is_not_repeated_in_it(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, _view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        // The cap on `catalog` is in the banner; `payments` and `billing`
+        // say why in their own rows, not twice.
         let banner = window.find("waiting-missing");
         let label = banner.label().unwrap_or_default().to_owned();
         assert!(label.starts_with("May be missing: "), "{label}");
-        assert!(label.contains("payments"), "{label}");
-        assert!(window.find(SharedString::from(WONKY)).visible());
+        assert!(
+            label.contains("catalog lists its 50 newest Freight; 4 older"),
+            "{label}"
+        );
+        assert!(
+            !label.contains("payments") && !label.contains("billing"),
+            "{label}"
+        );
+        assert!(window.find(WONKY).visible());
     })
     .unwrap();
 }
@@ -609,7 +618,15 @@ fn a_capped_project_says_how_many_older_freight_are_not_listed_where_it_shows(
             .iter()
             .find(|group| group.title.as_ref() == "catalog")
             .unwrap();
-        assert!(!catalog.detail.iter().any(|line| line.contains("older")));
+        // `catalog` is capped in the example itself: its own count.
+        assert!(
+            catalog
+                .detail
+                .iter()
+                .any(|line| line.starts_with("4 older Freight not listed")),
+            "{:?}",
+            catalog.detail
+        );
         let row = page
             .display
             .rows

@@ -313,7 +313,12 @@ fn trace_line(ix: usize, line: &TraceLine, cx: &App) -> AnyElement {
         ))
         .gap(dp(6.))
         .items_center()
-        .children(line.tone.and_then(|tone| ui::status_glyph(tone, cx)))
+        // Stages it hasn't reached keep the glyph's room, so names line up.
+        .child(
+            line.tone
+                .and_then(|tone| ui::status_glyph(tone, cx))
+                .unwrap_or_else(|| div().flex_none().size(dp(10.)).into_any_element()),
+        )
         .child(
             div()
                 .font_weight(FontWeight::MEDIUM)
