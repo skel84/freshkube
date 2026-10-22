@@ -36,17 +36,6 @@ fn unique_token(now: chrono::DateTime<chrono::Utc>) -> String {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::unique_token;
-
-    #[test]
-    fn two_presses_in_the_same_instant_get_different_tokens() {
-        let now = chrono::Utc::now();
-        assert_ne!(unique_token(now), unique_token(now));
-    }
-}
-
 /// Where the writes go and what holds them: the Kargo cluster's entry, its
 /// level now, and the cell a runner follows.
 struct KargoCluster {
@@ -236,5 +225,16 @@ impl Pilot {
         };
         let flow = write_flow::start(request, window, cx);
         write_flow::retain(flow, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unique_token;
+
+    #[test]
+    fn two_presses_in_the_same_instant_get_different_tokens() {
+        let now = chrono::Utc::now();
+        assert_ne!(unique_token(now), unique_token(now));
     }
 }
