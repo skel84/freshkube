@@ -24,6 +24,38 @@ pub(super) fn mount(
     width: f32,
     height: f32,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    mount_on(
+        cx,
+        options,
+        width,
+        height,
+        tokio::runtime::Runtime::new().unwrap(),
+    )
+}
+
+/// [`fixture`] on a current-thread runtime with a paused clock, which the test
+/// steps itself (`runtime.block_on(sleep)`): no Tokio thread wakes a GPUI task,
+/// which the test scheduler refuses as non-deterministic.
+pub(crate) fn fixture_stepped(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    mount_on(cx, GpuiOptions::fixture(), width, height, runtime)
+}
+
+fn mount_on(
+    cx: &mut TestAppContext,
+    options: GpuiOptions,
+    width: f32,
+    height: f32,
+    runtime: tokio::runtime::Runtime,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     // Tests build clients against loopback servers, which the environment's
     // proxy must not take: a hermetic value that keeps only the proxy pair.
     crate::ambient::install_for_tests();
@@ -36,7 +68,6 @@ pub(super) fn mount(
         // advance; reduced motion opens and closes them immediately.
         cx.set_reduce_motion(true);
     });
-    let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut view = None;
     let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let pilot = cx.new(|cx| Pilot::new(options, runtime.handle().clone(), window, cx));
