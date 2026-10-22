@@ -440,7 +440,7 @@ fn an_operators_lag_is_the_operators_finding_and_counts_in_its_state() {
     assert_eq!(v.state.source, Source::Operator);
     let finding = v.problems().next().unwrap();
     assert_eq!(finding.source, Source::Operator);
-    assert!(finding.why.contains("the operator"));
+    assert!(finding.why.contains("(operator)"));
     // Coroot's own measurement is Coroot's.
     let mut found = report(&db);
     found.lag.insert(

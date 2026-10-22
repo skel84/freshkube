@@ -36,7 +36,7 @@ fn backup(backup: &Backup, inv: &Inventory) -> Row {
         .as_ref()
         .map_or("Unknown", |r| r.engine.label());
     let (key, id) = identity_key(&backup.identity);
-    let kept = retained(inv, &backup.identity);
+    let kept = inv.backups.stale || retained(inv, &backup.identity);
     let mut tone = tone_of(freshkube_core::HasHealth::health(&backup.state));
     if kept {
         tone = ui::Tone::Unknown;
@@ -135,7 +135,7 @@ fn schedule(schedule: &Schedule, inv: &Inventory) -> Row {
         Fact::Known(false) => "Active",
         Fact::Unknown => "Unknown",
     };
-    let kept = retained(inv, &schedule.identity);
+    let kept = inv.schedules.stale || retained(inv, &schedule.identity);
     let tone = match schedule.suspended {
         Fact::Known(false) if !kept => tone_of(HealthIndicator::Healthy),
         _ => ui::Tone::Unknown,

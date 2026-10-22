@@ -176,6 +176,8 @@ impl DatabasesScreen {
         };
         let p = palette(cx);
         let heading = v_flex()
+            .flex_1()
+            .w_full()
             .min_w_0()
             .gap(dp(2.))
             .child(

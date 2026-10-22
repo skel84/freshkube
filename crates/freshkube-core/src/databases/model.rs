@@ -169,7 +169,7 @@ impl LagSource {
     pub fn label(self) -> &'static str {
         match self {
             Self::Coroot => "Coroot",
-            Self::Operator => "the operator",
+            Self::Operator => "operator",
         }
     }
 }

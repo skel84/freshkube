@@ -289,6 +289,14 @@ fn table_and_inspector_follow_shared_layout_at_wide_narrow_and_large_text(cx: &m
                     "databases-detail",
                     "databases-detail-title",
                 );
+                // The heading takes the Inspector's width, not one letter's.
+                let title = window.find("databases-detail-title").bounds();
+                let inspector = window.find("databases-detail").bounds();
+                assert!(
+                    title.size.width > inspector.size.width / 2.,
+                    "heading collapsed: {title:?} in {inspector:?}"
+                );
+                assert!(title.size.height < px(40. * text / 13.), "{title:?}");
                 window.press("escape", cx);
                 window.render_frame(cx);
             })
@@ -994,4 +1002,67 @@ fn retained_rows_stay_unknown_with_the_banner_after_two_failed_refreshes_in_ever
                 .contains("last read retained")
         );
     }
+}
+
+#[test]
+fn stale_and_retained_rows_are_marked_in_every_view_and_the_summary_counts() {
+    // The whole read failed: everything kept is stale.
+    let inv = databases::example::shaped(at(), "stale");
+    for mode in [Mode::Clusters, Mode::Backups, Mode::Schedules] {
+        let display = display_of(&inv, mode);
+        assert!(
+            display
+                .rows
+                .iter()
+                .all(|row| row.tone == crate::ui::Tone::Unknown),
+            "{}",
+            mode.label()
+        );
+        assert!(
+            display.summary.contains("coverage incomplete"),
+            "{}",
+            display.summary
+        );
+        assert!(
+            display
+                .summary
+                .starts_with(&format!("{} ", display.rows.len())),
+            "{}",
+            display.summary
+        );
+    }
+    // One operator refused after a good read: its rows are kept and marked.
+    let inv = databases::example::shaped(at(), "engine-refused");
+    assert_eq!(inv.retained, vec![databases::Engine::MariaDb]);
+    let display = display_of(&inv, Mode::Clusters);
+    assert_eq!(display.rows.len(), 2);
+    assert!(display.notice.unwrap().contains("last read retained"));
+}
+
+#[test]
+fn a_lone_backup_restore_window_and_unknown_readiness_read_plainly() {
+    let inv = databases::example::inventory(at());
+    let display = display_of(&inv, Mode::Clusters);
+    let value = |name: &str, label: &str| field(&display, name, label).value.clone();
+    // One completed backup: no span to speak of.
+    assert!(
+        value("orders-db", "Restore window").ends_with("to now (WAL archived)")
+            || value("orders-db", "Restore window").contains("only")
+    );
+    assert_eq!(
+        value("ledger-db", "Instances ready"),
+        "Not reported by the operator (3 wanted)"
+    );
+    assert!(
+        value("ledger-db", "Restore window").contains("only (the last backup; WAL not confirmed)")
+    );
+    let none = databases::example::shaped(at(), "no-primary");
+    let display = display_of(&none, Mode::Clusters);
+    assert_eq!(
+        field(&display, "orders-db", "orders-db-1")
+            .value
+            .split(" · ")
+            .next(),
+        Some("Role unknown")
+    );
 }

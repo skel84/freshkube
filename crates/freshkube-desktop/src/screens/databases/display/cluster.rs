@@ -239,11 +239,14 @@ fn instances(
     }
     fields.push(Field::prose(
         "Instances ready",
-        format!(
-            "{} of {}",
-            format::fact(&db.ready_instances),
-            format::fact(&db.desired_instances)
-        ),
+        match (&db.ready_instances, &db.desired_instances) {
+            (Fact::Known(ready), Fact::Known(desired)) => format!("{ready} of {desired}"),
+            (Fact::Known(ready), Fact::Unknown) => format!("{ready} (wanted not reported)"),
+            (Fact::Unknown, Fact::Known(desired)) => {
+                format!("Not reported by the operator ({desired} wanted)")
+            }
+            (Fact::Unknown, Fact::Unknown) => "Not reported".to_owned(),
+        },
     ));
     for instance in &db.instances {
         let mut parts = vec![match instance.role {
@@ -320,18 +323,21 @@ fn backups(
     fields.push(match window {
         Some(window) => Field::prose(
             "Restore window",
-            format!(
-                "{} to {}",
-                time(Some(window.from)),
-                if window.to_now {
-                    "now (WAL archived)".to_owned()
-                } else {
-                    format!(
-                        "{} (last backup; WAL not confirmed)",
-                        time(Some(window.until))
-                    )
-                }
-            ),
+            if window.to_now {
+                format!("{} to now (WAL archived)", time(Some(window.from)))
+            } else if window.from == window.until {
+                // One completed backup, and nothing after it is confirmed.
+                format!(
+                    "{} only (the last backup; WAL not confirmed)",
+                    time(Some(window.until))
+                )
+            } else {
+                format!(
+                    "{} to {} (last backup; WAL not confirmed)",
+                    time(Some(window.from)),
+                    time(Some(window.until))
+                )
+            },
         ),
         None => Field::prose("Restore window", "Unknown"),
     });

@@ -390,6 +390,10 @@ pub fn shaped(at: DateTime<Utc>, shape: &str) -> Inventory {
         "no-primary" => {
             inv.databases.items[0].current_primary = Fact::Unknown;
             inv.databases.items[0].conditions.clear();
+            // Roles come from the same status: none is reported either.
+            for instance in &mut inv.databases.items[0].instances {
+                instance.role = Fact::Unknown;
+            }
         }
         "stale" => {
             let previous = inv;
@@ -445,6 +449,20 @@ pub fn shaped(at: DateTime<Utc>, shape: &str) -> Inventory {
             inv.backups
                 .items
                 .retain(|b| b.identity.name != "ledger-manual");
+        }
+        // The MariaDB operator refuses after a good read: its rows are kept.
+        "engine-refused" => {
+            let previous = inv.clone();
+            inv.engines[1].1 = Coverage::Refused;
+            inv.databases.items.remove(1);
+            inv.backups
+                .items
+                .retain(|b| b.identity.group != "k8s.mariadb.com");
+            inv.schedules
+                .items
+                .retain(|s| s.identity.group != "k8s.mariadb.com");
+            inv.databases.coverage = Coverage::Refused;
+            inv.retain(&previous);
         }
         "mariadb" => {
             inv.databases.items.remove(0);

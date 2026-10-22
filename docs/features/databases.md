@@ -203,7 +203,7 @@ Open in Resources retains access to the full object status.
 `unsupported`, `failed`, `empty`, `backup-refused`, `partial`, `old`,
 `backup-failed`, `no-primary`, `stale`, `no-backup`, `no-schedule`, `suspended`,
 `cert-expiring`, `switchover-stuck`, `mariadb`, `coroot-none`,
-`coroot-not-found`, `coroot-no-report`, `coroot-unreachable`, `coroot-disagree`, `lag-high` and `scheduled-only`. Every name is invented: `orders-db`, `ledger-db`, namespace
+`coroot-not-found`, `coroot-no-report`, `coroot-unreachable`, `coroot-disagree`, `lag-high`, `scheduled-only` and `engine-refused`. Every name is invented: `orders-db`, `ledger-db`, namespace
 `shop`. The default has `orders-db` (CloudNativePG) and `ledger-db` (MariaDB), an
 active backup, a completed plugin backup and an orphaned backup, with Coroot
 flagging slow MariaDB queries the operator does not. The `old` shape has consistent creation/start/end times more
