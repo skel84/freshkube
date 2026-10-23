@@ -1,7 +1,7 @@
 use super::*;
 
 #[gpui_kit::test]
-fn secret_values_stay_hidden_until_one_is_revealed(cx: &mut TestAppContext) {
+fn safety_g09_secret_values_stay_hidden_until_one_is_revealed(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     let (secret, _) = target("secrets", |_, name| name == "ledger-database");
     let reveal = |key: &str, cx: &App| {

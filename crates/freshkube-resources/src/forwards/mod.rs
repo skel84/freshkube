@@ -130,6 +130,15 @@ pub fn stop_all(cx: &mut App) -> impl Future<Output = ()> + use<> {
 }
 
 impl ForwardList {
+    /// How many forwards are listed, running or ended.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
     /// Starts a forward and lists it.
     pub fn start(&mut self, spec: ForwardSpec, cx: &mut Context<Self>) -> Entity<ForwardView> {
         let id = self.next_id;
@@ -175,7 +184,7 @@ impl ForwardList {
     }
 
     /// Takes an ended forward off the list.
-    pub(crate) fn remove(&mut self, id: u64, cx: &mut Context<Self>) {
+    pub fn remove(&mut self, id: u64, cx: &mut Context<Self>) {
         self.stop(id, cx);
         self.items.retain(|item| item.read(cx).id != id);
         self.observers.remove(&id);

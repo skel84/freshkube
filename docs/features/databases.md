@@ -1,5 +1,7 @@
 # Databases
 
+The inventory below reads no Secret. **Explore** (a database's tab, [database-explorer.md](database-explorer.md)) reads one login Secret per connection (and the cluster CA's `ca.crt`), when the user connects it; nothing else on this page does.
+
 Code: `freshkube-core/src/databases/` contains the operator-neutral model
 (`model.rs`), the CloudNativePG v1 projection (`cnpg.rs`) and the MariaDB
 operator's (`mariadb.rs`), the bounded reader (`read.rs`), coverage and
@@ -142,7 +144,8 @@ It keeps identities, counts, named instance state, current/target primary,
 conditions with reason/transition time/observed generation, backup phase/method
 and times, and schedule configuration/times. It skips raw JSON, annotations,
 Secret selectors, arbitrary plugin parameters, command output and tokens. No
-Secret, credential store, object store, database endpoint, Pod or Job is read.
+Secret, credential store, object store, database endpoint, Pod or Job is read
+by the inventory; the explorer reads its own pod and login Secret when connected.
 No mutation, exec or forwarding request is made. Installed CRDs do not establish
 that the controller is healthy. Unreported replication state/lag stays Unknown.
 A reported observed generation below the Cluster generation is stale. An omitted

@@ -66,6 +66,9 @@ pub struct Overview {
     /// Present for a kind that runs pods: the label selector that finds
     /// them, `None` inside when it selects none.
     pub selector: Option<Option<String>>,
+    /// Present for a kind that runs pods: the labels its pod template gives
+    /// them, which the Services that select them are matched against.
+    pub template_labels: Option<Vec<(String, String)>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,6 +168,7 @@ pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectD
     overview.pod_status = kind.is_pod().then(|| PodStatus::new(&object));
     overview.ports = declared_ports(kind, &object);
     overview.selector = runs_pods(kind).then(|| workload_selector(&object));
+    overview.template_labels = runs_pods(kind).then(|| template_labels(&object));
     let yaml = serde_yaml::to_string(&object)
         .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
     let metadata = object.get("metadata");
@@ -378,8 +382,20 @@ fn overview(object: &Value) -> Overview {
         pod_status: None,
         ports: None,
         selector: None,
+        template_labels: None,
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+/// The labels a workload's pod template puts on its pods.
+fn template_labels(object: &Value) -> Vec<(String, String)> {
+    pairs(
+        object
+            .get("spec")
+            .and_then(|spec| spec.get("template"))
+            .and_then(|template| template.get("metadata"))
+            .and_then(|metadata| metadata.get("labels")),
+    )
+}

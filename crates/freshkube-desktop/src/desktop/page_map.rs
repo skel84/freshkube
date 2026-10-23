@@ -73,7 +73,12 @@ impl Pages {
         let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
         let databases = {
             let shape = options.debug.databases.clone();
-            cx.new(|cx| DatabasesScreen::new(runtime.clone(), window, cx).with_example(shape))
+            let explore = options.debug.db_explore.clone();
+            cx.new(|cx| {
+                DatabasesScreen::new(runtime.clone(), window, cx)
+                    .with_example(shape)
+                    .with_explore_example(&explore)
+            })
         };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
@@ -118,6 +123,9 @@ impl Pages {
         .collect();
         node_workspace.update(cx, |nodes, _| nodes.screens = screens);
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        resources.update(cx, |screen, cx| {
+            screen.set_services_shape(options.debug.services, cx)
+        });
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));

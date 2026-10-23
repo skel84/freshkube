@@ -81,10 +81,14 @@ sha2 = "0.10"
 grafaui-model = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95" }
 grafaui-prometheus = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95", default-features = false }
 coroot-rs = { git = "https://github.com/skel84/corust", rev = "5312f1efc4e68a286d42a0c5c1e58539ed2a243a" }
+# The database explorer's vocabulary (Value, DbError), MIT OR Apache-2.0, pinned
+# by revision; no driver and no UI crate (docs/features/database-explorer.md).
+dbflux_core = { git = "https://github.com/0xErwin1/dbflux", rev = "e8f3c03e2b506020ffdfa289c08b936a9f2d943d" }
 
 # Internal crates
 talos-rs = { path = "crates/talos-rs" }
 freshkube-core = { path = "crates/freshkube-core" }
+freshkube-db = { path = "crates/freshkube-db" }
 freshkube-delivery = { path = "crates/freshkube-delivery" }
 freshkube-followed = { path = "crates/freshkube-followed" }
 freshkube-graph = { path = "crates/freshkube-graph" }
@@ -120,6 +124,7 @@ capture-embed = ["dep:rust-embed"]
 [dependencies]
 freshkube-desktop.workspace = true
 freshkube-cli.workspace = true
+freshkube-core.workspace = true
 freshkube-probe.workspace = true
 clap.workspace = true
 tokio.workspace = true

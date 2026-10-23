@@ -382,3 +382,16 @@ a page's read, so page visibility is not its stop signal.
 | The bounds | At most 20 follows, refused beyond that; a repeat of one follow is refused. A listing or watch that fails retries with a growing wait and says "Not watching" once, never as a failure. |
 | Quit | `⌘Q` calls `stop_all` before the app ends: every feed is dropped and nothing starts again. The follows stay saved. |
 | What they tell | Pure [`rules`](../crates/freshkube-followed/src/rules/mod.rs) turn a read into updates: the same state never repeats, a crash loop fires once and again only after 5 minutes Ready. [`notice`](../crates/freshkube-followed/src/notice/mod.rs) groups updates within 2 minutes and holds all but failures in quiet hours. The owner emits an event for each notice that shows; the shell, which has the window, pushes it as a toast. The bell lists every notice. |
+
+### Database explorer
+
+An explorer tab (Databases › Explore, [#948](https://github.com/skel84/freshkube/issues/948)) is a user-started session: the user pressed Explore, and the connection lives with its tab until the tab closes or the connection changes. Hiding the page is not its stop signal for the connection, but it is for its reads.
+
+| Boundary | Owner and lifetime |
+| --- | --- |
+| The tab | `ExploreView` ([`explore/mod.rs`](../crates/freshkube-desktop/src/screens/databases/explore/mod.rs)), one per database, held by the Databases page. Closing the tab, or a change of cluster connection, drops it; its release stops and removes the forward it started. |
+| The forward | The app's `ForwardList` ([PORT_FORWARD.md](PORT_FORWARD.md)); the tab starts one pod forward and observes it. No second forward owner exists. A forward that ends while the tab is connected ends the connection and says so. |
+| The reads | Pick, connect, schemas, each schema's tables, columns and rows are `Loader`s keyed by the tab's connection epoch (and the table, for the last two): a Tokio job plus a delivery task, dropped on hide and on connecting again, landing only if their request is still the latest for their identity. A hidden tab starts no read; showing it resumes what hiding cut short. Reads of one connection share its session one at a time. |
+| The login | Read once per connection inside the connect job, held by a wiping value, dropped when the session is open. Not kept by the tab, the loaders or the forward. |
+| The session | Kept while hidden; every request is its own read-only transaction, rolled back. A read cut by hiding may leave its transaction open until the next request's rollback or `idle_in_transaction_session_timeout`. |
+

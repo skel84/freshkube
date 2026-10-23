@@ -157,7 +157,7 @@ fn secret() -> serde_json::Value {
 }
 
 #[test]
-fn a_secret_document_shows_keys_and_sizes_never_values() {
+fn safety_g09_a_secret_document_shows_keys_and_sizes_never_values() {
     let kind = builtin("secrets").unwrap();
     let document = document(&kind, serde_json::from_value(secret()).unwrap()).unwrap();
     for leak in [
@@ -195,7 +195,7 @@ fn a_secret_document_shows_keys_and_sizes_never_values() {
 }
 
 #[test]
-fn a_secret_value_is_revealed_only_for_the_same_incarnation() {
+fn safety_g09_a_secret_value_is_revealed_only_for_the_same_incarnation() {
     let object = secret();
     assert_eq!(
         secret_value(&object, "s-1", "token").unwrap(),
