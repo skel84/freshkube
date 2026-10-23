@@ -153,6 +153,8 @@ pub struct Step {
     pub onward_tone: Tone,
     /// Shown on hover and the cell's accessible label.
     pub tooltip: SharedString,
+    /// The cell is the page's selection: marked with the accent's tint.
+    pub selected: bool,
 }
 
 /// A stepper cell for `column`, two lines in the row's 40 dp: the track
@@ -219,9 +221,24 @@ pub fn stepper_cell(column: &impl TableColumn, step: Step, cx: &App) -> Observed
         .flex()
         .flex_col()
         .justify_center()
+        .when(step.selected, |this| this.bg(p.accent_soft))
         .follow_tooltip(step.tooltip)
         .child(first)
         .child(word)
+}
+
+/// A line across `extent` of its own box, in `tone`'s colour and `track`'s
+/// style: the link between two cards of a strip, drawn as the track and
+/// the rail are. It fills the room its parent gives it.
+pub fn connector(
+    id: impl Into<ElementId>,
+    track: Track,
+    tone: Tone,
+    vertical: bool,
+    cx: &App,
+) -> Observed<Stateful<Div>> {
+    let flow = stroke(id, track, track_color(tone, track, cx), 0., 0., vertical);
+    if vertical { flow.w_full() } else { flow.w_full().h(dp(LINE)) }
 }
 
 /// Where a row sits in the rail.

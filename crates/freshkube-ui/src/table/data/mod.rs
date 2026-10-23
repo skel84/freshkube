@@ -13,7 +13,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla, Pixels, Role,
     ScrollHandle, ScrollStrategy, SharedString, Stateful, TestSupportExt, UniformListScrollHandle,
-    WeakEntity, Window, div, px, uniform_list,
+    WeakEntity, Window, div, point, px, uniform_list,
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
@@ -147,6 +147,30 @@ impl TableState {
             },
             _ => self.scroll.scroll_to_item(line, strategy),
         }
+    }
+
+    /// Scrolls the table sideways so the column spanning `left..left +
+    /// width` dp from its left edge shows beside the pinned run of `pinned`
+    /// dp, for a selection in a wide table. `false` before the table has
+    /// drawn, when nothing can be said yet.
+    pub fn reveal_column(&self, left: f32, width: f32, pinned: f32, window: &Window) -> bool {
+        let view = self.sideways.bounds().size.width;
+        if view <= Pixels::ZERO {
+            return false;
+        }
+        let unit = ui::dp_px(1., window);
+        let (from, to, pinned) = (unit * left, unit * (left + width), unit * pinned);
+        let at = -self.sideways.offset().x;
+        let target = if from < at + pinned {
+            from - pinned
+        } else if to > at + view {
+            to - view
+        } else {
+            return true;
+        };
+        self.sideways
+            .set_offset(point(-target.max(Pixels::ZERO), self.sideways.offset().y));
+        true
     }
 
     /// The line the window should start at to show `line` with whole rows

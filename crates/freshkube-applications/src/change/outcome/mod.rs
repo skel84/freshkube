@@ -585,6 +585,7 @@ impl ChangePage {
                 .and_then(|memo| memo.after.as_deref())
                 .map(Mark::of);
         }
+        self.derive_overview();
     }
 
     /// Retry: reads the selected hop again.

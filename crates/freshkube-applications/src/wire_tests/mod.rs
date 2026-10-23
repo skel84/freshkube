@@ -74,6 +74,8 @@ fn mount_access(
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_kit::init(cx);
+        // These tests are about the hop table’s rows.
+        crate::change_view::use_session(crate::change_view::ChangeView::Hops, cx);
         freshkube_ui::theme::install(cx);
         freshkube_ui::text_size::install(None, cx);
         cx.set_reduce_motion(true);

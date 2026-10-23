@@ -1,42 +1,45 @@
 use super::*;
+use crate::change::overview::cells::{Column, locate};
+
+fn located(page: &Entity<ChangePage>, cx: &App) -> Option<(usize, Option<Column>)> {
+    let page = page.read(cx);
+    locate(&page.overview, page.selected()?)
+}
 
 #[gpui_kit::test]
-fn the_toggle_preserves_rows_cards_links_and_a_gate_selection(cx: &mut TestAppContext) {
-    let (handle, page) = fixture(cx);
+fn the_toggle_preserves_the_selection_and_a_link_selection(cx: &mut TestAppContext) {
+    let (handle, page) = overview_fixture(cx);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("change-hop-push-run", cx);
-        window.click("change-view-chain", cx);
+        // A cell is the hop it stands for.
+        window.click("change-cell-dev-promoted", cx);
+        assert_eq!(
+            page.read(cx).selected().map(|s| s.as_ref()),
+            Some("dev-promotion")
+        );
+        assert_eq!(located(&page, cx), Some((0, Some(Column::Promoted))));
+        window.click("change-view-hops", cx);
         window.render_frame(cx);
         assert_eq!(
             page.read(cx).selected().map(|s| s.as_ref()),
-            Some("push-run")
+            Some("dev-promotion")
         );
-        assert!(window.try_find("change-chain").is_some());
-        window.click("change-link-signature", cx);
-        assert!(page.read(cx).link_selected);
-        window.click("change-view-list", cx);
+        assert!(window.find("change-hop-dev-promotion").visible());
+        window.click("change-view-overview", cx);
         window.render_frame(cx);
-        assert_eq!(
-            page.read(cx).selected().map(|s| s.as_ref()),
-            Some("signature")
-        );
+        assert_eq!(located(&page, cx), Some((0, Some(Column::Promoted))));
+        // A link selection carries over too.
+        window.click("change-join-build-key", cx);
         assert!(page.read(cx).link_selected);
-        assert!(window.find("change-hop-signature").visible());
-        page.update(cx, |page, cx| page.select("dev-verification", window, cx));
-        chain(&page, window, cx);
-        assert_eq!(
-            page.read(cx).cursor(),
-            Some(Cursor::Node("dev-eligible".into()))
-        );
-        assert_eq!(
-            page.read(cx).selected().map(|s| s.as_ref()),
-            Some("dev-verification")
-        );
-        assert!(window.try_find("change-detail-verification").is_some());
+        window.click("change-view-hops", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).link_selected);
+        assert!(window.find("change-hop-push-run").visible());
         page.update(cx, |page, cx| page.back(cx));
-        page.update(cx, |page, cx| page.set_view(ChangeView::List, window, cx));
-        chain(&page, window, cx);
+        page.update(cx, |page, cx| {
+            page.set_view(ChangeView::Overview, window, cx)
+        });
+        hops(&page, window, cx);
         assert!(
             page.read(cx).selected.is_none(),
             "switching never invents a selection"
@@ -46,8 +49,67 @@ fn the_toggle_preserves_rows_cards_links_and_a_gate_selection(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
-fn the_chain_keys_walk_links_and_cards_open_clear_back_and_switch(cx: &mut TestAppContext) {
-    let (handle, page) = fixture(cx);
+fn the_running_cell_is_the_pods_row_and_the_synced_cell_the_application(cx: &mut TestAppContext) {
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The cells beyond the Inspector's edge scroll into view when they
+        // are selected; the ones in view are pressed.
+        for (cell, hop) in [
+            ("change-cell-stage-running", "stage-pods"),
+            ("change-cell-stage-synced", "stage-argocd"),
+            ("change-cell-prod-lon-verified", "prod-lon-verification"),
+            ("change-cell-prod-ams-promoted", "prod-ams-promotion"),
+        ] {
+            window.click(cell, cx);
+            assert_eq!(
+                page.read(cx).selected().map(|s| s.as_ref()),
+                Some(hop),
+                "{cell}"
+            );
+            window.render_frame(cx);
+            assert!(window.try_find("change-detail").is_some(), "{cell}");
+        }
+        // The Stage cell is its first gate.
+        window.click("change-stage-prod-ams", cx);
+        assert_eq!(
+            page.read(cx).selected().map(|s| s.as_ref()),
+            Some("prod-ams-eligible")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_start_strip_cards_select_the_pull_request_the_build_and_the_freight(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for (card, hop) in [
+            ("change-strip-pr", "pr"),
+            ("change-strip-build", "push-run"),
+            ("change-strip-freight", "freight"),
+        ] {
+            window.click(card, cx);
+            assert_eq!(page.read(cx).selected().map(|s| s.as_ref()), Some(hop));
+        }
+        // A hop of the Build selects the Build card.
+        page.update(cx, |page, cx| page.select("signature", window, cx));
+        assert!(
+            page.read(cx).strip.cards.iter().any(|card| card.id == "build"
+                && card.hops.iter().any(|hop| hop.as_ref() == "signature"))
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_overview_keys_walk_cells_and_the_strip_open_clear_back_and_switch(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = overview_fixture(cx);
     let events = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
     let recorded = events.clone();
     let _subscription = cx.update(|cx| {
@@ -60,29 +122,49 @@ fn the_chain_keys_walk_links_and_cards_open_clear_back_and_switch(cx: &mut TestA
         })
     });
     cx.update_window(handle, |_, window, cx| {
-        chain(&page, window, cx);
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.focus(window, cx));
+        let selected = |page: &Entity<ChangePage>, cx: &App| {
+            page.read(cx).selected().map(|s| s.to_string())
+        };
         window.press("down", cx);
-        assert_eq!(page.read(cx).selected().map(|s| s.as_ref()), Some("pr"));
+        assert_eq!(selected(&page, cx).as_deref(), Some("dev-eligible"));
         window.press("right", cx);
-        assert_eq!(
-            page.read(cx).cursor(),
-            Some(Cursor::Link("pr".into(), "pr-run".into()))
-        );
+        assert_eq!(selected(&page, cx).as_deref(), Some("dev-promotion"));
         window.press("right", cx);
-        assert_eq!(page.read(cx).selected().map(|s| s.as_ref()), Some("pr-run"));
-        window.press("left", cx);
-        window.press("left", cx);
-        assert_eq!(page.read(cx).selected().map(|s| s.as_ref()), Some("pr"));
+        window.press("right", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("dev-argocd"));
         window.press("down", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("stage-argocd"));
         window.press("up", cx);
-        assert_eq!(page.read(cx).selected().map(|s| s.as_ref()), Some("pr"));
+        window.press("left", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("dev-verification"));
+        // The keys stop at the row's ends.
+        for _ in 0..10 {
+            window.press("left", cx);
+        }
+        assert_eq!(selected(&page, cx).as_deref(), Some("dev-eligible"));
+        // Up from the top row goes to the strip, and along it.
+        window.press("up", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("freight"));
+        window.press("left", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("push-run"));
+        window.press("left", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("pr"));
+        window.press("right", cx);
+        window.press("right", cx);
+        window.press("right", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("freight"));
+        // Down from the strip enters the matrix.
+        window.press("down", cx);
+        assert_eq!(selected(&page, cx).as_deref(), Some("dev-eligible"));
         page.update(cx, |page, cx| page.select("freight", window, cx));
         window.press("o", cx);
         window.press("enter", cx);
         window.press("v", cx);
-        assert_eq!(page.read(cx).view, ChangeView::List);
+        assert_eq!(page.read(cx).view, ChangeView::Hops);
         window.press("v", cx);
-        assert_eq!(page.read(cx).view, ChangeView::Chain);
+        assert_eq!(page.read(cx).view, ChangeView::Overview);
         window.press("escape", cx);
         assert!(page.read(cx).selected.is_none());
         window.press("escape", cx);
@@ -93,137 +175,24 @@ fn the_chain_keys_walk_links_and_cards_open_clear_back_and_switch(cx: &mut TestA
 }
 
 #[gpui_kit::test]
-fn the_status_filter_dims_chain_cards_and_a_switch_reveals_its_selection(cx: &mut TestAppContext) {
-    let (handle, page) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        chain(&page, window, cx);
-        page.update(cx, |page, cx| {
-            page.toggle_filter(Tone::Crit, cx);
-            page.select("dev-verification", window, cx);
-        });
-        assert_eq!(
-            page.read(cx).graph.nodes().len(),
-            page.read(cx).trail.nodes.len()
-        );
-        page.update(cx, |page, cx| page.set_view(ChangeView::List, window, cx));
-        window.render_frame(cx);
-        assert_eq!(page.read(cx).filter, None);
-        assert!(!page.read(cx).folded.contains(&2));
-        assert!(window.find("change-hop-dev-verification").visible());
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn background_clicks_never_select_or_scroll_and_outside_clicks_blur(cx: &mut TestAppContext) {
-    let (handle, page) = fixture(cx);
-    cx.update_window(handle, |_, window, cx| {
-        chain(&page, window, cx);
-        page.update(cx, |page, cx| page.back(cx));
-        window.simulate_next_frame(cx);
-        let before = window.find("change-card-pr").bounds();
-        window.click_at("change-chain-graph", point(px(4.), px(4.)), cx);
-        window.simulate_next_frame(cx);
-        assert!(page.read(cx).selected.is_none());
-        assert!(page.read(cx).detail.is_none());
-        assert_eq!(window.find("change-card-pr").bounds(), before);
-        assert!(
-            page.read(cx)
-                .graph
-                .focus_handle()
-                .unwrap()
-                .is_focused(window)
-        );
-        window.click_at(
-            "change-chain",
-            point(
-                px(4.),
-                window.find("change-chain").bounds().size.height - px(4.),
-            ),
-            cx,
-        );
-        window.simulate_next_frame(cx);
-        assert!(
-            !page
-                .read(cx)
-                .graph
-                .focus_handle()
-                .unwrap()
-                .is_focused(window)
-        );
-    })
-    .unwrap();
-}
-
-fn has_cursor_ring(key: &str, window: &Window) -> bool {
-    let bounds = window
-        .find(SharedString::from(format!("change-card-{key}")))
-        .bounds()
-        .scale(window.scale_factor());
-    window.painted_quads().iter().any(|quad| {
-        quad.bounds == bounds && quad.border_widths.left.0 >= 2. * window.scale_factor()
-    })
-}
-
-#[gpui_kit::test]
-fn mouse_selection_keeps_the_selected_border_and_only_keyboard_navigation_rings_it(
+fn the_status_filter_shows_the_stages_it_counts_and_a_selection_gives_it_way(
     cx: &mut TestAppContext,
 ) {
-    let (handle, page) = fixture(cx);
+    let (handle, page) = overview_fixture(cx);
     cx.update_window(handle, |_, window, cx| {
-        window.activate_window();
-        chain(&page, window, cx);
-        window.click("change-card-pr", cx);
-        settle_chain(window, cx);
-        assert_eq!(page.read(cx).selected().map(|key| key.as_ref()), Some("pr"));
-        assert!(page.read(cx).focus_handle().is_focused(window));
-        assert!(
-            !has_cursor_ring("pr", window),
-            "mouse selection has no keyboard ring"
-        );
-        let bounds = window
-            .find("change-card-pr")
-            .bounds()
-            .scale(window.scale_factor());
-        let accent = freshkube_ui::palette::palette(cx).accent_line;
-        assert!(
-            window
-                .painted_quads()
-                .iter()
-                .any(|q| q.bounds == bounds && q.border_color == accent)
-        );
-        window.press("down", cx);
-        settle_chain(window, cx);
-        assert!(
-            has_cursor_ring("pr-run", window),
-            "keyboard navigation rings its card"
-        );
-        window.click("change-card-pr", cx);
-        settle_chain(window, cx);
-        assert!(
-            !has_cursor_ring("pr", window),
-            "mouse selection clears the ring"
-        );
-        window.press("down", cx);
-        settle_chain(window, cx);
-        assert!(has_cursor_ring("pr-run", window));
-    })
-    .unwrap();
-    // Focus subscriptions become active after the render's update ends.
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| window.blur(cx))
-        .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.simulate_next_frame(cx);
         window.render_frame(cx);
-        assert!(!has_cursor_ring("pr-run", window), "blur clears the ring");
-        page.update(cx, |page, cx| page.focus(window, cx));
+        page.update(cx, |page, cx| page.toggle_filter(Tone::Crit, cx));
         window.render_frame(cx);
-        assert!(
-            !has_cursor_ring("pr-run", window),
-            "focus alone does not restore the ring"
-        );
+        assert!(window.try_find("change-matrix-row-prod-lon").is_some());
+        assert!(window.try_find("change-matrix-row-dev").is_none());
+        page.update(cx, |page, cx| page.select("dev-verification", window, cx));
+        window.render_frame(cx);
+        assert_eq!(page.read(cx).filter, None);
+        assert!(window.try_find("change-matrix-row-dev").is_some());
+        page.update(cx, |page, cx| page.set_view(ChangeView::Hops, window, cx));
+        window.render_frame(cx);
+        assert!(!page.read(cx).folded.contains(&2));
+        assert!(window.find("change-hop-dev-verification").visible());
     })
     .unwrap();
 }

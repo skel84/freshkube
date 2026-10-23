@@ -338,18 +338,25 @@ impl Render for ChangePage {
         let summary = self.render_summary(window, cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,
-            None if self.view == ChangeView::Chain
-                && self.loading_rows().is_none()
-                && !self.rows.is_empty() =>
+            None if self.view == ChangeView::Overview
+                && (!self.rows.is_empty() || self.loading_rows().is_some()) =>
             {
-                self.render_chain(window, cx)
+                self.render_overview(window, cx)
             }
             None => self.render_table(window, cx),
         };
-        let least = self.split.short_height(
+        let split = match self.view {
+            ChangeView::Overview => &self.overview_split,
+            ChangeView::Hops => &self.split,
+        };
+        let least = split.short_height(
             page::page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
+        let least = match self.view {
+            ChangeView::Overview => least.max(OVERVIEW_LEAD),
+            ChangeView::Hops => least,
+        };
         // The keys live on a wrapper drawn in every state.
         div()
             .key_context(CONTEXT)
@@ -357,14 +364,19 @@ impl Render for ChangePage {
             .on_action(cx.listener(|this, _: &NextHop, window, cx| this.step(1, window, cx)))
             .on_action(cx.listener(|this, _: &PreviousHop, window, cx| this.step(-1, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleView, window, cx| this.toggle_view(window, cx)))
+            .on_action(cx.listener(|this, _: &NextCell, window, cx| {
+                if this.view == ChangeView::Overview {
+                    this.step_overview(0, 1, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &PreviousCell, window, cx| {
+                if this.view == ChangeView::Overview {
+                    this.step_overview(0, -1, window, cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))
             .on_action(cx.listener(|this, _: &OpenHop, window, cx| {
-                if this.focus.is_focused(window)
-                    || this
-                        .graph
-                        .focus_handle()
-                        .is_some_and(|focus| focus.is_focused(window))
-                {
+                if this.focus.is_focused(window) {
                     this.open_selected(cx);
                 } else {
                     cx.propagate();

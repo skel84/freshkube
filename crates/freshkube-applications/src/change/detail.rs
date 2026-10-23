@@ -230,9 +230,7 @@ impl ChangePage {
             }
             .map(link_lines)
             .or_else(|| {
-                let card = self.trail.cards.get(hop.key.as_str())?;
-                let edge = self.trail.edges.iter().find(|edge| &edge.to == card)?;
-                let before = self.change.hop(&edge.from)?;
+                let before = self.change.hop(hop.after.as_deref()?)?;
                 let why = match &hop.shows {
                     Shows::Hop(detail) => detail.unlinked.clone(),
                     Shows::Stage(_) => None,
