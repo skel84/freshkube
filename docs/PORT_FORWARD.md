@@ -193,6 +193,10 @@ Each step lands with its tests and a Done row in the roadmap.
    - "connection refused" on a closed port;
    - what closing releases. After closing a connection and after Stop, the pod has no TCP connection left on that port. If the user allows it, an exec reading `/proc/net/tcp` counts them, printing only the count. A pod going away is covered by tests unless a rollout happens during the check.
 
+## Database explorer
+
+An explorer tab ([database-explorer.md](features/database-explorer.md)) reaches its database through this owner and no other: on connect it starts one pod forward for a ready replica of a CloudNativePG cluster (the primary when none is ready), to port 5432 on an automatic local port, and removes it when the tab closes. The forward is the session tier like any other: it starts only from the user's Explore, shows in the status bar and Ports list, and is stopped with the window. The tab asks the forward for a route and connects to `127.0.0.1` on it; it does not bind a port of its own.
+
 ## References
 
 - [Kubeli's forwarding commands](../../Kubeli/src-tauri/src/commands/portforward.rs) for binding before reporting a port and holding the listener, Service targetPort resolution (numbers, names, unset) and a per-namespace pod watch. Avoid its gaps: it ignores the port's error channel, binds IPv4 only with `SO_REUSEADDR`, and follows a same-name pod replacement.

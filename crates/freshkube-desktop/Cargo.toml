@@ -25,6 +25,7 @@ freshkube-nav.workspace = true
 freshkube-observability.workspace = true
 freshkube-prefs.workspace = true
 freshkube-probe.workspace = true
+freshkube-db.workspace = true
 freshkube-reads.workspace = true
 freshkube-resources.workspace = true
 freshkube-terminal.workspace = true

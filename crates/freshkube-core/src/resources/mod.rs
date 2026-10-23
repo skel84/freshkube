@@ -33,6 +33,7 @@ mod pod_row;
 mod pod_state;
 mod state;
 mod table;
+pub mod traffic;
 mod watch;
 mod workload_pods;
 

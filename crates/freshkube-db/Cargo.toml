@@ -1,0 +1,29 @@
+[package]
+name = "freshkube-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The database explorer's session: a read-only Postgres session with timeouts and row caps, and a fake one for example data and tests; no GPUI"
+
+[lib]
+doctest = false
+
+[dependencies]
+# DBFlux's core, for Value and DbError only. Its Linux keyring brings libdbus-sys,
+# which the target dependency below builds from source, so no system library is needed.
+dbflux_core.workspace = true
+async-trait = "0.1"
+thiserror.workspace = true
+tokio.workspace = true
+tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.14"
+rustls.workspace = true
+rustls-pemfile = "2"
+zeroize = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libdbus-sys = { version = "0.2", features = ["vendored"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

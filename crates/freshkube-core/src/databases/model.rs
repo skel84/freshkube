@@ -124,7 +124,7 @@ pub struct Condition {
     pub observed_generation: Option<i64>,
     pub current: bool,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     Primary,
     Replica,

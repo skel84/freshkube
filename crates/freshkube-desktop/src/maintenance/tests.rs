@@ -527,7 +527,9 @@ async fn a_node_that_cannot_be_inspected_is_reported_and_nothing_proceeds(cx: &m
 }
 
 #[gpui_kit::test]
-async fn apply_needs_an_explicit_confirmation_of_the_reviewed_yaml(cx: &mut TestAppContext) {
+async fn safety_g10_apply_needs_an_explicit_confirmation_of_the_reviewed_yaml(
+    cx: &mut TestAppContext,
+) {
     let world = World::new("apply");
     let (_runtime, handle, view) = mount(cx, &world, NODE);
     reach_apply_confirmation(cx, handle, &view, &world).await;
@@ -636,7 +638,7 @@ async fn example_data_stops_at_the_review(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-async fn a_stale_apply_preview_is_refused_and_sends_nothing(cx: &mut TestAppContext) {
+async fn safety_g10_a_stale_apply_preview_is_refused_and_sends_nothing(cx: &mut TestAppContext) {
     let world = World::new("stale");
     let (_runtime, handle, view) = mount(cx, &world, NODE);
     reach_apply_confirmation(cx, handle, &view, &world).await;

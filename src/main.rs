@@ -8,7 +8,7 @@
 use clap::Parser;
 use color_eyre::Result;
 use freshkube_desktop::{DebugOptions, GpuiOptions};
-use std::{fs::File, path::PathBuf};
+use std::path::PathBuf;
 use tracing::Level;
 use tracing_subscriber::filter::{FilterExt, filter_fn};
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -165,14 +165,24 @@ fn main() -> Result<()> {
     color_eyre::install()?;
 
     // Log to a file; stdout belongs to the terminal that launched the app.
+    // The previous sessions' logs are kept, and a panic is written into this
+    // one (docs/features/settings.md, About).
     let log_path = resolve_log_path(log_file);
-    let log_file = File::create(&log_path)?;
+    let marker_folder = freshkube_desktop::preferences_path()
+        .and_then(|preferences| preferences.parent().map(std::path::Path::to_path_buf));
+    let session = freshkube_core::crash_log::start(
+        &log_path,
+        marker_folder.as_deref(),
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    let writer = session.writer();
 
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
-                .with_writer(log_file)
-                .with_ansi(true)
+                .with_writer(move || writer.clone())
+                // A colour code inside a field would hide it from redaction.
+                .with_ansi(false)
                 .with_target(false)
                 .with_filter(log_filter(debug).and(agent_libraries_at_info())),
         )
@@ -219,8 +229,12 @@ fn main() -> Result<()> {
     // The debug knobs are read here once; a release build gets the default.
     let options = options
         .with_debug(DebugOptions::from_env())
-        .with_open_link(url.or(open_link));
-    freshkube_desktop::run(options, runtime.handle().clone())?;
+        .with_open_link(url.or(open_link))
+        .with_crash_session(session.info());
+    let ran = freshkube_desktop::run(options, runtime.handle().clone());
+    // Quitting, with or without an error, is a clean end; a crash never gets here.
+    session.finish();
+    ran?;
 
     tracing::info!("Goodbye!");
     Ok(())

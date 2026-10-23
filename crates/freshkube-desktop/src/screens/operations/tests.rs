@@ -691,7 +691,9 @@ fn an_empty_roster_says_so_in_the_table(cx: &mut TestAppContext) {
 /// out. Review still opens the confirmation, and no step runs while it
 /// waits.
 #[gpui_kit::test]
-fn the_table_chooses_nodes_and_review_still_asks_before_any_step(cx: &mut TestAppContext) {
+fn safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
@@ -1052,7 +1054,7 @@ fn access_replaced_while_the_client_is_built_submits_nothing() {
 /// A confirmed source whose access isn't the preview's, or a preview that
 /// recorded none, refuses the run before a client is built.
 #[test]
-fn a_run_without_the_previews_access_submits_nothing() {
+fn safety_g10_a_run_without_the_previews_access_submits_nothing() {
     let files = access_files();
     let other = AppliedAccess {
         identity: AccessIdentity::new(AccessSessionId::new(), files.access.configuration),
@@ -1074,7 +1076,7 @@ fn a_run_without_the_previews_access_submits_nothing() {
 /// Review is off with the reason, pressing it opens nothing, and a
 /// confirmation already open when the level changed starts nothing.
 #[gpui_kit::test]
-fn a_read_only_cluster_refuses_review_and_starts_nothing(cx: &mut TestAppContext) {
+fn safety_g10_a_read_only_cluster_refuses_review_and_starts_nothing(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
     let level =
         |cx: &mut TestAppContext, level| cx.update(|cx| crate::mutation::set_protection(level, cx));

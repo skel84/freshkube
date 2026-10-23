@@ -55,7 +55,7 @@ pub(super) fn mount(
 ) {
     mount_sized(cx, width, 880.)
 }
-fn mount_sized(
+pub(super) fn mount_sized(
     cx: &mut TestAppContext,
     width: f32,
     height: f32,

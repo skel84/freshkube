@@ -224,6 +224,8 @@ impl TableSource for DatabasesScreen {
         let mut actions = vec![
             freshkube_ui::menu::MenuAction::new("Open in Resources", OpenResource)
                 .enabled(self.selected.is_some()),
+            freshkube_ui::menu::MenuAction::new("Explore", Explore)
+                .enabled(self.explorable().is_some()),
         ];
         actions.push(
             freshkube_ui::menu::MenuAction::new("Open in Observability", OpenObservability)

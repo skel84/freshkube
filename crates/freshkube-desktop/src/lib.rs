@@ -33,6 +33,9 @@ pub struct GpuiOptions {
     debug: DebugOptions,
     /// A `freshkube://open?…` link to open once the window is up (#873).
     open_link: Option<String>,
+    /// The session the binary started: its log, and the crash the last one
+    /// left (#953).
+    crash_session: Option<freshkube_core::crash_log::SessionInfo>,
     /// Links the operating system hands the running app, as they arrive
     /// (macOS's open-URL event); the app makes the channel itself, and a test
     /// brings its own (`with_urls`).
@@ -59,6 +62,7 @@ impl GpuiOptions {
             setup_notice: None,
             debug: DebugOptions::default(),
             open_link: None,
+            crash_session: None,
             urls: None,
         }
     }
@@ -75,6 +79,12 @@ impl GpuiOptions {
     /// A link to open at launch (a URL argument, or `--open-link`).
     pub fn with_open_link(mut self, link: Option<String>) -> Self {
         self.open_link = link;
+        self
+    }
+    /// Hands in the session whose log and last crash the notice and Settings ›
+    /// About use.
+    pub fn with_crash_session(mut self, session: freshkube_core::crash_log::SessionInfo) -> Self {
+        self.crash_session = Some(session);
         self
     }
     /// Hands in the debug knobs, which only a debug or stress build parses.
