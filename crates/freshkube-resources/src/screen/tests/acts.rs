@@ -145,6 +145,24 @@ fn a_replicaset_the_pane_shows_owned_by_a_deployment_does_not_offer_scale(cx: &m
             .find(|identity| identity.name.starts_with("api-"))
             .expect("an example ReplicaSet of api")
     });
+    // Before the pane has read it the list cannot know the owner: Scale is on
+    // offer.
+    cx.update(|cx| {
+        screen.update(cx, |screen, cx| {
+            let ix = (0..screen.projection.len())
+                .find(|ix| {
+                    screen
+                        .projection
+                        .row(&screen.store, *ix)
+                        .is_some_and(|row| row.identity == owned)
+                })
+                .unwrap();
+            screen.projection.select(&screen.store, Some(ix));
+            cx.notify();
+        })
+    });
+    let before = cx.read(|cx| screen.read(cx).acts(cx));
+    assert_eq!(before, [Everyday::Scale]);
     // Open it: the pane reads the object and says who owns it.
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -165,11 +183,21 @@ fn a_replicaset_the_pane_shows_owned_by_a_deployment_does_not_offer_scale(cx: &m
             .map(str::to_owned)
     });
     assert_eq!(owner.as_deref(), Some("Deployment"));
-    let items = open_menu(cx, handle, |window, cx| {
-        window.within(row_id(&owned)).right_click("name", cx)
+    // The row's menu leaves Scale off, and the toolbar's offer agrees.
+    let labels = cx.read(|cx| {
+        screen
+            .read(cx)
+            .act_menu(cx)
+            .into_iter()
+            .filter_map(|line| match line {
+                freshkube_ui::menu::MenuAction::Item { label, .. } => Some(label.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     });
-    assert!(items.contains(&Some("Open".into())), "{items:?}");
-    assert!(!items.contains(&Some("Scale…".into())), "{items:?}");
+    assert!(labels.is_empty(), "a ReplicaSet has only Scale: {labels:?}");
+    let offered = cx.read(|cx| screen.read(cx).acts(cx));
+    assert!(offered.is_empty(), "{offered:?}");
 }
 
 #[gpui_kit::test]
