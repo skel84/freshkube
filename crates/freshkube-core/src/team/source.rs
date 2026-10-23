@@ -91,10 +91,10 @@ pub fn redact(url: &str) -> String {
 /// A file in a git repository at a branch or tag.
 #[derive(Clone, PartialEq, Eq)]
 pub struct GitSource {
-    pub url: String,
-    pub git_ref: String,
+    url: String,
+    git_ref: String,
     /// The setup file's path inside the repository.
-    pub path: String,
+    path: String,
 }
 
 impl std::fmt::Debug for GitSource {
@@ -108,6 +108,18 @@ impl std::fmt::Debug for GitSource {
 }
 
 impl GitSource {
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn git_ref(&self) -> &str {
+        &self.git_ref
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
     /// The address without anything that could be a credential.
     pub fn redacted(&self) -> String {
         redact(&self.url)
@@ -214,7 +226,7 @@ fn relative_ok(path: &str) -> bool {
 /// A file at an HTTPS address, with an optional token kept in the key store.
 #[derive(Clone, PartialEq, Eq)]
 pub struct HttpsSource {
-    pub url: Url,
+    url: Url,
 }
 
 impl std::fmt::Debug for HttpsSource {
@@ -226,6 +238,10 @@ impl std::fmt::Debug for HttpsSource {
 }
 
 impl HttpsSource {
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
+
     pub fn new(text: &str) -> Result<Self, Refused> {
         let url = Url::parse(text.trim()).map_err(|_| Refused::NotAnAddress)?;
         match url.scheme() {
@@ -355,8 +371,8 @@ impl GitFetch {
             .map(String::from),
         );
         let address_at = args.len();
-        args.push(source.url.clone());
-        args.push(format!("+{}:{TRACKING_REF}", source.git_ref));
+        args.push(source.url().to_string());
+        args.push(format!("+{}:{TRACKING_REF}", source.git_ref()));
         Self {
             program: "git",
             args,
@@ -376,7 +392,7 @@ impl GitFetch {
             format!("core.hooksPath={}", empty_hooks.display()),
             "cat-file".into(),
             "blob".into(),
-            format!("{TRACKING_REF}:{}", source.path),
+            format!("{TRACKING_REF}:{}", source.path()),
         ]
     }
 

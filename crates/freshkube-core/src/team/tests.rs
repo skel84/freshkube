@@ -55,7 +55,7 @@ fn source() -> Source {
 fn every_key_the_team_may_not_set_is_ignored_not_an_error() {
     let v = version("1", TEAM);
     let ignored: Vec<(&str, IgnoredKey)> =
-        v.ignored.iter().map(|i| (i.at.as_str(), i.why)).collect();
+        v.ignored().iter().map(|i| (i.at.as_str(), i.why)).collect();
     for expected in [
         ("kubeconfig", IgnoredKey::LocalPath),
         ("notifications", IgnoredKey::Notifications),
@@ -71,18 +71,18 @@ fn every_key_the_team_may_not_set_is_ignored_not_an_error() {
     ] {
         assert!(ignored.contains(&expected), "{expected:?} in {ignored:?}");
     }
-    for key in v.values.keys() {
+    for key in v.values().keys() {
         assert!(
             !key.contains("context") && !key.contains("token") && !key.ends_with(".key"),
             "{key}"
         );
     }
     assert_eq!(
-        v.values["coroot.server"],
+        v.values()["coroot.server"],
         json!("https://coroot.example.test")
     );
     assert_eq!(
-        v.values["clusters[cluster-a].protection"],
+        v.values()["clusters[cluster-a].protection"],
         json!("protected")
     );
 }
@@ -111,7 +111,7 @@ fn a_bad_team_file_is_refused_without_repeating_it() {
 
 #[test]
 fn yours_over_the_teams_over_the_defaults() {
-    let team = version("1", TEAM).values;
+    let team = version("1", TEAM).values().clone();
     let defaults: Values = [("coroot.project".to_string(), json!("default"))].into();
     let yours: Overrides = [("coroot.project".to_string(), json!("mine"))].into();
     let none = Overrides::new();
@@ -139,7 +139,7 @@ fn yours_over_the_teams_over_the_defaults() {
 
 #[test]
 fn the_teams_protection_is_a_floor() {
-    let team = version("1", TEAM).values;
+    let team = version("1", TEAM).values().clone();
     let key = merge::protection_key("cluster-a");
     let looser: Overrides = [(key.clone(), json!("open"))].into();
     let r = resolve(&key, &team, &looser, &Values::new());
@@ -467,7 +467,10 @@ fn trust_changes_come_first_and_nothing_applies_unreviewed() {
     assert!(!review.confirm_rest());
     assert!(!review.confirm_trust("coroot.project"));
     let waiting: Vec<String> = review.trust_pending().map(|c| c.at.clone()).collect();
-    assert_eq!(waiting.len(), 3);
+    // The fingerprint, the Results address, the looser level, and cluster-b
+    // going, which had a guarded floor.
+    assert_eq!(waiting.len(), 4);
+    assert!(waiting.contains(&"clusters[cluster-b]".to_string()));
     for (done, at_key) in waiting.iter().enumerate() {
         assert_eq!(review.step(), Step::Trust, "{done} confirmed");
         assert!(!review.confirm_rest());
@@ -479,11 +482,11 @@ fn trust_changes_come_first_and_nothing_applies_unreviewed() {
         m.apply(review.clone(), at(2)),
         Err(NotReviewed::Step(Step::Rest))
     );
-    assert_eq!(m.applied().unwrap().id, "1");
+    assert_eq!(m.applied().unwrap().id(), "1");
     assert!(review.confirm_rest());
     assert!(review.is_finished());
     m.apply(review, at(2)).unwrap();
-    assert_eq!(m.applied().unwrap().id, "2");
+    assert_eq!(m.applied().unwrap().id(), "2");
     assert!(m.pending().is_none());
 }
 
@@ -536,7 +539,7 @@ fn a_failed_fetch_keeps_the_applied_version_and_says_since_when() {
     );
     let failure = m.failure().cloned().unwrap();
     assert_eq!((failure.since, failure.last_try), (at(3), at(4)));
-    assert_eq!(m.applied().unwrap().id, "1");
+    assert_eq!(m.applied().unwrap().id(), "1");
     assert_eq!(m.team_values()["coroot.project"], json!("shop-api"));
 
     // A parse failure is a failure too.
@@ -545,7 +548,7 @@ fn a_failed_fetch_keeps_the_applied_version_and_says_since_when() {
     m.fetched(bad, at(5));
     assert_eq!(m.failure().unwrap().since, at(3));
     assert!(m.failure().unwrap().reason.contains("version 9"));
-    assert_eq!(m.applied().unwrap().id, "1");
+    assert_eq!(m.applied().unwrap().id(), "1");
 
     m.fetched(Ok(version("1", TEAM)), at(6));
     assert!(m.failure().is_none());
@@ -624,7 +627,8 @@ fn the_floor_holds_in_both_directions_and_an_unknown_level_is_guarded() {
             "t",
             &format!("version: 1\nclusters:\n  - id: a\n    protection: {level}\n"),
         )
-        .values
+        .values()
+        .clone()
     };
     let open: Overrides = [(key.clone(), json!("open"))].into();
     // The team tightens under a looser override of yours: the floor wins.
@@ -672,11 +676,14 @@ clusters:
         ("clusters[a].agent", IgnoredKey::AgentAccess),
         ("clusters[a].writes", IgnoredKey::Writes),
     ] {
-        assert!(v.ignored.iter().any(|i| i.at == at && i.why == why), "{at}");
+        assert!(
+            v.ignored().iter().any(|i| i.at == at && i.why == why),
+            "{at}"
+        );
     }
     // The merge changes nothing for any of them: only the cluster's own id and
     // role come through.
-    let keys: Vec<&str> = v.values.keys().map(String::as_str).collect();
+    let keys: Vec<&str> = v.values().keys().map(String::as_str).collect();
     assert_eq!(keys, ["clusters[a]", "clusters[a].role"]);
     for key in [
         "agent.enabled",
@@ -684,7 +691,7 @@ clusters:
         "clusters[a].context",
         "clusters[a].agent.enabled",
     ] {
-        let r = resolve(key, &v.values, &Overrides::new(), &Values::new());
+        let r = resolve(key, v.values(), &Overrides::new(), &Values::new());
         assert_eq!((r.value, r.origin), (None, Origin::Default), "{key}");
     }
 }
@@ -698,7 +705,7 @@ fn the_fake_is_the_only_fetch_and_a_refresh_takes_its_answer() {
         Err(membership::FetchFailed("the host didn’t answer".into())),
     ]);
     m.refresh(&fetch, at(1));
-    assert_eq!(m.pending().unwrap().id, "1");
+    assert_eq!(m.pending().unwrap().id(), "1");
     m.refresh(&fetch, at(2));
     assert_eq!(m.failure().unwrap().since, at(2));
     // Past its script it fails; it never reads anything.
@@ -742,15 +749,15 @@ coroot:
         "coroot.sign_in.x",
     ] {
         assert!(
-            v.ignored
+            v.ignored()
                 .iter()
                 .any(|i| i.at == at && i.why == IgnoredKey::BadKey),
             "{at} in {:?}",
-            v.ignored
+            v.ignored()
         );
     }
     // None of them landed, and the entry's own level stands.
-    let keys: Vec<&str> = v.values.keys().map(String::as_str).collect();
+    let keys: Vec<&str> = v.values().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
         [
@@ -760,9 +767,9 @@ coroot:
             "coroot.server"
         ]
     );
-    assert_eq!(v.values["clusters[a].protection"], json!("protected"));
+    assert_eq!(v.values()["clusters[a].protection"], json!("protected"));
     for key in ["agent.enabled", "notifications.quiet", "history.keep"] {
-        let r = resolve(key, &v.values, &Overrides::new(), &Values::new());
+        let r = resolve(key, v.values(), &Overrides::new(), &Values::new());
         assert_eq!((r.value, r.origin), (None, Origin::Default), "{key}");
     }
 }
@@ -794,7 +801,7 @@ clusters:
 ",
     );
     let unknown = |at: &str| {
-        v.ignored
+        v.ignored()
             .iter()
             .any(|i| i.at == at && i.why == IgnoredKey::Unknown)
     };
@@ -805,10 +812,10 @@ clusters:
         "metrics.store.surprise",
         "clusters[a].surprise",
     ] {
-        assert!(unknown(at), "{at} in {:?}", v.ignored);
+        assert!(unknown(at), "{at} in {:?}", v.ignored());
     }
     assert!(
-        v.ignored
+        v.ignored()
             .iter()
             .any(|i| i.at == "destinations" && i.why == IgnoredKey::Destinations)
     );
@@ -820,7 +827,7 @@ clusters:
         "sources.kargo",
         "clusters[a].results.forward.port",
     ] {
-        assert!(v.values.contains_key(key), "{key}");
+        assert!(v.values().contains_key(key), "{key}");
     }
     // A cluster id that could address another path is refused outright.
     for id in ["a.b", "a]", "a b", "", &"x".repeat(65)] {
@@ -851,7 +858,7 @@ fn a_review_applies_only_for_the_versions_it_was_made_for() {
     example::confirm_all(&mut stale);
     m.fetched(Ok(version("3", TEAM)), at(4));
     assert_eq!(m.apply(stale, at(4)), Err(NotReviewed::Stale));
-    assert_eq!(m.applied().unwrap().id, "1");
+    assert_eq!(m.applied().unwrap().id(), "1");
     // A review made against another applied version is stale too.
     let mut other_base = Review::new(Some(&version("0", TEAM)), version("3", TEAM));
     example::confirm_all(&mut other_base);
@@ -860,7 +867,7 @@ fn a_review_applies_only_for_the_versions_it_was_made_for() {
     let mut honest = m.review().unwrap();
     example::confirm_all(&mut honest);
     m.apply(honest, at(6)).unwrap();
-    assert_eq!(m.applied().unwrap().id, "3");
+    assert_eq!(m.applied().unwrap().id(), "3");
 }
 
 #[test]
@@ -944,4 +951,82 @@ fn a_source_host_or_user_that_starts_with_a_dash_is_refused() {
     ] {
         assert!(GitSource::new(url, "", "").is_err(), "{url}");
     }
+}
+
+#[test]
+fn a_team_that_stops_naming_a_cluster_loosens_its_floor_and_needs_a_confirm() {
+    let both = "version: 1\nclusters:\n  - id: a\n    role: core\n    protection: guarded\n  - id: b\n    role: core\n";
+    let only_a = "version: 1\nclusters:\n  - id: a\n    role: core\n    protection: guarded\n";
+    let none = "version: 1\n";
+    let trust = |from: &str, to: &str| -> Vec<(String, Option<TrustKind>)> {
+        let review = Review::new(Some(&version("1", from)), version("2", to));
+        review
+            .changes()
+            .iter()
+            .map(|c| (c.at.clone(), c.trust))
+            .collect()
+    };
+    // `b` has no level, so its floor is guarded: removing it loosens.
+    let removed = trust(both, only_a);
+    assert!(
+        removed.contains(&("clusters[b]".into(), Some(TrustKind::LoosensProtection))),
+        "{removed:?}"
+    );
+    // Removing a guarded cluster that has its level: one confirmation, on the level.
+    let removed = trust(only_a, none);
+    let flagged: Vec<_> = removed.iter().filter(|(_, t)| t.is_some()).collect();
+    assert_eq!(flagged.len(), 1, "{removed:?}");
+    assert_eq!(flagged[0].0, "clusters[a].protection");
+    // Dropping the level of a protected cluster, or loosening it, is a trust change.
+    let protected = "version: 1\nclusters:\n  - id: a\n    protection: protected\n";
+    let unset = "version: 1\nclusters:\n  - id: a\n";
+    assert!(
+        trust(protected, unset)
+            .iter()
+            .any(|(at, t)| at == "clusters[a].protection" && t.is_some())
+    );
+    // Tightening, a cluster appearing and an unchanged floor are not.
+    assert!(trust(unset, protected).iter().all(|(_, t)| t.is_none()));
+    assert!(trust(none, both).iter().all(|(_, t)| t.is_none()));
+    assert!(trust(both, both).is_empty());
+    // A cluster the team never gave a floor is not a loosening when it goes.
+    let bare = "version: 1\ncoroot: {server: 'https://c.example.test', sign_in: api-key}\n";
+    assert!(
+        trust(bare, none)
+            .iter()
+            .all(|(at, t)| at.starts_with("coroot") == t.is_some() || t.is_none())
+    );
+
+    // And the person's open override, held by the floor, needs that confirm
+    // before it comes back.
+    let mut m = Membership::join(
+        source(),
+        [(merge::protection_key("a"), json!("open"))].into(),
+    );
+    m.fetched(Ok(version("1", only_a)), at(1));
+    let mut first = m.review().unwrap();
+    example::confirm_all(&mut first);
+    m.apply(first, at(1)).unwrap();
+    let key = merge::protection_key("a");
+    let held = resolve(&key, &m.team_values(), m.overrides(), &Values::new());
+    assert!(held.floor_held);
+    m.fetched(Ok(version("2", none)), at(2));
+    let mut review = m.review().unwrap();
+    assert!(!review.confirm_rest());
+    assert_eq!(review.trust_pending().count(), 1);
+}
+
+#[test]
+fn a_refused_apply_says_why() {
+    assert!(NotReviewed::Stale.to_string().contains("changed"));
+    assert!(
+        NotReviewed::Step(Step::Trust)
+            .to_string()
+            .contains("trust change")
+    );
+    assert!(
+        NotReviewed::Step(Step::Rest)
+            .to_string()
+            .contains("other changes")
+    );
 }

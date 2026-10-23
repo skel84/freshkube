@@ -216,18 +216,38 @@ fn cluster_id_ok(id: &str) -> bool {
 /// values it sets and what it set that is ignored.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
-    pub id: String,
-    pub values: Values,
-    pub ignored: Vec<Ignored>,
+    id: String,
+    values: Values,
+    ignored: Vec<Ignored>,
     /// Key files named by `supply_chain.public_key_file`: path → fingerprint of
     /// its contents, read at this version by the fetcher.
-    pub key_fingerprints: BTreeMap<String, String>,
+    key_fingerprints: BTreeMap<String, String>,
 }
 
 /// The one key whose value is a path inside the team repository.
 pub const KEY_FILE: &str = "supply_chain.public_key_file";
 
 impl Version {
+    /// The commit or content hash this version is.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// What the team sets, flat.
+    pub fn values(&self) -> &Values {
+        &self.values
+    }
+
+    /// What the file set that is ignored.
+    pub fn ignored(&self) -> &[Ignored] {
+        &self.ignored
+    }
+
+    pub fn key_fingerprints(&self) -> &BTreeMap<String, String> {
+        &self.key_fingerprints
+    }
+
+    /// The only way to make a version: the allowlist and the id check run here.
     pub fn parse(
         id: impl Into<String>,
         bytes: &[u8],

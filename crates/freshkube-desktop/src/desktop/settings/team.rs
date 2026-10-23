@@ -5,7 +5,9 @@
 //! Words and lists are derived when the data changes, never in `render`.
 
 use chrono::{DateTime, Utc};
-use freshkube_core::team::{Change, ChangeKind, Leave, Membership, Review, Step, example::Shape};
+use freshkube_core::team::{
+    Change, ChangeKind, Leave, Membership, NotReviewed, Review, Step, example::Shape,
+};
 use freshkube_ui::{form, page};
 use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -23,6 +25,8 @@ pub(super) struct TeamState {
     review: Option<Review>,
     /// Set once the person has left; the overrides to save are slice 2's.
     left: Option<Leave>,
+    /// Why the last apply was refused, until the next change.
+    refusal: Option<NotReviewed>,
     pub(super) shown: Shown,
 }
 
@@ -48,6 +52,7 @@ pub(super) struct Shown {
     applied: String,
     ignored: String,
     failure: Option<FailureWords>,
+    refusal: Option<String>,
     /// The review: its lead, its count line and the rows of the current step.
     lead: &'static str,
     pub(super) counts: String,
@@ -76,11 +81,11 @@ impl TeamState {
             shown.source = team.source().display();
             shown.applied = team.applied().map_or("None".to_string(), |v| {
                 let at = team.applied_at().map(when).unwrap_or_default();
-                format!("{} · applied {at}", v.id)
+                format!("{} · applied {at}", v.id())
             });
             shown.ignored = match team.applied() {
-                Some(v) if !v.ignored.is_empty() => v
-                    .ignored
+                Some(v) if !v.ignored().is_empty() => v
+                    .ignored()
                     .iter()
                     .map(|i| format!("{} ({})", i.at, i.why.words()))
                     .collect::<Vec<_>>()
@@ -94,7 +99,7 @@ impl TeamState {
                     failure.reason,
                     team.applied()
                         .map_or("Nothing is applied.".to_string(), |v| {
-                            format!("Still using version {}.", v.id)
+                            format!("Still using version {}.", v.id())
                         })
                 ),
             });
@@ -130,6 +135,7 @@ impl TeamState {
                 })
                 .collect();
         }
+        shown.refusal = self.refusal.map(|why| why.to_string());
         self.shown = shown;
     }
 }
@@ -225,6 +231,15 @@ impl SettingsPage {
     fn team_joined(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         let shown = &self.team.shown;
         let mut column = v_flex().id("team-joined").test_support().gap(dp(12.));
+        if let Some(why) = &shown.refusal {
+            column = column.child(div().id("team-refusal").test_support().child(ui::banner(
+                Tone::Warn,
+                Some("The update wasn’t applied".into()),
+                why.clone(),
+                None,
+                cx,
+            )));
+        }
         if let Some(failure) = &shown.failure {
             column = column.child(div().id("team-failure").test_support().child(ui::banner(
                 Tone::Warn,
@@ -369,7 +384,8 @@ impl SettingsPage {
         }
     }
 
-    /// Confirms the rest of the diff, which applies the version.
+    /// Confirms the rest of the diff, which applies the version. A refused
+    /// apply makes the review again from the waiting version and says why.
     fn team_apply(&mut self, cx: &mut Context<Self>) {
         let Some(review) = self.team.review.as_mut() else {
             return;
@@ -377,7 +393,13 @@ impl SettingsPage {
         if review.confirm_rest() {
             let review = self.team.review.take().expect("checked");
             if let Some(team) = self.team.membership.as_mut() {
-                let _ = team.apply(review, Utc::now());
+                match team.apply(review, Utc::now()) {
+                    Ok(()) => self.team.refusal = None,
+                    Err(why) => {
+                        self.team.refusal = Some(why);
+                        self.team.review = team.review();
+                    }
+                }
             }
             self.team.derive();
         }

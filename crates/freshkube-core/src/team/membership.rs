@@ -92,7 +92,7 @@ impl Membership {
     pub fn team_values(&self) -> Values {
         self.applied
             .as_ref()
-            .map(|v| v.values.clone())
+            .map(|v| v.values().clone())
             .unwrap_or_default()
     }
 
@@ -102,7 +102,11 @@ impl Membership {
         match result {
             Ok(version) => {
                 self.failure = None;
-                if self.applied.as_ref().is_some_and(|a| a.id == version.id) {
+                if self
+                    .applied
+                    .as_ref()
+                    .is_some_and(|a| a.id() == version.id())
+                {
                     self.pending = None;
                 } else {
                     self.pending = Some(version);

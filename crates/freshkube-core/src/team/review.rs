@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::file::{KEY_FILE, Version};
-use crate::write::Protection;
+use super::merge;
 
 /// What kind of trust a change moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -64,6 +64,18 @@ pub enum NotReviewed {
     Stale,
 }
 
+impl std::fmt::Display for NotReviewed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            NotReviewed::Step(Step::Trust) => "A trust change is still to confirm.",
+            NotReviewed::Step(Step::Rest) => "The other changes are still to confirm.",
+            NotReviewed::Stale => {
+                "The waiting version changed while you reviewed it. Review it again."
+            }
+        })
+    }
+}
+
 /// The settings that move no trust: anything else that changes is a trust
 /// change. Protection is judged by direction, not by name.
 fn is_safe(key: &str) -> bool {
@@ -83,26 +95,47 @@ fn is_safe(key: &str) -> bool {
         )
 }
 
-fn trust_of(key: &str, before: Option<&Value>, after: Option<&Value>) -> Option<TrustKind> {
+fn trust_of(key: &str) -> Option<TrustKind> {
     if key.starts_with("fingerprint:") {
         return Some(TrustKind::SigningKey);
     }
-    if key.starts_with("clusters[") && key.ends_with(".protection") {
-        let level = |v: Option<&Value>| -> Protection {
-            v.and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default()
-        };
-        return (level(after) > level(before)).then_some(TrustKind::LoosensProtection);
+    // Protection is judged by the cluster's floor, afterwards.
+    if is_cluster_part(key, "protection") || is_marker(key) {
+        return None;
     }
     (!is_safe(key)).then_some(TrustKind::Reach)
+}
+
+fn is_marker(key: &str) -> bool {
+    key.starts_with("clusters[") && key.ends_with(']')
+}
+
+fn is_cluster_part(key: &str, field: &str) -> bool {
+    key.starts_with("clusters[") && key.ends_with(&format!("].{field}"))
+}
+
+/// The cluster id of a `clusters[id]…` key.
+fn cluster_of(key: &str) -> Option<&str> {
+    let rest = key.strip_prefix("clusters[")?;
+    rest.split_once(']').map(|(id, _)| id)
+}
+
+/// Whether the team's floor for `id` is looser after than before. No floor is
+/// the loosest, so a cluster the team stops naming loosens if it had one.
+fn loosens(id: &str, before: &super::file::Values, after: &super::file::Values) -> bool {
+    match (merge::floor(id, before), merge::floor(id, after)) {
+        (Some(_), None) => true,
+        (Some(was), Some(now)) => now > was,
+        (None, _) => false,
+    }
 }
 
 /// All keys a version sets, with signing key fingerprints as `fingerprint:path`.
 fn flat(version: Option<&Version>) -> std::collections::BTreeMap<String, Value> {
     let mut all = std::collections::BTreeMap::new();
     if let Some(version) = version {
-        all.extend(version.values.clone());
-        for (path, print) in &version.key_fingerprints {
+        all.extend(version.values().clone());
+        for (path, print) in version.key_fingerprints() {
             all.insert(format!("fingerprint:{path}"), Value::String(print.clone()));
         }
     }
@@ -143,8 +176,29 @@ impl Review {
                 kind,
                 before: was.cloned(),
                 after: now.cloned(),
-                trust: trust_of(key, was, now),
+                trust: trust_of(key),
             });
+        }
+        // Protection: a cluster whose floor got looser is one trust change, on
+        // its level if that changed, else on the cluster itself.
+        let empty = super::file::Values::new();
+        let (was_values, now_values) = (applied.map_or(&empty, |v| v.values()), pending.values());
+        let ids: BTreeSet<String> = changes
+            .iter()
+            .filter(|c| is_cluster_part(&c.at, "protection") || is_marker(&c.at))
+            .filter_map(|c| cluster_of(&c.at).map(String::from))
+            .collect();
+        for id in ids.iter().filter(|id| loosens(id, was_values, now_values)) {
+            let level = merge::protection_key(id);
+            let marker = format!("clusters[{id}]");
+            let at = if changes.iter().any(|c| c.at == level) {
+                level
+            } else {
+                marker
+            };
+            if let Some(change) = changes.iter_mut().find(|c| c.at == at) {
+                change.trust = Some(TrustKind::LoosensProtection);
+            }
         }
         // Trust changes first, then by key.
         changes.sort_by(|a, b| {
@@ -156,7 +210,7 @@ impl Review {
         });
         Self {
             changes,
-            base: applied.map(|v| v.id.clone()),
+            base: applied.map(|v| v.id().to_string()),
             target: pending,
             confirmed: BTreeSet::new(),
             rest_done: false,
@@ -169,7 +223,7 @@ impl Review {
 
     /// The version this review is for.
     pub fn target_id(&self) -> &str {
-        &self.target.id
+        self.target.id()
     }
 
     /// The step the person is on: every trust change is confirmed on its own
@@ -229,7 +283,7 @@ impl Review {
         applied: Option<&Version>,
         pending: Option<&Version>,
     ) -> Result<Version, NotReviewed> {
-        if self.base.as_deref() != applied.map(|v| v.id.as_str()) || pending != Some(&self.target) {
+        if self.base.as_deref() != applied.map(|v| v.id()) || pending != Some(&self.target) {
             return Err(NotReviewed::Stale);
         }
         if self.step() == Step::Trust {
