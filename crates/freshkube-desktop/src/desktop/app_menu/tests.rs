@@ -81,6 +81,12 @@ fn the_menus_differ_only_by_the_systems_entries() {
             "Minimize",
             "Zoom",
             "—",
+            "Duplicate tab",
+            "Reopen closed tab",
+            "Next view tab",
+            "Previous view tab",
+            "Close view tab",
+            "—",
             "Next tab",
             "Previous tab",
             "Close tab",
@@ -126,7 +132,18 @@ fn the_menus_differ_only_by_the_systems_entries() {
         );
         assert_eq!(
             shown(named(&menus, "Window")),
-            ["Next tab", "Previous tab", "Close tab", "Minimize dock"]
+            [
+                "Duplicate tab",
+                "Reopen closed tab",
+                "Next view tab",
+                "Previous view tab",
+                "Close view tab",
+                "—",
+                "Next tab",
+                "Previous tab",
+                "Close tab",
+                "Minimize dock"
+            ]
         );
         for name in ["Edit", "View", "Go"] {
             assert_eq!(
