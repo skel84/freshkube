@@ -24,7 +24,7 @@ fn steps(inv: &Investigation) -> Vec<(String, StepState)> {
 }
 
 #[tokio::test]
-async fn only_freshkube_tools_are_allowed() {
+async fn safety_g08_only_freshkube_tools_are_allowed() {
     let (session, mut rx) = start_in_process(offline());
     session.prompt("try the tools").unwrap();
     let mut inv = Investigation::default();
@@ -61,7 +61,7 @@ async fn only_freshkube_tools_are_allowed() {
 }
 
 #[tokio::test]
-async fn the_agent_reads_through_the_endpoint_and_a_shell_is_refused() {
+async fn safety_g08_the_agent_reads_through_the_endpoint_and_a_shell_is_refused() {
     let stub = stub().await;
     let (session, mut rx) = start_in_process(stub.endpoint());
     session.prompt("checkout is degraded").unwrap();

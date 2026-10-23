@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test(start_paused = true)]
-async fn read_only_blocks_every_tier_and_makes_no_request_at_all() {
+async fn safety_g01_read_only_blocks_every_tier_and_makes_no_request_at_all() {
     for action in [fake::scale(3), fake::set_image("x"), fake::delete_web()] {
         let (cluster, dir) = (Cluster::new(), tmp());
         let runner = fake::runner(&cluster, dir.path(), Protection::ReadOnly);
@@ -16,7 +16,7 @@ async fn read_only_blocks_every_tier_and_makes_no_request_at_all() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_prepared_action_is_still_refused_by_a_read_only_runner() {
+async fn safety_g01_a_prepared_action_is_still_refused_by_a_read_only_runner() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let guarded = fake::runner(&cluster, dir.path(), Protection::Guarded);
     let prepared = ready(&guarded, fake::scale(3)).await;
@@ -30,7 +30,7 @@ async fn a_prepared_action_is_still_refused_by_a_read_only_runner() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn nothing_is_sent_without_the_confirmation_the_level_asks_for() {
+async fn safety_g02_nothing_is_sent_without_the_confirmation_the_level_asks_for() {
     for (level, action, given) in [
         (Protection::Guarded, fake::scale(3), Confirmation::NotAsked),
         (
@@ -76,7 +76,7 @@ async fn nothing_is_sent_without_the_confirmation_the_level_asks_for() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn open_sends_a_reversible_action_without_a_dialog_but_not_a_spec_change() {
+async fn safety_g02_open_sends_a_reversible_action_without_a_dialog_but_not_a_spec_change() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Open);
     let prepared = ready(&runner, fake::scale(3)).await;
@@ -94,7 +94,7 @@ async fn open_sends_a_reversible_action_without_a_dialog_but_not_a_spec_change()
 }
 
 #[tokio::test(start_paused = true)]
-async fn protected_takes_the_typed_name_and_the_entry_id_for_several_objects() {
+async fn safety_g02_protected_takes_the_typed_name_and_the_entry_id_for_several_objects() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Protected);
     let prepared = ready(&runner, fake::scale(3)).await;
