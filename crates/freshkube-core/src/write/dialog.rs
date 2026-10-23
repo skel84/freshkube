@@ -6,7 +6,8 @@
 use std::time::Duration;
 
 use super::{
-    action::ActionDescription,
+    Protection,
+    action::{ActionDescription, Preview},
     outcome::Observed,
     run::Runner,
     send::{Refusal, get},
@@ -39,6 +40,16 @@ pub struct Ask {
     pub cancel_window: Option<Duration>,
     /// The confirm is drawn as dangerous.
     pub danger: bool,
+    /// What the action shows under the sentence (a preview, a note).
+    pub preview: Vec<Preview>,
+    /// The other clusters the action reaches, named in the dialog, with the
+    /// level each holds it to.
+    pub destinations: Vec<(String, Protection)>,
+    /// With a typed name for several subjects, the ones a `protected`
+    /// cluster asks it for, so the dialog says which.
+    pub protected: Vec<String>,
+    /// The subjects the typed name is for.
+    pub subjects: Vec<String>,
 }
 
 /// What the dialog is, from the person's side.
@@ -48,7 +59,7 @@ pub enum Dialog {
     /// nothing is asked and nothing is sent.
     Disabled { reason: String },
     /// Ask first.
-    Ask(Ask),
+    Ask(Box<Ask>),
     /// Send at once; the toast says nothing was asked and why.
     SendWithoutAsking { notice: &'static str },
     /// Preflight refused it: access, the dry run, or the cluster not
@@ -70,6 +81,9 @@ pub enum Dialog {
 /// The toast's wording when nothing was asked because the cluster is open.
 pub const OPEN_NOTICE: &str = "Sent without asking because this cluster is open.";
 
+/// The toast's wording for an action that declares it needs no confirmation.
+pub const ANNOTATION_NOTICE: &str = "Sent without asking: it only adds an annotation.";
+
 pub const REVIEW_LABEL: &str = "Review the new version";
 
 fn ask(prepared: &Prepared, entry: &str) -> Ask {
@@ -77,7 +91,10 @@ fn ask(prepared: &Prepared, entry: &str) -> Ask {
     let objects = prepared.impact();
     let action = prepared.description();
     Ask {
-        title: format!("{} {}", action.verb, objects.join(", ")),
+        title: action
+            .title
+            .clone()
+            .unwrap_or_else(|| format!("{} {}", action.verb, objects.join(", "))),
         sentence: action.sentence.clone(),
         verb: action.verb.clone(),
         type_name: requirement.type_name.then(|| prepared.expected_name(entry)),
@@ -89,6 +106,22 @@ fn ask(prepared: &Prepared, entry: &str) -> Ask {
         impact: if requirement.impact { objects } else { vec![] },
         cancel_window: requirement.cancel_window,
         danger: requirement.cancel_window.is_some(),
+        preview: action.preview.clone(),
+        destinations: action
+            .destinations
+            .iter()
+            .map(|destination| (destination.entry.clone(), destination.level()))
+            .collect(),
+        protected: if requirement.type_name {
+            prepared.protected_subjects()
+        } else {
+            vec![]
+        },
+        subjects: action
+            .subject_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
     }
 }
 
@@ -114,10 +147,14 @@ impl Dialog {
     pub fn for_verdict(verdict: &Verdict, entry: &str) -> Dialog {
         match verdict {
             Verdict::Ready(prepared) if prepared.requirement().confirm => {
-                Dialog::Ask(ask(prepared, entry))
+                Dialog::Ask(Box::new(ask(prepared, entry)))
             }
-            Verdict::Ready(_) => Dialog::SendWithoutAsking {
-                notice: OPEN_NOTICE,
+            Verdict::Ready(prepared) => Dialog::SendWithoutAsking {
+                notice: if prepared.description().no_confirmation {
+                    ANNOTATION_NOTICE
+                } else {
+                    OPEN_NOTICE
+                },
             },
             Verdict::Blocked(Block::ReadOnly(reason)) => Dialog::Disabled {
                 reason: (*reason).to_owned(),
@@ -137,10 +174,32 @@ impl Dialog {
 }
 
 impl Finished {
-    /// Whether the report stays until the person closes it. Only an observed
-    /// success may go away by itself.
+    /// Whether the report stays until the person closes it. An observed
+    /// success may go away by itself, and so may a report that only says
+    /// there was nothing to watch (Reverify) or no cluster to send to
+    /// (example data): neither is a doubt about what happened. The rest stay.
     pub fn sticky(&self) -> bool {
-        self.headline() != Headline::Done
+        // A write whose audit line failed always stays: the person is told the
+        // log is incomplete.
+        self.audit_error.is_some()
+            || !(self.headline() == Headline::Done
+                || self.headline() == Headline::Cancelled
+                || self.nothing_to_watch()
+                || matches!(self.status, super::run::Status::NotSent(NotSent::Example)))
+    }
+
+    /// Every accepted object is one the app has no way to watch.
+    fn nothing_to_watch(&self) -> bool {
+        self.headline() == Headline::NotObserved
+            && self.objects.iter().all(|o| {
+                matches!(
+                    &o.step,
+                    Step::Accepted {
+                        observed: Observed::NotObserved { why, .. },
+                        ..
+                    } if *why == super::outcome::NOT_WATCHABLE
+                )
+            })
     }
 
     /// The sentence a toast leads with. Words that only fit success are used
@@ -148,6 +207,9 @@ impl Finished {
     pub fn message(&self) -> String {
         match self.headline() {
             Headline::Done => "Done. The cluster reached the new state.".to_owned(),
+            Headline::NotObserved if self.nothing_to_watch() => {
+                "Accepted. The app can't watch this take effect; check the object.".to_owned()
+            }
             Headline::NotObserved => {
                 let waited = self
                     .objects
@@ -198,6 +260,13 @@ impl Finished {
                     "This cluster is now {}. Nothing was sent; you will be asked again.",
                     level.label()
                 ),
+                super::run::Status::NotSent(NotSent::Moved(what)) => format!(
+                    "{what} It changed after you were asked, so nothing was sent; open it again."
+                ),
+                super::run::Status::NotSent(NotSent::Unchecked(text)) => text.clone(),
+                super::run::Status::NotSent(NotSent::Example) => {
+                    "Example data: there is no cluster, so nothing was sent.".to_owned()
+                }
                 super::run::Status::NotSent(NotSent::Session) => {
                     "Shells and port forwards are not writes. Nothing was sent.".to_owned()
                 }
@@ -223,7 +292,14 @@ impl Runner {
         &self,
         mut action: ActionDescription,
     ) -> Result<ActionDescription, Block> {
+        if self.example {
+            return Ok(action);
+        }
         for change in &mut action.changes {
+            // A new object has no version to take again.
+            if matches!(change.change, super::action::Change::Create(_)) {
+                continue;
+            }
             let target = &mut change.target;
             let object = target.label();
             match get(&self.client, target).await {
@@ -251,7 +327,14 @@ impl Runner {
                 Err(Refusal::NoAnswer(message) | Refusal::Rejected { message, .. }) => {
                     return Err(Block::NoAnswer { object, message });
                 }
-                Err(Refusal::Conflict(_)) => unreachable!("a read does not conflict"),
+                // A read does not conflict, but a proxy can answer it with a 409
+                // that reads as one: that is an answer we can't use, not a panic.
+                Err(Refusal::Conflict(_)) => {
+                    return Err(Block::NoAnswer {
+                        object,
+                        message: "the cluster answered a read with a conflict".to_owned(),
+                    });
+                }
             }
         }
         Ok(action)

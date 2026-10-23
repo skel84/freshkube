@@ -163,7 +163,7 @@ The forward token's key-store account is `Tekton Results forward://<namespace>/<
 | Value | Means |
 |-------|-------|
 | `read-only` | no writes at all |
-| `protected` | every write asks the user to type the object's name |
+| `protected` | every write asks the user to type the object's name, except one that only adds an annotation (Refresh, Reverify) |
 | `guarded` | each action's own confirmation |
 | `open` | reversible actions skip their confirmation |
 

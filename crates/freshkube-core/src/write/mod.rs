@@ -24,13 +24,14 @@ pub mod testing;
 
 pub use access::{Access, review as review_access};
 pub use action::{
-    ActionDescription, Change, Destination, Inverse, InverseFrom, ObjectChange, Observation, Target,
+    ActionDescription, Change, Depends, Destination, Inverse, InverseFrom, ObjectChange,
+    Observation, Preview, Target,
 };
 pub use audit::{
     AuditObject, AuditRequest, AuditStore, KEEP as AUDIT_KEEP, Phase, RESULT_LIMIT, ROTATE_AT,
     Read as AuditRead, Record as AuditRecord, RunId, SCHEMA as AUDIT_SCHEMA, scrub,
 };
-pub use dialog::{Ask, Dialog, OPEN_NOTICE, REVIEW_LABEL};
+pub use dialog::{ANNOTATION_NOTICE, Ask, Dialog, OPEN_NOTICE, REVIEW_LABEL};
 pub use diff::{ChangeKind, FieldChange};
 pub use history::{History, Row as HistoryRow, Source, SourceFilter, load as load_history};
 pub use outcome::{Accepted, DEFAULT_WAIT, MAX_WAIT, Observed, Watching};
@@ -38,6 +39,7 @@ pub use preflight::{Block, ObjectDiff, Prepared, Verdict, Who};
 pub use protection::{LevelCell, Protection, READ_ONLY_REASON};
 pub use requirement::{
     CANCEL_WINDOW, Confirmation, Requirement, Tier, UNDO_WINDOW, expected_name, requirement,
+    requirement_for,
 };
 pub use run::{Event, Finished, Headline, NotSent, ObjectResult, Runner, Status, Step};
 pub use send::{ChangedWhat, Conflict, FIELD_MANAGER, Refusal};

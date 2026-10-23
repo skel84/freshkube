@@ -483,7 +483,7 @@ pub enum Gap {
 }
 
 /// A Stage and its three gates.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Stage {
     pub name: String,
     /// Where it deploys, as far as what was read says.
@@ -511,6 +511,33 @@ pub struct Stage {
     pub reach: Reach,
     /// The Stage itself, to open in Resources.
     pub object: Object,
+    /// What its actions (Refresh, Promote, Abort) need, when the Stage and
+    /// the Freight were read with their UID and resourceVersion.
+    pub acts: Option<crate::acts::StageActs>,
+}
+
+/// Prints as the struct did before it had `acts`: the handles a write needs
+/// are not evidence, so a change derived from the same reads prints as it
+/// always has.
+impl std::fmt::Debug for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Stage")
+            .field("name", &self.name)
+            .field("cluster", &self.cluster)
+            .field("state", &self.state)
+            .field("words", &self.words)
+            .field("running", &self.running)
+            .field("eligible", &self.eligible)
+            .field("promotion", &self.promotion)
+            .field("approvers", &self.approvers)
+            .field("promoters", &self.promoters)
+            .field("steps", &self.steps)
+            .field("verification", &self.verification)
+            .field("link", &self.link)
+            .field("reach", &self.reach)
+            .field("object", &self.object)
+            .finish()
+    }
 }
 
 /// Source words as a complete explanatory sentence.
