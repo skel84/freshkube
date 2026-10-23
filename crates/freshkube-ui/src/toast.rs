@@ -9,10 +9,12 @@ use gpui_kit::{Anchor, App, Pixels, px};
 use crate::page::STATUS_BAR_HEIGHT;
 use crate::ui::BASE_TEXT;
 
-/// The footer row a toast stays above, in dp: an Inspector's footer, an
-/// xsmall button's 20 between 6 above and below, and its hairline. A
-/// table's footer is 26.
-pub const FOOTER_ROW: f32 = 34.;
+/// The footer row a toast stays above, in dp. The change page's wrapped
+/// actions measure 38 at text size 13; `Inspector::render` (inspector/mod.rs)
+/// adds 6 above and below plus a 1 px hairline: 51 in all. The footer takes
+/// variable-height content, so it has no fixed height to share. A table's
+/// footer is 26.
+pub const FOOTER_ROW: f32 = 51.;
 /// Between a toast and that row, in dp.
 pub const GAP: f32 = 8.;
 /// Between a toast and the window's right edge, in dp: Kit's 16 px at the
