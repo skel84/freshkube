@@ -89,11 +89,7 @@ impl ResourcesScreen {
 
     /// The toolbar's buttons for the selected row's actions, each with its
     /// folded form: disabled with the reason while writes are blocked.
-    pub(super) fn act_buttons(
-        &self,
-        header: page::PageHeader,
-        cx: &mut Context<Self>,
-    ) -> page::PageHeader {
+    pub(super) fn act_buttons(&self, header: page::PageHeader) -> page::PageHeader {
         if self.projection.selected().is_none() {
             return header;
         }
@@ -135,7 +131,6 @@ impl ResourcesScreen {
             };
             header = header.foldable(button, fold);
         }
-        let _ = cx;
         header
     }
 }

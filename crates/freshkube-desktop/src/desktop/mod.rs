@@ -56,6 +56,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 mod use_kubernetes_tests;
 mod view;
+mod write_runner;
 
 use crate::{
     GpuiOptions,

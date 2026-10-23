@@ -14,9 +14,7 @@ use crate::backend::spawn_job;
 use crate::mutation::{entry_level_cell, level_cell, write_audit_store};
 use crate::write_flow::{self, WriteRequest};
 use freshkube_core::workspace::{Entry, Role, Workspace};
-use freshkube_core::write::{
-    ActionDescription, AuditStore, Destination, LevelCell, Protection, Runner, Who,
-};
+use freshkube_core::write::{ActionDescription, Destination, LevelCell, Protection, Runner, Who};
 use freshkube_delivery::acts::{self, StageActs};
 use freshkube_delivery::change::Destination as StageDestination;
 use freshkube_delivery::entry;
@@ -154,21 +152,13 @@ impl Pilot {
             entry: kargo.entry.id.clone(),
             context: kargo.entry.context.clone(),
             protection: kargo.level,
-            actor: freshkube_core::ambient::get()
-                .user
-                .clone()
-                .unwrap_or_else(|| "unknown".into()),
+            actor: super::write_runner::actor(),
         };
         let runtime = self.runtime.clone();
         if matches!(act.kargo, KargoAt::Example) {
-            // Example data: a runner that sends nothing, so a capture shows
-            // each dialog at each level. Its audit goes to a scratch place.
-            let scratch = std::env::temp_dir().join("freshkube-example-audit");
-            let runner = {
-                let _guard = runtime.enter();
-                Runner::example_offline(AuditStore::new(scratch), who).following(kargo.cell)
-            };
-            self.start_stage_write(Arc::new(runner), action, window, cx);
+            // Example data: a runner that sends nothing.
+            let runner = super::write_runner::example_runner(&runtime, who, kargo.cell);
+            self.start_stage_write(runner, action, window, cx);
             return;
         }
         let Some(audit) = write_audit_store() else {

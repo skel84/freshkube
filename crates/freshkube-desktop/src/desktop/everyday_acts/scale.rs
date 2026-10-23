@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::resources::model::ResourceIdentity;
 use freshkube_core::write::Runner;
 use freshkube_core::write::everyday::{self, Subject};
 use freshkube_ui::form::{self, Action};
@@ -40,6 +41,7 @@ pub(super) struct ScaleDialog {
     runner: Arc<Runner>,
     runtime: Handle,
     subject: Subject,
+    identity: ResourceIdentity,
     count: Entity<InputState>,
     error: Option<String>,
 }
@@ -48,6 +50,7 @@ pub(super) fn open(
     runner: Arc<Runner>,
     runtime: Handle,
     subject: Subject,
+    identity: ResourceIdentity,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -58,6 +61,7 @@ pub(super) fn open(
         runner,
         runtime,
         subject,
+        identity,
         count,
         error: None,
     });
