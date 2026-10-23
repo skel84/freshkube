@@ -285,6 +285,7 @@ impl DetailPane {
     /// scrolling page under an index that stays at its top.
     fn details(&self, detail: &Detail, cx: &mut Context<Self>) -> AnyElement {
         let sections = Section::of(&detail.target.kind);
+        let waiting = self.details_wait(detail);
         let line = palette(cx).line;
         let pad = dp(freshkube_ui::page::PANE_PADDING);
         let body = |section: Section, this: &Self, cx: &mut Context<Self>| match section {
@@ -326,7 +327,18 @@ impl DetailPane {
                     .track_scroll(&self.details_scroll)
                     .on_scroll_wheel({
                         let pinned = self.section_pinned.clone();
-                        move |_, _, _| pinned.set(None)
+                        let held = self.wheel_held.clone();
+                        move |event, window, _| {
+                            pinned.set(None);
+                            // Opening an object gives Details a new handle
+                            // and starts its reads, so the wheel's deltas
+                            // since then are where it asked to be.
+                            if waiting {
+                                let dy = event.delta.pixel_delta(window.line_height()).y;
+                                let from = held.get().unwrap_or_default();
+                                held.set(Some((from + dy).min(px(0.))));
+                            }
+                        }
                     })
                     .flex_1()
                     .min_h_0()
@@ -336,25 +348,51 @@ impl DetailPane {
                     .py_3()
                     .children(parts),
             )
-            .child(self.watch_sections(sections, cx))
+            .child(self.watch_sections(sections, waiting, cx))
             .into_any_element()
     }
 
+    /// Whether Details still shows loading rows, the Overview's or the
+    /// events', which the reads will replace with something taller.
+    fn details_wait(&self, detail: &Detail) -> bool {
+        let overview = (detail.view.is_none() || self.summary.is_none())
+            && matches!(
+                detail.read,
+                DocumentRead::Loading | DocumentRead::Loaded | DocumentRead::Stale(_)
+            );
+        overview || matches!(detail.events.read(), EventsRead::Loading)
+    }
+
     /// Learns which section is at the top of Details as it draws, and draws
-    /// the index again when that changed.
+    /// the index again when that changed. Once the reads have drawn, it
+    /// takes Details where the wheel sent it while they loaded.
     fn watch_sections(
         &self,
         sections: &'static [Section],
+        waiting: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let scroll = self.details_scroll.clone();
         let shown = self.shown_section.clone();
         let pinned = self.section_pinned.clone();
+        let held = self.wheel_held.clone();
         let this = cx.entity().downgrade();
         canvas(
             move |_, window, _| {
                 // Runs after Details laid out this frame, so the handle's
                 // bounds and its sections' are this frame's.
+                if !waiting && let Some(wanted) = held.take() {
+                    let to = wanted.max(-scroll.max_offset().y);
+                    let offset = scroll.offset();
+                    if (offset.y - to).abs() > px(0.5) {
+                        scroll.set_offset(point(offset.x, to));
+                        let this = this.clone();
+                        window.on_next_frame(move |_, cx| {
+                            _ = this.update(cx, |_, cx| cx.notify());
+                        });
+                        return;
+                    }
+                }
                 if let Some(ix) = pinned.get() {
                     let Some(item) = scroll.bounds_for_item(ix) else {
                         return;
