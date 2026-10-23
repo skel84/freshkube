@@ -3,7 +3,7 @@ use freshkube_ui::{
     inspector::{self, Inspector},
     page::{self, PageHeader},
     palette::palette,
-    table::DataTable,
+    table::{DataTable, TableSource},
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -287,21 +287,30 @@ impl Render for DatabasesScreen {
                 .id("databases-stale")
                 .test_support()
             });
+        let empty = !loading && self.display.lines.is_empty();
+        let short = page::is_short(window);
         let body = if let Some(words) = state {
             page::inset()
-                .child(ui::empty_state(
-                    IconName::Database,
-                    "Databases",
-                    words,
-                    None,
-                    if self.loader.error().is_some() && self.source.is_some() {
-                        vec![self.retry(cx).into_any_element()]
-                    } else {
-                        Vec::new()
-                    },
-                    cx,
-                ))
+                .child(
+                    ui::empty_state(
+                        IconName::Database,
+                        "Databases",
+                        words,
+                        None,
+                        if self.loader.error().is_some() && self.source.is_some() {
+                            vec![self.retry(cx).into_any_element()]
+                        } else {
+                            Vec::new()
+                        },
+                        cx,
+                    )
+                    .h_auto(),
+                )
                 .into_any_element()
+        } else if empty {
+            // Let the state and its Retry contribute their full height to
+            // the page's scroll range, rather than overflow a table pane.
+            page::inset().children(self.empty(cx)).into_any_element()
         } else {
             self.body(window, cx)
         };
@@ -318,7 +327,9 @@ impl Render for DatabasesScreen {
             .flex_col()
             .flex_1()
             .min_h_0()
-            .when(page::is_short(window), |this| this.min_h(dp(least)))
+            .when(short, |this| {
+                this.min_h(dp(least)).when(empty, |this| this.flex_none())
+            })
             .child(body);
         div()
             .size_full()
@@ -350,12 +361,12 @@ impl Render for DatabasesScreen {
                     .restrict_scroll_to_axis()
                     .child(page::toolbar(cx).child(header))
                     .when(notice.is_some() || failure.is_some(), |this| {
-                        // Capped, so a long coverage line leaves the table and
-                        // the Inspector their room in a short window.
+                        // As on the change page, only a short window caps the
+                        // notes; with room to spare every banner shows whole.
                         this.child(
                             page::capped_notes(
                                 "databases-notices",
-                                dp(72.),
+                                if short { dp(72.).into() } else { Length::Auto },
                                 notice.into_iter().chain(failure),
                                 // A bottom edge, so a clipped banner reads as
                                 // scrollable, not cut off by the table.
