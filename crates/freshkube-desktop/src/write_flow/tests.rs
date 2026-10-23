@@ -35,7 +35,7 @@ pub(super) struct Harness {
     pub(super) _dir: tempfile::TempDir,
 }
 
-fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
+pub(super) fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
     harness_on(cx, level, Cluster::new)
 }
 
@@ -177,7 +177,7 @@ impl Harness {
         cx.update(|cx| Operations::current(cx).is_none())
     }
 
-    fn replicas(&self) -> i64 {
+    pub(super) fn replicas(&self) -> i64 {
         self.cluster.object(fake::DEPLOYMENT)["spec"]["replicas"]
             .as_i64()
             .unwrap()
