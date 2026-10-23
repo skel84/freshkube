@@ -25,20 +25,6 @@ pub(super) const LOADS_YOUR_CONFIG: &str = "opencode 2.1.3, the version Freshkub
 /// The read-only identity suggestion.
 pub(super) const READ_ONLY: &str = "The agent reads with your own access. Prefer a read-only identity: an entry whose context is bound to the built-in view ClusterRole, with agent access on for that entry alone. Nothing detects or requires it.";
 
-/// Whether a step's tool is one of Freshkube's four reads, under the names
-/// the agents use for an MCP tool.
-fn is_ours(tool: &str) -> bool {
-    freshkube_agent::tools::TOOLS.iter().any(|name| {
-        [
-            format!("{}_{name}", freshkube_agent::tools::SERVER),
-            format!("mcp__{}__{name}", freshkube_agent::tools::SERVER),
-            format!("mcp.{}.{name}", freshkube_agent::tools::SERVER),
-        ]
-        .iter()
-        .any(|ours| ours == tool)
-    })
-}
-
 impl AgentView {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
@@ -447,8 +433,9 @@ impl AgentView {
             StepState::Done => (Tone::Good, "Done"),
             // A tool that isn't one of Freshkube's four is refused by the
             // app; that is not the app failing.
-            StepState::Failed if !is_ours(&step.tool) => (Tone::Unknown, "Refused"),
-            StepState::Failed => (Tone::Crit, "Failed"),
+            // A read of ours that failed is on the trail as refused, so the
+            // transcript says the same.
+            StepState::Failed => (Tone::Unknown, "Refused"),
         };
         h_flex()
             .id(SharedString::from(format!("agent-step-{}", step.id)))
@@ -549,7 +536,8 @@ impl AgentView {
         let tone = match row.mark {
             TrailMark::Evidence => Tone::Unknown,
             TrailMark::Cited => Tone::Good,
-            TrailMark::Refused => Tone::Crit,
+            // Neutral, as the transcript's Refused is: the app refused it.
+            TrailMark::Refused => Tone::Unknown,
         };
         v_flex()
             .id(SharedString::from(format!("agent-trail-{}", row.id)))
@@ -567,12 +555,15 @@ impl AgentView {
                     .gap(dp(8.))
                     .items_center()
                     .child(div().text_color(p.muted).child(ui::mono(row.id.clone())))
+                    // The name gives way, so the mark is never clipped.
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
                             .font_weight(FontWeight::MEDIUM)
                             .child(row.tool.clone()),
                     )
-                    .child(div().flex_1())
                     .child(ui::tag(tone, None, row.mark.label(), cx)),
             )
             .child(
