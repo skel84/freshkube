@@ -86,6 +86,10 @@ fn last_other_writer(object: &Value) -> Option<String> {
 fn holds(guard: &Observation, object: &Value) -> bool {
     match guard {
         Observation::FieldEquals { pointer, value } => object.pointer(pointer) == Some(value),
+        Observation::FieldEqualsOrAbsent { pointer, value } => {
+            object.pointer(pointer) == Some(value)
+                || super::outcome::absent_is_zero(object, pointer, value)
+        }
         Observation::Gone => false,
         // Nothing can be checked, so nothing is known to be safe: not holding.
         Observation::Exists | Observation::Unobservable => false,

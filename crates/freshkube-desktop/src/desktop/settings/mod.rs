@@ -34,6 +34,9 @@ mod sections;
 mod small_window_tests;
 mod source;
 pub(super) mod sources;
+mod team;
+#[cfg(test)]
+mod team_tests;
 #[cfg(test)]
 pub(super) mod tests;
 mod unsaved;
@@ -108,6 +111,14 @@ pub(crate) struct ClusterRow {
 pub(super) enum Notice {
     Saved(SharedString),
     Failed(SharedString),
+}
+
+/// The words and tone of a Settings notice, before choosing its frame.
+struct SettingsBanner {
+    id: &'static str,
+    lead: &'static str,
+    body: SharedString,
+    tone: ui::Tone,
 }
 
 /// What the workspace file is.
@@ -190,6 +201,8 @@ pub(crate) struct SettingsPage {
     kubeconfig_path: Option<SharedString>,
     /// A list section's frame, which scrolls in a short window.
     page_scroll: ScrollHandle,
+    /// The page's banners keep their own scroll when capped.
+    banners_scroll: ScrollHandle,
     /// Monitoring's form scrolls independently from the workspace lists.
     monitoring_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -217,6 +230,8 @@ pub(crate) struct SettingsPage {
     follow_rows: Vec<notifications::FollowRow>,
     /// Settings › Audit log: what was read from both logs, and the filter.
     audit: audit::AuditView,
+    /// Settings › Team setup (#849).
+    team: team::TeamState,
 }
 
 impl SettingsPage {
@@ -411,6 +426,7 @@ impl SettingsPage {
                 trail: inspector::Pane::new(inspector::STACKED_HEIGHT).least(80.),
             }),
             page_scroll: ScrollHandle::new(),
+            banners_scroll: ScrollHandle::new(),
             monitoring_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             section: SettingsSection::default(),
@@ -432,6 +448,7 @@ impl SettingsPage {
             ignored: HashSet::new(),
             follow_rows: Vec::new(),
             audit: audit::AuditView::new(),
+            team: Default::default(),
         };
         page.derive_follows(cx);
         page
@@ -731,22 +748,13 @@ impl SettingsPage {
         &self.origin
     }
 
-    /// The banners under a list's toolbar: a file not used, unknown keys,
-    /// and what the last save did. Each reads text derived when it changed.
-    fn render_banners(&self, cx: &App) -> Vec<AnyElement> {
-        let banner = |id: &'static str, lead: &str, body: SharedString, tone: ui::Tone| {
-            page::inset()
-                .id(id)
-                .test_support()
-                .role(Role::Alert)
-                .aria_label(body.clone())
-                .child(
-                    ui::banner(tone, Some(lead.to_owned().into()), body, None, cx)
-                        .id(SharedString::from(format!("{id}-content")))
-                        .test_support()
-                        .aria_label(lead.to_owned()),
-                )
-                .into_any_element()
+    /// Banner contents are shared by the uncapped forms and capped lists.
+    fn banners(&self, cx: &App) -> Vec<SettingsBanner> {
+        let banner = |id, lead, body, tone| SettingsBanner {
+            id,
+            lead,
+            body,
+            tone,
         };
         let mut banners = Vec::new();
         if let Some(body) = &self.banner {
@@ -797,6 +805,79 @@ impl SettingsPage {
 }
 
 impl SettingsPage {
+    fn render_banners(&self, cx: &App) -> Vec<AnyElement> {
+        self.banners(cx)
+            .into_iter()
+            .map(|banner| {
+                page::inset()
+                    .id(banner.id)
+                    .test_support()
+                    .role(Role::Alert)
+                    .aria_label(banner.body.clone())
+                    .child(
+                        ui::banner(banner.tone, Some(banner.lead.into()), banner.body, None, cx)
+                            .id(SharedString::from(format!("{}-content", banner.id)))
+                            .test_support()
+                            .aria_label(banner.lead),
+                    )
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    fn render_banner_block(&self, window: &Window, cx: &App) -> AnyElement {
+        let banners = self.banners(cx);
+        if banners.is_empty() {
+            return div().into_any_element();
+        }
+        // A failure or warning keeps its tone even alongside a saved notice.
+        let tone = if banners.iter().any(|banner| banner.tone == ui::Tone::Crit) {
+            ui::Tone::Crit
+        } else if banners.iter().any(|banner| banner.tone == ui::Tone::Warn) {
+            ui::Tone::Warn
+        } else {
+            ui::Tone::Good
+        };
+        let short = page::is_short(window);
+        page::capped_notes(
+            "settings-banners",
+            if short {
+                dp(48.).into()
+            } else {
+                gpui_kit::Length::Auto
+            },
+            &self.banners_scroll,
+            [v_flex()
+                .gap(dp(page::PANE_PADDING_Y))
+                .children(banners.into_iter().map(|banner| {
+                    div()
+                        .id(banner.id)
+                        .test_support()
+                        .role(Role::Alert)
+                        .aria_label(banner.body.clone())
+                        .child(
+                            ui::banner_content(
+                                banner.tone,
+                                Some(banner.lead.into()),
+                                banner.body,
+                                None,
+                                cx,
+                            )
+                            .id(SharedString::from(format!("{}-content", banner.id)))
+                            .test_support()
+                            .aria_label(banner.lead),
+                        )
+                }))],
+            None,
+            Some(tone),
+            cx,
+        )
+        .min_h_0()
+        .mx(dp(page::PANE_PADDING))
+        .when(!short, |this| this.my(dp(page::PANE_PADDING_Y)))
+        .into_any_element()
+    }
+
     /// The toolbar: Add, and the actions on the selected cluster. Each acts
     /// on the selection, and each is off, with its reason in the tooltip,
     /// while nothing can be saved or nothing is selected.
@@ -952,6 +1033,7 @@ impl Render for SettingsPage {
                 .list_frame(window)
                 .child(self.destinations.clone())
                 .into_any_element(),
+            SettingsSection::Team => self.render_team(window, cx),
             SettingsSection::Sources => self
                 .list_frame(window)
                 .child(self.sources.clone())
@@ -1039,19 +1121,7 @@ impl SettingsPage {
         page::page("settings-page")
             .overflow_hidden()
             .child(page::toolbar(cx).child(header))
-            .child(
-                page::capped_notes(
-                    "settings-banners",
-                    if page::is_short(window) {
-                        dp(48.).into()
-                    } else {
-                        gpui_kit::Length::Auto
-                    },
-                    self.render_banners(cx),
-                    None,
-                )
-                .min_h_0(),
-            )
+            .child(self.render_banner_block(window, cx))
             .child(split)
             .into_any_element()
     }

@@ -87,6 +87,7 @@ pub(crate) struct DatabasesScreen {
     prepared: (u64, u64, Option<Mode>),
     table: TableState,
     split: InspectorSplit,
+    notes_scroll: ScrollHandle,
     loading: TableLoading,
     shape: String,
 }
@@ -152,6 +153,7 @@ impl DatabasesScreen {
             prepared: (u64::MAX, u64::MAX, None),
             table: TableState::new(PREFIX),
             split: InspectorSplit::new(PREFIX, cx),
+            notes_scroll: ScrollHandle::new(),
             loading: TableLoading::new(PREFIX, cx),
             shape: String::new(),
         }

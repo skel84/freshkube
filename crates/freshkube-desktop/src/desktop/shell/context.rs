@@ -139,6 +139,9 @@ impl Pilot {
         self.context_display.level_words = level_words(level).into();
         // What writes ask: the slot for the operations, the dock's shells.
         crate::mutation::set_protection(level, cx);
+        self.pages.resources.update(cx, |resources, cx| {
+            resources.set_write_block(level.refusal(), cx)
+        });
         self.pages
             .dock
             .update(cx, |dock, cx| dock.set_read_only(level.is_read_only(), cx));

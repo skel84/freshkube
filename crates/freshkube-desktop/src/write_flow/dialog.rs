@@ -19,9 +19,25 @@ use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use gpui_kit::component::WindowExt;
 
-pub(super) fn open(flow: &Entity<WriteFlow>, window: &mut Window, cx: &mut App) {
+pub(super) fn open(
+    flow: &Entity<WriteFlow>,
+    epoch: std::rc::Rc<std::cell::Cell<u64>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mine = epoch.get() + 1;
+    epoch.set(mine);
+    let weak = flow.downgrade();
+    // However the dialog goes, the flow is told: Cancel, Close and Escape
+    // pop it without asking the flow.
+    let dismissed = super::dismiss::OnDismiss::new(cx, move |cx| {
+        if epoch.get() == mine {
+            _ = weak.update(cx, |flow, cx| flow.dismissed(cx));
+        }
+    });
     let flow = flow.clone();
     window.open_dialog(cx, move |dialog, window, cx| {
+        let _kept = &dismissed;
         let (title, countdown) = {
             let flow = flow.read(cx);
             (
@@ -34,6 +50,9 @@ pub(super) fn open(flow: &Entity<WriteFlow>, window: &mut Window, cx: &mut App) 
         // and leave it running: only its Cancel ends that.
         freshkube_ui::dialog::frame(dialog, 520., title, flow.clone(), actions, window)
             .keyboard(!countdown)
+            // The cancel window ends only by its own Cancel or the send: the
+            // ✕ would close the dialog and leave the write running.
+            .close_button(!countdown)
     });
     // The typed name is the first thing a protected dialog wants.
 }
