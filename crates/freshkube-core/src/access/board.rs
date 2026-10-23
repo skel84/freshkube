@@ -74,6 +74,10 @@ impl Board {
         self.changed = None;
     }
 
+    pub fn is_in_flight(&self, key: &RowKey) -> bool {
+        self.inflight.contains(key)
+    }
+
     pub fn in_flight(&self) -> usize {
         self.inflight.len()
     }

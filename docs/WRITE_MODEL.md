@@ -137,6 +137,17 @@ The change page's Stage Inspector offers four actions on today's Kargo, through 
 - **What aborting stops** is the running Promotion's own steps and pushed commits (`status.stepExecutionMetadata`), not the change's.
 - **Handles:** a Stage action is offered only when the Stage's UID and resourceVersion were read, so the version check can hold; otherwise its button is greyed out with why.
 
+### Your access (#854)
+
+The access review that decides which actions are offered has two parts, and only one decides.
+
+- **The gate decides.** Before each write, `Runner::preflight` asks a `SelfSubjectAccessReview` on the exact object (verb, group, resource, namespace, name). It is never skipped, at any level, and a review that does not answer blocks with its reason ("Couldn't check", with Recheck in the dialog). This slice leaves it unchanged.
+- **The table guides.** The **Your access** page (Access control column, [features/access.md](features/access.md)) reads one `SelfSubjectRulesReview` per namespace, only while it shows and only for the rows a frame draws, and one `SelfSubjectReview` for who the person is. It says what to expect and, for each no, what is missing: "needs ⟨verb⟩ on ⟨resource⟩ in ⟨namespace⟩". A rules review can be incomplete (a webhook authorizer); those cells read "ask", never "no". Nothing reads these answers to allow or refuse a write, and a yes there never stands in for the gate.
+- **Cached per access identity.** Core's `access::Board` holds the answers for one access identity and one person. Another access, another person, or hiding the page drops them (in-flight answers by a generation check), so an answer is never shown for an identity it was not read under ([ACCESS_IDENTITY.md](ACCESS_IDENTITY.md)).
+- **Read-only.** Both are `create` calls of review objects the server evaluates and does not store; they add nothing to the safety suite, which lists what can change a cluster.
+
+The everyday actions' and Stage actions' disabled reasons stay what they were (the protection level's); showing a no from this view as the reason, with "See your access", is slice 2.
+
 ### The audit log
 
 One JSON object per line in `<preferences>/audit/writes.jsonl` (schema 1, mode 0600): `at`, `run`, `entry` and `context`, `actor`, `action`, `tier`, `protection` at that moment, `objects` (group, resource, namespace, name, UID and the field paths the request changes), `request` (a sentence), `phase` and `result`. The phases are `sending`, `accepted`, `refused`, `conflict`, `dry_run_failed`, `observed`, `not_observed`, `unknown`, `undo_offered`, `undo_sent` and `cancelled`. It holds field paths, never values, and no credentials or Secret values (a Secret write records which keys); API error text is scrubbed of bearer tokens, `key=value` credentials and long opaque strings, and cut to 512 characters. Quoted values (in double or single quotes or backticks) and whatever follows `value:` (`Invalid value: "…"`) are stripped from it before it reaches the dialog, a toast or the audit log (`audit.rs` `strip_values`): an error names the field and the reason, never the value. It rotates at 5 MiB and keeps three older files. Talos Operations keep their own file. Settings › Audit log reads both across contexts with a Source filter ([settings.md](features/settings.md#audit-log)).

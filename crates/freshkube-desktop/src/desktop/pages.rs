@@ -19,6 +19,7 @@ pub(crate) enum Page {
     Health,
     Resources,
     Databases,
+    Access,
     Etcd,
     SystemServices,
     Security,
@@ -44,6 +45,7 @@ pub(super) enum PageId {
     Settings,
     Resources,
     Databases,
+    Access,
     Processes,
     Storage,
     Network,
@@ -57,8 +59,9 @@ pub(super) enum PageId {
 
 impl PageId {
     /// The retained inspection views (Databases uses the Kubernetes source).
-    pub(super) const SCREENS: [Self; 10] = [
+    pub(super) const SCREENS: [Self; 11] = [
         Self::Databases,
+        Self::Access,
         Self::Processes,
         Self::Storage,
         Self::Network,
@@ -89,8 +92,8 @@ mod tests {
         let screen = |id: PageId| match id {
             Overview | Nodes | SystemServices | Monitoring | Observability | Applications
             | Settings | Resources => false,
-            Databases | Processes | Storage | Network | Diagnostics | Etcd | Health | Security
-            | Lifecycle | Operations => true,
+            Databases | Access | Processes | Storage | Network | Diagnostics | Etcd | Health
+            | Security | Lifecycle | Operations => true,
         };
         let pages = [
             Overview,
@@ -175,6 +178,7 @@ impl Area {
             Page::Nodes => Self::Nodes,
             Page::Health => Self::Group("workloads"),
             Page::Databases => Self::Group("storage"),
+            Page::Access => Self::Group("access-control"),
             Page::Resources => match kind.key().as_str() {
                 "namespaces" => Self::Namespaces,
                 "events" => Self::Events,
@@ -263,7 +267,7 @@ impl Area {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 14] = [
+    pub(super) const ALL: [Page; 15] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -278,6 +282,7 @@ impl Page {
         Self::Applications,
         Self::Settings,
         Self::Databases,
+        Self::Access,
     ];
 
     /// The page's key.
@@ -288,6 +293,7 @@ impl Page {
             Self::Health => PageId::Health,
             Self::Resources => PageId::Resources,
             Self::Databases => PageId::Databases,
+            Self::Access => PageId::Access,
             Self::Etcd => PageId::Etcd,
             Self::SystemServices => PageId::SystemServices,
             Self::Security => PageId::Security,
@@ -310,6 +316,7 @@ impl Page {
                 | Self::Health
                 | Self::Resources
                 | Self::Databases
+                | Self::Access
                 | Self::Monitoring
                 | Self::Observability
                 | Self::Applications
@@ -328,6 +335,7 @@ impl Page {
             Self::Health => "Health",
             Self::Resources => "Resources",
             Self::Databases => "Databases",
+            Self::Access => "Your access",
             Self::Etcd => "etcd",
             Self::SystemServices => "System services",
             Self::Security => "Security",
@@ -346,6 +354,7 @@ impl Page {
             Self::Health => "health",
             Self::Resources => "resources",
             Self::Databases => "databases",
+            Self::Access => "access",
             Self::Etcd => "etcd",
             Self::SystemServices => "system-services",
             Self::Security => "security",
