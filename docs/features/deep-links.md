@@ -13,7 +13,7 @@ Code:
 - `crates/freshkube-core/src/fingerprint/`: the fingerprint, its hashes, the matching rules and the one `kube-system` read.
 - `crates/freshkube-desktop/src/desktop/deep_link/`: also `identity.rs` (candidates and the decision, pure), `cluster.rs` (the reads, the cache, the switch), `picker.rs` (the dialog) and `example.rs` (the example clusters' identities); Settings' read-only value is `desktop/settings/entry/fingerprint.rs`.
 
-Tests that prove it: `freshkube-nav`'s `view/tests.rs` and `outcome.rs`; core's `fingerprint/tests.rs`, `resources/discovery.rs` and `setup/tests.rs`; desktop's `desktop/deep_link/tests.rs` and `cluster_tests.rs`, the unit tests in `identity.rs`, `desktop/tests/keys.rs` (the key) and `debug_options.rs` (the knob).
+Tests that prove it: `freshkube-nav`'s `view/tests.rs` and `outcome.rs`; core's `fingerprint/tests.rs`, `resources/discovery.rs` and `setup/tests/identity.rs`; desktop's `desktop/deep_link/tests.rs` and `cluster_tests.rs`, the unit tests in `identity.rs`, `desktop/tests/keys.rs` (the key) and `debug_options.rs` (the knob).
 
 ## The link
 

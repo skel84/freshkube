@@ -18,7 +18,7 @@ Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit
 - `settings/unsaved_tests.rs` exercises Save, Discard and Stay for Monitoring and Coroot through the column, rail and shortcuts, clean navigation, the marker, invalid saves, General's immediate choices, that typing into a changed draft draws the column no more than once, and that only a keyboard navigation moves focus to the shell. The shared test harness enables reduced motion; typing uses real input events.
 - `crates/freshkube-desktop/src/desktop/tests/settings.rs` (Connection's Talos group and Kubernetes API) and `tests/kubernetes_only.rs`; `tests/metrics.rs` for the metrics scope the Monitoring section saves.
 - `crates/freshkube-desktop/src/setup_file/mod.rs` (poll, debounce, own writes, saves) and `desktop/startup/migrate.rs`; inline tests in `desktop/shell/chrome.rs` (General's preferences).
-- `crates/freshkube-ui/src/form.rs`, `platform.rs` and `text_size.rs`; core's `setup/tests.rs` and `setup/migrate_tests.rs`; inline tests in `freshkube-observability/src/remember.rs`, `freshkube-monitoring/src/store.rs` and core's `secrets.rs`.
+- `crates/freshkube-ui/src/form.rs`, `platform.rs` and `text_size.rs`; core's `setup/tests/` and `setup/migrate_tests.rs`; inline tests in `freshkube-observability/src/remember.rs`, `freshkube-monitoring/src/store.rs` and core's `secrets.rs`.
 
 ## The page and its sections
 
