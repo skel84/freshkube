@@ -21,6 +21,26 @@ pub fn system() -> String {
     format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
+/// A path as About shows it: the folder and the file, with the home folder
+/// written as `~`.
+pub fn display_path(path: &Path) -> String {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    display_path_at(path, home.as_deref())
+}
+
+fn display_path_at(path: &Path, home: Option<&str>) -> String {
+    let text = path.display().to_string();
+    match home.filter(|home| home.len() > 1) {
+        Some(home) => match path.strip_prefix(home) {
+            Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+            Err(_) => text,
+        },
+        None => text,
+    }
+}
+
 /// The last lines of a log, redacted and cut to a bounded size. A missing log
 /// answers no lines.
 pub fn tail(path: &Path, lines: usize) -> Vec<String> {
@@ -182,6 +202,18 @@ mod tests {
                 .unwrap()
                 .contains("acme-prod-ams")
         );
+    }
+
+    #[test]
+    fn about_shows_the_folder_with_home_as_a_tilde() {
+        let log = Path::new("/home/jo/Library/Logs/freshkube.log");
+        let shown = display_path_at(log, Some("/home/jo"));
+        assert!(shown.starts_with('~') && shown.ends_with("Library/Logs/freshkube.log"));
+        assert_eq!(
+            display_path_at(log, Some("/home/other")),
+            log.display().to_string()
+        );
+        assert_eq!(display_path_at(log, None), log.display().to_string());
     }
 
     #[test]
