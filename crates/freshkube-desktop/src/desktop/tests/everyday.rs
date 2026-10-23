@@ -387,18 +387,19 @@ fn a_switch_while_the_dialog_is_open_keeps_the_level_the_press_was_under(cx: &mu
     // The window moves to an open cluster with the dialog still up.
     w.switch(cx, "dev-fra");
     w.drive(cx, Duration::from_millis(500));
-    if w.present(cx, "write-type-prompt") {
-        cx.update_window(w.handle, |_, window, cx| {
-            window.click("write-type-name", cx);
-            window.input("web", cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-        w.click(cx, "write-confirm");
-        w.drive(cx, Duration::from_secs(3));
-        let audit = w.audit();
-        assert!(audit.contains("\"entry\":\"prod-ams\""), "{audit}");
-        assert!(audit.contains("\"protection\":\"protected\""), "{audit}");
-        assert!(!audit.contains("dev-fra"), "{audit}");
-    }
+    // The dialog is still the protected one: the name is still asked for.
+    assert!(w.present(cx, "write-type-prompt"));
+    cx.update_window(w.handle, |_, window, cx| {
+        window.click("write-type-name", cx);
+        window.input("web", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert_eq!(w.cluster.writes().len(), 1);
+    let audit = w.audit();
+    assert!(audit.contains("\"entry\":\"prod-ams\""), "{audit}");
+    assert!(audit.contains("\"protection\":\"protected\""), "{audit}");
+    assert!(!audit.contains("dev-fra"), "{audit}");
 }
