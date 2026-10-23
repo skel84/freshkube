@@ -1,1 +1,0 @@
-- **Crash log:** the previous sessions' logs are kept (the last three) instead of wiped at launch, a panic from the main thread or a Tokio task is written into the log, and the next start says "The last session ended unexpectedly" with Reveal log and Copy diagnostics, also in Settings › About; logs and diagnostics have credentials removed.
