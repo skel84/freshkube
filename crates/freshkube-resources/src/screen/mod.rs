@@ -190,6 +190,11 @@ pub struct ResourcesScreen {
     visible: bool,
     /// The selection to find again once a restarted read lists it.
     restore: Option<ResourceIdentity>,
+    /// Set while the rows shown are frozen ones, from before the page last
+    /// stopped showing, and no list has landed since (`frozen.rs`).
+    frozen: Option<frozen::Thawed>,
+    /// Frozen rows waiting for the read that shows them.
+    pending_frozen: Option<(crate::frozen::FrozenRows, std::time::Instant)>,
     /// Unix seconds that ages are drawn against.
     now: i64,
     /// When the last batch landed.
@@ -266,9 +271,10 @@ impl ResourcesScreen {
             KeyBinding::new("shift-x", SelectGroup, Some(CONTEXT)),
             KeyBinding::new("o", OpenNode, Some(CONTEXT)),
             KeyBinding::new("h", ToggleHealthy, Some(CONTEXT)),
-            // Command-Shift-] and [, as macOS reports them.
-            KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
-            KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
+            // Option-Command-] and [; Command-Shift-] and [ step the shell's
+            // view tabs.
+            KeyBinding::new("secondary-alt-]", NextTab, Some(CONTEXT)),
+            KeyBinding::new("secondary-alt-[", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
         ]);
         cx.bind_keys([
@@ -393,6 +399,8 @@ impl ResourcesScreen {
             hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
+            frozen: None,
+            pending_frozen: None,
             now: live::now(),
             updated: None,
             status: Default::default(),
@@ -801,6 +809,7 @@ impl ResourcesScreen {
         if let Some(selected) = self.projection.selected() {
             self.restore = Some(selected.clone());
         }
+        self.carry_frozen(cx);
         let epoch = self.store.start_session();
         self.marked.clear();
         self.usage_state = UsageState::Unknown;
@@ -820,6 +829,7 @@ impl ResourcesScreen {
         }
         self.updated = None;
         self.now = live::now();
+        self.seed_frozen(epoch, cx);
         cx.notify();
         if !self.visible {
             return;
@@ -917,9 +927,11 @@ impl ResourcesScreen {
             let _span = crate::perf::span("table.store");
             self.store.apply(epoch, parts, keep)
         };
-        let Some(changes) = changes else {
+        let Some(mut changes) = changes else {
             return;
         };
+        // The first list after frozen rows: what changed meanwhile flashes.
+        let thawed = self.frozen.take_if(|_| reset);
         if served && let ReadState::Missing(_) = self.store.read_state() {
             // Nothing of the kind can be shown any more.
             self.close_detail(cx);
@@ -949,6 +961,9 @@ impl ResourcesScreen {
                 self.show_identity(&identity);
                 self.scroll_to_selection(ScrollStrategy::Nearest);
             }
+        }
+        if let Some(thawed) = thawed {
+            changes.push(self.changed_since_frozen(&thawed, keep));
         }
         self.flash(changes, cx);
         self.follow_detail(cx);
@@ -1082,6 +1097,7 @@ impl ResourcesScreen {
 
     fn tick(&mut self, cx: &mut Context<Self>) {
         self.now = live::now();
+        self.tick_frozen(cx);
         let ages = self
             .layout
             .columns
@@ -1278,7 +1294,7 @@ impl ResourcesScreen {
         focus.dispatch_action(&base::actions::Confirm { secondary: false }, window, cx);
     }
 
-    /// Command-Shift-] and [ on the list switch the pane's tab and leave
+    /// Option-Command-] and [ on the list switch the pane's tab and leave
     /// the keyboard where it is.
     fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) {
         self.detail
@@ -1414,6 +1430,7 @@ impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
 mod cells;
 mod controls;
+mod frozen;
 mod layout;
 mod link_outcome;
 pub use link_outcome::LinkOutcomeCard;

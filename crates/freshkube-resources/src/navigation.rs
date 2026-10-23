@@ -128,7 +128,7 @@ pub fn known(key: &str) -> Option<&'static str> {
 }
 
 /// The navigation label for a resource key.
-pub(crate) fn label(key: &str) -> Option<&'static str> {
+pub fn label(key: &str) -> Option<&'static str> {
     if let Some((label, _)) = CLUSTER.iter().find(|(_, item)| *item == key) {
         return Some(*label);
     }

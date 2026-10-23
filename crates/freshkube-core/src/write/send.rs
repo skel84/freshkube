@@ -5,7 +5,7 @@
 
 use kube::{
     Api,
-    api::{DeleteParams, DynamicObject, Patch, PatchParams, Preconditions},
+    api::{DeleteParams, DynamicObject, Patch, PatchParams, PostParams, Preconditions},
 };
 use serde_json::{Value, json};
 
@@ -35,6 +35,9 @@ pub enum ChangedWhat {
     Gone,
     /// It was deleted and created again: the UID moved.
     Recreated,
+    /// Something this write depends on is no longer as the page showed it.
+    /// Reading the object again would not help: the page must be opened again.
+    Moved,
 }
 
 impl ChangedWhat {
@@ -43,6 +46,9 @@ impl ChangedWhat {
             ChangedWhat::Modified => "It was changed after you opened it.",
             ChangedWhat::Gone => "It no longer exists.",
             ChangedWhat::Recreated => "It was deleted and created again after you opened it.",
+            ChangedWhat::Moved => {
+                "It is no longer as the page showed it. Read the page again before going on."
+            }
         }
     }
 }
@@ -130,6 +136,31 @@ pub async fn send(
                 None => api.patch(&target.name, &params, &Patch::Merge(&body)).await,
             }
             .map(|object| serde_json::to_value(object).unwrap_or(Value::Null))
+        }
+        Change::Create(body) => {
+            let params = PostParams {
+                dry_run,
+                field_manager: Some(FIELD_MANAGER.to_owned()),
+            };
+            // A new object has no version to check; a name taken is a plain
+            // refusal, not a modified object.
+            let object: DynamicObject = match serde_json::from_value(body.clone()) {
+                Ok(object) => object,
+                Err(error) => {
+                    return Err(Refusal::Rejected {
+                        code: 400,
+                        message: scrub(&error.to_string()),
+                    });
+                }
+            };
+            return match api.create(&params, &object).await {
+                Ok(created) => Ok(serde_json::to_value(created).unwrap_or(Value::Null)),
+                Err(kube::Error::Api(response)) if response.code == 409 => Err(Refusal::Rejected {
+                    code: 409,
+                    message: scrub(&response.message),
+                }),
+                Err(error) => Err(classify(error)),
+            };
         }
         Change::Delete => {
             let params = DeleteParams {

@@ -176,6 +176,7 @@ Behaviour that does not belong in the rules lives in one doc per feature, each s
 - [docs/features/deep-links.md](features/deep-links.md): Copy link, the `freshkube://open` link, how it is matched to a cluster and opened, and the outcomes it can end in.
 - [docs/features/resources.md](features/resources.md): the Resources page, the dock's logs, shells and ports, and a pod's cause card.
 - [docs/features/nodes.md](features/nodes.md): the Nodes table, its node pane and their keys.
+- [docs/features/tabs.md](features/tabs.md): the view tabs under the header, their keys, link gestures, saving and frozen rows.
 - [docs/features/shell.md](features/shell.md): the app frame, the Overview and Attention, and the Kubernetes summary session.
 - [docs/features/agent.md](features/agent.md): the agent's reads in core, the per-cluster access gate, the loopback endpoint and `agent.json`.
 - [docs/features/followed.md](features/followed.md): what the user follows, the owner, the toasts and the bell.
