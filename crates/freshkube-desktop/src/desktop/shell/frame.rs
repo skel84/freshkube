@@ -113,7 +113,9 @@ impl Pilot {
                             .child(label)
                     })),
             )
-            .right(right.child(self.chrome.fps.clone()))
+            // Kit clips each region. Its focus ring extends 3 px outside
+            // a control, so keep that room inside the right region's mask.
+            .right(right.child(self.chrome.fps.clone()).p(px(3.)))
             .into_any_element()
     }
 

@@ -4,7 +4,7 @@ Copy link gives a `freshkube://open?…` link to what the window shows. Pasting 
 
 Code:
 
-- `crates/freshkube-nav/src/view.rs`: `ViewState`, `Link`, `ClusterRef`, the bounded string types and `LinkError`; `outcome.rs`: `LinkOutcome`. No GPUI.
+- `crates/freshkube-nav/src/view/mod.rs`: `ViewState`, `Link`, `ClusterRef`, the bounded string types and `LinkError`; `outcome.rs`: `LinkOutcome`. No GPUI.
 - `crates/freshkube-core/src/resources/discovery.rs`: `resolve_kind_key`, which finds a kubectl key in a cluster's discovery.
 - `crates/freshkube-desktop/src/desktop/deep_link/`: `Pilot::current_view`, `apply_view`, `open_link`, `copy_link` and the toast words (`describe.rs`).
 - `crates/freshkube-resources/src/screen/link_outcome.rs`: the card the Resources drawer shows for an outcome.
@@ -13,7 +13,7 @@ Code:
 - `crates/freshkube-core/src/fingerprint/`: the fingerprint, its hashes, the matching rules and the one `kube-system` read.
 - `crates/freshkube-desktop/src/desktop/deep_link/`: also `identity.rs` (candidates and the decision, pure), `cluster.rs` (the reads, the cache, the switch), `picker.rs` (the dialog) and `example.rs` (the example clusters' identities); Settings' read-only value is `desktop/settings/entry/fingerprint.rs`.
 
-Tests that prove it: `freshkube-nav`'s `view/tests.rs` and `outcome.rs`; core's `fingerprint/tests.rs`, `resources/discovery.rs` and `setup/tests.rs`; desktop's `desktop/deep_link/tests.rs` and `cluster_tests.rs`, the unit tests in `identity.rs`, `desktop/tests/keys.rs` (the key) and `debug_options.rs` (the knob).
+Tests that prove it: `freshkube-nav`'s `view/tests.rs` and `outcome.rs`; core's `fingerprint/tests.rs`, `resources/discovery.rs` and `setup/tests/identity.rs`; desktop's `desktop/deep_link/tests.rs` and `cluster_tests.rs`, the unit tests in `identity.rs`, `desktop/tests/keys.rs` (the key) and `debug_options.rs` (the knob).
 
 ## The link
 
