@@ -62,3 +62,16 @@ A Resources tab that stops showing keeps its last list, so coming back shows it 
 Coming back, the page shows them muted with "200 of 1,204 kept · last known 4 min ago", while it lists again, and the status bar says it. When the list lands the rows are replaced and the ones whose version changed flash. If the read fails the rows stay, marked stale with the page's banner and Retry, never an empty list; Retry keeps them until a list answers.
 
 `ResourcesScreen::rows_are_frozen` says when the rows shown are frozen ones. The Resources page offers no Restart or Delete today (no page offers an action through the write framework yet, [the write model](../WRITE_MODEL.md)); when one does, it must stay disabled while rows are frozen, with a tooltip saying why, and Delete goes through the changed-since check of #853 once the rows are live.
+
+## Tabs on several clusters (#878)
+
+A tab is bound to a cluster entry (`Tab::entry`, the workspace entry's id) and never to the current context. A context switch no longer resets the set.
+
+- **Activating** a tab on another entry goes through the registry's `activate` and its parked summaries (`show_tab_view` → `switch_cluster_to_view`), which show as last known first; the tab's view is held until the entry has its connection. Until the window reaches the entry the tab keeps it (`Tabs::activating`).
+- **The context switcher retargets the focused tab** (`sync_tabs` → `TabSet::retarget`): the page, kind and namespace stay, the object only if it resolves by name, and the tab's kept rows are dropped. ⌘-click on a cluster row opens a new tab bound to that cluster instead (`open_cluster_in_new_tab`).
+- **A missing entry** (not in `freshkube.yaml`) shows a dashed ring and a "Choose a cluster" page (`tabs/choose.rs`) and nothing else. The shown cluster never stands in; a person's pick binds the tab (`choose_cluster_for_tab`).
+- **The level** (#852): every tab wears its own cluster's level glyph, and a 2 px cap when it is read-only, protected or open; the "cluster ·" prefix shows only when the tabs span clusters.
+- **Saved:** `navigation.json`'s `tabs.entries` holds each view's entry id; a file without it binds every tab to the cluster that opens.
+- **Right-click** opens a tab's menu and does not make the tab the shown one; its Close closes that tab. The tab's tooltip waits while its menu is open.
+
+Dock shells and logs keep their own connection: see [resources](resources.md) and [pod exec](../POD_EXEC.md#a-shell-on-its-own-connection-878).

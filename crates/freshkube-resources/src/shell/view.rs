@@ -36,8 +36,8 @@ impl ShellView {
             .small()
             .icon(IconName::SquareTerminal)
             .label(if again { "Start again" } else { "Start" })
-            .tooltip(if self.read_only {
-                freshkube_core::write::READ_ONLY_REASON
+            .tooltip(if let Some(reason) = self.blocked {
+                reason
             } else {
                 "Run a shell in the container. Everything typed reaches it."
             })
@@ -131,10 +131,13 @@ impl ShellView {
                 .child(ui::empty_state(
                     IconName::SquareTerminal,
                     "No shell running",
-                    if self.read_only {
-                        "This cluster is read-only, so no shell starts here. Start stays off until its protection level changes."
+                    if let Some(reason) = self.blocked {
+                        format!(
+                            "{reason} No shell starts here. Start stays off until its protection level changes."
+                        )
                     } else {
                         "Start runs a shell in the container. It changes nothing by itself, but whatever you type there runs in the pod."
+                            .to_owned()
                     },
                     None,
                     Vec::new(),

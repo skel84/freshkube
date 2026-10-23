@@ -7,7 +7,7 @@ use super::{
 };
 use crate::desktop::{COLUMN_WIDTH, RAIL_WIDTH};
 use crate::logs::TalosPanel;
-use crate::resources::{self, navigation, shell};
+use crate::resources::{self, navigation};
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::WindowExt;
 use gpui_kit::*;
@@ -373,7 +373,8 @@ impl Pilot {
             }
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
+        {
+            let this = &mut *self;
             this.leave_entry(cx);
             if !this.mode().has_talos() {
                 this.use_kube_context(Some(context), window, cx);
@@ -387,19 +388,7 @@ impl Pilot {
             }
             this.refresh(window, cx);
             this.prepare_context_display(window, cx);
-        });
-    }
-
-    /// Runs `then` at once, or, with shells running in the dock, once the
-    /// user agrees to end them: `then` leaves the connection.
-    pub(super) fn unless_shell(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) {
-        let running = shell::running_anywhere(cx);
-        shell::unless_shell(self, running, window, cx, then);
+        }
     }
 
     pub(super) fn adjacent_context(

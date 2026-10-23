@@ -1,5 +1,5 @@
 //! The tabs in `navigation.json`: each tab's `ViewState` and which was
-//! shown, never a title, a history, rows or a cluster. They come back in the
+//! shown and the entry each is bound to, never a title, a history or rows. They come back in the
 //! first cluster that opens, each as loading rows until its first list.
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,11 @@ pub(super) struct Saved {
     /// dropped on reading, so an old file never refuses the rest.
     #[serde(default)]
     pub(super) views: Vec<serde_json::Value>,
+    /// The workspace entry id each view is bound to, in the order of
+    /// `views` (#878); `null` for a tab bound to none. A file without it
+    /// binds every tab to the cluster that opens.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) entries: Vec<Option<String>>,
 }
 
 impl Saved {
@@ -44,11 +49,20 @@ impl Saved {
                 .take(SAVED_TABS)
                 .filter_map(|view| serde_json::to_value(view).ok())
                 .collect(),
+            entries: if set.entries().iter().any(Option::is_some) {
+                set.entries()
+                    .into_iter()
+                    .skip(first)
+                    .take(SAVED_TABS)
+                    .collect()
+            } else {
+                Vec::new()
+            },
         }
     }
 
     /// The views that parse, and the selection moved to follow them.
-    pub(super) fn views(&self) -> (Vec<ViewState>, usize) {
+    pub(super) fn views(&self) -> (Vec<(ViewState, Option<String>)>, usize) {
         let mut selected = 0;
         let mut views = Vec::new();
         for (at, value) in self.views.iter().take(SAVED_TABS).enumerate() {
@@ -56,7 +70,8 @@ impl Saved {
                 if at <= self.selected {
                     selected = views.len();
                 }
-                views.push(view);
+                let entry = self.entries.get(at).cloned().flatten();
+                views.push((view, entry));
             }
         }
         (views, selected)

@@ -101,13 +101,27 @@ pub(crate) fn set_entry_levels(
     cx: &mut App,
 ) {
     let global = cx.default_global::<GlobalProtection>();
+    let mut listed = std::collections::HashSet::new();
     for (entry, level) in levels {
+        listed.insert(entry.clone());
         global
             .1
             .entry(entry)
             .and_modify(|cell| cell.set(level))
             .or_insert_with(|| LevelCell::new(level));
     }
+    // An entry the file no longer lists has no level for a lookup to find
+    // (`entry_level`); a runner already holding its cell keeps it.
+    global.1.retain(|entry, _| listed.contains(entry));
+}
+
+/// The level of the workspace entry `entry` as it is now, or `None` when no
+/// entry of that id is listed. A dock shell's gate reads this and nothing
+/// else (#878); it never creates a cell, so a gone entry stays gone.
+pub(crate) fn entry_level(entry: &str, cx: &App) -> Option<Protection> {
+    cx.try_global::<GlobalProtection>()
+        .and_then(|global| global.1.get(entry))
+        .map(LevelCell::get)
 }
 
 /// The cell holding `entry`'s level, for a runner to follow. An entry not

@@ -328,7 +328,8 @@ fn a_shell_tab_asked_for_by_name_starts_on_the_pod_its_watch_finds(cx: &mut Test
     let id = cx
         .update_window(handle, |_, window, cx| {
             dock.update(cx, |dock, cx| {
-                let id = dock.add_shell(target, container.clone(), window, cx);
+                let origin = dock.current_origin().unwrap();
+                let id = dock.add_shell(origin, target, container.clone(), window, cx);
                 let view = shell_view_of(dock, 0);
                 let access = dock.source.as_ref().unwrap().access.clone();
                 view.update(cx, |view, cx| {
@@ -372,7 +373,8 @@ fn a_shell_tab_asked_for_by_name_takes_the_picked_pods_uid(cx: &mut TestAppConte
                 identity: by_name.clone(),
                 kind: builtin("pods").unwrap(),
             };
-            dock.add_shell(target, container.clone(), window, cx);
+            let origin = dock.current_origin().unwrap();
+            dock.add_shell(origin, target, container.clone(), window, cx);
             let view = shell_view_of(dock, 0);
             let access = dock.source.as_ref().unwrap().access.clone();
             view.update(cx, |view, cx| {

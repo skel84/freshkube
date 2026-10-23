@@ -8,6 +8,22 @@ use serde::{Deserialize, Serialize};
 /// The reason a control gives when a `read-only` cluster refuses a write.
 pub const READ_ONLY_REASON: &str = "This cluster is read-only.";
 
+/// The reason a dock shell gives when its own cluster's entry is no longer
+/// listed, or has no level cell.
+pub const ENTRY_GONE_REASON: &str = "Its cluster entry is no longer in freshkube.yaml.";
+
+/// Whether a dock shell may start a session, from its own cluster entry's
+/// level and nothing else. The shown cluster's level is not a parameter, so
+/// a call site cannot pass it. `None` is an entry that is gone or has no
+/// level cell: it blocks, as a skipped entry stays read-only. `Err` is the
+/// reason the Start control gives.
+pub fn may_start_shell(own_level: Option<Protection>) -> Result<(), &'static str> {
+    match own_level {
+        None => Err(ENTRY_GONE_REASON),
+        Some(level) => level.refusal().map_or(Ok(()), Err),
+    }
+}
+
 /// How much the app asks before it writes to a cluster. A person sets it on a
 /// cluster entry; it is never inferred from a context's name, an id or a
 /// role. The order is from the strictest to the loosest.
@@ -127,6 +143,18 @@ impl Eq for LevelCell {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shell_starts_from_its_own_level_at_each_level_and_never_with_none() {
+        assert_eq!(
+            may_start_shell(Some(Protection::ReadOnly)),
+            Err(READ_ONLY_REASON)
+        );
+        for level in [Protection::Protected, Protection::Guarded, Protection::Open] {
+            assert_eq!(may_start_shell(Some(level)), Ok(()));
+        }
+        assert_eq!(may_start_shell(None), Err(ENTRY_GONE_REASON));
+    }
 
     #[test]
     fn the_default_is_guarded() {

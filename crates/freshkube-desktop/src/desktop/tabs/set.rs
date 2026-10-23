@@ -39,6 +39,11 @@ pub(crate) struct Tab {
     /// A view has one namespace, the object's, so the list's own is kept
     /// here, and a tab that comes back opens the list where it was.
     pub list_ns: Option<Option<String>>,
+    /// The cluster entry the tab is bound to (#878), by its id. `None` is
+    /// the cluster the window opened on, which has no entry of its own.
+    /// Never the current context: a tab keeps its entry when another tab
+    /// or the header's switcher shows another cluster.
+    pub entry: Option<String>,
     back: VecDeque<ViewState>,
     forward: Vec<ViewState>,
 }
@@ -49,6 +54,7 @@ impl Tab {
             id,
             view,
             list_ns: None,
+            entry: None,
             back: VecDeque::new(),
             forward: Vec::new(),
         }
@@ -68,7 +74,7 @@ impl Tab {
 pub(crate) struct TabSet {
     tabs: Vec<Tab>,
     current: usize,
-    closed: Vec<ViewState>,
+    closed: Vec<(ViewState, Option<String>)>,
     next_id: TabId,
 }
 
@@ -95,16 +101,34 @@ impl TabSet {
     /// Tabs at `views`, the one at `selected` shown (the last when it is
     /// out of range). Views past [`SAVED_TABS`] are dropped; none makes one
     /// tab at `fallback`.
+    #[cfg(test)]
     pub fn restored(views: Vec<ViewState>, selected: usize, fallback: ViewState) -> Self {
+        Self::restored_bound(
+            views.into_iter().map(|view| (view, None)).collect(),
+            selected,
+            fallback,
+        )
+    }
+
+    /// [`TabSet::restored`] with each tab's entry (#878).
+    pub fn restored_bound(
+        views: Vec<(ViewState, Option<String>)>,
+        selected: usize,
+        fallback: ViewState,
+    ) -> Self {
         let mut views: Vec<_> = views.into_iter().take(SAVED_TABS).collect();
         if views.is_empty() {
-            views.push(fallback);
+            views.push((fallback, None));
         }
         let current = selected.min(views.len() - 1);
         let tabs: Vec<_> = views
             .into_iter()
             .enumerate()
-            .map(|(id, view)| Tab::new(id as TabId, view))
+            .map(|(id, (view, entry))| {
+                let mut tab = Tab::new(id as TabId, view);
+                tab.entry = entry;
+                tab
+            })
             .collect();
         Self {
             next_id: tabs.len() as TabId,
@@ -147,6 +171,64 @@ impl TabSet {
         self.tabs.iter().map(|tab| tab.view.clone()).collect()
     }
 
+    /// The entry each tab is bound to, in order.
+    pub fn entries(&self) -> Vec<Option<String>> {
+        self.tabs.iter().map(|tab| tab.entry.clone()).collect()
+    }
+
+    /// Whether the tabs are not all bound to one cluster, which is when the
+    /// strip prefixes a title with its cluster.
+    pub fn spans_clusters(&self) -> bool {
+        self.tabs
+            .windows(2)
+            .any(|pair| pair[0].entry != pair[1].entry)
+    }
+
+    /// Binds the shown tab to `entry` when it is bound to none yet, without
+    /// a history step: the first cluster a tab shows is the one it started
+    /// on.
+    pub fn bind_current(&mut self, entry: Option<String>) {
+        let tab = &mut self.tabs[self.current];
+        if tab.entry.is_none() {
+            tab.entry = entry;
+        }
+    }
+
+    /// Binds the shown tab to `entry` and sets its view to `view`, the page,
+    /// kind and namespace the switcher kept. The old view goes onto the tab's
+    /// history; history holds views only, so Back shows that view under the
+    /// tab's new entry, as a link would.
+    pub fn retarget(&mut self, entry: Option<String>, view: ViewState) -> bool {
+        let tab = &mut self.tabs[self.current];
+        if tab.entry == entry && tab.view == view {
+            return false;
+        }
+        tab.entry = entry;
+        tab.list_ns = None;
+        if tab.view != view {
+            let old = std::mem::replace(&mut tab.view, view);
+            if tab.back.len() == HISTORY {
+                tab.back.pop_front();
+            }
+            tab.back.push_back(old);
+            tab.forward.clear();
+        }
+        true
+    }
+
+    /// Opens `view` bound to `entry` in a new tab, as [`TabSet::open`].
+    pub fn open_for(
+        &mut self,
+        view: ViewState,
+        entry: Option<String>,
+        front: bool,
+    ) -> Option<TabId> {
+        let id = self.open(view, front)?;
+        let at = self.position(id)?;
+        self.tabs[at].entry = entry;
+        Some(id)
+    }
+
     /// Opens `view` in a new tab after the shown one, which `Front` also
     /// shows. `None` when the set is full.
     pub fn open(&mut self, view: ViewState, front: bool) -> Option<TabId> {
@@ -170,7 +252,8 @@ impl TabSet {
     /// A new tab at the shown tab's view, in front, with a history of its
     /// own.
     pub fn duplicate(&mut self) -> Option<TabId> {
-        self.open(self.current().view.clone(), true)
+        let entry = self.current().entry.clone();
+        self.open_for(self.current().view.clone(), entry, true)
     }
 
     /// Shows the tab `id`; its view when it was not already shown.
@@ -246,7 +329,7 @@ impl TabSet {
         }
         let at = self.position(id)?;
         let tab = self.tabs.remove(at);
-        self.remember(tab.view);
+        self.remember(tab);
         if at < self.current {
             self.current -= 1;
             return Some(Shown::Same);
@@ -264,7 +347,7 @@ impl TabSet {
         let shown = at == self.current;
         let keep = self.tabs.remove(at);
         for tab in std::mem::take(&mut self.tabs) {
-            self.remember(tab.view);
+            self.remember(tab);
         }
         let view = keep.view.clone();
         self.tabs.push(keep);
@@ -283,7 +366,7 @@ impl TabSet {
             return None;
         }
         for tab in self.tabs.split_off(at + 1) {
-            self.remember(tab.view);
+            self.remember(tab);
         }
         if self.current > at {
             self.current = at;
@@ -292,11 +375,11 @@ impl TabSet {
         Some(Shown::Same)
     }
 
-    fn remember(&mut self, view: ViewState) {
+    fn remember(&mut self, tab: Tab) {
         if self.closed.len() == REOPEN {
             self.closed.remove(0);
         }
-        self.closed.push(view);
+        self.closed.push((tab.view, tab.entry));
     }
 
     /// Brings back the tab closed last, in front. `None` when none is left
@@ -305,8 +388,8 @@ impl TabSet {
         if self.is_full() {
             return None;
         }
-        let view = self.closed.pop()?;
-        self.open(view.clone(), true)?;
+        let (view, entry) = self.closed.pop()?;
+        self.open_for(view.clone(), entry, true)?;
         Some(view)
     }
 }

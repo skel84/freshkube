@@ -698,6 +698,7 @@ impl Pilot {
     fn start(&mut self, mut options: GpuiOptions, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(any(debug_assertions, feature = "stress"))]
         let debug = options.debug.clone();
+        let examples = options.starts_with_examples();
         let names_source = options.starts_with_examples()
             || options.named_source
             || options.maintenance_endpoint.is_some();
@@ -779,6 +780,10 @@ impl Pilot {
         // Without Talos, the one page that reads is the first one shown.
         if !self.mode().has_talos() {
             self.navigate_from_keyboard(Page::Overview, window, cx);
+        }
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        if examples && let Some(shape) = debug.tabs {
+            self.seed_tabs(shape, cx);
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
         self.open_startup_page(&debug, window, cx);
@@ -1008,7 +1013,8 @@ impl Pilot {
             self.select_context(context, window, cx);
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
+        {
+            let this = &mut *self;
             this.leave_entry(cx);
             if !this.mode().has_talos() {
                 // The default talosconfig is what's missing in this mode.
@@ -1019,7 +1025,7 @@ impl Pilot {
             }
             this.applied = value;
             this.load_configuration(window, cx);
-        });
+        }
     }
 
     /// Opens the native file picker and applies its chosen file at once.

@@ -598,9 +598,9 @@ fn a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
     let shell = mount(cx);
     shell.open(cx, &running_pod());
     cx.update(|cx| {
-        shell
-            .shell
-            .update(cx, |view, cx| view.set_read_only(true, cx))
+        shell.shell.update(cx, |view, cx| {
+            view.set_own_level(Some(freshkube_core::write::Protection::ReadOnly), cx)
+        })
     });
     assert!(!cx.read(|cx| shell.shell.read(cx).can_start()));
     shell.step(cx, |window, cx| {
@@ -612,12 +612,40 @@ fn a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| shell.shell.read(cx).session.is_none()));
     assert!(cx.read(running_anywhere).is_empty());
     assert!(shell.screen(cx).trim().is_empty(), "{}", shell.screen(cx));
-    // Writes allowed again: the same press starts the shell.
+    // An entry that is gone blocks too, with its own reason.
     cx.update(|cx| {
         shell
             .shell
-            .update(cx, |view, cx| view.set_read_only(false, cx))
+            .update(cx, |view, cx| view.set_own_level(None, cx))
+    });
+    assert!(!cx.read(|cx| shell.shell.read(cx).can_start()));
+    assert_eq!(
+        cx.read(|cx| shell.shell.read(cx).blocked()),
+        Some(freshkube_core::write::ENTRY_GONE_REASON)
+    );
+    // Writes allowed again: the same press starts the shell.
+    cx.update(|cx| {
+        shell.shell.update(cx, |view, cx| {
+            view.set_own_level(Some(freshkube_core::write::Protection::Open), cx)
+        })
     });
     shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
     assert_eq!(shell.state(cx), ShellState::Running);
+}
+
+/// A shell that belongs to a cluster names it in the question about ending
+/// it, whatever cluster the window shows (#878).
+#[gpui_kit::test]
+fn a_running_shell_is_named_with_its_cluster(cx: &mut TestAppContext) {
+    let shell = mount(cx);
+    shell.open(cx, &running_pod());
+    cx.update(|cx| {
+        shell
+            .shell
+            .update(cx, |view, _| view.set_cluster(Some("prod-ams".into())))
+    });
+    shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
+    let named = cx.read(running_anywhere);
+    assert_eq!(named.len(), 1);
+    assert!(named[0].ends_with(" on prod-ams"), "{named:?}");
 }

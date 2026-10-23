@@ -542,14 +542,10 @@ impl Pilot {
             ),
             answer: "Switch".into(),
         };
-        let pods = shell::running_anywhere(cx);
-        // A link switches without asking, unless a shell would end.
-        if pods.is_empty() {
-            return self.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx);
-        }
-        shell::asking(leaving, pods, window, cx, move |this, window, cx| {
-            this.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx)
-        });
+        // A link switches without asking: a running shell keeps its own
+        // connection and ends nothing (#878).
+        let _ = leaving;
+        self.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx);
     }
 
     /// `switch_cluster`, holding `link` for the entry once the user has
@@ -572,14 +568,15 @@ impl Pilot {
             );
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
+        {
+            let this = &mut *self;
             this.switch_now(
                 id,
                 link.map(|(object, work)| (object, work, false)),
                 window,
                 cx,
             )
-        });
+        }
     }
 
     /// Switches to the entry once the user has agreed, holding `link`
@@ -663,8 +660,7 @@ impl Pilot {
         };
         // Cancel keeps a link held from an earlier switch; Switch replaces
         // it.
-        let pods = shell::running_anywhere(cx);
-        shell::asking(leaving, pods, window, cx, move |this, window, cx| {
+        shell::asking(leaving, Vec::new(), window, cx, move |this, window, cx| {
             let work = LinkWork::Open { kind, tab };
             this.switch_now(entry, Some((object, work, true)), window, cx);
         });

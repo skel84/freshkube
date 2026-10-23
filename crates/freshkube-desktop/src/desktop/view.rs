@@ -91,6 +91,9 @@ impl Pilot {
     /// The page shown, drawn beside the cached chrome.
     fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
         match self.navigation.page {
+            // A tab whose cluster entry is gone shows no page at all, never
+            // the cluster that happens to be open (#878).
+            _ if self.tab_entry_missing(cx) => self.render_choose_cluster(cx),
             // Not cached: a cached view that draws again makes every cached
             // view inside it draw again, so a cursor moving over one chart
             // would redraw all the panels. Drawn with the shell, the page

@@ -132,6 +132,14 @@ impl Pilot {
         // Every entry's level, so a write to an entry the window doesn't show
         // follows a change made in Settings as the window's own does.
         crate::mutation::set_entry_levels(self.entry_levels(cx), cx);
+        // The dock's shells read their own entry's level, never the shown
+        // one (#878); the dock learns the shown entry for the tabs it opens.
+        let entry = self.switch.active_cluster().map(str::to_owned);
+        self.pages
+            .dock
+            .update(cx, |dock, cx| dock.set_shown(entry, level, cx));
+        // The tabs wear their own cluster's level.
+        self.derive_strip(cx);
         if level == self.context_display.level && !self.context_display.level_words.is_empty() {
             return false;
         }
@@ -139,9 +147,6 @@ impl Pilot {
         self.context_display.level_words = level_words(level).into();
         // What writes ask: the slot for the operations, the dock's shells.
         crate::mutation::set_protection(level, cx);
-        self.pages
-            .dock
-            .update(cx, |dock, cx| dock.set_read_only(level.is_read_only(), cx));
         // Hide details defaults on for a protected or read-only cluster.
         self.offer_followed(cx);
         true

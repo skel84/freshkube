@@ -39,6 +39,15 @@ pub(crate) enum EtcdExample {
     Alarms,
 }
 
+/// `FRESHKUBE_TABS`: how the example opens its view tabs (#878).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabsShape {
+    /// Three tabs, each bound to another example cluster.
+    Clusters,
+    /// A second tab bound to a cluster entry the example file does not list.
+    Missing,
+}
+
 /// `FRESHKUBE_LINKS`: the outcome every example link is forced to, or how
 /// the example clusters identify themselves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,6 +124,9 @@ pub struct DebugOptions {
     /// example (`freshkube_followed::example::Shape`); anything else plays
     /// the example story. Needs `--fixture`.
     pub(crate) follows: Option<freshkube_followed::example::Shape>,
+    /// `FRESHKUBE_TABS`: how the example opens its view tabs; anything else
+    /// opens one. Needs `--fixture`.
+    pub(crate) tabs: Option<TabsShape>,
 }
 
 impl DebugOptions {
@@ -198,6 +210,11 @@ impl DebugOptions {
             follows: text("FRESHKUBE_FOLLOWS")
                 .as_deref()
                 .and_then(freshkube_followed::example::Shape::parse),
+            tabs: match text("FRESHKUBE_TABS").as_deref() {
+                Some("clusters") => Some(TabsShape::Clusters),
+                Some("missing") => Some(TabsShape::Missing),
+                _ => None,
+            },
         }
     }
 
@@ -266,6 +283,19 @@ mod tests {
                 None,
                 "{bad:?}"
             );
+        }
+    }
+
+    #[test]
+    fn tabs_names_the_shape_of_the_example_tabs_and_ignores_anything_else() {
+        for (value, shape) in [
+            ("clusters", TabsShape::Clusters),
+            ("missing", TabsShape::Missing),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_TABS", value)]).tabs, Some(shape));
+        }
+        for bad in ["", "Clusters", "nothing"] {
+            assert_eq!(parse(&[("FRESHKUBE_TABS", bad)]).tabs, None, "{bad:?}");
         }
     }
 

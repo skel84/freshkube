@@ -127,31 +127,40 @@ impl Pilot {
         }
         let list_ns = (view.page == freshkube_nav::LinkPage::Resources && view.object.is_some())
             .then(|| self.pages.resources.read(cx).namespace().map(str::to_owned));
-        if self.tabs.set.record(view, list_ns) {
+        // The tab follows the cluster the window shows, unless it is being
+        // opened on its own (`show_tab_view`): then the window has not
+        // reached it yet, and the tab keeps its entry.
+        let entry = self.switch.active_cluster().map(str::to_owned);
+        // A tab whose entry is gone stays as it is until a person chooses a
+        // cluster for it: the shown cluster never stands in.
+        if self.tab_entry_missing(cx) && !std::mem::take(&mut self.tabs.chosen) {
+            return;
+        }
+        if let Some(opening) = &self.tabs.activating {
+            if entry.as_deref() != Some(opening.as_str()) {
+                return;
+            }
+            self.tabs.activating = None;
+        }
+        self.tabs.set.bind_current(entry.clone());
+        let changed = if self.tabs.set.current().entry != entry && entry.is_some() {
+            // The context switcher retargets the focused tab: its page,
+            // kind and namespace stay, and rows kept for the old cluster
+            // are dropped.
+            let id = self.tabs.set.current().id;
+            self.tabs.frozen.forget(&id);
+            self.tabs.set.retarget(entry, view)
+        } else {
+            self.tabs.set.record(view, list_ns)
+        };
+        if changed {
             self.tabs_changed(cx);
         }
     }
 
     /// Derives the strip from the set and saves the set.
     pub(super) fn tabs_changed(&mut self, cx: &mut Context<Self>) {
-        let entries = self
-            .tabs
-            .set
-            .tabs()
-            .iter()
-            .map(|tab| {
-                let full = describe_tab(&tab.view);
-                Entry {
-                    id: tab.id,
-                    title: shorten(&full).into(),
-                    full: full.into(),
-                }
-            })
-            .collect();
-        let active = self.tabs.set.selected();
-        self.tabs
-            .strip
-            .update(cx, |strip, cx| strip.set(entries, active, cx));
+        self.derive_strip(cx);
         self.schedule_tabs_save(cx);
         // The shell draws again only when what it lays out or answers
         // changes: the strip appearing, or a key gaining or losing its
@@ -163,9 +172,71 @@ impl Pilot {
         }
     }
 
+    /// Derives the strip from the set: each tab's title, its cluster's
+    /// level, and the "cluster ·" prefix once the tabs span clusters. Also
+    /// called when a level changes; the strip draws again only when what it
+    /// shows differs.
+    pub(in crate::desktop) fn derive_strip(&mut self, cx: &mut App) {
+        let spans = self.tabs.set.spans_clusters();
+        let shown = self.context_display.level;
+        let entries = self
+            .tabs
+            .set
+            .tabs()
+            .iter()
+            .map(|tab| {
+                // A tab bound to an entry reads that entry's level, never
+                // the shown one; an unbound tab is the window's own.
+                let level = match &tab.entry {
+                    Some(entry) => crate::mutation::entry_level(entry, cx),
+                    None => Some(shown),
+                };
+                let missing = level.is_none();
+                let described = describe_tab(&tab.view);
+                let full = match (&tab.entry, missing) {
+                    (Some(entry), true) => format!("Choose a cluster ({entry} is not listed)"),
+                    (Some(entry), false) if spans => format!("{entry} · {described}"),
+                    _ => described,
+                };
+                Entry {
+                    id: tab.id,
+                    title: if missing {
+                        "Choose a cluster".into()
+                    } else {
+                        shorten(&full).into()
+                    },
+                    full: full.into(),
+                    mark: level.map(crate::desktop::shell::context::mark),
+                }
+            })
+            .collect();
+        let active = self.tabs.set.selected();
+        self.tabs
+            .strip
+            .update(cx, |strip, cx| strip.set(entries, active, cx));
+    }
+
     /// Shows `view` in the window, as a deep link would, and waits for its
     /// page before following the page again.
     fn show_tab_view(&mut self, view: ViewState, window: &mut Window, cx: &mut Context<Self>) {
+        // A tab on another cluster goes through the entry's own activation
+        // (the session registry parks the cluster left and shows the one
+        // reached as last known first), holding the view until the entry has
+        // its connection. An entry the file no longer lists opens nothing:
+        // the page says so, and the tab never falls back to the shown one.
+        if let Some(entry) = self.tabs.set.current().entry.clone()
+            && self.switch.active_cluster() != Some(entry.as_str())
+        {
+            if self.tab_entry_missing(cx) {
+                self.tabs.activating = None;
+                self.tabs_changed(cx);
+                cx.notify();
+                return;
+            }
+            self.tabs.activating = Some(entry.clone());
+            self.switch_cluster_to_view(entry, view, window, cx);
+            return;
+        }
         self.tabs.applying = Some((view.clone(), cx.background_executor().now()));
         // Coming back to a Resources tab shows the rows it kept, muted,
         // until its list is read again.
@@ -180,6 +251,96 @@ impl Pilot {
         self.tabs.list_override = self.tabs.set.current().list_ns.clone();
         self.apply_view(&view, window, cx);
         self.tabs.list_override = None;
+    }
+
+    /// ⌘-click on a cluster row: a new tab in front bound to `id`, at the
+    /// page, kind and namespace shown (the object stays behind, since it
+    /// belongs to the cluster left). The tab opens through the entry's own
+    /// activation. An entry the setup does not list opens nothing.
+    pub(in crate::desktop) fn open_cluster_in_new_tab(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let listed = self
+            .settings_page
+            .read(cx)
+            .workspace()
+            .clusters
+            .iter()
+            .any(|entry| entry.id == id);
+        if !listed {
+            return;
+        }
+        self.sync_tabs(cx);
+        self.freeze_shown_tab(cx);
+        let mut view = self.current_view(cx).unwrap_or_else(overview);
+        view.object = None;
+        view.tab = freshkube_nav::ViewTab::Details;
+        if self
+            .tabs
+            .set
+            .open_for(view.clone(), Some(id), true)
+            .is_none()
+        {
+            self.tell(too_many(), window, cx);
+            return;
+        }
+        self.tabs_changed(cx);
+        self.show_tab_view(view, window, cx);
+    }
+
+    /// `FRESHKUBE_TABS`: the example's tabs bound to invented clusters.
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    pub(in crate::desktop) fn seed_tabs(
+        &mut self,
+        shape: crate::debug_options::TabsShape,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::debug_options::TabsShape;
+        let here = self.current_view(cx).unwrap_or_else(overview);
+        let shown = self.switch.active_cluster().map(str::to_owned);
+        let bound = |page, entry: &str| (ViewState::page(page), Some(entry.to_owned()));
+        let views = match shape {
+            TabsShape::Clusters => vec![
+                (here, shown),
+                bound(freshkube_nav::LinkPage::Nodes, "prod-ams"),
+                bound(freshkube_nav::LinkPage::Etcd, "stage-fra"),
+            ],
+            TabsShape::Missing => vec![
+                (here, shown),
+                bound(freshkube_nav::LinkPage::Nodes, "retired-fra"),
+            ],
+        };
+        self.tabs.set = TabSet::restored_bound(views, 0, overview());
+        self.tabs_changed(cx);
+    }
+
+    /// "Choose a cluster" on a tab whose entry is gone: the person's pick
+    /// binds the tab to `id`, keeping its page, kind and namespace.
+    pub(in crate::desktop) fn choose_cluster_for_tab(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.tabs.chosen = true;
+        if self.switch.active_cluster() == Some(id.as_str()) {
+            self.sync_tabs(cx);
+        } else {
+            self.switch_cluster(id, window, cx);
+        }
+    }
+
+    /// Whether the shown tab belongs to an entry the setup no longer lists.
+    pub(in crate::desktop) fn tab_entry_missing(&self, cx: &App) -> bool {
+        self.tabs
+            .set
+            .current()
+            .entry
+            .as_deref()
+            .is_some_and(|entry| crate::mutation::entry_level(entry, cx).is_none())
     }
 
     /// Keeps the rows of the Resources tab that is about to stop showing.
@@ -208,20 +369,19 @@ impl Pilot {
         self.tabs.frozen.retain(|id| live.contains(id));
     }
 
-    /// The tabs follow the cluster that is open. A set made for another is
-    /// replaced by one tab at the view shown; the first cluster to open
-    /// takes the tabs of the last run.
+    /// The tabs span clusters: another cluster opening leaves them. The first
+    /// cluster to open takes the tabs of the last run.
     pub(in crate::desktop) fn adopt_cluster(
         &mut self,
         identity: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.adopt_key(identity, cx);
+        self.adopt_key(identity);
         self.try_restore(window, cx);
     }
 
-    fn adopt_key(&mut self, identity: Option<&str>, cx: &mut Context<Self>) {
+    fn adopt_key(&mut self, identity: Option<&str>) {
         let key = identity.unwrap_or_default();
         // A source that is missing for a moment is not another cluster.
         if key.is_empty()
@@ -236,8 +396,9 @@ impl Pilot {
         match self.tabs.cluster.as_deref() {
             Some(same) if same == key => return,
             Some("") | None => {}
+            // Another cluster is open: the tabs stay, each bound to its own
+            // entry (#878). The shown tab follows the window (`sync_tabs`).
             Some(_) => {
-                self.reset_tabs(cx);
                 self.tabs.cluster = Some(key.to_owned());
                 return;
             }
@@ -277,19 +438,10 @@ impl Pilot {
             return;
         }
         let fallback = self.current_view(cx).unwrap_or_else(overview);
-        self.tabs.set = TabSet::restored(views, selected, fallback);
+        self.tabs.set = TabSet::restored_bound(views, selected, fallback);
         let view = self.tabs.set.current().view.clone();
         self.tabs_changed(cx);
         self.show_tab_view(view, window, cx);
-    }
-
-    /// One tab, at the view that is shown.
-    fn reset_tabs(&mut self, cx: &mut Context<Self>) {
-        let view = self.current_view(cx).unwrap_or_else(overview);
-        self.tabs.set = TabSet::new(view);
-        self.tabs.frozen.clear();
-        self.tabs.applying = None;
-        self.tabs_changed(cx);
     }
 
     /// Opens `view` in a new tab; a tab in front is shown. The set refuses

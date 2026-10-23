@@ -491,13 +491,9 @@ impl Pilot {
             return;
         }
         let replacement = (report.revision, None);
-        if !crate::resources::shell::running_anywhere(cx).is_empty()
-            && self.switch.registry.active().prompted_access == Some(replacement)
-        {
-            return;
-        }
         self.switch.registry.active_mut().prompted_access = Some(replacement);
-        self.unless_shell(window, cx, move |view, window, cx| {
+        {
+            let view = &mut *self;
             if view.switch.registry.active().prompted_access != Some(replacement) {
                 return;
             }
@@ -518,7 +514,7 @@ impl Pilot {
             // current context differs or the selected context disappeared.
             view.use_kube_context(Some(access.context().to_owned()), window, cx);
             view.ensure_summary(window, cx);
-        });
+        }
     }
 
     /// Lists the contexts of a kubeconfig file chosen in Settings.
@@ -531,7 +527,8 @@ impl Pilot {
         if self.mode().is_example() || self.mode().has_talos() {
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
+        {
+            let this = &mut *self;
             let Some(kube) = this.mode.kubernetes_only_mut() else {
                 return;
             };
@@ -541,7 +538,7 @@ impl Pilot {
             // the choice is remembered only once a context is picked.
             kube.choosing = true;
             this.load_kube_contexts(window, cx);
-        });
+        }
     }
 
     /// Opens the kubeconfig chooser from Talos mode. Choosing a file reads its
@@ -583,9 +580,10 @@ impl Pilot {
         if !self.mode().has_talos() {
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
+        {
+            let this = &mut *self;
             this.enter_kubernetes_only(path, window, cx)
-        });
+        }
     }
 
     /// Drops the Talos session and its jobs, as a context change does, and
