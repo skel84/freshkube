@@ -875,6 +875,7 @@ fn a_view_can_name_only_plain_places() {
             | LinkPage::Nodes
             | LinkPage::Health
             | LinkPage::Databases
+            | LinkPage::Routes
             | LinkPage::Resources
             | LinkPage::Etcd
             | LinkPage::SystemServices
@@ -894,11 +895,17 @@ fn a_view_can_name_only_plain_places() {
         ViewTab::Events,
         ViewTab::Ports,
         ViewTab::Logs,
+        ViewTab::Trace,
     ] {
-        // Ports shows a pod's forwards; none starts without a press.
+        // Ports shows a pod's forwards; none starts without a press. Trace
+        // reads an HTTPRoute's gateways and Services, and nothing more.
         match tab {
-            ViewTab::Details | ViewTab::Yaml | ViewTab::Events | ViewTab::Ports | ViewTab::Logs => {
-            }
+            ViewTab::Details
+            | ViewTab::Yaml
+            | ViewTab::Events
+            | ViewTab::Ports
+            | ViewTab::Logs
+            | ViewTab::Trace => {}
         }
     }
 }
