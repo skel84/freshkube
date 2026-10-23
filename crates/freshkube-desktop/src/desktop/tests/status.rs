@@ -371,6 +371,84 @@ fn a_long_segment_truncates_and_leaves_the_right_side_whole(cx: &mut TestAppCont
     assert_eq!(widths[0], widths[1], "the right side keeps its width");
 }
 
+#[gpui_kit::test]
+fn a_squeezed_status_segment_shows_its_first_word_or_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 760., 560.);
+    for (page, id) in [
+        (Page::Resources, "resource-scope"),
+        (Page::Settings, "settings-scope"),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            Theme::change(ThemeMode::Dark, Some(window), cx);
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let full = segment(window, id).expect("the full line stays accessible");
+            let shown = freshkube_ui::status::shown(id).expect("the segment drew");
+            let first = full.split_whitespace().next().unwrap();
+            assert!(
+                shown.is_empty() || shown.starts_with(first),
+                "{id} shows {shown:?} from {full:?}"
+            );
+            let tag = window.find("status-protection").bounds();
+            let fail = window.find("fixture-fail").bounds();
+            assert!(tag.right() <= fail.left());
+            assert!(fail.right() <= window.viewport_size().width);
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn a_small_status_bar_paints_the_whole_focus_ring(cx: &mut TestAppContext) {
+    let options = GpuiOptions::fixture().with_debug(crate::DebugOptions {
+        page: Some("workload-logs".into()),
+        ..Default::default()
+    });
+    let (_runtime, handle, view) = mount(cx, options, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        Theme::change(ThemeMode::Dark, Some(window), cx);
+        view.update(cx, |view, cx| view.navigate(Page::Resources, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..200 {
+            window.focus_next(cx);
+            window.render_frame(cx);
+            if window.find("dock-toggle").focused() == Some(true) {
+                break;
+            }
+        }
+        let button = window.find("dock-toggle");
+        assert_eq!(button.focused(), Some(true));
+        let bounds = button.bounds().scale(window.scale_factor());
+        let ring = cx.theme().ring.alpha(0.5);
+        let quads: Vec<_> = window
+            .painted_quads()
+            .into_iter()
+            .filter(|quad| quad.border_color == ring && quad.bounds.intersects(&bounds))
+            .collect();
+        assert!(!quads.is_empty(), "the focused button paints its ring");
+        let painted = quads[0].bounds;
+        assert!(painted.left() < bounds.left() && painted.right() > bounds.right());
+        let mask = quads
+            .iter()
+            .map(|quad| quad.content_mask.bounds)
+            .reduce(|a, b| a.union(&b))
+            .unwrap();
+        assert_eq!(painted.intersect(&mask), painted, "the ring must be whole");
+    })
+    .unwrap();
+}
+
 /// Rests the pointer on the header's Refresh button until its tooltip shows.
 fn hover_refresh(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     use gpui_kit::{InputEvent, MouseMoveEvent};
