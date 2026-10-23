@@ -966,10 +966,12 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 }
 
 mod acme;
+mod agent;
 mod everyday;
 pub use everyday::{autoscaler_of, object_json};
 mod objects;
 mod summary;
+pub use agent::agent_objects;
 pub use objects::{document, events, pod_log, pod_log_line, secret_value};
 pub use summary::seed_summary;
 #[cfg(any(test, feature = "testing"))]
