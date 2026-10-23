@@ -1,18 +1,83 @@
 use super::*;
 
-/// Logs and a shell open in the dock, under the drawer, which steps aside
-/// and keeps its row selected.
+/// With a pod open in the drawer, L on the list, the pane's Logs and
+/// Shell → Start open the dock under the page, and the drawer stays open
+/// above it at the shell's 1280×880 (#922). An object opened straight on
+/// Logs leaves the drawer closed and its row selected.
 #[gpui_kit::test]
-fn logs_and_a_shell_close_the_drawer_and_keep_its_row(cx: &mut TestAppContext) {
+fn opening_the_dock_keeps_the_pod_pane_open(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let pods = running_pods(&pilot, cx);
-    pick_shell(handle, &pilot, &pods[0], cx);
-    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
-    assert_eq!(drawer(handle, &pilot, cx), (false, Some(pods[0].clone())));
+    let beside_the_dock = |pod: &ResourceIdentity, tabs: usize, cx: &mut TestAppContext| {
+        assert_eq!(drawer(handle, &pilot, cx), (true, Some(pod.clone())));
+        assert_eq!(titles(&dock(&pilot, cx), cx).len(), tabs);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let drawer = window.find("resource-drawer").bounds();
+            let dock = window.find("dock-tab-row").bounds();
+            assert!(drawer.bottom() <= dock.top(), "{drawer:?} over {dock:?}");
+        })
+        .unwrap();
+    };
 
-    open_logs(handle, &pilot, "pods", &pods[1], cx);
-    assert_eq!(drawer(handle, &pilot, cx), (false, Some(pods[1].clone())));
-    assert_eq!(titles(&dock(&pilot, cx), cx).len(), 2);
+    let open_pane = |pod: &ResourceIdentity, cx: &mut TestAppContext| {
+        let pod = pod.clone();
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_object(
+                    builtin("pods").unwrap(),
+                    pod.into(),
+                    Tab::Overview,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+
+    // L on the list, with a drawn pod's drawer open from its row.
+    open_pane(&pods[0], cx);
+    let first = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            pods.iter()
+                .find(|pod| window.try_find(crate::resources::row_id(pod)).is_some())
+                .cloned()
+        })
+        .unwrap()
+        .expect("a running pod drawn");
+    cx.update_window(handle, |_, window, cx| {
+        window
+            .within(crate::resources::row_id(&first))
+            .click("name", cx);
+        window.render_frame(cx);
+        window.press("l", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    beside_the_dock(&first, 1, cx);
+
+    // The pane's Logs.
+    let second = pods.iter().find(|pod| **pod != first).unwrap().clone();
+    open_pane(&second, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("detail-open-logs", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    beside_the_dock(&second, 2, cx);
+
+    // Shell → Start.
+    pick_shell(handle, &pilot, &first, cx);
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
+    beside_the_dock(&first, 3, cx);
+
+    // Straight on Logs, the drawer reads nothing and stays closed.
+    open_logs(handle, &pilot, "pods", &second, cx);
+    assert_eq!(drawer(handle, &pilot, cx), (false, Some(second.clone())));
 }
 
 /// Shells live in the dock: closing the drawer, swapping its object or a

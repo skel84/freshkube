@@ -68,7 +68,7 @@ impl Level {
             ""
         };
         format!(
-            "{unset}{} Today only Read-only does anything: it disables a shell's Start, Operations, Diagnostics' Apply fix and a service's Restart; the other levels change nothing yet.",
+            "{unset}{} Read-only disables a shell's Start, Operations, Diagnostics' Apply fix, a service's Restart and every change to an object; the other levels ask first, as above.",
             shown.meaning()
         )
     }

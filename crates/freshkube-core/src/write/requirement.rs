@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use super::Protection;
+use super::{Protection, action::ActionDescription};
 
 /// How risky an action is. The action declares it; a page never does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -106,6 +106,22 @@ pub fn requirement(tier: Tier, level: Protection) -> Requirement {
             ..none
         },
     }
+}
+
+/// What an action must do before it is sent at `level`: the table's row for
+/// its tier, except that an action which declares `no_confirmation` (it only
+/// adds an annotation) asks nothing at any level `read-only` doesn't block.
+pub fn requirement_for(action: &ActionDescription, level: Protection) -> Requirement {
+    let given = requirement(action.tier, level);
+    if action.no_confirmation && given.blocked.is_none() {
+        return Requirement {
+            confirm: false,
+            type_name: false,
+            undo: false,
+            ..given
+        };
+    }
+    given
 }
 
 impl Requirement {

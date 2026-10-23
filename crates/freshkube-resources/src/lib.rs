@@ -7,6 +7,7 @@ pub mod detail;
 pub mod direct;
 pub mod example;
 pub mod forwards;
+pub mod frozen;
 pub mod live;
 pub mod model;
 pub mod navigation;

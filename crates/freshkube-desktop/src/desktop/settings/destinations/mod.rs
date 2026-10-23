@@ -14,6 +14,8 @@ mod suggest;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+use super::small_window_tests;
 use super::{Origin, SettingsPage};
 use crate::ui::{self, dp};
 use freshkube_core::workspace::Key;
