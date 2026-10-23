@@ -31,6 +31,10 @@ pub struct Item {
     pub id: u64,
     pub title: SharedString,
     pub active: bool,
+    /// The level of the cluster the tab belongs to, when it shows one.
+    pub mark: Option<crate::level::Mark>,
+    /// The tab's cluster is gone: a dashed ring stands for its level.
+    pub missing: bool,
     pub tip: Option<Tip>,
 }
 
@@ -67,24 +71,32 @@ pub fn row<V: 'static>(
                 }),
             );
             let tip = item.tip;
-            let tab = dock::tab(format!("{prefix}-{id}"), item.title, item.active, close, cx)
-                .when_some(tip, |this, tip| {
-                    this.tooltip(move |window, cx| tip(window, cx))
-                })
-                .on_click(cx.listener(move |owner, _, window, cx| select(owner, id, window, cx)))
-                // Select and focus before Kit records the focus to restore.
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |owner, _, window, cx| press(owner, id, window, cx)),
-                )
-                // A middle-click closes the tab, as in a browser.
-                .on_mouse_down(
-                    MouseButton::Middle,
-                    cx.listener(move |owner, _, window, cx| {
-                        cx.stop_propagation();
-                        close_tab(owner, id, window, cx);
-                    }),
-                );
+            let tab = dock::tab(
+                format!("{prefix}-{id}"),
+                item.title,
+                item.active,
+                item.mark,
+                item.missing,
+                close,
+                cx,
+            )
+            .when_some(tip, |this, tip| {
+                this.tooltip(move |window, cx| tip(window, cx))
+            })
+            .on_click(cx.listener(move |owner, _, window, cx| select(owner, id, window, cx)))
+            // Select and focus before Kit records the focus to restore.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |owner, _, window, cx| press(owner, id, window, cx)),
+            )
+            // A middle-click closes the tab, as in a browser.
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |owner, _, window, cx| {
+                    cx.stop_propagation();
+                    close_tab(owner, id, window, cx);
+                }),
+            );
             let menu = actions.menu.clone();
             // The popup inherits its trigger's text style. Keep it in the
             // UI font, outside the selected tab's semibold label.

@@ -34,8 +34,6 @@ pub(super) struct ClusterSession {
     pub(super) access: Option<AccessIdentity>,
     /// The inspected local configuration it was collected under.
     pub(super) access_configuration: Option<ConfigurationRevision>,
-    /// The replacement a running shell last held up, so it is asked once.
-    pub(super) prompted_access: Option<(ConfigurationRevision, Option<AccessIdentity>)>,
 }
 
 impl ClusterSession {
@@ -48,7 +46,6 @@ impl ClusterSession {
             alerts: None,
             access: None,
             access_configuration: None,
-            prompted_access: None,
         }
     }
 }
@@ -278,7 +275,6 @@ mod tests {
         let mut registry = Registry::new();
         let first = registry.summary_watch.generation();
         registry.active_mut().summary_health = Some(Err("down".into()));
-        registry.active_mut().prompted_access = None;
         registry.reset_active();
         assert!(registry.active().summary_health.is_none());
         assert!(registry.active().access.is_none());

@@ -10,6 +10,7 @@
 //! so the remote side starts at the size the terminal already has.
 
 use freshkube_core::pluralize;
+use freshkube_core::write::{OwnLevel, may_start_shell};
 use std::time::Duration;
 
 use freshkube_core::resources::{
@@ -118,9 +119,13 @@ pub struct ShellView {
     known: bool,
     /// The pod is gone: no shell starts in it again.
     gone: bool,
-    /// The cluster is read-only (#852): no session starts, and one that
-    /// runs is left for its person to end.
-    read_only: bool,
+    /// Why no session starts: the shell's own cluster entry is read-only
+    /// (#852) or gone (#878). One that runs is left for its person to end.
+    blocked: Option<&'static str>,
+    /// The cluster this shell belongs to, named in every question about
+    /// ending it (#878). A shell does not follow the cluster the window
+    /// shows.
+    cluster: Option<SharedString>,
     pub(super) container: Option<String>,
     pub state: ShellState,
     pub(super) status: Status,
@@ -166,7 +171,10 @@ impl ShellView {
             containers: PodContainers::default(),
             known: false,
             gone: false,
-            read_only: false,
+            // Closed until its cluster's level is told: a shell never starts
+            // before `set_own_level` has said it may.
+            blocked: may_start_shell(OwnLevel::Unknown).err(),
+            cluster: None,
             container: None,
             state: ShellState::Idle,
             status: Status::default(),
@@ -277,7 +285,12 @@ impl ShellView {
     /// The pod whose shell runs, for "End the shell in ⟨pod⟩?".
     pub fn running_pod(&self) -> Option<SharedString> {
         self.running()
-            .then(|| self.pod.as_ref().map(|pod| pod.name.clone().into()))
+            .then(|| {
+                self.pod.as_ref().map(|pod| match &self.cluster {
+                    Some(cluster) => format!("{} on {cluster}", pod.name).into(),
+                    None => pod.name.clone().into(),
+                })
+            })
             .flatten()
     }
 
@@ -314,19 +327,33 @@ impl ShellView {
             .is_some_and(|container| matches!(container.state, ContainerState::Running(_)))
     }
 
-    /// Whether the cluster refuses writes, as the app's protection level
-    /// says. It disables Start, whatever else is ready.
-    pub fn set_read_only(&mut self, read_only: bool, cx: &mut Context<Self>) {
-        if self.read_only != read_only {
-            self.read_only = read_only;
+    /// What this shell's own cluster's level is: known, or an entry that is
+    /// gone, or not read yet (#878). The gate is core's `may_start_shell`,
+    /// which takes no other level, so the cluster shown never decides. A
+    /// refusal disables Start, whatever else is ready.
+    pub fn set_own_level(&mut self, level: OwnLevel, cx: &mut Context<Self>) {
+        let blocked = may_start_shell(level).err();
+        if self.blocked != blocked {
+            self.blocked = blocked;
             cx.notify();
         }
+    }
+
+    /// Names the cluster this shell belongs to, which every question about
+    /// ending it carries.
+    pub fn set_cluster(&mut self, cluster: Option<SharedString>) {
+        self.cluster = cluster;
+    }
+
+    /// Why Start is off because of the cluster's level, when it is.
+    pub fn blocked(&self) -> Option<&'static str> {
+        self.blocked
     }
 
     /// Whether Start can start a session now.
     pub fn can_start(&self) -> bool {
         !self.gone
-            && !self.read_only
+            && self.blocked.is_none()
             && self.pod.as_ref().is_some_and(|pod| !pod.uid.is_empty())
             && self.access.is_some()
             && !self.running()

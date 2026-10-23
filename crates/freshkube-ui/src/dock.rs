@@ -17,7 +17,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, Axis, Context, Div, DragMoveEvent, ElementId, IntoElement, Render, Role,
-    SharedString, Stateful, TestSupportExt, Window, div,
+    SharedString, Stateful, TestSupportExt, Window, div, px,
 };
 
 use crate::inspector::{TAB_HEIGHT, TabStrip, bare_strip};
@@ -45,15 +45,49 @@ impl Render for DockDrag {
 /// One of the dock's tabs: an inspector tab with a close button after its
 /// label. The caller adds the click that selects it and the close button's
 /// action, which `close` names.
+///
+/// A tab of a cluster (#878) carries its level's glyph after the label and
+/// a 2 px cap above it, for every level but Guarded, so a protected or
+/// read-only cluster's tab can't be taken for a test one.
 pub fn tab(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     active: bool,
+    mark: Option<crate::level::Mark>,
+    missing: bool,
     close: Button,
     cx: &App,
 ) -> Observed<Stateful<Div>> {
+    let p = palette(cx);
     crate::inspector::tab(id, label, active, cx)
+        .relative()
         .pr(dp(4.))
+        // A cluster the setup no longer lists wears a dashed ring, not a
+        // level.
+        .when(missing, |this| {
+            this.child(
+                Icon::new(IconName::CircleDashed)
+                    .size(dp(12.))
+                    .text_color(p.muted),
+            )
+        })
+        .when_some(mark.filter(|_| !missing), |this, mark| {
+            let inks = mark.inks(&p);
+            this.child(crate::level::glyph(mark, inks.glyph)).when_some(
+                mark.cap(&p),
+                |this, cap| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
+                            .h(px(2.))
+                            .bg(cap),
+                    )
+                },
+            )
+        })
         .child(close)
 }
 

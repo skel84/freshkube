@@ -8,6 +8,39 @@ use serde::{Deserialize, Serialize};
 /// The reason a control gives when a `read-only` cluster refuses a write.
 pub const READ_ONLY_REASON: &str = "This cluster is read-only.";
 
+/// The reason a dock shell gives when its own cluster's entry is no longer
+/// listed.
+pub const ENTRY_GONE_REASON: &str = "Its cluster entry is no longer in freshkube.yaml.";
+
+/// The reason a dock shell gives while its cluster's level is not known: the
+/// setup has not been read yet, so nothing says what the level is.
+pub const LEVEL_UNKNOWN_REASON: &str = "The setup hasn't been read yet.";
+
+/// What a dock tab knows of the level of its own cluster. It is the tab's
+/// own cluster's, never the shown one's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnLevel {
+    /// The level of the tab's entry, or of its context for a window with no
+    /// entry, under the setup as it is now.
+    Known(Protection),
+    /// The entry the tab started under is no longer in the setup.
+    EntryGone,
+    /// The setup has not been read, so there is no level to apply.
+    Unknown,
+}
+
+/// Whether a dock shell may start a session, from its own cluster's level
+/// and nothing else. The shown cluster's level is not a parameter, so a call
+/// site cannot pass it. A level that is gone or unknown blocks, as a skipped
+/// entry stays read-only. `Err` is the reason the Start control gives.
+pub fn may_start_shell(own: OwnLevel) -> Result<(), &'static str> {
+    match own {
+        OwnLevel::EntryGone => Err(ENTRY_GONE_REASON),
+        OwnLevel::Unknown => Err(LEVEL_UNKNOWN_REASON),
+        OwnLevel::Known(level) => level.refusal().map_or(Ok(()), Err),
+    }
+}
+
 /// How much the app asks before it writes to a cluster. A person sets it on a
 /// cluster entry; it is never inferred from a context's name, an id or a
 /// role. The order is from the strictest to the loosest.
@@ -127,6 +160,23 @@ impl Eq for LevelCell {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shell_starts_from_its_own_level_at_each_level_and_never_without_one() {
+        assert_eq!(
+            may_start_shell(OwnLevel::Known(Protection::ReadOnly)),
+            Err(READ_ONLY_REASON)
+        );
+        for level in [Protection::Protected, Protection::Guarded, Protection::Open] {
+            assert_eq!(may_start_shell(OwnLevel::Known(level)), Ok(()));
+        }
+        assert_eq!(may_start_shell(OwnLevel::EntryGone), Err(ENTRY_GONE_REASON));
+        assert_eq!(
+            may_start_shell(OwnLevel::Unknown),
+            Err(LEVEL_UNKNOWN_REASON)
+        );
+        assert_ne!(ENTRY_GONE_REASON, LEVEL_UNKNOWN_REASON);
+    }
 
     #[test]
     fn the_default_is_guarded() {

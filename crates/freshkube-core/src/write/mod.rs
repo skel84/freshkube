@@ -37,7 +37,10 @@ pub use diff::{ChangeKind, FieldChange};
 pub use history::{History, Row as HistoryRow, Source, SourceFilter, load as load_history};
 pub use outcome::{Accepted, DEFAULT_WAIT, MAX_WAIT, Observed, Watching};
 pub use preflight::{Block, ObjectDiff, Prepared, Verdict, Who};
-pub use protection::{LevelCell, Protection, READ_ONLY_REASON};
+pub use protection::{
+    ENTRY_GONE_REASON, LEVEL_UNKNOWN_REASON, LevelCell, OwnLevel, Protection, READ_ONLY_REASON,
+    may_start_shell,
+};
 pub use requirement::{
     CANCEL_WINDOW, Confirmation, Requirement, Tier, UNDO_WINDOW, expected_name, requirement,
     requirement_for,

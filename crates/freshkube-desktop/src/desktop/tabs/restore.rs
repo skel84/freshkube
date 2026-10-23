@@ -1,5 +1,5 @@
 //! The tabs in `navigation.json`: each tab's `ViewState` and which was
-//! shown, never a title, a history, rows or a cluster. They come back in the
+//! shown and the entry each is bound to, never a title, a history or rows. They come back in the
 //! first cluster that opens, each as loading rows until its first list.
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,16 @@ pub(super) struct Saved {
     /// dropped on reading, so an old file never refuses the rest.
     #[serde(default)]
     pub(super) views: Vec<serde_json::Value>,
+    /// The workspace entry id each view is bound to, in the order of
+    /// `views` (#878); `null` for a tab bound to none. A file without it
+    /// binds every tab to the cluster that opens.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) entries: Vec<Option<String>>,
+    /// The context each view is bound to when it was made in a window with
+    /// no entry, with the kind of window (#878); `null` for a tab bound to an
+    /// entry or to none. A file without it binds no context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) contexts: Vec<Option<ContextBinding>>,
 }
 
 impl Saved {
@@ -44,11 +54,29 @@ impl Saved {
                 .take(SAVED_TABS)
                 .filter_map(|view| serde_json::to_value(view).ok())
                 .collect(),
+            entries: if set.entries().iter().any(Option::is_some) {
+                set.entries()
+                    .into_iter()
+                    .skip(first)
+                    .take(SAVED_TABS)
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            contexts: if set.contexts().iter().any(Option::is_some) {
+                set.contexts()
+                    .into_iter()
+                    .skip(first)
+                    .take(SAVED_TABS)
+                    .collect()
+            } else {
+                Vec::new()
+            },
         }
     }
 
     /// The views that parse, and the selection moved to follow them.
-    pub(super) fn views(&self) -> (Vec<ViewState>, usize) {
+    pub(super) fn views(&self) -> (Vec<super::set::BoundView>, usize) {
         let mut selected = 0;
         let mut views = Vec::new();
         for (at, value) in self.views.iter().take(SAVED_TABS).enumerate() {
@@ -56,7 +84,9 @@ impl Saved {
                 if at <= self.selected {
                     selected = views.len();
                 }
-                views.push(view);
+                let entry = self.entries.get(at).cloned().flatten();
+                let context = self.contexts.get(at).cloned().flatten();
+                views.push((view, entry, context));
             }
         }
         (views, selected)

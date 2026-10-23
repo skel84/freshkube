@@ -179,8 +179,15 @@ impl Pilot {
                     .text_color(p.muted)
                     .child(item.role.clone()),
             )
-            .on_click(cx.listener(move |view, _, window, cx| {
-                view.switch_cluster(chosen.clone(), window, cx);
+            .on_click(cx.listener(move |view, event: &ClickEvent, window, cx| {
+                if event.modifiers().secondary() {
+                    // ⌘-click opens the cluster in a new tab (#878).
+                    view.open_cluster_in_new_tab(chosen.clone(), window, cx);
+                } else if view.tab_entry_missing(cx) {
+                    view.choose_cluster_for_tab(chosen.clone(), window, cx);
+                } else {
+                    view.retarget_shown_tab(chosen.clone(), window, cx);
+                }
                 view.focus_page(window, cx);
                 let handle = window.window_handle();
                 let popover = popover.clone();
@@ -200,7 +207,7 @@ mod column;
 pub(super) use column::Room;
 #[cfg(test)]
 pub(super) use column::cut_edges;
-mod context;
+pub(in crate::desktop) mod context;
 pub(super) use context::{Connection, ContextDisplay, mark};
 pub(super) mod fps;
 mod frame;

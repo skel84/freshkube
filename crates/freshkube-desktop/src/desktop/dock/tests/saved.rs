@@ -197,6 +197,9 @@ fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         let source = pilot.read(cx).source().kube;
         dock.update(cx, |dock, cx| {
+            // A dock that opens with no tab, as a first launch does.
+            dock.tabs.clear();
+            dock.selected = None;
             dock.set_source(None, None, window, cx);
             dock.restore = Some(saved);
             dock.set_source(source, None, window, cx);

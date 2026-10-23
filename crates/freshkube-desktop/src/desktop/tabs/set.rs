@@ -29,6 +29,20 @@ pub(crate) enum OpenIn {
     Front,
 }
 
+/// The context a tab made in a window with no entry is bound to, with the
+/// kind of window it was made in: a Talos context and a kubeconfig context
+/// share a name space, so the name alone does not say which one to reach.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ContextBinding {
+    pub name: String,
+    /// The window had Talos (a talosconfig context), not Kubernetes only.
+    pub talos: bool,
+}
+
+/// A view with the entry and the context its tab is bound to: what the file
+/// holds for a tab and what a restored set is made from.
+pub(crate) type BoundView = (ViewState, Option<String>, Option<ContextBinding>);
+
 /// One tab: where it is and where it has been. Its title is derived from
 /// the view when the strip is, never stored.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,6 +53,21 @@ pub(crate) struct Tab {
     /// A view has one namespace, the object's, so the list's own is kept
     /// here, and a tab that comes back opens the list where it was.
     pub list_ns: Option<Option<String>>,
+    /// The cluster entry the tab is bound to (#878), by its id. `None` is
+    /// the cluster the window opened on, which has no entry of its own.
+    /// Never the current context: a tab keeps its entry when another tab
+    /// or the header's switcher shows another cluster.
+    pub entry: Option<String>,
+    /// The kubeconfig or Talos context the tab is bound to when the window
+    /// it was made in had no entry (a context picked by hand, a kubeconfig
+    /// or talosconfig given at launch). Only meaningful with no `entry`; a
+    /// tab with neither is not bound yet.
+    pub context: Option<ContextBinding>,
+    /// The tab was selected in a window of the other kind than its context
+    /// was made in, where the name means something else: it has no cluster
+    /// to reach until a person chooses one. A window that changes kind under
+    /// the tab shown is no such case; the tab follows it.
+    pub stranded: bool,
     back: VecDeque<ViewState>,
     forward: Vec<ViewState>,
 }
@@ -49,6 +78,9 @@ impl Tab {
             id,
             view,
             list_ns: None,
+            entry: None,
+            context: None,
+            stranded: false,
             back: VecDeque::new(),
             forward: Vec::new(),
         }
@@ -68,7 +100,7 @@ impl Tab {
 pub(crate) struct TabSet {
     tabs: Vec<Tab>,
     current: usize,
-    closed: Vec<ViewState>,
+    closed: Vec<(ViewState, Option<String>, Option<ContextBinding>)>,
     next_id: TabId,
 }
 
@@ -95,16 +127,31 @@ impl TabSet {
     /// Tabs at `views`, the one at `selected` shown (the last when it is
     /// out of range). Views past [`SAVED_TABS`] are dropped; none makes one
     /// tab at `fallback`.
+    #[cfg(test)]
     pub fn restored(views: Vec<ViewState>, selected: usize, fallback: ViewState) -> Self {
+        Self::restored_bound(
+            views.into_iter().map(|view| (view, None, None)).collect(),
+            selected,
+            fallback,
+        )
+    }
+
+    /// [`TabSet::restored`] with each tab's entry (#878).
+    pub fn restored_bound(views: Vec<BoundView>, selected: usize, fallback: ViewState) -> Self {
         let mut views: Vec<_> = views.into_iter().take(SAVED_TABS).collect();
         if views.is_empty() {
-            views.push(fallback);
+            views.push((fallback, None, None));
         }
         let current = selected.min(views.len() - 1);
         let tabs: Vec<_> = views
             .into_iter()
             .enumerate()
-            .map(|(id, view)| Tab::new(id as TabId, view))
+            .map(|(id, (view, entry, context))| {
+                let mut tab = Tab::new(id as TabId, view);
+                tab.entry = entry;
+                tab.context = context;
+                tab
+            })
             .collect();
         Self {
             next_id: tabs.len() as TabId,
@@ -120,6 +167,11 @@ impl TabSet {
 
     pub fn tabs(&self) -> &[Tab] {
         &self.tabs
+    }
+
+    #[cfg(test)]
+    pub fn tabs_mut(&mut self) -> &mut [Tab] {
+        &mut self.tabs
     }
 
     pub fn selected(&self) -> usize {
@@ -147,6 +199,84 @@ impl TabSet {
         self.tabs.iter().map(|tab| tab.view.clone()).collect()
     }
 
+    /// The entry each tab is bound to, in order.
+    pub fn entries(&self) -> Vec<Option<String>> {
+        self.tabs.iter().map(|tab| tab.entry.clone()).collect()
+    }
+
+    /// The context each tab is bound to, in order (tabs bound to an entry
+    /// have none).
+    pub fn contexts(&self) -> Vec<Option<ContextBinding>> {
+        self.tabs.iter().map(|tab| tab.context.clone()).collect()
+    }
+
+    /// Whether the tabs are not all bound to one cluster, which is when the
+    /// strip prefixes a title with its cluster.
+    pub fn spans_clusters(&self) -> bool {
+        self.tabs
+            .windows(2)
+            .any(|pair| (&pair[0].entry, &pair[0].context) != (&pair[1].entry, &pair[1].context))
+    }
+
+    /// Marks the shown tab as having no cluster to reach, or not.
+    pub fn strand_current(&mut self, stranded: bool) {
+        self.tabs[self.current].stranded = stranded;
+    }
+
+    /// Binds the shown tab to what the window shows when it is bound to
+    /// nothing yet, without a history step: the first cluster a tab shows is
+    /// the one it started on, the window's own first tab included. A window
+    /// that shows neither an entry nor a context binds nothing.
+    pub fn bind_current(&mut self, entry: Option<String>, context: Option<ContextBinding>) {
+        let tab = &mut self.tabs[self.current];
+        if tab.entry.is_none() && tab.context.is_none() {
+            tab.entry = entry;
+            tab.context = context;
+        }
+    }
+
+    /// Binds the shown tab to `entry` (or, with none, to `context`) and sets
+    /// its view to `view`, the page, kind and namespace the switcher kept.
+    /// The old view goes onto the tab's history; history holds views only,
+    /// so Back shows that view under the tab's new binding, as a link would.
+    pub fn retarget(
+        &mut self,
+        entry: Option<String>,
+        context: Option<ContextBinding>,
+        view: ViewState,
+    ) -> bool {
+        let tab = &mut self.tabs[self.current];
+        if tab.entry == entry && tab.context == context && tab.view == view {
+            return false;
+        }
+        tab.entry = entry;
+        tab.context = context;
+        tab.stranded = false;
+        tab.list_ns = None;
+        if tab.view != view {
+            let old = std::mem::replace(&mut tab.view, view);
+            if tab.back.len() == HISTORY {
+                tab.back.pop_front();
+            }
+            tab.back.push_back(old);
+            tab.forward.clear();
+        }
+        true
+    }
+
+    /// Opens `view` bound to `entry` in a new tab, as [`TabSet::open`].
+    pub fn open_for(
+        &mut self,
+        view: ViewState,
+        entry: Option<String>,
+        front: bool,
+    ) -> Option<TabId> {
+        let id = self.open(view, front)?;
+        let at = self.position(id)?;
+        self.tabs[at].entry = entry;
+        Some(id)
+    }
+
     /// Opens `view` in a new tab after the shown one, which `Front` also
     /// shows. `None` when the set is full.
     pub fn open(&mut self, view: ViewState, front: bool) -> Option<TabId> {
@@ -170,7 +300,10 @@ impl TabSet {
     /// A new tab at the shown tab's view, in front, with a history of its
     /// own.
     pub fn duplicate(&mut self) -> Option<TabId> {
-        self.open(self.current().view.clone(), true)
+        let (entry, context) = (self.current().entry.clone(), self.current().context.clone());
+        let id = self.open_for(self.current().view.clone(), entry, true)?;
+        self.tabs[self.current].context = context;
+        Some(id)
     }
 
     /// Shows the tab `id`; its view when it was not already shown.
@@ -246,7 +379,7 @@ impl TabSet {
         }
         let at = self.position(id)?;
         let tab = self.tabs.remove(at);
-        self.remember(tab.view);
+        self.remember(tab);
         if at < self.current {
             self.current -= 1;
             return Some(Shown::Same);
@@ -264,7 +397,7 @@ impl TabSet {
         let shown = at == self.current;
         let keep = self.tabs.remove(at);
         for tab in std::mem::take(&mut self.tabs) {
-            self.remember(tab.view);
+            self.remember(tab);
         }
         let view = keep.view.clone();
         self.tabs.push(keep);
@@ -283,7 +416,7 @@ impl TabSet {
             return None;
         }
         for tab in self.tabs.split_off(at + 1) {
-            self.remember(tab.view);
+            self.remember(tab);
         }
         if self.current > at {
             self.current = at;
@@ -292,11 +425,11 @@ impl TabSet {
         Some(Shown::Same)
     }
 
-    fn remember(&mut self, view: ViewState) {
+    fn remember(&mut self, tab: Tab) {
         if self.closed.len() == REOPEN {
             self.closed.remove(0);
         }
-        self.closed.push(view);
+        self.closed.push((tab.view, tab.entry, tab.context));
     }
 
     /// Brings back the tab closed last, in front. `None` when none is left
@@ -305,8 +438,9 @@ impl TabSet {
         if self.is_full() {
             return None;
         }
-        let view = self.closed.pop()?;
-        self.open(view.clone(), true)?;
+        let (view, entry, context) = self.closed.pop()?;
+        self.open_for(view.clone(), entry, true)?;
+        self.tabs[self.current].context = context;
         Some(view)
     }
 }

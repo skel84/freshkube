@@ -567,7 +567,10 @@ fn object_frontdoor_navigates_at_once_while_a_shell_runs(cx: &mut TestAppContext
         );
         assert_eq!(
             shell::running_anywhere(cx),
-            [gpui_kit::SharedString::from(pod.name.clone())]
+            [gpui_kit::SharedString::from(format!(
+                "{} on prod-fra",
+                pod.name
+            ))]
         );
     })
     .unwrap();

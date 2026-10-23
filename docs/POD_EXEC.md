@@ -115,3 +115,12 @@ Each step lands with its tests and moves to Done in the roadmap.
 
 - [Kubeli's shell commands](../../Kubeli/src-tauri/src/commands/shell.rs) for the shell fallback chain and batching (8 ms or 64 KiB). Avoid its gaps: it reports Connected before exec succeeds, never sends the first size and ignores the exit status.
 - [`gpui_xterm`](https://crates.io/crates/gpui_xterm) (MIT) for drawing an `alacritty_terminal` grid in GPUI Kit, read for approach, not copied.
+
+## A shell on its own connection (#878)
+
+A shell captures its cluster source, entry and context when its tab starts, and keeps them; its level is read live for that entry (or that context, for a window with no entry) and never captured:
+
+- **Nothing ends it but closing.** Switching tab, switching the context in the header, opening a link on another cluster and changing the access of the cluster shown ask nothing and end nothing (the guard of #873 is gone). Only closing its dock tab, closing the window and quitting ask, and each question names the cluster: "End the shell in ⟨pod⟩ on ⟨cluster⟩?". A running session is not killed by any of the others.
+- **Its gate is its own.** Start reads the level of the tab's own cluster through core's `may_start_shell`: its entry's, or its context's when the window had no entry, never the shown one ([WRITE_MODEL.md](WRITE_MODEL.md#exec-follows-the-dock-tabs-own-level-878)). A new shell is blocked until its tab has told it that level. A read-only cluster's shell stays blocked under an open cluster, a gone entry or an unread setup blocks (each with its own reason), and a blocked shell offers "Open logs instead", on its own cluster.
+- **It says whose it is.** When the shown cluster is not the shell's, the shell's own header names its cluster and context with its level tag, the level's cap and a side rule, and says "Not the shown cluster: you're looking at ⟨cluster⟩". The dock tab also wears the level's glyph, which alone would not be enough. The header shows while the shell still runs after a switch, not only at Start.
+- Port forwards already own their connection and are unchanged.

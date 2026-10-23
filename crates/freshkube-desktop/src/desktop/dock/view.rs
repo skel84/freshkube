@@ -10,7 +10,7 @@ use freshkube_ui::tab_strip;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ElementExt as _, Sizable as _, v_flex};
+use gpui_kit::component::{ElementExt as _, Sizable as _, h_flex, v_flex};
 
 use super::feed::FeedState;
 use super::*;
@@ -43,12 +43,24 @@ fn shell_tip(tab: &DockTab) -> Option<impl Fn(&mut Window, &mut App) -> AnyView 
 impl Dock {
     fn render_tabs(&self, cx: &mut Context<Self>) -> AnyElement {
         let active = self.selected.and_then(|id| self.position(id)).unwrap_or(0);
-        let items = self.tabs.iter().map(|tab| tab_strip::Item {
-            id: tab.id,
-            title: tab.title.clone(),
-            active: Some(tab.id) == self.selected,
-            tip: shell_tip(tab).map(|tip| Rc::new(tip) as tab_strip::Tip),
-        });
+        let items: Vec<_> = self
+            .tabs
+            .iter()
+            .map(|tab| tab_strip::Item {
+                id: tab.id,
+                title: tab.title.clone(),
+                active: Some(tab.id) == self.selected,
+                // Only a tab of another cluster than the shown one wears its
+                // level; the shown cluster's is in the header.
+                mark: tab
+                    .badge
+                    .as_ref()
+                    .filter(|badge| badge.foreign)
+                    .map(|badge| badge.mark),
+                missing: false,
+                tip: shell_tip(tab).map(|tip| Rc::new(tip) as tab_strip::Tip),
+            })
+            .collect();
         let this = cx.entity().downgrade();
         let actions = tab_strip::Actions {
             select: |dock: &mut Dock, id, window, cx| dock.select(id, true, window, cx),
@@ -245,6 +257,7 @@ impl Dock {
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tab = self.selected_tab()?;
         let id = tab.id;
+        let origin = self.render_origin(tab, cx);
         let notice = match &tab.feed.state {
             FeedState::Gone => Some(ui::warning_banner(
                 Some("This pod is gone.".into()),
@@ -271,15 +284,77 @@ impl Dock {
                 cx,
             )),
             FeedState::Idle | FeedState::Reading | FeedState::Ready => None,
-        }?;
+        };
+        if notice.is_none() && origin.is_none() {
+            return None;
+        }
         Some(
-            div()
+            v_flex()
                 .id("dock-tab-notice")
                 .test_support()
                 .role(Role::Status)
                 .flex_none()
                 .pt(dp(BODY_PADDING))
-                .child(notice)
+                .gap(dp(BODY_PADDING))
+                .children(origin)
+                .children(notice)
+                .into_any_element(),
+        )
+    }
+
+    /// A shell on a cluster other than the one shown says whose it is, in
+    /// its own header (#878): the cluster and context, its level's tag, cap
+    /// and side rule, and that this is not the shown cluster. A shell whose
+    /// own cluster's level blocks its Start says why, shown cluster or not,
+    /// and offers "Open logs instead". A glyph on the dock tab alone would
+    /// not do. All of it is read from the badge `refresh_gates` derived.
+    fn render_origin(&self, tab: &DockTab, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let badge = tab.badge.as_ref()?;
+        if tab.is_log() || (!badge.foreign && badge.blocked.is_none()) {
+            return None;
+        }
+        let id = tab.id;
+        let p = crate::palette::palette(cx);
+        let rule = badge.mark.cap(&p).unwrap_or(p.line_strong);
+        let say = match (badge.foreign, badge.blocked) {
+            (true, _) => badge.warning.clone(),
+            (false, reason) => reason.unwrap_or_default().into(),
+        };
+        Some(
+            h_flex()
+                .id("dock-origin")
+                .test_support()
+                .role(Role::Status)
+                .aria_label(SharedString::from(format!("{}. {}", badge.who, say)))
+                .flex_none()
+                .w_full()
+                .gap(dp(8.))
+                .items_center()
+                .pl(dp(8.))
+                .py(dp(4.))
+                .bg(p.surface_2)
+                .border_l(px(3.))
+                .border_color(rule)
+                .border_t(px(2.))
+                .child(freshkube_ui::level::tag(
+                    badge.mark,
+                    freshkube_ui::level::Form::Cell,
+                    cx,
+                ))
+                .child(div().text_color(p.ink).child(badge.who.clone()))
+                .child(div().flex_1().min_w_0().text_color(p.muted).child(say))
+                .when(badge.blocked.is_some(), |this| {
+                    this.child(
+                        gpui_kit::component::button::Button::new("dock-open-logs-instead")
+                            .outline()
+                            .small()
+                            .icon(IconName::ScrollText)
+                            .label("Open logs instead")
+                            .on_click(cx.listener(move |dock, _, window, cx| {
+                                dock.open_logs_instead(id, window, cx)
+                            })),
+                    )
+                })
                 .into_any_element(),
         )
     }

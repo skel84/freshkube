@@ -430,12 +430,11 @@ impl Pilot {
         {
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
-            this.open_builtin("pods", window, cx);
-            this.pages.resources.update(cx, |resources, cx| {
-                resources.set_namespace(namespace, window, cx)
-            });
-            this.focus_page(window, cx);
+
+        self.open_builtin("pods", window, cx);
+        self.pages.resources.update(cx, |resources, cx| {
+            resources.set_namespace(namespace, window, cx)
         });
+        self.focus_page(window, cx);
     }
 }
