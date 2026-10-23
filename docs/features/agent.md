@@ -317,7 +317,7 @@ From D1b's version check (`Profile::check`), run off the UI thread when the tab 
 Signed out is shown when a turn fails with an authentication message. The card also always says, plainly:
 
 - **The agent reads with your own access.** Prefer a read-only identity ([below](#a-read-only-identity)). Nothing detects, enforces or requires it.
-- **opencode loads your own configuration.** opencode 2.1.3 still loads `~/.config/opencode`, and a source loaded after Freshkube's inline profile can widen `agents.*.permissions`. Freshkube can't prevent this yet; the card links to [#945](https://github.com/skel84/freshkube/issues/945). This slice does not change the profile's lock-down.
+- **Other opencode configuration may still load.** A live check of opencode 2.1.3 found that a session loaded no `~/.config/opencode` of the person's; it did not test a populated plugin folder or an organisation configuration, and a source loaded after Freshkube's inline profile could widen `agents.*.permissions`. Freshkube can't rule that out yet; the card says so and links to [#945](https://github.com/skel84/freshkube/issues/945). This slice does not change the profile's lock-down.
 - **`data: shared`.** When `agent.json` says `data: shared`, opencode runs on the person's own data directories: investigations land in their own opencode history and configs saved there load. The setup card and the egress card both say so. The default is Freshkube's own directory, `opencode/` beside the preferences.
 
 ### The egress card is the access switch

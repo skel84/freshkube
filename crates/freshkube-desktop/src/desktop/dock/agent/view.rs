@@ -21,7 +21,7 @@ pub(super) const EGRESS: &str = "Everything the agent reads (names, specs, logs 
 /// The warning when opencode runs on the person's own data (`data: shared`).
 pub(super) const SHARED: &str = "opencode runs on your own data (data: shared in agent.json). Investigations are saved in your own opencode history, and configs saved there load.";
 /// The plain statement of #945.
-pub(super) const LOADS_YOUR_CONFIG: &str = "opencode 2.1.3, the version Freshkube checked, still loads your own ~/.config/opencode. A source loaded after Freshkube's inline profile can widen what the agent may do (agents.*.permissions). Freshkube can't prevent this yet.";
+pub(super) const LOADS_YOUR_CONFIG: &str = "A live check of opencode 2.1.3, the version Freshkube checked, found that a session loaded no ~/.config/opencode of yours. It did not test a populated plugin folder or an organisation configuration, though, and a source loaded after Freshkube's inline profile could widen what the agent may do (agents.*.permissions). Freshkube can't rule that out yet.";
 /// The read-only identity suggestion.
 pub(super) const READ_ONLY: &str = "The agent reads with your own access. Prefer a read-only identity: an entry whose context is bound to the built-in view ClusterRole, with agent access on for that entry alone. Nothing detects or requires it.";
 
@@ -265,7 +265,7 @@ impl AgentView {
             .child(
                 ui::banner(
                     Tone::Warn,
-                    Some("opencode loads your own configuration".into()),
+                    Some("Other opencode configuration may still load".into()),
                     div()
                         .id("agent-config-warning")
                         .test_support()
