@@ -151,7 +151,7 @@ The directories are one `Dirs` per session, removed when the process group is go
 
 The command is `opencode acp`. The configuration is handed inline in `OPENCODE_CONFIG_CONTENT`; `profile/opencode.rs` builds it (`config()`) and the environment (`environment()`). A guard inside a plugin is never counted as the boundary.
 
-**What was read.** The source of opencode 2.1.3 (commit [`e965774`](https://github.com/anomalyco/opencode/tree/e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b)), and for each switch below the same file at 2.1.0 ([`d30e990`](https://github.com/anomalyco/opencode/tree/d30e990c69efd8a954413a724b35c5a27462f320)), which is the floor of the range. Nothing here has been run against opencode; the live check is the lead's.
+**What was read.** The source of opencode 2.1.3 (commit [`e965774`](https://github.com/anomalyco/opencode/tree/e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b)), and for each switch below the same file at 2.1.0 ([`d30e990`](https://github.com/anomalyco/opencode/tree/d30e990c69efd8a954413a724b35c5a27462f320)), which is the floor of the range. The table is from that reading; what a run of 2.1.3 showed is in [The live check](#the-live-check).
 
 | Switch | Where opencode reads it |
 | --- | --- |
