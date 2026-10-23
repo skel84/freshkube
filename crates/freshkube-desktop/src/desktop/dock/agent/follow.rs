@@ -40,6 +40,9 @@ pub(crate) enum AgentEvent {
     Open(ViewState),
     /// Following stopped, for whatever reason: the follow-owned log tab goes.
     Stopped,
+    /// Following started again (Jump, the toggle, the next question): the
+    /// hand-back toast has nothing left to offer.
+    Resumed,
 }
 
 impl EventEmitter<AgentEvent> for AgentView {}
@@ -98,10 +101,14 @@ impl AgentView {
         let Some(follow) = &mut self.follow else {
             return;
         };
+        let was_following = follow.follower.following();
         follow.follower.clear();
         follow.follower.resume();
         follow.due = None;
         self.sync_strip(cx);
+        if !was_following {
+            cx.emit(AgentEvent::Resumed);
+        }
     }
 
     fn show(&mut self, place: Move, now: Instant, cx: &mut Context<Self>) {
@@ -154,11 +161,12 @@ impl AgentView {
     }
 
     /// Whether Jump has somewhere to go: the page was taken back and the
-    /// agent has places newer than the one shown.
+    /// agent has read a place. With nothing newer it follows again at the
+    /// latest place, the one the page is on.
     pub(crate) fn can_jump(&self) -> bool {
         self.follow
             .as_ref()
-            .is_some_and(|follow| !follow.follower.following() && follow.follower.newer() > 0)
+            .is_some_and(|follow| !follow.follower.following() && follow.follower.has_places())
     }
 
     pub(crate) fn follow_strip(&self) -> Option<Entity<FollowStrip>> {
@@ -197,6 +205,7 @@ impl AgentView {
             follow.follower.resume();
         }
         self.sync_strip(cx);
+        cx.emit(AgentEvent::Resumed);
         cx.notify();
     }
 
@@ -212,6 +221,7 @@ impl AgentView {
         }
         self.arm_follow(cx);
         self.sync_strip(cx);
+        cx.emit(AgentEvent::Resumed);
         cx.notify();
     }
 
@@ -262,14 +272,22 @@ impl AgentView {
 }
 
 impl StripState {
-    /// "Following agent · pods · payments · 2 of 4".
+    /// "Following agent · pods · payments"; the place gives way when the
+    /// strip is narrow, never the count or the buttons.
     fn line(&self) -> SharedString {
-        match self.position {
-            Some((n, m)) if !self.place.is_empty() => {
-                format!("Following agent · {} · {n} of {m}", self.place).into()
-            }
-            _ => "Following agent".into(),
+        if self.place.is_empty() {
+            "Following agent".into()
+        } else {
+            format!("Following agent · {}", self.place).into()
         }
+    }
+
+    /// "2 of 4".
+    fn count(&self) -> SharedString {
+        self.position
+            .map(|(n, m)| format!("{n} of {m}"))
+            .unwrap_or_default()
+            .into()
     }
 
     /// "The agent read ⟨other⟩; this page stays on ⟨own⟩."
@@ -301,6 +319,7 @@ pub(crate) struct FollowStrip {
     /// What the strip says, derived when the state changes and not on each
     /// frame of the hairline.
     line: SharedString,
+    count: SharedString,
     warning: Option<SharedString>,
     /// Where the strip was last laid out, so the shell can tell a press on
     /// it from the person's input in the page.
@@ -311,11 +330,15 @@ pub(crate) struct FollowStrip {
 pub(crate) const STRIP_HEIGHT: f32 = 26.;
 
 impl FollowStrip {
+    /// The strip's height, in dp.
+    pub(crate) const HEIGHT: f32 = STRIP_HEIGHT;
+
     fn new(agent: WeakEntity<AgentView>) -> Self {
         Self {
             agent,
             state: StripState::default(),
             line: SharedString::default(),
+            count: SharedString::default(),
             warning: None,
             bounds: Default::default(),
         }
@@ -324,6 +347,7 @@ impl FollowStrip {
     fn set(&mut self, state: StripState, cx: &mut Context<Self>) {
         if self.state != state {
             self.line = state.line();
+            self.count = state.count();
             self.warning = state.warning();
             self.state = state;
             cx.notify();
@@ -378,7 +402,7 @@ impl Render for FollowStrip {
             freshkube_ui::motion::next_frame(window, cx);
         }
         let bounds = self.bounds.clone();
-        let (line, warning) = (self.line.clone(), self.warning.clone());
+        let (line, count, warning) = (self.line.clone(), self.count.clone(), self.warning.clone());
         h_flex()
             .id("follow-strip")
             .test_support()
@@ -403,6 +427,14 @@ impl Render for FollowStrip {
                     .min_w_0()
                     .truncate()
                     .child(line),
+            )
+            .child(
+                div()
+                    .id("follow-count")
+                    .test_support()
+                    .aria_label(count.clone())
+                    .flex_none()
+                    .child(count),
             )
             .children(warning.map(|warning| {
                 div()

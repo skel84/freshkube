@@ -36,10 +36,13 @@ impl Render for Pilot {
             .when(followed, |this| {
                 this.capture_any_mouse_down(cx.listener(
                     |pilot, event: &MouseDownEvent, window, cx| {
-                        pilot.follow_input(Some(event.position), window, cx)
+                        pilot.follow_input(Some(event.position), true, window, cx)
                     },
                 ))
                 .child(self.follow_scroll_guard(cx))
+            })
+            .when(self.follow_spacer, |this| {
+                this.child(self.follow_move_guard(cx))
             })
             .child(self.chrome.parts.header())
             .children(
@@ -202,6 +205,13 @@ impl Pilot {
             // The strip, beside the cached page, so its hairline's frames
             // draw nothing else.
             .children(strip.clone())
+            .children((strip.is_none() && self.follow_spacer).then(|| {
+                div()
+                    .id("follow-spacer")
+                    .test_support()
+                    .flex_none()
+                    .h(crate::ui::dp(dock::FollowStrip::HEIGHT))
+            }))
             .child(
                 div()
                     .relative()
@@ -251,7 +261,31 @@ impl Pilot {
                 window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
                         _ = pilot.update(cx, |pilot, cx| {
-                            pilot.follow_input(Some(event.position), window, cx)
+                            pilot.follow_input(Some(event.position), false, window, cx)
+                        });
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_0()
+    }
+}
+
+impl Pilot {
+    /// The pointer moving ends the room kept under a click that handed the
+    /// page back.
+    fn follow_move_guard(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let pilot = cx.entity().downgrade();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let pilot = pilot.clone();
+                window.on_mouse_event(move |_: &MouseMoveEvent, phase, _, cx| {
+                    if phase == DispatchPhase::Capture {
+                        _ = pilot.update(cx, |pilot, cx| {
+                            pilot.follow_spacer = false;
+                            cx.notify();
                         });
                     }
                 });

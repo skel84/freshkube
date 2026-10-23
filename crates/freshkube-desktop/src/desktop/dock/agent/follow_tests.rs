@@ -163,11 +163,11 @@ fn the_page_follows_through_apply_view(cx: &mut TestAppContext) {
     // The frame and the strip are drawn.
     assert!(tab.present("follow-frame", cx));
     assert!(tab.present("follow-strip", cx));
-    let strip = tab.label("follow-place", cx).unwrap();
     assert_eq!(
-        strip,
-        format!("Following agent · pods · {} · 1 of 1", at.namespace)
+        tab.label("follow-place", cx).unwrap(),
+        format!("Following agent · pods · {}", at.namespace)
     );
+    assert_eq!(tab.label("follow-count", cx).unwrap(), "1 of 1");
 
     // The object.
     tab.wait_out_hold(cx);
@@ -213,7 +213,7 @@ fn the_page_follows_through_apply_view(cx: &mut TestAppContext) {
     let shown = tab.shown(cx).unwrap();
     assert_eq!(shown.tab, ViewTab::Events);
     assert_eq!(object_of(&shown), at.deployment);
-    assert!(tab.label("follow-place", cx).unwrap().ends_with("4 of 4"));
+    assert_eq!(tab.label("follow-count", cx).unwrap(), "4 of 4");
     assert!(tab.following(cx));
 }
 
@@ -958,5 +958,152 @@ fn the_trail_row_of_another_clusters_read_names_both_clusters(cx: &mut TestAppCo
         format!(
             "The agent read stage-fra; this page stays on {own}. It needs agent access of its own."
         )
+    );
+}
+
+fn toasts(tab: &Tab, cx: &mut TestAppContext) -> usize {
+    // A closing toast leaves its list after its exit.
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(tab.handle, |_, window, cx| window.notifications(cx).len())
+        .unwrap()
+}
+
+#[gpui_kit::test]
+fn jump_on_a_toast_with_nothing_newer_follows_again_at_the_latest_place(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    tab.draw(cx);
+    cx.update_window(tab.handle, |_, window, cx| window.click("nav-nodes", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(!tab.following(cx));
+    assert_eq!(
+        tab.label("follow-toast-newer", cx).as_deref(),
+        Some("0 newer")
+    );
+    tab.click("follow-jump", cx);
+    assert!(tab.following(cx), "following is on again");
+    assert!(tab.present("follow-strip", cx));
+    let shown = tab.shown(cx).unwrap();
+    assert_eq!(kind_of(&shown), "pods", "the page goes to the latest place");
+}
+
+#[gpui_kit::test]
+fn resuming_closes_the_hand_back_toast_and_only_one_shows(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    for resume in ["jump", "toggle", "prompt"] {
+        tab.draw(cx);
+        cx.update_window(tab.handle, |_, window, cx| window.click("nav-nodes", cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert!(!tab.following(cx), "{resume}");
+        assert_eq!(toasts(&tab, cx), 1, "{resume}: one toast");
+        match resume {
+            "jump" => tab.click("follow-jump", cx),
+            "toggle" => tab.click("agent-following", cx),
+            _ => tab.view.update(cx, |view, cx| view.follow_new_turn(cx)),
+        }
+        assert!(tab.following(cx), "{resume}");
+        assert_eq!(toasts(&tab, cx), 0, "{resume} closes the toast");
+        // The new turn starts a new trail.
+        tab.read(
+            10,
+            view("pods", Some(&at.namespace), None, ViewTab::Details),
+            cx,
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn the_strip_cuts_the_place_not_the_count_or_the_buttons(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 760., 560.);
+    cx.update(|cx| crate::text_size::set(18., cx));
+    let at = places(&tab, cx);
+    let long = "a".repeat(120);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), Some(&long), ViewTab::Logs),
+        cx,
+    );
+    tab.draw(cx);
+    cx.update_window(tab.handle, |_, window, _| {
+        let strip = window.find("follow-strip").bounds();
+        let place = window.find("follow-place").bounds();
+        let count = window.find("follow-count").bounds();
+        let stop = window.find("follow-stop").bounds();
+        assert!(strip.contains(&count.origin) && count.right() <= strip.right());
+        assert!(stop.right() <= strip.right(), "the × is inside the strip");
+        assert!(place.right() <= count.left(), "the place gives way");
+        assert!(count.size.width > gpui_kit::px(20.));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_click_that_hands_back_selects_the_row_under_it(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    let context = cx.update(|cx| tab.view.read(cx).own.as_ref().unwrap().context.clone());
+    let pod = example::read(&context, "pods", Some(&at.namespace), live::now())
+        .unwrap()
+        .1
+        .remove(0)
+        .identity;
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    tab.draw(cx);
+    let row = |cx: &mut TestAppContext| {
+        cx.update_window(tab.handle, |_, window, _| {
+            window.find(crate::resources::row_id(&pod)).bounds().top()
+        })
+        .unwrap()
+    };
+    let before = row(cx);
+    cx.update_window(tab.handle, |_, window, cx| {
+        window.click(crate::resources::row_id(&pod), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    tab.draw(cx);
+    assert!(!tab.following(cx));
+    assert!(tab.present("follow-spacer", cx), "the strip's room is kept");
+    assert_eq!(row(cx), before, "the row stayed under the pointer");
+    let opened = cx.read(|cx| {
+        tab.pilot
+            .read(cx)
+            .pages
+            .resources
+            .read(cx)
+            .detail_identity(cx)
+            .map(|identity| identity.name.clone())
+    });
+    assert_eq!(opened.as_deref(), Some(pod.name.as_str()));
+    // The pointer moves: the room goes and the page moves up.
+    cx.update_window(tab.handle, |_, window, cx| {
+        window.hover(crate::resources::row_id(&pod), cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    tab.draw(cx);
+    assert!(!tab.present("follow-spacer", cx));
+    let after = row(cx);
+    assert!(
+        before - after > gpui_kit::px(20.),
+        "the page moved up by the strip"
     );
 }

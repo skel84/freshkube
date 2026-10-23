@@ -17,6 +17,9 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::notification::Notification;
 
+/// The hand-back toast's identity: one at a time.
+struct FollowToast;
+
 impl Pilot {
     /// A view the dock asked the window to show.
     pub(super) fn follow_event(
@@ -25,6 +28,13 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(event, FollowEvent::Resumed) {
+            // Nothing left to jump to: the toast goes, and the strip is back.
+            window.remove_notification::<FollowToast>(cx);
+            self.follow_spacer = false;
+            cx.notify();
+            return;
+        }
         // The same guard for both: a window still loading its setup or
         // identifying its cluster is not one to navigate.
         if self.config_loading || self.identifying() {
@@ -44,6 +54,7 @@ impl Pilot {
                 }
             }
             FollowEvent::Open(view) => self.apply_view(view, window, cx),
+            FollowEvent::Resumed => {}
         }
     }
 
@@ -73,7 +84,7 @@ impl Pilot {
             {
                 return;
             }
-            _ = pilot.update(cx, |pilot, cx| pilot.follow_input(None, window, cx));
+            _ = pilot.update(cx, |pilot, cx| pilot.follow_input(None, false, window, cx));
         })
     }
 
@@ -82,6 +93,7 @@ impl Pilot {
     pub(super) fn follow_input(
         &mut self,
         at: Option<Point<Pixels>>,
+        pressed: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -100,11 +112,16 @@ impl Pilot {
         if in_dock || on_strip {
             return;
         }
-        self.hand_back_follow(window, cx);
+        self.hand_back_follow(pressed, window, cx);
     }
 
     /// Takes the page back and says so, with how many places are newer.
-    pub(super) fn hand_back_follow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn hand_back_follow(
+        &mut self,
+        pressed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(newer) = self
             .pages
             .dock
@@ -112,8 +129,12 @@ impl Pilot {
         else {
             return;
         };
+        // A click that hands the page back keeps the strip's room until the
+        // pointer moves, so it lands on the row it was aimed at.
+        self.follow_spacer = pressed;
         let pilot = cx.entity().downgrade();
         let note = Notification::new()
+            .id::<FollowToast>()
             .title("Stopped following the agent")
             .content(move |_, _, _| {
                 div()

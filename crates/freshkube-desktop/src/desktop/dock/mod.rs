@@ -98,6 +98,8 @@ pub(crate) enum FollowEvent {
     /// The person pressed a trail row: show this view as their own
     /// navigation.
     Open(freshkube_nav::ViewState),
+    /// Following started again: the hand-back toast is closed.
+    Resumed,
 }
 
 impl EventEmitter<FollowEvent> for Dock {}

@@ -21,6 +21,7 @@ impl Dock {
     ) {
         match event {
             AgentEvent::Stopped => self.close_followed_logs(window, cx),
+            AgentEvent::Resumed => cx.emit(FollowEvent::Resumed),
             AgentEvent::Show(view) | AgentEvent::Open(view) => {
                 // A tab of another cluster never moves the page.
                 let shown = self

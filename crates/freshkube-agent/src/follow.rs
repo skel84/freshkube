@@ -250,6 +250,11 @@ impl Follower {
         place
     }
 
+    /// Whether any place has been read.
+    pub fn has_places(&self) -> bool {
+        !self.trail.is_empty()
+    }
+
     pub fn following(&self) -> bool {
         self.following
     }
