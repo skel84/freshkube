@@ -413,13 +413,7 @@ fn the_rows_carry_team_and_yours_chips(cx: &mut TestAppContext) {
         label(cx, handle, "settings-cluster-core-fra-origin"),
         "Yours · over the team’s"
     );
-    assert_eq!(
-        cx.update_window(handle, |_, window, _| window
-            .find("settings-cluster-core-fra-origin")
-            .visible())
-            .unwrap(),
-        true
-    );
+    assert!(visible(cx, handle, "settings-cluster-core-fra-origin"));
     // cicd-fra: only the team names it.
     assert_eq!(
         label(cx, handle, "settings-cluster-cicd-fra-origin"),

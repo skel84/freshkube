@@ -442,14 +442,6 @@ impl SettingsPage {
         }
     }
 
-    /// The level the Inspector's draft stands at, for the tests.
-    #[cfg(test)]
-    pub(super) fn draft_level(&self) -> Option<Protection> {
-        self.entry
-            .as_ref()
-            .and_then(|draft| draft.protection.values.level)
-    }
-
     pub(super) fn set_entry_store(&mut self, kind: metrics::Kind, cx: &mut Context<Self>) {
         if !self.editable() {
             return;

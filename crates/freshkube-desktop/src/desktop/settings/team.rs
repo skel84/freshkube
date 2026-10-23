@@ -6,8 +6,8 @@
 
 use chrono::{DateTime, Utc};
 use freshkube_core::team::{
-    Change, ChangeKind, ClusterView, FetchFailed, Leave, Membership, NotReviewed, Origin, Review,
-    Step, Version, cluster_view, example::Shape, resolve,
+    Change, ChangeKind, ClusterView, Leave, Membership, NotReviewed, Origin, Review, Step,
+    cluster_view, example::Shape, resolve,
 };
 use freshkube_ui::{form, page};
 use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
@@ -658,7 +658,7 @@ impl SettingsPage {
     /// Joins a team with a version applied, for tests on real workspaces.
     #[cfg(test)]
     pub(super) fn set_team_for_test(&mut self, team_file: &str, cx: &mut Context<Self>) {
-        use freshkube_core::team::{Overrides, example};
+        use freshkube_core::team::{Overrides, Version, example};
         let mut m = Membership::join(example::source(), Overrides::new());
         let version = Version::parse("t1", team_file.as_bytes(), Default::default())
             .expect("a valid team file");
@@ -730,10 +730,12 @@ impl SettingsPage {
 
     /// Takes the outcome of a fetch of the team file. A different waiting
     /// version makes a new review and ends a choice to review later; the same
-    /// one, or a failure, leaves the review as it is.
+    /// one, or a failure, leaves the review as it is. The real fetch is a
+    /// later slice; until then only the tests call it.
+    #[cfg(test)]
     pub(in crate::desktop) fn team_fetched(
         &mut self,
-        result: Result<Version, FetchFailed>,
+        result: Result<freshkube_core::team::Version, freshkube_core::team::FetchFailed>,
         now: DateTime<Utc>,
         cx: &mut Context<Self>,
     ) {
