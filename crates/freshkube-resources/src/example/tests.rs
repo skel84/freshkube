@@ -347,3 +347,41 @@ fn the_summary_reads_status_page_as_its_own_deployment() {
     // The example's first Deployment is a different object.
     assert_ne!(deployments[0].metadata.name, status.metadata.name);
 }
+
+#[test]
+fn the_example_holds_what_the_everyday_actions_show() {
+    let (_, deployments) = read("core-fra", "deployments.apps", None, TEST_NOW).unwrap();
+    let of = |name: &str| {
+        deployments
+            .iter()
+            .find(|row| row.identity.name == name && row.identity.namespace.starts_with("pay"))
+            .unwrap()
+            .identity
+            .clone()
+    };
+    // An autoscaler for one Deployment, and only that one.
+    assert_eq!(autoscaler_of(&of("api")), Some("api"));
+    assert_eq!(autoscaler_of(&of("ledger")), None);
+    // Argo CD tracks one Deployment.
+    let tracked = object_json(&of("ledger"), TEST_NOW).unwrap();
+    assert!(
+        tracked["metadata"]["annotations"]["argocd.argoproj.io/tracking-id"].is_string(),
+        "{tracked}"
+    );
+    let plain = object_json(&of("api"), TEST_NOW).unwrap();
+    assert!(plain["metadata"]["annotations"]["argocd.argoproj.io/tracking-id"].is_null());
+    // A CronJob to suspend, not suspended.
+    let (_, cronjobs) = read("core-fra", "cronjobs.batch", None, TEST_NOW).unwrap();
+    assert_eq!(cronjobs.len(), 1);
+    let cronjob = object_json(&cronjobs[0].identity, TEST_NOW).unwrap();
+    assert_eq!(cronjob["kind"], "CronJob");
+    assert_eq!(cronjob["spec"]["suspend"], false);
+    // A ReplicaSet keeps its owner, so the refusal can run.
+    let (_, sets) = read("core-fra", "replicasets.apps", None, TEST_NOW).unwrap();
+    let set = sets
+        .iter()
+        .find(|row| row.identity.name.starts_with("api-"))
+        .unwrap();
+    let set = object_json(&set.identity, TEST_NOW).unwrap();
+    assert_eq!(set["metadata"]["ownerReferences"][0]["kind"], "Deployment");
+}

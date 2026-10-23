@@ -125,3 +125,69 @@ fn a_blocked_cluster_shows_the_actions_disabled_and_a_key_does_nothing(cx: &mut 
     cx.run_until_parked();
     assert!(heard.borrow().is_empty());
 }
+
+#[gpui_kit::test]
+fn a_replicaset_the_pane_shows_owned_by_a_deployment_does_not_offer_scale(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("replicasets.apps"), window, cx);
+            screen.focus(window, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let owned = cx.read(|cx| {
+        let rows = screen.read(cx).projection.len();
+        (0..rows)
+            .map(|ix| identity_at(&screen, ix, cx))
+            .find(|identity| identity.name.starts_with("api-"))
+            .expect("an example ReplicaSet of api")
+    });
+    // Open it: the pane reads the object and says who owns it.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.within(row_id(&owned)).click("name", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor().advance_clock(KEYBOARD_PAUSE);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let owner = cx.read(|cx| {
+        screen
+            .read(cx)
+            .detail
+            .read(cx)
+            .controller_of(&owned)
+            .map(str::to_owned)
+    });
+    assert_eq!(owner.as_deref(), Some("Deployment"));
+    let items = open_menu(cx, handle, |window, cx| {
+        window.within(row_id(&owned)).right_click("name", cx)
+    });
+    assert!(items.contains(&Some("Open".into())), "{items:?}");
+    assert!(!items.contains(&Some("Scale…".into())), "{items:?}");
+}
+
+#[gpui_kit::test]
+fn the_example_cronjob_offers_suspend_or_resume(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("cronjobs.batch"), window, cx);
+            screen.focus(window, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let items = row_menu(cx, handle, &screen);
+    assert!(
+        items.contains(&Some("Suspend or resume".into())),
+        "{items:?}"
+    );
+    assert!(!items.contains(&Some("Scale…".into())), "{items:?}");
+}

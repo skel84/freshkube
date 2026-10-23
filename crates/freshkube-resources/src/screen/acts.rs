@@ -42,21 +42,36 @@ impl ResourcesScreen {
     }
 
     /// The actions the listed kind has. None in the node pane's list.
-    pub(super) fn acts(&self) -> &'static [Everyday] {
+    fn kind_acts(&self) -> &'static [Everyday] {
         if self.embedded {
             return &[];
         }
         offered_for(&self.kind.group, &self.kind.kind)
     }
 
+    /// The actions on offer for the selected row: its kind's, except Scale
+    /// for a ReplicaSet the pane shows a Deployment owning. The list does not
+    /// know an owner; only a row whose pane is open can say, and core refuses
+    /// an owned ReplicaSet after it reads the object whatever was offered.
+    pub(super) fn acts(&self, cx: &App) -> Vec<Everyday> {
+        let owned = self.projection.selected().is_some_and(|identity| {
+            self.detail.read(cx).controller_of(identity) == Some("Deployment")
+        });
+        self.kind_acts()
+            .iter()
+            .copied()
+            .filter(|act| !(owned && *act == Everyday::Scale))
+            .collect()
+    }
+
     /// The selected row's actions as menu lines, after a separator.
-    pub(super) fn act_menu(&self) -> Vec<MenuAction> {
-        let acts = self.acts();
+    pub(super) fn act_menu(&self, cx: &App) -> Vec<MenuAction> {
+        let acts = self.acts(cx);
         if acts.is_empty() || self.projection.selected().is_none() {
             return Vec::new();
         }
         let mut lines = vec![MenuAction::Separator];
-        for &act in acts {
+        for act in acts {
             let line = match act {
                 Everyday::Scale => MenuAction::new(label(act), ScaleSelected),
                 Everyday::Restart => MenuAction::new(label(act), RestartSelected),
@@ -71,7 +86,7 @@ impl ResourcesScreen {
     /// kind that lacks the action, a blocked cluster or no selection: the
     /// controls are disabled then, and a key must not do what they cannot.
     pub(super) fn run_act(&mut self, act: Everyday, cx: &mut Context<Self>) {
-        if self.write_block.is_some() || !self.acts().contains(&act) {
+        if self.write_block.is_some() || !self.acts(cx).contains(&act) {
             return;
         }
         let (Some(identity), Some(source)) =
@@ -89,12 +104,12 @@ impl ResourcesScreen {
 
     /// The toolbar's buttons for the selected row's actions, each with its
     /// folded form: disabled with the reason while writes are blocked.
-    pub(super) fn act_buttons(&self, header: page::PageHeader) -> page::PageHeader {
+    pub(super) fn act_buttons(&self, header: page::PageHeader, cx: &App) -> page::PageHeader {
         if self.projection.selected().is_none() {
             return header;
         }
         let mut header = header;
-        for &act in self.acts() {
+        for act in self.acts(cx) {
             let id = header.id(match act {
                 Everyday::Scale => "scale",
                 Everyday::Restart => "restart",

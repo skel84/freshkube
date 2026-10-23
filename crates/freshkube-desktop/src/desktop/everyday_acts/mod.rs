@@ -17,7 +17,7 @@ use crate::mutation::{Operations, entry_level_cell, write_audit_store};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{ClusterAccess, WorkloadAct};
 use crate::write_flow::{self, WriteRequest};
-use freshkube_core::write::everyday::{self, Everyday, Row, Subject};
+use freshkube_core::write::everyday::{self, Autoscaler, Everyday, Row, Subject};
 use freshkube_core::write::{ActionDescription, Runner, Who};
 use gpui_kit::component::WindowExt;
 
@@ -134,9 +134,19 @@ impl Pilot {
         if matches!(act.source.access, ClusterAccess::Example(_)) {
             // Example data: a runner that sends nothing.
             release(&act.identity, cx);
-            let Some(subject) = Subject::from_object(&example_object(act)) else {
+            // The example cluster's own object when it has one, so what the
+            // dialog says (an owner, an autoscaler, Argo CD) is what the
+            // page shows; an identity it doesn't know gets a plain one.
+            let now = chrono::Utc::now().timestamp();
+            let object = crate::resources::example::object_json(&act.identity, now)
+                .unwrap_or_else(|| example_object(act));
+            let Some(subject) = Subject::from_object(&object) else {
                 return;
             };
+            let subject = subject.with_autoscaler(
+                crate::resources::example::autoscaler_of(&act.identity)
+                    .map_or(Autoscaler::None, |name| Autoscaler::Found(name.into())),
+            );
             let runner = super::write_runner::example_runner(&runtime, who, cell);
             self.begin_everyday(runner, subject, act.act, &act.identity, window, cx);
             return;
@@ -207,6 +217,14 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Refused here, before any dialog, whatever the menu offered.
+        if act == Everyday::Scale
+            && let Some(why) = subject.scale_refusal()
+        {
+            release(identity, cx);
+            window.push_notification(why, cx);
+            return;
+        }
         let described = match act {
             // The count dialog keeps the object claimed until it is gone.
             Everyday::Scale => {

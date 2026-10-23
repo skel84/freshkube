@@ -112,6 +112,34 @@ impl World {
         cx.run_until_parked();
     }
 
+    /// The page asks to act on an example object of the open cluster.
+    fn press_example(&self, cx: &mut TestAppContext, act: Everyday, kind: &str, name: &str) {
+        let now = chrono::Utc::now().timestamp();
+        let (_, rows) = crate::resources::example::read("core-fra", kind, None, now).unwrap();
+        let row = rows
+            .into_iter()
+            .find(|row| row.identity.name.starts_with(name))
+            .unwrap_or_else(|| panic!("no example {kind} {name}"));
+        let source = ClusterSource {
+            id: crate::resources::example::connection("core-fra"),
+            context: "core-fra".into(),
+            access: ClusterAccess::EXAMPLE,
+        };
+        let kind = builtin(kind).unwrap();
+        cx.update(|cx| {
+            let resources = self.view.read(cx).pages.resources.clone();
+            resources.update(cx, |_, cx| {
+                cx.emit(WorkloadAct {
+                    source,
+                    identity: row.identity,
+                    kind,
+                    act,
+                })
+            });
+        });
+        cx.run_until_parked();
+    }
+
     fn press_web(&self, cx: &mut TestAppContext, act: Everyday) {
         self.press(cx, act, "deployments.apps", "web", "uid-web");
     }
@@ -402,4 +430,80 @@ fn a_switch_while_the_dialog_is_open_keeps_the_level_the_press_was_under(cx: &mu
     assert!(audit.contains("\"entry\":\"prod-ams\""), "{audit}");
     assert!(audit.contains("\"protection\":\"protected\""), "{audit}");
     assert!(!audit.contains("dev-fra"), "{audit}");
+}
+
+#[gpui_kit::test]
+fn the_x_lets_go_of_the_object_in_both_dialogs(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    dismissed_then_pressed_again(cx, &w, "write-confirm", |w, cx| w.click(cx, "close"));
+    let w = world(cx, "core-fra");
+    w.press_web(cx, Everyday::Scale);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "scale-dialog"));
+    w.click(cx, "close");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "scale-dialog"));
+    w.press_web(cx, Everyday::Scale);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "scale-dialog"), "a second press asks again");
+}
+
+#[gpui_kit::test]
+fn the_example_shows_the_autoscaler_the_gitops_warning_and_a_cronjob(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    // payments/api has an autoscaler: Scale's dialog says so.
+    w.press_example(cx, Everyday::Scale, "deployments.apps", "api");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "scale-dialog"));
+    cx.update_window(w.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("scale-count", cx);
+        window.press("secondary-a", cx);
+        window.input("9", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    w.click(cx, "scale-review");
+    w.drive(cx, Duration::from_millis(500));
+    let sentence = w.label(cx, "write-sentence");
+    assert!(
+        sentence.contains("An autoscaler manages replicas"),
+        "{sentence}"
+    );
+    w.click(cx, "write-cancel");
+    w.drive(cx, Duration::from_millis(500));
+    // payments/ledger is tracked by Argo CD.
+    w.press_example(cx, Everyday::Restart, "deployments.apps", "ledger");
+    w.drive(cx, Duration::from_millis(500));
+    let sentence = w.label(cx, "write-sentence");
+    assert!(
+        sentence.contains("Argo CD manages this object"),
+        "{sentence}"
+    );
+    w.click(cx, "write-cancel");
+    w.drive(cx, Duration::from_millis(500));
+    // The CronJob suspends, and nothing is sent for any of it.
+    w.press_example(cx, Everyday::Suspend, "cronjobs.batch", "nightly-report");
+    w.drive(cx, Duration::from_millis(500));
+    let sentence = w.label(cx, "write-sentence");
+    assert!(
+        sentence.contains("Suspend CronJob/nightly-report"),
+        "{sentence}"
+    );
+    assert!(w.cluster.recorder.requests().is_empty());
+}
+
+#[gpui_kit::test]
+fn an_owned_replicaset_is_refused_before_any_dialog(cx: &mut TestAppContext) {
+    let w = world(cx, "dev-fra");
+    // Open cluster: it would go straight through if it were not refused.
+    w.press_example(cx, Everyday::Scale, "replicasets.apps", "api-");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "scale-dialog") && !w.present(cx, "write-dialog"));
+    assert!(w.cluster.recorder.requests().is_empty());
+    assert_eq!(w.audit(), "");
+    // And the object is not left claimed: the same press is refused again.
+    w.press_example(cx, Everyday::Scale, "replicasets.apps", "api-");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "scale-dialog"));
 }

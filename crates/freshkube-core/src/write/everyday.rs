@@ -157,6 +157,17 @@ impl Subject {
             .collect()
     }
 
+    /// Why Scale is not on offer for this object, when it is not: a
+    /// ReplicaSet a Deployment owns is scaled through its Deployment, and the
+    /// Deployment would put the count back.
+    pub fn scale_refusal(&self) -> Option<&'static str> {
+        if !self.workload.offered().contains(&Everyday::Scale) {
+            return Some("This kind cannot be scaled.");
+        }
+        (self.owner_kind() == Some("Deployment"))
+            .then_some("A Deployment owns this ReplicaSet: scale its Deployment.")
+    }
+
     /// The kind of the controller that owns the object, if one does.
     fn owner_kind(&self) -> Option<&str> {
         self.object["metadata"]["ownerReferences"]
@@ -412,12 +423,8 @@ fn count_observation(count: u64) -> Observation {
 /// list it would take it away again. Undo puts back the count the object has when
 /// it is read for preflight.
 pub fn scale(subject: &Subject, count: u64) -> Result<ActionDescription, NotOffered> {
-    if !subject.offered().contains(&Everyday::Scale) {
-        return Err(NotOffered(if subject.owner_kind() == Some("Deployment") {
-            "A Deployment owns this ReplicaSet: scale its Deployment."
-        } else {
-            "This kind cannot be scaled."
-        }));
+    if let Some(why) = subject.scale_refusal() {
+        return Err(NotOffered(why));
     }
     if count == subject.replicas() {
         return Err(NotOffered("It already has that many replicas."));
