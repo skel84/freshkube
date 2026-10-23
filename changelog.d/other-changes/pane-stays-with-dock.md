@@ -1,1 +1,0 @@
-- **Resources:** the detail pane stays open when L, its Logs button or Shell → Start opens the dock, so a pod's details stay beside its logs or shell. Opening an object straight on its logs still leaves the pane closed.
