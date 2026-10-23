@@ -19,7 +19,7 @@ fn subject(h: &Harness, path: &str) -> Subject {
     Subject::from_object(&h.cluster.object(path)).unwrap()
 }
 
-fn scale_to(h: &Harness, count: u64) -> ActionDescription {
+fn scale_to(h: &Harness, count: i64) -> ActionDescription {
     everyday::scale(&subject(h, fake::DEPLOYMENT), count).unwrap()
 }
 
