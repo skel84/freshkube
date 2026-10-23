@@ -41,6 +41,10 @@ struct State {
     stuck: bool,
     /// A write that gets no answer at all (the object may or may not change).
     no_answer: bool,
+    /// Which leaf fields each field manager owns per object, as server-side
+    /// apply keeps them: a manager that stops listing a field it applied
+    /// before loses it.
+    owned: BTreeMap<(String, String), Vec<String>>,
 }
 
 /// The fake cluster, its recorder and a client over it.
@@ -49,6 +53,44 @@ pub struct Cluster {
     state: Arc<Mutex<State>>,
     pub recorder: Recorder,
     pub client: kube::Client,
+}
+
+/// The leaf fields an apply body sets, as JSON pointers, without the
+/// object's identity.
+fn applied_fields(body: &Value) -> Vec<String> {
+    fn walk(value: &Value, at: String, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) if !map.is_empty() => {
+                for (key, child) in map {
+                    walk(
+                        child,
+                        format!("{at}/{}", key.replace('~', "~0").replace('/', "~1")),
+                        out,
+                    );
+                }
+            }
+            _ => out.push(at),
+        }
+    }
+    let mut out = vec![];
+    walk(body, String::new(), &mut out);
+    out.retain(|path| {
+        !matches!(
+            path.as_str(),
+            "/apiVersion" | "/kind" | "/metadata/name" | "/metadata/namespace"
+        ) && !path.starts_with("/metadata/resourceVersion")
+    });
+    out
+}
+
+/// Removes the field at a JSON pointer, if it is there.
+fn remove_field(object: &mut Value, pointer: &str) {
+    let Some((parent, last)) = pointer.rsplit_once('/') else {
+        return;
+    };
+    if let Some(Value::Object(map)) = object.pointer_mut(parent) {
+        map.remove(&last.replace("~1", "/").replace("~0", "~"));
+    }
 }
 
 fn merge(into: &mut Value, from: &Value) {
@@ -351,6 +393,26 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
             }
             let body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
             let mut next = state.objects[path].clone();
+            if request.content_type.contains("apply-patch") {
+                // Server-side apply: what this manager applied before and no
+                // longer lists is removed, as the server does.
+                let manager = request
+                    .query
+                    .split('&')
+                    .find_map(|pair| pair.strip_prefix("fieldManager="))
+                    .unwrap_or_default()
+                    .to_owned();
+                let now = applied_fields(&body);
+                let key = (path.to_owned(), manager);
+                if !dry {
+                    for gone in state.owned.get(&key).into_iter().flatten() {
+                        if !now.contains(gone) {
+                            remove_field(&mut next, gone);
+                        }
+                    }
+                    state.owned.insert(key, now);
+                }
+            }
             merge(&mut next, &body);
             state.next_version += 1;
             next["metadata"]["resourceVersion"] = json!(state.next_version.to_string());

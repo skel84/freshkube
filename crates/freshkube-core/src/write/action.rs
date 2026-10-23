@@ -56,7 +56,10 @@ pub enum Change {
     /// Server-side apply of this object, with field manager `freshkube` and
     /// no forced takeover.
     Apply(Value),
-    /// A JSON merge patch, where apply doesn't fit (a subresource).
+    /// A JSON merge patch: for a change to one field that other actions and
+    /// tools also write, so that applying it does not make this app the owner
+    /// of a field it would later take away (Scale, Restart), and where apply
+    /// does not fit (a subresource).
     MergePatch(Value),
     /// A delete, with the UID and resourceVersion as preconditions.
     Delete,
