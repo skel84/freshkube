@@ -363,12 +363,17 @@ pub fn scale(subject: &Subject, count: i64) -> Result<ActionDescription, NotOffe
                 ""
             }
         )),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
             target: subject.target.clone(),
             change: Change::Apply(subject.body(json!({"replicas": count}))),
             observe: count_observation(count),
             inverse: Some(inverse),
+            depends: vec![],
         }],
     })
 }
@@ -390,7 +395,11 @@ pub fn restart(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffe
             "Restart {}. This can't be undone; the rollout restarts every pod",
             subject.target.label()
         )),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
             target: subject.target.clone(),
             change: Change::Apply(subject.body(spec)),
@@ -399,6 +408,7 @@ pub fn restart(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffe
                 value: json!(at),
             },
             inverse: None,
+            depends: vec![],
         }],
     })
 }
@@ -441,7 +451,11 @@ pub fn suspend(subject: &Subject) -> Result<ActionDescription, NotOffered> {
                 "it starts Jobs on its schedule again"
             }
         )),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
             target: subject.target.clone(),
             change: Change::Apply(subject.body(json!({"suspend": now}))),
@@ -450,6 +464,7 @@ pub fn suspend(subject: &Subject) -> Result<ActionDescription, NotOffered> {
                 value: json!(now),
             },
             inverse: Some(inverse),
+            depends: vec![],
         }],
     })
 }

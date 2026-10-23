@@ -151,6 +151,6 @@ fn example_data_shows_the_dialog_and_sends_nothing(cx: &mut TestAppContext) {
     h.drive(cx, Duration::from_secs(3));
     assert!(h.cluster.recorder.requests().is_empty());
     assert_eq!(h.replicas(), 2);
-    assert!(h.label(cx, "write-toast-status").contains("example data"));
+    assert!(h.label(cx, "write-toast-status").contains("Example data"));
     assert!(h.cluster.writes().is_empty());
 }
