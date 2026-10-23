@@ -152,6 +152,52 @@ pub fn client(
     (kube::Client::new(service, "default"), recorder)
 }
 
+/// A client whose server takes every request and never answers, for a test
+/// of a read that must end without one. The requests are recorded, and the
+/// requests whose wait was given up (their future dropped) are counted.
+pub struct Held {
+    pub client: kube::Client,
+    pub recorder: Recorder,
+    abandoned: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Held {
+    /// How many requests were given up on.
+    pub fn abandoned(&self) -> usize {
+        self.abandoned.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// Counts a request given up on when its future is dropped.
+struct GivenUp(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for GivenUp {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+pub fn held() -> Held {
+    let recorder = Recorder::default();
+    let log = recorder.clone();
+    let abandoned = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = abandoned.clone();
+    let service = tower::service_fn(move |request: Request<Body>| {
+        log.record(&request);
+        let given_up = GivenUp(counter.clone());
+        async move {
+            std::future::pending::<()>().await;
+            drop(given_up);
+            Ok::<Response<Body>, Infallible>(response((500, String::new())))
+        }
+    });
+    Held {
+        client: kube::Client::new(service, "default"),
+        recorder,
+        abandoned,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
