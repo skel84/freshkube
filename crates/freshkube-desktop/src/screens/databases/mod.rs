@@ -2,6 +2,7 @@
 #[cfg(test)]
 mod coroot_tests;
 mod display;
+mod explore;
 mod table;
 #[cfg(test)]
 mod tests;
@@ -49,7 +50,8 @@ actions!(
         Close,
         OpenResource,
         OpenObservability,
-        Find
+        Find,
+        Explore
     ]
 );
 
@@ -90,6 +92,14 @@ pub(crate) struct DatabasesScreen {
     notes_scroll: ScrollHandle,
     loading: TableLoading,
     shape: String,
+    /// The explorer tabs opened from rows (#948), in the order opened.
+    explorers: Vec<Entity<explore::ExploreView>>,
+    /// The explorer shown in place of the inventory, by its database's UID.
+    active: Option<String>,
+    /// `FRESHKUBE_DB_EXPLORE`: how example connections end, and, when it is
+    /// set, that the first PostgreSQL database opens in the explorer.
+    explore_example: Option<explore::Example>,
+    explore_on_start: bool,
 }
 impl EventEmitter<ScreenEvent> for DatabasesScreen {}
 impl EventEmitter<ResourceLink> for DatabasesScreen {}
@@ -104,6 +114,7 @@ impl DatabasesScreen {
             KeyBinding::new("escape", Close, Some(CONTEXT)),
             KeyBinding::new("o", OpenResource, Some(CONTEXT)),
             KeyBinding::new("shift-o", OpenObservability, Some(CONTEXT)),
+            KeyBinding::new("e", Explore, Some(CONTEXT)),
             KeyBinding::new("/", Find, Some(CONTEXT)),
         ]);
         let namespace_input =
@@ -156,10 +167,20 @@ impl DatabasesScreen {
             notes_scroll: ScrollHandle::new(),
             loading: TableLoading::new(PREFIX, cx),
             shape: String::new(),
+            explorers: Vec::new(),
+            active: None,
+            explore_example: None,
+            explore_on_start: false,
         }
     }
     pub(crate) fn with_example(mut self, shape: String) -> Self {
         self.shape = shape;
+        self
+    }
+    /// `FRESHKUBE_DB_EXPLORE`: an empty or unknown value changes nothing.
+    pub(crate) fn with_explore_example(mut self, shape: &str) -> Self {
+        self.explore_example = explore::Example::parse(shape);
+        self.explore_on_start = !shape.is_empty() && self.explore_example.is_some();
         self
     }
     fn identity(&self) -> Option<String> {
@@ -203,6 +224,7 @@ impl DatabasesScreen {
             }
             self.loader.resolve(id, Ok(inventory));
             self.inventory_changed(cx);
+            self.explore_first_on_start(cx);
             cx.notify();
             return;
         }
@@ -411,12 +433,106 @@ impl DatabasesScreen {
         self.display.set_filter(&filter);
     }
     fn mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        self.show_inventory(cx);
         self.mode = mode;
         self.prepared = (u64::MAX, u64::MAX, None);
         self.selected = None;
         self.sync();
         cx.notify();
     }
+    /// The database under the selection, when it can be explored.
+    fn explorable(&self) -> Option<freshkube_core::databases::Database> {
+        let uid = &self.selected_row()?.identity.uid;
+        self.loader
+            .data()?
+            .databases
+            .items
+            .iter()
+            .find(|db| {
+                &db.identity.uid == uid
+                    && db.engine == freshkube_core::databases::Engine::CloudNativePg
+            })
+            .cloned()
+    }
+
+    /// Opens the selected database in the explorer, or shows its tab.
+    fn explore(&mut self, cx: &mut Context<Self>) {
+        if let Some(database) = self.explorable() {
+            self.open_explorer(database, cx);
+        }
+    }
+
+    fn open_explorer(
+        &mut self,
+        database: freshkube_core::databases::Database,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        let uid = database.identity.uid.clone();
+        if !self.explorers.iter().any(|e| e.read(cx).key() == uid) {
+            let example = source
+                .access
+                .is_example()
+                .then(|| self.explore_example.unwrap_or_default());
+            let runtime = self.runtime.clone();
+            let view =
+                cx.new(|cx| explore::ExploreView::new(runtime, source, database, example, cx));
+            self.explorers.push(view);
+        }
+        self.activate_explorer(Some(uid), cx);
+    }
+
+    /// With `FRESHKUBE_DB_EXPLORE` set, the first PostgreSQL database opens
+    /// in the explorer once, when the example inventory lands.
+    fn explore_first_on_start(&mut self, cx: &mut Context<Self>) {
+        if !std::mem::take(&mut self.explore_on_start) {
+            return;
+        }
+        let first = self.loader.data().and_then(|inventory| {
+            inventory
+                .databases
+                .items
+                .iter()
+                .find(|db| db.engine == freshkube_core::databases::Engine::CloudNativePg)
+                .cloned()
+        });
+        if let Some(database) = first {
+            self.open_explorer(database, cx);
+        }
+    }
+
+    /// Shows the explorer of `uid`, or the inventory for `None`.
+    fn activate_explorer(&mut self, uid: Option<String>, cx: &mut Context<Self>) {
+        self.active = uid;
+        self.show_active(self.visible, cx);
+        cx.notify();
+    }
+
+    fn show_inventory(&mut self, cx: &mut Context<Self>) {
+        if self.active.is_some() {
+            self.activate_explorer(None, cx);
+        }
+    }
+
+    /// Tells each explorer whether it shows: only the active one, on a page that does.
+    fn show_active(&mut self, visible: bool, cx: &mut Context<Self>) {
+        for explorer in self.explorers.clone() {
+            let shown = visible && self.active.as_deref() == Some(explorer.read(cx).key());
+            explorer.update(cx, |explorer, cx| explorer.set_visible(shown, cx));
+        }
+    }
+
+    fn close_explorer(&mut self, uid: &str, cx: &mut Context<Self>) {
+        self.explorers.retain(|e| e.read(cx).key() != uid);
+        if self.active.as_deref() == Some(uid) {
+            self.active = None;
+        }
+        self.show_active(self.visible, cx);
+        cx.notify();
+    }
+
     fn choose(&mut self, key: SharedString, cx: &mut Context<Self>) {
         self.selected = Some(key);
         freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
@@ -485,6 +601,10 @@ impl ScreenPanel for DatabasesScreen {
             self.loader.reset();
             self.evidence.reset();
             self.selected = None;
+            // Their connections belong to the old cluster; dropping a tab
+            // stops the forward it started.
+            self.explorers.clear();
+            self.active = None;
         }
         cx.notify();
     }
@@ -494,6 +614,7 @@ impl ScreenPanel for DatabasesScreen {
         let again = self.loader.set_visible(visible, ON_SHOW, cx);
         let coroot_again = self.evidence.set_visible(visible, ON_SHOW, cx);
         self.want_coroot(cx);
+        self.show_active(visible, cx);
         if again {
             self.read(cx)
         } else if coroot_again {

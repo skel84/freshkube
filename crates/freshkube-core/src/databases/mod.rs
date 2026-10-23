@@ -1,9 +1,11 @@
-//! Operator-neutral, read-only database evidence. Readers never resolve credentials.
+//! Operator-neutral, read-only database evidence. Readers never resolve credentials;
+//! `explore` reads one login Secret when the user connects the explorer (#948).
 mod cnpg;
 pub mod coroot;
 mod coverage;
 pub mod cron;
 pub mod example;
+pub mod explore;
 mod mariadb;
 mod model;
 mod read;

@@ -29,11 +29,56 @@ impl DatabasesScreen {
                                 this.mode(mode, cx);
                                 window.focus(&this.focus, cx);
                             })),
-                        self.mode == mode,
+                        self.mode == mode && self.active.is_none(),
                         cx,
                     )
                 }),
         );
+        let tabs = h_flex()
+            .gap_1()
+            .children(self.explorers.iter().map(|explorer| {
+                let (uid, title) = {
+                    let explorer = explorer.read(cx);
+                    (explorer.key().to_owned(), explorer.title())
+                };
+                let shown = self.active.as_deref() == Some(uid.as_str());
+                let (open, close) = (uid.clone(), uid);
+                h_flex()
+                    .gap(dp(2.))
+                    .child(ui::segment(
+                        Button::new(SharedString::from(format!("databases-explore-tab-{title}")))
+                            .small()
+                            .h(dp(ui::CONTROL_HEIGHT))
+                            .label(format!("Explore · {title}"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.activate_explorer(Some(open.clone()), cx)
+                            })),
+                        shown,
+                        cx,
+                    ))
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "databases-explore-close-{title}"
+                        )))
+                        .ghost()
+                        .small()
+                        .h(dp(ui::CONTROL_HEIGHT))
+                        .icon(IconName::X)
+                        .accessibility_label(format!("Close the explorer for {title}"))
+                        .tooltip("Close")
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.close_explorer(&close, cx)),
+                        ),
+                    )
+            }));
+        let explore = Button::new("databases-explore")
+            .ghost()
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .label("Explore")
+            .tooltip("Read the selected PostgreSQL database's tables, read-only")
+            .disabled(self.explorable().is_none())
+            .on_click(cx.listener(|this, _, _, cx| this.explore(cx)));
         let filter = div().w(dp(170.)).child(
             Input::new(&self.filter_input)
                 .id("databases-filter")
@@ -71,10 +116,18 @@ impl DatabasesScreen {
             .label("Open in Observability")
             .disabled(self.selected_observe().is_none())
             .on_click(cx.listener(|this, _, _, cx| this.open_observability(cx)));
+        if self.active.is_some() {
+            return header.control(modes).control(tabs).render(window, cx);
+        }
+        // An empty strip of tabs would be a control 0 px wide.
+        let header = header.filter(filter).control(namespace).control(modes);
+        let header = if self.explorers.is_empty() {
+            header
+        } else {
+            header.control(tabs)
+        };
         header
-            .filter(filter)
-            .control(namespace)
-            .control(modes)
+            .control(explore)
             .control(open)
             .control(observe)
             .control(refresh)
@@ -289,7 +342,24 @@ impl Render for DatabasesScreen {
             });
         let empty = !loading && self.display.lines.is_empty();
         let short = page::is_short(window);
-        let body = if let Some(words) = state {
+        let active = self.active.as_deref().and_then(|uid| {
+            self.explorers
+                .iter()
+                .find(|e| e.read(cx).key() == uid)
+                .cloned()
+        });
+        let body = if let Some(explorer) = active {
+            // No `min_h_0`: the tab's own least height keeps it from being
+            // squeezed, so a short window scrolls the page to reach it.
+            div()
+                .id("databases-explorer")
+                .w_full()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .child(explorer)
+                .into_any_element()
+        } else if let Some(words) = state {
             page::inset()
                 .child(
                     ui::empty_state(
@@ -320,14 +390,15 @@ impl Render for DatabasesScreen {
             super::super::page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
+        let exploring = self.active.is_some();
         let body = div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .flex()
             .flex_col()
             .flex_1()
-            .min_h_0()
-            .when(short, |this| {
+            .when(!exploring, |this| this.min_h_0())
+            .when(short && !exploring, |this| {
                 this.min_h(dp(least)).when(empty, |this| this.flex_none())
             })
             .child(body);
@@ -348,6 +419,7 @@ impl Render for DatabasesScreen {
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenResource, _, cx| this.open(cx)))
+            .on_action(cx.listener(|this, _: &Explore, _, cx| this.explore(cx)))
             .on_action(
                 cx.listener(|this, _: &OpenObservability, _, cx| this.open_observability(cx)),
             )

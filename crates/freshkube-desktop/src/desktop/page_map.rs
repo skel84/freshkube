@@ -73,7 +73,12 @@ impl Pages {
         let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
         let databases = {
             let shape = options.debug.databases.clone();
-            cx.new(|cx| DatabasesScreen::new(runtime.clone(), window, cx).with_example(shape))
+            let explore = options.debug.db_explore.clone();
+            cx.new(|cx| {
+                DatabasesScreen::new(runtime.clone(), window, cx)
+                    .with_example(shape)
+                    .with_explore_example(&explore)
+            })
         };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
