@@ -13,6 +13,7 @@ use freshkube_ui::motion::Choice;
 use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
+use freshkube_delivery::timeline::example::Shape as TimelineShape;
 
 /// `FRESHKUBE_THEME`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +107,10 @@ pub struct DebugOptions {
     /// (`firing`, `quiet`, `not-found`, `refused`, `several`, `no-label`,
     /// `stale`, `rules-only`); anything else is `firing`.
     pub(crate) alerts: AlertsShape,
+    /// `FRESHKUBE_TIMELINE`: what the application Timeline's example sources
+    /// could read (`busy`, `quiet`, `partial`, `short-events`, `none-read`);
+    /// anything else is `busy`.
+    pub(crate) timeline: TimelineShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -127,6 +132,10 @@ pub struct DebugOptions {
     /// `FRESHKUBE_TABS`: how the example opens its view tabs; anything else
     /// opens one. Needs `--fixture`.
     pub(crate) tabs: Option<TabsShape>,
+    /// `FRESHKUBE_TEAM`: the shape of the example team in Settings › Team
+    /// setup (`freshkube_core::team::example::Shape`); anything else is no
+    /// team. Needs `--fixture`.
+    pub(crate) team: Option<freshkube_core::team::example::Shape>,
 }
 
 impl DebugOptions {
@@ -191,6 +200,9 @@ impl DebugOptions {
             alerts: text("FRESHKUBE_ALERTS")
                 .and_then(|shape| AlertsShape::parse(&shape))
                 .unwrap_or_default(),
+            timeline: text("FRESHKUBE_TIMELINE")
+                .and_then(|shape| TimelineShape::parse(&shape))
+                .unwrap_or_default(),
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
             app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
@@ -215,6 +227,9 @@ impl DebugOptions {
                 Some("missing") => Some(TabsShape::Missing),
                 _ => None,
             },
+            team: text("FRESHKUBE_TEAM")
+                .as_deref()
+                .and_then(freshkube_core::team::example::Shape::parse),
         }
     }
 
@@ -297,6 +312,21 @@ mod tests {
         for bad in ["", "Clusters", "nothing"] {
             assert_eq!(parse(&[("FRESHKUBE_TABS", bad)]).tabs, None, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn team_names_the_shape_of_the_example_team_and_ignores_anything_else() {
+        use freshkube_core::team::example::Shape;
+        for (value, shape) in [
+            ("none", Shape::NoTeam),
+            ("joined", Shape::Joined),
+            ("update", Shape::Update),
+            ("trust", Shape::Trust),
+            ("failed", Shape::Failed),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_TEAM", value)]).team, Some(shape));
+        }
+        assert_eq!(parse(&[("FRESHKUBE_TEAM", "Joined")]).team, None);
     }
 
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
@@ -473,6 +503,28 @@ mod tests {
     }
 
     #[test]
+    fn timeline_takes_each_shape_and_falls_back_to_busy() {
+        for name in TimelineShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_TIMELINE", name)]).timeline,
+                TimelineShape::parse(name).unwrap(),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_TIMELINE", "partial")]).timeline,
+            TimelineShape::Partial
+        );
+        for bad in ["Partial", "", "busy ", "nope"] {
+            assert_eq!(
+                parse(&[("FRESHKUBE_TIMELINE", bad)]).timeline,
+                TimelineShape::Busy,
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn alerts_takes_each_shape_and_falls_back_to_firing() {
         for name in AlertsShape::NAMES {
             assert_eq!(
@@ -593,6 +645,7 @@ mod tests {
                     | "FRESHKUBE_FIXTURE_HOLD"
                     | "FRESHKUBE_APPLICATIONS"
                     | "FRESHKUBE_ALERTS"
+                    | "FRESHKUBE_TIMELINE"
             )
             .then(bad)
         });
@@ -601,6 +654,7 @@ mod tests {
         assert_eq!(options.hold, Hold::default());
         assert_eq!(options.applications, Variant::Acme);
         assert_eq!(options.alerts, AlertsShape::Firing);
+        assert_eq!(options.timeline, TimelineShape::Busy);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }
