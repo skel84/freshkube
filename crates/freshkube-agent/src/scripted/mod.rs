@@ -66,6 +66,11 @@ pub struct Script {
     /// False: an ordinary prompt is answered without asking the endpoint for
     /// anything, as an agent does that was not given Freshkube's tools.
     pub offers_tools: bool,
+    /// With `offers_tools` off: first ask the endpoint for its tools.
+    pub lists_tools: bool,
+    /// With `offers_tools` off: ask to run each of these tools (by name),
+    /// which the client refuses.
+    pub asks_for: Vec<String>,
 }
 
 impl Default for Script {
@@ -85,6 +90,8 @@ impl Default for Script {
             tour_shell: false,
             tour_pause: std::time::Duration::ZERO,
             offers_tools: true,
+            lists_tools: false,
+            asks_for: Vec::new(),
         }
     }
 }

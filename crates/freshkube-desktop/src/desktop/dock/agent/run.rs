@@ -11,7 +11,7 @@ use freshkube_agent::acp::{AcpSession, Endpoint as AcpEndpoint, Models};
 use freshkube_agent::investigation::{Event, Outcome};
 use freshkube_agent::profile::{Checked, Host, Profile};
 use freshkube_agent::scripted::{self, Script};
-use freshkube_agent::tools::{NotOffered, not_offered};
+use freshkube_agent::tools::{EXECUTE, NotOffered, not_offered};
 use freshkube_agent::{Endpoint, ReadEvent, SessionId, Targets};
 use freshkube_core::agent_reads::AgentAccess;
 use freshkube_core::job::OwnedJob;
@@ -50,7 +50,7 @@ pub(crate) enum Message {
     Models(Models),
     /// The endpoint's port, for a test to see it close.
     Listening(std::net::SocketAddr),
-    /// An answered turn showed Freshkube's tools weren't offered; sent once.
+    /// An answered turn showed Freshkube's tools weren't offered.
     ToolsNotOffered(NotOffered),
     /// The session could not start, or has ended (the agent exited).
     Ended(Option<String>),
@@ -113,8 +113,7 @@ async fn run(
         AcpEndpoint::new(endpoint.url(), endpoint.token().reveal()),
     );
     let mut models = session.models();
-    let mut refused = 0u32;
-    let mut told = false;
+    let mut execute_refused = 0u32;
     loop {
         tokio::select! {
             Some(command) = commands.recv() => match command {
@@ -132,10 +131,15 @@ async fn run(
                 // The agent exited or closed its output: the session ends.
                 let Some(event) = event else { break };
                 match &event {
-                    Event::Note(note) if note.starts_with("Refused: ") => refused += 1,
-                    Event::Ended(Outcome::Answered) if !told => {
-                        if let Some(why) = not_offered(endpoint.listed(), endpoint.calls(), refused) {
-                            told = true;
+                    Event::Refused { name } if name.as_deref() == Some(EXECUTE) => {
+                        execute_refused += 1;
+                    }
+                    // Told at every answered turn that shows it: the tab
+                    // keeps the first and shows it when no other notice is.
+                    Event::Ended(Outcome::Answered) => {
+                        if let Some(why) =
+                            not_offered(endpoint.listed(), endpoint.calls(), execute_refused)
+                        {
                             let _ = messages.send(Message::ToolsNotOffered(why));
                         }
                     }

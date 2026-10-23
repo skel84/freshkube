@@ -3,15 +3,18 @@
 
 pub use freshkube_core::agent_reads::{SERVER_NAME as SERVER, TOOLS};
 
+/// The tool Code Mode offers in place of an MCP server's own. The profile
+/// denies it; an agent that asks for it anyway has been refused it.
+pub const EXECUTE: &str = "execute";
+
 /// Why Freshkube's tools were not offered to the agent's model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotOffered {
     /// The agent never asked the endpoint for its tools.
     NeverListed,
-    /// It listed them, but asked for a tool that isn't one of the four and
-    /// was refused, and made no read: the shape of Code Mode, which wraps an
-    /// MCP server's tools behind `execute`.
-    OnlyRefused,
+    /// It listed them and made no read, and the only call it made was for
+    /// `execute`, which was refused.
+    ExecuteRefused,
 }
 
 /// Whether an answered turn shows the tools weren't offered, from what the
@@ -19,15 +22,18 @@ pub enum NotOffered {
 /// carries no list of the model's tools, so this needs a session with no
 /// read at all: one read, of any of the four, proves they were offered.
 ///
-/// Not caught: an agent that lists the tools, is offered them, and asks for
-/// nothing (or the model chose not to read). That is silent on purpose.
-pub fn not_offered(listed: bool, reads: u32, refused: u32) -> Option<NotOffered> {
+/// Not caught: an agent that lists the tools and reads nothing without
+/// asking for `execute`. Under the pinned opencode that is what a plugin
+/// that didn't load looks like (its `*` deny means `execute` is never
+/// offered, so there is no request to refuse), and it is also a model that
+/// chose not to read. The tab stays silent on both (#967).
+pub fn not_offered(listed: bool, reads: u32, execute_refused: u32) -> Option<NotOffered> {
     if reads > 0 {
         None
     } else if !listed {
         Some(NotOffered::NeverListed)
-    } else if refused > 0 {
-        Some(NotOffered::OnlyRefused)
+    } else if execute_refused > 0 {
+        Some(NotOffered::ExecuteRefused)
     } else {
         None
     }
@@ -44,8 +50,8 @@ mod tests {
     }
 
     #[test]
-    fn listing_and_being_refused_another_tool_without_a_read_is_code_mode() {
-        assert_eq!(not_offered(true, 0, 1), Some(NotOffered::OnlyRefused));
+    fn listing_and_being_refused_execute_without_a_read_says_so() {
+        assert_eq!(not_offered(true, 0, 1), Some(NotOffered::ExecuteRefused));
     }
 
     #[test]
@@ -57,7 +63,7 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_with_no_reads_and_no_refusal_says_nothing() {
+    fn an_answer_with_no_reads_and_no_refused_execute_says_nothing() {
         assert_eq!(not_offered(true, 0, 0), None);
     }
 }

@@ -843,6 +843,60 @@ fn the_tab_says_when_the_tools_were_not_offered_and_only_then(cx: &mut TestAppCo
     }
 }
 
+/// A session that lists Freshkube's tools, asks to run each of `asks`, which
+/// is refused, reads nothing and answers.
+fn listing_and_asking(asks: &[&str]) -> Script {
+    Script {
+        offers_tools: false,
+        lists_tools: true,
+        asks_for: asks.iter().map(|name| name.to_string()).collect(),
+        ..Script::default()
+    }
+}
+
+#[gpui_kit::test]
+fn a_refused_execute_without_a_read_says_the_tools_weren_t_offered(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    tab.script(listing_and_asking(&["execute"]), cx);
+    tab.ask("why is api restarting?", cx);
+    tab.click("agent-turn-on", cx);
+    tab.answered(cx);
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.contains("execute"), "{notice}");
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).notice()),
+        Some(Notice::ToolsNotOffered(NotOffered::ExecuteRefused))
+    );
+}
+
+#[gpui_kit::test]
+fn another_refused_tool_or_no_refusal_after_listing_says_nothing(cx: &mut TestAppContext) {
+    // A person's config put a shell back on ask: listed, refused, no read.
+    for asks in [&["bash"][..], &[][..]] {
+        let tab = open(cx, "ready", 1280., 880.);
+        tab.script(listing_and_asking(asks), cx);
+        tab.ask("why is api restarting?", cx);
+        tab.click("agent-turn-on", cx);
+        tab.answered(cx);
+        assert_eq!(cx.update(|cx| tab.view.read(cx).notice()), None, "{asks:?}");
+    }
+}
+
+#[gpui_kit::test]
+fn the_notice_waits_behind_another_and_comes_up_when_it_clears(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let why = NotOffered::NeverListed;
+    tab.view.update(cx, |view, _| {
+        view.notice = Some(Notice::HeldOff);
+        view.tools_not_offered(why);
+        assert_eq!(view.notice, Some(Notice::HeldOff));
+        // The session tells it again at the next answered turn.
+        view.notice = None;
+        view.tools_not_offered(why);
+        assert_eq!(view.notice, Some(Notice::ToolsNotOffered(why)));
+    });
+}
+
 #[gpui_kit::test]
 fn the_agent_page_slug_opens_the_tab_once(cx: &mut TestAppContext) {
     cx.executor().allow_parking();

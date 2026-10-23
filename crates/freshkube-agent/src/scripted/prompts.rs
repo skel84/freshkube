@@ -56,14 +56,49 @@ pub(super) async fn run(turn: &Turn<'_>, prompt: &str) -> agent_client_protocol:
         say(turn, &format!("model={}", turn.model))?;
         StopReason::EndTurn
     } else if !turn.script.offers_tools {
-        say(turn, "I have no tool to read the cluster with.")?;
-        StopReason::EndTurn
+        without_tools(turn).await?
     } else if !turn.script.tour.is_empty() {
         tour(turn).await?
     } else {
         investigate(turn).await?
     };
     Ok(Ending::Stop(stop))
+}
+
+/// An agent that was not given Freshkube's tools: it may ask the endpoint for
+/// them and ask for tools of its own, and reads nothing.
+async fn without_tools(turn: &Turn<'_>) -> agent_client_protocol::Result<StopReason> {
+    if turn.script.lists_tools {
+        let mcp = turn
+            .mcp
+            .clone()
+            .ok_or_else(|| fail("no MCP server in session/new"))?;
+        let client = ()
+            .serve(StreamableHttpClientTransport::from_config(
+                StreamableHttpClientTransportConfig::with_uri(mcp.url).auth_header(mcp.token),
+            ))
+            .await
+            .map_err(fail)?;
+        client.list_tools(None).await.map_err(fail)?;
+    }
+    for (ix, name) in turn.script.asks_for.iter().enumerate() {
+        let id = format!("x{}", ix + 1);
+        attempt(
+            turn,
+            Call {
+                id: &id,
+                title: name,
+                name: Some(name),
+                kind: ToolKind::Execute,
+                input: json!({}),
+                claim: None,
+                rename: None,
+            },
+        )
+        .await?;
+    }
+    say(turn, "I have no tool to read the cluster with.")?;
+    Ok(StopReason::EndTurn)
 }
 
 fn say(turn: &Turn<'_>, text: &str) -> agent_client_protocol::Result<()> {

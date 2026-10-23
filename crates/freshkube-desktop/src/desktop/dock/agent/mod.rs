@@ -640,9 +640,7 @@ impl AgentView {
             }
             run::Message::Models(models) => self.models = models,
             run::Message::Listening(addr) => self.listening = Some(addr),
-            run::Message::ToolsNotOffered(why) => {
-                self.notice.get_or_insert(Notice::ToolsNotOffered(why));
-            }
+            run::Message::ToolsNotOffered(why) => self.tools_not_offered(why),
             run::Message::Ended(reason) => {
                 self.session = None;
                 self.listening = None;
@@ -655,6 +653,13 @@ impl AgentView {
         }
         self.refresh_steps();
         cx.notify();
+    }
+
+    /// Shows that the tools weren't offered unless another notice is up. The
+    /// session tells it at each answered turn that shows it, so it comes up
+    /// after the other one clears.
+    fn tools_not_offered(&mut self, why: NotOffered) {
+        self.notice.get_or_insert(Notice::ToolsNotOffered(why));
     }
 
     /// Says what each failed step of Freshkube's own reads stands for. A

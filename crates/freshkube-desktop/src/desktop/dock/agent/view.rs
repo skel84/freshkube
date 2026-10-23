@@ -320,8 +320,8 @@ impl AgentView {
                     NotOffered::NeverListed => {
                         "The agent answered without ever asking for them, so it cannot read the cluster."
                     }
-                    NotOffered::OnlyRefused => {
-                        "The agent asked for a tool of its own, which was refused, and read nothing. It may have them only behind Code Mode."
+                    NotOffered::ExecuteRefused => {
+                        "The agent listed them, then asked to run code with execute, which Freshkube refuses, and read nothing."
                     }
                 }
                 .to_owned(),
