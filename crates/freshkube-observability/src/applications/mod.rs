@@ -187,7 +187,7 @@ impl ObservabilityPage {
                     "No applications match these filters"
                 },
                 if no_apps {
-                    "Coroot has no applications in this observation window."
+                    "Coroot has no applications in the time range shown."
                 } else {
                     "Clear the search, namespace and category filters to see every application."
                 },

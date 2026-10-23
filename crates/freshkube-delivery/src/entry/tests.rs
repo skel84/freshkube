@@ -115,7 +115,7 @@ async fn an_entry_probe_404_keeps_the_not_served_kind_and_words() {
         404,
         FailureKind::NotFound,
         "the server could not find the requested resource",
-        "Kargo isn't served on cluster-a",
+        "Kargo isn't installed on cluster-a",
     )
     .await;
 }
@@ -171,7 +171,7 @@ async fn a_kind_the_cluster_does_not_serve_is_not_served() {
     assert!(matches!(reach, Reach::NotServed(_)), "{reach:?}");
     assert_eq!(
         reach.words(Part::Kargo.label(), "cluster-a"),
-        "Kargo isn't served on cluster-a"
+        "Kargo isn't installed on cluster-a"
     );
     // The group served without the kind is the same.
     let reach = check(

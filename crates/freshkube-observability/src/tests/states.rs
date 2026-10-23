@@ -54,7 +54,11 @@ fn applications_loading_failure_refusal_and_stale_keep_distinct_surfaces(cx: &mu
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.find(surface).visible());
-            assert!(window.find("obs-retry").visible());
+            // A refusal gets no Retry; a failure does.
+            assert_eq!(
+                window.try_find("obs-retry").is_some(),
+                surface == "obs-failed"
+            );
             assert!(window.try_find("obs-loading").is_none());
             assert!(window.try_find("obs-table-loading").is_none());
             assert!(page.read(cx).loading_motion(cx).is_none());

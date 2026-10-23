@@ -64,7 +64,11 @@ impl Column {
             Some(text)
         };
         let note = match &display.body {
-            _ if !connected => Some(note("Not connected", None, false)),
+            _ if !connected => Some(note(
+                "Not connected to a cluster",
+                Some("Choose a cluster in the header to read its applications.".to_owned()),
+                false,
+            )),
             Body::Table if !read => Some(note("Reading…", None, false)),
             Body::Table => None,
             _ if reading => Some(note("Reading…", None, false)),
@@ -77,6 +81,7 @@ impl Column {
                 title,
                 description,
                 reason,
+                ..
             } => Some(note(
                 "Not permitted",
                 sentence(title, description, Some(reason)),

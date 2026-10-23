@@ -6,6 +6,7 @@ use chrono::{DateTime, Local, Utc};
 use freshkube_delivery::change::{Change, Phase, Reach, Shows};
 use freshkube_delivery::changes::{Changes, Fold, Gap, Named, Row};
 use freshkube_delivery::join::Confidence;
+use freshkube_ui::read_state::ReadState;
 use freshkube_ui::ui::Tone;
 use gpui_kit::SharedString;
 
@@ -195,12 +196,14 @@ fn body(changes: &Changes, cluster: &str) -> Body {
         };
     }
     if uninstalled(changes) {
+        let state = ReadState::NotInstalled {
+            tool: "Kargo".into(),
+            adds: "a list that follows each version through its environments".into(),
+            cluster: cluster.to_string(),
+        };
         return Body::Empty {
-            title: "Kargo isn't installed".into(),
-            description: format!(
-                "Kargo's projects aren't served on {cluster}, so there's no Freight to follow."
-            )
-            .into(),
+            title: state.title().into(),
+            description: format!("{} Without Kargo, see Applications.", state.description()).into(),
         };
     }
     if changes.notes.is_empty() {
@@ -459,6 +462,34 @@ mod tests {
             fold: Fold::NotConfirmed,
             trail: Err(failure),
         }
+    }
+
+    /// Without Kargo the page says what Kargo would add and where to look
+    /// instead, as a note and not a failure.
+    #[test]
+    fn without_kargo_changes_says_so_in_plain_words() {
+        let changes = Changes {
+            rows: Vec::new(),
+            notes: vec![freshkube_delivery::changes::Note {
+                gap: Gap::NotServed,
+                project: None,
+                text: "Kargo projects aren't installed on core-fra".into(),
+            }],
+        };
+        let Body::Empty { title, description } = body(&changes, "core-fra") else {
+            panic!("expected the empty state");
+        };
+        assert_eq!(title.as_ref(), "Kargo isn't installed on core-fra");
+        assert!(
+            description.contains("Looked for Kargo in core-fra"),
+            "{description}"
+        );
+        assert!(description.contains("optional"), "{description}");
+        assert!(
+            description.contains("Without Kargo, see Applications."),
+            "{description}"
+        );
+        assert!(!description.contains("served"), "{description}");
     }
 
     #[test]

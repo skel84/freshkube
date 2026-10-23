@@ -537,6 +537,20 @@ A banner's tone picks its icon and colours (`ui::banner`): Crit and Died show th
 
 Each state's element has role status and an id `<page>-<state>`.
 
+#### Words
+
+Every state is written to the same nine rules (issue 952). `freshkube_ui::read_state::ReadState` holds the tool-neutral part, and `ui::read_state` draws it through `empty_state` and `banner`; the change page's own cause and next step (`delivery/src/change/cause.rs`) is the pattern it copies.
+
+1. **Plain words.** No API groups, field paths, Rust enum names or setup-file keys in a title. A key may appear in a tooltip or the Inspector, after the plain sentence.
+2. **Say what was checked:** the tool or kind, and the cluster. "Looked for Prometheus in prod-fra."
+3. **Say what was found, and keep the cases apart:** none found, not installed, not allowed to read, couldn't reach, not read yet, out of date.
+4. **Say what's next:** one button where one exists (Open Settings › X, Copy access request, Retry, Open docs ↗), otherwise one sentence.
+5. **Optional means optional.** When Kargo, Argo CD, Tekton, Coroot or Prometheus isn't installed, say what it would add and that the rest of Freshkube works without it. That is a note (Info), never a warning.
+6. **Never blame the user.** Name the gap ("Freshkube doesn't know where builds run"), not the person.
+7. **Unknown is never green, and a refusal isn't an empty list.** No Retry after a refusal.
+8. **The title carries the meaning:** four to eight words. A page name alone is not a title. Details go in the description, and raw errors in the mono box.
+9. **A tool's nouns only where the tool exists.** Freight, Stage and Project are fine when Kargo is there. Without it, say "deploy" or "version".
+
 ### Tooltips
 
 Kit's `Tooltip` is the only tooltip: `.tooltip(…)` on an element or a button, `tooltip_with_action` on a button with a shortcut. An element that scrolls, such as a row or a card, uses `freshkube_ui::tooltip::FollowTooltip`'s `.follow_tooltip(text)` instead: GPUI keeps a tooltip up while the pointer stays inside the bounds its element had when the pointer arrived, so after a scroll under a still pointer one row's tooltip would show over another ([#192](https://github.com/skel84/freshkube/issues/192)). The table's row tooltips, `status_mark` and the Nodes cards use it; other lists move to it when they're next changed. A Kit `Button`'s own `.tooltip(text)` is already safe there: Kit shows it from the button's hover, which a scroll ends, and the graph view's boxes, markers and connection rows keep it (`graph/tests/tooltips.rs` checks a box after a sideways scroll). A tooltip says what the element can't show; it never repeats a label shown whole. One is required on:

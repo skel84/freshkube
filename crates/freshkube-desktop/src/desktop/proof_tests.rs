@@ -385,7 +385,12 @@ async fn summary_list_failure_is_shown(
             .find(|card| card.id == "tile-nodes")
             .unwrap();
         assert_eq!(card.figure.as_ref(), "Unavailable");
-        assert_eq!(card.detail.as_ref(), format!("Can't read nodes: {words}"));
+        let lead = if code == 403 {
+            "Not allowed to read"
+        } else {
+            "Couldn't read"
+        };
+        assert_eq!(card.detail.as_ref(), format!("{lead} nodes: {words}"));
         window.render_frame(cx);
         assert!(window.find("tile-nodes").visible());
         assert!(window.find("tile-pods").visible());

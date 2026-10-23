@@ -48,6 +48,19 @@ fn node() -> NodeRow {
 }
 
 #[test]
+fn an_incomplete_list_names_what_could_not_be_read() {
+    let mut summary = example::summary("prod-fra", now().timestamp());
+    summary.pods = Part::Refused("Can't list pods: forbidden".into());
+    let attention = build(&[], Some(&summary), None, None, now());
+    assert!(!attention.complete);
+    assert!(attention.unread.contains(&"pods"));
+    assert_eq!(
+        attention.incomplete_note.as_ref(),
+        "Couldn't read pods, so this list may be incomplete."
+    );
+}
+
+#[test]
 fn no_observations_produce_no_attention() {
     let attention = build(&[], None, None, None, now());
     assert!(attention.rows.is_empty());

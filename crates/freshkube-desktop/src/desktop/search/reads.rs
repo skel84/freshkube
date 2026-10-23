@@ -34,6 +34,11 @@ impl Search {
                 }
                 let kind = builtin(key).unwrap();
                 if matches!(source.access, ClusterAccess::Example(_)) {
+                    if self.refuse_example && key == "secrets" {
+                        self.parts
+                            .insert(key, Err("secrets is forbidden for this identity".into()));
+                        continue;
+                    }
                     let objects = resources::example::read(
                         &source.context,
                         key,
@@ -89,7 +94,7 @@ impl Search {
                 let task = cx.spawn(async move |this, cx| {
                     let result = receiver
                         .await
-                        .unwrap_or_else(|_| Err("The metadata worker stopped".into()));
+                        .unwrap_or_else(|_| Err("Freshkube stopped reading before this finished. Search again to retry.".into()));
                     _ = this.update(cx, |search, cx| search.answer(sequence, key, result, cx));
                 });
                 self.jobs.push((job, task));

@@ -466,9 +466,12 @@ impl PanelView {
                     .clone()
                     .map_or_else(|| div().into_any_element(), IntoElement::into_any_element),
                 Body::Text(text) => summary::text(text, cx),
-                Body::NoData => {
-                    summary::message(self.element_id("empty"), None, "No data".into(), cx)
-                }
+                Body::NoData => summary::message(
+                    self.element_id("empty"),
+                    None,
+                    "The query returned nothing for this time range.".into(),
+                    cx,
+                ),
                 Body::NotDrawn(kind) => summary::message(
                     self.element_id("not-drawn"),
                     None,

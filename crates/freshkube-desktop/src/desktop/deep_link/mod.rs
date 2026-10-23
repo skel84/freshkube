@@ -28,7 +28,7 @@ pub(super) use describe::describe;
 pub(super) struct State {
     /// Debug: forces one outcome on every example link, or reshapes how the
     /// example clusters identify themselves.
-    shape: Option<LinkShape>,
+    pub(in crate::desktop) shape: Option<LinkShape>,
     /// What is known of each cluster's identity, and the dialog that asks.
     identities: cluster::Identities,
     /// Links from the operating system or the command line, waiting for the
