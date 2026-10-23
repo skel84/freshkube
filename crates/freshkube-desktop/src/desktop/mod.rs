@@ -764,6 +764,13 @@ impl Pilot {
                     cx.notify();
                 }
                 this.sync_setup_connection(window, cx);
+                // A tab whose entry the file no longer lists shows the page
+                // that says so; the shell draws again when that changes.
+                let missing = this.tab_entry_missing(cx);
+                if this.tabs.missing_shown != missing {
+                    this.tabs.missing_shown = missing;
+                    cx.notify();
+                }
                 // The shell and its cached column draw again only when the
                 // section shown changes or a section's dot appears or clears.
                 if flipped {
@@ -1013,19 +1020,17 @@ impl Pilot {
             self.select_context(context, window, cx);
             return;
         }
-        {
-            let this = &mut *self;
-            this.leave_entry(cx);
-            if !this.mode().has_talos() {
-                // The default talosconfig is what's missing in this mode.
-                if value.path.is_none() {
-                    return;
-                }
-                this.leave_kubernetes_only(window, cx);
+
+        self.leave_entry(cx);
+        if !self.mode().has_talos() {
+            // The default talosconfig is what's missing in self mode.
+            if value.path.is_none() {
+                return;
             }
-            this.applied = value;
-            this.load_configuration(window, cx);
+            self.leave_kubernetes_only(window, cx);
         }
+        self.applied = value;
+        self.load_configuration(window, cx);
     }
 
     /// Opens the native file picker and applies its chosen file at once.
@@ -1161,7 +1166,6 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.switch.registry.active_mut().prompted_access = None;
         if !self.mode().has_talos() && !self.mode().is_example() {
             // Local inspection must finish before any page retries through
             // its access. A replacement publishes the new source itself.

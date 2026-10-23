@@ -339,7 +339,7 @@ forwarding the page's hide to `Watch::set_visible`.
   starts only from the user's container choice or Start. Running owns the
   `ExecSession` and output delivery across navigation and minimization.
   Explicit End or confirmed close/replacement ends it; restored tabs are idle.
-  Its dock tab captures its cluster (`Origin`: source, entry, context, level)
+  Its dock tab captures its cluster (`Origin`: source, entry, context; its level is read live)
   when it starts (#878), as a forward does: switching tab or context ends
   nothing, the tab's source is refreshed only by the same connection's, and
   its Start gate reads the tab's own entry level, never the shown one. See

@@ -79,6 +79,8 @@ pub(super) struct Tabs {
     activating: Option<String>,
     /// A person picked a cluster for a tab whose entry is gone.
     chosen: bool,
+    /// Whether the shell last drew the "Choose a cluster" page.
+    pub(super) missing_shown: bool,
     /// The cluster the set belongs to: its identity once one has opened.
     cluster: Option<String>,
     /// The tabs of the last run, waiting for a cluster to open them in.
@@ -110,6 +112,7 @@ impl Tabs {
             applying: None,
             activating: None,
             chosen: false,
+            missing_shown: false,
             cluster: None,
             restore,
             save: None,

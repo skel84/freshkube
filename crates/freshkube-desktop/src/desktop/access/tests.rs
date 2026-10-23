@@ -244,7 +244,7 @@ fn detected_configuration_replacement_asks_nothing_of_a_running_shell(cx: &mut T
 #[gpui_kit::test]
 fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 820.);
-    let (before, after) = revisions();
+    let (before, _) = revisions();
     let access = AccessIdentity::new(AccessSessionId::new(), before);
     let sender = cx
         .update_window(handle, |_, window, cx| {
@@ -255,7 +255,6 @@ fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAp
                 let session = view.switch.registry.active_mut();
                 session.access = Some(access);
                 session.access_configuration = Some(before);
-                session.prompted_access = Some((after, Some(access)));
                 session.summary_health = Some(Err("old".into()));
                 let identity = view
                     .switch
@@ -283,7 +282,6 @@ fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAp
                 let session = view.switch.registry.active();
                 assert!(session.access.is_none());
                 assert!(session.access_configuration.is_none());
-                assert!(session.prompted_access.is_none());
                 assert!(session.summary_health.is_none());
                 assert!(!view.switch.registry.summary_watch.is_running());
                 assert!(view.switch.registry.summary_watch.generation() != epoch);

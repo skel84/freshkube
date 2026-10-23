@@ -184,6 +184,13 @@ impl TabSet {
             .any(|pair| pair[0].entry != pair[1].entry)
     }
 
+    /// Unbinds the shown tab: the window shows no cluster entry, so the tab
+    /// is a tab with no cluster rather than the one the window left.
+    /// Returns whether it changed.
+    pub fn unbind_current(&mut self) -> bool {
+        self.tabs[self.current].entry.take().is_some()
+    }
+
     /// Binds the shown tab to `entry` when it is bound to none yet, without
     /// a history step: the first cluster a tab shows is the one it started
     /// on.

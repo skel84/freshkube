@@ -78,11 +78,22 @@ impl Global for GlobalOperations {}
 /// operation slot: one level at a time, like the one slot. It is a shared
 /// cell, so a write's runner follows it and reads it again just before it
 /// sends (#853).
-pub(crate) struct GlobalProtection(LevelCell, std::collections::HashMap<String, LevelCell>);
+pub(crate) struct GlobalProtection(
+    LevelCell,
+    std::collections::HashMap<String, LevelCell>,
+    Option<(
+        freshkube_core::workspace::Workspace,
+        freshkube_core::workspace::SourceRecovery,
+    )>,
+);
 
 impl Default for GlobalProtection {
     fn default() -> Self {
-        Self(LevelCell::new(Protection::default()), Default::default())
+        Self(
+            LevelCell::new(Protection::default()),
+            Default::default(),
+            None,
+        )
     }
 }
 
@@ -113,6 +124,25 @@ pub(crate) fn set_entry_levels(
     // An entry the file no longer lists has no level for a lookup to find
     // (`entry_level`); a runner already holding its cell keeps it.
     global.1.retain(|entry, _| listed.contains(entry));
+}
+
+/// Publishes the setup the levels come from, so a context no entry names
+/// is read under it live (`context_level`), as the window's own is.
+pub(crate) fn set_workspace_levels(
+    workspace: &freshkube_core::workspace::Workspace,
+    recovery: &freshkube_core::workspace::SourceRecovery,
+    cx: &mut App,
+) {
+    cx.default_global::<GlobalProtection>().2 = Some((workspace.clone(), recovery.clone()));
+}
+
+/// The level of the kubeconfig context `context` under the setup as it is
+/// now: the stricter of the entries naming it, guarded for one no entry
+/// names, or what a skipped row locked it to. `None` before any setup was
+/// published, which blocks a shell (#878).
+pub(crate) fn context_level(context: &str, cx: &App) -> Option<Protection> {
+    let (workspace, recovery) = cx.try_global::<GlobalProtection>()?.2.as_ref()?;
+    Some(workspace.level_of(context, recovery))
 }
 
 /// The level of the workspace entry `entry` as it is now, or `None` when no

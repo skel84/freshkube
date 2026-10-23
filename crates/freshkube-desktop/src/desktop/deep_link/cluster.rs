@@ -4,7 +4,8 @@
 //!
 //! The window never switches context unasked: a switch is the one match, the
 //! one open, or the reader's own choice in the dialog, and it goes through
-//! the same switch as the header's, which asks first when a shell is running.
+//! the same switch as the header's, which a running shell does not hold up (it
+//! keeps its own connection).
 use super::super::settings::FingerprintLine;
 use super::identity::{Cache, Candidate, Checked, Decision, Local, Record, Target, decide};
 use super::picker::{LinkChoice, Why, rows};
@@ -790,8 +791,8 @@ impl Pilot {
     }
 
     /// Opens `view` in `target`, switching to it through the header's own
-    /// switch, which asks first when a shell is running. A target that is
-    /// already open only navigates, and a running shell is left alone.
+    /// switch. A target that is already open only navigates, and a running
+    /// shell is left alone either way.
     fn go_to(
         &mut self,
         target: Target,

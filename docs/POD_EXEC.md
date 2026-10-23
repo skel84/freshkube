@@ -118,7 +118,7 @@ Each step lands with its tests and moves to Done in the roadmap.
 
 ## A shell on its own connection (#878)
 
-A shell captures its cluster source, entry, context and level cell when its tab starts, and keeps them:
+A shell captures its cluster source, entry and context when its tab starts, and keeps them; its level is read live for that entry (or that context, for a window with no entry) and never captured:
 
 - **Nothing ends it but closing.** Switching tab, switching the context in the header, opening a link on another cluster and changing the access of the cluster shown ask nothing and end nothing (the guard of #873 is gone). Only closing its dock tab, closing the window and quitting ask, and each question names the cluster: "End the shell in ⟨pod⟩ on ⟨cluster⟩?". A running session is not killed by any of the others.
 - **Its gate is its own.** Start reads the level of the tab's own cluster entry through core's `may_start_shell`, never the shown one ([WRITE_MODEL.md](WRITE_MODEL.md#exec-follows-the-dock-tabs-own-level-878)). A read-only cluster's shell stays blocked under an open cluster, a gone entry blocks, and a blocked shell offers "Open logs instead", on its own cluster.

@@ -142,8 +142,13 @@ impl Pilot {
             }
             self.tabs.activating = None;
         }
+        // A window with no entry (a context picked by hand, a kubeconfig or
+        // talosconfig given at launch) is no entry's: the shown tab shows no
+        // cluster rather than the one that was left, and selecting it does
+        // not switch back.
+        let unbound = entry.is_none() && self.tabs.set.unbind_current();
         self.tabs.set.bind_current(entry.clone());
-        let changed = if self.tabs.set.current().entry != entry && entry.is_some() {
+        let moved = if self.tabs.set.current().entry != entry && entry.is_some() {
             // The context switcher retargets the focused tab: its page,
             // kind and namespace stay, and rows kept for the old cluster
             // are dropped.
@@ -153,7 +158,7 @@ impl Pilot {
         } else {
             self.tabs.set.record(view, list_ns)
         };
-        if changed {
+        if unbound || moved {
             self.tabs_changed(cx);
         }
     }
@@ -315,6 +320,32 @@ impl Pilot {
         };
         self.tabs.set = TabSet::restored_bound(views, 0, overview());
         self.tabs_changed(cx);
+    }
+
+    /// The header switcher's pick of cluster `id` for the tab that is shown:
+    /// its page, kind and namespace stay, and its object opens again in the
+    /// cluster reached only if it resolves there by name, read with the
+    /// reader's own access (the object's UID is the old cluster's, so only
+    /// the name is carried). One that does not says so in the pane's slot, as
+    /// a link does, and no object is shown.
+    pub(in crate::desktop) fn retarget_shown_tab(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_tabs(cx);
+        if self.switch.active_cluster() == Some(id.as_str()) {
+            return;
+        }
+        let mut view = self.tabs.set.current().view.clone();
+        if view.page != freshkube_nav::LinkPage::Resources || view.kind.is_none() {
+            return self.switch_cluster(id, window, cx);
+        }
+        if let Some(object) = &mut view.object {
+            object.uid = None;
+        }
+        self.switch_cluster_to_view(id, view, window, cx);
     }
 
     /// "Choose a cluster" on a tab whose entry is gone: the person's pick

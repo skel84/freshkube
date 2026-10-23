@@ -636,43 +636,139 @@ fn a_blocked_shell_opens_logs_on_its_own_cluster_and_a_stricter_level_blocks_at_
     assert_eq!(tabs[1], (true, own.clone()));
     let shown = cx.read(|cx| pilot.read(cx).source().kube.unwrap().id);
     assert_ne!(own, shown);
+}
 
-    // The entry's level turning read-only reaches an open tab at once; the
-    // entry disappearing blocks it with its own reason.
+/// Changes the setup as a saved file would: the workspace the settings page
+/// holds is replaced, and the shell hears of it as it does of a reload.
+fn change_setup(
+    pilot: &Entity<Pilot>,
+    cx: &mut TestAppContext,
+    change: impl FnOnce(&mut freshkube_core::workspace::Workspace),
+) {
+    use freshkube_core::workspace::Loaded;
+    let page = cx.read(|cx| pilot.read(cx).settings_page.clone());
+    let mut workspace = cx.read(|cx| page.read(cx).workspace().clone());
+    change(&mut workspace);
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_workspace(&Loaded::Workspace(workspace), true, cx)
+        })
+    });
+    cx.run_until_parked();
+}
+
+fn entry_mut<'a>(
+    workspace: &'a mut freshkube_core::workspace::Workspace,
+    id: &str,
+) -> &'a mut freshkube_core::workspace::Entry {
+    workspace
+        .clusters
+        .iter_mut()
+        .find(|entry| entry.id == id)
+        .unwrap()
+}
+
+/// The shell's gate follows its own entry through a change of the setup: a
+/// stricter level blocks an open tab's Start at once, a looser one frees it,
+/// and an entry the file no longer lists blocks with its own reason.
+#[gpui_kit::test]
+fn a_setup_change_reaches_a_shell_tab_on_an_entry_at_once(cx: &mut TestAppContext) {
+    use freshkube_core::write::{ENTRY_GONE_REASON, Protection, READ_ONLY_REASON};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     show_cluster(handle, &pilot, "dev-fra", cx);
-    pick_shell(handle, &pilot, &running_pods(&pilot, cx)[1], cx);
-    let ix = cx.read(|cx| {
-        dock.read(cx)
-            .tabs
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    let view = shell_view(&dock(&pilot, cx), 0, cx);
+    assert_eq!(cx.read(|cx| view.read(cx).blocked()), None);
+    change_setup(&pilot, cx, |workspace| {
+        entry_mut(workspace, "dev-fra").protection = Some(Protection::ReadOnly)
+    });
+    assert_eq!(
+        cx.read(|cx| view.read(cx).blocked()),
+        Some(READ_ONLY_REASON)
+    );
+    change_setup(&pilot, cx, |workspace| {
+        entry_mut(workspace, "dev-fra").protection = Some(Protection::Open)
+    });
+    assert_eq!(cx.read(|cx| view.read(cx).blocked()), None);
+    change_setup(&pilot, cx, |workspace| {
+        workspace.clusters.retain(|entry| entry.id != "dev-fra")
+    });
+    assert_eq!(
+        cx.read(|cx| view.read(cx).blocked()),
+        Some(ENTRY_GONE_REASON)
+    );
+    // The running session is not killed by any of it.
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
+}
+
+/// A window with no entry follows its context: a shell started there is
+/// held to the level the setup gives that context now, not the one it had.
+#[gpui_kit::test]
+fn a_setup_change_reaches_a_shell_tab_on_a_window_with_no_entry(cx: &mut TestAppContext) {
+    use freshkube_core::write::{Protection, READ_ONLY_REASON};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).switch.active_cluster().map(str::to_owned)),
+        None
+    );
+    let context = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    let view = shell_view(&dock(&pilot, cx), 0, cx);
+    assert_eq!(cx.read(|cx| view.read(cx).blocked()), None);
+    let id = cx.read(|cx| {
+        let page = pilot.read(cx).settings_page.read(cx);
+        page.workspace()
+            .clusters
             .iter()
-            .position(|tab| {
-                !tab.is_log()
-                    && tab.origin.level(cx) == Some(freshkube_core::write::Protection::Open)
-            })
+            .find(|entry| entry.context == context)
+            .map(|entry| entry.id.clone())
             .unwrap()
     });
-    let view = shell_view(&dock, ix, cx);
-    assert!(cx.read(|cx| view.read(cx).blocked().is_none()));
-    cx.update(|cx| {
-        crate::mutation::set_entry_levels(
-            [(
-                "dev-fra".to_owned(),
-                freshkube_core::write::Protection::ReadOnly,
-            )],
-            cx,
-        );
-        dock.update(cx, |dock, cx| dock.refresh_gates(cx));
+    change_setup(&pilot, cx, |workspace| {
+        entry_mut(workspace, &id).protection = Some(Protection::ReadOnly)
     });
     assert_eq!(
         cx.read(|cx| view.read(cx).blocked()),
-        Some(freshkube_core::write::READ_ONLY_REASON)
+        Some(READ_ONLY_REASON)
     );
-    cx.update(|cx| {
-        crate::mutation::set_entry_levels([], cx);
-        dock.update(cx, |dock, cx| dock.refresh_gates(cx));
+    change_setup(&pilot, cx, |workspace| {
+        entry_mut(workspace, &id).protection = Some(Protection::Guarded)
     });
-    assert_eq!(
-        cx.read(|cx| view.read(cx).blocked()),
-        Some(freshkube_core::write::ENTRY_GONE_REASON)
-    );
+    assert_eq!(cx.read(|cx| view.read(cx).blocked()), None);
+}
+
+/// An open cluster's shell can start while a read-only cluster is shown:
+/// the shown level is never consulted.
+#[gpui_kit::test]
+fn an_open_clusters_shell_can_start_while_a_read_only_cluster_is_shown(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    show_cluster(handle, &pilot, "dev-fra", cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    let view = shell_view(&dock(&pilot, cx), 0, cx);
+    cx.update(|cx| view.update(cx, |view, cx| view.end(cx)));
+    cx.run_until_parked();
+    show_cluster(handle, &pilot, "stage-fra", cx);
+    assert!(cx.read(|cx| pilot.read(cx).context_display.level.is_read_only()));
+    assert!(cx.read(|cx| view.read(cx).can_start()));
+    assert_eq!(cx.read(|cx| view.read(cx).blocked()), None);
+}
+
+/// A shell blocked on the shown cluster gets the offer too.
+#[gpui_kit::test]
+fn a_shell_blocked_on_the_shown_cluster_offers_logs(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    show_cluster(handle, &pilot, "stage-fra", cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("dock-origin").is_some());
+        window.click("dock-open-logs-instead", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(titles(&dock(&pilot, cx), cx).len(), 2);
 }

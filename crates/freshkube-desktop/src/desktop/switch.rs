@@ -496,8 +496,8 @@ impl Pilot {
         cx.notify();
     }
 
-    /// Switches to the workspace entry `id`, after any running shell is
-    /// ended or kept by the user's answer. The active entry is a no-op.
+    /// Switches to the workspace entry `id`. A running shell keeps its own
+    /// connection and is not asked about (#878). The active entry is a no-op.
     pub(super) fn switch_cluster(
         &mut self,
         id: String,
@@ -507,9 +507,8 @@ impl Pilot {
         self.switch_cluster_for(id, None, window, cx);
     }
 
-    /// Switches to the entry `id` to open a deep link's view there, after any
-    /// running shell is ended or kept by the user's answer. The view is held
-    /// until the entry has its own connection; Cancel holds nothing.
+    /// Switches to the entry `id` to open a deep link's view there. The view
+    /// is held until the entry has its own connection.
     pub(super) fn switch_cluster_to_view(
         &mut self,
         id: String,
@@ -533,23 +532,10 @@ impl Pilot {
             uid: String::new(),
             connection: None,
         };
-        let leaving = shell::Leaving {
-            question: format!("Switch to {id} to open this link?"),
-            detail: format!(
-                "{id} opens as it does from the cluster list, then the link opens {}, read \
-                 with your own access. Port forwards keep running.",
-                super::deep_link::describe(&view)
-            ),
-            answer: "Switch".into(),
-        };
-        // A link switches without asking: a running shell keeps its own
-        // connection and ends nothing (#878).
-        let _ = leaving;
         self.switch_now(id, Some((nameless, LinkWork::View(view), true)), window, cx);
     }
 
-    /// `switch_cluster`, holding `link` for the entry once the user has
-    /// agreed. Cancel at the shell question holds nothing.
+    /// `switch_cluster`, holding `link` for the entry.
     fn switch_cluster_for(
         &mut self,
         id: String,
@@ -568,15 +554,13 @@ impl Pilot {
             );
             return;
         }
-        {
-            let this = &mut *self;
-            this.switch_now(
-                id,
-                link.map(|(object, work)| (object, work, false)),
-                window,
-                cx,
-            )
-        }
+
+        self.switch_now(
+            id,
+            link.map(|(object, work)| (object, work, false)),
+            window,
+            cx,
+        )
     }
 
     /// Switches to the entry once the user has agreed, holding `link`
@@ -606,10 +590,10 @@ impl Pilot {
     }
 
     /// A part of an application read in another workspace entry's cluster:
-    /// asks to switch to that entry, folding any running shell into the one
-    /// question, then opens the part there. Cancel changes nothing. Port
-    /// forwards run on their own connection, so the question never names
-    /// them. An entry the workspace no longer lists is refused.
+    /// asks to switch to that entry, then opens the part there. Cancel
+    /// changes nothing. Shells and port forwards run on their own
+    /// connection, so the question never names them. An entry the workspace
+    /// no longer lists is refused.
     pub(super) fn open_on_entry(
         &mut self,
         entry: String,

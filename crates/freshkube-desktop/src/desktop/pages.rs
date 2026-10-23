@@ -373,22 +373,20 @@ impl Pilot {
             }
             return;
         }
-        {
-            let this = &mut *self;
-            this.leave_entry(cx);
-            if !this.mode().has_talos() {
-                this.use_kube_context(Some(context), window, cx);
-                return;
-            }
-            this.applied.context = Some(context);
-            this.remember_connection(window, cx);
-            this.invalidate_target(window, cx);
-            if this.mode().is_example() {
-                this.seed_example_history(cx);
-            }
-            this.refresh(window, cx);
-            this.prepare_context_display(window, cx);
+
+        self.leave_entry(cx);
+        if !self.mode().has_talos() {
+            self.use_kube_context(Some(context), window, cx);
+            return;
         }
+        self.applied.context = Some(context);
+        self.remember_connection(window, cx);
+        self.invalidate_target(window, cx);
+        if self.mode().is_example() {
+            self.seed_example_history(cx);
+        }
+        self.refresh(window, cx);
+        self.prepare_context_display(window, cx);
     }
 
     pub(super) fn adjacent_context(

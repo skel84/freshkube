@@ -23,10 +23,10 @@ Every Talos write takes the one operation slot through `Operations::begin`, whic
 A dock shell belongs to the cluster it started on, as a port forward does, and its gate reads **that cluster entry's level** and nothing else. The shown cluster's level is never consulted for a shell, so a `read-only` cluster's shell stays blocked while an `open` cluster is shown, and an `open` cluster's shell is not blocked by a `read-only` one that is shown.
 
 - **One function, one level.** `freshkube_core::write::may_start_shell` takes the dock tab's level only (`Option<Protection>`) and has no parameter for the shown level, so a call site cannot pass the wrong one. It is tested at all four levels and with none.
-- **Fail closed.** A tab whose entry the file no longer lists, or that has no level cell, is blocked as `read-only`, with the reason "Its cluster entry is no longer in freshkube.yaml." The gate never falls back to the shown level.
-- **Followed live.** The level is read from the entry's shared `LevelCell`, so a stricter level reaches an open tab's Start at once. A running session is not killed: it is left for its person to end, as before.
+- **Fail closed.** A tab whose entry the file no longer lists, or whose level is not known, is blocked as `read-only`, with the reason "Its cluster entry is no longer in freshkube.yaml." The gate never falls back to the shown level.
+- **Followed live.** The shell reads its entry's level from the map of levels `prepare_protection` refreshes whenever the setup changes (`mutation::entry_level`), so a stricter level reaches an open tab's Start at once. A running session is not killed: it is left for its person to end, as before.
 - **Open logs instead.** A blocked shell offers "Open logs instead", a log tab for the same pod and container on the dock tab's own cluster source, never retargeted to the shown one.
-- A window that is no entry's has no cell to follow; its tabs keep the level the window had when they started.
+- A window that is no entry's (a context picked by hand, a kubeconfig or talosconfig given at launch) has no entry to follow: its shells read their kubeconfig context's level under the setup as it is now (`mutation::context_level`, the stricter of the entries naming it, guarded for one none names), not the level the window had at the start. Before any setup was read the level is unknown, and the gate blocks.
 
 ## The protection level
 

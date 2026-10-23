@@ -52,11 +52,11 @@ impl Dock {
                 active: Some(tab.id) == self.selected,
                 // Only a tab of another cluster than the shown one wears its
                 // level; the shown cluster's is in the header.
-                mark: (!tab.origin.is_shown(&self.shown_entry, &self.source)).then(|| {
-                    crate::desktop::shell::context::mark(
-                        tab.origin.level(cx).unwrap_or(Protection::ReadOnly),
-                    )
-                }),
+                mark: tab
+                    .badge
+                    .as_ref()
+                    .filter(|badge| badge.foreign)
+                    .map(|badge| badge.mark),
                 tip: shell_tip(tab).map(|tip| Rc::new(tip) as tab_strip::Tip),
             })
             .collect();
@@ -303,34 +303,28 @@ impl Dock {
 
     /// A shell on a cluster other than the one shown says whose it is, in
     /// its own header (#878): the cluster and context, its level's tag, cap
-    /// and side rule, and that this is not the shown cluster. A glyph on
-    /// the dock tab alone would not do.
+    /// and side rule, and that this is not the shown cluster. A shell whose
+    /// own cluster's level blocks its Start says why, shown cluster or not,
+    /// and offers "Open logs instead". A glyph on the dock tab alone would
+    /// not do. All of it is read from the badge `refresh_gates` derived.
     fn render_origin(&self, tab: &DockTab, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if tab.is_log() || tab.origin.is_shown(&self.shown_entry, &self.source) {
+        let badge = tab.badge.as_ref()?;
+        if tab.is_log() || (!badge.foreign && badge.blocked.is_none()) {
             return None;
         }
         let id = tab.id;
         let p = crate::palette::palette(cx);
-        let level = tab.origin.level(cx);
-        // An entry that is gone is held to Read-only, as its gate is.
-        let mark = crate::desktop::shell::context::mark(level.unwrap_or(Protection::ReadOnly));
-        let rule = mark.cap(&p).unwrap_or(p.line_strong);
-        let blocked =
-            matches!(&tab.kind, TabKind::Shell(view) if view.read(cx).blocked().is_some());
-        let who = format!(
-            "Shell on {} · {}",
-            tab.origin.cluster, tab.origin.source.context
-        );
-        let warning = format!(
-            "Not the shown cluster: you're looking at {}",
-            self.shown_name()
-        );
+        let rule = badge.mark.cap(&p).unwrap_or(p.line_strong);
+        let say = match (badge.foreign, badge.blocked) {
+            (true, _) => badge.warning.clone(),
+            (false, reason) => reason.unwrap_or_default().into(),
+        };
         Some(
             h_flex()
                 .id("dock-origin")
                 .test_support()
                 .role(Role::Status)
-                .aria_label(format!("{who}. {warning}"))
+                .aria_label(SharedString::from(format!("{}. {}", badge.who, say)))
                 .flex_none()
                 .w_full()
                 .gap(dp(8.))
@@ -342,19 +336,13 @@ impl Dock {
                 .border_color(rule)
                 .border_t(px(2.))
                 .child(freshkube_ui::level::tag(
-                    mark,
+                    badge.mark,
                     freshkube_ui::level::Form::Cell,
                     cx,
                 ))
-                .child(div().text_color(p.ink).child(SharedString::from(who)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_color(p.muted)
-                        .child(SharedString::from(warning)),
-                )
-                .when(blocked, |this| {
+                .child(div().text_color(p.ink).child(badge.who.clone()))
+                .child(div().flex_1().min_w_0().text_color(p.muted).child(say))
+                .when(badge.blocked.is_some(), |this| {
                     this.child(
                         gpui_kit::component::button::Button::new("dock-open-logs-instead")
                             .outline()

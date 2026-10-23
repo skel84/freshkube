@@ -186,7 +186,7 @@ impl Pilot {
                 } else if view.tab_entry_missing(cx) {
                     view.choose_cluster_for_tab(chosen.clone(), window, cx);
                 } else {
-                    view.switch_cluster(chosen.clone(), window, cx);
+                    view.retarget_shown_tab(chosen.clone(), window, cx);
                 }
                 view.focus_page(window, cx);
                 let handle = window.window_handle();

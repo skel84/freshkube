@@ -4,8 +4,8 @@
 //! stream starts when the user opens the tab, and a shell tab's session
 //! when the user picks its container or presses Start; both live until the
 //! tab closes, whatever page or object shows and whether the dock is
-//! minimized. Closing a running shell's tab asks first. Another connection
-//! closes every tab, once a running shell may end.
+//! minimized. Closing a running shell's tab asks first. A tab keeps the
+//! cluster it started on (`Origin`), so another connection closes nothing.
 //!
 //! A tab knows its own object: a pod's tab watches that pod for its
 //! containers (`feed.rs`), a workload's reads its selector once. The tabs
@@ -152,20 +152,22 @@ pub(crate) enum TabKind {
 pub(crate) struct Origin {
     pub(crate) source: ClusterSource,
     /// The workspace entry the tab started under; `None` for a window that
-    /// has none, whose level is then the one it had at the start.
+    /// has none, whose level is then its kubeconfig context's, read from the
+    /// setup as it is now.
     pub(crate) entry: Option<String>,
-    fixed: Protection,
     /// What the tab says it belongs to: the entry's id, else its context.
     pub(crate) cluster: SharedString,
 }
 
 impl Origin {
-    /// This tab's own cluster's level as it is now. `None` is an entry the
-    /// file no longer lists, which blocks (`may_start_shell`).
+    /// This tab's own cluster's level as it is now: its entry's, or for a
+    /// window with none its context's. Never the shown cluster's. `None` is
+    /// an entry the file no longer lists, or a setup not yet read, which
+    /// blocks (`may_start_shell`).
     pub(crate) fn level(&self, cx: &App) -> Option<Protection> {
         match &self.entry {
             Some(entry) => crate::mutation::entry_level(entry, cx),
-            None => Some(self.fixed),
+            None => crate::mutation::context_level(&self.source.context, cx),
         }
     }
 }
@@ -182,9 +184,26 @@ impl Origin {
     }
 }
 
+/// What a tab says about its cluster, derived when a level or the shown
+/// cluster changes (`refresh_gates`) and read by the frame, never worked out
+/// while drawing.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Badge {
+    pub(super) mark: freshkube_ui::level::Mark,
+    /// The tab's cluster is not the one shown.
+    pub(super) foreign: bool,
+    /// Why a shell tab's Start is off because of its cluster's level.
+    pub(super) blocked: Option<&'static str>,
+    /// "Shell on ⟨cluster⟩ · ⟨context⟩".
+    pub(super) who: SharedString,
+    /// "Not the shown cluster: you're looking at ⟨cluster⟩".
+    pub(super) warning: SharedString,
+}
+
 pub(crate) struct DockTab {
     pub(crate) id: u64,
     origin: Origin,
+    pub(super) badge: Option<Badge>,
     key: TabKey,
     target: DetailTarget,
     /// "Pod ⟨name⟩", "⟨Kind⟩ ⟨name⟩" or "Shell ⟨pod⟩".
@@ -286,9 +305,6 @@ pub(crate) struct Dock {
     /// The entry the window shows and its level, which new tabs capture
     /// (#878). Nothing reads them to gate a shell that already has its own.
     shown_entry: Option<String>,
-    shown_level: Protection,
-    /// Each tab's own level as the gates last read it.
-    gate_levels: Vec<Option<Protection>>,
     pub(crate) tabs: Vec<DockTab>,
     selected: Option<u64>,
     next_id: u64,
@@ -347,8 +363,6 @@ impl Dock {
             runtime,
             source: None,
             shown_entry: None,
-            shown_level: Protection::default(),
-            gate_levels: Vec::new(),
             tabs: Vec::new(),
             selected: None,
             next_id: 0,
@@ -693,7 +707,6 @@ impl Dock {
             subscriptions,
             cx,
         );
-        self.refresh_gates(cx);
         id
     }
 
@@ -713,6 +726,7 @@ impl Dock {
         self.tabs.push(DockTab {
             id,
             origin,
+            badge: None,
             key,
             target,
             base,
@@ -724,6 +738,7 @@ impl Dock {
             _subscriptions: subscriptions,
         });
         self.derive_titles();
+        self.refresh_gates(cx);
         self.schedule_save(cx);
     }
 
@@ -1044,30 +1059,11 @@ impl Dock {
         }
     }
 
-    /// The connection the tabs read with, and the access identity it is
-    /// for. The same one refreshes their handles. A source missing for a
-    /// while under the same identity, as Talos's without its overview or
-    /// Kubernetes client, keeps the tabs and their shells. Another identity,
-    /// or none while another context loads, closes every tab, as the
-    /// Resources page starts over: whoever changed it asked about running
-    /// shells first (`Pilot::unless_shell`). The first source restores the
-    /// saved tabs when its context is theirs.
-    /// Tells the dock which entry the window shows and at what level, which
-    /// the tabs opened later capture, and has every shell tab read its own
+    /// Tells the dock which entry the window shows, which the tabs opened
+    /// later capture and the headers name, and has every tab read its own
     /// level again. A session already running is left to end.
-    pub(crate) fn set_shown(
-        &mut self,
-        entry: Option<String>,
-        level: Protection,
-        cx: &mut Context<Self>,
-    ) {
-        let moved = self.shown_entry != entry;
+    pub(crate) fn set_shown(&mut self, entry: Option<String>, cx: &mut Context<Self>) {
         self.shown_entry = entry;
-        self.shown_level = level;
-        // The headers and tab marks say which cluster is shown.
-        if moved && !self.tabs.is_empty() {
-            cx.notify();
-        }
         self.refresh_gates(cx);
     }
 
@@ -1111,33 +1107,60 @@ impl Dock {
         Some(Origin {
             source,
             entry: self.shown_entry.clone(),
-            fixed: self.shown_level,
             cluster: cluster.into(),
         })
     }
 
-    /// Every shell tab reads the level of its own cluster entry, through
-    /// core's gate. Followed live: a stricter level reaches an open tab's
-    /// Start at once.
+    /// Every tab reads the level of its own cluster, and every shell tab
+    /// gates its Start on it through core's `may_start_shell`: followed
+    /// live, so a stricter level reaches an open tab's Start at once. The
+    /// badges the frame draws are derived here, once per change, and the
+    /// dock draws again only when one differs.
     pub(crate) fn refresh_gates(&mut self, cx: &mut Context<Self>) {
-        // The dock draws again only when a tab's level changed.
-        let levels: Vec<_> = self.tabs.iter().map(|tab| tab.origin.level(cx)).collect();
-        if levels != self.gate_levels {
-            self.gate_levels = levels;
-            cx.notify();
-        }
-        for tab in &self.tabs {
-            if let TabKind::Shell(view) = &tab.kind {
-                let level = tab.origin.level(cx);
+        let shown_name = self.shown_name();
+        let mut changed = false;
+        for ix in 0..self.tabs.len() {
+            let tab = &self.tabs[ix];
+            let level = tab.origin.level(cx);
+            let foreign = !tab.origin.is_shown(&self.shown_entry, &self.source);
+            let blocked = if let TabKind::Shell(view) = &tab.kind {
                 let cluster = tab.origin.cluster.clone();
                 view.update(cx, |view, cx| {
                     view.set_cluster(Some(cluster));
                     view.set_own_level(level, cx);
                 });
+                view.read(cx).blocked()
+            } else {
+                None
+            };
+            let badge = Badge {
+                // An entry that is gone is held to Read-only, as its gate is.
+                mark: crate::desktop::shell::context::mark(level.unwrap_or(Protection::ReadOnly)),
+                foreign,
+                blocked,
+                who: format!(
+                    "Shell on {} · {}",
+                    tab.origin.cluster, tab.origin.source.context
+                )
+                .into(),
+                warning: format!("Not the shown cluster: you're looking at {shown_name}").into(),
+            };
+            if self.tabs[ix].badge.as_ref() != Some(&badge) {
+                self.tabs[ix].badge = Some(badge);
+                changed = true;
             }
+        }
+        if changed {
+            cx.notify();
         }
     }
 
+    /// The connection new tabs capture, and the access identity it is for.
+    /// A tab keeps the connection it started on (#878): another identity, or
+    /// none while another context loads, closes nothing, and only the same
+    /// connection's tabs take its refreshed handle. A source missing for a
+    /// while keeps the tabs and their shells. The first source restores the
+    /// saved tabs when its context is theirs.
     pub(crate) fn set_source(
         &mut self,
         source: Option<ClusterSource>,
@@ -1146,16 +1169,16 @@ impl Dock {
         cx: &mut Context<Self>,
     ) {
         let Some(source) = source else {
-            // Before the first connection there is nothing to close, and
-            // the saved tabs wait for it.
+            // Before the first connection the saved tabs wait for it.
             let kept = self
                 .source
                 .as_ref()
                 .is_some_and(|current| identity == Some(current.id.as_str()));
-            // The tabs keep their own connections (#878); only new ones
-            // wait for the next source.
+            // The tabs keep their own connections (#878); only new ones wait
+            // for the next source.
             if !kept {
                 self.source = None;
+                self.refresh_gates(cx);
             }
             return;
         };
@@ -1172,6 +1195,8 @@ impl Dock {
         if first && let Some(restore) = self.restore.take() {
             self.restore_tabs(restore, window, cx);
         }
+        // Which tabs are the shown cluster's depends on this source.
+        self.refresh_gates(cx);
     }
 
     /// Derives the titles: a title another tab already has gets "(2)".
