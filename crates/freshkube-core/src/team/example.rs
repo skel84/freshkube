@@ -39,9 +39,12 @@ impl Shape {
 
 const V1: &str = "\
 version: 1
+# Two keys a team may not set, so the page shows what is ignored.
+kubeconfig: /home/acme/.kube/config
 clusters:
   - id: core-fra
     role: core
+    context: team-chosen
     protection: protected
   - id: cicd-fra
     role: cicd

@@ -15,9 +15,23 @@ fn open(
     AnyWindowHandle,
     Entity<crate::desktop::Pilot>,
 ) {
+    open_at(cx, shape, size, None)
+}
+
+fn open_at(
+    cx: &mut TestAppContext,
+    shape: Option<Shape>,
+    size: (f32, f32),
+    text: Option<f32>,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<crate::desktop::Pilot>,
+) {
     let options = GpuiOptions::fixture().with_debug(DebugOptions {
         page: Some("settings-team".into()),
         team: shape,
+        text_size: text,
         ..DebugOptions::default()
     });
     let (runtime, handle, view) = mount(cx, options, size.0, size.1);
@@ -143,6 +157,12 @@ fn a_failed_fetch_keeps_the_applied_version_and_says_since_when(cx: &mut TestApp
     let (_runtime, handle, _view) = open(cx, Some(Shape::Failed), (1280., 880.));
     assert!(visible(cx, handle, "team-failure"));
     assert!(label(cx, handle, "team-version-value").contains("a1b2c3d"));
+    let state = super::team::TeamState::example(Shape::Failed, chrono::Utc::now());
+    let failure = state.shown.failure_words().unwrap();
+    assert_eq!(
+        failure,
+        "The host didn’t answer. Still using version a1b2c3d."
+    );
     assert!(!visible(cx, handle, "team-update"));
 }
 
@@ -184,8 +204,76 @@ fn counts_are_worded_in_the_singular_and_the_plural() {
     assert_eq!(plural(1, "trust change", "trust changes"), "trust change");
     assert_eq!(plural(0, "trust change", "trust changes"), "trust changes");
     assert_eq!(plural(4, "trust change", "trust changes"), "trust changes");
-    let update = TeamState::example(Shape::Update, chrono::Utc::now());
-    assert!(update.shown.counts.starts_with("0 trust changes, 0 still"));
     let trust = TeamState::example(Shape::Trust, chrono::Utc::now());
     assert!(trust.shown.counts.starts_with("4 trust changes, 4 still"));
+}
+
+#[gpui_kit::test]
+fn review_later_puts_the_review_off_and_keeps_what_was_confirmed(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open(cx, Some(Shape::Trust), (1280., 880.));
+    click(cx, handle, leak(format!("team-confirm-{}", TRUST[0])));
+    click(cx, handle, "team-review-later");
+    assert!(!visible(cx, handle, "team-update"));
+    assert!(visible(cx, handle, "team-waiting"));
+    assert!(label(cx, handle, "team-version-value").contains("a1b2c3d"));
+    click(cx, handle, "team-review-open");
+    assert!(visible(cx, handle, "team-update"));
+    assert!(!visible(cx, handle, "team-waiting"));
+    // What was confirmed stays confirmed.
+    assert!(!visible(
+        cx,
+        handle,
+        leak(format!("team-confirm-{}", TRUST[0]))
+    ));
+    assert!(visible(
+        cx,
+        handle,
+        leak(format!("team-confirm-{}", TRUST[1]))
+    ));
+}
+
+#[gpui_kit::test]
+fn an_update_with_nothing_to_confirm_says_what_apply_changes(cx: &mut TestAppContext) {
+    let update = super::team::TeamState::example(Shape::Update, chrono::Utc::now());
+    let counts = &update.shown.counts;
+    assert!(
+        counts.contains("will change") && !counts.contains("trust"),
+        "{counts}"
+    );
+    let trust = super::team::TeamState::example(Shape::Trust, chrono::Utc::now());
+    assert!(trust.shown.counts.contains("still to confirm"));
+    let _ = cx;
+}
+
+#[gpui_kit::test]
+fn long_values_stay_inside_the_page_and_labels_stay_in_their_column(cx: &mut TestAppContext) {
+    for (size, text) in [((1280., 880.), 13.), ((760., 560.), 20.)] {
+        let (_runtime, handle, _view) = open_at(cx, Some(Shape::Trust), size, Some(text));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let page = window.find("settings-page").bounds();
+            for at in TRUST {
+                let value = window.find(leak(format!("team-change-{at}-line"))).bounds();
+                let label = window
+                    .find(leak(format!("team-change-{at}-label")))
+                    .bounds();
+                assert!(
+                    value.right() <= page.right() + gpui_kit::px(1.),
+                    "{at} at {size:?}"
+                );
+                assert!(label.right() <= page.right(), "{at}");
+                // Wide layouts keep the label left of its value; narrow ones stack.
+                assert!(
+                    value.left() >= label.right() - gpui_kit::px(1.)
+                        || value.top() >= label.bottom() - gpui_kit::px(1.),
+                    "{at} at {size:?}"
+                );
+            }
+            // The banner stays as wide as the groups under it.
+            let banner = window.find("team-update-banner").bounds();
+            let group = window.find("team-review").bounds();
+            assert!(banner.right() <= group.right() + gpui_kit::px(1.));
+        })
+        .unwrap();
+    }
 }
