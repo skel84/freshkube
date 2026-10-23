@@ -7,7 +7,7 @@ use freshkube_core::write::Runner;
 use freshkube_core::write::everyday::{self, Subject};
 use freshkube_ui::form::{self, Action};
 use gpui_kit::component::{
-    WindowExt,
+    Sizable, WindowExt,
     input::{Input, InputState},
     v_flex,
 };
