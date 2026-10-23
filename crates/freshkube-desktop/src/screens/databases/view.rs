@@ -363,6 +363,8 @@ impl Render for DatabasesScreen {
                                 // A bottom edge, so a clipped banner reads as
                                 // scrollable, not cut off by the table.
                                 Some(palette(cx).line),
+                                None,
+                                cx,
                             )
                             .flex_none()
                             .min_w_0()

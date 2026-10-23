@@ -148,12 +148,16 @@ pub fn inset() -> Div {
 /// An optional bottom hairline counts towards the cap. The caller keeps its
 /// padding on the outer frame, outside the scroll viewport and its overlay.
 /// The scrollbar stays visible whenever the notes overflow the cap.
+/// With a tone, children are banner contents: the block draws their shared
+/// border, background and padding outside the viewport.
 pub fn capped_notes(
     id: impl Into<ElementId>,
     cap: impl Into<Length>,
     scroll: &ScrollHandle,
     children: impl IntoIterator<Item = impl IntoElement>,
     bottom_edge: Option<Hsla>,
+    tone: Option<Tone>,
+    cx: &App,
 ) -> Observed<Stateful<Div>> {
     let cap: Length = cap.into();
     let id = id.into();
@@ -161,6 +165,7 @@ pub fn capped_notes(
         .id(id.clone())
         .test_support()
         .min_w_0()
+        .when_some(tone, |this, tone| crate::ui::banner_frame(this, tone, cx))
         .when_some(bottom_edge, |this, color| {
             this.border_b_1().border_color(color)
         })
@@ -1078,6 +1083,8 @@ mod tests {
                     .id("banner")
                     .test_support()],
                     Some(palette(cx).line),
+                    None,
+                    cx,
                 )
                 .px(dp(PANE_PADDING))
                 .py(dp(PANE_PADDING_Y)),
@@ -1131,13 +1138,15 @@ mod tests {
     }
 
     impl Render for Notes {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             v_flex().size_full().child(capped_notes(
                 "notes",
                 self.cap,
                 &self.scroll,
                 [div().flex_none().h(dp(180.))],
                 None,
+                None,
+                cx,
             ))
         }
     }

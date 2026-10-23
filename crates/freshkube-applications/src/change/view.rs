@@ -205,6 +205,8 @@ impl ChangePage {
                 &self.notes_scroll,
                 children,
                 None,
+                None,
+                cx,
             )
         } else {
             div().id("change-notes").test_support().children(children)

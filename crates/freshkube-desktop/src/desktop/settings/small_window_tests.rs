@@ -392,19 +392,76 @@ async fn a_long_destination_save_caps_the_banner_and_reveals_the_new_row(cx: &mu
                     "{banners:?} exceeds {cap:?}"
                 );
                 assert!(
-                    banner.size.height > banners.size.height,
+                    banner.size.height > scroll.bounds().size.height,
                     "the save must overflow"
                 );
                 assert!(scroll.max_offset().y > px(0.));
-                window.scroll(
-                    "settings-banners",
-                    ScrollDelta::Pixels(point(px(0.), px(-4000.))),
-                    cx,
-                );
-                window.render_frame(cx);
-                assert!(scroll.offset().y < px(0.), "the capped banner must scroll");
-                assert_eq!(window.find("settings-banners").bounds(), banners);
-                assert!(window.find("settings-saved").bounds().top() < banner.top());
+                let green = crate::palette::palette(cx).good;
+                let border = |window: &Window| {
+                    let bounds = window
+                        .find("settings-banners")
+                        .bounds()
+                        .scale(window.scale_factor());
+                    let frames: Vec<_> = window
+                        .painted_quads()
+                        .into_iter()
+                        .filter(|quad| {
+                            quad.border_color == green
+                                && quad.border_widths.top > px(0.).scale(window.scale_factor())
+                                && quad.bounds.intersects(&bounds)
+                        })
+                        .collect();
+                    assert!(!frames.is_empty(), "the green frame must be painted");
+                    // GPUI may paint a border as four strips with separate
+                    // masks. They must all describe the same fixed frame,
+                    // and together expose its full top, bottom and sides.
+                    let painted = frames[0].bounds;
+                    let tolerance = window.scale_factor();
+                    assert!((painted.top() - bounds.top()).0.abs() <= tolerance);
+                    assert!((painted.bottom() - bounds.bottom()).0.abs() <= tolerance);
+                    assert!((painted.left() - bounds.left()).0.abs() <= tolerance);
+                    assert!((painted.right() - bounds.right()).0.abs() <= tolerance);
+                    for frame in &frames {
+                        assert_eq!(frame.bounds, painted, "one frame inside the cap");
+                    }
+                    let mask = frames
+                        .iter()
+                        .map(|frame| frame.content_mask.bounds)
+                        .reduce(|a, b| a.union(&b))
+                        .unwrap();
+                    assert_eq!(
+                        painted.intersect(&mask),
+                        painted,
+                        "the border's top, bottom and corners must not be clipped"
+                    );
+                    painted
+                };
+                let before = border(window);
+                assert_eq!(scroll.offset().y, px(0.));
+                for delta in [-4000., 4000.] {
+                    window.scroll(
+                        "settings-banners",
+                        ScrollDelta::Pixels(point(px(0.), px(delta))),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                    assert_eq!(
+                        scroll.offset().y,
+                        if delta < 0. {
+                            -scroll.max_offset().y
+                        } else {
+                            px(0.)
+                        }
+                    );
+                    assert_eq!(window.find("settings-banners").bounds(), banners);
+                    assert_eq!(border(window), before);
+                    let content = window.find("settings-saved").bounds();
+                    if delta < 0. {
+                        assert!(content.top() < banner.top(), "only the contents move");
+                    } else {
+                        assert_eq!(content, banner);
+                    }
+                }
             } else {
                 assert!(
                     banners.size.height > cap,
