@@ -102,8 +102,20 @@ fn look(observation: &Observation, target: &Target, now: Result<Value, Refusal>)
                 Look::Waiting
             }
         }
+        Observation::FieldEqualsOrAbsent { pointer, value } => {
+            if object.pointer(pointer) == Some(value) || absent_is_zero(&object, pointer, value) {
+                Look::Reached
+            } else {
+                Look::Waiting
+            }
+        }
         Observation::Gone | Observation::Unobservable => Look::Waiting,
     }
+}
+
+/// An absent count reads as 0, as the API omits a count at zero.
+pub(super) fn absent_is_zero(object: &Value, pointer: &str, value: &Value) -> bool {
+    value == &Value::from(0) && matches!(object.pointer(pointer), None | Some(Value::Null))
 }
 
 /// Looks until the observation holds, the object turns out not to be the one

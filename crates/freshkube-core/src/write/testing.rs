@@ -22,6 +22,7 @@ use super::{
 use crate::fake_api::{self, Recorded, Recorder};
 
 pub const DEPLOYMENT: &str = "/apis/apps/v1/namespaces/shop/deployments/web";
+pub const CRONJOB: &str = "/apis/batch/v1/namespaces/shop/cronjobs/nightly";
 pub const SECRET: &str = "/api/v1/namespaces/shop/secrets/db";
 
 #[derive(Default)]
@@ -69,6 +70,14 @@ fn deployment() -> Value {
     })
 }
 
+fn cronjob() -> Value {
+    json!({
+        "apiVersion": "batch/v1", "kind": "CronJob",
+        "metadata": {"name": "nightly", "namespace": "shop", "uid": "uid-nightly", "resourceVersion": "300"},
+        "spec": {"schedule": "0 3 * * *", "suspend": false}
+    })
+}
+
 fn secret() -> Value {
     json!({
         "apiVersion": "v1", "kind": "Secret",
@@ -87,6 +96,7 @@ impl Cluster {
             let mut state = state.lock().unwrap();
             state.objects.insert(DEPLOYMENT.into(), deployment());
             state.objects.insert(SECRET.into(), secret());
+            state.objects.insert(CRONJOB.into(), cronjob());
         }
         let recorder = Recorder::default();
         let (log, shared) = (recorder.clone(), state.clone());
@@ -323,6 +333,7 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
             next["metadata"]["resourceVersion"] = json!(state.next_version.to_string());
             if !state.stuck && next.pointer("/spec/replicas").is_some() {
                 next["status"]["readyReplicas"] = next["spec"]["replicas"].clone();
+                next["status"]["replicas"] = next["spec"]["replicas"].clone();
             }
             if !dry {
                 state.objects.insert(path.to_owned(), next.clone());
