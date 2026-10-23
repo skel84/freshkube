@@ -53,7 +53,7 @@ struct PodLine {
 
 enum Loaded {
     Service(Box<Result<ServiceReading, Failure>>),
-    Workload(Result<Vec<ServiceReading>, Failure>),
+    Workload(Result<traffic::WorkloadServices, Failure>),
 }
 
 #[derive(Default)]
@@ -65,6 +65,8 @@ pub(super) struct TrafficView {
     pods: Vec<PodLine>,
     /// Why the unpublished list is not shown, when it can't be.
     pods_note: Option<SharedString>,
+    /// The unpublished list is cut, by the draw cap or by the read's limit.
+    pods_more: Option<SharedString>,
     source: Option<SharedString>,
     job: Option<Job>,
     seq: u64,
@@ -133,6 +135,7 @@ impl TrafficView {
         self.groups.clear();
         self.pods.clear();
         self.pods_note = None;
+        self.pods_more = None;
         self.source = None;
         let reading = match reading {
             Ok(reading) => reading,
@@ -196,6 +199,14 @@ impl TrafficView {
         }
         match reading.unpublished {
             Some(Ok(pods)) => {
+                let mut more = Vec::new();
+                if pods.len() > GROUP_SHOWN {
+                    more.push(format!("{} more not shown", pods.len() - GROUP_SHOWN));
+                }
+                if reading.pods_cut {
+                    more.push("The pod list was cut at its limit; more may exist".to_owned());
+                }
+                self.pods_more = (!more.is_empty()).then(|| more.join(". ").into());
                 self.pods = pods
                     .iter()
                     .take(GROUP_SHOWN)
@@ -227,11 +238,12 @@ impl TrafficView {
         namespace: &str,
         name: &str,
         labels: &BTreeMap<String, String>,
-        services: Result<Vec<ServiceReading>, Failure>,
+        services: Result<traffic::WorkloadServices, Failure>,
     ) {
         self.groups.clear();
         self.pods.clear();
         self.pods_note = None;
+        self.pods_more = None;
         self.source = None;
         self.steps = Self::lines(&traffic::workload_chain(
             kind, namespace, name, labels, &services,
@@ -361,9 +373,13 @@ impl DetailPane {
                     .filter_map(|document| facts(&document.yaml, shape))
                     .filter(|facts| facts.selects(labels))
                     .map(|facts| reading(facts, shape, false))
-                    .collect()
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or_default())),
+            .map(|readings| {
+                let total = readings.len();
+                traffic::WorkloadServices::new(readings, total)
+            })
+            .unwrap_or_else(|| traffic::WorkloadServices::new(Vec::new(), 0)))),
         }
     }
 

@@ -9,8 +9,8 @@ mod read;
 mod service;
 
 pub use chain::{
-    Evidence, ServiceReading, StepKind, Subject, TrafficChain, TrafficStep, Verdict, service_chain,
-    workload_chain,
+    Evidence, ServiceReading, StepKind, Subject, TrafficChain, TrafficStep, Verdict,
+    WorkloadServices, service_chain, workload_chain,
 };
 pub use endpoints::{
     Endpoint, EndpointSource, EndpointState, Published, SERVICE_LABEL, UnpublishedPod,

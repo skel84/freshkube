@@ -108,7 +108,7 @@ impl Published {
                     .ports
                     .iter()
                     .flatten()
-                    .map(|port| port.name.clone().unwrap_or_default()),
+                    .map(|port| port_key(port.name.clone(), port.protocol.clone())),
                 &wanted,
             );
             for endpoint in &slice.endpoints {
@@ -155,7 +155,7 @@ impl Published {
                     .ports
                     .iter()
                     .flatten()
-                    .map(|port| port.name.clone().unwrap_or_default()),
+                    .map(|port| port_key(port.name.clone(), port.protocol.clone())),
                 &wanted,
             );
             let groups = [
@@ -208,13 +208,28 @@ fn target_uid(target: &Option<ObjectReference>) -> Option<String> {
 }
 
 /// The Service's port names; empty when it declares no ports.
-fn service_port_names(service: &ServiceFacts) -> BTreeSet<String> {
-    service.ports.iter().map(|port| port.name.clone()).collect()
+fn service_port_names(service: &ServiceFacts) -> BTreeSet<(String, String)> {
+    service
+        .ports
+        .iter()
+        .map(|port| (port.name.clone(), port.protocol.to_uppercase()))
+        .collect()
+}
+
+/// A slice or Endpoints port as name and protocol; no protocol means TCP.
+fn port_key(name: Option<String>, protocol: Option<String>) -> (String, String) {
+    (
+        name.unwrap_or_default(),
+        protocol.unwrap_or_else(|| "TCP".into()).to_uppercase(),
+    )
 }
 
 /// Whether a slice's ports reach any Service port. A Service with no ports
 /// (a headless one) has nothing to be unrouted from.
-fn routed(slice_ports: impl Iterator<Item = String>, wanted: &BTreeSet<String>) -> bool {
+fn routed(
+    slice_ports: impl Iterator<Item = (String, String)>,
+    wanted: &BTreeSet<(String, String)>,
+) -> bool {
     wanted.is_empty() || slice_ports.into_iter().any(|name| wanted.contains(&name))
 }
 

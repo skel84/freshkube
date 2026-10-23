@@ -344,11 +344,23 @@ fn a_workload_chain_follows_the_services_that_select_it() {
             Ok(published_of(json!([]))),
         ),
     ];
-    let chain = workload_chain("Deployment", "shop", "web", &labels, &Ok(readings));
+    let chain = workload_chain(
+        "Deployment",
+        "shop",
+        "web",
+        &labels,
+        &Ok(WorkloadServices::new(readings, 2)),
+    );
     assert_eq!(chain.steps[0].kind, StepKind::Workload);
     assert_eq!(chain.steps.len(), 3);
     assert!(chain.steps[1..].iter().all(|s| s.subject.name == "api"));
-    let none = workload_chain("Deployment", "shop", "web", &BTreeMap::new(), &Ok(vec![]));
+    let none = workload_chain(
+        "Deployment",
+        "shop",
+        "web",
+        &BTreeMap::new(),
+        &Ok(WorkloadServices::new(vec![], 0)),
+    );
     assert_eq!(none.steps[0].verdict, Verdict::Neutral);
 }
 
@@ -424,7 +436,7 @@ async fn a_service_reads_its_slices_and_pods_and_nothing_else() {
 
 #[tokio::test]
 async fn unserved_slices_fall_back_to_endpoints_and_say_so() {
-    let (client, _) = crate::fake_api::client(|request| {
+    let (client, recorder) = crate::fake_api::client(|request| {
         match request.path.as_str() {
         SLICES => Some(status(404)),
         "/api/v1/namespaces/shop/endpoints/api" => Some((200, json!({
@@ -439,6 +451,7 @@ async fn unserved_slices_fall_back_to_endpoints_and_say_so() {
     let published = read_published(&client, &facts).await.unwrap();
     assert_eq!(published.source, EndpointSource::Endpoints);
     assert_eq!(published.count(EndpointState::Ready), 1);
+    only_gets(&recorder);
 }
 
 #[tokio::test]
@@ -478,17 +491,22 @@ async fn an_empty_slice_list_is_an_answer_and_reads_no_endpoints() {
 
 #[tokio::test]
 async fn a_workload_reads_services_then_each_selecting_ones_slices() {
-    let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
+    let (client, recorder) = crate::fake_api::client(|request| match request.path.as_str() {
         SERVICES => Some(list(vec![service_json()])),
         SLICES => Some(list(vec![])),
-        "/api/v1/namespaces/shop/endpoints/api" => Some(status(404)),
         _ => None,
     });
     let labels = [("app".to_owned(), "web".to_owned())].into();
-    let readings = read_workload_services(&client, "shop", &labels)
+    let found = read_workload_services(&client, "shop", &labels)
         .await
         .unwrap();
+    let readings = found.readings;
     assert_eq!(readings.len(), 1);
+    assert_eq!(found.total, 1);
+    // An empty slice list is an answer: Endpoints are not read.
+    let lines = recorder.lines();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    only_gets(&recorder);
     // An empty slice list with no Endpoints object is an honest empty read.
     assert!(readings[0].published.as_ref().unwrap().endpoints.is_empty());
     let denied = crate::fake_api::client(|_| Some(status(403))).0;
@@ -497,4 +515,91 @@ async fn a_workload_reads_services_then_each_selecting_ones_slices() {
             .await
             .is_err()
     );
+}
+
+fn only_gets(recorder: &crate::fake_api::Recorder) {
+    let lines = recorder.lines();
+    assert!(
+        lines.iter().all(|line| line.starts_with("GET ")),
+        "{lines:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_server_error_or_timeout_on_slices_does_not_fall_back_to_endpoints() {
+    for code in [500, 504] {
+        let (client, recorder) =
+            crate::fake_api::client(move |request| match request.path.as_str() {
+                SLICES => Some(status(code)),
+                _ => None,
+            });
+        let error = read_published(&client, &web()).await.unwrap_err();
+        assert_ne!(error.kind, FailureKind::NotFound, "{code}");
+        let lines = recorder.lines();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("endpointslices"));
+        only_gets(&recorder);
+    }
+}
+
+#[tokio::test]
+async fn a_cut_services_list_is_an_error_not_no_service() {
+    let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
+        SERVICES => Some((
+            200,
+            json!({"metadata": {"continue": "more"}, "items": [service_json()]}).to_string(),
+        )),
+        _ => None,
+    });
+    let labels = [("app".to_owned(), "web".to_owned())].into();
+    let error = read_workload_services(&client, "shop", &labels)
+        .await
+        .unwrap_err();
+    assert!(error.message.contains("cut at 500"));
+}
+
+#[test]
+fn more_selecting_services_than_the_chain_follows_are_counted() {
+    let labels = [("app".to_owned(), "web".to_owned())].into();
+    let readings = (0..CHAIN_SERVICES)
+        .map(|_| reading(web(), Ok(published_of(json!([])))))
+        .collect();
+    let chain = workload_chain(
+        "Deployment",
+        "shop",
+        "web",
+        &labels,
+        &Ok(WorkloadServices::new(readings, CHAIN_SERVICES + 1)),
+    );
+    assert!(chain.steps[0].summary.contains("11"));
+    assert_eq!(
+        chain.steps[0].detail.as_deref(),
+        Some("and 1 more not shown")
+    );
+}
+
+#[test]
+fn a_slice_port_of_another_protocol_is_unrouted() {
+    let slices = vec![slice(
+        "api-a",
+        json!([{"name": "http", "port": 8080, "protocol": "UDP"}]),
+        json!([endpoint("10.0.0.1", "web-1", json!({}))]),
+    )];
+    let published = Published::from_slices(&web(), slices, false);
+    assert_eq!(published.count(EndpointState::Unrouted), 1);
+}
+
+#[tokio::test]
+async fn a_cut_pod_list_is_marked() {
+    let (client, recorder) = crate::fake_api::client(|request| match request.path.as_str() {
+        SLICES => Some(list(vec![])),
+        "/api/v1/namespaces/shop/pods" => Some((
+            200,
+            json!({"metadata": {"continue": "more"}, "items": []}).to_string(),
+        )),
+        _ => None,
+    });
+    let reading = read_service(&client, web(), true).await;
+    assert!(reading.pods_cut);
+    only_gets(&recorder);
 }

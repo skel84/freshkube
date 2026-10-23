@@ -75,6 +75,23 @@ pub struct ServiceReading {
     pub published: Result<Published, Failure>,
     /// `None` when pods were not asked for (the workload chain).
     pub unpublished: Option<Result<Vec<UnpublishedPod>, Failure>>,
+    /// The pod list was cut at its limit, so more may be unpublished.
+    pub pods_cut: bool,
+}
+
+/// The Services that select a workload's pods: the ones read, and how many
+/// there are in all.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct WorkloadServices {
+    pub readings: Vec<ServiceReading>,
+    pub total: usize,
+}
+
+impl WorkloadServices {
+    pub fn new(readings: Vec<ServiceReading>, total: usize) -> Self {
+        Self { readings, total }
+    }
 }
 
 impl ServiceReading {
@@ -87,6 +104,7 @@ impl ServiceReading {
             facts,
             published,
             unpublished,
+            pods_cut: false,
         }
     }
 
@@ -243,7 +261,7 @@ pub fn workload_chain(
     namespace: &str,
     name: &str,
     template_labels: &BTreeMap<String, String>,
-    services: &Result<Vec<ServiceReading>, Failure>,
+    services: &Result<WorkloadServices, Failure>,
 ) -> TrafficChain {
     let subject = Subject {
         kind: kind.into(),
@@ -265,8 +283,9 @@ pub fn workload_chain(
             "Services unknown: the list failed".into(),
             Some(format!("{}: {}", failure.kind.label(), failure.message)),
         )),
-        Ok(readings) => {
-            let selecting = readings
+        Ok(found) => {
+            let selecting = found
+                .readings
                 .iter()
                 .filter(|reading| reading.facts.selects(template_labels))
                 .collect::<Vec<_>>();
@@ -279,8 +298,12 @@ pub fn workload_chain(
             } else {
                 step(
                     Verdict::Neutral,
-                    format!("Selected by {} Service(s)", selecting.len()),
-                    None,
+                    format!(
+                        "Selected by {} Service(s)",
+                        found.total.max(selecting.len())
+                    ),
+                    (found.total > selecting.len())
+                        .then(|| format!("and {} more not shown", found.total - selecting.len())),
                 )
             });
             for reading in selecting {

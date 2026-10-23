@@ -120,6 +120,15 @@ impl DetailPane {
                                 )
                         }))
                 })
+                .children(view.pods_more.clone().map(|more| {
+                    div()
+                        .id("traffic-pods-more")
+                        .test_support()
+                        .pl(dp(8.))
+                        .text_size(dp(12.))
+                        .text_color(p.muted)
+                        .child(more)
+                }))
                 .children(view.pods_note.clone().map(|note| {
                     div()
                         .id("traffic-pods-unknown")
