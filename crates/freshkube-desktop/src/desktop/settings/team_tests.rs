@@ -623,19 +623,18 @@ fn the_banner_fits_the_smallest_window_at_the_largest_text(cx: &mut TestAppConte
 #[gpui_kit::test]
 fn the_chip_for_your_own_value_says_so_in_a_tooltip(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = clusters(cx, Shape::Joined);
-    for id in ["settings-cluster-core-fra-origin"] {
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            window.hover(id, cx);
-        })
+    let id = "settings-cluster-core-fra-origin";
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover(id, cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(600));
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
-            .unwrap();
-        assert!(freshkube_ui::tooltip::drawn("Yours · over the team’s") > 0);
-    }
+    assert!(freshkube_ui::tooltip::drawn("Yours · over the team’s") > 0);
 }
 
 #[gpui_kit::test]
