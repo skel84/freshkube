@@ -17,11 +17,17 @@ pub type Values = BTreeMap<String, Value>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionError {
     TooLarge,
-    NotYaml { line: usize, column: usize },
+    NotYaml {
+        line: usize,
+        column: usize,
+    },
     NotAMap,
     MissingVersion,
     UnknownVersion(u64),
     ClusterWithoutId,
+    /// A cluster id that is empty-looking, long, or not letters, digits, `-`
+    /// and `_`. The id is never repeated.
+    BadClusterId,
     DuplicateCluster(String),
 }
 
@@ -38,6 +44,9 @@ impl std::fmt::Display for VersionError {
                 write!(f, "the team file is version {n}, and this app reads 1")
             }
             VersionError::ClusterWithoutId => f.write_str("a team cluster has no id"),
+            VersionError::BadClusterId => {
+                f.write_str("a team cluster id may only use letters, digits, - and _ (64 at most)")
+            }
             VersionError::DuplicateCluster(id) => {
                 write!(f, "the team cluster “{id}” is listed twice")
             }
@@ -58,6 +67,12 @@ pub enum IgnoredKey {
     Writes,
     Notifications,
     History,
+    /// The person's own mapping of Argo CD destinations.
+    Destinations,
+    /// A name that could address a path of its own (`.`, `[`, `]` or `:`).
+    BadKey,
+    /// Not a setting a team may set, or not of the shape it takes.
+    Unknown,
 }
 
 impl IgnoredKey {
@@ -70,6 +85,9 @@ impl IgnoredKey {
             IgnoredKey::Writes => "what the app may write is yours",
             IgnoredKey::Notifications => "notification and follow settings are yours",
             IgnoredKey::History => "history is yours",
+            IgnoredKey::Destinations => "your Argo CD destinations are yours",
+            IgnoredKey::BadKey => "that name isn’t allowed in a key",
+            IgnoredKey::Unknown => "a team may not set this",
         }
     }
 }
@@ -79,6 +97,119 @@ impl IgnoredKey {
 pub struct Ignored {
     pub at: String,
     pub why: IgnoredKey,
+}
+
+/// What a team may set, as a tree. Anything not on it is ignored.
+enum Allow {
+    /// A string, a number or a boolean.
+    Leaf,
+    Map(&'static [(&'static str, Allow)]),
+}
+
+use Allow::{Leaf, Map};
+
+const SERVICE: Allow = Map(&[
+    ("namespace", Leaf),
+    ("name", Leaf),
+    ("port", Leaf),
+    ("https", Leaf),
+    ("path", Leaf),
+]);
+
+const CLUSTER: &[(&str, Allow)] = &[
+    ("role", Leaf),
+    ("protection", Leaf),
+    ("fingerprint", Leaf),
+    ("coroot", Map(&[("project", Leaf), ("cluster", Leaf)])),
+    (
+        "metrics",
+        Map(&[
+            ("value", Leaf),
+            ("source", Map(&[("service", SERVICE), ("url", Leaf)])),
+        ]),
+    ),
+    (
+        "results",
+        Map(&[
+            ("address", Leaf),
+            (
+                "forward",
+                Map(&[("namespace", Leaf), ("service", Leaf), ("port", Leaf)]),
+            ),
+        ]),
+    ),
+];
+
+const TOP: &[(&str, Allow)] = &[
+    (
+        "coroot",
+        Map(&[("server", Leaf), ("sign_in", Leaf), ("project", Leaf)]),
+    ),
+    (
+        "supply_chain",
+        Map(&[
+            ("public_key_file", Leaf),
+            ("transparency_log", Leaf),
+            ("transparency_url", Leaf),
+            (
+                "evidence",
+                Map(&[("result", Leaf), ("commit", Leaf), ("digest", Leaf)]),
+            ),
+        ]),
+    ),
+    (
+        "metrics",
+        Map(&[
+            ("mode", Leaf),
+            ("label", Leaf),
+            (
+                "store",
+                Map(&[("entry", Leaf), ("service", SERVICE), ("url", Leaf)]),
+            ),
+        ]),
+    ),
+    (
+        "delivery",
+        Map(&[
+            ("build_namespace", Leaf),
+            (
+                "stage_naming",
+                Map(&[("name_template", Leaf), ("project_key", Leaf)]),
+            ),
+        ]),
+    ),
+    (
+        "sources",
+        Map(&[("kargo", Leaf), ("builds", Leaf), ("argocd", Leaf)]),
+    ),
+];
+
+/// A name with a meaning of its own, whatever level it is found at.
+fn named(key: &str) -> Option<IgnoredKey> {
+    Some(match key {
+        "context" | "talos_context" => IgnoredKey::Context,
+        "kubeconfig" | "talosconfig" | "ca_file" | "api_key_file" => IgnoredKey::LocalPath,
+        "token" | "key" => IgnoredKey::KeyOrToken,
+        "agent" => IgnoredKey::AgentAccess,
+        "writes" | "write" | "write_model" => IgnoredKey::Writes,
+        "notifications" | "follows" | "follow" => IgnoredKey::Notifications,
+        "history" => IgnoredKey::History,
+        "destinations" => IgnoredKey::Destinations,
+        _ => return None,
+    })
+}
+
+fn key_ok(key: &str) -> bool {
+    !key.is_empty() && !key.contains(['.', '[', ']', ':'])
+}
+
+/// A cluster id: short, and nothing that could address another path.
+fn cluster_id_ok(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// One version of the team file: an id (a commit, or the content's hash), the
@@ -123,17 +254,13 @@ impl Version {
         let mut values = Values::new();
         let mut ignored = Vec::new();
         for (key, value) in &map {
-            match key.as_str() {
-                "version" => {}
-                "kubeconfig" => ignore(&mut ignored, key, IgnoredKey::LocalPath),
-                "notifications" | "follows" | "follow" => {
-                    ignore(&mut ignored, key, IgnoredKey::Notifications)
-                }
-                "history" => ignore(&mut ignored, key, IgnoredKey::History),
-                "agent" => ignore(&mut ignored, key, IgnoredKey::AgentAccess),
-                "writes" | "write" | "write_model" => ignore(&mut ignored, key, IgnoredKey::Writes),
-                "clusters" => clusters(value, &mut values, &mut ignored)?,
-                _ => flatten(key, value, &mut values, &mut ignored),
+            if key == "version" {
+                continue;
+            }
+            if key == "clusters" {
+                clusters(value, &mut values, &mut ignored)?;
+            } else {
+                walk(key, key, value, &Map(TOP), &mut values, &mut ignored);
             }
         }
         Ok(Version {
@@ -169,6 +296,9 @@ fn clusters(
         else {
             return Err(VersionError::ClusterWithoutId);
         };
+        if !cluster_id_ok(id) {
+            return Err(VersionError::BadClusterId);
+        }
         if !seen.insert(id.to_string()) {
             return Err(VersionError::DuplicateCluster(id.to_string()));
         }
@@ -177,7 +307,14 @@ fn clusters(
         if let Value::Object(fields) = item {
             for (key, value) in fields {
                 if key != "id" {
-                    flatten(&format!("{base}.{key}"), value, values, ignored);
+                    walk(
+                        &format!("{base}.{key}"),
+                        key,
+                        value,
+                        &Map(CLUSTER),
+                        values,
+                        ignored,
+                    );
                 }
             }
         }
@@ -185,28 +322,50 @@ fn clusters(
     Ok(())
 }
 
-fn flatten(at: &str, value: &Value, values: &mut Values, ignored: &mut Vec<Ignored>) {
-    let last = at.rsplit('.').next().unwrap_or(at);
-    let why = match last {
-        "context" | "talos_context" => Some(IgnoredKey::Context),
-        "talosconfig" | "ca_file" | "api_key_file" => Some(IgnoredKey::LocalPath),
-        "token" | "key" => Some(IgnoredKey::KeyOrToken),
-        "agent" => Some(IgnoredKey::AgentAccess),
-        "writes" | "write" | "write_model" => Some(IgnoredKey::Writes),
-        _ => None,
-    };
-    if let Some(why) = why {
-        ignore(ignored, at, why);
-        return;
+/// Takes `value` at `at` (named `key`) if `allow` lets a team set it; names it
+/// as ignored otherwise.
+fn walk(
+    at: &str,
+    key: &str,
+    value: &Value,
+    parent: &Allow,
+    values: &mut Values,
+    ignored: &mut Vec<Ignored>,
+) {
+    if !key_ok(key) {
+        return ignore(ignored, at, IgnoredKey::BadKey);
     }
-    match value {
-        Value::Object(map) => {
-            for (key, value) in map {
-                flatten(&format!("{at}.{key}"), value, values, ignored);
+    if let Some(why) = named(key) {
+        return ignore(ignored, at, why);
+    }
+    let Map(children) = parent else {
+        return ignore(ignored, at, IgnoredKey::Unknown);
+    };
+    let Some((_, allow)) = children.iter().find(|(name, _)| *name == key) else {
+        return ignore(ignored, at, IgnoredKey::Unknown);
+    };
+    match (allow, value) {
+        (Map(_), Value::Object(map)) => {
+            for (child, value) in map {
+                walk(
+                    &format!("{at}.{child}"),
+                    child,
+                    value,
+                    allow,
+                    values,
+                    ignored,
+                );
             }
         }
-        _ => {
+        (Leaf, Value::String(text)) if text.len() <= MAX_VALUE => {
             values.insert(at.to_string(), value.clone());
         }
+        (Leaf, Value::Number(_) | Value::Bool(_)) => {
+            values.insert(at.to_string(), value.clone());
+        }
+        _ => ignore(ignored, at, IgnoredKey::Unknown),
     }
 }
+
+/// The longest string a team value may be.
+const MAX_VALUE: usize = 2048;

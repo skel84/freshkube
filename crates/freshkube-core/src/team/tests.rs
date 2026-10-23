@@ -156,16 +156,34 @@ fn the_teams_protection_is_a_floor() {
     let same: Overrides = [(key.clone(), json!("protected"))].into();
     assert!(!resolve(&key, &team, &same, &Values::new()).floor_held);
 
-    // A team entry with no level has no floor: the default is guarded.
+    // A team entry that names a cluster and sets no level has a floor of
+    // guarded: open is held at it, protected is allowed.
     let free_key = merge::protection_key("cluster-b");
     let open: Overrides = [(free_key.clone(), json!("open"))].into();
     let r = resolve(&free_key, &team, &open, &Values::new());
+    assert_eq!(r.value, Some(json!("guarded")));
+    assert!(r.floor_held);
+    let protected: Overrides = [(free_key.clone(), json!("protected"))].into();
+    assert!(!resolve(&free_key, &team, &protected, &Values::new()).floor_held);
+    assert_eq!(merge::floor("cluster-b", &team), Some(Protection::Guarded));
+    // A cluster the team doesn't name has no floor.
+    let own_key = merge::protection_key("mine-only");
+    let open: Overrides = [(own_key.clone(), json!("open"))].into();
+    let r = resolve(&own_key, &team, &open, &Values::new());
     assert_eq!(r.value, Some(json!("open")));
-    assert!(!r.floor_held);
+    assert_eq!(merge::floor("mine-only", &team), None);
 
     assert_eq!(
         allowed_levels(Some(Protection::Protected)),
         vec![Protection::ReadOnly, Protection::Protected]
+    );
+    assert_eq!(
+        allowed_levels(Some(Protection::Guarded)),
+        vec![
+            Protection::ReadOnly,
+            Protection::Protected,
+            Protection::Guarded
+        ]
     );
     assert_eq!(allowed_levels(None), Protection::ALL.to_vec());
     assert!(floor_words(Protection::Protected).contains("stricter, not looser"));
@@ -301,6 +319,14 @@ fn the_git_command_runs_nothing_from_the_repo() {
             "-c",
             "core.hooksPath=/app/empty",
             "-c",
+            "protocol.allow=never",
+            "-c",
+            "protocol.https.allow=always",
+            "-c",
+            "protocol.ssh.allow=always",
+            "-c",
+            "http.followRedirects=false",
+            "-c",
             "protocol.file.allow=never",
             "-c",
             "protocol.ext.allow=never",
@@ -326,7 +352,12 @@ fn the_git_command_runs_nothing_from_the_repo() {
     assert!(!with_store.args.join(" ").to_lowercase().contains("token"));
 
     let show = GitFetch::show(&git, mirror, empty);
-    assert_eq!(show.last().unwrap(), "refs/freshkube/team:freshkube.yaml");
+    // The raw blob, so no textconv or filter driver runs.
+    assert_eq!(
+        &show[show.len() - 3..],
+        ["cat-file", "blob", "refs/freshkube/team:freshkube.yaml"]
+    );
+    assert!(!show.contains(&"show".to_string()));
     assert!(show.join(" ").contains("core.hooksPath=/app/empty"));
 }
 
@@ -407,11 +438,15 @@ fn with_print(id: &str, text: &str, print: &str) -> Version {
 
 #[test]
 fn trust_changes_come_first_and_nothing_applies_unreviewed() {
-    let applied = with_print("1", TEAM, "aaaa");
-    let pending = with_print("2", NEXT, "bbbb");
-    let mut review = Review::new(Some(&applied), pending);
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(Ok(with_print("1", TEAM, "aaaa")), at(1));
+    let mut first = m.review().unwrap();
+    example::confirm_all(&mut first);
+    m.apply(first, at(1)).unwrap();
+    m.fetched(Ok(with_print("2", NEXT, "bbbb")), at(2));
+    let mut review = m.review().unwrap();
 
-    let kinds: Vec<Option<TrustKind>> = review.changes.iter().map(|c| c.trust).collect();
+    let kinds: Vec<Option<TrustKind>> = review.changes().iter().map(|c| c.trust).collect();
     let first_plain = kinds.iter().position(Option::is_none).unwrap();
     assert!(kinds[..first_plain].iter().all(Option::is_some));
     assert!(kinds[first_plain..].iter().all(Option::is_none));
@@ -422,13 +457,10 @@ fn trust_changes_come_first_and_nothing_applies_unreviewed() {
     assert!(!trust.contains(&"coroot.server")); // unchanged
     assert!(review.other_changes().any(|c| c.at == "coroot.project"));
 
-    let mut m = Membership::join(source(), Overrides::new());
-    m.applied = Some(applied.clone());
-    m.pending = Some(with_print("2", NEXT, "bbbb"));
     // Not at all, then trust only, then both.
     assert_eq!(
         m.apply(review.clone(), at(2)),
-        Err(NotReviewed(Step::Trust))
+        Err(NotReviewed::Step(Step::Trust))
     );
     assert_eq!(review.step(), Step::Trust);
     // Each trust change is confirmed on its own; the rest can't be before.
@@ -443,13 +475,16 @@ fn trust_changes_come_first_and_nothing_applies_unreviewed() {
         assert!(review.is_confirmed(at_key));
     }
     assert_eq!(review.step(), Step::Rest);
-    assert_eq!(m.apply(review.clone(), at(2)), Err(NotReviewed(Step::Rest)));
-    assert_eq!(m.applied.as_ref().unwrap().id, "1");
+    assert_eq!(
+        m.apply(review.clone(), at(2)),
+        Err(NotReviewed::Step(Step::Rest))
+    );
+    assert_eq!(m.applied().unwrap().id, "1");
     assert!(review.confirm_rest());
     assert!(review.is_finished());
     m.apply(review, at(2)).unwrap();
-    assert_eq!(m.applied.as_ref().unwrap().id, "2");
-    assert!(m.pending.is_none());
+    assert_eq!(m.applied().unwrap().id, "2");
+    assert!(m.pending().is_none());
 }
 
 #[test]
@@ -472,12 +507,12 @@ fn the_first_version_is_reviewed_too() {
     let mut m = Membership::join(source(), Overrides::new());
     m.fetched(Ok(version("1", TEAM)), at(1));
     let mut review = m.review().unwrap();
-    assert!(review.changes.iter().all(|c| c.kind == ChangeKind::Added));
+    assert!(review.changes().iter().all(|c| c.kind == ChangeKind::Added));
     assert!(m.apply(review.clone(), at(1)).is_err());
-    assert!(m.applied.is_none());
+    assert!(m.applied().is_none());
     example::confirm_all(&mut review);
     m.apply(review, at(1)).unwrap();
-    assert!(m.applied.is_some());
+    assert!(m.applied().is_some());
     // The same version again is no update.
     m.fetched(Ok(version("1", TEAM)), at(2));
     assert!(m.review().is_none());
@@ -499,21 +534,21 @@ fn a_failed_fetch_keeps_the_applied_version_and_says_since_when() {
         Err(membership::FetchFailed("the host didn’t answer".into())),
         at(4),
     );
-    let failure = m.failure.clone().unwrap();
+    let failure = m.failure().cloned().unwrap();
     assert_eq!((failure.since, failure.last_try), (at(3), at(4)));
-    assert_eq!(m.applied.as_ref().unwrap().id, "1");
+    assert_eq!(m.applied().unwrap().id, "1");
     assert_eq!(m.team_values()["coroot.project"], json!("shop-api"));
 
     // A parse failure is a failure too.
     let bad =
         Version::parse("3", b"version: 9", BTreeMap::new()).map_err(membership::FetchFailed::from);
     m.fetched(bad, at(5));
-    assert_eq!(m.failure.as_ref().unwrap().since, at(3));
-    assert!(m.failure.as_ref().unwrap().reason.contains("version 9"));
-    assert_eq!(m.applied.as_ref().unwrap().id, "1");
+    assert_eq!(m.failure().unwrap().since, at(3));
+    assert!(m.failure().unwrap().reason.contains("version 9"));
+    assert_eq!(m.applied().unwrap().id, "1");
 
     m.fetched(Ok(version("1", TEAM)), at(6));
-    assert!(m.failure.is_none());
+    assert!(m.failure().is_none());
 }
 
 #[test]
@@ -524,8 +559,8 @@ fn leaving_keeps_a_copy_or_goes_back() {
     let mut review = m.review().unwrap();
     example::confirm_all(&mut review);
     m.apply(review, at(1)).unwrap();
-    m.overrides.insert("coroot.project".into(), json!("mine"));
-    m.overrides.insert("metrics.label".into(), json!("c"));
+    m.set_override("coroot.project", json!("mine"));
+    m.set_override("metrics.label", json!("c"));
 
     let kept = m.clone().leave(Leave::KeepCopy);
     assert_eq!(kept["coroot.server"], json!("https://coroot.example.test"));
@@ -540,8 +575,26 @@ fn leaving_keeps_a_copy_or_goes_back() {
 
 #[test]
 fn display_never_carries_a_query() {
-    let s = Source::parse("https://example.test/f.yaml?token=abc#x", "", "").unwrap();
+    // A query or a fragment is refused, for a file and for a repository.
+    for url in [
+        "https://example.test/f.yaml?token=abc",
+        "https://example.test/f.yaml#x",
+        "https://example.test/team.git?x=1",
+        "git@example.test:team/setup.git#frag",
+    ] {
+        assert_eq!(
+            Source::parse(url, "", ""),
+            Err(Refused::QueryOrFragment),
+            "{url}"
+        );
+    }
+    let s = Source::parse("https://example.test/f.yaml", "", "").unwrap();
     assert_eq!(s.display(), "https://example.test/f.yaml");
+    // Debug prints the redacted address, not the raw one.
+    let git = GitSource::new("ssh://git@example.test/team/setup.git", "", "").unwrap();
+    assert!(!format!("{git:?}").contains("git@"));
+    let https = HttpsSource::new("https://example.test/f.yaml").unwrap();
+    assert!(format!("{https:?}").contains("https://example.test/f.yaml"));
     let _: Value = json!(null);
 }
 
@@ -551,14 +604,14 @@ fn the_example_shapes_tell_their_story() {
     let now = at(20);
     assert!(membership(Shape::NoTeam, now).is_none());
     let (m, review) = membership(Shape::Joined, now).unwrap();
-    assert!(review.is_none() && m.failure.is_none() && m.applied.is_some());
+    assert!(review.is_none() && m.failure().is_none() && m.applied().is_some());
     let (_, review) = membership(Shape::Update, now).unwrap();
     assert_eq!(review.unwrap().trust_changes().count(), 0);
     let (_, review) = membership(Shape::Trust, now).unwrap();
     assert!(review.unwrap().trust_changes().count() >= 4);
     let (m, _) = membership(Shape::Failed, now).unwrap();
-    let failure = m.failure.unwrap();
-    assert!(failure.since < failure.last_try && m.applied.is_some());
+    let failure = m.failure().cloned().unwrap();
+    assert!(failure.since < failure.last_try && m.applied().is_some());
     assert_eq!(Shape::parse("trust"), Some(Shape::Trust));
     assert_eq!(Shape::parse("Trust"), None);
 }
@@ -645,10 +698,250 @@ fn the_fake_is_the_only_fetch_and_a_refresh_takes_its_answer() {
         Err(membership::FetchFailed("the host didn’t answer".into())),
     ]);
     m.refresh(&fetch, at(1));
-    assert_eq!(m.pending.as_ref().unwrap().id, "1");
+    assert_eq!(m.pending().unwrap().id, "1");
     m.refresh(&fetch, at(2));
-    assert_eq!(m.failure.as_ref().unwrap().since, at(2));
+    assert_eq!(m.failure().unwrap().since, at(2));
     // Past its script it fails; it never reads anything.
     m.refresh(&fetch, at(3));
-    assert_eq!(m.failure.as_ref().unwrap().since, at(2));
+    assert_eq!(m.failure().unwrap().since, at(2));
+}
+
+fn walk_ignored(text: &str) -> Version {
+    version("1", text)
+}
+
+#[test]
+fn a_dotted_or_bracketed_key_cannot_reach_another_path() {
+    let v = walk_ignored(
+        "\
+version: 1
+agent.enabled: true
+notifications.quiet: true
+history.keep: 3
+clusters[a].protection: open
+clusters:
+  - id: a
+    role: core
+    protection: protected
+    agent.enabled: true
+    'metrics.value': x
+    'a:b': y
+coroot:
+  server: https://coroot.example.test
+  'sign_in.x': y
+",
+    );
+    for at in [
+        "agent.enabled",
+        "notifications.quiet",
+        "history.keep",
+        "clusters[a].protection",
+        "clusters[a].agent.enabled",
+        "clusters[a].metrics.value",
+        "clusters[a].a:b",
+        "coroot.sign_in.x",
+    ] {
+        assert!(
+            v.ignored
+                .iter()
+                .any(|i| i.at == at && i.why == IgnoredKey::BadKey),
+            "{at} in {:?}",
+            v.ignored
+        );
+    }
+    // None of them landed, and the entry's own level stands.
+    let keys: Vec<&str> = v.values.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        [
+            "clusters[a]",
+            "clusters[a].protection",
+            "clusters[a].role",
+            "coroot.server"
+        ]
+    );
+    assert_eq!(v.values["clusters[a].protection"], json!("protected"));
+    for key in ["agent.enabled", "notifications.quiet", "history.keep"] {
+        let r = resolve(key, &v.values, &Overrides::new(), &Values::new());
+        assert_eq!((r.value, r.origin), (None, Origin::Default), "{key}");
+    }
+}
+
+#[test]
+fn only_what_a_team_may_set_gets_through() {
+    let v = walk_ignored(
+        "\
+version: 1
+destinations:
+  - {server: 'https://x.example.test', entry: a}
+somthing_new: 1
+coroot:
+  server: https://coroot.example.test
+  sign_in: api-key
+  unknown_field: 1
+  project: [not, a, scalar]
+metrics:
+  mode: central
+  store:
+    service: {namespace: vm, name: vmselect, port: 8481}
+    surprise: 1
+sources: {kargo: b}
+clusters:
+  - id: a
+    role: core
+    surprise: 1
+    results: {forward: {namespace: tekton, service: r, port: 8080}}
+",
+    );
+    let unknown = |at: &str| {
+        v.ignored
+            .iter()
+            .any(|i| i.at == at && i.why == IgnoredKey::Unknown)
+    };
+    for at in [
+        "somthing_new",
+        "coroot.unknown_field",
+        "coroot.project",
+        "metrics.store.surprise",
+        "clusters[a].surprise",
+    ] {
+        assert!(unknown(at), "{at} in {:?}", v.ignored);
+    }
+    assert!(
+        v.ignored
+            .iter()
+            .any(|i| i.at == "destinations" && i.why == IgnoredKey::Destinations)
+    );
+    for key in [
+        "coroot.server",
+        "coroot.sign_in",
+        "metrics.mode",
+        "metrics.store.service.name",
+        "sources.kargo",
+        "clusters[a].results.forward.port",
+    ] {
+        assert!(v.values.contains_key(key), "{key}");
+    }
+    // A cluster id that could address another path is refused outright.
+    for id in ["a.b", "a]", "a b", "", &"x".repeat(65)] {
+        let text = format!("version: 1\nclusters:\n  - id: '{id}'\n");
+        let parsed = Version::parse("x", text.as_bytes(), BTreeMap::new());
+        assert!(parsed.is_err(), "{id:?}");
+        assert!(!parsed.unwrap_err().to_string().contains(id) || id.is_empty());
+    }
+}
+
+#[test]
+fn a_review_applies_only_for_the_versions_it_was_made_for() {
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(Ok(version("1", TEAM)), at(1));
+    let mut first = m.review().unwrap();
+    example::confirm_all(&mut first);
+    let forged = Review::new(None, version("9", NEXT)); // for another version
+    let mut forged = forged;
+    example::confirm_all(&mut forged);
+    assert_eq!(m.apply(forged, at(1)), Err(NotReviewed::Stale));
+    assert!(m.applied().is_none());
+
+    m.apply(first.clone(), at(1)).unwrap();
+    // A finished review can't be used twice, nor after a newer version came.
+    assert_eq!(m.apply(first.clone(), at(2)), Err(NotReviewed::Stale));
+    m.fetched(Ok(version("2", NEXT)), at(3));
+    let mut stale = m.review().unwrap();
+    example::confirm_all(&mut stale);
+    m.fetched(Ok(version("3", TEAM)), at(4));
+    assert_eq!(m.apply(stale, at(4)), Err(NotReviewed::Stale));
+    assert_eq!(m.applied().unwrap().id, "1");
+    // A review made against another applied version is stale too.
+    let mut other_base = Review::new(Some(&version("0", TEAM)), version("3", TEAM));
+    example::confirm_all(&mut other_base);
+    assert_eq!(m.apply(other_base, at(5)), Err(NotReviewed::Stale));
+    // The honest one still applies.
+    let mut honest = m.review().unwrap();
+    example::confirm_all(&mut honest);
+    m.apply(honest, at(6)).unwrap();
+    assert_eq!(m.applied().unwrap().id, "3");
+}
+
+#[test]
+fn every_setting_is_a_trust_change_unless_it_is_known_safe() {
+    let old = "\
+version: 1
+clusters:
+  - id: a
+    role: core
+    fingerprint: one
+    metrics: {value: x}
+    coroot: {project: p, cluster: c}
+metrics:
+  mode: central
+  label: cluster
+  store: {entry: a, service: {namespace: vm, name: vmselect, port: 8481}}
+coroot: {server: 'https://coroot.example.test', sign_in: api-key, project: shop}
+supply_chain: {transparency_log: false}
+sources: {kargo: a}
+";
+    let new = "\
+version: 1
+clusters:
+  - id: a
+    role: cicd
+    fingerprint: two
+    metrics: {value: y}
+    coroot: {project: q, cluster: d}
+    results: {forward: {namespace: tekton, service: r, port: 8080}}
+metrics:
+  mode: per-entry
+  label: site
+  store: {entry: b, service: {namespace: other, name: vmselect, port: 8481}}
+coroot: {server: 'https://coroot.example.test', sign_in: session, project: shop2}
+supply_chain: {transparency_log: true}
+sources: {kargo: b}
+";
+    let review = Review::new(Some(&version("1", old)), version("2", new));
+    let trust: Vec<&str> = review.trust_changes().map(|c| c.at.as_str()).collect();
+    for at in [
+        "clusters[a].fingerprint",
+        "clusters[a].results.forward.namespace",
+        "clusters[a].results.forward.service",
+        "clusters[a].results.forward.port",
+        "coroot.sign_in",
+        "metrics.mode",
+        "metrics.store.entry",
+        "metrics.store.service.namespace",
+        "supply_chain.transparency_log",
+        "sources.kargo",
+    ] {
+        assert!(trust.contains(&at), "{at} in {trust:?}");
+    }
+    let safe: Vec<&str> = review.other_changes().map(|c| c.at.as_str()).collect();
+    for at in [
+        "clusters[a].role",
+        "clusters[a].metrics.value",
+        "clusters[a].coroot.project",
+        "clusters[a].coroot.cluster",
+        "coroot.project",
+        "metrics.label",
+    ] {
+        assert!(safe.contains(&at), "{at} in {safe:?}");
+    }
+    // Stopping to set one is a change of trust too.
+    let dropped = Review::new(Some(&version("2", new)), version("3", "version: 1\n"));
+    assert!(
+        dropped
+            .trust_changes()
+            .any(|c| c.at == "supply_chain.transparency_log" && c.kind == ChangeKind::Removed)
+    );
+}
+
+#[test]
+fn a_source_host_or_user_that_starts_with_a_dash_is_refused() {
+    for url in [
+        "ssh://-oProxyCommand=id@example.test/team.git",
+        "ssh://git@-example/team.git",
+        "git@-example:team/setup.git",
+        "-x@example.test:team/setup.git",
+    ] {
+        assert!(GitSource::new(url, "", "").is_err(), "{url}");
+    }
 }

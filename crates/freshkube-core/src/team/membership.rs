@@ -33,14 +33,14 @@ pub enum Leave {
 /// A person's membership of one team.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Membership {
-    pub source: Source,
-    pub applied: Option<Version>,
-    pub applied_at: Option<DateTime<Utc>>,
+    source: Source,
+    applied: Option<Version>,
+    applied_at: Option<DateTime<Utc>>,
     /// A fetched version that waits for review.
-    pub pending: Option<Version>,
-    pub failure: Option<Failure>,
+    pending: Option<Version>,
+    failure: Option<Failure>,
     /// Your overrides now.
-    pub overrides: Overrides,
+    overrides: Overrides,
     /// Your overrides from before joining.
     before_joining: Overrides,
 }
@@ -57,6 +57,35 @@ impl Membership {
             before_joining: overrides.clone(),
             overrides,
         }
+    }
+
+    pub fn source(&self) -> &Source {
+        &self.source
+    }
+
+    pub fn applied(&self) -> Option<&Version> {
+        self.applied.as_ref()
+    }
+
+    pub fn applied_at(&self) -> Option<DateTime<Utc>> {
+        self.applied_at
+    }
+
+    pub fn pending(&self) -> Option<&Version> {
+        self.pending.as_ref()
+    }
+
+    pub fn failure(&self) -> Option<&Failure> {
+        self.failure.as_ref()
+    }
+
+    pub fn overrides(&self) -> &Overrides {
+        &self.overrides
+    }
+
+    /// Sets one of your own values.
+    pub fn set_override(&mut self, key: impl Into<String>, value: Value) {
+        self.overrides.insert(key.into(), value);
     }
 
     /// The team's applied values; none before the first review.
@@ -104,7 +133,7 @@ impl Membership {
 
     /// Applies a finished review. Nothing else changes the applied version.
     pub fn apply(&mut self, review: Review, now: DateTime<Utc>) -> Result<(), NotReviewed> {
-        let version = review.apply()?;
+        let version = review.apply(self.applied.as_ref(), self.pending.as_ref())?;
         self.applied = Some(version);
         self.applied_at = Some(now);
         self.pending = None;

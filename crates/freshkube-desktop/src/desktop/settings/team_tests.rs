@@ -177,3 +177,15 @@ fn the_page_keeps_the_shared_frame_at_both_sizes(cx: &mut TestAppContext) {
         .unwrap();
     }
 }
+
+#[test]
+fn counts_are_worded_in_the_singular_and_the_plural() {
+    use super::team::{TeamState, plural};
+    assert_eq!(plural(1, "trust change", "trust changes"), "trust change");
+    assert_eq!(plural(0, "trust change", "trust changes"), "trust changes");
+    assert_eq!(plural(4, "trust change", "trust changes"), "trust changes");
+    let update = TeamState::example(Shape::Update, chrono::Utc::now());
+    assert!(update.shown.counts.starts_with("0 trust changes, 0 still"));
+    let trust = TeamState::example(Shape::Trust, chrono::Utc::now());
+    assert!(trust.shown.counts.starts_with("4 trust changes, 4 still"));
+}

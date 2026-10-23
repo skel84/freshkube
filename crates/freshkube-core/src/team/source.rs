@@ -14,6 +14,7 @@ pub enum Refused {
     LocalPath,
     BadRef,
     BadPath,
+    QueryOrFragment,
     CrossHostRedirect,
 }
 
@@ -27,6 +28,7 @@ impl std::fmt::Display for Refused {
             Refused::LocalPath => "a path on this computer is not a team source",
             Refused::BadRef => "that branch or tag name can’t be used",
             Refused::BadPath => "that file path can’t be used",
+            Refused::QueryOrFragment => "an address with a query or a fragment is refused",
             Refused::CrossHostRedirect => "the address redirects to another host, which is refused",
         })
     }
@@ -48,6 +50,9 @@ impl Source {
         let text = text.trim();
         if text.starts_with("http://") {
             return Err(Refused::PlainHttp);
+        }
+        if text.contains(['?', '#']) {
+            return Err(Refused::QueryOrFragment);
         }
         if text.starts_with("https://") && !text.trim_end_matches('/').ends_with(".git") {
             return HttpsSource::new(text).map(Source::Https);
@@ -84,12 +89,22 @@ pub fn redact(url: &str) -> String {
 }
 
 /// A file in a git repository at a branch or tag.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GitSource {
     pub url: String,
     pub git_ref: String,
     /// The setup file's path inside the repository.
     pub path: String,
+}
+
+impl std::fmt::Debug for GitSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitSource")
+            .field("url", &self.redacted())
+            .field("git_ref", &self.git_ref)
+            .field("path", &self.path)
+            .finish()
+    }
 }
 
 impl GitSource {
@@ -107,6 +122,9 @@ impl GitSource {
         if url.contains("::") {
             return Err(Refused::Scheme); // `ext::` and friends run commands
         }
+        if url.contains(['?', '#']) {
+            return Err(Refused::QueryOrFragment);
+        }
         if let Some((scheme, rest)) = url.split_once("://") {
             match scheme {
                 "https" | "ssh" => {}
@@ -119,7 +137,9 @@ impl GitSource {
                 // password, or any userinfo on https, may be a credential.
                 return Err(Refused::Credentials);
             }
-            if parsed.host_str().is_none() || rest.is_empty() {
+            let dashed = |s: &str| s.starts_with('-');
+            if parsed.host_str().is_none_or(dashed) || dashed(parsed.username()) || rest.is_empty()
+            {
                 return Err(Refused::NotAnAddress);
             }
         } else if !is_scp_like(url) {
@@ -158,7 +178,10 @@ fn is_scp_like(url: &str) -> bool {
     match url.split_once(':') {
         Some((head, tail)) => {
             let host = head.rsplit_once('@').map_or(head, |(_, host)| host);
+            let user = head.split_once('@').map_or("", |(user, _)| user);
             !tail.is_empty()
+                && !host.starts_with('-')
+                && !user.starts_with('-')
                 && !tail.starts_with('/')
                 && !host.is_empty()
                 && !head.contains('/')
@@ -189,9 +212,17 @@ fn relative_ok(path: &str) -> bool {
 }
 
 /// A file at an HTTPS address, with an optional token kept in the key store.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct HttpsSource {
     pub url: Url,
+}
+
+impl std::fmt::Debug for HttpsSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpsSource")
+            .field("url", &redact(self.url.as_str()))
+            .finish()
+    }
 }
 
 impl HttpsSource {
@@ -207,6 +238,9 @@ impl HttpsSource {
         }
         if !url.username().is_empty() || url.password().is_some() {
             return Err(Refused::Credentials);
+        }
+        if url.query().is_some() || url.fragment().is_some() {
+            return Err(Refused::QueryOrFragment);
         }
         Ok(Self { url })
     }
@@ -298,6 +332,12 @@ impl GitFetch {
             args.push(setting);
         };
         config(format!("core.hooksPath={}", empty_hooks.display()));
+        // Only https and ssh, whatever `url.insteadOf` rewrites an address to,
+        // and no redirect is followed.
+        config("protocol.allow=never".into());
+        config("protocol.https.allow=always".into());
+        config("protocol.ssh.allow=always".into());
+        config("http.followRedirects=false".into());
         config("protocol.file.allow=never".into());
         config("protocol.ext.allow=never".into());
         config("submodule.recurse=false".into());
@@ -326,14 +366,16 @@ impl GitFetch {
         }
     }
 
-    /// The command that reads the setup file at the fetched commit.
+    /// The command that reads the setup file at the fetched commit: the raw
+    /// blob, so no `textconv` or filter driver runs.
     pub fn show(source: &GitSource, mirror: &Path, empty_hooks: &Path) -> Vec<String> {
         vec![
             "-C".into(),
             mirror.display().to_string(),
             "-c".into(),
             format!("core.hooksPath={}", empty_hooks.display()),
-            "show".into(),
+            "cat-file".into(),
+            "blob".into(),
             format!("{TRACKING_REF}:{}", source.path),
         ]
     }

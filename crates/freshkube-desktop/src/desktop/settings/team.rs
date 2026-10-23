@@ -2,6 +2,7 @@
 //! file this person has joined, what it ignores, a version waiting for
 //! review, and how to leave. The rules are core's `team` module; this draws
 //! them. Slice 1 runs on example data (`FRESHKUBE_TEAM`): nothing is fetched.
+//! Words and lists are derived when the data changes, never in `render`.
 
 use chrono::{DateTime, Utc};
 use freshkube_core::team::{Change, ChangeKind, Leave, Membership, Review, Step, example::Shape};
@@ -15,26 +16,126 @@ use super::SettingsPage;
 use crate::ui::{self, Tone, dp};
 
 /// What the section holds: the membership, the review of a waiting version,
-/// and how the person last left.
+/// how the person last left, and what the page draws, worded from them.
 #[derive(Default)]
 pub(super) struct TeamState {
     membership: Option<Membership>,
     review: Option<Review>,
     /// Set once the person has left; the overrides to save are slice 2's.
     left: Option<Leave>,
+    pub(super) shown: Shown,
+}
+
+/// A change as the review lists it.
+struct ChangeRow {
+    at: String,
+    label: String,
+    line: String,
+    /// A trust change, and whether it is confirmed.
+    trust: Option<bool>,
+}
+
+/// The failure banner's words.
+struct FailureWords {
+    lead: String,
+    body: String,
+}
+
+/// Everything `render` draws, derived by [`TeamState::derive`].
+#[derive(Default)]
+pub(super) struct Shown {
+    source: String,
+    applied: String,
+    ignored: String,
+    failure: Option<FailureWords>,
+    /// The review: its lead, its count line and the rows of the current step.
+    lead: &'static str,
+    pub(super) counts: String,
+    step: Option<Step>,
+    rows: Vec<ChangeRow>,
 }
 
 impl TeamState {
     pub(super) fn example(shape: Shape, now: DateTime<Utc>) -> Self {
-        match freshkube_core::team::example::membership(shape, now) {
+        let mut state = match freshkube_core::team::example::membership(shape, now) {
             Some((membership, review)) => Self {
                 membership: Some(membership),
                 review,
-                left: None,
+                ..Self::default()
             },
             None => Self::default(),
-        }
+        };
+        state.derive();
+        state
     }
+
+    /// Words the page from the membership and the review.
+    fn derive(&mut self) {
+        let mut shown = Shown::default();
+        if let Some(team) = &self.membership {
+            shown.source = team.source().display();
+            shown.applied = team.applied().map_or("None".to_string(), |v| {
+                let at = team.applied_at().map(when).unwrap_or_default();
+                format!("{} · applied {at}", v.id)
+            });
+            shown.ignored = match team.applied() {
+                Some(v) if !v.ignored.is_empty() => v
+                    .ignored
+                    .iter()
+                    .map(|i| format!("{} ({})", i.at, i.why.words()))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                _ => "Nothing".to_string(),
+            };
+            shown.failure = team.failure().map(|failure| FailureWords {
+                lead: format!("Couldn’t fetch since {}", when(failure.since)),
+                body: format!(
+                    "{} {}",
+                    failure.reason,
+                    team.applied()
+                        .map_or("Nothing is applied.".to_string(), |v| {
+                            format!("Still using version {}.", v.id)
+                        })
+                ),
+            });
+        }
+        if let Some(review) = &self.review {
+            let step = review.step();
+            shown.step = Some(step);
+            shown.lead = match step {
+                Step::Trust => "A new team version waits: review trust changes first",
+                Step::Rest => "A new team version waits: review the other changes",
+            };
+            let trust = review.trust_changes().count();
+            let waiting = review.trust_pending().count();
+            shown.counts = format!(
+                "{} {}, {waiting} still to confirm. Nothing applies until you confirm each.",
+                trust,
+                plural(trust, "trust change", "trust changes"),
+            );
+            let listed: Vec<&Change> = match step {
+                Step::Trust => review.trust_changes().collect(),
+                Step::Rest => review.other_changes().collect(),
+            };
+            shown.rows = listed
+                .into_iter()
+                .map(|change| ChangeRow {
+                    at: change.at.clone(),
+                    label: change.trust.map_or_else(
+                        || change.at.clone(),
+                        |t| format!("{} · {}", change.at, t.words()),
+                    ),
+                    line: change_line(change),
+                    trust: change.trust.map(|_| review.is_confirmed(&change.at)),
+                })
+                .collect();
+        }
+        self.shown = shown;
+    }
+}
+
+pub(super) fn plural<'a>(n: usize, one: &'a str, many: &'a str) -> &'a str {
+    if n == 1 { one } else { many }
 }
 
 /// A value the tests can read back.
@@ -80,7 +181,7 @@ impl SettingsPage {
         let header = page::PageHeader::new("settings-team", "Team setup").render(window, cx);
         let body = match (&self.team.left, &self.team.membership) {
             (Some(how), _) => self.team_left(*how, cx),
-            (None, Some(membership)) => self.team_joined(membership, narrow, cx),
+            (None, Some(_)) => self.team_joined(narrow, cx),
             (None, None) => self.team_empty(narrow, cx),
         };
         page::padded("settings-page")
@@ -102,7 +203,7 @@ impl SettingsPage {
                     .narrow(narrow)
                     .row(form::row("team-about-none", "Team", "Not in a team").hint(
                         "A team can share one freshkube.yaml from a git repository or an \
-                                 HTTPS address. Your contexts, keys and agent access stay yours.",
+                             HTTPS address. Your contexts, keys and agent access stay yours.",
                     ))
                     .render(cx),
             )
@@ -121,110 +222,74 @@ impl SettingsPage {
             .into_any_element()
     }
 
-    fn team_joined(&self, team: &Membership, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn team_joined(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+        let shown = &self.team.shown;
         let mut column = v_flex().id("team-joined").test_support().gap(dp(12.));
-        if let Some(failure) = &team.failure {
-            let still = team
-                .applied
-                .as_ref()
-                .map_or("Nothing is applied.".to_string(), |v| {
-                    format!("Still using version {}.", v.id)
-                });
+        if let Some(failure) = &shown.failure {
             column = column.child(div().id("team-failure").test_support().child(ui::banner(
                 Tone::Warn,
-                Some(format!("Couldn’t fetch since {}", when(failure.since)).into()),
-                format!("{} {still}", failure.reason),
+                Some(failure.lead.clone().into()),
+                failure.body.clone(),
                 None,
                 cx,
             )));
         }
-        if let Some(review) = &self.team.review {
-            column = column.child(self.team_review(review, narrow, cx));
+        if self.team.review.is_some() {
+            column = column.child(self.team_review(narrow, cx));
         }
-        let applied = team.applied.as_ref().map_or("None".to_string(), |v| {
-            let at = team.applied_at.map(when).unwrap_or_default();
-            format!("{} · applied {at}", v.id)
-        });
-        let mut about = form::group("team-source-group", "Source")
+        let about = form::group("team-source-group", "Source")
             .narrow(narrow)
             .row(form::row(
                 "team-source",
                 "Source",
-                value("team-source-value", team.source.display()),
+                value("team-source-value", shown.source.clone()),
             ))
             .row(form::row(
                 "team-version",
                 "Applied version",
-                value("team-version-value", applied),
-            ));
-        if let Some(version) = &team.applied {
-            let ignored = if version.ignored.is_empty() {
-                "Nothing".to_string()
-            } else {
-                version
-                    .ignored
-                    .iter()
-                    .map(|i| format!("{} ({})", i.at, i.why.words()))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            };
-            about = about.row(
+                value("team-version-value", shown.applied.clone()),
+            ))
+            .row(
                 form::row(
                     "team-ignored",
                     "Ignored keys",
-                    value("team-ignored-value", ignored),
+                    value("team-ignored-value", shown.ignored.clone()),
                 )
                 .hint("The team file may not set these. They are named here and left out."),
             );
-        }
-        column = column.child(about.render(cx));
         column
+            .child(about.render(cx))
             .child(self.team_leave_group(narrow, cx))
             .into_any_element()
     }
 
-    fn team_review(&self, review: &Review, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
-        let step = review.step();
-        let lead = match step {
-            Step::Trust => "A new team version waits: review trust changes first",
-            Step::Rest => "A new team version waits: review the other changes",
-        };
-        let trust = review.trust_changes().count();
-        let waiting = review.trust_pending().count();
+    fn team_review(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+        let shown = &self.team.shown;
         let mut group = form::group("team-review", "Update waiting").narrow(narrow);
-        let shown: Vec<&Change> = match step {
-            Step::Trust => review.trust_changes().collect(),
-            Step::Rest => review.other_changes().collect(),
-        };
-        if shown.is_empty() {
+        if shown.rows.is_empty() {
             group = group.row(form::row(
                 "team-review-none",
                 "Changes",
                 "No changes to review",
             ));
         }
-        for change in shown {
-            let label = change.trust.map_or_else(
-                || change.at.clone(),
-                |t| format!("{} · {}", change.at, t.words()),
-            );
-            let line = change_line(change);
-            let control = match change.trust {
+        for row in &shown.rows {
+            let control = match row.trust {
                 // Each trust change is confirmed on its own.
-                Some(_) if review.is_confirmed(&change.at) => h_flex()
+                Some(true) => h_flex()
                     .gap(dp(8.))
-                    .child(line)
+                    .child(row.line.clone())
                     .child("Confirmed")
                     .into_any_element(),
-                Some(_) => {
+                Some(false) => {
                     let this = cx.entity();
-                    let at = change.at.clone();
+                    let at = row.at.clone();
                     h_flex()
                         .gap(dp(8.))
                         .items_center()
-                        .child(line)
+                        .child(row.line.clone())
                         .child(
-                            Button::new(SharedString::from(format!("team-confirm-{}", change.at)))
+                            Button::new(SharedString::from(format!("team-confirm-{}", row.at)))
                                 .small()
                                 .outline()
                                 .label("Confirm")
@@ -235,15 +300,15 @@ impl SettingsPage {
                         )
                         .into_any_element()
                 }
-                None => line.into_any_element(),
+                None => row.line.clone().into_any_element(),
             };
             group = group.row(form::row(
-                format!("team-change-{}", change.at),
-                label,
+                format!("team-change-{}", row.at),
+                row.label.clone(),
                 control,
             ));
         }
-        if step == Step::Rest {
+        if shown.step == Some(Step::Rest) {
             let this = cx.entity();
             let apply = form::Action::new("team-apply", "Apply update", move |_, _, cx| {
                 this.update(cx, |page, cx| page.team_apply(cx));
@@ -257,10 +322,8 @@ impl SettingsPage {
             .gap(dp(8.))
             .child(ui::banner(
                 Tone::Info,
-                Some(lead.into()),
-                format!(
-                    "{trust} trust changes, {waiting} still to confirm. Nothing applies until you confirm each."
-                ),
+                Some(shown.lead.into()),
+                shown.counts.clone(),
                 None,
                 cx,
             ))
@@ -273,17 +336,22 @@ impl SettingsPage {
         let back = cx.entity();
         form::group("team-leave", "Leave the team")
             .narrow(narrow)
-            .row(
-                form::row(
-                    "team-leave-row",
-                    "Leaving",
-                    div().child("Keep a copy of the team’s values, or go back to your setup from before you joined."),
+            .row(form::row(
+                "team-leave-row",
+                "Leaving",
+                div().child(
+                    "Keep a copy of the team’s values, or go back to your setup from before you \
+                     joined.",
                 ),
-            )
+            ))
             .actions(form::actions(
-                form::Action::new("team-leave-copy", "Leave and keep a copy", move |_, _, cx| {
-                    copy.update(cx, |page, cx| page.team_leave(Leave::KeepCopy, cx));
-                }),
+                form::Action::new(
+                    "team-leave-copy",
+                    "Leave and keep a copy",
+                    move |_, _, cx| {
+                        copy.update(cx, |page, cx| page.team_leave(Leave::KeepCopy, cx));
+                    },
+                ),
                 form::Action::new("team-leave-back", "Leave and go back", move |_, _, cx| {
                     back.update(cx, |page, cx| page.team_leave(Leave::GoBack, cx));
                 }),
@@ -296,6 +364,7 @@ impl SettingsPage {
     fn team_confirm_trust(&mut self, at: &str, cx: &mut Context<Self>) {
         if let Some(review) = self.team.review.as_mut() {
             review.confirm_trust(at);
+            self.team.derive();
             cx.notify();
         }
     }
@@ -310,6 +379,7 @@ impl SettingsPage {
             if let Some(team) = self.team.membership.as_mut() {
                 let _ = team.apply(review, Utc::now());
             }
+            self.team.derive();
         }
         cx.notify();
     }
@@ -320,6 +390,7 @@ impl SettingsPage {
             let _overrides = team.leave(how);
             self.team.review = None;
             self.team.left = Some(how);
+            self.team.derive();
             cx.notify();
         }
     }

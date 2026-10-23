@@ -1,5 +1,8 @@
-//! A new version waits behind a review in two steps: trust changes first, then
-//! the rest. It never applies without both.
+//! A new version waits behind a review in two steps: each trust change
+//! first, on its own, then the rest. It never applies without both, and only
+//! for the version it was made for.
+
+use std::collections::BTreeSet;
 
 use serde_json::Value;
 
@@ -11,18 +14,19 @@ use crate::write::Protection;
 pub enum TrustKind {
     /// A signing key's fingerprint.
     SigningKey,
-    /// An address that receives a sign-in or a token.
-    Address,
     /// A protection level looser than before.
     LoosensProtection,
+    /// Any other setting that decides where a sign-in, a token or a read goes,
+    /// or how it is checked: every setting not on the safe list.
+    Reach,
 }
 
 impl TrustKind {
     pub fn words(self) -> &'static str {
         match self {
             TrustKind::SigningKey => "Signing key",
-            TrustKind::Address => "Receives a sign-in or token",
             TrustKind::LoosensProtection => "Loosens protection",
+            TrustKind::Reach => "Changes where a sign-in or read goes",
         }
     }
 }
@@ -51,42 +55,46 @@ pub enum Step {
     Rest,
 }
 
-/// Applying a review that isn't finished.
+/// Why a review does not apply.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NotReviewed(pub Step);
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Review {
-    pub changes: Vec<Change>,
-    version: Version,
-    /// The trust changes the person has confirmed, each on its own.
-    confirmed: std::collections::BTreeSet<String>,
-    rest_done: bool,
+pub enum NotReviewed {
+    /// A step is not confirmed.
+    Step(Step),
+    /// The review was made for another applied or waiting version.
+    Stale,
 }
 
-/// Keys whose value is an address that receives a sign-in or a token.
-fn is_address(key: &str) -> bool {
-    let last = key.rsplit('.').next().unwrap_or(key);
-    matches!(
-        last,
-        "server" | "url" | "address" | "transparency_url" | "kargo_api" | "argocd_api"
-    ) && !key.starts_with("destinations")
+/// The settings that move no trust: anything else that changes is a trust
+/// change. Protection is judged by direction, not by name.
+fn is_safe(key: &str) -> bool {
+    let tail = key.split_once("].").map_or(key, |(_, rest)| rest);
+    let cluster_marker = key.starts_with("clusters[") && key.ends_with(']');
+    cluster_marker
+        || matches!(
+            tail,
+            "role"
+                | "coroot.project"
+                | "coroot.cluster"
+                | "metrics.value"
+                | "metrics.label"
+                | "delivery.build_namespace"
+                | "delivery.stage_naming.name_template"
+                | "delivery.stage_naming.project_key"
+        )
 }
 
 fn trust_of(key: &str, before: Option<&Value>, after: Option<&Value>) -> Option<TrustKind> {
     if key.starts_with("fingerprint:") {
         return Some(TrustKind::SigningKey);
     }
-    if key.ends_with(".protection") && key.starts_with("clusters[") {
-        let was: Protection = before
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        let now: Protection = after
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default();
-        return (now > was).then_some(TrustKind::LoosensProtection);
+    if key.starts_with("clusters[") && key.ends_with(".protection") {
+        let level = |v: Option<&Value>| -> Protection {
+            v.and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default()
+        };
+        return (level(after) > level(before)).then_some(TrustKind::LoosensProtection);
     }
-    (is_address(key) && after.is_some()).then_some(TrustKind::Address)
+    (!is_safe(key)).then_some(TrustKind::Reach)
 }
 
 /// All keys a version sets, with signing key fingerprints as `fingerprint:path`.
@@ -102,16 +110,25 @@ fn flat(version: Option<&Version>) -> std::collections::BTreeMap<String, Value> 
     all
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Review {
+    changes: Vec<Change>,
+    /// The applied version this was made against, and the one it is for.
+    base: Option<String>,
+    target: Version,
+    /// The trust changes the person has confirmed, each on its own.
+    confirmed: BTreeSet<String>,
+    rest_done: bool,
+}
+
 impl Review {
-    pub fn new(applied: Option<&Version>, pending: Version) -> Self {
+    /// Only a [`super::Membership`] makes a review, of its waiting version
+    /// against its applied one.
+    pub(super) fn new(applied: Option<&Version>, pending: Version) -> Self {
         let before = flat(applied);
         let after = flat(Some(&pending));
         let mut changes = Vec::new();
-        for key in before
-            .keys()
-            .chain(after.keys())
-            .collect::<std::collections::BTreeSet<_>>()
-        {
+        for key in before.keys().chain(after.keys()).collect::<BTreeSet<_>>() {
             let (was, now) = (before.get(key), after.get(key));
             if was == now {
                 continue;
@@ -139,10 +156,20 @@ impl Review {
         });
         Self {
             changes,
-            version: pending,
-            confirmed: Default::default(),
+            base: applied.map(|v| v.id.clone()),
+            target: pending,
+            confirmed: BTreeSet::new(),
             rest_done: false,
         }
+    }
+
+    pub fn changes(&self) -> &[Change] {
+        &self.changes
+    }
+
+    /// The version this review is for.
+    pub fn target_id(&self) -> &str {
+        &self.target.id
     }
 
     /// The step the person is on: every trust change is confirmed on its own
@@ -195,13 +222,22 @@ impl Review {
         self.step() == Step::Rest && self.rest_done
     }
 
-    pub(super) fn apply(self) -> Result<Version, NotReviewed> {
+    /// The version, if every step is confirmed and this review is of the
+    /// given applied and waiting versions.
+    pub(super) fn apply(
+        self,
+        applied: Option<&Version>,
+        pending: Option<&Version>,
+    ) -> Result<Version, NotReviewed> {
+        if self.base.as_deref() != applied.map(|v| v.id.as_str()) || pending != Some(&self.target) {
+            return Err(NotReviewed::Stale);
+        }
         if self.step() == Step::Trust {
-            return Err(NotReviewed(Step::Trust));
+            return Err(NotReviewed::Step(Step::Trust));
         }
         if !self.rest_done {
-            return Err(NotReviewed(Step::Rest));
+            return Err(NotReviewed::Step(Step::Rest));
         }
-        Ok(self.version)
+        Ok(self.target)
     }
 }

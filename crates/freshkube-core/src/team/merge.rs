@@ -70,16 +70,30 @@ fn level(value: Option<&Value>) -> Option<Protection> {
     Some(serde_json::from_value(value.clone()).unwrap_or_default())
 }
 
+/// The floor the team sets a cluster: its level, else guarded when the team
+/// names the cluster. A cluster the team doesn't name has no floor.
+pub fn floor(id: &str, team: &Values) -> Option<Protection> {
+    match level(team.get(&protection_key(id))) {
+        Some(floor) => Some(floor),
+        None => team
+            .contains_key(&format!("clusters[{id}]"))
+            .then_some(Protection::Guarded),
+    }
+}
+
 /// Resolves one key.
 pub fn resolve(key: &str, team: &Values, yours: &Overrides, defaults: &Values) -> Resolved {
     let team_value = team.get(key);
     if let Some(mine) = yours.get(key) {
         if is_protection(key)
-            && let (Some(floor), Some(mine_level)) = (level(team_value), level(Some(mine)))
+            && let Some(id) = key
+                .strip_prefix("clusters[")
+                .and_then(|rest| rest.strip_suffix("].protection"))
+            && let (Some(floor), Some(mine_level)) = (floor(id, team), level(Some(mine)))
             && mine_level > floor
         {
             return Resolved {
-                value: team_value.cloned(),
+                value: Some(Value::String(floor.key().into())),
                 origin: Origin::Team,
                 floor_held: true,
             };
@@ -106,8 +120,8 @@ pub fn resolve(key: &str, team: &Values, yours: &Overrides, defaults: &Values) -
     }
 }
 
-/// The levels a cluster may be set to: the team's level and every stricter
-/// one. A team entry with no level has no floor.
+/// The levels a cluster may be set to: the floor and every stricter level.
+/// `None` is a cluster the team doesn't name: no floor.
 pub fn allowed_levels(team_level: Option<Protection>) -> Vec<Protection> {
     Protection::ALL
         .into_iter()
