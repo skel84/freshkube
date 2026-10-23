@@ -14,6 +14,7 @@ use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
 use freshkube_delivery::timeline::example::Shape as TimelineShape;
+use freshkube_resources::example::traffic::Shape as ServicesShape;
 
 /// `FRESHKUBE_THEME`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +48,18 @@ pub(crate) enum TabsShape {
     Clusters,
     /// A second tab bound to a cluster entry the example file does not list.
     Missing,
+}
+
+/// `FRESHKUBE_CRASH`: the crash notice and the panics that lead to it (#953).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CrashShape {
+    /// The "last session ended unexpectedly" notice with an invented crash
+    /// when none was found; the marker file is not touched.
+    Notice,
+    /// The app panics on its main thread a moment after the window opens.
+    Panic,
+    /// A Tokio task panics a moment after the window opens.
+    Task,
 }
 
 /// `FRESHKUBE_LINKS`: the outcome every example link is forced to, or how
@@ -111,6 +124,11 @@ pub struct DebugOptions {
     /// could read (`busy`, `quiet`, `partial`, `short-events`, `none-read`);
     /// anything else is `busy`.
     pub(crate) timeline: TimelineShape,
+    /// `FRESHKUBE_SERVICES`: what the Service and workload panes' example
+    /// traffic reads answer (`mixed`, `healthy`, `nothing`, `draining`,
+    /// `legacy`, `pending`, `no-selector`, `external-name`, `refused`,
+    /// `services-refused`); anything else is `mixed`.
+    pub(crate) services: ServicesShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -136,6 +154,14 @@ pub struct DebugOptions {
     /// setup (`freshkube_core::team::example::Shape`); anything else is no
     /// team. Needs `--fixture`.
     pub(crate) team: Option<freshkube_core::team::example::Shape>,
+    /// `FRESHKUBE_CRASH`: `notice` shows the crash notice (with `--fixture`,
+    /// an invented crash), `panic` and `task` force a panic on the main
+    /// thread or in a Tokio task; anything else is ignored. Debug builds only.
+    pub(crate) crash: Option<CrashShape>,
+    /// `FRESHKUBE_CRASH_SEED`: a value the startup log line and the forced
+    /// panic carry as a token and a password, to check that the log and the
+    /// copied diagnostics hold neither. Debug builds only.
+    pub(crate) crash_seed: Option<String>,
 }
 
 impl DebugOptions {
@@ -160,6 +186,8 @@ impl DebugOptions {
             self.etcd = None;
             self.app_menu_button = false;
             self.text_size = None;
+            self.crash = None;
+            self.crash_seed = None;
         }
         self
     }
@@ -203,6 +231,9 @@ impl DebugOptions {
             timeline: text("FRESHKUBE_TIMELINE")
                 .and_then(|shape| TimelineShape::parse(&shape))
                 .unwrap_or_default(),
+            services: text("FRESHKUBE_SERVICES")
+                .and_then(|shape| ServicesShape::parse(&shape))
+                .unwrap_or_default(),
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
             app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
@@ -230,6 +261,13 @@ impl DebugOptions {
             team: text("FRESHKUBE_TEAM")
                 .as_deref()
                 .and_then(freshkube_core::team::example::Shape::parse),
+            crash: match text("FRESHKUBE_CRASH").as_deref() {
+                Some("notice") => Some(CrashShape::Notice),
+                Some("panic") => Some(CrashShape::Panic),
+                Some("task") => Some(CrashShape::Task),
+                _ => None,
+            },
+            crash_seed: text("FRESHKUBE_CRASH_SEED"),
         }
     }
 
@@ -327,6 +365,18 @@ mod tests {
             assert_eq!(parse(&[("FRESHKUBE_TEAM", value)]).team, Some(shape));
         }
         assert_eq!(parse(&[("FRESHKUBE_TEAM", "Joined")]).team, None);
+    }
+
+    #[test]
+    fn crash_names_the_notice_or_a_forced_panic_and_ignores_anything_else() {
+        for (value, shape) in [
+            ("notice", CrashShape::Notice),
+            ("panic", CrashShape::Panic),
+            ("task", CrashShape::Task),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_CRASH", value)]).crash, Some(shape));
+        }
+        assert_eq!(parse(&[("FRESHKUBE_CRASH", "Panic")]).crash, None);
     }
 
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
@@ -503,6 +553,20 @@ mod tests {
     }
 
     #[test]
+    fn services_take_each_shape_and_fall_back_to_mixed() {
+        for name in ServicesShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_SERVICES", name)]).services,
+                ServicesShape::parse(name).unwrap(),
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_SERVICES", "bogus")]).services,
+            ServicesShape::Mixed
+        );
+    }
+
+    #[test]
     fn timeline_takes_each_shape_and_falls_back_to_busy() {
         for name in TimelineShape::NAMES {
             assert_eq!(
@@ -646,6 +710,7 @@ mod tests {
                     | "FRESHKUBE_APPLICATIONS"
                     | "FRESHKUBE_ALERTS"
                     | "FRESHKUBE_TIMELINE"
+                    | "FRESHKUBE_SERVICES"
             )
             .then(bad)
         });
@@ -655,6 +720,7 @@ mod tests {
         assert_eq!(options.applications, Variant::Acme);
         assert_eq!(options.alerts, AlertsShape::Firing);
         assert_eq!(options.timeline, TimelineShape::Busy);
+        assert_eq!(options.services, ServicesShape::Mixed);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }

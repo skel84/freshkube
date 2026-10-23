@@ -6,6 +6,9 @@ mod applications_column_tests;
 #[cfg(test)]
 mod applications_tests;
 mod connection;
+mod crash;
+#[cfg(test)]
+mod crash_tests;
 mod deep_link;
 pub(crate) mod dock;
 mod entity_pages;
@@ -156,6 +159,7 @@ pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
     // and its page, but not the app (docs/STATE_LIFETIMES.md).
     fn end(quit: fn(&mut App), cx: &mut App) {
         freshkube_followed::stop_all(cx);
+        crash::clean_quit(cx);
         quit(cx);
     }
     cx.on_action(move |_: &Quit, cx| {
@@ -195,6 +199,7 @@ pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Resu
     application.run(move |cx| {
         gpui_kit::init(cx);
         theme::install(cx);
+        crash::install(&options, cx);
         text_size::install_with(options.preferences.clone(), options.debug.text_size, cx);
         // Kit's animations draw still when the OS asks for reduced motion.
         // Tests never run this, so they keep the reduced motion they set.
@@ -219,6 +224,13 @@ pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Resu
             cx,
         );
         on_quit(cx, |cx| cx.quit());
+        // Whatever starts the quit (the window's close included) ends the
+        // session cleanly.
+        cx.on_app_quit(|cx| {
+            crash::clean_quit(cx);
+            async {}
+        })
+        .detach();
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -795,6 +807,8 @@ impl Pilot {
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
         self.open_startup_page(&debug, window, cx);
+        let (debug, runtime) = (options.debug.clone(), self.runtime.clone());
+        self.start_crash_log(&debug, &runtime, window, cx);
         // A link given at launch, and every one the operating system opens
         // us with after it, opens once the window has settled and has a
         // cluster to read.
