@@ -79,35 +79,59 @@ fn a_joined_team_shows_its_source_version_and_nothing_waiting(cx: &mut TestAppCo
     assert!(!visible(cx, handle, "team-failure"));
 }
 
+/// The trust changes of the example's waiting version.
+const TRUST: [&str; 4] = [
+    "clusters[cicd-fra].results.address",
+    "clusters[core-fra].protection",
+    "coroot.server",
+    "fingerprint:keys/cosign.pub",
+];
+
 #[gpui_kit::test]
-fn trust_changes_are_reviewed_first_and_nothing_applies_before_both_steps(cx: &mut TestAppContext) {
+fn each_trust_change_is_confirmed_on_its_own_before_the_rest(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = open(cx, Some(Shape::Trust), (1280., 880.));
     assert!(visible(cx, handle, "team-update"));
-    assert!(visible(cx, handle, "team-confirm-trust"));
+    for at in TRUST {
+        assert!(
+            visible(cx, handle, leak(format!("team-change-{at}"))),
+            "{at}"
+        );
+    }
+    assert!(!visible(cx, handle, "team-change-coroot.project"));
     assert!(!visible(cx, handle, "team-apply"));
-    assert!(visible(cx, handle, "team-change-coroot.server"));
-    assert!(visible(
+
+    for (done, at) in TRUST.into_iter().enumerate() {
+        assert!(!visible(cx, handle, "team-apply"), "{done} confirmed");
+        click(cx, handle, leak(format!("team-confirm-{at}")));
+        // Confirmed once: its button is gone, the others wait.
+        assert!(!visible(cx, handle, leak(format!("team-confirm-{at}"))));
+        assert!(label(cx, handle, "team-version-value").contains("a1b2c3d"));
+    }
+    // Only now the other changes, and the version applies with the last step.
+    assert!(!visible(
         cx,
         handle,
-        "team-change-clusters[core-fra].protection"
+        leak(format!("team-change-{}", TRUST[0]))
     ));
-    assert!(!visible(cx, handle, "team-change-coroot.project"));
-
-    click(cx, handle, "team-confirm-trust");
-    assert!(!visible(cx, handle, "team-confirm-trust"));
+    assert!(
+        visible(cx, handle, "team-change-coroot.project")
+            || visible(cx, handle, "team-review-none")
+    );
     assert!(visible(cx, handle, "team-apply"));
-    // Still not applied: the old version is shown.
-    assert!(label(cx, handle, "team-version-value").contains("a1b2c3d"));
-
     click(cx, handle, "team-apply");
     assert!(!visible(cx, handle, "team-update"));
     assert!(label(cx, handle, "team-version-value").contains("e4f5a6b"));
 }
 
+/// Element ids are `'static`; these tests are short-lived.
+fn leak(id: String) -> &'static str {
+    Box::leak(id.into_boxed_str())
+}
+
 #[gpui_kit::test]
 fn an_update_without_trust_changes_starts_at_the_other_changes(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = open(cx, Some(Shape::Update), (1280., 880.));
-    assert!(!visible(cx, handle, "team-confirm-trust"));
+    assert!(!visible(cx, handle, "team-confirm-coroot.server"));
     assert!(visible(cx, handle, "team-apply"));
     assert!(visible(cx, handle, "team-change-coroot.project"));
     click(cx, handle, "team-apply");

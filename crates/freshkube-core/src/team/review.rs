@@ -59,7 +59,8 @@ pub struct NotReviewed(pub Step);
 pub struct Review {
     pub changes: Vec<Change>,
     version: Version,
-    trust_done: bool,
+    /// The trust changes the person has confirmed, each on its own.
+    confirmed: std::collections::BTreeSet<String>,
     rest_done: bool,
 }
 
@@ -136,21 +137,21 @@ impl Review {
                 .then(a.trust.cmp(&b.trust))
                 .then(a.at.cmp(&b.at))
         });
-        let has_trust = changes.iter().any(|c| c.trust.is_some());
         Self {
             changes,
             version: pending,
-            trust_done: !has_trust,
+            confirmed: Default::default(),
             rest_done: false,
         }
     }
 
-    /// The step the person is on.
+    /// The step the person is on: every trust change is confirmed on its own
+    /// before the rest can be.
     pub fn step(&self) -> Step {
-        if self.trust_done {
-            Step::Rest
-        } else {
+        if self.trust_pending().next().is_some() {
             Step::Trust
+        } else {
+            Step::Rest
         }
     }
 
@@ -162,20 +163,40 @@ impl Review {
         self.changes.iter().filter(|c| c.trust.is_none())
     }
 
-    /// Confirms the current step. The second step can't be confirmed first.
-    pub fn confirm(&mut self) {
-        match self.step() {
-            Step::Trust => self.trust_done = true,
-            Step::Rest => self.rest_done = true,
+    /// The trust changes not yet confirmed.
+    pub fn trust_pending(&self) -> impl Iterator<Item = &Change> {
+        self.trust_changes()
+            .filter(|c| !self.confirmed.contains(&c.at))
+    }
+
+    pub fn is_confirmed(&self, at: &str) -> bool {
+        self.confirmed.contains(at)
+    }
+
+    /// Confirms one trust change. False when `at` is not a trust change.
+    pub fn confirm_trust(&mut self, at: &str) -> bool {
+        let known = self.trust_changes().any(|c| c.at == at);
+        if known {
+            self.confirmed.insert(at.to_string());
         }
+        known
+    }
+
+    /// Confirms the rest of the diff. Refused while a trust change waits.
+    pub fn confirm_rest(&mut self) -> bool {
+        let ready = self.step() == Step::Rest;
+        if ready {
+            self.rest_done = true;
+        }
+        ready
     }
 
     pub fn is_finished(&self) -> bool {
-        self.trust_done && self.rest_done
+        self.step() == Step::Rest && self.rest_done
     }
 
     pub(super) fn apply(self) -> Result<Version, NotReviewed> {
-        if !self.trust_done {
+        if self.step() == Step::Trust {
             return Err(NotReviewed(Step::Trust));
         }
         if !self.rest_done {

@@ -58,9 +58,28 @@ impl Source {
     /// The name shown for the source, without any query.
     pub fn display(&self) -> String {
         match self {
-            Source::Git(git) => git.url.clone(),
+            Source::Git(git) => git.redacted(),
             Source::Https(https) => https.url.origin().ascii_serialization() + https.url.path(),
         }
+    }
+}
+
+/// An address as logs, errors and the page may show it: no user name or
+/// password, query or fragment.
+pub fn redact(url: &str) -> String {
+    if url.contains("://") {
+        if let Ok(mut parsed) = Url::parse(url) {
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            parsed.set_query(None);
+            parsed.set_fragment(None);
+            return parsed.to_string();
+        }
+        return "<address>".into();
+    }
+    match url.rsplit_once('@') {
+        Some((_, rest)) => rest.to_string(),
+        None => url.to_string(),
     }
 }
 
@@ -74,6 +93,11 @@ pub struct GitSource {
 }
 
 impl GitSource {
+    /// The address without anything that could be a credential.
+    pub fn redacted(&self) -> String {
+        redact(&self.url)
+    }
+
     pub fn new(url: &str, git_ref: &str, path: &str) -> Result<Self, Refused> {
         let url = url.trim();
         if url.is_empty() || url.starts_with('-') || url.chars().any(|c| c.is_control() || c == ' ')
@@ -91,6 +115,8 @@ impl GitSource {
             }
             let parsed = Url::parse(url).map_err(|_| Refused::NotAnAddress)?;
             if parsed.password().is_some() || (scheme == "https" && !parsed.username().is_empty()) {
+                // A user name alone is how ssh addresses name an account; any
+                // password, or any userinfo on https, may be a credential.
                 return Err(Refused::Credentials);
             }
             if parsed.host_str().is_none() || rest.is_empty() {
@@ -216,14 +242,39 @@ pub fn check_redirect(from: &Url, to: &Url) -> Result<(), Refused> {
 
 /// The git command that fetches a team repository, as data: tests assert its
 /// flags and a later slice runs it. It is the person's own `git`, so their
-/// sign-in is used and none is stored here.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// sign-in is used and none is stored here. A token never goes on a command
+/// line, in an address or in a log.
+#[derive(Clone, PartialEq, Eq)]
 pub struct GitFetch {
     pub program: &'static str,
     pub args: Vec<String>,
     pub env: Vec<(&'static str, &'static str)>,
     /// The ref the fetch writes in the mirror.
     pub tracking_ref: &'static str,
+    /// Where the address sits in `args`, so `Debug` can redact it.
+    address_at: usize,
+}
+
+impl std::fmt::Debug for GitFetch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let args: Vec<String> = self
+            .args
+            .iter()
+            .enumerate()
+            .map(|(i, arg)| {
+                if i == self.address_at {
+                    redact(arg)
+                } else {
+                    arg.clone()
+                }
+            })
+            .collect();
+        f.debug_struct("GitFetch")
+            .field("program", &self.program)
+            .field("args", &args)
+            .field("env", &self.env)
+            .finish()
+    }
 }
 
 /// Where the fetch writes: one fixed ref in the app-owned mirror.
@@ -232,32 +283,46 @@ pub const TRACKING_REF: &str = "refs/freshkube/team";
 impl GitFetch {
     /// `mirror` is the app-owned bare repository; `empty_hooks` an empty
     /// directory, so no hook of the repository or the person's config runs.
-    pub fn new(source: &GitSource, mirror: &Path, empty_hooks: &Path) -> Self {
-        let hooks = format!("core.hooksPath={}", empty_hooks.display());
-        let args = [
-            "-C".to_string(),
-            mirror.display().to_string(),
-            "-c".into(),
-            hooks,
-            "-c".into(),
-            "protocol.file.allow=never".into(),
-            "-c".into(),
-            "protocol.ext.allow=never".into(),
-            "-c".into(),
-            "submodule.recurse=false".into(),
-            "fetch".into(),
-            "--no-recurse-submodules".into(),
-            "--no-tags".into(),
-            "--force".into(),
-            "--".into(),
-            source.url.clone(),
-            format!("+{}:{TRACKING_REF}", source.git_ref),
-        ];
+    /// `token_from_store` is true only when the token comes from our key store:
+    /// then the person's credential helper is switched off for this fetch.
+    /// Otherwise their helper is left alone.
+    pub fn new(
+        source: &GitSource,
+        mirror: &Path,
+        empty_hooks: &Path,
+        token_from_store: bool,
+    ) -> Self {
+        let mut args: Vec<String> = vec!["-C".into(), mirror.display().to_string()];
+        let mut config = |setting: String| {
+            args.push("-c".into());
+            args.push(setting);
+        };
+        config(format!("core.hooksPath={}", empty_hooks.display()));
+        config("protocol.file.allow=never".into());
+        config("protocol.ext.allow=never".into());
+        config("submodule.recurse=false".into());
+        if token_from_store {
+            config("credential.helper=".into());
+        }
+        args.extend(
+            [
+                "fetch",
+                "--no-recurse-submodules",
+                "--no-tags",
+                "--force",
+                "--",
+            ]
+            .map(String::from),
+        );
+        let address_at = args.len();
+        args.push(source.url.clone());
+        args.push(format!("+{}:{TRACKING_REF}", source.git_ref));
         Self {
             program: "git",
-            args: args.into(),
+            args,
             env: vec![("GIT_TERMINAL_PROMPT", "0")],
             tracking_ref: TRACKING_REF,
+            address_at,
         }
     }
 

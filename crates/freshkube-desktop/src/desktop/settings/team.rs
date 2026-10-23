@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use freshkube_core::team::{Change, ChangeKind, Leave, Membership, Review, Step, example::Shape};
 use freshkube_ui::{form, page};
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::Value;
@@ -190,6 +190,7 @@ impl SettingsPage {
             Step::Rest => "A new team version waits: review the other changes",
         };
         let trust = review.trust_changes().count();
+        let waiting = review.trust_pending().count();
         let mut group = form::group("team-review", "Update waiting").narrow(narrow);
         let shown: Vec<&Change> = match step {
             Step::Trust => review.trust_changes().collect(),
@@ -207,21 +208,49 @@ impl SettingsPage {
                 || change.at.clone(),
                 |t| format!("{} · {}", change.at, t.words()),
             );
+            let line = change_line(change);
+            let control = match change.trust {
+                // Each trust change is confirmed on its own.
+                Some(_) if review.is_confirmed(&change.at) => h_flex()
+                    .gap(dp(8.))
+                    .child(line)
+                    .child("Confirmed")
+                    .into_any_element(),
+                Some(_) => {
+                    let this = cx.entity();
+                    let at = change.at.clone();
+                    h_flex()
+                        .gap(dp(8.))
+                        .items_center()
+                        .child(line)
+                        .child(
+                            Button::new(SharedString::from(format!("team-confirm-{}", change.at)))
+                                .small()
+                                .outline()
+                                .label("Confirm")
+                                .on_click(move |_, _, cx| {
+                                    let at = at.clone();
+                                    this.update(cx, |page, cx| page.team_confirm_trust(&at, cx));
+                                }),
+                        )
+                        .into_any_element()
+                }
+                None => line.into_any_element(),
+            };
             group = group.row(form::row(
                 format!("team-change-{}", change.at),
                 label,
-                change_line(change),
+                control,
             ));
         }
-        let (id, label) = match step {
-            Step::Trust => ("team-confirm-trust", "Confirm trust changes"),
-            Step::Rest => ("team-apply", "Apply update"),
-        };
-        let this = cx.entity();
-        let confirm = form::Action::new(id, label, move |_, _, cx| {
-            this.update(cx, |page, cx| page.team_confirm(cx));
-        });
-        let keep = form::Action::new("team-keep-waiting", "Review later", |_, _, _| {});
+        if step == Step::Rest {
+            let this = cx.entity();
+            let apply = form::Action::new("team-apply", "Apply update", move |_, _, cx| {
+                this.update(cx, |page, cx| page.team_apply(cx));
+            });
+            let keep = form::Action::new("team-keep-waiting", "Review later", |_, _, _| {});
+            group = group.actions(form::actions(apply, keep));
+        }
         v_flex()
             .id("team-update")
             .test_support()
@@ -229,11 +258,13 @@ impl SettingsPage {
             .child(ui::banner(
                 Tone::Info,
                 Some(lead.into()),
-                format!("{trust} trust changes. Nothing applies until you confirm."),
+                format!(
+                    "{trust} trust changes, {waiting} still to confirm. Nothing applies until you confirm each."
+                ),
                 None,
                 cx,
             ))
-            .child(group.actions(form::actions(confirm, keep)).render(cx))
+            .child(group.render(cx))
             .into_any_element()
     }
 
@@ -261,13 +292,20 @@ impl SettingsPage {
             .into_any_element()
     }
 
-    /// Confirms the review's current step; the last one applies the version.
-    fn team_confirm(&mut self, cx: &mut Context<Self>) {
+    /// Confirms one trust change.
+    fn team_confirm_trust(&mut self, at: &str, cx: &mut Context<Self>) {
+        if let Some(review) = self.team.review.as_mut() {
+            review.confirm_trust(at);
+            cx.notify();
+        }
+    }
+
+    /// Confirms the rest of the diff, which applies the version.
+    fn team_apply(&mut self, cx: &mut Context<Self>) {
         let Some(review) = self.team.review.as_mut() else {
             return;
         };
-        review.confirm();
-        if review.is_finished() {
+        if review.confirm_rest() {
             let review = self.team.review.take().expect("checked");
             if let Some(team) = self.team.membership.as_mut() {
                 let _ = team.apply(review, Utc::now());

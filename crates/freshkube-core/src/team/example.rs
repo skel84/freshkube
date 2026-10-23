@@ -4,7 +4,7 @@
 use chrono::{DateTime, Duration, Utc};
 
 use super::file::Version;
-use super::membership::{FetchFailed, Membership, Overrides};
+use super::membership::{Fetch, FetchFailed, Membership, Overrides};
 use super::review::Review;
 use super::source::Source;
 
@@ -122,9 +122,7 @@ pub fn membership(shape: Shape, now: DateTime<Utc>) -> Option<(Membership, Optio
         now - Duration::days(9),
     );
     let mut first = m.review().expect("a first version waits");
-    while !first.is_finished() {
-        first.confirm();
-    }
+    confirm_all(&mut first);
     m.apply(first, now - Duration::days(9)).expect("reviewed");
     match shape {
         Shape::Update => m.fetched(Ok(version("e4f5a6b", V2_PLAIN, "SHA256:aaaa")), now),
@@ -138,4 +136,36 @@ pub fn membership(shape: Shape, now: DateTime<Utc>) -> Option<(Membership, Optio
     }
     let review = m.review();
     Some((m, review))
+}
+
+/// Confirms every step of a review, as the person would one by one.
+pub fn confirm_all(review: &mut Review) {
+    let waiting: Vec<String> = review.trust_pending().map(|c| c.at.clone()).collect();
+    for at in waiting {
+        review.confirm_trust(&at);
+    }
+    review.confirm_rest();
+}
+
+/// The only [`Fetch`] in slice 1: answers from a script and reads nothing.
+pub struct FakeFetch {
+    answers: std::sync::Mutex<std::collections::VecDeque<Result<Version, FetchFailed>>>,
+}
+
+impl FakeFetch {
+    pub fn new(answers: impl IntoIterator<Item = Result<Version, FetchFailed>>) -> Self {
+        Self {
+            answers: std::sync::Mutex::new(answers.into_iter().collect()),
+        }
+    }
+}
+
+impl Fetch for FakeFetch {
+    fn fetch(&self, _: &Source) -> Result<Version, FetchFailed> {
+        self.answers
+            .lock()
+            .expect("the script is not poisoned")
+            .pop_front()
+            .unwrap_or_else(|| Err(FetchFailed("nothing left to answer".into())))
+    }
 }

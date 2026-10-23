@@ -54,6 +54,8 @@ pub enum IgnoredKey {
     LocalPath,
     KeyOrToken,
     AgentAccess,
+    /// What the app may write is the person's own setting.
+    Writes,
     Notifications,
     History,
 }
@@ -65,6 +67,7 @@ impl IgnoredKey {
             IgnoredKey::LocalPath => "a path on your computer is yours",
             IgnoredKey::KeyOrToken => "keys and tokens are never shared",
             IgnoredKey::AgentAccess => "agent access is your own consent",
+            IgnoredKey::Writes => "what the app may write is yours",
             IgnoredKey::Notifications => "notification and follow settings are yours",
             IgnoredKey::History => "history is yours",
         }
@@ -128,6 +131,7 @@ impl Version {
                 }
                 "history" => ignore(&mut ignored, key, IgnoredKey::History),
                 "agent" => ignore(&mut ignored, key, IgnoredKey::AgentAccess),
+                "writes" | "write" | "write_model" => ignore(&mut ignored, key, IgnoredKey::Writes),
                 "clusters" => clusters(value, &mut values, &mut ignored)?,
                 _ => flatten(key, value, &mut values, &mut ignored),
             }
@@ -188,6 +192,7 @@ fn flatten(at: &str, value: &Value, values: &mut Values, ignored: &mut Vec<Ignor
         "talosconfig" | "ca_file" | "api_key_file" => Some(IgnoredKey::LocalPath),
         "token" | "key" => Some(IgnoredKey::KeyOrToken),
         "agent" => Some(IgnoredKey::AgentAccess),
+        "writes" | "write" | "write_model" => Some(IgnoredKey::Writes),
         _ => None,
     };
     if let Some(why) = why {

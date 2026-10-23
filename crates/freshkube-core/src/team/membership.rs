@@ -90,6 +90,12 @@ impl Membership {
         }
     }
 
+    /// Fetches again and takes the outcome.
+    pub fn refresh(&mut self, fetch: &dyn Fetch, now: DateTime<Utc>) {
+        let result = fetch.fetch(&self.source);
+        self.fetched(result, now);
+    }
+
     /// The review of the waiting version, if any.
     pub fn review(&self) -> Option<Review> {
         let pending = self.pending.clone()?;
@@ -118,6 +124,12 @@ impl Membership {
             }
         }
     }
+}
+
+/// Something that fetches the team file. Slice 1 has one implementation, the
+/// fake in [`super::example`]: nothing reads the network.
+pub trait Fetch {
+    fn fetch(&self, source: &Source) -> Result<Version, FetchFailed>;
 }
 
 /// A fetch or parse that failed. The text never repeats the source's content.

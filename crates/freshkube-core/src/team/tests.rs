@@ -286,35 +286,100 @@ fn http_and_cross_host_redirects_are_refused() {
 #[test]
 fn the_git_command_runs_nothing_from_the_repo() {
     let git = GitSource::new("git@example.test:team/setup.git", "main", "").unwrap();
-    let cmd = GitFetch::new(
-        &git,
-        std::path::Path::new("/app/mirror.git"),
-        std::path::Path::new("/app/empty"),
-    );
+    let mirror = std::path::Path::new("/app/mirror.git");
+    let empty = std::path::Path::new("/app/empty");
+    let cmd = GitFetch::new(&git, mirror, empty, false);
     assert_eq!(cmd.program, "git");
     assert_eq!(cmd.env, vec![("GIT_TERMINAL_PROMPT", "0")]);
-    let args = cmd.args.join(" ");
-    for flag in [
-        "-c core.hooksPath=/app/empty",
-        "-c protocol.file.allow=never",
-        "-c protocol.ext.allow=never",
-        "-c submodule.recurse=false",
-        "fetch --no-recurse-submodules --no-tags",
-    ] {
-        assert!(args.contains(flag), "{flag} in {args}");
-    }
-    // The address comes after `--`, so it can never be read as an option.
-    let dashes = cmd.args.iter().position(|a| a == "--").unwrap();
-    assert_eq!(cmd.args[dashes + 1], "git@example.test:team/setup.git");
-    assert_eq!(cmd.args[dashes + 2], "+main:refs/freshkube/team");
-    assert!(!args.contains("credential"));
-    let show = GitFetch::show(
-        &git,
-        std::path::Path::new("/app/mirror.git"),
-        std::path::Path::new("/app/empty"),
+    // Every flag, in order. The address comes after `--`, so it can never be
+    // read as an option. The person's credential helper is left alone.
+    assert_eq!(
+        cmd.args,
+        [
+            "-C",
+            "/app/mirror.git",
+            "-c",
+            "core.hooksPath=/app/empty",
+            "-c",
+            "protocol.file.allow=never",
+            "-c",
+            "protocol.ext.allow=never",
+            "-c",
+            "submodule.recurse=false",
+            "fetch",
+            "--no-recurse-submodules",
+            "--no-tags",
+            "--force",
+            "--",
+            "git@example.test:team/setup.git",
+            "+main:refs/freshkube/team",
+        ]
     );
+    assert!(!cmd.args.join(" ").contains("credential"));
+
+    // A token from our key store switches the person's helper off, and still
+    // never appears on the command line.
+    let with_store = GitFetch::new(&git, mirror, empty, true);
+    let at = with_store.args.iter().position(|a| a == "fetch").unwrap();
+    assert_eq!(&with_store.args[at - 2..at], ["-c", "credential.helper="]);
+    assert_eq!(with_store.args.len(), cmd.args.len() + 2);
+    assert!(!with_store.args.join(" ").to_lowercase().contains("token"));
+
+    let show = GitFetch::show(&git, mirror, empty);
     assert_eq!(show.last().unwrap(), "refs/freshkube/team:freshkube.yaml");
     assert!(show.join(" ").contains("core.hooksPath=/app/empty"));
+}
+
+#[test]
+fn an_address_with_credentials_is_refused_and_never_shown() {
+    for url in [
+        "https://user:secret@example.test/team.git",
+        "https://token@example.test/team.git",
+        "ssh://user:secret@example.test/team.git",
+    ] {
+        assert_eq!(
+            GitSource::new(url, "", ""),
+            Err(Refused::Credentials),
+            "{url}"
+        );
+        assert_eq!(
+            Source::parse(url, "", ""),
+            Err(Refused::Credentials),
+            "{url}"
+        );
+    }
+    // An ssh account name is not a credential, but is not shown either.
+    let ssh = GitSource::new("ssh://git@example.test/team/setup.git", "", "").unwrap();
+    assert_eq!(ssh.redacted(), "ssh://example.test/team/setup.git");
+    let scp = GitSource::new("git@example.test:team/setup.git", "", "").unwrap();
+    assert_eq!(scp.redacted(), "example.test:team/setup.git");
+    assert_eq!(
+        redact("https://u:p@example.test/x?token=abc#frag"),
+        "https://example.test/x"
+    );
+    // No error text carries the address.
+    for refused in [
+        Refused::NotAnAddress,
+        Refused::PlainHttp,
+        Refused::Scheme,
+        Refused::Credentials,
+        Refused::LocalPath,
+        Refused::BadRef,
+        Refused::BadPath,
+        Refused::CrossHostRedirect,
+    ] {
+        assert!(!refused.to_string().contains("example.test"));
+    }
+    // Debug output redacts the address too.
+    let cmd = GitFetch::new(
+        &ssh,
+        std::path::Path::new("/m"),
+        std::path::Path::new("/e"),
+        false,
+    );
+    let shown = format!("{cmd:?}");
+    assert!(!shown.contains("git@"), "{shown}");
+    assert!(shown.contains("example.test/team/setup.git"));
 }
 
 const NEXT: &str = "\
@@ -366,11 +431,21 @@ fn trust_changes_come_first_and_nothing_applies_unreviewed() {
         Err(NotReviewed(Step::Trust))
     );
     assert_eq!(review.step(), Step::Trust);
-    review.confirm();
+    // Each trust change is confirmed on its own; the rest can't be before.
+    assert!(!review.confirm_rest());
+    assert!(!review.confirm_trust("coroot.project"));
+    let waiting: Vec<String> = review.trust_pending().map(|c| c.at.clone()).collect();
+    assert_eq!(waiting.len(), 3);
+    for (done, at_key) in waiting.iter().enumerate() {
+        assert_eq!(review.step(), Step::Trust, "{done} confirmed");
+        assert!(!review.confirm_rest());
+        assert!(review.confirm_trust(at_key));
+        assert!(review.is_confirmed(at_key));
+    }
     assert_eq!(review.step(), Step::Rest);
     assert_eq!(m.apply(review.clone(), at(2)), Err(NotReviewed(Step::Rest)));
     assert_eq!(m.applied.as_ref().unwrap().id, "1");
-    review.confirm();
+    assert!(review.confirm_rest());
     assert!(review.is_finished());
     m.apply(review, at(2)).unwrap();
     assert_eq!(m.applied.as_ref().unwrap().id, "2");
@@ -400,9 +475,7 @@ fn the_first_version_is_reviewed_too() {
     assert!(review.changes.iter().all(|c| c.kind == ChangeKind::Added));
     assert!(m.apply(review.clone(), at(1)).is_err());
     assert!(m.applied.is_none());
-    while !review.is_finished() {
-        review.confirm();
-    }
+    example::confirm_all(&mut review);
     m.apply(review, at(1)).unwrap();
     assert!(m.applied.is_some());
     // The same version again is no update.
@@ -415,9 +488,7 @@ fn a_failed_fetch_keeps_the_applied_version_and_says_since_when() {
     let mut m = Membership::join(source(), Overrides::new());
     m.fetched(Ok(version("1", TEAM)), at(1));
     let mut review = m.review().unwrap();
-    while !review.is_finished() {
-        review.confirm();
-    }
+    example::confirm_all(&mut review);
     m.apply(review, at(1)).unwrap();
 
     m.fetched(
@@ -451,9 +522,7 @@ fn leaving_keeps_a_copy_or_goes_back() {
     let mut m = Membership::join(source(), before.clone());
     m.fetched(Ok(version("1", TEAM)), at(1));
     let mut review = m.review().unwrap();
-    while !review.is_finished() {
-        review.confirm();
-    }
+    example::confirm_all(&mut review);
     m.apply(review, at(1)).unwrap();
     m.overrides.insert("coroot.project".into(), json!("mine"));
     m.overrides.insert("metrics.label".into(), json!("c"));
@@ -492,4 +561,94 @@ fn the_example_shapes_tell_their_story() {
     assert!(failure.since < failure.last_try && m.applied.is_some());
     assert_eq!(Shape::parse("trust"), Some(Shape::Trust));
     assert_eq!(Shape::parse("Trust"), None);
+}
+
+#[test]
+fn the_floor_holds_in_both_directions_and_an_unknown_level_is_guarded() {
+    let key = merge::protection_key("a");
+    let team = |level: &str| {
+        version(
+            "t",
+            &format!("version: 1\nclusters:\n  - id: a\n    protection: {level}\n"),
+        )
+        .values
+    };
+    let open: Overrides = [(key.clone(), json!("open"))].into();
+    // The team tightens under a looser override of yours: the floor wins.
+    let r = resolve(&key, &team("read-only"), &open, &Values::new());
+    assert_eq!((r.value, r.floor_held), (Some(json!("read-only")), true));
+    // The team loosens: an override of yours that was stricter stays.
+    let strict: Overrides = [(key.clone(), json!("protected"))].into();
+    let r = resolve(&key, &team("open"), &strict, &Values::new());
+    assert_eq!(r.value, Some(json!("protected")));
+    // An unknown level in yours counts as guarded: looser than protected.
+    let unknown: Overrides = [(key.clone(), json!("whatever"))].into();
+    assert!(resolve(&key, &team("protected"), &unknown, &Values::new()).floor_held);
+    // An unknown level from the team is a guarded floor.
+    let r = resolve(&key, &team("whatever"), &open, &Values::new());
+    assert!(r.floor_held);
+    let r = resolve(&key, &team("whatever"), &strict, &Values::new());
+    assert!(!r.floor_held && r.value == Some(json!("protected")));
+}
+
+#[test]
+fn a_team_file_cannot_widen_what_a_persons_setup_restricts() {
+    let text = "\
+version: 1
+agent:
+  enabled: true
+writes: open
+write_model:
+  everything: yes
+clusters:
+  - id: a
+    role: core
+    context: team-chosen
+    talos_context: team-chosen
+    agent:
+      enabled: true
+    writes: open
+";
+    let v = version("1", text);
+    for (at, why) in [
+        ("agent", IgnoredKey::AgentAccess),
+        ("writes", IgnoredKey::Writes),
+        ("write_model", IgnoredKey::Writes),
+        ("clusters[a].context", IgnoredKey::Context),
+        ("clusters[a].talos_context", IgnoredKey::Context),
+        ("clusters[a].agent", IgnoredKey::AgentAccess),
+        ("clusters[a].writes", IgnoredKey::Writes),
+    ] {
+        assert!(v.ignored.iter().any(|i| i.at == at && i.why == why), "{at}");
+    }
+    // The merge changes nothing for any of them: only the cluster's own id and
+    // role come through.
+    let keys: Vec<&str> = v.values.keys().map(String::as_str).collect();
+    assert_eq!(keys, ["clusters[a]", "clusters[a].role"]);
+    for key in [
+        "agent.enabled",
+        "writes",
+        "clusters[a].context",
+        "clusters[a].agent.enabled",
+    ] {
+        let r = resolve(key, &v.values, &Overrides::new(), &Values::new());
+        assert_eq!((r.value, r.origin), (None, Origin::Default), "{key}");
+    }
+}
+
+#[test]
+fn the_fake_is_the_only_fetch_and_a_refresh_takes_its_answer() {
+    use super::example::FakeFetch;
+    let mut m = Membership::join(source(), Overrides::new());
+    let fetch = FakeFetch::new([
+        Ok(version("1", TEAM)),
+        Err(membership::FetchFailed("the host didn’t answer".into())),
+    ]);
+    m.refresh(&fetch, at(1));
+    assert_eq!(m.pending.as_ref().unwrap().id, "1");
+    m.refresh(&fetch, at(2));
+    assert_eq!(m.failure.as_ref().unwrap().since, at(2));
+    // Past its script it fails; it never reads anything.
+    m.refresh(&fetch, at(3));
+    assert_eq!(m.failure.as_ref().unwrap().since, at(2));
 }

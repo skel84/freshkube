@@ -63,8 +63,11 @@ fn is_protection(key: &str) -> bool {
     key.starts_with("clusters[") && key.ends_with("].protection")
 }
 
+/// The level a value says. An unknown level counts as guarded, as the write
+/// model does; no value is no level.
 fn level(value: Option<&Value>) -> Option<Protection> {
-    serde_json::from_value(value?.clone()).ok()
+    let value = value?;
+    Some(serde_json::from_value(value.clone()).unwrap_or_default())
 }
 
 /// Resolves one key.
