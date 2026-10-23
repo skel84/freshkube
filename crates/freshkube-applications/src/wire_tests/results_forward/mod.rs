@@ -2,9 +2,6 @@ mod fake;
 mod review;
 use super::*;
 
-// These cases share the automatic port candidates; keep another case from
-// taking a just-stopped listener before the restart assertion.
-static PORT_CASE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 use freshkube_core::setup::{Forward, Results};
 use gpui_kit::test::TestWindowExt;
 
@@ -13,22 +10,23 @@ async fn only_the_toolbar_press_starts_a_forward_and_results_use_its_listener(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let ca = dir.path().join("service.pem");
     std::fs::write(&ca, fake::CERT).unwrap();
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let server = fake::Server::new(runtime.handle());
+    // Its own remote port gives this restart test local candidates no other
+    // forward test asks for, even while the old listener is stopped.
+    let server = fake::Server::with_port(runtime.handle(), 9444);
     let mut configured = setup(None, None, false);
     let mut settings = Results::default();
-    settings.forward = Some(Forward::new("acme", "results", 8443));
+    settings.forward = Some(Forward::new("acme", "results", 9444));
     settings.ca_file = Some(ca);
     settings.token = Some(freshkube_core::setup::KeysJson);
     server.token.store(true, Ordering::SeqCst);
     let store = Arc::new(MemoryStore::default());
     store
         .write(
-            "Tekton Results forward://acme/results:8443",
+            "Tekton Results forward://acme/results:9444",
             super::fake::TOKEN,
         )
         .unwrap();
@@ -59,12 +57,12 @@ async fn only_the_toolbar_press_starts_a_forward_and_results_use_its_listener(
     let owner = cx.update(|cx| {
         freshkube_resources::forwards::list(cx)
             .read(cx)
-            .find("invented-connection", "acme", "results", 8443, cx)
+            .find("invented-connection", "acme", "results", 9444, cx)
             .unwrap()
     });
     let before = cx.read(|cx| owner.read(cx).snapshot());
     let forwarded = cx.read(|cx| owner.read(cx).local_port.unwrap());
-    assert_ne!(forwarded, 8443);
+    assert_ne!(forwarded, 9444);
     let id = before.epoch.id;
     cx.update(|cx| {
         freshkube_resources::forwards::list(cx).update(cx, |list, cx| list.stop(id, cx))
@@ -127,7 +125,6 @@ async fn the_builds_inspector_starts_the_owner_and_hiding_does_not_stop_it(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -193,7 +190,6 @@ async fn the_builds_inspector_starts_the_owner_and_hiding_does_not_stop_it(
 #[gpui_kit::test]
 async fn refresh_reload_and_show_do_not_start_a_forward_but_f_does(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -370,7 +366,6 @@ fn the_other_build_entry_offers_only_a_switch_and_never_starts(cx: &mut TestAppC
 #[gpui_kit::test]
 async fn a_refused_results_request_does_not_end_the_listening_forward(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -424,7 +419,6 @@ async fn stop_invalidates_a_late_results_response_and_never_publishes_its_build(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -499,7 +493,6 @@ async fn the_wrong_tls_name_is_a_request_failure_while_the_forward_listens(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let mut setup = configured(dir.path());
     setup.workspace.clusters[0]
@@ -559,7 +552,6 @@ async fn the_wrong_tls_name_is_a_request_failure_while_the_forward_listens(
 #[gpui_kit::test]
 async fn a_broken_results_response_does_not_become_an_ended_route(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -613,7 +605,6 @@ async fn closing_a_change_releases_its_subscription_but_leaves_the_owner_listeni
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -671,7 +662,6 @@ async fn a_selected_owner_ending_does_not_fall_back_to_another_matching_forward(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -760,7 +750,6 @@ async fn a_forward_restarted_while_hidden_is_read_only_when_the_page_shows(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();

@@ -106,6 +106,72 @@ pub fn find(name: &str) -> Option<ResourceKind> {
     })
 }
 
+/// kubectl's short names for the built-in kinds, by plural.
+const SHORT_NAMES: [(&str, &str); 21] = [
+    ("po", "pods"),
+    ("deploy", "deployments"),
+    ("rs", "replicasets"),
+    ("ds", "daemonsets"),
+    ("sts", "statefulsets"),
+    ("cj", "cronjobs"),
+    ("svc", "services"),
+    ("ing", "ingresses"),
+    ("ns", "namespaces"),
+    ("no", "nodes"),
+    ("cm", "configmaps"),
+    ("pv", "persistentvolumes"),
+    ("pvc", "persistentvolumeclaims"),
+    ("sa", "serviceaccounts"),
+    ("ev", "events"),
+    ("hpa", "horizontalpodautoscalers"),
+    ("pdb", "poddisruptionbudgets"),
+    ("netpol", "networkpolicies"),
+    ("sc", "storageclasses"),
+    ("quota", "resourcequotas"),
+    ("limits", "limitranges"),
+];
+
+/// Splits what kubectl takes (`pod`, `Deployment.apps`, `po`) into the name
+/// and the group it names, if any. A name has no dot, so the first one
+/// separates them.
+pub(crate) fn split_name(asked: &str) -> (String, Option<String>) {
+    let asked = asked.to_ascii_lowercase();
+    match asked.split_once('.') {
+        Some((name, group)) => (name.to_owned(), Some(group.to_owned())),
+        None => (asked, None),
+    }
+}
+
+/// Whether `name` (lower case, no group) is a plural, the kind, or a short
+/// name of `kind`, whose short names are known only for built-ins.
+pub(crate) fn names_kind(kind: &ResourceKind, name: &str, short: bool) -> bool {
+    kind.plural == name
+        || kind.kind.to_ascii_lowercase() == name
+        || (short
+            && SHORT_NAMES
+                .iter()
+                .any(|(alias, plural)| *alias == name && *plural == kind.plural))
+}
+
+/// A built-in kind by anything kubectl takes: the key, a plural, a singular
+/// (the kind in any case) or a short name, with an optional `.group`. A name
+/// that two kinds share, such as `events` in two groups, is not guessed.
+pub fn find_named(asked: &str) -> Option<ResourceKind> {
+    if let Some(kind) = builtin(asked) {
+        return Some(kind);
+    }
+    let (name, group) = split_name(asked);
+    let mut found = BUILTIN
+        .iter()
+        .map(|(group, version, kind, plural, namespaced)| {
+            ResourceKind::new(group, version, kind, plural, *namespaced)
+        })
+        .filter(|kind| group.as_deref().is_none_or(|group| kind.group == group))
+        .filter(|kind| names_kind(kind, &name, true));
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
 /// Resolve a built-in owner reference by group and kind, keeping its named version.
 pub fn builtin_by_gvk(api_version: &str, kind: &str) -> Option<ResourceKind> {
     let (group, version) = api_version.split_once('/').unwrap_or(("", api_version));
@@ -304,6 +370,30 @@ const BUILTIN: [(&str, &str, &str, &str, bool); 47] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_kubectl_takes_finds_its_built_in_kind_with_or_without_a_group() {
+        for asked in ["po", "pod", "Pod", "pods", "PODS"] {
+            assert_eq!(find_named(asked).unwrap().key(), "pods", "{asked}");
+        }
+        for asked in [
+            "deploy",
+            "Deployment.apps",
+            "deployment.apps",
+            "deploy.apps",
+        ] {
+            assert_eq!(
+                find_named(asked).unwrap().key(),
+                "deployments.apps",
+                "{asked}"
+            );
+        }
+        assert_eq!(find_named("svc").unwrap().key(), "services");
+        // The wrong group, an unknown name and a group alone are not kinds.
+        assert!(find_named("deployment.batch").is_none());
+        assert!(find_named("widgets").is_none());
+        assert!(find_named(".apps").is_none());
+    }
 
     #[test]
     fn a_kind_is_found_by_key_plural_or_kind_and_never_guessed() {

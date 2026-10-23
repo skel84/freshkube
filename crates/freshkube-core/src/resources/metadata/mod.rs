@@ -79,5 +79,49 @@ pub async fn list_metadata(
     })
 }
 
+/// One page of names and metadata in a namespace (or all of them), at most
+/// `limit` objects, without an ordinary JSON fallback. A continuation means
+/// the page was cut. `list_metadata` reads the whole cluster's names; this is
+/// the bounded read an agent's list takes.
+pub async fn list_metadata_page(
+    client: &kube::Client,
+    kind: &ResourceKind,
+    namespace: Option<&str>,
+    limit: usize,
+) -> Result<MetadataNames, Failure> {
+    #[derive(Deserialize)]
+    struct MetadataList {
+        #[serde(default)]
+        metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ListMeta,
+        items: Vec<Metadata>,
+    }
+    let request = json_get(
+        format!("{}?limit={limit}", kind.collection_path(namespace)),
+        "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1",
+    )?;
+    let list = client
+        .request::<MetadataList>(request)
+        .await
+        .map_err(Failure::from_kube)?;
+    let capped = list.items.len() > limit
+        || list
+            .metadata
+            .continue_
+            .is_some_and(|value| !value.is_empty())
+        || list
+            .metadata
+            .remaining_item_count
+            .is_some_and(|count| count > 0);
+    Ok(MetadataNames {
+        objects: list
+            .items
+            .into_iter()
+            .take(limit)
+            .map(|item| item.metadata)
+            .collect(),
+        capped,
+    })
+}
+
 #[cfg(test)]
 mod tests;

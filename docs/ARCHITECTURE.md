@@ -14,6 +14,7 @@ freshkube-resources          → core, delivery, followed, monitoring, nav, prob
 freshkube-observability      → core, delivery, graph, logs, monitoring, prefs, ui
 freshkube-delivery           → core, talos-rs
 freshkube-followed           → core, delivery, prefs, reads, ui
+freshkube-agent              → core, nav, prefs
 freshkube-cli                → core
 freshkube-monitoring         → core, prefs, probe, reads, ui, talos-rs
 freshkube-logs               → core, probe, ui
@@ -29,6 +30,7 @@ freshkube-graph, freshkube-prefs, freshkube-probe, talos-rs                (no w
 The rules the graph shows:
 
 - **`freshkube-core` has no GPUI.** Its manifest has no `gpui` dependency; cluster logic, domain types and the snapshot (`crates/freshkube-core/src/snapshot.rs`) are plain Rust. A screen calls core with real Rust types; there is no serialization boundary. The access a page is handed is core's too (`cluster_source`, below), though desktop still builds it.
+- **The agent reads through core and is served by `freshkube-agent`.** Core's `agent_reads` (`crates/freshkube-core/src/agent_reads/`) is the whole of what an agent may read: `Call::parse` turns the four tools' arguments into closed, bounded types, `read` answers them with `get`, `list` and the `log` subresource only, and `AgentAccess` is the per-cluster gate that `read` asks before it builds any client. It has no UI and no HTTP. `freshkube-agent` (`crates/freshkube-agent/`) serves those reads over MCP on a loopback port, one endpoint per session guarded by the session's bearer token, and tells the app what each read looked at as a `ReadEvent` carrying a `ViewState` from `freshkube-nav`; the view never goes on the wire. It also owns `agent.json` and its audit line. **Core names nothing of the agent crate, and the agent crate names nothing of desktop, `freshkube-ui` or the feature crates.** Desktop does not depend on it yet; nothing in the app starts an endpoint ([docs/features/agent.md](features/agent.md)).
 - **`freshkube-ui` has no core.** The look (theme, tables, page frame, drawer, inspector) knows nothing of clusters. It depends on `freshkube-graph` (curve layout), `freshkube-prefs` (the text size file) and `freshkube-probe` only.
 - **Feature crates sit under desktop and never name it.** Monitoring, Observability, Resources and Applications reach desktop only through their events (below). Observability and Resources use Monitoring; Monitoring uses neither. Applications uses Resources (`ResourceLink`, `ClusterSource`, the example objects) and Observability (`RevisionLink`); neither uses it.
 - **A link into Observability is `ObservabilityLink`, a sibling of `ResourceLink`.** `freshkube-nav`'s `ObservabilityLink { entry, app, tab }` (`crates/freshkube-nav/src/observability.rs`) names a workspace entry, a Coroot application (core's `AppId`) and the report to open on (`ObservabilityTab`: `Overview`, `Postgres`, or `Mysql`, which Coroot names `Mysql`); `ResourceLink` stays Kubernetes objects. A page emits it as `PageEvent::Application`; desktop's `open_application` (`desktop/object_links/mod.rs`) refuses a link made in another entry (`route_observability`, `desktop/switch.rs`) and otherwise calls `ObservabilityPage::open_application`, which selects the application and report and shows Observability. Databases uses it; #873's deep links reuse it.
@@ -175,6 +177,7 @@ Behaviour that does not belong in the rules lives in one doc per feature, each s
 - [docs/features/resources.md](features/resources.md): the Resources page, the dock's logs, shells and ports, and a pod's cause card.
 - [docs/features/nodes.md](features/nodes.md): the Nodes table, its node pane and their keys.
 - [docs/features/shell.md](features/shell.md): the app frame, the Overview and Attention, and the Kubernetes summary session.
+- [docs/features/agent.md](features/agent.md): the agent's reads in core, the per-cluster access gate, the loopback endpoint and `agent.json`.
 - [docs/features/followed.md](features/followed.md): what the user follows, the owner, the toasts and the bell.
 - [docs/features/monitoring.md](features/monitoring.md): the Monitoring page, its markers and the CPU and memory history charts.
 - [docs/features/settings.md](features/settings.md): the Settings area, its eight sections, the shared form rules and the setup file's saves.
