@@ -3,12 +3,14 @@
 //! the group's Save like the others, so a click never loosens a guard.
 use super::{Group, SettingsPage, saved_in};
 use crate::ui;
+use freshkube_core::team::{ClusterView, LevelSource};
 use freshkube_core::workspace::Entry;
 use freshkube_core::write::Protection;
 use freshkube_ui::form;
 use gpui_kit::component::{
     Disableable, Sizable,
     button::{Button, ButtonGroup},
+    h_flex, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -60,9 +62,8 @@ impl Level {
 
     /// What the group says under the choice: the level's meaning, that an
     /// unset level is guarded, and what enforces it today.
-    fn hint(&self) -> String {
-        let shown = self.values.shown();
-        let unset = if self.values.level.is_none() {
+    fn hint(&self, shown: Protection, source: LevelSource) -> String {
+        let unset = if source == LevelSource::Default {
             "Not set in freshkube.yaml: guarded. "
         } else {
             ""
@@ -77,9 +78,23 @@ impl Level {
         &self,
         editable: bool,
         dirty: bool,
+        team: Option<&ClusterView>,
         cx: &Context<SettingsPage>,
     ) -> AnyElement {
-        let shown = self.values.shown();
+        // Never looser than the team's floor, whatever the draft holds.
+        let (shown, source) = match team {
+            Some(view) => view.effective(self.values.level),
+            None => (
+                self.values.shown(),
+                self.values
+                    .level
+                    .map_or(LevelSource::Default, |_| LevelSource::Own),
+            ),
+        };
+        // The team's level is a floor: the looser levels are off, and the
+        // group says why.
+        let allowed = team.map(ClusterView::allowed);
+        let off = |level: &Protection| allowed.as_ref().is_some_and(|all| !all.contains(level));
         let levels = Protection::ALL.iter().enumerate().fold(
             ButtonGroup::new("settings-protection-level")
                 .outline()
@@ -89,11 +104,46 @@ impl Level {
                 group.child(ui::choice(
                     Button::new(("settings-protection-level", ix))
                         .label(level.label())
-                        .disabled(!editable),
+                        .disabled(!editable || off(level)),
                     shown == *level,
                 ))
             },
         );
+        let chip = team.and_then(|view| {
+            super::super::team::origin_chip(
+                "settings-protection-origin".to_string(),
+                view.level,
+                cx,
+            )
+        });
+        let floor = team.and_then(ClusterView::floor_words).map(|words| {
+            div()
+                .id("settings-protection-floor")
+                .test_support()
+                .aria_label(words.clone())
+                .child(words)
+        });
+        let from = super::super::team::level_note(shown, source)
+            .filter(|(kind, ..)| *kind != "default")
+            .map(|(_, _, whole)| {
+                div()
+                    .id("settings-protection-source")
+                    .test_support()
+                    .aria_label(whole.clone())
+                    .child(whole)
+            });
+        let hint = v_flex()
+            .gap(ui::dp(4.))
+            .child({
+                let hint = self.hint(shown, source);
+                div()
+                    .id("settings-protection-hint")
+                    .test_support()
+                    .aria_label(hint.clone())
+                    .child(hint)
+            })
+            .children(from)
+            .children(floor);
         let page = cx.weak_entity();
         form::group("settings-protection", "Protection")
             .narrow(true)
@@ -102,16 +152,21 @@ impl Level {
                 form::row(
                     "settings-protection-level-row",
                     "Level",
-                    levels.on_click(move |selected: &Vec<usize>, _, cx| {
-                        let Some(level) = selected.first().and_then(|ix| Protection::ALL.get(*ix))
-                        else {
-                            return;
-                        };
-                        let level = *level;
-                        _ = page.update(cx, |page, cx| page.set_entry_protection(level, cx));
-                    }),
+                    h_flex()
+                        .gap(ui::dp(8.))
+                        .items_center()
+                        .child(levels.on_click(move |selected: &Vec<usize>, _, cx| {
+                            let Some(level) =
+                                selected.first().and_then(|ix| Protection::ALL.get(*ix))
+                            else {
+                                return;
+                            };
+                            let level = *level;
+                            _ = page.update(cx, |page, cx| page.set_entry_protection(level, cx));
+                        }))
+                        .children(chip),
                 )
-                .hint(self.hint()),
+                .hint_element(hint),
             )
             .saved_in(saved_in())
             .actions(form::actions(

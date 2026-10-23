@@ -12,7 +12,7 @@ restore evaluation (`coverage.rs`), the row state (`state.rs`), the verdict
 prepares rows, groups and Inspector sections, `table.rs` and `view.rs` draw them.
 Tests: core's `databases/tests.rs`, `verdict_tests.rs` and `mariadb_tests.rs`
 exercise interpretation, the verdict and a GET-only fake API; the screen's
-`tests.rs` covers states, keys, links, groups, the Engine column and layout,
+`tests/` covers states, keys, links, groups, the Engine column and layout,
 `coroot_tests.rs` the Coroot read (scripted connection: asked once over the
 entry's link, dropped on hide, late answers rejected), and `wire_tests.rs`
 drives the real reader through an in-memory Kubernetes client. Paths above are
