@@ -4,7 +4,9 @@
 //! which can only read: a namespace at a time (at most [`MAX_NAMESPACES`]),
 //! each at most [`MAX_PAGES`](crate::read::MAX_PAGES) pages. A listing that
 //! fails leaves its source not read, with the failure's kind and the
-//! collection, and the others stand. Kargo, Argo CD and Coroot are not read
+//! collection, and the others stand. A listing cut at the page cap, and
+//! namespaces past the cap, leave the source read in part: its `cut` says
+//! what, and it speaks for no quiet hour. Kargo, Argo CD and Coroot are not read
 //! here yet: their sources say so.
 use chrono::DateTime;
 use serde_json::Value;
@@ -47,9 +49,8 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
             .collect();
     }
 
-    let mut events: Result<Vec<Item>, String> = Ok(Vec::new());
-    let mut restarts: Result<Vec<Item>, String> = Ok(Vec::new());
-    let mut deploys: Result<Vec<Item>, String> = Ok(Vec::new());
+    let (mut events, mut restarts, mut deploys) =
+        (Part::default(), Part::default(), Part::default());
     let mut hosts: Vec<String> = Vec::new();
     for (namespace, workloads) in &namespaces {
         let (event_list, pod_list, set_list) = futures::join!(
@@ -57,41 +58,46 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
             list(reader, pods_resource(), namespace, "pods"),
             list(reader, replicasets_resource(), namespace, "replicasets"),
         );
-        extend(&mut events, event_list, |list| {
-            warnings(list, workloads, since)
-        });
-        extend(&mut deploys, set_list, |list| {
-            rollouts(list, workloads, since)
-        });
-        match pod_list {
-            Ok(list) => {
-                if let Ok(items) = &mut restarts {
-                    items.extend(restarted(&list, workloads, since));
-                }
-                hosts.extend(hosting(&list, workloads));
-            }
-            Err(why) => restarts = Err(why),
+        events.take(event_list, |list| warnings(list, workloads, since));
+        deploys.take(set_list, |list| rollouts(list, workloads, since));
+        if let Ok(listed) = &pod_list {
+            hosts.extend(hosting(&listed.items, workloads));
         }
+        restarts.take(pod_list, |list| restarted(list, workloads, since));
     }
     hosts.sort();
     hosts.dedup();
-    let nodes = list(reader, nodes_resource(), "", "nodes")
-        .await
-        .map(|list| node_changes(&list, &hosts, since));
+    let mut nodes = Part::default();
+    // The hosts are the pods' nodes: a pod list that was cut leaves some
+    // unknown.
+    nodes.cuts.extend(restarts.cuts.iter().cloned());
+    nodes.take(list(reader, nodes_resource(), "", "nodes").await, |list| {
+        node_changes(list, &hosts, since)
+    });
 
-    let from = if skipped > 0 {
-        format!("{from}, the first {MAX_NAMESPACES} namespaces")
-    } else {
-        from.to_owned()
+    // Namespaces past the cap were not asked, which cuts every source that
+    // reads by namespace.
+    if skipped > 0 {
+        let note = format!(
+            "only the first {MAX_NAMESPACES} of {} namespaces were read",
+            scope.workloads.len()
+        );
+        for part in [&mut events, &mut restarts, &mut deploys, &mut nodes] {
+            part.cuts.push(note.clone());
+        }
+    }
+    let read = |source, part: Part| {
+        let cut = (!part.cuts.is_empty()).then(|| part.cuts.join("; "));
+        SourceRead {
+            source,
+            from: from.to_owned(),
+            read_at: now,
+            outcome: part.items,
+            kept_from: None,
+            cut,
+        }
     };
-    let read = |source, outcome: Result<Vec<Item>, String>| SourceRead {
-        source,
-        from: from.clone(),
-        read_at: now,
-        outcome,
-        kept_from: None,
-    };
-    let reads = vec![
+    vec![
         not_read(Source::Promotions, now),
         not_read(Source::Syncs, now),
         not_read(Source::Incidents, now),
@@ -99,24 +105,47 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
         read(Source::Events, events).kept_from(now - EVENT_RETENTION),
         read(Source::Restarts, restarts),
         read(Source::Nodes, nodes),
-    ];
-    reads
+    ]
 }
 
 fn not_read(source: Source, now: i64) -> SourceRead {
     SourceRead::not_read(source, "", now, NOT_YET)
 }
 
-fn extend(
-    into: &mut Result<Vec<Item>, String>,
-    list: Result<Vec<Value>, String>,
-    parse: impl FnOnce(&[Value]) -> Vec<Item>,
-) {
-    match (into.as_mut(), list) {
-        (Ok(items), Ok(list)) => items.extend(parse(&list)),
-        (Ok(_), Err(why)) => *into = Err(why),
-        (Err(_), _) => {}
+/// The items of one source so far, or why it failed, and what was cut.
+struct Part {
+    items: Result<Vec<Item>, String>,
+    cuts: Vec<String>,
+}
+
+impl Default for Part {
+    fn default() -> Self {
+        Self {
+            items: Ok(Vec::new()),
+            cuts: Vec::new(),
+        }
     }
+}
+
+impl Part {
+    /// Adds a listing's items, its cut, or its failure, which makes the
+    /// whole source not read.
+    fn take(&mut self, list: Result<Listed, String>, parse: impl FnOnce(&[Value]) -> Vec<Item>) {
+        match (self.items.as_mut(), list) {
+            (Ok(items), Ok(listed)) => {
+                items.extend(parse(&listed.items));
+                self.cuts.extend(listed.cut);
+            }
+            (Ok(_), Err(why)) => self.items = Err(why),
+            (Err(_), _) => {}
+        }
+    }
+}
+
+/// A listing's items, and where it was cut off if it was.
+struct Listed {
+    items: Vec<Value>,
+    cut: Option<String>,
 }
 
 fn events_resource() -> Resource {
@@ -140,7 +169,7 @@ async fn list(
     resource: Resource,
     namespace: &str,
     what: &str,
-) -> Result<Vec<Value>, String> {
+) -> Result<Listed, String> {
     let scope = if resource.namespaced {
         Scope::Namespace(namespace.to_owned())
     } else {
@@ -149,7 +178,17 @@ async fn list(
     reader
         .list(&ListRequest { resource, scope })
         .await
-        .map(|listing| listing.items)
+        .map(|listing| Listed {
+            cut: listing.truncated.map(|cut| {
+                let at = if namespace.is_empty() {
+                    String::new()
+                } else {
+                    format!(" in {namespace}")
+                };
+                format!("cut after {} {what}{at}", cut.read)
+            }),
+            items: listing.items,
+        })
         .map_err(|Failure { kind, .. }| format!("{}: can't list {what}", kind.label()))
 }
 

@@ -97,6 +97,10 @@ pub struct TimelineView {
     fetch: Fetch,
     loader: Loader<Vec<SourceRead>, (String, u32)>,
     hours: u32,
+    /// The time example data is dated from: taken at its first read and
+    /// kept, so a window or a refresh doesn't date it again and pass old
+    /// lines for new ones.
+    anchor: Anchor,
     visible: bool,
     /// Derived when an answer lands.
     pub(super) chips: Vec<TimelineChip>,
@@ -120,6 +124,7 @@ impl TimelineView {
             fetch,
             loader,
             hours: WINDOWS[0],
+            anchor: Anchor::default(),
             visible: false,
             chips: Vec::new(),
             rows: Vec::new(),
@@ -145,6 +150,7 @@ impl TimelineView {
             return;
         }
         self.fetch = fetch;
+        self.anchor = Anchor::default();
         self.loader.reset();
         self.derive(cx);
         if self.visible {
@@ -196,7 +202,7 @@ impl TimelineView {
         let request = self.loader.start(identity);
         match self.fetch.clone() {
             Fetch::Example { shape, delay } => {
-                let now = Utc::now().timestamp();
+                let now = self.anchor.at(Utc::now().timestamp());
                 let reads = example::reads(now, shape);
                 if delay.is_zero() {
                     if self.loader.land(&request, Ok(reads), cx) {
@@ -278,6 +284,16 @@ impl TimelineView {
     }
 }
 
+/// The time example data is dated from: the first read's, kept.
+#[derive(Default)]
+struct Anchor(Option<i64>);
+
+impl Anchor {
+    fn at(&mut self, wall: i64) -> i64 {
+        *self.0.get_or_insert(wall)
+    }
+}
+
 /// Every source not read, for a read that failed whole.
 fn unread(cluster: &str, now: i64, why: &str) -> Vec<SourceRead> {
     Source::ALL
@@ -330,6 +346,15 @@ impl TimelineView {
 #[cfg(test)]
 mod tests {
     use super::{Source, timeline, unread, view};
+
+    #[test]
+    fn example_data_is_dated_from_its_first_read_and_not_again() {
+        let mut anchor = super::Anchor::default();
+        assert_eq!(anchor.at(100), 100);
+        assert_eq!(anchor.at(200), 100);
+        anchor = super::Anchor::default();
+        assert_eq!(anchor.at(300), 300);
+    }
 
     #[test]
     fn a_read_that_failed_whole_leaves_every_source_not_read_and_nothing_quiet() {

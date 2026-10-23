@@ -14,12 +14,19 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
         .map(|chip| {
             let name = chip.source.label();
             match &chip.state {
-                ChipState::Read { count, kept_from } => {
+                ChipState::Read {
+                    count,
+                    kept_from,
+                    cut,
+                } => {
                     let kept = kept_from.map(|at| span_words(timeline.now - at));
-                    let text = match &kept {
-                        Some(kept) => format!("{name} {count} · kept {kept}"),
-                        None => format!("{name} {count}"),
-                    };
+                    let mut text = format!("{name} {count}");
+                    if let Some(kept) = &kept {
+                        text.push_str(&format!(" · kept {kept}"));
+                    }
+                    if cut.is_some() {
+                        text.push_str(" · cut");
+                    }
                     let entries = if *count == 1 { "entry" } else { "entries" };
                     let mut label = format!(
                         "{name}: {count} {entries} in the last {} h, read from {}",
@@ -33,10 +40,13 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
                             clock(*at)
                         ));
                     }
+                    if let Some(cut) = cut {
+                        label.push_str(&format!(". Read in part: {cut}"));
+                    }
                     TimelineChip {
                         source: chip.source,
                         text: text.into(),
-                        tone: if kept.is_some() {
+                        tone: if kept.is_some() || cut.is_some() {
                             Tone::Warn
                         } else {
                             Tone::Outline

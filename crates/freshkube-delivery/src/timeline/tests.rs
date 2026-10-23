@@ -64,7 +64,8 @@ fn events_stop_where_the_cluster_stops_keeping_them() {
         chip.state,
         ChipState::Read {
             count: 2,
-            kept_from: Some(NOW - EVENT_RETENTION)
+            kept_from: Some(NOW - EVENT_RETENTION),
+            cut: None,
         }
     );
     // A window the retention covers needs no marker.
@@ -93,6 +94,34 @@ fn time_before_the_retention_is_not_quiet_for_events() {
     assert_eq!(quiet[1].2, vec![Source::Deploys]);
     assert!(quiet[1].3.contains(&Source::Events));
     assert_eq!((quiet[1].0, quiet[1].1), (NOW - 3 * 3600, NOW - 3600));
+}
+
+#[test]
+fn a_source_cut_by_a_cap_says_so_and_speaks_for_no_quiet_hour() {
+    let reads = vec![
+        SourceRead::read(Source::Deploys, "c", NOW, Vec::new()),
+        SourceRead::read(Source::Events, "c", NOW, Vec::new()).cut("cut after 1000 events in shop"),
+    ];
+    let timeline = derive(&reads, NOW, 3);
+    let chip = timeline
+        .chips
+        .iter()
+        .find(|chip| chip.source == Source::Events)
+        .unwrap();
+    assert_eq!(
+        chip.state,
+        ChipState::Read {
+            count: 0,
+            kept_from: None,
+            cut: Some("cut after 1000 events in shop".into())
+        }
+    );
+    // Every hour is quiet for Deploys alone; Events, which may hold what
+    // the cap left out, is named as not read in them.
+    let quiet = quiet_rows(&timeline);
+    assert_eq!(quiet.len(), 1);
+    assert_eq!(quiet[0].2, vec![Source::Deploys]);
+    assert!(quiet[0].3.contains(&Source::Events));
 }
 
 #[test]
@@ -303,6 +332,55 @@ mod live {
         assert!(timeline.chips.iter().any(
             |chip| chip.source == Source::Events && matches!(chip.state, ChipState::NotRead(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_listing_cut_at_the_cap_is_read_in_part() {
+        let capped = cluster().capped("events");
+        let reads = live::read(&capped, &place(), NOW, 3).await;
+        let events = reads.iter().find(|r| r.source == Source::Events).unwrap();
+        assert!(events.outcome.is_ok());
+        assert!(
+            events
+                .cut
+                .as_deref()
+                .is_some_and(|cut| cut.contains("events in shop")),
+            "{:?}",
+            events.cut
+        );
+        let others = reads.iter().find(|r| r.source == Source::Restarts).unwrap();
+        assert_eq!(others.cut, None);
+        // No quiet hour is drawn for the part that was cut.
+        let timeline = derive(&reads, NOW, 3);
+        for row in &timeline.rows {
+            if let Row::Quiet { read, .. } = row {
+                assert!(!read.contains(&Source::Events), "{row:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn namespaces_past_the_cap_cut_every_source_that_reads_by_namespace() {
+        let many = Place {
+            cluster: "core-fra".into(),
+            workloads: (0..live::MAX_NAMESPACES + 2)
+                .map(|ix| (format!("shop-{ix}"), vec!["api".into()]))
+                .collect(),
+        };
+        let reads = live::read(&cluster(), &many, NOW, 3).await;
+        for source in [
+            Source::Deploys,
+            Source::Events,
+            Source::Restarts,
+            Source::Nodes,
+        ] {
+            let read = reads.iter().find(|r| r.source == source).unwrap();
+            assert_eq!(
+                read.cut.as_deref(),
+                Some("only the first 5 of 7 namespaces were read"),
+                "{source:?}"
+            );
+        }
     }
 
     #[tokio::test]

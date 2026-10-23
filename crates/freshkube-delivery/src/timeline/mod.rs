@@ -13,6 +13,8 @@
 //!   source with a `kept_from` later than the window's start gets a row
 //!   where its entries stop, "not kept by the cluster", and the time before
 //!   it never counts as read by that source;
+//! - a source read in part, because a cap cut its listing off, says what was
+//!   cut and speaks for no quiet hour;
 //! - a stretch of hours with no entry is a quiet row that names every
 //!   source that was read for it, and the ones that weren't.
 //!
@@ -126,6 +128,10 @@ pub struct SourceRead {
     /// The earliest time the source can say anything about, when that is
     /// later than a window may ask for: Events' retention.
     pub kept_from: Option<i64>,
+    /// What a cap cut off, when the source was read in part: its entries
+    /// are real, but nothing is known of what is missing, so it speaks for
+    /// no quiet hour.
+    pub cut: Option<String>,
 }
 
 impl SourceRead {
@@ -136,6 +142,7 @@ impl SourceRead {
             read_at,
             outcome: Ok(items),
             kept_from: None,
+            cut: None,
         }
     }
 
@@ -146,11 +153,18 @@ impl SourceRead {
             read_at,
             outcome: Err(why.to_owned()),
             kept_from: None,
+            cut: None,
         }
     }
 
     pub fn kept_from(mut self, at: i64) -> Self {
         self.kept_from = Some(at);
+        self
+    }
+
+    /// Marks the source read in part, as a cap left it.
+    pub fn cut(mut self, what: &str) -> Self {
+        self.cut = Some(what.to_owned());
         self
     }
 }
@@ -179,10 +193,12 @@ pub struct Chip {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChipState {
     /// Read: this many entries in the window, and from when the source can
-    /// say, when that is after the window's start.
+    /// say, when that is after the window's start, and what a cap cut off.
     Read {
         count: usize,
         kept_from: Option<i64>,
+        /// What a cap cut off: the count is of what was read.
+        cut: Option<String>,
     },
     NotRead(String),
 }
@@ -279,6 +295,7 @@ pub fn derive(reads: &[SourceRead], now: i64, hours: u32) -> Timeline {
                     state: ChipState::Read {
                         count: entries.len() - before,
                         kept_from: read.kept_from.filter(|at| *at > since),
+                        cut: read.cut.clone(),
                     },
                 });
             }
@@ -365,6 +382,7 @@ fn coverage(reads: &[SourceRead], lo: i64) -> (Vec<Source>, Vec<Source>) {
         let covers = reads.iter().any(|read| {
             read.source == source
                 && read.outcome.is_ok()
+                && read.cut.is_none()
                 && read.kept_from.is_none_or(|at| at <= lo)
         });
         if covers { &mut read } else { &mut not_read }.push(source);
