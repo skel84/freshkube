@@ -1,1 +1,0 @@
-- **Test organization:** group destination settings and graph tests by scenario.

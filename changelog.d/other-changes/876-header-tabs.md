@@ -1,1 +1,0 @@
-- **Header:** the section tabs (Dashboard, Nodes, Workloads, Events, Observability) are gone; the rail is the navigation. Search everything is centred and 320 dp wide, shrinking in a narrow window before anything overlaps, and the empty header drags the window.

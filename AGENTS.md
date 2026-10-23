@@ -7,6 +7,7 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 ```
 crates/
 ├── talos-rs/            Talos gRPC client
+├── freshkube-agent/     the agent in the dock: the ACP client, the opencode profile and its lock-down, the transcript; no GPUI, not yet used by desktop
 ├── freshkube-cli/       the read commands of the binary: check and get, JSON and exit codes; no GPUI
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-agent/     the agent's loopback read endpoint, its session token and the saved per-cluster access; no GPUI
@@ -270,6 +271,7 @@ Behaviour that is not a rule lives in one doc per feature, each starting with it
 - View tabs (`desktop/tabs/`, `freshkube_ui::tab_strip`): [docs/features/tabs.md](docs/features/tabs.md). Rules kept here: a tab is a `ViewState` of the cluster that is open and nothing else is saved; every link still goes through `Pilot::open_object_in` and its guard first; the strip is a cached view beside the page and the shell draws again only when its layout or answers change; frozen rows are bounded (8 tabs, 5,000 rows each, 64 MiB) and make a row action wait.
 - Resources, the dock, shells and ports (`crates/freshkube-resources/`, `desktop/dock/`): [docs/features/resources.md](docs/features/resources.md). Rules kept here: a dock log tab reads while it is open, on any page, and so does a followed item (below), and nothing else reads out of sight; Resources reads only while its page shows; Secret values never reach the detail pane's document, search or a link's resolution (metadata-only reads).
 - Deep links, Copy link and opening a `freshkube://open` link (`crates/freshkube-nav/src/view.rs`, `desktop/deep_link/`): [docs/features/deep-links.md](docs/features/deep-links.md). Rules kept here: a link holds identities only in closed, bounded types and only navigates; Copy link always means a Freshkube link (the change page's is Copy Kargo link).
+- The agent in the dock (`crates/freshkube-agent/`): [docs/features/agent.md](docs/features/agent.md). The agent's only tools are Freshkube's four reads; it gets no credential, an empty workspace and a cleared environment; the token goes only into `session/new`; tests and CI never run opencode.
 - Applications, the Changes list, Waiting to ship and the change page (`crates/freshkube-applications/`): [docs/features/applications.md](docs/features/applications.md). The change page's Stage actions (Refresh, Reverify, Promote, Abort) are the first writes a page offers, through core's `write` module ([docs/WRITE_MODEL.md](docs/WRITE_MODEL.md#stage-actions-855)): never from a deep link, never in a live check unless the maintainer names a disposable Stage.
 - The Nodes workspace and its node pane (`desktop/nodes/`): [docs/features/nodes.md](docs/features/nodes.md).
 - The frame, the Overview and the Kubernetes summary session (`desktop/shell/`, `presentation/`, `kubernetes_summary/`): [docs/features/shell.md](docs/features/shell.md).
