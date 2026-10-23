@@ -522,6 +522,9 @@ fn pressing_s_twice_in_example_mode_shows_one_count_dialog(cx: &mut TestAppConte
     // One Cancel closes it: a second dialog stacked under it would remain.
     w.click(cx, "scale-cancel");
     w.drive(cx, Duration::from_millis(500));
-    assert!(!w.present(cx, "scale-dialog"), "a second dialog was stacked");
+    assert!(
+        !w.present(cx, "scale-dialog"),
+        "a second dialog was stacked"
+    );
     assert!(w.cluster.recorder.requests().is_empty());
 }

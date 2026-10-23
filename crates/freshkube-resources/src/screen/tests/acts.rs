@@ -203,7 +203,9 @@ fn a_replicaset_the_pane_shows_owned_by_a_deployment_does_not_offer_scale(cx: &m
     cx.update(|cx| {
         let heard = heard.clone();
         cx.subscribe(&screen, move |_, act: &WorkloadAct, _| {
-            heard.borrow_mut().push((act.act, act.identity.name.clone()));
+            heard
+                .borrow_mut()
+                .push((act.act, act.identity.name.clone()));
         })
         .detach();
     });
