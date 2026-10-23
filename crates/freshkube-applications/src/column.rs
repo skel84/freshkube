@@ -233,6 +233,7 @@ impl ApplicationsPage {
             changes.set_visible(visible, cx);
             changes.focus_shown(window, cx);
         });
+        self.sync_timeline(cx);
         cx.notify();
     }
 
@@ -252,6 +253,7 @@ impl ApplicationsPage {
             waiting.set_visible(visible, cx);
             waiting.focus(window, cx);
         });
+        self.sync_timeline(cx);
         cx.notify();
     }
 
@@ -293,6 +295,7 @@ impl ApplicationsPage {
         self.column_revision += 1;
         self.waiting
             .update(cx, |waiting, cx| waiting.set_visible(false, cx));
+        self.sync_timeline(cx);
         cx.notify();
     }
 
@@ -304,6 +307,7 @@ impl ApplicationsPage {
         self.column_revision += 1;
         self.changes
             .update(cx, |changes, cx| changes.set_visible(false, cx));
+        self.sync_timeline(cx);
         cx.notify();
     }
 }

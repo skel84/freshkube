@@ -6,6 +6,7 @@ mod outcome;
 mod page;
 mod results_forward;
 mod setup;
+mod timeline;
 mod waiting;
 
 use crate::applications::{ApplicationsPage, Variant};

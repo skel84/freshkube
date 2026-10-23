@@ -164,6 +164,9 @@ impl Pages {
                 cx,
             )
         });
+        applications.update(cx, |page, _| {
+            page.set_timeline_shape(options.debug.timeline)
+        });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
         settings_page.update(cx, |page, _| {
             page.set_example_labels_capped(options.debug.metrics_labels_capped)

@@ -38,6 +38,7 @@ pub(crate) mod rollouts;
 pub(crate) mod shared;
 pub mod source;
 pub(crate) mod tekton;
+pub mod timeline;
 pub(crate) mod verify;
 pub(crate) mod versions;
 pub mod waiting;
