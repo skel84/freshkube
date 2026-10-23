@@ -3,5 +3,6 @@
   "auth": "session",
   "project": "shop-api",
   "reconnect": true,
-  "remember": true
+  "remember": true,
+  "version": 1
 }

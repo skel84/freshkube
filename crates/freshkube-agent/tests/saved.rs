@@ -127,6 +127,65 @@ async fn safety_g08_a_missing_file_grants_nothing_and_an_unparsable_one_grants_n
     assert_eq!(said, 1, "said once");
 }
 
+/// A file with a grant in it, then damaged three ways: cut short, not JSON,
+/// and written by a newer build. None of them grants anything, and the
+/// newer one is never written over.
+#[tokio::test]
+async fn safety_g08_a_truncated_corrupt_or_newer_file_grants_nothing_and_a_newer_one_is_not_written()
+ {
+    let granted = tempfile::tempdir().unwrap();
+    let source = granted.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&source, &gate);
+    access.set_access(ENTRY, CONTEXT, true, "settings").unwrap();
+    assert!(
+        can_read(&gate).await,
+        "the grant is real before it is damaged"
+    );
+    let whole = std::fs::read_to_string(access.file_path()).unwrap();
+    let mut later: serde_json::Value = serde_json::from_str(&whole).unwrap();
+    later["version"] = json!(2);
+    let cases = [
+        ("truncated", whole[..whole.len() / 2].to_owned()),
+        ("corrupt", "{ not json".to_owned()),
+        ("newer", later.to_string()),
+    ];
+    for (name, text) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let preferences = dir.path().join("preferences.json");
+        let file = preferences.with_file_name("agent.json");
+        std::fs::write(&file, &text).unwrap();
+        let gate = AgentAccess::new();
+        let access = Access::open(&preferences, &gate);
+        assert!(
+            gate.granted().is_empty() && access.grants().is_empty(),
+            "{name}"
+        );
+        assert!(!can_read(&gate).await, "{name} grants nothing");
+
+        let turned_on = access.set_access(ENTRY, CONTEXT, true, "settings");
+        if name == "newer" {
+            assert!(turned_on.is_err(), "a newer file is not written");
+            assert!(!can_read(&gate).await, "and nothing is on");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        } else {
+            // The damaged file is kept, then replaced by the person's choice.
+            turned_on.unwrap();
+            let kept = std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with("agent.corrupt-")
+                })
+                .map(|e| std::fs::read_to_string(e.path()).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(kept, [text], "{name} is kept");
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_failed_audit_changes_nothing() {
     let dir = tempfile::tempdir().unwrap();

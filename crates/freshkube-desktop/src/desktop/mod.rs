@@ -818,6 +818,7 @@ impl Pilot {
         self.open_startup_page(&debug, window, cx);
         let (debug, runtime) = (options.debug.clone(), self.runtime.clone());
         self.start_crash_log(&debug, &runtime, window, cx);
+        self.tell_settings_files(window, cx);
         // A link given at launch, and every one the operating system opens
         // us with after it, opens once the window has settled and has a
         // cluster to read.

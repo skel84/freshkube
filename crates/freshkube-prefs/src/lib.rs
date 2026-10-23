@@ -6,6 +6,13 @@
 //! [`Document`] loads and saves one of them as a typed value. A missing file
 //! is the default. A file that can't be read or parsed is also the default,
 //! and the load says why once, in [`Loaded::problem`], for the caller to log.
+//!
+//! A file that can't be parsed (a hand edit, a half-written file) is copied
+//! aside as `<name>.corrupt-<UTC time>.json` before anything replaces it
+//! (see [`keep`]). A save writes `"version": 1` into an object; a load takes
+//! it out before the value is read, so a file without one is version 1. A
+//! file with a newer version is the default for a load and is never written:
+//! an older build does not destroy a newer build's file.
 //! A save writes a temporary file in the same directory and renames it into
 //! place, so a reader never sees half a file and a failed save leaves the old
 //! one.
@@ -19,6 +26,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
+
+mod keep;
+pub use keep::{KEEP, Notice, take_notices};
+
+/// The version a save writes and a load understands.
+pub const VERSION: u64 = 1;
 
 /// How a document's JSON is laid out on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,12 +150,25 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
             }
             Err(error) => return Err(error),
         };
-        Ok(match serde_json::from_slice(&bytes) {
-            Ok(value) => Loaded {
+        Ok(match parse(&bytes) {
+            Found::Value(value) => Loaded {
                 value,
                 problem: None,
             },
-            Err(error) => self.unusable(format!("could not be parsed: {}", describe(&error))),
+            Found::Newer(version) => {
+                keep::tell(Notice {
+                    file: self.path.clone(),
+                    kept_as: None,
+                });
+                self.unusable(newer(version))
+            }
+            Found::Corrupt(why) => {
+                let kept = match keep::copy(&self.path, &bytes) {
+                    Ok(copy) => format!("; kept as {}", copy.display()),
+                    Err(error) => format!("; a copy could not be kept: {error}"),
+                };
+                self.unusable(format!("could not be parsed: {why}{kept}"))
+            }
         })
     }
 
@@ -188,12 +215,17 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// symlink stays one: the temporary file goes beside its target and is
     /// renamed over the target.
     pub fn save(&self, value: &T) -> std::io::Result<()> {
+        let mut json = serde_json::to_value(value).map_err(std::io::Error::other)?;
+        if let Value::Object(map) = &mut json {
+            map.insert("version".into(), VERSION.into());
+        }
         let mut text = match self.layout {
-            Layout::Compact => serde_json::to_string(value),
-            Layout::Pretty => serde_json::to_string_pretty(value),
+            Layout::Compact => serde_json::to_string(&json),
+            Layout::Pretty => serde_json::to_string_pretty(&json),
         }
         .map_err(std::io::Error::other)?;
         text.push('\n');
+        self.before_replacing()?;
         let target = self.target();
         let directory = target.parent().unwrap_or(Path::new(""));
         if !directory.as_os_str().is_empty() {
@@ -209,6 +241,28 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
             let _ = std::fs::remove_file(&temporary);
         }
         result
+    }
+
+    /// What a save may do to the file that is there: refuse to replace a
+    /// newer version's, and keep a copy of one that can't be parsed. A file
+    /// that is missing, can't be read or is past the limit is left to the
+    /// save, as before.
+    fn before_replacing(&self) -> std::io::Result<()> {
+        let Ok(Ok(bytes)) = self.read_bytes() else {
+            return Ok(());
+        };
+        match parse::<T>(&bytes) {
+            Found::Value(_) => Ok(()),
+            Found::Newer(version) => Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} {}; not overwritten",
+                    self.path.display(),
+                    newer(version)
+                ),
+            )),
+            Found::Corrupt(_) => keep::copy(&self.path, &bytes).map(drop),
+        }
     }
 
     /// The file a save replaces: the path itself, or what a symlink there
@@ -252,10 +306,10 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// writer that owns some keys of a shared document sets those and leaves
     /// the rest as it found it, so a `Document<Map<String, Value>>` keeps
     /// the keys this build does not know. A file that is missing starts from
-    /// the default, and so does one that parses wrongly (it holds nothing
-    /// this build can keep). A file that exists but can't be read (no
-    /// permission, an I/O error, a directory) returns that error and saves
-    /// nothing, so a transient failure never wipes the other keys. So does a
+    /// the default, and so does one that parses wrongly, after a copy of it is
+    /// kept. A file with a newer version returns an error and saves nothing,
+    /// and so does one that exists but can't be read (no permission, an I/O
+    /// error, a directory),  so a transient failure never wipes the other keys. So does a
     /// file that a [`limited_to`](Self::limited_to) document refuses.
     ///
     /// Updates in this process run one at a time, so two of them never lose
@@ -271,6 +325,38 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         change(&mut value);
         self.save(&value)
     }
+}
+
+enum Found<T> {
+    Value(T),
+    /// The version a newer build wrote.
+    Newer(u64),
+    Corrupt(String),
+}
+
+/// Reads `bytes` as a `T`, without its `version` key.
+fn parse<T: DeserializeOwned>(bytes: &[u8]) -> Found<T> {
+    let mut json: Value = match serde_json::from_slice(bytes) {
+        Ok(json) => json,
+        Err(error) => return Found::Corrupt(describe(&error)),
+    };
+    if let Value::Object(map) = &mut json
+        && let Some(version) = map.remove("version")
+    {
+        match version.as_u64() {
+            Some(version) if version > VERSION => return Found::Newer(version),
+            Some(_) => {}
+            None => return Found::Corrupt("has a version that is not a number".into()),
+        }
+    }
+    match serde_json::from_value(json) {
+        Ok(value) => Found::Value(value),
+        Err(error) => Found::Corrupt(describe(&error)),
+    }
+}
+
+fn newer(version: u64) -> String {
+    format!("was written by a newer Freshkube (version {version}) and is not used")
 }
 
 #[cfg(unix)]
@@ -315,7 +401,11 @@ fn describe(error: &serde_json::Error) -> String {
         Category::Data => "a value of the wrong type or shape",
         Category::Eof => "the file ends too early",
     };
-    format!("{kind} at line {}, column {}", error.line(), error.column())
+    // An error from a value already parsed has no position.
+    match error.line() {
+        0 => kind.to_owned(),
+        line => format!("{kind} at line {line}, column {}", error.column()),
+    }
 }
 
 #[cfg(test)]

@@ -160,3 +160,26 @@ fn about_after_a_crash_copies_the_crashed_log_without_the_token(cx: &mut TestApp
     );
     assert!(!text.contains(SEED), "{text}");
 }
+
+#[gpui_kit::test]
+fn a_settings_file_kept_aside_is_told_once_with_its_copy(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, handle) = open(cx, session(dir.path(), None), None);
+    assert_eq!(notices(cx, handle), 0);
+    let notice = freshkube_prefs::Notice {
+        file: dir.path().join("preferences.json"),
+        kept_as: Some(dir.path().join("preferences.corrupt-20261024T101500Z.json")),
+    };
+    for _ in 0..2 {
+        cx.update_window(handle, |_, window, cx| {
+            crash::tell_notices(vec![notice.clone()], window, cx)
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    assert_eq!(notices(cx, handle), 1, "one line, however often it is told");
+    assert_eq!(
+        notice.to_string(),
+        "preferences.json could not be read; the old file is kept as preferences.corrupt-20261024T101500Z.json"
+    );
+}

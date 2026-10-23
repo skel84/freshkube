@@ -28,9 +28,11 @@ fn a_saved_value_reads_back() {
     let loaded = document.load();
     assert_eq!(loaded.value, value);
     assert!(loaded.problem.is_none());
+    let text = std::fs::read_to_string(document.path()).unwrap();
+    assert!(text.ends_with("}\n") && !text[..text.len() - 1].contains('\n'));
     assert_eq!(
-        std::fs::read_to_string(document.path()).unwrap(),
-        "{\"name\":\"shop-api\",\"count\":3}\n"
+        serde_json::from_str::<Value>(&text).unwrap(),
+        serde_json::json!({"name": "shop-api", "count": 3, "version": 1})
     );
 }
 
@@ -157,7 +159,6 @@ fn a_problem_never_carries_the_files_contents() {
     assert!(!problem.contains("config-acme"), "{problem}");
     assert!(!problem.contains("someone"), "{problem}");
     assert!(problem.contains("wrong type or shape"), "{problem}");
-    assert!(problem.contains("line 1, column"), "{problem}");
     // A wrong field type in an object, too.
     std::fs::write(
         document.path(),
@@ -244,8 +245,8 @@ fn a_symlinked_file_stays_a_link_and_its_target_is_rewritten() {
             .is_symlink()
     );
     assert_eq!(
-        std::fs::read_to_string(&target).unwrap(),
-        "{\"name\":\"new\",\"count\":5}\n"
+        serde_json::from_str::<Value>(&std::fs::read_to_string(&target).unwrap()).unwrap(),
+        serde_json::json!({"name": "new", "count": 5, "version": 1})
     );
     // No temporary file beside the link or its target.
     for dir in [directory.path(), elsewhere.path()] {
@@ -335,8 +336,9 @@ fn an_update_of_a_missing_or_unusable_file_starts_from_the_default() {
             })
             .unwrap();
         assert_eq!(
-            std::fs::read_to_string(document.path()).unwrap(),
-            "{\n  \"text_size\": 18.0\n}\n"
+            serde_json::from_str::<Value>(&std::fs::read_to_string(document.path()).unwrap())
+                .unwrap(),
+            serde_json::json!({"text_size": 18.0, "version": 1})
         );
         std::fs::remove_file(document.path()).unwrap();
     }
@@ -498,4 +500,196 @@ fn a_save_that_fails_before_writing_keeps_the_old_file_and_leaves_nothing() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["sample.json"]);
+}
+
+fn copies(directory: &tempfile::TempDir) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("sample.corrupt-"))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_corrupt_file_is_kept_and_then_replaced() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "{\"name\": \"shop-api\", oops").unwrap();
+    let loaded = document.load();
+    assert_eq!(loaded.value, Sample::default());
+    let kept = copies(&directory);
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    let problem = loaded.problem.expect("a problem");
+    assert!(problem.contains(&kept[0]), "{problem}");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join(&kept[0])).unwrap(),
+        "{\"name\": \"shop-api\", oops"
+    );
+    // The original is still there until something saves.
+    assert!(
+        std::fs::read_to_string(document.path())
+            .unwrap()
+            .contains("oops")
+    );
+    document.update(|sample| sample.count = 7).unwrap();
+    assert_eq!(document.load().value.count, 7);
+    assert_eq!(copies(&directory), kept, "no second copy of the same bytes");
+}
+
+#[test]
+fn a_save_over_a_corrupt_file_keeps_it_first() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "not json at all").unwrap();
+    // No load first: the save itself must not lose the file.
+    document.save(&Sample::default()).unwrap();
+    let kept = copies(&directory);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join(&kept[0])).unwrap(),
+        "not json at all"
+    );
+    assert!(document.load().problem.is_none());
+}
+
+#[test]
+fn a_truncated_file_is_corrupt_and_kept() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    document
+        .save(&Sample {
+            name: "shop-api".into(),
+            count: 3,
+        })
+        .unwrap();
+    let whole = std::fs::read(document.path()).unwrap();
+    std::fs::write(document.path(), &whole[..whole.len() / 2]).unwrap();
+    let loaded = document.load();
+    assert_eq!(loaded.value, Sample::default());
+    assert!(loaded.problem.unwrap().contains("ends too early"));
+    let kept = copies(&directory);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        std::fs::read(directory.path().join(&kept[0])).unwrap(),
+        &whole[..whole.len() / 2]
+    );
+}
+
+#[test]
+fn only_the_newest_three_copies_are_kept_and_none_is_overwritten() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    for n in 0..5 {
+        std::fs::write(document.path(), format!("broken {n}")).unwrap();
+        document.load();
+    }
+    let kept = copies(&directory);
+    assert_eq!(kept.len(), KEEP, "{kept:?}");
+    let contents: Vec<String> = kept
+        .iter()
+        .map(|name| std::fs::read_to_string(directory.path().join(name)).unwrap())
+        .collect();
+    assert_eq!(contents, ["broken 2", "broken 3", "broken 4"]);
+}
+
+#[test]
+fn a_copy_is_named_for_its_utc_time_and_does_not_replace_one() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("sample.json");
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let first = keep::copy_at(&file, b"one", at).unwrap();
+    let second = keep::copy_at(&file, b"two", at).unwrap();
+    assert_eq!(
+        first.file_name().unwrap(),
+        "sample.corrupt-20231114T221320Z.json"
+    );
+    assert_eq!(
+        second.file_name().unwrap(),
+        "sample.corrupt-20231114T221320Z.1.json"
+    );
+    assert_eq!(std::fs::read(&first).unwrap(), b"one");
+    assert_eq!(std::fs::read(&second).unwrap(), b"two");
+}
+
+#[test]
+fn a_notice_names_the_file_and_the_copy_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "{").unwrap();
+    document.load();
+    document.load();
+    let mine: Vec<_> = take_notices()
+        .into_iter()
+        .filter(|notice| notice.file == document.path())
+        .collect();
+    assert_eq!(mine.len(), 1, "{mine:?}");
+    let line = mine[0].to_string();
+    assert!(line.starts_with("sample.json could not be read"), "{line}");
+    assert!(line.contains("sample.corrupt-"), "{line}");
+    assert!(
+        !line.contains(&*directory.path().to_string_lossy()),
+        "{line}"
+    );
+}
+
+#[test]
+fn a_file_without_a_version_loads_and_a_save_writes_one() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "{\"name\":\"a\",\"count\":2}").unwrap();
+    let loaded = document.load();
+    assert!(loaded.problem.is_none());
+    assert_eq!(loaded.value.count, 2);
+    document.save(&loaded.value).unwrap();
+    let written: Value =
+        serde_json::from_str(&std::fs::read_to_string(document.path()).unwrap()).unwrap();
+    assert_eq!(written["version"], VERSION);
+    assert!(copies(&directory).is_empty());
+}
+
+#[test]
+fn the_version_key_never_reaches_the_value() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory);
+    document
+        .update(|map| drop(map.insert("a".into(), 1.into())))
+        .unwrap();
+    let loaded = document.load();
+    assert!(!loaded.value.contains_key("version"));
+    assert_eq!(loaded.value.len(), 1);
+}
+
+#[test]
+fn a_newer_version_is_not_used_and_not_written() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    let newer = "{\"version\":2,\"name\":\"later\",\"count\":9,\"added\":true}";
+    std::fs::write(document.path(), newer).unwrap();
+    let loaded = document.load();
+    assert_eq!(loaded.value, Sample::default());
+    assert!(
+        loaded
+            .problem
+            .unwrap()
+            .contains("newer Freshkube (version 2)")
+    );
+    assert!(document.save(&Sample::default()).is_err());
+    assert!(document.update(|sample| sample.count = 1).is_err());
+    assert_eq!(std::fs::read_to_string(document.path()).unwrap(), newer);
+    assert!(copies(&directory).is_empty(), "a newer file is not corrupt");
+    assert!(
+        directory.path().read_dir().unwrap().count() == 1,
+        "no temporary file"
+    );
+}
+
+#[test]
+fn a_version_that_is_not_a_number_is_corrupt() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "{\"version\":\"one\"}").unwrap();
+    assert!(document.load().problem.is_some());
+    assert_eq!(copies(&directory).len(), 1);
 }

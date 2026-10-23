@@ -175,6 +175,41 @@ impl Pilot {
     }
 }
 
+impl Pilot {
+    /// Tells once, at launch, of each settings file that was kept aside or
+    /// left alone as a newer build's (`freshkube_prefs::take_notices`).
+    /// ponytail: a file first read after launch (Monitoring's, on its first
+    /// visit) is told at the next start; poll the queue if that matters.
+    pub(super) fn tell_settings_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A test shares the process-wide queue with every other test.
+        #[cfg(not(test))]
+        tell_notices(freshkube_prefs::take_notices(), window, cx);
+        #[cfg(test)]
+        let _ = (window, cx);
+    }
+}
+
+/// One warning per notice, kept until dismissed: it names a file and where
+/// its copy went.
+pub(super) fn tell_notices(
+    notices: Vec<freshkube_prefs::Notice>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for notice in notices {
+        let key = notice.file.to_string_lossy().into_owned();
+        window.push_notification(
+            Notification::warning(notice.to_string())
+                .id1::<SettingsFileNotice>(key)
+                .autohide(false),
+            cx,
+        );
+    }
+}
+
+/// The notice's identity, so a file is told once.
+struct SettingsFileNotice;
+
 /// The notice: what happened in a line, and the two actions.
 fn crash_notice(crash: &CrashReport, cx: &App) -> Notification {
     let what = match &crash.panic {
