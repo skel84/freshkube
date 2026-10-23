@@ -109,18 +109,22 @@ async fn safety_g08_a_missing_file_grants_nothing_and_an_unparsable_one_grants_n
     Access::open(&preferences, &gate);
     assert!(gate.granted().is_empty());
 
-    std::fs::write(preferences.with_file_name("agent.json"), "{ not json").unwrap();
-    let before = capture::captured()
-        .matches("agent access is off everywhere")
-        .count();
+    let file = preferences.with_file_name("agent.json");
+    std::fs::write(&file, "{ not json").unwrap();
     let gate = AgentAccess::new();
     let access = Access::open(&preferences, &gate);
     assert!(gate.granted().is_empty() && access.grants().is_empty());
     assert!(!can_read(&gate).await);
-    let after = capture::captured()
-        .matches("agent access is off everywhere")
+    // The capture is shared by every test in this binary, so count only the
+    // warnings that name this test's own file.
+    let said = capture::captured()
+        .lines()
+        .filter(|line| {
+            line.contains("agent access is off everywhere")
+                && line.contains(&*file.to_string_lossy())
+        })
         .count();
-    assert_eq!(after - before, 1, "said once");
+    assert_eq!(said, 1, "said once");
 }
 
 #[tokio::test]
