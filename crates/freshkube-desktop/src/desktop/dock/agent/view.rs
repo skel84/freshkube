@@ -604,17 +604,22 @@ impl AgentView {
                     .child(ui::mono(row.place.clone())),
             )
             .when_some(row.elsewhere.clone(), |this, cluster| {
+                let own = self.own.as_ref().map(|own| own.entry.as_str());
+                let words = match own {
+                    Some(own) => format!(
+                        "The agent read {cluster}; this page stays on {own}. It needs agent access of its own."
+                    ),
+                    None => format!(
+                        "The agent read {cluster}, not this cluster. It needs agent access of its own."
+                    ),
+                };
                 this.child(
                     div()
                         .id(SharedString::from(format!("agent-elsewhere-{}", row.id)))
                         .test_support()
-                        .aria_label(SharedString::from(format!(
-                            "Another cluster: {cluster}. It needs agent access of its own."
-                        )))
+                        .aria_label(SharedString::from(words.clone()))
                         .text_color(p.warn_ink)
-                        .child(format!(
-                            "Read on {cluster}, not this cluster. It needs agent access of its own."
-                        )),
+                        .child(words),
                 )
             })
     }

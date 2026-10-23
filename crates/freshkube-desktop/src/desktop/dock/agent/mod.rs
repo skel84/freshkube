@@ -565,6 +565,8 @@ impl AgentView {
     pub(crate) fn end(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
         self.session = None;
+        // The page is handed back, so the followed log tab goes with it.
+        self.hand_back(cx);
         self.follow = None;
         self.listening = None;
         self.check = None;
@@ -650,18 +652,24 @@ impl AgentView {
             }
             run::Message::Models(models) => self.models = models,
             run::Message::Listening(addr) => self.listening = Some(addr),
-            run::Message::Ended(reason) => {
-                self.session = None;
-                self.listening = None;
-                self.working = false;
-                self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
-                if let Some(reason) = reason {
-                    self.notice = Some(Notice::Failed(reason));
-                }
-            }
+            run::Message::Ended(reason) => self.session_ended(reason, cx),
         }
         self.refresh_steps();
         cx.notify();
+    }
+
+    /// The session is over (the agent exited, or it could not start): the
+    /// page is handed back, so no pending move and no followed log tab
+    /// outlive it.
+    fn session_ended(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
+        self.session = None;
+        self.listening = None;
+        self.working = false;
+        self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
+        self.hand_back(cx);
+        if let Some(reason) = reason {
+            self.notice = Some(Notice::Failed(reason));
+        }
     }
 
     /// Says what each failed step of Freshkube's own reads stands for. A
@@ -751,7 +759,7 @@ impl AgentView {
             // most nine bytes, so eight carry a split one.
             let scan = format!("{}{chunk}", self.cite_carry);
             self.trail.cite(&scan);
-            self.follow_cited(&scan);
+            self.follow_cited(&scan, cx);
             let mut from = scan.len().saturating_sub(CITE_CARRY);
             while !scan.is_char_boundary(from) {
                 from += 1;
@@ -783,6 +791,11 @@ impl AgentView {
                 *last = shown(entry);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn end_session_for_test(&mut self, cx: &mut Context<Self>) {
+        self.session_ended(None, cx);
     }
 
     #[cfg(test)]

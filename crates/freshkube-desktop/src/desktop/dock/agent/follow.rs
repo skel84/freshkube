@@ -80,12 +80,17 @@ impl AgentView {
     }
 
     /// The agent cited these reads: they keep their full hold.
-    pub(super) fn follow_cited(&mut self, text: &str) {
-        if let Some(follow) = &mut self.follow {
-            for number in citations(text) {
-                follow.follower.keep(number);
-            }
+    pub(super) fn follow_cited(&mut self, text: &str, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let Some(follow) = &mut self.follow else {
+            return;
+        };
+        for number in citations(text) {
+            follow.follower.keep(number, now);
         }
+        // A cited place that was skipped waits its turn again.
+        self.arm_follow(cx);
+        self.sync_strip(cx);
     }
 
     /// A new question starts a new trail and follows again.
@@ -256,6 +261,27 @@ impl AgentView {
     }
 }
 
+impl StripState {
+    /// "Following agent · pods · payments · 2 of 4".
+    fn line(&self) -> SharedString {
+        match self.position {
+            Some((n, m)) if !self.place.is_empty() => {
+                format!("Following agent · {} · {n} of {m}", self.place).into()
+            }
+            _ => "Following agent".into(),
+        }
+    }
+
+    /// "The agent read ⟨other⟩; this page stays on ⟨own⟩."
+    fn warning(&self) -> Option<SharedString> {
+        let other = self.elsewhere.as_ref()?;
+        Some(match &self.own {
+            Some(own) => format!("The agent read {other}; this page stays on {own}.").into(),
+            None => format!("The agent read {other}; this page stays.").into(),
+        })
+    }
+}
+
 #[derive(Clone, Default, PartialEq)]
 struct StripState {
     place: SharedString,
@@ -272,6 +298,10 @@ struct StripState {
 pub(crate) struct FollowStrip {
     agent: WeakEntity<AgentView>,
     state: StripState,
+    /// What the strip says, derived when the state changes and not on each
+    /// frame of the hairline.
+    line: SharedString,
+    warning: Option<SharedString>,
     /// Where the strip was last laid out, so the shell can tell a press on
     /// it from the person's input in the page.
     bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
@@ -285,12 +315,16 @@ impl FollowStrip {
         Self {
             agent,
             state: StripState::default(),
+            line: SharedString::default(),
+            warning: None,
             bounds: Default::default(),
         }
     }
 
     fn set(&mut self, state: StripState, cx: &mut Context<Self>) {
         if self.state != state {
+            self.line = state.line();
+            self.warning = state.warning();
             self.state = state;
             cx.notify();
         }
@@ -344,23 +378,7 @@ impl Render for FollowStrip {
             freshkube_ui::motion::next_frame(window, cx);
         }
         let bounds = self.bounds.clone();
-        let state = self.state.clone();
-        let count = state
-            .position
-            .map(|(n, m)| format!("{n} of {m}"))
-            .unwrap_or_default();
-        let line = if state.place.is_empty() {
-            "Following agent".to_owned()
-        } else {
-            format!("Following agent · {} · {count}", state.place)
-        };
-        let warning = match (&state.elsewhere, &state.own) {
-            (Some(other), Some(own)) => {
-                Some(format!("The agent read {other}; this page stays on {own}."))
-            }
-            (Some(other), None) => Some(format!("The agent read {other}; this page stays.")),
-            _ => None,
-        };
+        let (line, warning) = (self.line.clone(), self.warning.clone());
         h_flex()
             .id("follow-strip")
             .test_support()
@@ -380,7 +398,7 @@ impl Render for FollowStrip {
                 div()
                     .id("follow-place")
                     .test_support()
-                    .aria_label(SharedString::from(line.clone()))
+                    .aria_label(line.clone())
                     .flex_1()
                     .min_w_0()
                     .truncate()
@@ -390,7 +408,7 @@ impl Render for FollowStrip {
                 div()
                     .id("follow-elsewhere")
                     .test_support()
-                    .aria_label(SharedString::from(warning.clone()))
+                    .aria_label(warning.clone())
                     .min_w_0()
                     .truncate()
                     .text_color(p.warn_ink)

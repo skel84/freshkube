@@ -69,6 +69,25 @@ impl Dock {
         view.update(cx, |view, cx| view.hand_back(cx))
     }
 
+    /// The window shows another cluster, or reads through another
+    /// connection: every Agent tab hands the page back, which closes the
+    /// followed log tab through its `Stopped`.
+    pub(super) fn stop_following(&mut self, cx: &mut Context<Self>) {
+        let views: Vec<_> = self
+            .tabs
+            .iter()
+            .filter_map(|tab| match &tab.kind {
+                TabKind::Agent(view) => Some(view.clone()),
+                _ => None,
+            })
+            .collect();
+        for view in views {
+            view.update(cx, |view, cx| {
+                view.hand_back(cx);
+            });
+        }
+    }
+
     /// The toast's Jump: follows again at the latest place.
     pub(crate) fn jump_follow(&mut self, cx: &mut Context<Self>) {
         let view = self.tabs.iter().find_map(|tab| match &tab.kind {

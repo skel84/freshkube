@@ -11,8 +11,9 @@
 //!   cluster instead ([`Fed::Elsewhere`]).
 //! - Each view holds for [`DWELL`]. The latest place waits for the hold to
 //!   end and the places in between are skipped, except a read the agent cited
-//!   or one that explains a failure ([`Follower::keep`]), which gets its full
-//!   hold.
+//!   ([`Follower::keep`]), which gets its full hold. A citation usually comes
+//!   after the reads, so a place that was skipped is remembered for [`GRACE`]
+//!   and comes back when it is cited within it.
 //! - After the person takes the page back ([`Follower::hand_back`]) nothing
 //!   moves; the places that come are counted ([`Follower::newer`]) until
 //!   [`Follower::jump`] or [`Follower::resume`].
@@ -26,6 +27,9 @@ use crate::endpoint::{Outcome, ReadEvent};
 
 /// How long a view holds before the next place may replace it.
 pub const DWELL: Duration = Duration::from_millis(1500);
+/// How long a skipped place is remembered, so a citation that comes after
+/// the reads can still bring it back.
+pub const GRACE: Duration = Duration::from_secs(30);
 /// The reads a session may make, and so the most places the trail keeps.
 const MAX_TRAIL: usize = 500;
 /// The most places that wait at once; cited ones are kept, the rest are
@@ -68,6 +72,8 @@ pub struct Follower {
     /// What the page shows from the agent, and since when.
     shown: Option<(Move, Instant)>,
     waiting: VecDeque<Waiting>,
+    /// Places that latest-wins dropped, and when, for a late citation.
+    skipped: VecDeque<(Move, Instant)>,
     /// Every place a read could show, in the order the reads ran.
     trail: Vec<Move>,
     /// Where in the trail the page is, for ◂ ▸.
@@ -85,6 +91,7 @@ impl Follower {
             following: true,
             shown: None,
             waiting: VecDeque::new(),
+            skipped: VecDeque::new(),
             trail: Vec::new(),
             at: None,
             kept: Vec::new(),
@@ -123,7 +130,12 @@ impl Follower {
             return Fed::Show(self.show(place, now));
         }
         // Latest wins: the places that wait and were not kept give way.
-        self.waiting.retain(|waiting| waiting.keep);
+        let (kept, dropped): (VecDeque<_>, VecDeque<_>) =
+            self.waiting.drain(..).partition(|waiting| waiting.keep);
+        self.waiting = kept;
+        for waiting in dropped {
+            self.remember(waiting.place, now);
+        }
         if self.waiting.len() >= MAX_WAITING {
             self.waiting.pop_front();
         }
@@ -153,9 +165,17 @@ impl Follower {
         self.shown.as_ref().map(|(_, since)| *since + DWELL)
     }
 
-    /// Gives the read `number` its full hold: the agent cited it, or it
-    /// explains a failure. It is not skipped by newer places.
-    pub fn keep(&mut self, number: u32) {
+    fn remember(&mut self, place: Move, now: Instant) {
+        if self.skipped.len() >= MAX_WAITING {
+            self.skipped.pop_front();
+        }
+        self.skipped.push_back((place, now));
+    }
+
+    /// Gives the read `number` its full hold: the agent cited it. It is not
+    /// skipped by newer places, and one that was skipped less than [`GRACE`]
+    /// ago waits its turn again, in the order the reads ran.
+    pub fn keep(&mut self, number: u32, now: Instant) {
         if !self.kept.contains(&number) && self.kept.len() < MAX_TRAIL {
             self.kept.push(number);
         }
@@ -163,6 +183,20 @@ impl Follower {
             if waiting.place.read == number {
                 waiting.keep = true;
             }
+        }
+        self.skipped
+            .retain(|(_, at)| now.saturating_duration_since(*at) <= GRACE);
+        if !self.following {
+            return;
+        }
+        if let Some(ix) = self.skipped.iter().position(|(p, _)| p.read == number) {
+            let (place, _) = self.skipped.remove(ix).expect("just found");
+            let at = self
+                .waiting
+                .iter()
+                .position(|waiting| waiting.place.read > number)
+                .unwrap_or(self.waiting.len());
+            self.waiting.insert(at, Waiting { place, keep: true });
         }
     }
 
@@ -174,6 +208,7 @@ impl Follower {
         }
         self.following = false;
         self.waiting.clear();
+        self.skipped.clear();
     }
 
     /// Follows again from the next read.
@@ -185,6 +220,7 @@ impl Follower {
     pub fn jump(&mut self, now: Instant) -> Option<Move> {
         self.following = true;
         self.waiting.clear();
+        self.skipped.clear();
         let latest = self.trail.last().cloned()?;
         Some(self.show(latest, now))
     }
@@ -352,7 +388,7 @@ mod tests {
         follower.feed(&run.read("pods"), run.at(0));
         let cited = run.read("services");
         follower.feed(&cited, run.at(300));
-        follower.keep(cited.read.number());
+        follower.keep(cited.read.number(), run.at(300));
         follower.feed(&run.read("deployments.apps"), run.at(600));
         follower.feed(&run.read("nodes"), run.at(900));
         let second = follower.due(run.at(1500)).unwrap();
@@ -363,12 +399,46 @@ mod tests {
     }
 
     #[test]
+    fn a_citation_after_the_skip_brings_the_place_back_within_the_grace() {
+        let run = Run::new();
+        let mut follower = Follower::new("a");
+        follower.feed(&run.read("pods"), run.at(0));
+        let skipped = run.read("services");
+        follower.feed(&skipped, run.at(300));
+        follower.feed(&run.read("deployments.apps"), run.at(600));
+        // The latest shows and the second was skipped.
+        assert_eq!(
+            kind(&follower.due(run.at(1500)).unwrap()),
+            "deployments.apps"
+        );
+        // The answer cites it, after the reads.
+        follower.keep(skipped.read.number(), run.at(2000));
+        assert_eq!(follower.next_due(), Some(run.at(3000)));
+        assert_eq!(kind(&follower.due(run.at(3000)).unwrap()), "services");
+    }
+
+    #[test]
+    fn a_citation_after_the_grace_brings_nothing_back() {
+        let run = Run::new();
+        let mut follower = Follower::new("a");
+        follower.feed(&run.read("pods"), run.at(0));
+        let skipped = run.read("services");
+        follower.feed(&skipped, run.at(300));
+        follower.feed(&run.read("deployments.apps"), run.at(600));
+        follower.due(run.at(1500));
+        let late = run.at(600) + GRACE + Duration::from_millis(1);
+        follower.keep(skipped.read.number(), late);
+        assert_eq!(follower.next_due(), None);
+        assert_eq!(follower.due(late + DWELL), None);
+    }
+
+    #[test]
     fn a_read_kept_before_it_arrives_is_kept() {
         let run = Run::new();
         let mut follower = Follower::new("a");
         follower.feed(&run.read("pods"), run.at(0));
         let early = run.read("services");
-        follower.keep(early.read.number());
+        follower.keep(early.read.number(), run.at(300));
         follower.feed(&early, run.at(300));
         follower.feed(&run.read("nodes"), run.at(600));
         assert_eq!(kind(&follower.due(run.at(1500)).unwrap()), "services");

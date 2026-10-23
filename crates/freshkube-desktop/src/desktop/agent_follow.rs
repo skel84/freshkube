@@ -25,18 +25,22 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The same guard for both: a window still loading its setup or
+        // identifying its cluster is not one to navigate.
+        if self.config_loading || self.identifying() {
+            return;
+        }
         match event {
             FollowEvent::Show(view) => {
-                if self.config_loading || self.identifying() {
-                    return;
-                }
                 let focus = window.focused(cx);
                 self.apply_followed_view(view, window, cx);
-                // Following never moves the keyboard.
-                if window.focused(cx) != focus
-                    && let Some(focus) = focus
-                {
-                    window.focus(&focus, cx);
+                // Following never moves the keyboard: it goes back where it
+                // was, or off whatever took it when it was nowhere.
+                if window.focused(cx) != focus {
+                    match focus {
+                        Some(focus) => window.focus(&focus, cx),
+                        None => window.blur(cx),
+                    }
                 }
             }
             FollowEvent::Open(view) => self.apply_view(view, window, cx),

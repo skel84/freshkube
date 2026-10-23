@@ -757,3 +757,206 @@ fn a_missing_object_reads_not_found_on_the_step_and_the_trail_row(cx: &mut TestA
     assert!(!label.contains("Refused") && !label.contains("Couldn't read"));
     let _ = Page::Resources;
 }
+
+/// A followed log read, so follow owns a tab.
+fn following_a_log(tab: &Tab, cx: &mut TestAppContext) -> String {
+    let at = places(tab, cx);
+    let pod = at.pods[0].clone();
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), Some(&pod), ViewTab::Logs),
+        cx,
+    );
+    assert!(tab.follow_tab(cx).is_some());
+    assert!(tab.following(cx));
+    pod
+}
+
+#[gpui_kit::test]
+fn a_session_that_ends_hands_the_page_back_and_closes_follows_log_tab(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    following_a_log(&tab, cx);
+    // A second place is waiting for its hold.
+    tab.read(
+        2,
+        view("services", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    let shown = tab.shown(cx);
+    tab.view
+        .update(cx, |view, cx| view.end_session_for_test(cx));
+    cx.run_until_parked();
+    assert!(!tab.following(cx));
+    assert!(tab.log_tabs(cx).is_empty());
+    assert!(tab.follow_tab(cx).is_none());
+    // The timer is gone: the hold ending moves nothing.
+    tab.wait_out_hold(cx);
+    assert_eq!(tab.shown(cx), shown);
+}
+
+#[gpui_kit::test]
+fn ending_the_tab_hands_the_page_back_and_closes_follows_log_tab(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    following_a_log(&tab, cx);
+    tab.view.update(cx, |view, cx| view.end(cx));
+    cx.run_until_parked();
+    assert!(tab.log_tabs(cx).is_empty());
+    assert!(tab.follow_tab(cx).is_none());
+}
+
+#[gpui_kit::test]
+fn a_change_of_the_shown_cluster_closes_follows_log_tab(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    following_a_log(&tab, cx);
+    cx.update(|cx| {
+        tab.dock
+            .update(cx, |dock, cx| dock.set_shown(Some("dev-fra".into()), cx))
+    });
+    cx.run_until_parked();
+    assert!(!tab.following(cx));
+    assert!(tab.log_tabs(cx).is_empty());
+    assert!(tab.follow_tab(cx).is_none());
+}
+
+#[gpui_kit::test]
+fn switching_cluster_stops_following_and_closes_follows_log_tab(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    following_a_log(&tab, cx);
+    cx.update_window(tab.handle, |_, window, cx| {
+        tab.pilot.update(cx, |pilot, cx| {
+            pilot.switch_cluster("dev-fra".into(), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!tab.following(cx));
+    assert!(
+        tab.log_tabs(cx).is_empty(),
+        "no pod of the old cluster is read"
+    );
+}
+
+#[gpui_kit::test]
+fn a_citation_after_the_reads_brings_a_skipped_place_back(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    tab.read(
+        2,
+        view("services", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    tab.read(
+        3,
+        view("configmaps", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    tab.wait_out_hold(cx);
+    assert_eq!(kind_of(&tab.shown(cx).unwrap()), "configmaps");
+    // The answer cites the second read, which was skipped.
+    tab.view
+        .update(cx, |view, cx| view.follow_cited("It restarted [r2].", cx));
+    tab.wait_out_hold(cx);
+    assert_eq!(kind_of(&tab.shown(cx).unwrap()), "services");
+}
+
+#[test]
+fn a_view_can_name_only_plain_places() {
+    // Exhaustive on purpose: a new page or tab has to be classified here,
+    // and nothing that opens a dialog, a shell or a forward can pass.
+    for page in LinkPage::ALL {
+        match page {
+            LinkPage::Overview
+            | LinkPage::Nodes
+            | LinkPage::Health
+            | LinkPage::Databases
+            | LinkPage::Resources
+            | LinkPage::Etcd
+            | LinkPage::SystemServices
+            | LinkPage::Security
+            | LinkPage::Lifecycle
+            | LinkPage::Monitoring
+            | LinkPage::Observability
+            | LinkPage::Applications => {}
+        }
+        for forbidden in ["settings", "operations", "maintenance", "shell"] {
+            assert!(!page.slug().contains(forbidden), "{}", page.slug());
+        }
+    }
+    for tab in [
+        ViewTab::Details,
+        ViewTab::Yaml,
+        ViewTab::Events,
+        ViewTab::Ports,
+        ViewTab::Logs,
+    ] {
+        // Ports shows a pod's forwards; none starts without a press.
+        match tab {
+            ViewTab::Details | ViewTab::Yaml | ViewTab::Events | ViewTab::Ports | ViewTab::Logs => {
+            }
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn a_scripted_run_opens_no_dialog_shell_or_forward(cx: &mut TestAppContext) {
+    let tab = open(cx, "refused", 1280., 880.);
+    // The agent asks for a shell (refused) and reads another cluster too.
+    let forwards = cx.update(freshkube_resources::forwards::list);
+    tab.answered(cx);
+    for _ in 0..6 {
+        tab.wait_out_hold(cx);
+        tab.draw(cx);
+        assert!(
+            !cx.update_window(tab.handle, |_, window, cx| window.has_active_dialog(cx))
+                .unwrap()
+        );
+    }
+    assert!(
+        cx.read(|cx| forwards.read(cx).is_empty()),
+        "no forward started"
+    );
+    let shells = cx.read(|cx| {
+        tab.dock
+            .read(cx)
+            .tabs
+            .iter()
+            .filter(|tab| matches!(tab.kind, TabKind::Shell(_)))
+            .count()
+    });
+    assert_eq!(shells, 0);
+    // The shell the agent asked for sits on the trail, refused.
+    assert!(tab.rows(cx).iter().any(|row| row.number == 0));
+}
+
+#[gpui_kit::test]
+fn the_trail_row_of_another_clusters_read_names_both_clusters(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    let own = tab.entry(cx);
+    // The transcript shows the trail once a turn has started.
+    tab.view.update(cx, |view, cx| {
+        view.record(
+            freshkube_agent::investigation::Event::Prompt("q".into()),
+            cx,
+        );
+    });
+    tab.feed(
+        1,
+        Some("stage-fra"),
+        Some(view("pods", Some(&at.namespace), None, ViewTab::Details)),
+        ReadOutcome::Answered { cut: None },
+        cx,
+    );
+    assert_eq!(
+        tab.label("agent-elsewhere-r1", cx).unwrap(),
+        format!(
+            "The agent read stage-fra; this page stays on {own}. It needs agent access of its own."
+        )
+    );
+}

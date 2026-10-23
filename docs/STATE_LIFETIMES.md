@@ -383,8 +383,10 @@ forwarding the page's hide to `Watch::set_visible`.
   shows its pod in one dock log tab that
   [`Dock`](../crates/freshkube-desktop/src/desktop/dock/follow.rs) owns for
   following (`follow_tab`). The next log read takes its place, so there is at
-  most one. It lives until following stops (the person's input, ×, the toggle
-  or the Agent tab closing) and then closes, unless the person used it
+  most one. It reads only the named pod and container, with the person's
+  access. It lives until following stops (the person's input, ×, the toggle,
+  the session ending or failing to start, the Agent tab closing, or the window
+  showing another cluster or connection) and then closes, unless the person used it
   (selected it, pressed in it or opened that pod): it is theirs from then on
   and ends like any log tab. The follower's timer is dropped with the hand-back
   and with the session's view. See

@@ -38,7 +38,7 @@ impl Mark {
             Self::Evidence => "evidence",
             Self::Cited => "cited",
             Self::Refused => "refused",
-            Self::NotFound => "Not found",
+            Self::NotFound => "not found",
             Self::CouldntRead => "couldn't read",
         }
     }
@@ -283,7 +283,7 @@ mod tests {
         trail.read(&refused, "a");
         let marks: Vec<_> = trail.rows().iter().map(|row| row.mark).collect();
         assert_eq!(marks, [Mark::NotFound, Mark::Refused]);
-        assert_eq!(Mark::NotFound.label(), "Not found");
+        assert_eq!(Mark::NotFound.label(), "not found");
     }
 
     #[test]

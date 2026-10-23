@@ -1234,6 +1234,10 @@ impl Dock {
     /// later capture and the headers name, and has every tab read its own
     /// level again. A session already running is left to end.
     pub(crate) fn set_shown(&mut self, entry: Option<String>, cx: &mut Context<Self>) {
+        if self.shown_entry != entry {
+            // The page no longer shows the cluster the agent was read for.
+            self.stop_following(cx);
+        }
         self.shown_entry = entry;
         self.refresh_gates(cx);
     }
@@ -1365,11 +1369,19 @@ impl Dock {
             // The tabs keep their own connections (#878); only new ones wait
             // for the next source.
             if !kept {
+                self.stop_following(cx);
                 self.source = None;
                 self.refresh_gates(cx);
             }
             return;
         };
+        if self
+            .source
+            .as_ref()
+            .is_some_and(|current| current.id != source.id)
+        {
+            self.stop_following(cx);
+        }
         // A tab on this connection takes its refreshed handle; the tabs of
         // another connection keep theirs.
         for tab in &mut self.tabs {
