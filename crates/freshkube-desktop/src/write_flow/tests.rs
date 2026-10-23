@@ -36,6 +36,26 @@ pub(super) struct Harness {
 }
 
 pub(super) fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
+    harness_on(cx, level, Cluster::new)
+}
+
+/// The harness over the cluster `make` builds, inside its runtime.
+pub(super) fn harness_on(
+    cx: &mut TestAppContext,
+    level: Protection,
+    make: impl FnOnce() -> Cluster,
+) -> Harness {
+    harness_sized(cx, level, 880., make)
+}
+
+/// [`harness_on`] in a window `height` points tall: a dialog with a long
+/// preview scrolls its body, and a click needs the control in view.
+pub(super) fn harness_sized(
+    cx: &mut TestAppContext,
+    level: Protection,
+    height: f32,
+    make: impl FnOnce() -> Cluster,
+) -> Harness {
     let runtime = Builder::new_current_thread()
         .enable_all()
         .start_paused(true)
@@ -52,12 +72,12 @@ pub(super) fn harness(cx: &mut TestAppContext, level: Protection) -> Harness {
     // The client's buffer worker spawns onto the runtime it is built in.
     let cluster = {
         let _guard = runtime.enter();
-        Cluster::new()
+        make()
     };
     let cell = cx.update(level_cell);
     let runner = Arc::new(fake::runner(&cluster, dir.path(), level).following(cell));
     let handle = cx
-        .open_window(size(px(1280.), px(880.)), |window, cx| {
+        .open_window(size(px(1280.), px(height)), |window, cx| {
             Root::new(cx.new(|_| Host), window, cx)
         })
         .into();

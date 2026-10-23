@@ -78,11 +78,11 @@ impl Global for GlobalOperations {}
 /// operation slot: one level at a time, like the one slot. It is a shared
 /// cell, so a write's runner follows it and reads it again just before it
 /// sends (#853).
-pub(crate) struct GlobalProtection(LevelCell);
+pub(crate) struct GlobalProtection(LevelCell, std::collections::HashMap<String, LevelCell>);
 
 impl Default for GlobalProtection {
     fn default() -> Self {
-        Self(LevelCell::new(Protection::default()))
+        Self(LevelCell::new(Protection::default()), Default::default())
     }
 }
 
@@ -93,9 +93,36 @@ pub(crate) fn set_protection(level: Protection, cx: &mut App) {
     cx.default_global::<GlobalProtection>().0.set(level);
 }
 
-/// The window's level as a cell a runner can follow. The first page action
-/// that builds a runner uses it; until then only the tests do.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Sets the level each workspace entry has, by its id, so a runner writing to
+/// an entry other than the one the window shows follows a change made in
+/// Settings too.
+pub(crate) fn set_entry_levels(
+    levels: impl IntoIterator<Item = (String, Protection)>,
+    cx: &mut App,
+) {
+    let global = cx.default_global::<GlobalProtection>();
+    for (entry, level) in levels {
+        global
+            .1
+            .entry(entry)
+            .and_modify(|cell| cell.set(level))
+            .or_insert_with(|| LevelCell::new(level));
+    }
+}
+
+/// The cell holding `entry`'s level, for a runner to follow. An entry not
+/// seen yet starts at `level`.
+pub(crate) fn entry_level_cell(entry: &str, level: Protection, cx: &mut App) -> LevelCell {
+    let global = cx.default_global::<GlobalProtection>();
+    let cell = global
+        .1
+        .entry(entry.to_owned())
+        .or_insert_with(|| LevelCell::new(level));
+    cell.set(level);
+    cell.clone()
+}
+
+/// The window's level as a cell a runner can follow.
 pub(crate) fn level_cell(cx: &mut App) -> LevelCell {
     cx.default_global::<GlobalProtection>().0.clone()
 }

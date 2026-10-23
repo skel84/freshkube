@@ -16,8 +16,8 @@ use kube::client::Body;
 use serde_json::{Value, json};
 
 use super::{
-    ActionDescription, AuditStore, Change, Inverse, InverseFrom, ObjectChange, Observation,
-    Protection, Runner, Target, Tier, Who,
+    ActionDescription, AuditStore, Change, Depends, Inverse, InverseFrom, ObjectChange,
+    Observation, Protection, Runner, Target, Tier, Who,
 };
 use crate::fake_api::{self, Recorded, Recorder};
 
@@ -30,6 +30,8 @@ struct State {
     objects: BTreeMap<String, Value>,
     next_version: u64,
     denied: bool,
+    /// Verbs the access review refuses, whatever the object.
+    denied_verbs: Vec<String>,
     access_review_fails: bool,
     /// An answer for every write that is not a dry run.
     fail_write: Option<(u16, String)>,
@@ -88,16 +90,20 @@ fn secret() -> Value {
 
 impl Cluster {
     pub fn new() -> Self {
+        Self::with(vec![
+            (DEPLOYMENT.to_owned(), deployment()),
+            (SECRET.to_owned(), secret()),
+            (CRONJOB.to_owned(), cronjob()),
+        ])
+    }
+
+    /// A cluster holding these objects, by the path each is served at.
+    pub fn with(objects: Vec<(String, Value)>) -> Self {
         let state = Arc::new(Mutex::new(State {
             next_version: 1000,
             ..State::default()
         }));
-        {
-            let mut state = state.lock().unwrap();
-            state.objects.insert(DEPLOYMENT.into(), deployment());
-            state.objects.insert(SECRET.into(), secret());
-            state.objects.insert(CRONJOB.into(), cronjob());
-        }
+        state.lock().unwrap().objects.extend(objects);
         let recorder = Recorder::default();
         let (log, shared) = (recorder.clone(), state.clone());
         let service = tower::service_fn(move |request: Request<Body>| {
@@ -132,6 +138,15 @@ impl Cluster {
     /// The access review answers no.
     pub fn deny_access(&self) {
         self.state.lock().unwrap().denied = true;
+    }
+
+    /// The access review refuses this verb alone.
+    pub fn deny_verb(&self, verb: &str) {
+        self.state
+            .lock()
+            .unwrap()
+            .denied_verbs
+            .push(verb.to_owned());
     }
 
     /// The access review itself fails.
@@ -243,18 +258,26 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
                 false,
             );
         }
+        let denied = state.denied
+            || state
+                .denied_verbs
+                .iter()
+                .any(|verb| request.body.contains(&format!("\"verb\":\"{verb}\"")));
         return (
             fake_api::json(
                 201,
                 json!({"apiVersion": "authorization.k8s.io/v1", "kind": "SelfSubjectAccessReview",
                     "metadata": {}, "spec": {},
-                    "status": {"allowed": !state.denied,
-                               "reason": if state.denied { "RBAC: no role allows it" } else { "" }}}),
+                    "status": {"allowed": !denied,
+                               "reason": if denied { "RBAC: no role allows it" } else { "" }}}),
             ),
             false,
         );
     }
     let path = request.path.as_str();
+    if request.method == "POST" {
+        return (create(state, request, dry), false);
+    }
     if !state.objects.contains_key(path) {
         return (
             if state.objects.is_empty() {
@@ -344,6 +367,30 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
     }
 }
 
+/// A create: the object goes under the collection's path, by its name.
+fn create(state: &mut State, request: &Recorded, dry: bool) -> (u16, String) {
+    let mut body: Value = serde_json::from_str(&request.body).unwrap_or(Value::Null);
+    let name = body["metadata"]["name"].as_str().unwrap_or_default();
+    let key = format!("{}/{name}", request.path);
+    if state.objects.contains_key(&key) {
+        return status(409, "AlreadyExists", &format!("{name} already exists"));
+    }
+    if dry {
+        if let Some((code, message)) = &state.fail_dry_run {
+            return status(*code, "Invalid", message);
+        }
+    } else if let Some((code, message)) = &state.fail_write {
+        return status(*code, "Invalid", message);
+    }
+    state.next_version += 1;
+    body["metadata"]["uid"] = json!(format!("uid-created-{}", state.next_version));
+    body["metadata"]["resourceVersion"] = json!(state.next_version.to_string());
+    if !dry {
+        state.objects.insert(key, body.clone());
+    }
+    fake_api::json(201, body)
+}
+
 /// The `web` Deployment as the person saw it at the start.
 pub fn web() -> Target {
     Target {
@@ -389,8 +436,13 @@ pub fn scale(count: u64) -> ActionDescription {
         verb: "Scale".into(),
         tier: Tier::Reversible,
         sentence: format!("Scale web to {count}"),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: web(),
             change: Change::Apply(
                 json!({"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "web"},
@@ -420,8 +472,13 @@ pub fn set_image(image: &str) -> ActionDescription {
         verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Change web's image".into(),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: web(),
             change: Change::Apply(json!({"apiVersion": "apps/v1", "kind": "Deployment",
                 "metadata": {"name": "web"},
@@ -442,8 +499,13 @@ pub fn delete_web() -> ActionDescription {
         verb: "Delete".into(),
         tier: Tier::Destructive,
         sentence: "Delete web".into(),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: web(),
             change: Change::Delete,
             observe: Observation::Gone,
@@ -459,8 +521,13 @@ pub fn rotate_password() -> ActionDescription {
         verb: "Apply".into(),
         tier: Tier::SpecChange,
         sentence: "Rotate db's password".into(),
-        destination: None,
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
         changes: vec![ObjectChange {
+            depends: vec![],
             target: db(),
             change: Change::Apply(json!({"apiVersion": "v1", "kind": "Secret",
                 "metadata": {"name": "db"}, "data": {"password": "bmV3cGFzc3dvcmQ="}})),
@@ -479,6 +546,90 @@ pub fn scale_and_delete() -> ActionDescription {
     action.tier = Tier::Destructive;
     action.changes.extend(rotate_password().changes);
     action
+}
+
+/// A ConfigMap that does not exist yet, as a create sees it: no UID and no
+/// version to have seen.
+pub fn new_note(name: &str) -> Target {
+    Target {
+        group: String::new(),
+        version: "v1".into(),
+        kind: "ConfigMap".into(),
+        resource: "configmaps".into(),
+        namespace: Some("shop".into()),
+        name: name.into(),
+        uid: String::new(),
+        resource_version: String::new(),
+        subresource: None,
+    }
+}
+
+/// A spec change that creates one ConfigMap per name, each for a subject
+/// (a Stage, say) of the same name: the shape of a promotion to several Stages.
+pub fn create_notes(names: &[&str]) -> ActionDescription {
+    ActionDescription {
+        kind: "test-create".into(),
+        verb: "Create".into(),
+        tier: Tier::SpecChange,
+        sentence: "Create notes".into(),
+        destinations: vec![],
+        no_confirmation: false,
+        title: None,
+        subjects: names.iter().map(|name| (*name).to_owned()).collect(),
+        preview: vec![],
+        changes: names
+            .iter()
+            .map(|name| ObjectChange {
+                target: new_note(&format!("{name}.1")),
+                change: Change::Create(json!({"apiVersion": "v1", "kind": "ConfigMap",
+                    "metadata": {"name": format!("{name}.1"), "namespace": "shop"},
+                    "data": {"stage": name}})),
+                observe: Observation::Exists,
+                inverse: None,
+                depends: vec![],
+            })
+            .collect(),
+    }
+}
+
+/// [`create_notes`] for one subject that depends on `web` still having two
+/// replicas, as a Promotion depends on its Stage still running the Freight
+/// the page showed: the access review also asks about `promote`.
+pub fn create_note_after_web() -> ActionDescription {
+    let mut action = create_notes(&["stage-a"]);
+    action.changes[0].depends = vec![Depends {
+        target: web(),
+        verb: Some("promote"),
+        holds: vec![("/spec/replicas".into(), json!(2))],
+    }];
+    action
+}
+
+/// An action that only adds an annotation, and says it needs no confirmation.
+pub fn annotate_web() -> ActionDescription {
+    ActionDescription {
+        kind: "test-annotate".into(),
+        verb: "Refresh".into(),
+        tier: Tier::Reversible,
+        sentence: "Ask web to refresh".into(),
+        destinations: vec![],
+        no_confirmation: true,
+        title: None,
+        subjects: vec![],
+        preview: vec![],
+        changes: vec![ObjectChange {
+            depends: vec![],
+            target: web(),
+            change: Change::MergePatch(
+                json!({"metadata": {"annotations": {"example.com/refresh": "t1"}}}),
+            ),
+            observe: Observation::FieldEquals {
+                pointer: "/metadata/annotations/example.com~1refresh".into(),
+                value: json!("t1"),
+            },
+            inverse: None,
+        }],
+    }
 }
 
 /// A runner over the fake, auditing under `dir`.

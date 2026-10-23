@@ -268,6 +268,17 @@ impl WriteReport {
                 let tone = match done.headline() {
                     Headline::Done => Tone::Good,
                     Headline::Cancelled => Tone::Unknown,
+                    // Example data has no cluster: nothing failed.
+                    Headline::NotSent
+                        if matches!(
+                            done.status,
+                            freshkube_core::write::Status::NotSent(
+                                freshkube_core::write::NotSent::Example
+                            )
+                        ) =>
+                    {
+                        Tone::Info
+                    }
                     Headline::NotObserved
                     | Headline::Unknown
                     | Headline::Diverged
