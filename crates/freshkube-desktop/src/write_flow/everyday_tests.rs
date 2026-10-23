@@ -47,7 +47,7 @@ fn guarded_scale_confirms_sends_one_apply_and_offers_undo(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn protected_scale_sends_only_after_the_name_is_typed(cx: &mut TestAppContext) {
+fn safety_g02_protected_scale_sends_only_after_the_name_is_typed(cx: &mut TestAppContext) {
     let h = harness(cx, Protection::Protected);
     h.begin(cx, scale_to(&h, 5));
     assert_eq!(h.label(cx, "write-type-prompt"), "Type web to confirm");
@@ -98,7 +98,7 @@ fn open_sends_a_scale_without_asking_and_says_so(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn read_only_blocks_every_everyday_action_and_makes_no_request(cx: &mut TestAppContext) {
+fn safety_g01_read_only_blocks_every_everyday_action_and_makes_no_request(cx: &mut TestAppContext) {
     for pick in 0..3 {
         let h = harness(cx, Protection::ReadOnly);
         let action = match pick {

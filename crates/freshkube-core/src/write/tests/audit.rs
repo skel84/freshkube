@@ -16,7 +16,7 @@ async fn the_sending_line_comes_first_and_if_it_cannot_be_written_nothing_is_sen
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_secret_is_diffed_and_audited_by_key_names_never_values() {
+async fn safety_g09_a_secret_is_diffed_and_audited_by_key_names_never_values() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     let prepared = ready(&runner, fake::rotate_password()).await;

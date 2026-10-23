@@ -104,7 +104,7 @@ fn event(reason: &str, minutes_ago: i64) -> Value {
 }
 
 #[tokio::test]
-async fn a_cluster_without_agent_access_refuses_before_any_request() {
+async fn safety_g08_a_cluster_without_agent_access_refuses_before_any_request() {
     let (target, recorder, source) = live(|_| ok(json!({})));
     let refusal = read(
         &AgentAccess::new(),
@@ -153,7 +153,7 @@ async fn turning_access_off_ends_a_read_in_flight() {
 }
 
 #[tokio::test]
-async fn a_grant_for_another_context_reads_as_off() {
+async fn safety_g08_a_grant_for_another_context_reads_as_off() {
     let (target, recorder, _) = live(|_| ok(json!({})));
     let access = AgentAccess::new();
     access.allow(ENTRY, "ctx-old");
@@ -224,7 +224,7 @@ fn all_tools() -> Vec<Request> {
 }
 
 #[tokio::test]
-async fn every_agent_read_is_a_get() {
+async fn safety_g08_every_agent_read_is_a_get() {
     let (target, recorder, _) = live(everything);
     let access = granted();
     for asking in all_tools() {

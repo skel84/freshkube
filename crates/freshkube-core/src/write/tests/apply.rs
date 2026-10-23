@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test(start_paused = true)]
-async fn guarded_scale_asks_then_sends_one_apply_and_is_observed() {
+async fn safety_g02_guarded_scale_asks_then_sends_one_apply_and_is_observed() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     let prepared = ready(&runner, fake::scale(3)).await;

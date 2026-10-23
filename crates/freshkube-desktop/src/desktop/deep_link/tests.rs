@@ -129,6 +129,29 @@ fn opened(
     })
 }
 
+/// The writes the example runner has audited: it sends nothing, but each
+/// write it is asked for leaves a line in its scratch audit.
+fn writes_audited() -> usize {
+    let scratch = std::env::temp_dir().join("freshkube-example-audit");
+    freshkube_core::write::AuditStore::new(scratch)
+        .read()
+        .map_or(0, |read| read.records.len())
+}
+
+/// Nothing a link may not start is running: no forward, no shell, no
+/// operation, no dialog, and no write reached the runner since `writes`.
+fn assert_nothing_started(cx: &mut TestAppContext, handle: AnyWindowHandle, writes: usize) {
+    assert_eq!(writes_audited(), writes, "a write reached the runner");
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!window.has_active_dialog(cx));
+        assert_eq!(freshkube_resources::forwards::running(cx), 0);
+        assert!(crate::resources::shell::running_anywhere(cx).is_empty());
+        assert!(crate::mutation::Operations::current(cx).is_none());
+    })
+    .unwrap();
+    assert!(cx.pending_prompt().is_none());
+}
+
 fn drawn(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &str) -> bool {
     let id = id.to_owned();
     cx.update_window(handle, |_, window, cx| {
@@ -460,22 +483,54 @@ fn a_link_that_opens_nothing_leaves_the_keyboard_on_the_list(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn a_link_never_opens_a_dialog_a_shell_or_a_forward(cx: &mut TestAppContext) {
+fn safety_g07_a_link_never_opens_a_dialog_a_shell_or_a_forward(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let identity = deployment(cx, &view);
+    let writes = writes_audited();
     let hostile = link_for(
         &identity,
         "&action=delete&dialog=confirm&shell=bash&forward=8080&route=operations&tab=logs",
     );
     open_text(cx, handle, &view, &hostile);
-    cx.update_window(handle, |_, window, cx| {
-        assert!(!window.has_active_dialog(cx));
-        let pilot = view.read(cx);
-        assert_ne!(pilot.navigation.page, Page::Operations);
-        assert!(crate::resources::shell::running_anywhere(cx).is_empty());
-    })
-    .unwrap();
-    assert!(cx.pending_prompt().is_none());
+    // The link did navigate: it opened the object it names.
+    assert_eq!(opened(cx, &view), Some(identity));
+    cx.read(|cx| assert_ne!(view.read(cx).navigation.page, Page::Operations));
+    assert_nothing_started(cx, handle, writes);
+}
+
+/// Navigation alone, by any tab a link can name, starts no exec and no
+/// forward: those begin only from an explicit Start or Forward.
+#[gpui_kit::test]
+fn safety_g06_opening_an_object_on_any_tab_starts_no_shell_and_no_forward(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let identity = deployment(cx, &view);
+    let writes = writes_audited();
+    for tab in ["details", "yaml", "events", "ports", "logs"] {
+        open_text(
+            cx,
+            handle,
+            &view,
+            &link_for(&identity, &format!("&tab={tab}")),
+        );
+        assert_eq!(opened(cx, &view), Some(identity.clone()), "{tab}");
+        assert_nothing_started(cx, handle, writes);
+    }
+}
+
+/// A link that asks for a forward or a write in extra keys is only
+/// navigation: it opens the object and forwards and writes nothing.
+#[gpui_kit::test]
+fn safety_g07_a_link_asking_for_a_forward_starts_none(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let identity = deployment(cx, &view);
+    let writes = writes_audited();
+    let hostile = link_for(
+        &identity,
+        "&tab=ports&forward=8080&port=8080&action=scale&replicas=0",
+    );
+    open_text(cx, handle, &view, &hostile);
+    assert_eq!(opened(cx, &view), Some(identity));
+    assert_nothing_started(cx, handle, writes);
 }
 
 #[gpui_kit::test]
