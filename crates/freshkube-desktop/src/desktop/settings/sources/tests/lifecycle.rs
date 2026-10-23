@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use super::*;
 
 /// A live workspace whose entries' credential plugin sleeps, so a check
