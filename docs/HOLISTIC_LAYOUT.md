@@ -29,7 +29,7 @@ Reviewed on 2 October 2026. Paths are under `crates/freshkube-desktop/src` (desk
   - The Resources page watches one kind, through the Table API, only while it's visible.
   - Workload health (`screens/workloads.rs`) makes four one-shot typed lists on its own 15 s refresh (`collect_workloads` in core `workloads.rs`: deployments, statefulsets, daemonsets, pods). It reads through the Talos-derived client, so it is Talos mode only.
   - The shell's Talos overview, by contrast, refreshes every 15 s on every page.
-- **Kubernetes and Talos nodes are already matched in core,** by name equal to the Talos hostname, with the InternalIP as the address (`cluster_overview.rs` `K8sNodeInfo`, `security_lifecycle.rs` `merge_node_roster`, `operations.rs` `node_matches_target`). The desktop has no joined view. `NodeSummary.responding` means Talos answered; it is not Kubernetes Ready.
+- **Kubernetes and Talos nodes are already matched in core,** by name equal to the Talos hostname, with the InternalIP as the address (`cluster_overview/mod.rs` `K8sNodeInfo`, `security_lifecycle.rs` `merge_node_roster`, `operations.rs` `node_matches_target`). The desktop has no joined view. `NodeSummary.responding` means Talos answered; it is not Kubernetes Ready.
 - **The detail pane** (`resources/pane/`) shows one Overview for every kind: metadata, conditions, an "Owned by" line in plain text, labels, annotations and finalizers.
   - Pods add Logs, Shell and Ports tabs.
   - The pane is resizable, from 320 dp up to the list's minimum, and can't take the full width.
