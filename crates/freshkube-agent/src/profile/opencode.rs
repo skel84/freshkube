@@ -9,7 +9,7 @@
 //! separate step; nothing here has been run against opencode.
 
 use std::collections::BTreeMap;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -61,7 +61,7 @@ pub const BUILTIN_TOOLS: [&str; 20] = [
 /// Where opencode reads each switch, at the commit that released 2.1.3
 /// (`e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b`). Each entry is
 /// (switch, what it does, path under the repository).
-pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 14] = [
+pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 15] = [
     (
         "`opencode acp` starts a private server",
         "The `acp` command always starts its own server; it has no flag to attach to the shared service, and the shared-service resolution (`server-connection.ts`) is not on its path. The private server is `serve --stdio --port 0`, a random password in `OPENCODE_PASSWORD`, an environment inherited from the child.",
@@ -93,9 +93,14 @@ pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 14] = [
         "packages/schema/src/config/agent.ts, packages/core/src/agent.ts, packages/core/src/plugin/agent.ts",
     ),
     (
-        "`plugins`, `commands`, `skills`, `instructions`, `references`, `lsp`, `formatter`, `websearch`, `snapshots`, `update`, `share`",
-        "The inline configuration is read as a config document. The empty and false values are starting values, not removals: a source that loads later can add to them. Our MCP server arrives in `session/new`, which opencode accepts over HTTP; its inline entry only turns Code Mode off (`mcp.freshkube.codemode: false`).",
+        "`commands`, `skills`, `instructions`, `references`, `lsp`, `formatter`, `websearch`, `snapshots`, `update`, `share`",
+        "The inline configuration is read as a config document. The empty and false values are starting values, not removals: a source that loads later can add to them. Our MCP server arrives in `session/new`, which opencode accepts over HTTP; the inline document names no MCP server.",
         "packages/schema/src/config.ts, packages/cli/src/acp/service.ts (`supportedMcpServers`)",
+    ),
+    (
+        "`plugins` lists one Freshkube-owned directory, which turns Code Mode off for our server",
+        "A server added in `session/new` is built without a `codemode` field, and a config entry of the same name is skipped when it exists, so nothing in the configuration can set it. A plugin's `mcp.transform` runs after the server is added and can. The directory is written at each launch into the session's own 0700 directory and read back byte for byte before the agent starts. In the live check an agent session loaded no `~/.config/opencode` (#945); a populated plugin folder there and an organisation configuration were not tested. The project folders are off, and the administrators' own directories are theirs. Whatever source loads after ours, including a `-<path>` entry, can remove our plugin.",
+        "packages/cli/src/acp/sessions.ts (`mcpConfig`), packages/core/src/mcp/index.ts (`add`, `initial`), packages/core/src/config/plugin/mcp.ts, packages/core/src/plugin/host.ts (`mcp.transform`), packages/core/src/config/plugin/source.ts, packages/core/src/plugin/module.ts",
     ),
     (
         "`OPENCODE_CONFIG_CONTENT`",
@@ -162,8 +167,10 @@ fn permissions() -> Value {
     Value::Array(rules)
 }
 
-/// The configuration handed to opencode inline.
-pub fn config() -> Value {
+/// The configuration handed to opencode inline. `plugin_dir` is the absolute
+/// directory [`stage_plugin`] fills; a path that is not absolute would be
+/// read as a package to install.
+pub fn config(plugin_dir: &Path) -> Value {
     let agents: serde_json::Map<String, Value> = BUILTIN_AGENTS
         .iter()
         .map(|agent| (agent.to_string(), json!({"permissions": permissions()})))
@@ -174,16 +181,14 @@ pub fn config() -> Value {
         "permissions": permissions(),
         "default_agent": "build",
         "agents": agents,
+        // The one plugin is ours: it turns Code Mode off for our server,
+        // whose tools the `*` deny would otherwise leave unreachable. The
+        // server itself, and its token, arrive in `session/new`; no `mcp`
+        // entry can name it (see [`PLUGIN_SOURCE`]).
+        "plugins": [plugin_dir.to_string_lossy()],
         // Nothing is added by these: they start empty or off. A source that
         // loads after this configuration can still add to them; see the
         // module docs and the data mode.
-        "plugins": [],
-        // Code Mode would route our tools through `execute`, which the `*`
-        // deny also refuses and which runs model-written code with an
-        // unrestricted `fetch`. With it off for our server, the four reads
-        // are offered to the model directly. The server itself arrives in
-        // `session/new`.
-        "mcp": {SERVER: {"codemode": false}},
         "commands": {},
         "skills": [],
         "instructions": [],
@@ -193,6 +198,138 @@ pub fn config() -> Value {
         "websearch": false,
         "snapshots": false,
     })
+}
+
+/// The one file of the plugin that turns Code Mode off for our server.
+///
+/// opencode builds a server added in `session/new` without a `codemode`
+/// field (`acp/sessions.ts` `mcpConfig`), and skips a configuration entry of
+/// the same name when the server exists (`config/plugin/mcp.ts`), so no
+/// configuration can set it; a plugin's `mcp.transform` runs after the server
+/// is added and can. The text is fixed: it reads no input, no environment,
+/// no file and no network, registers no tool and no hook, and touches only
+/// the server named [`SERVER`]. Freshkube writes it at each launch and
+/// compares it byte for byte before the agent starts.
+pub fn plugin_source() -> String {
+    format!(
+        "// Freshkube: offer the tools of the server named {SERVER} to the model directly.\n\
+         // Fixed text, written by Freshkube at each launch and checked before the agent starts.\n\
+         export default {{\n\
+         \x20 id: \"freshkube.codemode\",\n\
+         \x20 async setup(ctx) {{\n\
+         \x20   await ctx.mcp.transform((editor) => {{\n\
+         \x20     editor.update(\"{SERVER}\", (server) => {{\n\
+         \x20       server.codemode = false\n\
+         \x20     }})\n\
+         \x20   }})\n\
+         \x20 }},\n\
+         }}\n"
+    )
+}
+
+/// The plugin's package file: the entry is an ES module.
+pub const PLUGIN_PACKAGE: &str =
+    "{\"name\":\"freshkube-codemode\",\"private\":true,\"type\":\"module\"}\n";
+
+/// The plugin directory's files: (name, text). opencode takes the directory's
+/// `server` module as the entry (`plugin/host.ts` `resolve`).
+pub fn plugin_files() -> [(&'static str, String); 2] {
+    [
+        ("server.js", plugin_source()),
+        ("package.json", PLUGIN_PACKAGE.to_string()),
+    ]
+}
+
+/// Writes the plugin into the session's own plugin directory (private to the
+/// person, never one of theirs) and reads it back: the agent is not started
+/// if the directory is not exactly what was written. The check is of launch
+/// only: opencode watches the directory and loads the plugin again when it
+/// changes.
+pub(super) fn stage_plugin(dirs: &Dirs) -> io::Result<()> {
+    stage_plugin_with(dirs, |_| {})
+}
+
+/// [`stage_plugin`], with a step between the write and the check; tests use
+/// it to change the directory.
+pub(super) fn stage_plugin_with(dirs: &Dirs, between: impl FnOnce(&Path)) -> io::Result<()> {
+    let dir = dirs.plugin();
+    // The path goes into the configuration as text.
+    if dir.to_str().is_none() {
+        return Err(refused("its directory's path is not valid text".into()));
+    }
+    create_private(&dir)?;
+    for (name, text) in plugin_files() {
+        // A file that is already there is not ours to reuse.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o400);
+        }
+        options.open(dir.join(name))?.write_all(text.as_bytes())?;
+    }
+    between(&dir);
+    verify_plugin(&dir)?;
+    // Against accident only: a process running as the same user can still
+    // change the directory back, or opencode itself. [`Dirs`] puts the mode
+    // back when the session ends so the directory can be removed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500))?;
+    }
+    Ok(())
+}
+
+fn refused(why: String) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "Freshkube's tool plugin for the agent {why}; the agent was not started, because \
+             without the plugin the model is offered none of Freshkube's tools"
+        ),
+    )
+}
+
+/// Checks that `dir` holds the plugin's files, byte for byte, and nothing
+/// else: opencode takes the first of `server.ts`, `server.js` and the other
+/// extensions it finds, so a file beside ours could be the one it loads.
+pub(super) fn verify_plugin(dir: &Path) -> io::Result<()> {
+    let files = plugin_files();
+    let own = std::fs::symlink_metadata(dir)
+        .map_err(|error| refused(format!("could not be read (its directory: {error})")))?;
+    if !own.is_dir() {
+        return Err(refused("is not in a plain directory".into()));
+    }
+    for (name, text) in &files {
+        let path = dir.join(name);
+        let meta = std::fs::symlink_metadata(&path)
+            .map_err(|error| refused(format!("could not be read ({name}: {error})")))?;
+        if !meta.is_file() {
+            return Err(refused(format!("is not a plain file ({name})")));
+        }
+        let found = std::fs::read(&path)
+            .map_err(|error| refused(format!("could not be read ({name}: {error})")))?;
+        if found != text.as_bytes() {
+            return Err(refused(format!(
+                "differs from what Freshkube wrote ({name})"
+            )));
+        }
+    }
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| refused(format!("could not be listed ({error})")))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| refused(format!("could not be listed ({error})")))?;
+        let name = entry.file_name();
+        if !files.iter().any(|(known, _)| name == *known) {
+            return Err(refused(format!(
+                "has a file Freshkube did not write ({})",
+                name.to_string_lossy()
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Where opencode keeps its data, state and cache: its logins, its session
@@ -437,7 +574,7 @@ pub(super) fn environment(dirs: &Dirs, host: &Host, data: &Data) -> BTreeMap<Str
     let mut set = |name: &str, value: String| {
         env.insert(name.to_string(), value);
     };
-    set(CONFIG_VAR, config().to_string());
+    set(CONFIG_VAR, config(&dirs.plugin()).to_string());
     set(
         "OPENCODE_CONFIG_DIR",
         dirs.config().to_string_lossy().into_owned(),
@@ -553,11 +690,10 @@ mod tests {
                 "{agent}"
             );
         }
-        // Plugins, user and project config, other MCP servers, sharing and updates are off.
-        assert_eq!(config["plugins"], json!([]));
-        // The one MCP entry is ours, with Code Mode off so the four tools are
-        // offered directly; `execute` stays denied.
-        assert_eq!(config["mcp"], json!({"freshkube": {"codemode": false}}));
+        // The one plugin is ours, in the session's own directory; no MCP
+        // server is named here (it arrives in `session/new`, with the token).
+        assert_eq!(config["plugins"], json!([dirs.plugin().to_str().unwrap()]));
+        assert!(config.get("mcp").is_none());
         assert_eq!(SERVER, "freshkube");
         assert_eq!(effect(&config, "execute"), "deny");
         assert_eq!(config["commands"], json!({}));
@@ -599,6 +735,245 @@ mod tests {
         );
         assert_eq!(std::fs::metadata(&env["KUBECONFIG"]).unwrap().len(), 0);
         assert_eq!(std::fs::metadata(&env["TALOSCONFIG"]).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn the_document_has_the_shape_opencodes_schema_accepts() {
+        let dirs = Dirs::create().unwrap();
+        let config = config(&dirs.plugin());
+        crate::profile::schema_copy::check_document(&config).unwrap();
+        // The plugin is an absolute path: anything else opencode installs as a package.
+        let plugin = config["plugins"][0].as_str().unwrap();
+        assert!(Path::new(plugin).is_absolute());
+        assert_eq!(config["plugins"].as_array().unwrap().len(), 1);
+    }
+
+    fn staged() -> (Dirs, PathBuf) {
+        let dirs = Dirs::create().unwrap();
+        stage_plugin(&dirs).unwrap();
+        let dir = dirs.plugin();
+        (dirs, dir)
+    }
+
+    #[test]
+    fn the_plugin_is_written_and_reads_back() {
+        let (_dirs, dir) = staged();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("server.js")).unwrap(),
+            plugin_source()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("package.json")).unwrap(),
+            PLUGIN_PACKAGE
+        );
+        verify_plugin(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&dir), 0o500);
+            assert_eq!(mode(&dir.join("server.js")), 0o400);
+        }
+    }
+
+    #[test]
+    fn the_plugin_text_is_fixed_and_reaches_nothing() {
+        let source = plugin_source();
+        assert_eq!(
+            source,
+            "// Freshkube: offer the tools of the server named freshkube to the model directly.\n\
+             // Fixed text, written by Freshkube at each launch and checked before the agent starts.\n\
+             export default {\n  id: \"freshkube.codemode\",\n  async setup(ctx) {\n    \
+             await ctx.mcp.transform((editor) => {\n      editor.update(\"freshkube\", (server) => {\n        \
+             server.codemode = false\n      })\n    })\n  },\n}\n"
+        );
+        // No token, no environment, no file, no network, no import, no tool or hook.
+        for word in [
+            "token",
+            "process",
+            "env",
+            "Bun",
+            "fetch",
+            "import",
+            "require",
+            "fs",
+            "http",
+            "eval",
+            "Function",
+            "tool.",
+            "hook",
+            "permission",
+            "session",
+            "credential",
+            "storage",
+            "shell",
+            "rpc",
+            "provider",
+        ] {
+            assert!(!source.contains(word), "the plugin mentions `{word}`");
+        }
+        // It names our server and no other, and does nothing but turn Code Mode off for it.
+        assert_eq!(source.matches("editor.").count(), 1);
+        assert_eq!(source.matches("ctx.").count(), 1);
+        assert_eq!(SERVER, "freshkube");
+    }
+
+    #[test]
+    fn a_tampered_plugin_is_refused() {
+        let dirs = Dirs::create().unwrap();
+        let error = stage_plugin_with(&dirs, |dir| {
+            // The file is read-only; replace it as its owner could.
+            std::fs::remove_file(dir.join("server.js")).unwrap();
+            std::fs::write(dir.join("server.js"), plugin_source() + "// more\n").unwrap();
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("differs"), "{error}");
+        assert!(error.to_string().contains("not started"), "{error}");
+        // A byte changed in the package file, a file beside ours, which opencode could load
+        // instead, and a link in place of the file.
+        let dirs = Dirs::create().unwrap();
+        assert!(
+            stage_plugin_with(&dirs, |dir| {
+                std::fs::remove_file(dir.join("package.json")).unwrap();
+                std::fs::write(
+                    dir.join("package.json"),
+                    PLUGIN_PACKAGE.replace("module", "commonjs"),
+                )
+                .unwrap();
+            })
+            .is_err()
+        );
+        let dirs = Dirs::create().unwrap();
+        let error = stage_plugin_with(&dirs, |dir| {
+            std::fs::write(dir.join("server.ts"), "export default {}").unwrap();
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("server.ts"), "{error}");
+        #[cfg(unix)]
+        {
+            let dirs = Dirs::create().unwrap();
+            let error = stage_plugin_with(&dirs, |dir| {
+                std::fs::remove_file(dir.join("server.js")).unwrap();
+                let other = dir.parent().unwrap().join("other.js");
+                std::fs::write(&other, plugin_source()).unwrap();
+                std::os::unix::fs::symlink(other, dir.join("server.js")).unwrap();
+            })
+            .unwrap_err();
+            assert!(error.to_string().contains("plain file"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_file_already_there_or_a_linked_directory_is_refused_and_the_session_still_cleans_up() {
+        // A file that is already there is not reused.
+        let dirs = Dirs::create().unwrap();
+        std::fs::create_dir(dirs.plugin()).unwrap();
+        std::fs::write(dirs.plugin().join("server.js"), plugin_source()).unwrap();
+        let error = stage_plugin(&dirs).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
+        #[cfg(unix)]
+        {
+            // The plugin directory must be a real directory.
+            let dirs = Dirs::create().unwrap();
+            let real = dirs.root().join("real");
+            std::fs::create_dir(&real).unwrap();
+            for (name, text) in plugin_files() {
+                std::fs::write(real.join(name), text).unwrap();
+            }
+            std::os::unix::fs::symlink(&real, dirs.plugin()).unwrap();
+            let error = verify_plugin(&dirs.plugin()).unwrap_err();
+            assert!(error.to_string().contains("plain directory"), "{error}");
+            // Read-only once checked, and removed with the session all the same.
+            let dirs = Dirs::create().unwrap();
+            stage_plugin(&dirs).unwrap();
+            let root = dirs.root().to_path_buf();
+            drop(dirs);
+            assert!(!root.exists());
+        }
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_plugin_is_refused() {
+        let dirs = Dirs::create().unwrap();
+        let error = stage_plugin_with(&dirs, |dir| {
+            std::fs::remove_file(dir.join("server.js")).unwrap();
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("could not be read"), "{error}");
+        assert!(error.to_string().contains("not started"), "{error}");
+        // A directory where the file should be cannot be read as one.
+        let dirs = Dirs::create().unwrap();
+        assert!(
+            stage_plugin_with(&dirs, |dir| {
+                std::fs::remove_file(dir.join("package.json")).unwrap();
+                std::fs::create_dir(dir.join("package.json")).unwrap();
+            })
+            .is_err()
+        );
+        // The directory itself gone.
+        assert!(verify_plugin(&dirs.plugin().join("nowhere")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_start_with_a_changed_plugin_never_starts_the_agent() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("ran");
+        let binary = root.path().join("opencode-bin");
+        std::fs::write(
+            &binary,
+            format!("#!/bin/sh\ntouch {}\nsleep 5\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let profile = Profile::opencode(&binary, Data::Own(root.path().join("opencode")));
+        let host = Host::default();
+        let proof = fake_proof(&profile);
+
+        let changed = |dirs: &Dirs| {
+            stage_plugin_with(dirs, |dir| {
+                std::fs::remove_file(dir.join("server.js")).unwrap();
+                std::fs::write(dir.join("server.js"), "export default {}").unwrap();
+            })
+        };
+        let error = profile
+            .spawn_staged(&host, &proof, &changed)
+            .err()
+            .expect("refused");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!marker.exists(), "the agent started");
+
+        // The real start stages the plugin, and the agent runs.
+        let link = profile.spawn(&host, &proof).unwrap();
+        for _ in 0..50 {
+            if marker.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(marker.exists());
+        verify_plugin(&link.workspace.parent().unwrap().join("plugin")).unwrap();
+        drop(link);
+    }
+
+    #[test]
+    fn the_shared_mode_writes_the_plugin_to_the_sessions_own_directory() {
+        let dirs = Dirs::create().unwrap();
+        stage_plugin(&dirs).unwrap();
+        let plan = Profile::opencode("/usr/bin/opencode", Data::Shared).plan(&dirs, &host());
+        let config = plan.config().unwrap();
+        let plugin = PathBuf::from(config["plugins"][0].as_str().unwrap());
+        assert!(plugin.starts_with(dirs.root()));
+        // Nothing of the person's directories is written to.
+        assert!(!plugin.starts_with("/Users/ada"));
+        assert!(
+            !PathBuf::from(&plan.env["XDG_CONFIG_HOME"])
+                .join("plugin")
+                .exists()
+        );
     }
 
     #[test]
