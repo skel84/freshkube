@@ -93,8 +93,8 @@ pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 14] = [
         "packages/schema/src/config/agent.ts, packages/core/src/agent.ts, packages/core/src/plugin/agent.ts",
     ),
     (
-        "`plugins`, `mcp`, `commands`, `skills`, `instructions`, `references`, `lsp`, `formatter`, `websearch`, `snapshots`, `update`, `share`",
-        "The inline configuration is read as a config document. The empty and false values are starting values, not removals: a source that loads later can add to them. Our MCP server arrives in `session/new`, which opencode accepts over HTTP.",
+        "`plugins`, `commands`, `skills`, `instructions`, `references`, `lsp`, `formatter`, `websearch`, `snapshots`, `update`, `share`",
+        "The inline configuration is read as a config document. The empty and false values are starting values, not removals: a source that loads later can add to them. Our MCP server arrives in `session/new`, which opencode accepts over HTTP; its inline entry only turns Code Mode off (`mcp.freshkube.codemode: false`).",
         "packages/schema/src/config.ts, packages/cli/src/acp/service.ts (`supportedMcpServers`)",
     ),
     (
@@ -178,7 +178,12 @@ pub fn config() -> Value {
         // loads after this configuration can still add to them; see the
         // module docs and the data mode.
         "plugins": [],
-        "mcp": {},
+        // Code Mode would route our tools through `execute`, which the `*`
+        // deny also refuses and which runs model-written code with an
+        // unrestricted `fetch`. With it off for our server, the four reads
+        // are offered to the model directly. The server itself arrives in
+        // `session/new`.
+        "mcp": {SERVER: {"codemode": false}},
         "commands": {},
         "skills": [],
         "instructions": [],
@@ -550,7 +555,11 @@ mod tests {
         }
         // Plugins, user and project config, other MCP servers, sharing and updates are off.
         assert_eq!(config["plugins"], json!([]));
-        assert_eq!(config["mcp"], json!({}));
+        // The one MCP entry is ours, with Code Mode off so the four tools are
+        // offered directly; `execute` stays denied.
+        assert_eq!(config["mcp"], json!({"freshkube": {"codemode": false}}));
+        assert_eq!(SERVER, "freshkube");
+        assert_eq!(effect(&config, "execute"), "deny");
         assert_eq!(config["commands"], json!({}));
         assert_eq!(config["instructions"], json!([]));
         assert_eq!(config["skills"], json!([]));

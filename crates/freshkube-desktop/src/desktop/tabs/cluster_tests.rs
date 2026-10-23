@@ -799,53 +799,85 @@ fn a_tab_with_no_cluster_shows_no_cluster_name_or_level(cx: &mut TestAppContext)
     .unwrap();
 }
 
-/// Leaving an entry for the context it names re-derives what the window
-/// shows: the level, what writes ask, and the entry the dock thinks is shown.
+/// Leaving an open entry for a context that a stricter entry names re-derives
+/// what the window shows: the level, and what writes ask. In Talos mode the
+/// applied context is a Talos context no entry's `context` names, so the
+/// entry's level and the context's differ; the view the tab returns to
+/// (Etcd, a page) re-derives nothing of its own, so only the explicit call
+/// does.
 #[gpui_kit::test]
-fn leaving_an_entry_for_the_context_it_names_re_derives_the_shown_level(cx: &mut TestAppContext) {
+fn leaving_an_open_entry_for_a_stricter_context_re_derives_level_and_write_refusal(
+    cx: &mut TestAppContext,
+) {
+    use super::set::ContextBinding;
     use freshkube_core::write::Protection;
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
-    let opened = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
-    let entry = cx.read(|cx| {
-        pilot
-            .read(cx)
-            .settings_page
-            .read(cx)
-            .workspace()
-            .clusters
-            .iter()
-            .find(|entry| entry.context == opened)
-            .map(|entry| entry.id.clone())
-            .unwrap()
+    let talos = "admin@dev-talos";
+    // `stage-fra` is read-only and names the Talos context; `dev-fra` is open.
+    change_setup(cx, &pilot, |workspace| {
+        for entry in &mut workspace.clusters {
+            match entry.id.as_str() {
+                "stage-fra" => {
+                    entry.context = talos.into();
+                    entry.protection = Some(Protection::ReadOnly);
+                }
+                "dev-fra" => entry.protection = Some(Protection::Open),
+                _ => {}
+            }
+        }
     });
-    cx.update(|cx| pilot.update(cx, |pilot, cx| pilot.sync_tabs(cx)));
-    let dock = cx.read(|cx| pilot.read(cx).pages.dock.clone());
-    open_in_new_tab(cx, handle, &pilot, &entry);
-    assert_eq!(
-        cx.read(|cx| dock.read(cx).shown_entry().map(str::to_owned)),
-        Some(entry)
-    );
-    // Whatever the level is now, leaving must leave what the window shows
-    // consistent with the window that is open.
-    let first = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[0].id);
+    let has_talos = cx.read(|cx| pilot.read(cx).mode().has_talos());
+    open_in_new_tab(cx, handle, &pilot, "dev-fra");
+    cx.update(|cx| {
+        pilot.update(cx, |pilot, cx| {
+            // The first tab was made in a window on that Talos context.
+            pilot.sync_tabs(cx);
+            pilot.tabs.set.tabs_mut()[0].entry = None;
+            pilot.tabs.set.tabs_mut()[0].context = Some(ContextBinding {
+                name: talos.into(),
+                talos: has_talos,
+            });
+        })
+    });
+    assert_eq!(active(cx, &pilot), SessionKey::Entry("dev-fra".into()));
+    // As a Talos window shows an entry: the applied context is the Talos
+    // one, and the shown level is the entry's.
+    cx.update(|cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.applied.context = Some(talos.into());
+            pilot.prepare_protection(cx);
+        })
+    });
+    let (shown, refused) = cx.read(|cx| {
+        (
+            pilot.read(cx).context_display.level,
+            crate::mutation::refusal(cx).is_some(),
+        )
+    });
+    assert_eq!((shown, refused), (Protection::Open, false));
+    // The tab it returns to is on a Resources kind that goes through
+    // discovery. The settings page's observer re-derives the level too, but
+    // only when the update ends, so the state is read inside it: what the
+    // tab's own selection leaves, before anything else runs.
     cx.update_window(handle, |_, window, cx| {
-        pilot.update(cx, |pilot, cx| pilot.select_tab(first, window, cx))
+        pilot.update(cx, |pilot, cx| {
+            let mut view = ViewState::page(LinkPage::Resources);
+            view.kind = Some(freshkube_nav::KindKey::parse("foos.example.io").unwrap());
+            pilot.tabs.set.tabs_mut()[0].view = view;
+            let first = pilot.tabs.set.tabs()[0].id;
+            pilot.select_tab(first, window, cx);
+            // The window is on no entry, and the level and what writes ask
+            // are the Talos context's (read-only), not the entry's that was
+            // left.
+            assert_eq!(pilot.switch.active_cluster(), None);
+            assert_eq!(pilot.pages.dock.read(cx).shown_entry(), None);
+            assert_eq!(pilot.current_level(cx), Protection::ReadOnly);
+            assert_eq!(pilot.context_display.level, Protection::ReadOnly);
+            assert!(
+                crate::mutation::refusal(cx).is_some(),
+                "writes still ask the entry's level that was left"
+            );
+        })
     })
     .unwrap();
-    // Read straight after the selection, before anything else runs.
-    assert_eq!(active(cx, &pilot), SessionKey::Implicit);
-    assert_eq!(
-        cx.read(|cx| dock.read(cx).shown_entry().map(str::to_owned)),
-        None
-    );
-    let (shown, derived) = cx.read(|cx| {
-        let pilot = pilot.read(cx);
-        (pilot.context_display.level, pilot.current_level(cx))
-    });
-    assert_eq!(shown, derived);
-    // What writes ask is the shown level's.
-    assert_eq!(
-        cx.read(|cx| crate::mutation::refusal(cx).is_some()),
-        shown == Protection::ReadOnly
-    );
 }
