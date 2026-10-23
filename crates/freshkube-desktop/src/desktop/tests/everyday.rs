@@ -433,9 +433,13 @@ fn a_switch_while_the_dialog_is_open_keeps_the_level_the_press_was_under(cx: &mu
 }
 
 #[gpui_kit::test]
-fn the_x_lets_go_of_the_object_in_both_dialogs(cx: &mut TestAppContext) {
+fn the_x_lets_go_of_the_object_in_the_flow_dialog(cx: &mut TestAppContext) {
     let w = world(cx, "core-fra");
     dismissed_then_pressed_again(cx, &w, "write-confirm", |w, cx| w.click(cx, "close"));
+}
+
+#[gpui_kit::test]
+fn the_x_lets_go_of_the_object_in_the_count_dialog(cx: &mut TestAppContext) {
     let w = world(cx, "core-fra");
     w.press_web(cx, Everyday::Scale);
     w.drive(cx, Duration::from_millis(500));
