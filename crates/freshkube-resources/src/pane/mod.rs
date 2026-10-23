@@ -339,6 +339,15 @@ impl DetailPane {
         self.detail.as_ref().map(|detail| &detail.target.identity)
     }
 
+    /// The kind of the controller that owns `identity`, when the pane shows
+    /// that object and has read it: what `Owned by` says.
+    pub fn controller_of(&self, identity: &ResourceIdentity) -> Option<&str> {
+        if self.target_identity()? != identity {
+            return None;
+        }
+        self.summary.as_ref()?.controller()
+    }
+
     pub(crate) fn target(&self) -> Option<&DetailTarget> {
         self.detail.as_ref().map(|detail| &detail.target)
     }

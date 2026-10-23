@@ -56,7 +56,10 @@ pub enum Change {
     /// Server-side apply of this object, with field manager `freshkube` and
     /// no forced takeover.
     Apply(Value),
-    /// A JSON merge patch, where apply doesn't fit (a subresource).
+    /// A JSON merge patch: for a change to one field that other actions and
+    /// tools also write, so that applying it does not make this app the owner
+    /// of a field it would later take away (Scale, Restart), and where apply
+    /// does not fit (a subresource).
     MergePatch(Value),
     /// A delete, with the UID and resourceVersion as preconditions.
     Delete,
@@ -125,6 +128,10 @@ fn leaf_paths(value: &Value, prefix: String, out: &mut Vec<String>) {
 pub enum Observation {
     /// The value at this JSON pointer (`/status/readyReplicas`) equals this.
     FieldEquals { pointer: String, value: Value },
+    /// As `FieldEquals`, and a field the object leaves out reads as 0: a
+    /// count that is omitted at zero, such as `readyReplicas` after a scale
+    /// to 0. Only a value of 0 is ever met by an absent field.
+    FieldEqualsOrAbsent { pointer: String, value: Value },
     /// The object is gone.
     Gone,
     /// The object exists: what a created object is seen by.

@@ -20,6 +20,7 @@
 //! Follow and the Inspector's button ask the list to show the change
 //! page on that Stage.
 pub(crate) mod table;
+pub(crate) mod timeline;
 mod view;
 
 use freshkube_delivery::applications::claims::{Claim, Claims, Gap, Side, Unchecked, claims};
@@ -66,6 +67,14 @@ pub(crate) fn key_bindings() -> [KeyBinding; 5] {
         KeyBinding::new("o", OpenPart, Some(CONTEXT)),
         KeyBinding::new("f", FollowFreight, Some(CONTEXT)),
     ]
+}
+
+/// The page's two tabs: its parts, or what happened to it (#844).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageTab {
+    #[default]
+    Parts,
+    Timeline,
 }
 
 /// What the page asks of the list that owns it.
@@ -170,6 +179,12 @@ pub struct ApplicationPage {
     /// The list's last read failed over an earlier one: the banner's text
     /// and label, as the list shows them.
     stale: Option<(SharedString, SharedString)>,
+    /// Which tab shows. The Timeline reads only while it does and the page
+    /// shows.
+    tab: PageTab,
+    timeline: Entity<timeline::TimelineView>,
+    /// Whether the list shows this page; the tab's read follows.
+    visible: bool,
 }
 
 impl EventEmitter<ApplicationEvent> for ApplicationPage {}
@@ -180,9 +195,15 @@ impl ApplicationPage {
         read: &Read,
         connections: &Connections,
         stale: Option<(SharedString, SharedString)>,
+        fetch: timeline::Fetch,
         cx: &mut Context<Self>,
     ) -> Self {
         let split = InspectorSplit::new(PREFIX, cx);
+        let name: SharedString = app.name.clone().into();
+        let timeline = {
+            let name = name.clone();
+            cx.new(|cx| timeline::TimelineView::new(&name, fetch, cx))
+        };
         let mut page = Self {
             id: app.id.clone(),
             name: app.name.clone().into(),
@@ -199,9 +220,67 @@ impl ApplicationPage {
             selected: None,
             inspect: false,
             stale,
+            tab: PageTab::Parts,
+            timeline,
+            visible: false,
         };
         page.show(app, read, connections);
         page
+    }
+
+    /// Shows a tab; the Timeline reads once it shows on a shown page.
+    pub(crate) fn set_tab(&mut self, tab: PageTab, cx: &mut Context<Self>) {
+        if tab == self.tab {
+            return;
+        }
+        self.tab = tab;
+        self.sync_timeline(cx);
+        cx.notify();
+    }
+
+    pub fn tab(&self) -> PageTab {
+        self.tab
+    }
+
+    /// The list shows this page, or no longer does.
+    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if visible == self.visible {
+            return;
+        }
+        self.visible = visible;
+        self.sync_timeline(cx);
+    }
+
+    fn sync_timeline(&self, cx: &mut Context<Self>) {
+        let shown = self.visible && self.tab == PageTab::Timeline;
+        self.timeline
+            .update(cx, |timeline, cx| timeline.set_visible(shown, cx));
+    }
+
+    /// Refresh reads the Timeline again, while it shows.
+    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.tab == PageTab::Timeline {
+            self.timeline
+                .update(cx, |timeline, cx| timeline.refresh(cx));
+        }
+    }
+
+    /// Where the Timeline's sources come from, as the list's source or
+    /// workspace changes.
+    pub(crate) fn set_fetch(&mut self, fetch: timeline::Fetch, cx: &mut Context<Self>) {
+        self.timeline
+            .update(cx, |timeline, cx| timeline.set_fetch(fetch, cx));
+    }
+
+    /// The motion over the Timeline's loading rows, which the shell mounts
+    /// beside the cached page.
+    pub(crate) fn loading_motion(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        (self.tab == PageTab::Timeline)
+            .then(|| self.timeline.read(cx).loading_motion())
+            .flatten()
     }
 
     pub fn id(&self) -> &ApplicationId {
@@ -279,6 +358,9 @@ impl ApplicationPage {
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.tab != PageTab::Parts {
+            return;
+        }
         if let Some(key) = kit::step(self, delta, cx) {
             self.select(key, cx);
         }
@@ -288,7 +370,7 @@ impl ApplicationPage {
     /// when its cluster isn't open, or asks to switch to the workspace entry
     /// it is.
     fn open_part(&mut self, cx: &mut Context<Self>) {
-        let Some(row) = self.selected_row() else {
+        let Some(row) = self.selected_row().filter(|_| self.tab == PageTab::Parts) else {
             return;
         };
         let link = Box::new(row.open.clone());
@@ -300,7 +382,10 @@ impl ApplicationPage {
 
     /// F: the change the selected Stage carries, when one was read.
     fn follow(&mut self, cx: &mut Context<Self>) {
-        if let Some(row) = self.selected_row().filter(|row| row.follows.is_some()) {
+        if let Some(row) = self
+            .selected_row()
+            .filter(|row| row.follows.is_some() && self.tab == PageTab::Parts)
+        {
             cx.emit(ApplicationEvent::Follow(row.name.clone()));
         }
     }
@@ -318,6 +403,11 @@ impl ApplicationPage {
 
 #[cfg(any(test, feature = "testing"))]
 impl ApplicationPage {
+    /// The Timeline tab's view.
+    pub fn timeline(&self) -> &Entity<timeline::TimelineView> {
+        &self.timeline
+    }
+
     /// Each line: a group's label, or a row's name and link word.
     pub fn lines_text(&self) -> Vec<String> {
         self.lines
