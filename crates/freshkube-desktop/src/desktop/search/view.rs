@@ -44,10 +44,17 @@ impl RenderOnce for SearchView {
                 let Some(destination) = destination else {
                     return;
                 };
+                // Command-Return (`tabs::bind_keys`) opens a new tab; the
+                // palette's callback hears the key, not its modifiers.
+                let open_in = if window.modifiers().secondary() {
+                    super::super::tabs::OpenIn::Front
+                } else {
+                    super::super::tabs::OpenIn::Here
+                };
                 _ = search.update(cx, |search, cx| search.close(cx));
                 window.close_dialog(cx);
                 _ = pilot.update(cx, |pilot, cx| {
-                    pilot.search_destination(destination, window, cx)
+                    pilot.search_destination(destination, open_in, window, cx)
                 });
             })
             .on_cancel(move |_, cx| {
@@ -67,7 +74,10 @@ impl RenderOnce for SearchView {
                             .aria_label(note.clone())
                             .child(note.clone())
                     }))
-                    .child("↑ ↓ choose · Enter opens · Escape closes")
+                    .child(format!(
+                        "↑ ↓ choose · Enter opens · {}Enter opens in a new tab · Escape closes",
+                        freshkube_ui::platform::Platform::current().primary_modifier()
+                    ))
             })
     }
 }

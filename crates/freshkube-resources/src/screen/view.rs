@@ -494,6 +494,10 @@ impl Render for ResourcesScreen {
                 self.stale_banner(cx)
                     .map(|banner| page::inset().child(banner)),
             )
+            .children(
+                self.frozen_banner(cx)
+                    .map(|banner| page::inset().child(banner)),
+            )
             .child(body)
     }
 }
