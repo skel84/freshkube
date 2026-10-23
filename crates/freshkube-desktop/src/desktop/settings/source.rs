@@ -1,5 +1,6 @@
 //! The clusters table as a `TableSource`.
 use super::*;
+use freshkube_ui::tooltip::FollowTooltip as _;
 use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -180,26 +181,22 @@ impl TableSource for SettingsPage {
             },
             Field::Role => text_cell("role", &row.role).into_any_element(),
             Field::Protection => {
-                // The level that applies: an unset one is guarded and says it
-                // is the default; one the team's floor raised says so.
+                // The level that applies, and where it comes from when that
+                // is not the entry alone.
                 let level = row.level;
                 let id = format!("settings-cluster-{}-protection", row.id);
-                let note = if row.floor_raised {
-                    Some("· team floor")
-                } else if row.protection.is_none() {
-                    Some("· default")
-                } else {
-                    None
-                };
-                let words = match note {
-                    Some(note) => format!("{} {note}", level.label()),
+                let note = super::team::level_note(level, row.level_source);
+                let words = match &note {
+                    Some((_, note, _)) => format!("{} {note}", level.label()),
                     None => level.label().to_owned(),
                 };
                 table::cell(column)
                     .id(SharedString::from(format!("{id}-cell")))
+                    .test_support()
                     .flex()
                     .items_center()
                     .gap(dp(6.))
+                    .overflow_hidden()
                     .child(
                         freshkube_ui::level::tag(
                             crate::desktop::shell::mark(level),
@@ -208,18 +205,20 @@ impl TableSource for SettingsPage {
                         )
                         .id(SharedString::from(id.clone()))
                         .test_support()
+                        .flex_none()
                         .aria_label(words.clone()),
                     )
-                    .when_some(note, |this, note| {
-                        let kind = if row.floor_raised { "floor" } else { "default" };
+                    .when_some(note, |this, (kind, note, whole)| {
                         this.child(
                             div()
                                 .id(SharedString::from(format!("{id}-{kind}")))
                                 .test_support()
                                 .aria_label(note)
+                                .min_w_0()
+                                .truncate()
                                 .text_size(dp(12.))
                                 .text_color(style.p.muted)
-                                .whitespace_nowrap()
+                                .follow_tooltip(whole)
                                 .child(note),
                         )
                     })

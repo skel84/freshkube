@@ -23,7 +23,7 @@ pub use file::{Ignored, IgnoredKey, Values, Version, VersionError};
 pub use keyfile::{KeyFileError, resolve_in_repo};
 pub use membership::{Failure, Fetch, FetchFailed, Leave, Membership, Overrides};
 pub use merge::{
-    ClusterView, Origin, Resolved, allowed_levels, cluster_view, floor_words, resolve,
+    ClusterView, LevelSource, Origin, Resolved, allowed_levels, cluster_view, floor_words, resolve,
 };
 pub use review::{Change, ChangeKind, NotReviewed, Review, Step, TrustKind};
 pub use source::{GitFetch, GitSource, HttpsSource, Refused, Source, redact};

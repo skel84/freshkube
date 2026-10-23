@@ -422,8 +422,8 @@ async fn an_own_or_default_level_looser_than_the_floor_shows_the_floor(cx: &mut 
     reveal(cx, handle);
     cx.update_window(handle, |_, window, _| {
         assert_eq!(
-            window.find("settings-protection-raised").label(),
-            Some("Protected · team floor")
+            window.find("settings-protection-source").label(),
+            Some("Protected · team floor: The team’s floor, stricter than your own level.")
         );
     })
     .unwrap();

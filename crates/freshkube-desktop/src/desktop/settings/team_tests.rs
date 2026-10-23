@@ -789,3 +789,71 @@ async fn review_is_held_back_by_unsaved_edits(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.read(|cx| assert_eq!(settings.read(cx).section(), SettingsSection::Team));
 }
+
+#[gpui_kit::test]
+fn a_level_from_your_own_override_says_yours_not_default(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = clusters(cx, Shape::Joined);
+    // core-fra: Read-only is your override, stricter than the team's floor.
+    assert_eq!(
+        label(cx, handle, "settings-cluster-core-fra-protection"),
+        "Read-only · yours"
+    );
+    assert_eq!(
+        label(cx, handle, "settings-cluster-core-fra-protection-yours"),
+        "· yours"
+    );
+    assert!(!visible(
+        cx,
+        handle,
+        "settings-cluster-core-fra-protection-default"
+    ));
+    // An entry nothing sets still says default.
+    assert!(visible(
+        cx,
+        handle,
+        "settings-cluster-prod-fra-protection-default"
+    ));
+    click(cx, handle, "settings-cluster-core-fra");
+    let source = label(cx, handle, "settings-protection-source");
+    assert!(source.starts_with("Read-only · yours"), "{source}");
+    let hint = label(cx, handle, "settings-protection-hint");
+    assert!(!hint.contains("Not set in freshkube.yaml"), "{hint}");
+}
+
+#[gpui_kit::test]
+fn the_level_note_stays_inside_its_cell_and_has_a_tooltip(cx: &mut TestAppContext) {
+    for (size, text) in [((1280., 880.), None), ((760., 560.), Some(20.))] {
+        let (_runtime, handle, _view) =
+            open_on(cx, "settings-clusters", Some(Shape::Joined), size, text);
+        cx.update_window(handle, |_, window, _| {
+            for id in [
+                "settings-cluster-core-fra-protection-yours",
+                "settings-cluster-prod-fra-protection-default",
+            ] {
+                let note = window.find(id).bounds();
+                let cell = window
+                    .find(id.replace("-yours", "-cell").replace("-default", "-cell"))
+                    .bounds();
+                let one = gpui_kit::px(1.);
+                assert!(note.right() <= cell.right() + one, "{id} {note:?} {cell:?}");
+            }
+        })
+        .unwrap();
+    }
+    let (_runtime, handle, _view) = clusters(cx, Shape::Joined);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("settings-cluster-core-fra-protection-yours", cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(
+        freshkube_ui::tooltip::drawn(
+            "Read-only · yours: Your own level, stricter than the team’s floor."
+        ) > 0
+    );
+}

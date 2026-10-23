@@ -137,6 +137,19 @@ pub fn floor_words(team_level: Protection) -> String {
     )
 }
 
+/// Where the level a cluster runs at comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LevelSource {
+    /// Nothing sets one: guarded.
+    Default,
+    /// The entry in `freshkube.yaml`.
+    Own,
+    /// Your override, stricter than the entry and the floor.
+    Override,
+    /// The team's floor, stricter than the entry.
+    Floor,
+}
+
 /// How one cluster stands against the team, for its row and its Inspector.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClusterView {
@@ -167,18 +180,21 @@ impl ClusterView {
 
     /// The level that applies to a cluster whose own entry says `own` (none
     /// reads as the default): the strictest of that, the level you and the
-    /// team settled on and the team's floor. The second is whether the floor
-    /// is what raised it above `own`.
-    pub fn effective(&self, own: Option<Protection>) -> (Protection, bool) {
+    /// team settled on and the team's floor, and where it comes from.
+    pub fn effective(&self, own: Option<Protection>) -> (Protection, LevelSource) {
         let base = own.unwrap_or_default();
         let level = [self.resolved, self.floor]
             .into_iter()
             .flatten()
             .fold(base, Protection::min);
-        let raised = self
-            .floor
-            .is_some_and(|floor| floor < base && level == floor);
-        (level, raised)
+        let source = if level == base {
+            own.map_or(LevelSource::Default, |_| LevelSource::Own)
+        } else if self.floor == Some(level) {
+            LevelSource::Floor
+        } else {
+            LevelSource::Override
+        };
+        (level, source)
     }
 }
 

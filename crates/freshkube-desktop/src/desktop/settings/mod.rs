@@ -100,8 +100,8 @@ pub(crate) struct ClusterRow {
     /// The level that applies: `protection` or the default, never looser than
     /// the team's floor. Derived with the rows and the team (`derive_levels`).
     level: freshkube_core::write::Protection,
-    /// The team's floor is what raised `level` above `protection`.
-    floor_raised: bool,
+    /// Where `level` comes from.
+    level_source: freshkube_core::team::LevelSource,
     /// The row's tooltip: the cluster, the talosconfig path in full and the
     /// note about how it opened, if there is one.
     tooltip: SharedString,
@@ -509,7 +509,11 @@ impl SettingsPage {
                     talosconfig: talosconfig.into(),
                     protection: entry.protection,
                     level: entry.protection.unwrap_or_default(),
-                    floor_raised: false,
+                    level_source: if entry.protection.is_some() {
+                        freshkube_core::team::LevelSource::Own
+                    } else {
+                        freshkube_core::team::LevelSource::Default
+                    },
                     tooltip: tooltip.into(),
                 }
             })

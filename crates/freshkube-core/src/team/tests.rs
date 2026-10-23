@@ -1249,21 +1249,40 @@ fn the_effective_level_is_never_looser_than_the_floor() {
     let team: Values = [(merge::protection_key("a"), json!("protected"))].into();
     let view = cluster_view("a", &team, &Overrides::new()).unwrap();
     // Unset reads as guarded, which is looser than the floor.
-    assert_eq!(view.effective(None), (Protection::Protected, true));
+    assert_eq!(
+        cluster_view(
+            "c",
+            &Values::new(),
+            &[(merge::protection_key("c"), json!("open"))].into()
+        )
+        .unwrap()
+        .effective(None),
+        (Protection::Guarded, LevelSource::Default)
+    );
+    assert_eq!(
+        view.effective(None),
+        (Protection::Protected, LevelSource::Floor)
+    );
     assert_eq!(
         view.effective(Some(Protection::Open)),
-        (Protection::Protected, true)
+        (Protection::Protected, LevelSource::Floor)
     );
     assert_eq!(
         view.effective(Some(Protection::ReadOnly)),
-        (Protection::ReadOnly, false)
+        (Protection::ReadOnly, LevelSource::Own)
     );
     let mine: Overrides = [(merge::protection_key("a"), json!("open"))].into();
     let held = cluster_view("a", &team, &mine).unwrap();
-    assert_eq!(held.effective(None), (Protection::Protected, true));
+    assert_eq!(
+        held.effective(None),
+        (Protection::Protected, LevelSource::Floor)
+    );
     let strict: Overrides = [(merge::protection_key("a"), json!("read-only"))].into();
     let stricter = cluster_view("a", &team, &strict).unwrap();
-    assert_eq!(stricter.effective(None), (Protection::ReadOnly, false));
+    assert_eq!(
+        stricter.effective(None),
+        (Protection::ReadOnly, LevelSource::Override)
+    );
     // A cluster the team doesn't name keeps its own level.
     let own_b: Overrides = [(merge::protection_key("b"), json!("open"))].into();
     let free = cluster_view("b", &team, &own_b);

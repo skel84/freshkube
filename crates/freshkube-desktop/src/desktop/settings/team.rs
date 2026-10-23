@@ -6,8 +6,8 @@
 
 use chrono::{DateTime, Utc};
 use freshkube_core::team::{
-    Change, ChangeKind, ClusterView, Leave, Membership, NotReviewed, Origin, Review, Step,
-    cluster_view, example::Shape, resolve,
+    Change, ChangeKind, ClusterView, Leave, LevelSource, Membership, NotReviewed, Origin, Review,
+    Step, cluster_view, example::Shape, resolve,
 };
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{form, page};
@@ -365,9 +365,13 @@ impl SettingsPage {
     pub(super) fn derive_levels(&mut self) {
         let views = &self.team.shown.clusters;
         for row in &mut self.rows {
-            (row.level, row.floor_raised) = match views.get(row.id.as_ref()) {
+            (row.level, row.level_source) = match views.get(row.id.as_ref()) {
                 Some(view) => view.effective(row.protection),
-                None => (row.protection.unwrap_or_default(), false),
+                None => (
+                    row.protection.unwrap_or_default(),
+                    row.protection
+                        .map_or(LevelSource::Default, |_| LevelSource::Own),
+                ),
             };
         }
     }
@@ -843,4 +847,31 @@ impl SettingsPage {
             cx.notify();
         }
     }
+}
+
+/// The note after a level that does not come from the entry alone, and the
+/// whole of it for a tooltip: where the level comes from.
+pub(super) fn level_note(
+    level: freshkube_core::write::Protection,
+    source: LevelSource,
+) -> Option<(&'static str, &'static str, String)> {
+    let (id, note, whole) = match source {
+        LevelSource::Own => return None,
+        LevelSource::Default => (
+            "default",
+            "· default",
+            "Not set in freshkube.yaml: guarded.",
+        ),
+        LevelSource::Override => (
+            "yours",
+            "· yours",
+            "Your own level, stricter than the team’s floor.",
+        ),
+        LevelSource::Floor => (
+            "floor",
+            "· team floor",
+            "The team’s floor, stricter than your own level.",
+        ),
+    };
+    Some((id, note, format!("{} {note}: {whole}", level.label())))
 }
