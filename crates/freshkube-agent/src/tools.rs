@@ -12,8 +12,8 @@ pub const EXECUTE: &str = "execute";
 pub enum NotOffered {
     /// The agent never asked the endpoint for its tools.
     NeverListed,
-    /// It listed them and made no read, and the only call it made was for
-    /// `execute`, which was refused.
+    /// It listed them, made no read, and asked for `execute`, which was
+    /// refused.
     ExecuteRefused,
 }
 
