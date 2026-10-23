@@ -174,7 +174,7 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
 }
 
 #[gpui_kit::test]
-fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppContext) {
+fn detected_configuration_replacement_asks_nothing_of_a_running_shell(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 820.);
     let (before, after) = revisions();
     let access = AccessIdentity::new(AccessSessionId::new(), before);
@@ -228,26 +228,10 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
         });
     };
     step(cx, &deliver);
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
+    // A running shell keeps the connection it started on (#878): the
+    // replacement asks nothing of it and ends nothing.
+    assert!(!cx.has_pending_prompt());
     assert!(!cx.read(resources::shell::running_anywhere).is_empty());
-    assert_eq!(
-        cx.read(|cx| view.read(cx).switch.registry.active().access_configuration),
-        Some(before)
-    );
-    step(cx, &deliver);
-    assert!(
-        !cx.has_pending_prompt(),
-        "an automatic refresh must not repeat a cancelled prompt"
-    );
-    view.update(cx, |view, _| {
-        view.switch.registry.active_mut().prompted_access = None
-    });
-    step(cx, &deliver);
-    cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
-    assert!(cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
         cx.read(|cx| view.read(cx).switch.registry.active().access_configuration),
         Some(after)

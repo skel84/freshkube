@@ -36,11 +36,10 @@ impl ShellView {
             .small()
             .icon(IconName::SquareTerminal)
             .label(if again { "Start again" } else { "Start" })
-            .tooltip(if let Some(reason) = self.blocked {
-                reason
-            } else {
-                "Run a shell in the container. Everything typed reaches it."
-            })
+            .tooltip(
+                self.blocked
+                    .unwrap_or("Run a shell in the container. Everything typed reaches it."),
+            )
             .disabled(!self.can_start())
             .on_click(cx.listener(|view, _, window, cx| view.start(window, cx)))
     }

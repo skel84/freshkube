@@ -292,7 +292,7 @@ fn typing_in_the_form_does_not_rebuild_the_switcher(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn switching_asks_before_ending_a_running_shell(cx: &mut TestAppContext) {
+fn switching_asks_nothing_of_a_running_shell_and_ends_nothing(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 800.);
     let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
     let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
@@ -305,37 +305,21 @@ fn switching_asks_before_ending_a_running_shell(cx: &mut TestAppContext) {
     start_shell(handle, &view, &pod, cx);
     assert_eq!(cx.read(shell::running_anywhere).len(), 1);
 
+    // The shell keeps the connection it started on (#878).
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.switch_cluster("dev-fra".into(), window, cx)
         });
     })
     .unwrap();
-    let (message, _) = cx.pending_prompt().unwrap();
-    assert_eq!(message, format!("End the shell in {}?", pod.name));
-    cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
-    assert_eq!(active(cx, &view), SessionKey::Implicit);
-    assert_eq!(
-        cx.read(|cx| view.read(cx).applied.context.clone()),
-        Some(context)
-    );
-    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
-
-    cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |pilot, cx| {
-            pilot.switch_cluster("dev-fra".into(), window, cx)
-        });
-    })
-    .unwrap();
-    cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
+    assert!(!cx.has_pending_prompt());
     assert_eq!(active(cx, &view), key("dev-fra"));
-    assert!(cx.read(shell::running_anywhere).is_empty());
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
 }
 
 #[gpui_kit::test]
-fn cancelling_the_shell_question_for_a_kubeconfig_pick_keeps_the_entry(cx: &mut TestAppContext) {
+fn a_kubeconfig_pick_asks_nothing_of_a_running_shell(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 800.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
@@ -354,7 +338,7 @@ fn cancelling_the_shell_question_for_a_kubeconfig_pick_keeps_the_entry(cx: &mut 
         .identity
         .clone();
     start_shell(handle, &view, &pod, cx);
-    // Example mode ignores kubeconfig picks; let this one through to the question.
+    // Example mode ignores kubeconfig picks; let this one through.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.mode.set_example(false);
@@ -362,11 +346,10 @@ fn cancelling_the_shell_question_for_a_kubeconfig_pick_keeps_the_entry(cx: &mut 
         });
     })
     .unwrap();
-    assert!(cx.pending_prompt().is_some());
-    cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     cx.update(|cx| view.update(cx, |pilot, _| pilot.mode.set_example(true)));
-    assert_eq!(active(cx, &view), key("dev-fra"));
+    assert!(!cx.has_pending_prompt());
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
 }
 
 #[gpui_kit::test]

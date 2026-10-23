@@ -5,6 +5,7 @@ Several places of the open cluster at once, under the header, each with a histor
 Code:
 
 - `crates/freshkube-desktop/src/desktop/tabs/set.rs`: `TabSet`, `OpenIn` and the rules (open, close, reopen, step, history), with no GPUI types.
+- `tabs/cluster_tests.rs`: tabs on several clusters (#878). `tabs/choose.rs`: the "Choose a cluster" page.
 - `tabs/strip.rs`: `ViewTabs`, the strip as a cached view of its own; `tabs/commands.rs`: what `Pilot` does with the set, the keys and the click's gesture; `tabs/restore.rs`: the file.
 - `crates/freshkube-ui/src/tab_strip.rs`: the row of closable tabs the dock and the strip share, and the bar the strip sits in.
 - `crates/freshkube-resources/src/frozen/`: `FrozenRows` and `FrozenSet`, the bounds of frozen rows; `screen/frozen.rs`: the page's side of them.
@@ -14,7 +15,7 @@ Tests that prove it: `tabs/set_tests.rs` (the rules), `tabs/tests.rs` (the windo
 
 ## The set
 
-A `TabSet` is on `Pilot` and belongs to the cluster that is open: a tab is one cluster's, and a context or workspace switch leaves one tab at the view shown. At most 16 tabs; a tab remembers 64 steps back and 64 forward. A background tab opens right after the shown one and changes nothing on screen; a front tab is shown at once. The last tab does not close. Closing the shown tab shows its right neighbour, else the left; the last ten closed tabs can be reopened.
+A `TabSet` is on `Pilot`. Since #878 a tab is bound to a cluster entry (see [Tabs on several clusters](#tabs-on-several-clusters-878)), and a context or workspace switch no longer resets the set: it retargets the shown tab. At most 16 tabs; a tab remembers 64 steps back and 64 forward. A background tab opens right after the shown one and changes nothing on screen; a front tab is shown at once. The last tab does not close. Closing the shown tab shows its right neighbour, else the left; the last ten closed tabs can be reopened.
 
 A view has one namespace, the open object's, so a tab keeps its list's own beside it (`Tab::list_ns`) and comes back listing where it was. Titles use the names Resources shows ("Deployments", "Deployment payments/api").
 

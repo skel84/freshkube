@@ -205,7 +205,10 @@ fn pod_node_link_goes_at_once_and_the_shell_runs_on(cx: &mut TestAppContext) {
         assert_eq!(pilot.read(cx).navigation.page, Page::Nodes);
         assert_eq!(
             crate::resources::shell::running_anywhere(cx),
-            [gpui_kit::SharedString::from(identity.name.clone())]
+            [gpui_kit::SharedString::from(format!(
+                "{} on prod-fra",
+                identity.name
+            ))]
         );
     })
     .unwrap();
@@ -380,7 +383,10 @@ fn owner_and_service_links_go_at_once_while_a_shell_runs(cx: &mut TestAppContext
     };
     open_pod(cx);
     crate::desktop::tests::start_shell(handle, &pilot, &identity, cx);
-    let running = vec![gpui_kit::SharedString::from(identity.name.clone())];
+    let running = vec![gpui_kit::SharedString::from(format!(
+        "{} on prod-fra",
+        identity.name
+    ))];
     let owner = &document.overview.owners[0];
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);

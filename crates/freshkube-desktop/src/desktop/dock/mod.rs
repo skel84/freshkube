@@ -287,6 +287,8 @@ pub(crate) struct Dock {
     /// (#878). Nothing reads them to gate a shell that already has its own.
     shown_entry: Option<String>,
     shown_level: Protection,
+    /// Each tab's own level as the gates last read it.
+    gate_levels: Vec<Option<Protection>>,
     pub(crate) tabs: Vec<DockTab>,
     selected: Option<u64>,
     next_id: u64,
@@ -346,6 +348,7 @@ impl Dock {
             source: None,
             shown_entry: None,
             shown_level: Protection::default(),
+            gate_levels: Vec::new(),
             tabs: Vec::new(),
             selected: None,
             next_id: 0,
@@ -1058,8 +1061,13 @@ impl Dock {
         level: Protection,
         cx: &mut Context<Self>,
     ) {
+        let moved = self.shown_entry != entry;
         self.shown_entry = entry;
         self.shown_level = level;
+        // The headers and tab marks say which cluster is shown.
+        if moved && !self.tabs.is_empty() {
+            cx.notify();
+        }
         self.refresh_gates(cx);
     }
 
@@ -1085,7 +1093,7 @@ impl Dock {
         };
         let (origin, target) = (tab.origin.clone(), tab.target.clone());
         let at = tab.key.container.clone();
-        let at = (!at.is_empty()).then(|| LogsAt {
+        let at = (!at.is_empty()).then_some(LogsAt {
             container: at,
             previous: false,
             all: false,
@@ -1112,6 +1120,12 @@ impl Dock {
     /// core's gate. Followed live: a stricter level reaches an open tab's
     /// Start at once.
     pub(crate) fn refresh_gates(&mut self, cx: &mut Context<Self>) {
+        // The dock draws again only when a tab's level changed.
+        let levels: Vec<_> = self.tabs.iter().map(|tab| tab.origin.level(cx)).collect();
+        if levels != self.gate_levels {
+            self.gate_levels = levels;
+            cx.notify();
+        }
         for tab in &self.tabs {
             if let TabKind::Shell(view) = &tab.kind {
                 let level = tab.origin.level(cx);
@@ -1122,7 +1136,6 @@ impl Dock {
                 });
             }
         }
-        cx.notify();
     }
 
     pub(crate) fn set_source(

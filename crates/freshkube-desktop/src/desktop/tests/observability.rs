@@ -78,7 +78,7 @@ fn coroot_links_open_without_asking_while_a_shell_runs(cx: &mut TestAppContext) 
         cx.run_until_parked();
     };
     start_shell(handle, &view, &pods[0], cx);
-    let running = vec![SharedString::from(pods[0].name.clone())];
+    let running = vec![SharedString::from(format!("{} on prod-fra", pods[0].name))];
     assert_eq!(cx.read(shell::running_anywhere), running);
     step(cx, &|window, cx| {
         view.update(cx, |view, cx| {

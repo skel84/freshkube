@@ -248,7 +248,7 @@ fn pod(context: &str) -> crate::resources::model::ResourceIdentity {
 }
 
 #[gpui_kit::test]
-async fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppContext) {
+async fn an_open_shell_is_not_asked_about_when_leaving_talos(cx: &mut TestAppContext) {
     let guard = tempfile::tempdir().unwrap();
     let file = kubeconfig(guard.path());
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
@@ -275,23 +275,12 @@ async fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppConte
         .unwrap();
         cx.run_until_parked();
     };
+    // The shell keeps the connection it started on (#878): leaving Talos
+    // asks nothing of it and ends nothing.
     switch(cx);
-    let (message, _) = cx.pending_prompt().unwrap();
-    assert_eq!(message, format!("End the shell in {}?", pod.name));
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    cx.update(|cx| assert!(view.read(cx).mode().has_talos()));
+    assert!(!cx.has_pending_prompt());
+    cx.update(|cx| assert!(view.read(cx).mode().kubernetes_only().is_some()));
     assert_eq!(cx.read(shell::running_anywhere).len(), 1);
-
-    switch(cx);
-    cx.simulate_prompt_answer("End the shell");
-    // The switch waits for the session to end, which can finish off the
-    // GPUI executor.
-    cx.wait_for_io(handle, |_, cx| {
-        view.read(cx).mode().kubernetes_only().is_some()
-    })
-    .await;
-    assert!(cx.read(shell::running_anywhere).is_empty());
 }
 
 #[gpui_kit::test]
