@@ -36,6 +36,7 @@ impl Pilot {
                 let extra = match slug {
                     "workloads" => Some((Page::Health, "Health · ⌘5")),
                     "storage" => Some((Page::Databases, "Databases")),
+                    "networking" => Some((Page::Routes, "Routes")),
                     _ => None,
                 };
                 if let Some((page, tooltip)) = extra {

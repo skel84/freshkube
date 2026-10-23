@@ -44,10 +44,12 @@ pub enum Shape {
     MixedBundle,
     /// The route list is refused.
     Refused,
+    /// The route list stopped at its limit of 500.
+    Cut,
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 14] = [
+    pub const NAMES: [&'static str; 15] = [
         "all",
         "serving",
         "partly",
@@ -62,6 +64,7 @@ impl Shape {
         "incomplete",
         "mixed-bundle",
         "refused",
+        "cut",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -80,6 +83,7 @@ impl Shape {
             "incomplete" => Self::Incomplete,
             "mixed-bundle" => Self::MixedBundle,
             "refused" => Self::Refused,
+            "cut" => Self::Cut,
             _ => return None,
         })
     }
@@ -103,7 +107,7 @@ impl Shape {
                 "stale",
                 "mesh-cart",
             ],
-            Self::Serving => &["web", "https-redirect", "pay-status"],
+            Self::Serving | Self::Cut => &["web", "https-redirect", "pay-status"],
             Self::Partly => &["cart-split", "web"],
             Self::CrossNamespace => &["checkout", "pay-status"],
             Self::Listener => &["status", "docs", "web"],
@@ -308,6 +312,7 @@ pub struct World {
 
 pub fn world(shape: Shape) -> World {
     let https = json!([{"name": "https", "port": 443, "protocol": "HTTPS", "hostname": "*.example.com",
+        "tls": {"mode": "Terminate", "certificateRefs": [{"name": "edge-tls"}]},
         "allowedRoutes": {"namespaces": {"from": "All"}}}]);
     let internal = json!([{"name": "web", "port": 8080, "protocol": "HTTP", "hostname": "*.internal.example.com",
         "allowedRoutes": {"namespaces": {"from": "Same"}}}]);
@@ -394,7 +399,7 @@ pub fn read(shape: Shape) -> Result<RoutesRead, Failure> {
         mixed: (shape == Shape::MixedBundle)
             .then(|| "HTTPRoute v1, Gateway v1beta1, GatewayClass v1".to_owned()),
     };
-    Ok(RoutesRead::new(api)
+    let mut read = RoutesRead::new(api)
         .with_route_kind(crate::resources::ResourceKind::new(
             GATEWAY_GROUP,
             "v1",
@@ -402,5 +407,9 @@ pub fn read(shape: Shape) -> Result<RoutesRead, Failure> {
             "httproutes",
             true,
         ))
-        .with_routes(routes))
+        .with_routes(routes);
+    if shape == Shape::Cut {
+        read.set_cut(super::read::ROUTE_LIMIT);
+    }
+    Ok(read)
 }

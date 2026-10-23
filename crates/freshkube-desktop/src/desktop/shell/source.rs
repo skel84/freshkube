@@ -146,6 +146,12 @@ impl Pilot {
         if slug == "storage" {
             lines.push(self.page_line(Page::Databases, None).into());
         }
+        // Traffic is a section on top, above the kind lists (#949).
+        if slug == "networking" {
+            lines.push(Section::new("nav-traffic", "Traffic").into());
+            lines.push(self.page_line(Page::Routes, None).into());
+            lines.push(Section::new("nav-networking-kinds", "Kinds").into());
+        }
         let first_kind = lines.len();
         lines.extend(group.items.iter().map(|(label, key)| {
             let row = Row::new(ColumnKey::Kind(key), format!("nav-k8s-{key}"), *label)

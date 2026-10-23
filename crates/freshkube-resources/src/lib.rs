@@ -12,6 +12,7 @@ pub mod live;
 pub mod model;
 pub mod navigation;
 mod node_facts;
+pub mod route_trace;
 mod pane;
 pub(crate) mod projection;
 pub mod rows;

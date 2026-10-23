@@ -4,7 +4,7 @@ The behaviour of the Resources page and what hangs off it, moved from [AGENTS.md
 
 Code:
 
-- `crates/freshkube-resources/src/` is the page: `screen/` (the list), `custom.rs`, `pane/` (the detail pane, with `cross_links/`, `ports/` and `traffic/`), `detail.rs`, `rows.rs`, `projection.rs`, `live.rs`, `navigation.rs`, `shell/` (pod shells) and `example/`.
+- `crates/freshkube-resources/src/` is the page: `screen/` (the list), `custom.rs`, `pane/` (the detail pane, with `cross_links/`, `ports/` and `traffic/`), `route_trace/` (an HTTPRoute's trace as rows, [traffic.md](traffic.md)), `detail.rs`, `rows.rs`, `projection.rs`, `live.rs`, `navigation.rs`, `shell/` (pod shells) and `example/`.
 - `crates/freshkube-desktop/src/desktop/dock/` is the dock; `crates/freshkube-desktop/src/logs/` holds the log sources (`pod/`, `workload/`, `streams.rs`) over `LogView<S>`; `crates/freshkube-resources/src/forwards/` is the app's forward list.
 - `crates/freshkube-logs/src/` is the log view; `crates/freshkube-terminal/src/` is the terminal behind a shell; `crates/freshkube-core/src/` holds the cluster reads (`follow_pod_log`, `PodStatus::diagnose`).
 
@@ -69,3 +69,5 @@ A dock tab (`desktop/dock/`) captures its cluster (`Origin`) when it starts: a l
 - **Example data.** `example/traffic.rs` answers every shape (`FRESHKUBE_SERVICES`, in AGENTS.md's knob table); open `FRESHKUBE_KIND=services` for a Service and `deployments.apps` for a workload.
 
 Tests: `freshkube-core/src/resources/traffic/tests.rs` (each state, the fallback, the requests a fake API records) and `pane/traffic/tests.rs` (each shape, refused, the workload chain, a stale or hidden answer).
+
+An HTTPRoute's pane has a third tab, Trace, and the compact trace in its Overview ([traffic.md](traffic.md), #949 N2a).

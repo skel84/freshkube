@@ -117,6 +117,13 @@ impl RoutesRead {
         self
     }
 
+    /// The route list stopped at `limit`.
+    pub(super) fn set_cut(&mut self, limit: u32) {
+        self.routes_cut = true;
+        self.notes
+            .push(format!("Routes were cut at {limit}; more may exist"));
+    }
+
     pub fn with_notes(mut self, notes: Vec<String>) -> Self {
         self.notes = notes;
         self

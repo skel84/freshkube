@@ -442,6 +442,32 @@ fn a_label_selector_is_checked_against_the_namespaces_labels() {
 }
 
 #[test]
+fn a_cut_namespace_list_is_unknown_even_when_the_namespace_is_in_it() {
+    let gateway = gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
+        "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": "Selector",
+            "selector": {"matchLabels": {"team": "data"}}}}}]}}));
+    let mut world = World::with(gateway, accepted_class());
+    // The labels in the partial list say "broken", but the list is cut.
+    world.namespaces = Ok(Listing::new(
+        vec![("shop".into(), [("team".to_owned(), "web".to_owned())].into())],
+        true,
+    ));
+    let trace = world.trace(healthy_route());
+    assert_eq!(step(&trace, StepId::Namespace).verdict, StepVerdict::Unknown);
+    assert!(step(&trace, StepId::Namespace).reason.contains("cut"));
+    assert_eq!(trace.verdict, RouteVerdict::Unknown);
+}
+
+#[test]
+fn a_listeners_certificate_refs_are_shown_by_name_and_nothing_reads_them() {
+    let gateway = gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
+        "hostname": "*.example.com", "tls": {"certificateRefs": [{"name": "shop-tls"}, {"name": "spare-tls"}]},
+        "allowedRoutes": {"namespaces": {"from": "All"}}}]}}));
+    let trace = World::with(gateway, accepted_class()).trace(healthy_route());
+    assert!(step(&trace, StepId::Listener).serves.contains("certificate shop-tls, spare-tls"));
+}
+
+#[test]
 fn selector_expressions_match_like_kubernetes() {
     let labels: BTreeMap<String, String> = [("env".to_owned(), "prod".to_owned())].into();
     let selector = |op: &str, key: &str, values: &[&str]| Selector {

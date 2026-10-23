@@ -21,8 +21,8 @@ use crate::{
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
         DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen,
-        OperationsScreen, ProcessesScreen, ScreenHandle, ScreenPanel, SecurityScreen,
-        StorageScreen, WorkloadsScreen,
+        OperationsScreen, ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel,
+        SecurityScreen, StorageScreen, WorkloadsScreen,
     },
 };
 
@@ -80,12 +80,17 @@ impl Pages {
                     .with_explore_example(&explore)
             })
         };
+        let routes = {
+            let shape = options.debug.routes;
+            cx.new(|cx| RoutesScreen::new(runtime.clone(), window, cx).with_example(shape))
+        };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
                     PageId::Databases => ScreenHandle::new(databases.clone()),
+                    PageId::Routes => ScreenHandle::new(routes.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
                     PageId::Network => screen(NetworkScreen::new, runtime, window, cx),
@@ -124,7 +129,8 @@ impl Pages {
         node_workspace.update(cx, |nodes, _| nodes.screens = screens);
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         resources.update(cx, |screen, cx| {
-            screen.set_services_shape(options.debug.services, cx)
+            screen.set_services_shape(options.debug.services, cx);
+            screen.set_routes_shape(options.debug.routes, cx)
         });
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), options.debug.agent, cx));
         // Its height and whether it shows are laid out by the shell.

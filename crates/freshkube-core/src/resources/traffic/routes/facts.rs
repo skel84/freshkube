@@ -364,6 +364,8 @@ pub struct Listener {
     pub namespaces: AllowedNamespaces,
     /// `allowedRoutes.kinds`; none means the protocol's default kinds.
     pub kinds: Option<Vec<String>>,
+    /// `tls.certificateRefs`, by name alone: no Secret is read.
+    pub certificates: Vec<String>,
 }
 
 /// What the controller reported for one listener.
@@ -417,6 +419,12 @@ impl GatewayFacts {
                         kinds: allowed["kinds"].as_array().map(|kinds| {
                             kinds.iter().map(|k| text(&k["kind"])).collect::<Vec<_>>()
                         }),
+                        certificates: l["tls"]["certificateRefs"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|c| opt(&c["name"]))
+                            .collect(),
                     })
                 })
                 .collect(),

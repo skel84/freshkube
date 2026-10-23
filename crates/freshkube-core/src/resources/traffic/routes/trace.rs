@@ -568,8 +568,13 @@ fn pick_listener<'a>(gateway: &'a GatewayFacts, parent: &ParentRef, route: &Rout
 }
 
 fn describe_listener(l: &Listener) -> String {
+    let certificates = if l.certificates.is_empty() {
+        String::new()
+    } else {
+        format!(" · certificate {}", l.certificates.join(", "))
+    };
     format!(
-        "listener {} {} :{} · {}",
+        "listener {} {} :{} · {}{certificates}",
         l.name,
         l.protocol,
         l.port,
@@ -690,6 +695,13 @@ fn namespace_step(
                     ),
                 )
                 .quoting(asks, serves),
+                // A cut list is no basis for a label match either way.
+                Ok(namespaces) if namespaces.cut => TraceStep::unknown(
+                    id,
+                    Owner::Platform,
+                    "the namespace list was cut, so the selector can't be checked",
+                )
+                .quoting(asks, serves),
                 Ok(namespaces) => {
                     match namespaces.items.iter().find(|(name, _)| *name == route.namespace) {
                         Some((_, labels)) if selector.matches(labels) => {
@@ -700,12 +712,6 @@ fn namespace_step(
                             id,
                             Owner::Platform,
                             "the namespace's labels do not match the listener's selector",
-                        )
-                        .quoting(asks, serves),
-                        None if namespaces.cut => TraceStep::unknown(
-                            id,
-                            Owner::Platform,
-                            "the namespace list was cut; the labels are unknown",
                         )
                         .quoting(asks, serves),
                         None => TraceStep::unknown(

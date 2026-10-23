@@ -292,3 +292,235 @@ fn the_section_and_its_rows_stay_inside_the_pane(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+// -- HTTPRoute (#949, N2a) -------------------------------------------------
+
+mod route {
+    use super::*;
+    use crate::pane::{DetailEvent, Tab};
+    use crate::{ResourceLink, route_trace::TraceLink};
+    use freshkube_core::resources::traffic::routes::example::Shape as Routes;
+
+    const KEY: &str = "httproutes.gateway.networking.k8s.io";
+
+    fn route(shape: Routes, name: &str) -> (DetailTarget, Routes) {
+        (target(KEY, "shop", name), shape)
+    }
+
+    fn open_route(pane: &Entity<DetailPane>, target: &DetailTarget, shape: Routes, cx: &mut App) {
+        pane.update(cx, |pane, cx| {
+            pane.close(cx);
+            pane.set_routes_shape(shape);
+            pane.open(
+                target.clone(),
+                ClusterAccess::EXAMPLE,
+                "1",
+                Duration::ZERO,
+                cx,
+            )
+        });
+    }
+
+    #[gpui_kit::test]
+    fn a_route_shows_its_trace_compact_in_overview_and_full_on_its_own_tab(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, pane, handle, _) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let (target, shape) = route(Routes::All, "checkout");
+            open_route(&pane, &target, shape, cx);
+            window.render_frame(cx);
+            assert!(window.find("traffic-section").visible());
+            let compact = window.find("route-trace-compact");
+            assert!(compact.visible());
+            assert!(window.find("route-trace-verdict").label().unwrap().starts_with("Not serving"));
+            // The tab carries the route's host and path.
+            window.find("detail-tab-trace");
+            assert_eq!(pane.read(cx).traffic.route_label(), "checkout.example.com/");
+            window.click("detail-tab-trace", cx);
+            window.render_frame(cx);
+            assert_eq!(pane.read(cx).tab(), Tab::Trace);
+            window.find("detail-trace-page");
+            window.find("route-trace-full");
+            // Each step of the one parent, then the branch's, are drawn.
+            for step in 0..4 {
+                window.find(format!("route-trace-parent-0-step-{step}"));
+            }
+            for step in 0..3 {
+                window.find(format!("route-trace-parent-0-branch-0-step-{step}"));
+            }
+            // The refused reference proposes a grant to copy, scoped to the pair.
+            window.find("route-trace-grant-0-copy");
+            window.find("route-trace-grant-0-yaml");
+            let proposals = pane
+                .read(cx)
+                .traffic
+                .route
+                .as_ref()
+                .map(|view| match view {
+                    super::super::RouteView::Trace { model, .. } => {
+                        model.proposals().map(str::to_owned).collect::<Vec<_>>()
+                    }
+                    _ => Vec::new(),
+                })
+                .unwrap();
+            assert_eq!(proposals.len(), 1);
+            assert!(proposals[0].contains("namespace: payments"));
+            assert!(proposals[0].contains("namespace: shop"));
+            assert!(proposals[0].contains("name: ledger"));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn only_a_route_has_a_trace_tab_and_asking_for_it_elsewhere_opens_details(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, pane, handle, _) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            open(
+                &pane,
+                &target("services", "payments", "api"),
+                Shape::Healthy,
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(window.try_find("detail-tab-trace").is_none());
+            pane.update(cx, |pane, cx| pane.set_tab(Tab::Trace, cx));
+            window.render_frame(cx);
+            assert_eq!(pane.read(cx).tab(), Tab::Overview);
+            // From a route's Trace tab to another kind: back to Details.
+            let (route, shape) = route(Routes::All, "web");
+            open_route(&pane, &route, shape, cx);
+            pane.update(cx, |pane, cx| pane.set_tab(Tab::Trace, cx));
+            window.render_frame(cx);
+            assert_eq!(pane.read(cx).tab(), Tab::Trace);
+            open(
+                &pane,
+                &target("services", "payments", "api"),
+                Shape::Healthy,
+                cx,
+            );
+            window.render_frame(cx);
+            assert_eq!(pane.read(cx).tab(), Tab::Overview);
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn the_strip_steps_through_details_trace_and_yaml_for_a_route(cx: &mut TestAppContext) {
+        let (_runtime, pane, handle, _) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let (route, shape) = route(Routes::All, "web");
+            open_route(&pane, &route, shape, cx);
+            window.render_frame(cx);
+            let mut seen = vec![pane.read(cx).tab()];
+            for _ in 0..3 {
+                pane.update(cx, |pane, cx| pane.turn_tab(1, cx));
+                seen.push(pane.read(cx).tab());
+            }
+            assert_eq!(seen, [Tab::Overview, Tab::Trace, Tab::Yaml, Tab::Overview]);
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn the_traces_links_go_through_the_normal_object_links(cx: &mut TestAppContext) {
+        let (_runtime, pane, handle, emitted) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let (route, shape) = route(Routes::All, "checkout");
+            open_route(&pane, &route, shape, cx);
+            pane.update(cx, |pane, cx| pane.set_tab(Tab::Trace, cx));
+            window.render_frame(cx);
+            window.click("route-trace-parent-0-gateway", cx);
+            window.click("route-trace-parent-0-branch-0-service", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let links = emitted
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                DetailEvent::Link(link) => Some(link.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            matches!(&links[0], ResourceLink::Owner { kind, object, .. }
+                if kind == "Gateway" && object.name == "edge" && object.namespace == "infra"),
+            "{links:?}"
+        );
+        assert!(
+            matches!(&links[1], ResourceLink::Object(kind, object, Tab::Overview)
+                if kind.plural == "services" && object.name == "ledger" && object.namespace == "payments"),
+            "{links:?}"
+        );
+        let _ = TraceLink::Gateway { namespace: String::new(), name: String::new() };
+    }
+
+    #[gpui_kit::test]
+    fn a_gateway_api_that_is_not_there_or_a_refused_read_is_plain_never_not_serving(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, pane, handle, _) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let (route, _) = route(Routes::All, "web");
+            open_route(&pane, &route, Routes::NotInstalled, cx);
+            window.render_frame(cx);
+            let message = window.find("route-trace-message");
+            assert!(message.label().unwrap().contains("not installed"));
+            assert!(window.try_find("traffic-retry").is_none());
+            open_route(&pane, &route, Routes::Refused, cx);
+            window.render_frame(cx);
+            let message = window.find("route-trace-message");
+            let words = message.label().unwrap();
+            assert!(words.starts_with("Trace unknown"), "{words}");
+            assert!(!words.contains("Not serving"));
+            window.find("traffic-retry");
+            // The Trace tab says the same, with the same Retry.
+            pane.update(cx, |pane, cx| pane.set_tab(Tab::Trace, cx));
+            window.render_frame(cx);
+            window.find("detail-trace-page");
+            window.find("route-trace-message");
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_mixed_bundle_is_noted_beside_the_trace(cx: &mut TestAppContext) {
+        let (_runtime, pane, handle, _) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let (route, _) = route(Routes::All, "web");
+            open_route(&pane, &route, Routes::MixedBundle, cx);
+            window.render_frame(cx);
+            let notes = window.find("route-trace-notes");
+            assert!(notes.visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_hidden_pane_reads_no_trace(cx: &mut TestAppContext) {
+        let (_runtime, pane, handle, _) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let (route, shape) = route(Routes::All, "web");
+            pane.update(cx, |pane, cx| {
+                pane.set_active(false, cx);
+                pane.set_routes_shape(shape);
+                pane.open(
+                    route.clone(),
+                    ClusterAccess::EXAMPLE,
+                    "1",
+                    Duration::ZERO,
+                    cx,
+                )
+            });
+            window.render_frame(cx);
+            assert!(pane.read(cx).traffic.route.is_none());
+            pane.update(cx, |pane, cx| pane.set_active(true, cx));
+            window.render_frame(cx);
+            assert!(pane.read(cx).traffic.route.is_some());
+        })
+        .unwrap();
+    }
+}
