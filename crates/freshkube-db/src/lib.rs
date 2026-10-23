@@ -9,6 +9,10 @@
 //! Kubernetes and nothing of desktop live here: the caller brings a connected
 //! [`wire::Wire`] and, for a password, a [`credentials::Password`] that it read
 //! once for this connection.
+// The `async_trait` expansion marks its boxed futures `must_use`, which newer
+// clippy reports as a second `must_use` on every async method here.
+#![allow(clippy::double_must_use)]
+
 pub mod credentials;
 pub mod fake;
 pub mod limits;
