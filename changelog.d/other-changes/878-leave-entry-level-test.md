@@ -1,0 +1,1 @@
+- **Tab test:** leaving an open entry for a stricter context is now tested to re-derive the shown level and what writes ask; the test fails without the call that does it.
