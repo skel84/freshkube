@@ -388,7 +388,7 @@ const PAGE: u32 = 500;
 const MOST_PAGES: usize = 4;
 
 /// Said in Scale's dialog when there were too many autoscalers to check.
-pub const AUTOSCALER_UNKNOWN: &str = "Autoscalers: unknown, more than 2,000 to check.";
+pub const AUTOSCALER_UNKNOWN: &str = "HPA: unknown, more than 2,000 to check.";
 
 /// Said in Scale's dialog when an autoscaler targets the object.
 pub const AUTOSCALER_NOTE: &str = "An autoscaler manages replicas; it may change this back.";
