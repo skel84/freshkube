@@ -11,7 +11,7 @@ use super::{
     action::{ActionDescription, Inverse, ObjectChange, Target},
     audit::{AuditObject, AuditRequest, AuditStore, Record, RunId, SCHEMA, scrub},
     outcome::{Accepted, Observed, Watching, observe},
-    preflight::{Prepared, Who},
+    preflight::{Block, Prepared, Who},
     requirement::{Confirmation, UNDO_WINDOW},
     send::{ChangedWhat, Conflict, Refusal, send},
     undo::UndoOffer,
@@ -51,8 +51,6 @@ pub enum NotSent {
     ReadOnly(&'static str),
     /// What the person did does not meet the level's requirement.
     Unconfirmed,
-    /// A runner for example data, which has no cluster to send to.
-    Example,
     /// The audit log can't be written, so nothing is sent.
     AuditUnavailable(String),
     /// The level got stricter after the action was prepared: nothing was
@@ -61,6 +59,15 @@ pub enum NotSent {
     /// Exec and port forwarding keep their own owners; they never go through
     /// this path.
     Session,
+    /// A runner for example data, which has no cluster to send to.
+    Example,
+    /// Something the write depends on (a Stage that runs other Freight now)
+    /// is no longer as the person was shown, so nothing was sent.
+    Moved(String),
+    /// What the write depends on could not be checked again just before the
+    /// send (no answer, an access review that failed, or a refusal), so
+    /// nothing was sent. The text says why.
+    Unchecked(String),
 }
 
 /// What happened to one object.
@@ -340,7 +347,7 @@ impl Runner {
         if let Some(not_sent) = refused_at(self.level_for(&description)) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
         }
-        if !requirement.satisfied_by(&confirmation, &description.names(), &self.who.entry) {
+        if !requirement.satisfied_by(&confirmation, &description.subject_names(), &self.who.entry) {
             return finished(Status::NotSent(NotSent::Unconfirmed), vec![], None, None);
         }
         if let Some(window) = requirement.cancel_window {
@@ -353,8 +360,8 @@ impl Runner {
         // The one reading the send is decided on, and the level every audit
         // line of this run records.
         let level = self.level_for(&description);
-        if cancel() {
-            // Example data audits nothing.
+        // Cancelled before anything is sent. Example data audits nothing.
+        let cancelled = || {
             if !self.example {
                 let _ = self.record(
                     &run,
@@ -365,10 +372,37 @@ impl Runner {
                     "Cancelled before sending.",
                 );
             }
-            return finished(Status::Cancelled, vec![], None, None);
+            finished(Status::Cancelled, vec![], None, None)
+        };
+        if cancel() {
+            return cancelled();
         }
         if let Some(not_sent) = refused_at(level) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
+        // What the write depends on is read again just before it is sent, as
+        // the level is: a dialog can stay open while someone else promotes the
+        // Stage, and a create from the page as it was would roll it back.
+        if !self.example {
+            for depends in description.changes.iter().flat_map(|c| &c.depends) {
+                if let Err(block) = self.check_depends(depends).await {
+                    let not_sent = match &block {
+                        Block::Changed { .. } => NotSent::Moved(block.text()),
+                        Block::NoAnswer { .. } | Block::AccessUnknown { .. } => {
+                            NotSent::Unchecked(format!(
+                                "{} It couldn't be checked again, so nothing was sent.",
+                                block.text()
+                            ))
+                        }
+                        other => NotSent::Unchecked(format!("{} Nothing was sent.", other.text())),
+                    };
+                    return finished(Status::NotSent(not_sent), vec![], None, None);
+                }
+            }
+            // The check made requests after the last look at Cancel.
+            if cancel() {
+                return cancelled();
+            }
         }
         // Example data has no cluster to send to; everything the level and the
         // person decide has been decided as for a real one.
@@ -579,6 +613,7 @@ impl Runner {
                     change: inverse.change.clone(),
                     observe: inverse.observe.clone(),
                     inverse: None,
+                    depends: vec![],
                 },
                 inverse.guard.clone(),
             ));
@@ -587,7 +622,7 @@ impl Runner {
             action: description.kind.clone(),
             sentence: description.sentence.clone(),
             window: UNDO_WINDOW,
-            destination: description.destination.clone(),
+            destinations: description.destinations.clone(),
             items,
         })
     }

@@ -17,6 +17,8 @@ mod dialog;
 mod everyday_tests;
 mod report;
 #[cfg(test)]
+mod stage_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
@@ -42,6 +44,24 @@ use report::WriteReport;
 /// How long checking an action may take before it is reported as not
 /// answering.
 const CHECK_DEADLINE: Duration = Duration::from_secs(30);
+
+/// The flows a page started and that are still open, kept so the dialog's
+/// state lives while it shows. A closed one is dropped when the next starts.
+#[derive(Default)]
+struct Flows(Vec<Entity<WriteFlow>>);
+
+impl Global for Flows {}
+
+/// Keeps `flow` alive until it closes.
+pub(crate) fn retain(flow: Entity<WriteFlow>, cx: &mut App) {
+    let kept = std::mem::take(&mut cx.default_global::<Flows>().0);
+    let mut open: Vec<Entity<WriteFlow>> = kept
+        .into_iter()
+        .filter(|kept| kept.read(cx).stage != Stage::Closed)
+        .collect();
+    open.push(flow);
+    cx.default_global::<Flows>().0 = open;
+}
 
 /// What a page hands over.
 pub(crate) struct WriteRequest {
@@ -101,8 +121,8 @@ pub(crate) struct WriteFlow {
 /// Opens the flow for `request`: the dialog when the level asks anything,
 /// otherwise nothing until there is something to say.
 pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) -> Entity<WriteFlow> {
-    let asks = freshkube_core::write::requirement(
-        request.action.tier,
+    let asks = freshkube_core::write::requirement_for(
+        &request.action,
         request.runner.level_for(&request.action),
     );
     let flow = cx.new(|_| WriteFlow {
@@ -121,22 +141,6 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
     }
     flow.update(cx, |flow, cx| flow.check(window, cx));
     flow
-}
-
-/// The flows that are open. A page that starts one keeps no handle, so they
-/// are held here until they close: dropping the entity would drop its check
-/// and the dialog's state with it.
-#[derive(Default)]
-struct Open(Vec<Entity<WriteFlow>>);
-
-impl Global for Open {}
-
-/// Keeps `flow` alive until it closes, and lets go of the ones that have.
-pub(crate) fn retain(flow: Entity<WriteFlow>, cx: &mut App) {
-    let mut open = std::mem::take(&mut cx.default_global::<Open>().0);
-    open.retain(|flow| flow.read(cx).stage != Stage::Closed);
-    open.push(flow);
-    cx.default_global::<Open>().0 = open;
 }
 
 /// Opens the flow for an action that has already passed preflight, such as

@@ -2,6 +2,7 @@ mod acts;
 mod drawer;
 mod external_secrets;
 mod flash;
+mod frozen;
 mod keys;
 mod list;
 mod menu;

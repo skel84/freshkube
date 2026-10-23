@@ -334,6 +334,41 @@ pub async fn connect_entry(
     }
 }
 
+/// The `kube::Client` for `entry`, connected as [`connect_entry`] does, for a
+/// write (#855): the reader of the same name can only GET. Only the write
+/// module sends anything through it, after its preflight.
+pub async fn connect_writer(
+    kubeconfigs: Vec<PathBuf>,
+    entry: Entry,
+) -> Result<kube::Client, Failure> {
+    let Some(talosconfig) = entry.talosconfig.clone() else {
+        return match open_listed(kubeconfigs, entry.context.clone(), CONNECT_DEADLINE).await? {
+            Some(client) => Ok(client),
+            None => Err(Failure::new(
+                FailureKind::Config,
+                format!("the kubeconfig has no context {}", entry.context),
+            )),
+        };
+    };
+    let started = tokio::time::Instant::now();
+    if let Some(client) = open_listed(kubeconfigs, entry.context.clone(), CONNECT_DEADLINE).await? {
+        return Ok(client);
+    }
+    let context = entry.talos_context.unwrap_or(entry.context);
+    let left = CONNECT_DEADLINE.saturating_sub(started.elapsed());
+    match tokio::time::timeout(left, through_talos(talosconfig, context, CONNECT_DEADLINE)).await {
+        Err(_) => Err(Failure::new(
+            FailureKind::Timeout,
+            format!(
+                "Talos gave no kubeconfig within {}",
+                within(CONNECT_DEADLINE)
+            ),
+        )),
+        Ok(Err(why)) => Err(why),
+        Ok(Ok((client, _))) => Ok(client),
+    }
+}
+
 /// The client for the kubeconfig a Talos context's control plane serves.
 /// The errors name the file and context, never what they hold.
 async fn through_talos(

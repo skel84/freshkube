@@ -1,6 +1,10 @@
 //! Pages and how the shell moves between them: which page shows, which
 //! Kubernetes kind and context it shows, and where focus lands.
-use super::{Pilot, switch::LinkWork};
+use super::{
+    Pilot,
+    switch::LinkWork,
+    tabs::{self, OpenIn},
+};
 use crate::desktop::{COLUMN_WIDTH, RAIL_WIDTH};
 use crate::logs::TalosPanel;
 use crate::resources::{self, navigation, shell};
@@ -753,9 +757,25 @@ impl Pilot {
 }
 
 impl Pilot {
-    /// Every object link follows this path.
+    /// Every object link follows this path, here.
     pub(crate) fn open_object(
         &mut self,
+        kind: ResourceKind,
+        object: resources::model::ObjectRef,
+        tab: resources::Tab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_object_in(OpenIn::Here, kind, object, tab, window, cx)
+    }
+
+    /// Every object link follows this path, and its guard first: a link
+    /// made in another cluster is sent to it or refused whatever `open_in`
+    /// says, since the tabs are one cluster's. Where it opens, a new tab or
+    /// the shown one, is decided after.
+    pub(crate) fn open_object_in(
+        &mut self,
+        open_in: OpenIn,
         kind: ResourceKind,
         object: resources::model::ObjectRef,
         tab: resources::Tab,
@@ -768,6 +788,12 @@ impl Pilot {
             tab,
         };
         if self.divert_link(&object, work, window, cx) {
+            return;
+        }
+        if open_in != OpenIn::Here
+            && let Some(view) = tabs::object_view(&kind, &object, tab)
+        {
+            self.open_view_tab(view, open_in, window, cx);
             return;
         }
         let object = resources::model::ObjectRef {
