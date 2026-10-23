@@ -1524,5 +1524,5 @@ fn describe_checks(checks: &[Check]) -> (ui::Tone, String) {
 }
 
 #[cfg(test)]
-#[path = "monitoring/tests/mod.rs"]
+#[path = "tests/mod.rs"]
 pub(in crate::desktop::settings) mod tests;
