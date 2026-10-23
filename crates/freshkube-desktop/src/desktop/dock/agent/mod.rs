@@ -560,6 +560,17 @@ impl AgentView {
         self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
     }
 
+    /// Targets a test put in place of the dock's own.
+    #[cfg(test)]
+    fn injected_targets(&self) -> Option<std::sync::Arc<dyn freshkube_agent::Targets>> {
+        self.targets.clone()
+    }
+
+    #[cfg(not(test))]
+    fn injected_targets(&self) -> Option<std::sync::Arc<dyn freshkube_agent::Targets>> {
+        None
+    }
+
     fn start_session(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(own) = self.own.clone() else {
             return false;
@@ -584,13 +595,9 @@ impl AgentView {
         let launch = run::Launch {
             entry: own.entry.clone(),
             gate: self.host.gate.clone(),
-            targets: {
-                #[cfg(test)]
-                let injected = self.targets.clone();
-                #[cfg(not(test))]
-                let injected = None;
-                injected.unwrap_or_else(|| DockTargets::new(&own, workspace.as_ref()).shared())
-            },
+            targets: self
+                .injected_targets()
+                .unwrap_or_else(|| DockTargets::new(&own, workspace.as_ref()).shared()),
             agent,
         };
         let (job, commands, mut receiver) = run::start(&self.runtime, launch);
