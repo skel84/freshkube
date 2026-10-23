@@ -275,8 +275,8 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         .unwrap()
         .name
         .clone();
-    // Logs open in the dock and close the drawer, so each action opens
-    // the pod's Overview again first.
+    // Each action opens the pod's Overview again first, on the Details
+    // tab's top.
     let reopen = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
         pilot.update(cx, |pilot, cx| {
             pilot.open_object(
@@ -300,8 +300,8 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         // The container's previous instance opens in the dock, and the
-        // drawer steps aside.
-        assert!(window.try_find("resource-drawer").is_none());
+        // drawer stays open above it (#922).
+        assert!(window.try_find("resource-drawer").is_some());
         assert_eq!(window.find("pod-logs-previous").checked(), Some(true));
         assert_eq!(
             pilot

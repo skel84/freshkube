@@ -34,7 +34,7 @@ use super::model::{
 use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab};
 use super::projection::ResourceProjection;
 use super::store::{Changed, ResourceEvent, ResourceStore};
-use super::{ResourceLink, example, live, navigation};
+use super::{example, live, navigation};
 use crate::backend;
 use crate::palette::palette;
 use crate::ui::{self, clock, dp};
@@ -357,14 +357,9 @@ impl ResourcesScreen {
                         window.focus(&this.focus, cx);
                         cx.notify();
                     }
-                    DetailEvent::Link(intent) => {
-                        // Logs and shells open in the dock, under the
-                        // drawer: it steps aside, keeping the row.
-                        if matches!(intent, ResourceLink::Logs(_) | ResourceLink::Shell(_)) {
-                            this.hide_detail(cx);
-                        }
-                        cx.emit(intent.clone());
-                    }
+                    // Logs and shells open in the dock, under the page: the
+                    // drawer stays open above it (#922).
+                    DetailEvent::Link(intent) => cx.emit(intent.clone()),
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
                         this.open_now(identity.clone(), window, |_, _, _| {}, cx);
@@ -552,6 +547,10 @@ impl ResourcesScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Logs open in the dock under the page; a drawer already showing
+        // the object stays open above it (#922).
+        let only_logs =
+            tab == crate::Tab::Logs && self.detail.read(cx).target_identity() != Some(&identity);
         if self
             .namespace
             .as_ref()
@@ -571,9 +570,10 @@ impl ResourcesScreen {
         }
         self.select_identity(&identity, window, cx);
         self.restore = Some(identity.clone());
-        // Logs open in the dock and close the drawer at once: its read
-        // waits as for a keyboard pause, which the close cancels.
-        let delay = if tab == crate::Tab::Logs {
+        // Otherwise, opened straight on Logs, the drawer only names the
+        // object for the dock and closes at once: its read waits as for a
+        // keyboard pause, which the close cancels.
+        let delay = if only_logs {
             KEYBOARD_PAUSE
         } else {
             Duration::ZERO
@@ -587,6 +587,9 @@ impl ResourcesScreen {
                 detail.focus(window, cx);
             }
         });
+        if only_logs {
+            self.hide_detail(cx);
+        }
     }
 
     /// A source with the same `id` only refreshes the handles; another one
