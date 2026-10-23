@@ -23,8 +23,14 @@ impl Render for Pilot {
             .track_focus(&self.focus);
         let root = self.navigation.listen(root, cx);
         let root = self.chrome.listen(root, cx);
+        let root = self.listen_tabs(root, cx);
         self.listen(root, cx)
             .child(self.chrome.parts.header())
+            .children(
+                self.tabs
+                    .shows()
+                    .then(|| self.tabs.strip.clone().cached(tab_strip_style())),
+            )
             .child(
                 div()
                     .flex()
@@ -175,4 +181,12 @@ impl Pilot {
                     .cached(StyleRefinement::default().w_full().flex_none().h(height))
             }))
     }
+}
+
+/// The strip's cached frame: the window's width, one bar high.
+fn tab_strip_style() -> StyleRefinement {
+    StyleRefinement::default()
+        .w_full()
+        .h(crate::ui::dp(freshkube_ui::tab_strip::BAR_HEIGHT))
+        .flex_none()
 }

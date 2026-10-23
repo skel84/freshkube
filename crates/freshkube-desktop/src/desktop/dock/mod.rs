@@ -387,8 +387,14 @@ impl Dock {
         self.maximized
     }
 
+    /// How many tabs the dock holds, for tests of the keys it shares.
     #[cfg(test)]
+    pub(crate) fn tab_count(&self) -> usize {
+        self.tabs.len()
+    }
+
     /// Whether the keyboard is somewhere in the dock.
+    #[cfg(test)]
     pub(crate) fn has_focus(&self, window: &Window, cx: &App) -> bool {
         self.focus.contains_focused(window, cx)
     }

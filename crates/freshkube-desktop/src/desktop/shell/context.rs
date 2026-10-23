@@ -100,6 +100,26 @@ impl Pilot {
         }
     }
 
+    /// Every workspace entry's level, by its id: what it sets, with the
+    /// stricter of any entry naming the same context and what a skipped row
+    /// locked it to.
+    fn entry_levels(&self, cx: &App) -> Vec<(String, Protection)> {
+        let settings = self.settings_page.read(cx);
+        let workspace = settings.workspace();
+        workspace
+            .clusters
+            .iter()
+            .map(|entry| {
+                (
+                    entry.id.clone(),
+                    workspace
+                        .level_of(&entry.context, &settings.source_recovery)
+                        .stricter(entry.level()),
+                )
+            })
+            .collect()
+    }
+
     /// The level the window works under: the active workspace entry's, with
     /// the stricter of any entry naming the same kubeconfig context, else
     /// guarded, else what a skipped row locked it to. The entry is the
@@ -109,6 +129,9 @@ impl Pilot {
     /// setup changes, never while drawing.
     pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
         let level = self.current_level(cx);
+        // Every entry's level, so a write to an entry the window doesn't show
+        // follows a change made in Settings as the window's own does.
+        crate::mutation::set_entry_levels(self.entry_levels(cx), cx);
         if level == self.context_display.level && !self.context_display.level_words.is_empty() {
             return false;
         }
