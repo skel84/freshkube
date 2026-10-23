@@ -275,7 +275,7 @@ fn new_versions_are_read_once_each_and_at_most_once_a_second(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn a_hidden_pane_reads_nothing_and_hides_revealed_values(cx: &mut TestAppContext) {
+fn safety_g09_a_hidden_pane_reads_nothing_and_hides_revealed_values(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     let (secret, _) = target("secrets", |_, name| name == "ledger-database");
     cx.update_window(handle, |_, window, cx| {
@@ -455,7 +455,7 @@ fn lines_select_and_copy_and_copy_yaml_takes_the_whole_document(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
-fn secret_values_stay_hidden_until_one_is_revealed(cx: &mut TestAppContext) {
+fn safety_g09_secret_values_stay_hidden_until_one_is_revealed(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     let (secret, _) = target("secrets", |_, name| name == "ledger-database");
     let reveal = |key: &str, cx: &App| {

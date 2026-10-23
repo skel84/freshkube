@@ -209,7 +209,7 @@ fn results_are_capped_per_group_and_match_namespace_name(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
-fn searching_secret_names_never_reads_a_secret_document(cx: &mut TestAppContext) {
+fn safety_g09_searching_secret_names_never_reads_a_secret_document(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);
     let before = crate::desktop::probe::count("example.secret-document");
     cx.update_window(handle, |_, window, cx| {

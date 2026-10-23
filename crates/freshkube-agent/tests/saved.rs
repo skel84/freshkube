@@ -100,7 +100,8 @@ async fn set_access_saves_audits_and_gates_together() {
 }
 
 #[tokio::test]
-async fn a_missing_file_grants_nothing_and_an_unparsable_one_grants_nothing_and_logs_once() {
+async fn safety_g08_a_missing_file_grants_nothing_and_an_unparsable_one_grants_nothing_and_logs_once()
+ {
     capture::install();
     let dir = tempfile::tempdir().unwrap();
     let preferences = dir.path().join("preferences.json");
@@ -168,7 +169,7 @@ async fn turning_a_cluster_off_ends_a_session_endpoints_reads() {
 }
 
 #[tokio::test]
-async fn turning_access_off_fails_closed_even_when_the_save_or_the_audit_fails() {
+async fn safety_g08_turning_access_off_fails_closed_even_when_the_save_or_the_audit_fails() {
     // The audit line cannot be written.
     let dir = tempfile::tempdir().unwrap();
     let preferences = dir.path().join("preferences.json");

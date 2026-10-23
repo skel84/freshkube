@@ -138,7 +138,7 @@ fn yours_over_the_teams_over_the_defaults() {
 }
 
 #[test]
-fn the_teams_protection_is_a_floor() {
+fn safety_g03_the_teams_protection_is_a_floor() {
     let team = version("1", TEAM).values().clone();
     let key = merge::protection_key("cluster-a");
     let looser: Overrides = [(key.clone(), json!("open"))].into();
@@ -620,7 +620,7 @@ fn the_example_shapes_tell_their_story() {
 }
 
 #[test]
-fn the_floor_holds_in_both_directions_and_an_unknown_level_is_guarded() {
+fn safety_g03_the_floor_holds_in_both_directions_and_an_unknown_level_is_guarded() {
     let key = merge::protection_key("a");
     let team = |level: &str| {
         version(
@@ -649,7 +649,7 @@ fn the_floor_holds_in_both_directions_and_an_unknown_level_is_guarded() {
 }
 
 #[test]
-fn a_team_file_cannot_widen_what_a_persons_setup_restricts() {
+fn safety_g03_a_team_file_cannot_widen_what_a_persons_setup_restricts() {
     let text = "\
 version: 1
 agent:

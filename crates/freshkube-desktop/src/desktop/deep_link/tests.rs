@@ -460,7 +460,7 @@ fn a_link_that_opens_nothing_leaves_the_keyboard_on_the_list(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn a_link_never_opens_a_dialog_a_shell_or_a_forward(cx: &mut TestAppContext) {
+fn safety_g07_a_link_never_opens_a_dialog_a_shell_or_a_forward(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let identity = deployment(cx, &view);
     let hostile = link_for(
@@ -476,6 +476,47 @@ fn a_link_never_opens_a_dialog_a_shell_or_a_forward(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert!(cx.pending_prompt().is_none());
+}
+
+/// Navigation alone, by any tab a link can name, starts no exec and no
+/// forward: those begin only from an explicit Start or Forward.
+#[gpui_kit::test]
+fn safety_g06_opening_an_object_on_any_tab_starts_no_shell_and_no_forward(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let identity = deployment(cx, &view);
+    for tab in ["details", "yaml", "events", "ports", "logs"] {
+        open_text(
+            cx,
+            handle,
+            &view,
+            &link_for(&identity, &format!("&tab={tab}")),
+        );
+        cx.read(|cx| {
+            assert_eq!(freshkube_resources::forwards::running(cx), 0, "{tab}");
+            assert!(
+                crate::resources::shell::running_anywhere(cx).is_empty(),
+                "{tab}"
+            );
+        });
+    }
+}
+
+/// A link that asks for a forward or a write in extra keys is only
+/// navigation: it forwards nothing.
+#[gpui_kit::test]
+fn safety_g07_a_link_asking_for_a_forward_starts_none(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let identity = deployment(cx, &view);
+    let hostile = link_for(
+        &identity,
+        "&tab=ports&forward=8080&port=8080&action=scale&replicas=0",
+    );
+    open_text(cx, handle, &view, &hostile);
+    cx.read(|cx| assert_eq!(freshkube_resources::forwards::running(cx), 0));
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!window.has_active_dialog(cx))
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

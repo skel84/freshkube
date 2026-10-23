@@ -146,7 +146,7 @@ fn running_pod() -> DetailTarget {
 }
 
 #[gpui_kit::test]
-fn nothing_runs_until_start_which_opens_the_default_container(cx: &mut TestAppContext) {
+fn safety_g06_nothing_runs_until_start_which_opens_the_default_container(cx: &mut TestAppContext) {
     let shell = mount(cx);
     let pod = running_pod();
     shell.open(cx, &pod);
@@ -603,7 +603,7 @@ fn quit_is_bounded_when_the_transport_never_closes(cx: &mut TestAppContext) {
 /// reason, pressing it runs nothing, and a level that allows writes again
 /// turns it back on.
 #[gpui_kit::test]
-fn a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
+fn safety_g05_a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
     let shell = mount(cx);
     shell.open(cx, &running_pod());
     cx.update(|cx| {
@@ -662,7 +662,7 @@ fn a_running_shell_is_named_with_its_cluster(cx: &mut TestAppContext) {
 /// A new shell view is closed until its cluster's level is told: it never
 /// starts in the moment before the dock has said it may.
 #[gpui_kit::test]
-fn a_new_shell_is_blocked_until_its_clusters_level_is_told(cx: &mut TestAppContext) {
+fn safety_g05_a_new_shell_is_blocked_until_its_clusters_level_is_told(cx: &mut TestAppContext) {
     let shell = mount_with(cx, None);
     shell.open(cx, &running_pod());
     assert!(!cx.read(|cx| shell.shell.read(cx).can_start()));
