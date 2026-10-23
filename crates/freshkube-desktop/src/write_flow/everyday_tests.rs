@@ -8,7 +8,7 @@ use std::time::Duration;
 use freshkube_core::write::everyday::{self, Subject};
 use freshkube_core::write::testing as fake;
 use freshkube_core::write::{ActionDescription, AuditStore, Protection, Runner, Who};
-use gpui_kit::TestAppContext;
+use gpui_kit::{AppContext, TestAppContext};
 use serde_json::json;
 
 use super::WriteRequest;
