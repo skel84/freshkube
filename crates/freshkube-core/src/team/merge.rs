@@ -136,3 +136,88 @@ pub fn floor_words(team_level: Protection) -> String {
         team_level.label()
     )
 }
+
+/// Where the level a cluster runs at comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LevelSource {
+    /// Nothing sets one: guarded.
+    Default,
+    /// The entry in `freshkube.yaml`.
+    Own,
+    /// Your override, stricter than the entry and the floor.
+    Override,
+    /// The team's floor, stricter than the entry.
+    Floor,
+}
+
+/// How one cluster stands against the team, for its row and its Inspector.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClusterView {
+    /// The chip on the row: the team names the cluster, or you set one of its
+    /// keys. None when neither does.
+    pub row: Option<Origin>,
+    /// The loosest level the team allows; none when the team sets no floor.
+    pub floor: Option<Protection>,
+    /// Where the protection level comes from.
+    pub level: Origin,
+    /// Your level was looser than the floor, so the floor applies.
+    pub floor_held: bool,
+    /// The level the team's file and your overrides settle on, floor held;
+    /// none when neither sets one.
+    pub resolved: Option<Protection>,
+}
+
+impl ClusterView {
+    /// The levels the Inspector offers.
+    pub fn allowed(&self) -> Vec<Protection> {
+        allowed_levels(self.floor)
+    }
+
+    /// Why the looser levels are off; none without a floor.
+    pub fn floor_words(&self) -> Option<String> {
+        self.floor.map(floor_words)
+    }
+
+    /// The level that applies to a cluster whose own entry says `own` (none
+    /// reads as the default): the strictest of that, the level you and the
+    /// team settled on and the team's floor, and where it comes from.
+    pub fn effective(&self, own: Option<Protection>) -> (Protection, LevelSource) {
+        let base = own.unwrap_or_default();
+        let level = [self.resolved, self.floor]
+            .into_iter()
+            .flatten()
+            .fold(base, Protection::min);
+        let source = if level == base {
+            own.map_or(LevelSource::Default, |_| LevelSource::Own)
+        } else if self.floor == Some(level) {
+            LevelSource::Floor
+        } else {
+            LevelSource::Override
+        };
+        (level, source)
+    }
+}
+
+/// The cluster `id` against the team's values and yours. None when neither
+/// the team nor you set anything for it.
+pub fn cluster_view(id: &str, team: &Values, yours: &Overrides) -> Option<ClusterView> {
+    let mark = format!("clusters[{id}]");
+    let mine = |key: &String| {
+        key.starts_with(&mark) && matches!(key[mark.len()..].chars().next(), None | Some('.'))
+    };
+    let yours_set = yours.keys().any(mine);
+    let team_set = team.keys().any(mine);
+    let row = match (yours_set, team_set) {
+        (false, false) => return None,
+        (true, over_team) => Origin::Yours { over_team },
+        (false, true) => Origin::Team,
+    };
+    let level = resolve(&protection_key(id), team, yours, &Values::new());
+    Some(ClusterView {
+        row: Some(row),
+        floor: floor(id, team),
+        level: level.origin,
+        floor_held: level.floor_held,
+        resolved: self::level(level.value.as_ref()),
+    })
+}

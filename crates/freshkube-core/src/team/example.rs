@@ -128,8 +128,12 @@ pub fn membership(shape: Shape, now: DateTime<Utc>) -> Option<(Membership, Optio
     confirm_all(&mut first);
     m.apply(first, now - Duration::days(9)).expect("reviewed");
     match shape {
-        Shape::Update => m.fetched(Ok(version("e4f5a6b", V2_PLAIN, "SHA256:aaaa")), now),
-        Shape::Trust => m.fetched(Ok(version("e4f5a6b", V2_TRUST, "SHA256:bbbb")), now),
+        Shape::Update => {
+            m.fetched(Ok(version("e4f5a6b", V2_PLAIN, "SHA256:aaaa")), now);
+        }
+        Shape::Trust => {
+            m.fetched(Ok(version("e4f5a6b", V2_TRUST, "SHA256:bbbb")), now);
+        }
         Shape::Failed => {
             let why = FetchFailed("the host didn’t answer".into());
             m.fetched(Err(why.clone()), now - Duration::hours(30));

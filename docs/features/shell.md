@@ -10,7 +10,7 @@ Code:
 
 Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit::test]`, found with `git grep -l '#\[test\]\|#\[tokio::test\]\|#\[gpui_kit::test\]'` run over `desktop/shell/`, `desktop/tests/`, `desktop/settings/`, `presentation/`, `desktop/kubernetes_summary/` and core's `kubernetes_summary/`):
 
-- The frame, `crates/freshkube-desktop/src/desktop/`: `tests/{chrome,column,custom,header,keys,kubernetes_only,layout,motion,observability,operations,overview,rail,screens,services,settings,shells,status,target}.rs`; inline tests in `shell/{column_state,context,fps,rail}.rs`; `switch_tests.rs`, `link_tests.rs`, `object_links/tests.rs`, `search/tests.rs`, `startup/tests.rs`, `settings/tests.rs`, `settings/edit_tests.rs`, `settings/destinations/tests/`, `settings/sources/tests.rs`.
+- The frame, `crates/freshkube-desktop/src/desktop/`: `tests/{chrome,column,custom,header,keys,kubernetes_only,layout,motion,observability,operations,overview,rail,screens,services,settings,shells,status,target}.rs`; inline tests in `shell/{column_state,context,fps,rail}.rs`; `switch_tests.rs`, `link_tests.rs`, `object_links/tests.rs`, `search/tests.rs`, `startup/tests.rs`, `settings/tests.rs`, `settings/edit_tests.rs`, `settings/destinations/tests/`, `settings/sources/tests/`.
 - The Overview, `crates/freshkube-desktop/src/presentation/`: `tests.rs`, `attention/tests.rs`.
 - The summary session: `crates/freshkube-desktop/src/desktop/kubernetes_summary/tests.rs`; core's `crates/freshkube-core/src/kubernetes_summary/`: `session_tests.rs`, `driver_tests.rs`; inline tests in `driver.rs`, `mod.rs`, `observation.rs`, `project.rs`, `requests.rs`, `retained.rs`, `session.rs`, `summarize.rs`.
 

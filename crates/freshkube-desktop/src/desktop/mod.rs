@@ -350,6 +350,8 @@ pub(crate) struct Pilot {
     /// Settings' handle, also held by the pages: `settings/` and the
     /// start-up code read it here.
     settings_page: Entity<settings::SettingsPage>,
+    /// How many reviewed team versions the shell has applied to the setup.
+    team_applied_seen: u64,
     /// `workspace.json` beside the preferences; none without preferences.
     workspace_file: Option<PathBuf>,
     setup_file: Entity<crate::setup_file::SetupFile>,
@@ -762,6 +764,7 @@ impl Pilot {
             &self.settings_page,
             window,
             |this, _, window, cx| {
+                this.follow_team(window, cx);
                 let page = this.settings_page.read(cx);
                 let unsaved = settings::SettingsSection::GROUPS
                     .iter()
@@ -879,6 +882,7 @@ impl Pilot {
             target: target::Selected::default(),
             chrome,
             settings_page: pages.settings_page.clone(),
+            team_applied_seen: 0,
             pages,
             workspace_file: options
                 .preferences

@@ -425,6 +425,15 @@ impl SettingsPage {
         if !self.editable() {
             return;
         }
+        // A level looser than the team's floor is off, whatever asks for it.
+        let off = self
+            .entry
+            .as_ref()
+            .and_then(|draft| self.team_cluster(&draft.id))
+            .is_some_and(|view| !view.allowed().contains(&level));
+        if off {
+            return;
+        }
         if let Some(draft) = self.entry.as_mut() {
             draft.protection.values.level = Some(level);
             draft.error = None;
@@ -728,11 +737,12 @@ impl SettingsPage {
                     .identity
                     .render(editable, draft.dirty(Group::Identity), cx),
             )
-            .child(
-                draft
-                    .protection
-                    .render(editable, draft.dirty(Group::Protection), cx),
-            )
+            .child(draft.protection.render(
+                editable,
+                draft.dirty(Group::Protection),
+                self.team_cluster(&draft.id),
+                cx,
+            ))
             .child(
                 draft
                     .metrics
