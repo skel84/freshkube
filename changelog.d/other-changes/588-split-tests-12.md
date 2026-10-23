@@ -1,1 +1,0 @@
-- **Maintenance:** split delivery-source settings, database screen and core monitoring tests into scenario files without changing their behavior.
