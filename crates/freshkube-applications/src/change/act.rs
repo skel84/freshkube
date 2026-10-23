@@ -11,15 +11,9 @@ use super::*;
 use freshkube_core::workspace::{Chosen, Entry, Part};
 use freshkube_delivery::acts::Slot;
 
-/// Which action a button asks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ActKind {
-    RefreshStage,
-    RefreshWarehouse,
-    Reverify,
-    Promote,
-    Abort,
-}
+/// Which action a button asks for: delivery's, which also decides what each
+/// one is held to (`delivery::acts::describe`).
+pub use freshkube_delivery::acts::Kind as ActKind;
 
 /// Where Kargo is, so the shell can connect to write there.
 #[derive(Clone, Debug)]

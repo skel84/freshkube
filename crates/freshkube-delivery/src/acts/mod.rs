@@ -303,6 +303,9 @@ pub fn abort(acts: &StageActs, running: &Promoting) -> ActionDescription {
 /// How much of a Stage's name a Promotion's name keeps.
 const MAX_STAGE_IN_NAME: usize = 218;
 
+/// What a dialog says of a destination that isn't known.
+const UNKNOWN_NOTE: &str = "Where it deploys isn't known, so it is held to Guarded at least.";
+
 /// How a destination that isn't known is named in the dialog.
 pub const UNKNOWN_DESTINATION: &str = "an unknown cluster";
 
@@ -318,8 +321,50 @@ fn destination_or_unknown(destination: Option<&Destination>) -> Destination {
     })
 }
 
+/// Which Stage action is asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    RefreshStage,
+    RefreshWarehouse,
+    Reverify,
+    Promote,
+    Abort,
+}
+
+/// Describes the action `kind` for the Stage `acts` belongs to, or `None`
+/// when it isn't on offer. This is the one place that says which actions are
+/// held to the Stage's destination: all but a Warehouse's Refresh, which
+/// reaches none. `token` is the refresh token and `ulid` the new Promotion's.
+pub fn describe(
+    kind: Kind,
+    acts: &StageActs,
+    change: &change::Change,
+    destination: Option<Destination>,
+    token: &str,
+    ulid: &str,
+) -> Option<ActionDescription> {
+    let stage = acts.stage.name.as_str();
+    let held = |action| held_to(action, stage, destination.as_ref());
+    Some(match kind {
+        Kind::RefreshStage => held(refresh_stage(acts, token)),
+        Kind::RefreshWarehouse => refresh_warehouse(acts, token)?,
+        Kind::Reverify => held(reverify(acts)?),
+        Kind::Abort => match acts.slot() {
+            Slot::Abort(running) => held(abort(acts, running)),
+            _ => return None,
+        },
+        Kind::Promote => {
+            if acts.slot() != Slot::Promote {
+                return None;
+            }
+            promote(change, &[Pick { acts, destination }], ulid)
+        }
+    })
+}
+
 /// Holds an action on a Stage to the cluster that Stage deploys to as well
-/// as Kargo's: the stricter of the two levels applies, and the typed name on
+/// as Kargo's. It **replaces** the action's `destinations` with that one
+/// (these actions have none of their own): the stricter of the two levels applies, and the typed name on
 /// `protected` is the Stage's. Every action that reaches the Stage's
 /// destination (Refresh and Reverify of the Stage, Abort) goes through this;
 /// Promote does it for each Stage it is for, and a Warehouse's Refresh reaches
@@ -334,6 +379,12 @@ pub fn held_to(
         ..destination_or_unknown(destination)
     }];
     action.subjects = vec![stage.to_owned()];
+    if destination.is_none() {
+        action.preview.push(Preview {
+            title: "Where it deploys".into(),
+            lines: vec![UNKNOWN_NOTE.into()],
+        });
+    }
     action
 }
 
@@ -497,8 +548,7 @@ fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
                     destination.level().label()
                 ));
             }
-            None => lines
-                .push("Where it deploys isn't known, so it is held to Guarded at least.".into()),
+            None => lines.push(UNKNOWN_NOTE.into()),
         }
         if let Some(model) = model {
             if !model.steps.is_empty() {

@@ -1713,6 +1713,10 @@ async fn an_action_with_nothing_to_watch_is_told_plainly_and_does_not_stay() {
         "{}",
         finished.message()
     );
+    // A write whose audit line failed always stays, whatever its headline.
+    let mut unlogged = finished.clone();
+    unlogged.audit_error = Some("the log is full".into());
+    assert!(unlogged.sticky());
     // An accepted write that was watched and never arrived still stays.
     let (cluster, dir) = (Cluster::new(), tmp());
     cluster.never_reaches_the_state();

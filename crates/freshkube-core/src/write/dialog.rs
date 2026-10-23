@@ -176,9 +176,12 @@ impl Finished {
     /// there was nothing to watch (Reverify) or no cluster to send to
     /// (example data): neither is a doubt about what happened. The rest stay.
     pub fn sticky(&self) -> bool {
-        !(self.headline() == Headline::Done
-            || self.nothing_to_watch()
-            || matches!(self.status, super::run::Status::NotSent(NotSent::Example)))
+        // A write whose audit line failed always stays: the person is told the
+        // log is incomplete.
+        self.audit_error.is_some()
+            || !(self.headline() == Headline::Done
+                || self.nothing_to_watch()
+                || matches!(self.status, super::run::Status::NotSent(NotSent::Example)))
     }
 
     /// Every accepted object is one the app has no way to watch.

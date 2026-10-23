@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
-use crate::applications::{ActKind, KargoAt, StageAct};
+use crate::applications::{KargoAt, StageAct};
 use crate::backend::spawn_job;
 use crate::mutation::{entry_level_cell, level_cell, write_audit_store};
 use crate::write_flow::{self, WriteRequest};
@@ -17,7 +17,7 @@ use freshkube_core::workspace::{Entry, Role, Workspace};
 use freshkube_core::write::{
     ActionDescription, AuditStore, Destination, LevelCell, Protection, Runner, Who,
 };
-use freshkube_delivery::acts::{self, Pick, Slot, StageActs};
+use freshkube_delivery::acts::{self, StageActs};
 use freshkube_delivery::change::Destination as StageDestination;
 use freshkube_delivery::entry;
 use gpui_kit::component::WindowExt;
@@ -123,31 +123,15 @@ impl Pilot {
             }
             StageDestination::Unknown(_) => None,
         };
-        let held = |action| acts::held_to(action, &act.stage, destination.as_ref());
-        Some(match act.kind {
-            ActKind::RefreshStage => held(acts::refresh_stage(stage_acts, &token)),
-            // A Warehouse reaches no destination.
-            ActKind::RefreshWarehouse => acts::refresh_warehouse(stage_acts, &token)?,
-            ActKind::Reverify => held(acts::reverify(stage_acts)?),
-            ActKind::Abort => match stage_acts.slot() {
-                Slot::Abort(running) => held(acts::abort(stage_acts, running)),
-                _ => return None,
-            },
-            ActKind::Promote => {
-                if stage_acts.slot() != Slot::Promote {
-                    return None;
-                }
-                let ulid = acts::new_ulid(now);
-                acts::promote(
-                    &act.change,
-                    &[Pick {
-                        acts: stage_acts,
-                        destination,
-                    }],
-                    &ulid,
-                )
-            }
-        })
+        let ulid = acts::new_ulid(now);
+        acts::describe(
+            act.kind,
+            stage_acts,
+            &act.change,
+            destination,
+            &token,
+            &ulid,
+        )
     }
 
     pub(super) fn stage_act(
