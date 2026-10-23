@@ -26,7 +26,7 @@ impl TrustKind {
         match self {
             TrustKind::SigningKey => "Signing key",
             TrustKind::LoosensProtection => "Loosens protection",
-            TrustKind::Reach => "Changes where a sign-in or read goes",
+            TrustKind::Reach => "Access or address",
         }
     }
 }

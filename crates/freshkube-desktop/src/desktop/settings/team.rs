@@ -10,10 +10,12 @@ use freshkube_core::team::{
     resolve,
 };
 use freshkube_ui::{form, page};
-use gpui_kit::component::{Sizable, button::Button, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::Value;
+
+use freshkube_ui::tooltip::FollowTooltip as _;
 
 use super::SettingsPage;
 use crate::ui::{self, Tone, dp};
@@ -74,6 +76,12 @@ pub(super) struct Shown {
 }
 
 impl Shown {
+    /// The review rows' labels, for the tests.
+    #[cfg(test)]
+    pub(super) fn row_labels(&self) -> Vec<&str> {
+        self.rows.iter().map(|row| row.label.as_str()).collect()
+    }
+
     /// The failure banner's body, for the tests.
     #[cfg(test)]
     pub(super) fn failure_words(&self) -> Option<&str> {
@@ -133,20 +141,7 @@ impl TeamState {
                 Step::Trust => "A new team version waits: review trust changes first",
                 Step::Rest => "A new team version waits: review the other changes",
             };
-            let trust = review.trust_changes().count();
-            let waiting = review.trust_pending().count();
-            let total = review.changes().len();
-            shown.counts = if trust == 0 {
-                format!(
-                    "{total} {} will change. Nothing applies until you confirm.",
-                    plural(total, "setting", "settings"),
-                )
-            } else {
-                format!(
-                    "{trust} {}, {waiting} still to confirm. Nothing applies until you confirm each.",
-                    plural(trust, "trust change", "trust changes"),
-                )
-            };
+            shown.counts = counts(review);
             let listed: Vec<&Change> = match step {
                 Step::Trust => review.trust_changes().collect(),
                 Step::Rest => review.other_changes().collect(),
@@ -165,6 +160,34 @@ impl TeamState {
         }
         shown.refusal = self.refusal.map(|why| why.to_string());
         self.shown = shown;
+    }
+}
+
+/// What the review banner says about what is left to confirm.
+pub(super) fn counts(review: &Review) -> String {
+    let total = review.changes().len();
+    let trust = review.trust_changes().count();
+    let waiting = review.trust_pending().count();
+    if trust == 0 {
+        format!(
+            "{total} {} will change. Nothing applies until you confirm.",
+            plural(total, "setting", "settings"),
+        )
+    } else if waiting == 0 {
+        let all = if trust == 1 {
+            "The trust change is".to_string()
+        } else {
+            format!("All {trust} trust changes are")
+        };
+        format!(
+            "{all} confirmed. Apply to use version {}.",
+            review.target_id()
+        )
+    } else {
+        format!(
+            "{trust} {}, {waiting} still to confirm. Nothing applies until you confirm each.",
+            plural(trust, "trust change", "trust changes"),
+        )
     }
 }
 
@@ -229,7 +252,6 @@ fn kind_word(change: &Change) -> &'static str {
 /// A value that stays on one line, with the whole of it on hover and for
 /// the tests to read back.
 fn line(id: impl Into<ElementId>, text: String) -> impl IntoElement {
-    let tip = text.clone();
     div()
         .id(id)
         .test_support()
@@ -237,7 +259,8 @@ fn line(id: impl Into<ElementId>, text: String) -> impl IntoElement {
         .w_full()
         .min_w_0()
         .truncate()
-        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
+        // Hides when a scroll moves the line from under the pointer.
+        .follow_tooltip(text.clone())
         .child(text)
 }
 

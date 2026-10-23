@@ -328,3 +328,43 @@ fn a_refused_apply_shows_why_and_rebuilds_the_review(cx: &mut TestAppContext) {
     assert!(!visible(cx, handle, "team-update"));
     assert!(label(cx, handle, "team-version-value").contains("zz-newer"));
 }
+
+#[test]
+fn the_banner_counts_what_is_left_and_says_so_when_nothing_is() {
+    use super::team::counts;
+    let (_, review) =
+        freshkube_core::team::example::membership(Shape::Trust, chrono::Utc::now()).unwrap();
+    let mut review = review.unwrap();
+    assert!(counts(&review).starts_with("4 trust changes, 4 still to confirm"));
+    for at in TRUST.into_iter().take(3) {
+        review.confirm_trust(at);
+    }
+    assert!(counts(&review).starts_with("4 trust changes, 1 still to confirm"));
+    review.confirm_trust(TRUST[3]);
+    let done = counts(&review);
+    assert_eq!(
+        done,
+        "All 4 trust changes are confirmed. Apply to use version e4f5a6b."
+    );
+    assert!(!done.contains("0 still") && !done.contains("until you confirm each"));
+}
+
+#[test]
+fn the_labels_fit_the_label_column() {
+    use freshkube_core::team::TrustKind;
+    // The label column is fixed and its text does not wrap, so a label stays
+    // short enough for it at the default text size.
+    for kind in [
+        TrustKind::SigningKey,
+        TrustKind::LoosensProtection,
+        TrustKind::Reach,
+    ] {
+        assert!(kind.words().chars().count() <= 20, "{}", kind.words());
+    }
+    for shape in [Shape::Update, Shape::Trust] {
+        let state = super::team::TeamState::example(shape, chrono::Utc::now());
+        for label in state.shown.row_labels() {
+            assert!(label.chars().count() <= 20, "{label}");
+        }
+    }
+}
