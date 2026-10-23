@@ -85,6 +85,15 @@ fn search_text(entry: &RouteEntry, summary: &str) -> String {
             .map(|p| p.label.as_str())
             .collect::<Vec<_>>()
             .join(" "),
+        // The backends it sends traffic to.
+        &entry
+            .trace
+            .parents
+            .iter()
+            .flat_map(|p| &p.branches)
+            .map(|b| b.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
         summary,
         entry.trace.verdict.label(),
     ]
@@ -222,8 +231,7 @@ impl Display {
         .map(|(verdict, words)| format!("{} {words}", count(verdict)))
         .collect::<Vec<_>>();
         display.attention = (!attention.is_empty()).then(|| attention.join(" · ").into());
-        display.summary = plural(rows.len(), "route", "routes").into()
-            ;
+        display.summary = plural(rows.len(), "route", "routes").into();
         display.empty = "There are no HTTPRoutes in this cluster.".into();
         display.rows = rows;
         display.columns = table::columns(&display.rows);

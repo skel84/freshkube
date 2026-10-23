@@ -174,7 +174,11 @@ pub async fn discover(client: &Client) -> Result<(ApiState, Option<GatewayKinds>
     Ok((ApiState::Ready { mixed }, Some(kinds)))
 }
 
-async fn list_json(client: &Client, kind: &ResourceKind, limit: u32) -> Result<Listing<Value>, Failure> {
+async fn list_json(
+    client: &Client,
+    kind: &ResourceKind,
+    limit: u32,
+) -> Result<Listing<Value>, Failure> {
     let path = format!("{}?limit={limit}", kind.collection_path(None));
     let list: Value = client
         .request(json_get(path, JSON)?)
@@ -194,7 +198,10 @@ async fn list_as<T>(
     parse: fn(&Value) -> Option<T>,
 ) -> Result<Listing<T>, Failure> {
     let list = list_json(client, kind, limit).await?;
-    Ok(Listing::new(list.items.iter().filter_map(parse).collect(), list.cut))
+    Ok(Listing::new(
+        list.items.iter().filter_map(parse).collect(),
+        list.cut,
+    ))
 }
 
 async fn read_backend(client: &Client, namespace: &str, name: &str) -> BackendRead {
@@ -225,7 +232,10 @@ fn note<T>(what: &str, result: &Result<Listing<T>, Failure>, notes: &mut Vec<Str
 
 /// A grant version safe to write into text to copy.
 pub(super) fn grant_version(kinds: &GatewayKinds) -> String {
-    let version = kinds.grant.as_ref().map_or("v1beta1", |k| k.version.as_str());
+    let version = kinds
+        .grant
+        .as_ref()
+        .map_or("v1beta1", |k| k.version.as_str());
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let plain = version.strip_prefix('v').is_some_and(|rest| {
         let (major, rest) = rest.split_at(rest.bytes().take_while(u8::is_ascii_digit).count());
@@ -236,13 +246,20 @@ pub(super) fn grant_version(kinds: &GatewayKinds) -> String {
                     .or_else(|| rest.strip_prefix("beta"))
                     .is_some_and(digits))
     });
-    if plain { version.to_owned() } else { "v1beta1".into() }
+    if plain {
+        version.to_owned()
+    } else {
+        "v1beta1".into()
+    }
 }
 
 /// Reads and traces every HTTPRoute, or, with `only`, the one named
 /// `(namespace, name)`. An error is the discovery or the route read failing;
 /// everything else lands in the traces.
-pub async fn read_routes(client: &Client, only: Option<(&str, &str)>) -> Result<RoutesRead, Failure> {
+pub async fn read_routes(
+    client: &Client,
+    only: Option<(&str, &str)>,
+) -> Result<RoutesRead, Failure> {
     let (api, kinds) = discover(client).await?;
     let Some(kinds) = kinds else {
         return Ok(RoutesRead::new(api));
@@ -251,7 +268,10 @@ pub async fn read_routes(client: &Client, only: Option<(&str, &str)>) -> Result<
         match only {
             Some((namespace, name)) => {
                 let object: Value = client
-                    .request(json_get(kinds.route.object_path(Some(namespace), name), JSON)?)
+                    .request(json_get(
+                        kinds.route.object_path(Some(namespace), name),
+                        JSON,
+                    )?)
                     .await
                     .map_err(Failure::from_kube)?;
                 Ok(Listing::new(vec![object], false))
@@ -296,7 +316,11 @@ pub async fn read_routes(client: &Client, only: Option<(&str, &str)>) -> Result<
             .await
             .map_err(Failure::from_kube)
             .map(|list| {
-                let cut = list.metadata.continue_.as_deref().is_some_and(|t| !t.is_empty());
+                let cut = list
+                    .metadata
+                    .continue_
+                    .as_deref()
+                    .is_some_and(|t| !t.is_empty());
                 Listing::new(
                     list.items
                         .into_iter()
@@ -320,7 +344,10 @@ pub async fn read_routes(client: &Client, only: Option<(&str, &str)>) -> Result<
     for route in &facts {
         for backend in route.rules.iter().flat_map(|r| &r.backends) {
             let key = (
-                backend.namespace.clone().unwrap_or_else(|| route.namespace.clone()),
+                backend
+                    .namespace
+                    .clone()
+                    .unwrap_or_else(|| route.namespace.clone()),
                 backend.name.clone(),
             );
             if backend.is_service() && backend.weight > 0 && !wanted.contains(&key) {

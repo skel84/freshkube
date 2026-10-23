@@ -38,14 +38,7 @@ const READ_DEADLINE: Duration = Duration::from_secs(45);
 actions!(
     routes,
     [
-        Next,
-        Previous,
-        First,
-        Last,
-        Close,
-        OpenTrace,
-        OpenRoute,
-        Find
+        Next, Previous, First, Last, Close, OpenTrace, OpenRoute, Find
     ]
 );
 

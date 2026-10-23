@@ -85,7 +85,10 @@ fn example_secrets_hide_values_until_one_is_revealed() {
 #[test]
 fn example_discovery_covers_every_group_state() {
     let groups = custom_groups();
-    assert_eq!(groups.len(), CUSTOM_GROUPS.len() + acme::GROUPS.len());
+    assert_eq!(
+        groups.len(),
+        CUSTOM_GROUPS.len() + acme::GROUPS.len() + gateway::GROUPS.len()
+    );
     let names: Vec<_> = groups.iter().map(|group| group.name.as_str()).collect();
     assert!(names.is_sorted(), "{names:?}");
     let cilium = groups

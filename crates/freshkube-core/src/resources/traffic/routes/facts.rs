@@ -90,10 +90,7 @@ pub struct ParentRef {
 impl ParentRef {
     fn parse(value: &Value) -> Option<Self> {
         Some(Self {
-            group: value["group"]
-                .as_str()
-                .unwrap_or(GATEWAY_GROUP)
-                .to_owned(),
+            group: value["group"].as_str().unwrap_or(GATEWAY_GROUP).to_owned(),
             kind: value["kind"].as_str().unwrap_or("Gateway").to_owned(),
             namespace: opt(&value["namespace"]),
             name: opt(&value["name"])?,
@@ -507,9 +504,8 @@ impl GrantFacts {
         self.from
             .iter()
             .any(|(g, k, n)| g == GATEWAY_GROUP && k == "HTTPRoute" && n == from_namespace)
-            && self
-                .to
-                .iter()
-                .any(|(g, k, n)| g.is_empty() && k == "Service" && n.as_deref().is_none_or(|n| n == service))
+            && self.to.iter().any(|(g, k, n)| {
+                g.is_empty() && k == "Service" && n.as_deref().is_none_or(|n| n == service)
+            })
     }
 }

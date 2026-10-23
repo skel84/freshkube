@@ -51,7 +51,12 @@ fn a_step_quotes_the_route_against_the_gateway_and_keeps_the_controller_apart() 
     assert!(listener.serves.contains("*.example.com"));
     let checkout = model("checkout");
     let refs = &checkout.parents[0].branches[0].steps[0];
-    assert!(refs.controller.as_deref().unwrap().contains("RefNotPermitted"));
+    assert!(
+        refs.controller
+            .as_deref()
+            .unwrap()
+            .contains("RefNotPermitted")
+    );
     assert!(!refs.reason.contains("RefNotPermitted"));
 }
 
@@ -66,7 +71,11 @@ fn the_split_is_drawn_as_shares_and_a_broken_branch_is_its_own_row() {
     assert_eq!(shares, [Some("80%".into()), Some("20%".into())]);
     assert_eq!(split.parents[0].branches[0].state, "Serving");
     assert_eq!(split.parents[0].branches[1].state, "Not serving");
-    assert!(split.headline().starts_with("Partly serving · stops at Endpoints ready"));
+    assert!(
+        split
+            .headline()
+            .starts_with("Partly serving · stops at Endpoints ready")
+    );
 }
 
 #[test]

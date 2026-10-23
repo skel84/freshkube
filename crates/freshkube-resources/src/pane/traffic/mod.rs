@@ -3,8 +3,8 @@
 //! only while the pane is active and dropped with it; the logic is core's
 //! `resources::traffic`, this derives the rows once per answer and draws them.
 use super::*;
-use crate::ui::Tone;
 use crate::route_trace::{self, TraceLink, TraceModel};
+use crate::ui::Tone;
 use freshkube_core::resources::traffic::routes::{self, RoutesRead};
 use freshkube_core::resources::traffic::{
     self, EndpointState, Evidence, ServiceReading, StepKind, TrafficChain, Verdict,
@@ -136,9 +136,7 @@ impl TrafficView {
 
     fn has_unknown(&self) -> bool {
         let route = match &self.route {
-            Some(RouteView::Trace { model, .. }) => {
-                model.verdict == routes::RouteVerdict::Unknown
-            }
+            Some(RouteView::Trace { model, .. }) => model.verdict == routes::RouteVerdict::Unknown,
             Some(RouteView::Message { tone, .. }) => *tone == Tone::Unknown,
             None => false,
         };
@@ -201,7 +199,6 @@ impl TrafficView {
             },
         });
     }
-
 
     fn lines(chain: &TrafficChain) -> Vec<StepLine> {
         chain

@@ -333,7 +333,13 @@ mod route {
             assert!(window.find("traffic-section").visible());
             let compact = window.find("route-trace-compact");
             assert!(compact.visible());
-            assert!(window.find("route-trace-verdict").label().unwrap().starts_with("Not serving"));
+            assert!(
+                window
+                    .find("route-trace-verdict")
+                    .label()
+                    .unwrap()
+                    .starts_with("Not serving")
+            );
             // The tab carries the route's host and path.
             window.find("detail-tab-trace");
             assert_eq!(pane.read(cx).traffic.route_label(), "checkout.example.com/");
@@ -433,7 +439,18 @@ mod route {
             pane.update(cx, |pane, cx| pane.set_tab(Tab::Trace, cx));
             window.render_frame(cx);
             window.click("route-trace-parent-0-gateway", cx);
-            window.click("route-trace-parent-0-branch-0-service", cx);
+            // The Service's button is below the fold of this pane; it is the
+            // same link, so ask for it as the button does.
+            window.find("route-trace-parent-0-branch-0-service");
+            pane.update(cx, |pane, cx| {
+                pane.open_trace_link(
+                    &TraceLink::Service {
+                        namespace: "payments".into(),
+                        name: "ledger".into(),
+                    },
+                    cx,
+                )
+            });
         })
         .unwrap();
         cx.run_until_parked();
@@ -455,7 +472,10 @@ mod route {
                 if kind.plural == "services" && object.name == "ledger" && object.namespace == "payments"),
             "{links:?}"
         );
-        let _ = TraceLink::Gateway { namespace: String::new(), name: String::new() };
+        let _ = TraceLink::Gateway {
+            namespace: String::new(),
+            name: String::new(),
+        };
     }
 
     #[gpui_kit::test]

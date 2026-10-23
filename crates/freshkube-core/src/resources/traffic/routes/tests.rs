@@ -76,9 +76,7 @@ fn service_reading(ready: usize, not_ready: usize, ports: &[i32]) -> ServiceRead
     .unwrap();
     let facts = ServiceFacts::from_service(&service);
     let endpoints = (0..ready + not_ready)
-        .map(|n| {
-            json!({"addresses": [format!("10.0.0.{n}")], "conditions": {"ready": n < ready}})
-        })
+        .map(|n| json!({"addresses": [format!("10.0.0.{n}")], "conditions": {"ready": n < ready}}))
         .collect::<Vec<_>>();
     let slices: Vec<EndpointSlice> = if endpoints.is_empty() {
         Vec::new()
@@ -113,11 +111,20 @@ impl World {
 
     fn with(gateway: Value, class: Value) -> Self {
         Self {
-            gateways: Ok(Listing::new(vec![GatewayFacts::parse(&gateway).unwrap()], false)),
-            classes: Ok(Listing::new(vec![ClassFacts::parse(&class).unwrap()], false)),
+            gateways: Ok(Listing::new(
+                vec![GatewayFacts::parse(&gateway).unwrap()],
+                false,
+            )),
+            classes: Ok(Listing::new(
+                vec![ClassFacts::parse(&class).unwrap()],
+                false,
+            )),
             grants: Ok(Listing::new(Vec::new(), false)),
             namespaces: Ok(Listing::new(
-                vec![("shop".into(), [("team".to_owned(), "web".to_owned())].into())],
+                vec![(
+                    "shop".into(),
+                    [("team".to_owned(), "web".to_owned())].into(),
+                )],
                 false,
             )),
             backends: [(
@@ -193,10 +200,16 @@ fn a_healthy_route_serves_and_every_step_passes() {
     assert!(!trace.stale);
     let parent = &trace.parents[0];
     assert_eq!(parent.controller.as_deref(), Some("example.io/gateway"));
-    assert!(parent.steps.iter().all(|s| s.verdict == StepVerdict::Pass), "{parent:#?}");
+    assert!(
+        parent.steps.iter().all(|s| s.verdict == StepVerdict::Pass),
+        "{parent:#?}"
+    );
     let branch = &parent.branches[0];
     assert_eq!(branch.label, "shop/cart:8080");
-    assert!(branch.steps.iter().all(|s| s.verdict == StepVerdict::Pass), "{branch:#?}");
+    assert!(
+        branch.steps.iter().all(|s| s.verdict == StepVerdict::Pass),
+        "{branch:#?}"
+    );
     assert_eq!(trace.summary.stops_at, None);
     assert!(trace.summary.reason.contains("infra/edge"));
     // The step quotes what the route asks and what the gateway serves.
@@ -221,7 +234,11 @@ fn a_missing_parent_gateway_is_the_first_break() {
     assert_eq!(trace.verdict, RouteVerdict::NotServing);
     assert_eq!(trace.parents[0].steps[0].owner, Some(Owner::Yours));
     assert!(trace.summary.reason.contains("no longer exists"));
-    assert!(trace.parents[0].steps[1..].iter().all(|s| s.verdict == StepVerdict::NotReached));
+    assert!(
+        trace.parents[0].steps[1..]
+            .iter()
+            .all(|s| s.verdict == StepVerdict::NotReached)
+    );
 }
 
 #[test]
@@ -251,7 +268,13 @@ fn the_class_must_exist_and_be_claimed() {
     .trace(healthy_route());
     stops(&unclaimed, StepId::Class);
     assert_eq!(step(&unclaimed, StepId::Class).verdict, StepVerdict::Fail);
-    assert!(step(&unclaimed, StepId::Class).controller.as_deref().unwrap().contains("InvalidParameters"));
+    assert!(
+        step(&unclaimed, StepId::Class)
+            .controller
+            .as_deref()
+            .unwrap()
+            .contains("InvalidParameters")
+    );
 
     let blind = World::with(gateway_json(json!({})), class_json(json!({}))).trace(healthy_route());
     stops(&blind, StepId::Class);
@@ -282,8 +305,15 @@ fn pending_blind_and_failed_gateways_are_three_different_states() {
     )
     .trace(healthy_route());
     stops(&no_address, StepId::Gateway);
-    assert_eq!(step(&no_address, StepId::Gateway).owner, Some(Owner::Platform));
-    assert!(step(&no_address, StepId::Gateway).reason.contains("no address"));
+    assert_eq!(
+        step(&no_address, StepId::Gateway).owner,
+        Some(Owner::Platform)
+    );
+    assert!(
+        step(&no_address, StepId::Gateway)
+            .reason
+            .contains("no address")
+    );
     assert_eq!(no_address.verdict, RouteVerdict::Unknown);
     // Pending.
     let pending = World::with(
@@ -291,7 +321,11 @@ fn pending_blind_and_failed_gateways_are_three_different_states() {
         accepted_class(),
     )
     .trace(healthy_route());
-    assert!(step(&pending, StepId::Gateway).reason.starts_with("pending"));
+    assert!(
+        step(&pending, StepId::Gateway)
+            .reason
+            .starts_with("pending")
+    );
     assert_eq!(pending.verdict, RouteVerdict::Unknown);
     // Failed.
     let failed = World::with(
@@ -338,7 +372,12 @@ fn a_listener_that_does_not_serve_the_host_quotes_both_sides() {
     assert!(listener.serves.contains("*.example.com"));
     assert!(listener.reason.contains("match no listener hostname"));
     assert_eq!(trace.verdict, RouteVerdict::NotServing);
-    assert!(trace.summary.line().starts_with("stops at Listener accepts — "));
+    assert!(
+        trace
+            .summary
+            .line()
+            .starts_with("stops at Listener accepts — ")
+    );
 }
 
 #[test]
@@ -348,43 +387,73 @@ fn listener_names_ports_protocols_and_kinds_are_checked() {
         json!({"parentRefs": [{"name": "edge", "namespace": "infra", "sectionName": "web"}]}),
         json!({}),
     );
-    assert!(step(&world.trace(named), StepId::Listener).reason.contains("no listener named web"));
+    assert!(
+        step(&world.trace(named), StepId::Listener)
+            .reason
+            .contains("no listener named web")
+    );
     let ported = route_json(
         json!({"parentRefs": [{"name": "edge", "namespace": "infra", "port": 8443}]}),
         json!({}),
     );
-    assert!(step(&world.trace(ported), StepId::Listener).reason.contains("port 8443"));
+    assert!(
+        step(&world.trace(ported), StepId::Listener)
+            .reason
+            .contains("port 8443")
+    );
 
     let tcp = World::with(
-        gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "TCP"}]}})),
+        gateway_json(
+            json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "TCP"}]}}),
+        ),
         accepted_class(),
     );
-    assert!(step(&tcp.trace(healthy_route()), StepId::Listener).reason.contains("no HTTP or HTTPS listener"));
+    assert!(
+        step(&tcp.trace(healthy_route()), StepId::Listener)
+            .reason
+            .contains("no HTTP or HTTPS listener")
+    );
 
     let kinds = World::with(
-        gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
-            "allowedRoutes": {"kinds": [{"kind": "GRPCRoute"}]}}]}})),
+        gateway_json(
+            json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
+            "allowedRoutes": {"kinds": [{"kind": "GRPCRoute"}]}}]}}),
+        ),
         accepted_class(),
     );
-    assert!(step(&kinds.trace(healthy_route()), StepId::Listener).reason.contains("does not allow HTTPRoute"));
+    assert!(
+        step(&kinds.trace(healthy_route()), StepId::Listener)
+            .reason
+            .contains("does not allow HTTPRoute")
+    );
 }
 
 #[test]
 fn an_unaccepted_listener_breaks_the_listener_step_with_the_controllers_words() {
-    let gateway = gateway_json(json!({"status": {"listeners": [{"name": "https", "attachedRoutes": 0,
-        "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]}]}}));
+    let gateway = gateway_json(
+        json!({"status": {"listeners": [{"name": "https", "attachedRoutes": 0,
+        "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]}]}}),
+    );
     let trace = World::with(gateway, accepted_class()).trace(healthy_route());
     stops(&trace, StepId::Listener);
     let listener = step(&trace, StepId::Listener);
     assert_eq!(listener.owner, Some(Owner::Platform));
-    assert!(listener.controller.as_deref().unwrap().contains("PortUnavailable"));
+    assert!(
+        listener
+            .controller
+            .as_deref()
+            .unwrap()
+            .contains("PortUnavailable")
+    );
     assert_eq!(trace.verdict, RouteVerdict::NotServing);
 }
 
 #[test]
 fn a_listener_with_a_bad_certificate_ref_is_yours() {
-    let gateway = gateway_json(json!({"status": {"listeners": [{"name": "https", "attachedRoutes": 0,
-        "conditions": [cond("Accepted", "True", "Accepted", 2), cond("ResolvedRefs", "False", "InvalidCertificateRef", 2)]}]}}));
+    let gateway = gateway_json(
+        json!({"status": {"listeners": [{"name": "https", "attachedRoutes": 0,
+        "conditions": [cond("Accepted", "True", "Accepted", 2), cond("ResolvedRefs", "False", "InvalidCertificateRef", 2)]}]}}),
+    );
     let trace = World::with(gateway, accepted_class()).trace(healthy_route());
     assert_eq!(step(&trace, StepId::Listener).owner, Some(Owner::Yours));
 }
@@ -399,10 +468,13 @@ fn an_accepted_listener_is_preferred_to_one_that_is_not() {
             {"name": "a", "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]},
             {"name": "b", "conditions": [cond("Accepted", "True", "Accepted", 2)]}]},
     }));
-    let route = route_json(json!({"parentRefs": [{"name": "edge", "namespace": "infra"}]}), json!({
-        "parents": [{"parentRef": {"name": "edge", "namespace": "infra"}, "controllerName": "c",
-            "conditions": [cond("Accepted", "True", "Accepted", 3)]}]
-    }));
+    let route = route_json(
+        json!({"parentRefs": [{"name": "edge", "namespace": "infra"}]}),
+        json!({
+            "parents": [{"parentRef": {"name": "edge", "namespace": "infra"}, "controllerName": "c",
+                "conditions": [cond("Accepted", "True", "Accepted", 3)]}]
+        }),
+    );
     let trace = World::with(gateway, accepted_class()).trace(route);
     assert!(step(&trace, StepId::Listener).serves.contains("listener b"));
 }
@@ -410,8 +482,10 @@ fn an_accepted_listener_is_preferred_to_one_that_is_not() {
 #[test]
 fn the_namespace_must_be_allowed() {
     let same = |from: &str| {
-        gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
-            "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": from}}}]}}))
+        gateway_json(
+            json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
+            "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": from}}}]}}),
+        )
     };
     let trace = World::with(same("Same"), accepted_class()).trace(healthy_route());
     stops(&trace, StepId::Namespace);
@@ -424,9 +498,11 @@ fn the_namespace_must_be_allowed() {
 #[test]
 fn a_label_selector_is_checked_against_the_namespaces_labels() {
     let gateway = |value: &str| {
-        gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
+        gateway_json(
+            json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
             "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": "Selector",
-                "selector": {"matchLabels": {"team": value}}}}}]}}))
+                "selector": {"matchLabels": {"team": value}}}}}]}}),
+        )
     };
     let ok = World::with(gateway("web"), accepted_class()).trace(healthy_route());
     assert_eq!(ok.verdict, RouteVerdict::Serving);
@@ -437,34 +513,51 @@ fn a_label_selector_is_checked_against_the_namespaces_labels() {
     let mut refused_world = World::with(gateway("web"), accepted_class());
     refused_world.namespaces = Err(refused());
     let unknown = refused_world.trace(healthy_route());
-    assert_eq!(step(&unknown, StepId::Namespace).verdict, StepVerdict::Unknown);
+    assert_eq!(
+        step(&unknown, StepId::Namespace).verdict,
+        StepVerdict::Unknown
+    );
     assert_eq!(unknown.verdict, RouteVerdict::Unknown);
 }
 
 #[test]
 fn a_cut_namespace_list_is_unknown_even_when_the_namespace_is_in_it() {
-    let gateway = gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
+    let gateway = gateway_json(
+        json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
         "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": "Selector",
-            "selector": {"matchLabels": {"team": "data"}}}}}]}}));
+            "selector": {"matchLabels": {"team": "data"}}}}}]}}),
+    );
     let mut world = World::with(gateway, accepted_class());
     // The labels in the partial list say "broken", but the list is cut.
     world.namespaces = Ok(Listing::new(
-        vec![("shop".into(), [("team".to_owned(), "web".to_owned())].into())],
+        vec![(
+            "shop".into(),
+            [("team".to_owned(), "web".to_owned())].into(),
+        )],
         true,
     ));
     let trace = world.trace(healthy_route());
-    assert_eq!(step(&trace, StepId::Namespace).verdict, StepVerdict::Unknown);
+    assert_eq!(
+        step(&trace, StepId::Namespace).verdict,
+        StepVerdict::Unknown
+    );
     assert!(step(&trace, StepId::Namespace).reason.contains("cut"));
     assert_eq!(trace.verdict, RouteVerdict::Unknown);
 }
 
 #[test]
 fn a_listeners_certificate_refs_are_shown_by_name_and_nothing_reads_them() {
-    let gateway = gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
+    let gateway = gateway_json(
+        json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "HTTPS",
         "hostname": "*.example.com", "tls": {"certificateRefs": [{"name": "shop-tls"}, {"name": "spare-tls"}]},
-        "allowedRoutes": {"namespaces": {"from": "All"}}}]}}));
+        "allowedRoutes": {"namespaces": {"from": "All"}}}]}}),
+    );
     let trace = World::with(gateway, accepted_class()).trace(healthy_route());
-    assert!(step(&trace, StepId::Listener).serves.contains("certificate shop-tls, spare-tls"));
+    assert!(
+        step(&trace, StepId::Listener)
+            .serves
+            .contains("certificate shop-tls, spare-tls")
+    );
 }
 
 #[test]
@@ -472,7 +565,11 @@ fn selector_expressions_match_like_kubernetes() {
     let labels: BTreeMap<String, String> = [("env".to_owned(), "prod".to_owned())].into();
     let selector = |op: &str, key: &str, values: &[&str]| Selector {
         labels: BTreeMap::new(),
-        expressions: vec![(key.into(), op.into(), values.iter().map(|v| (*v).into()).collect())],
+        expressions: vec![(
+            key.into(),
+            op.into(),
+            values.iter().map(|v| (*v).into()).collect(),
+        )],
     };
     assert!(selector("In", "env", &["prod", "stage"]).matches(&labels));
     assert!(!selector("In", "env", &["stage"]).matches(&labels));
@@ -495,7 +592,13 @@ fn the_controller_saying_no_is_its_own_line_and_breaks_the_trace() {
     stops(&trace, StepId::Namespace);
     let namespace = step(&trace, StepId::Namespace);
     assert_eq!(namespace.owner, Some(Owner::Platform));
-    assert!(namespace.controller.as_deref().unwrap().contains("NotAllowedByListeners"));
+    assert!(
+        namespace
+            .controller
+            .as_deref()
+            .unwrap()
+            .contains("NotAllowedByListeners")
+    );
     // Configuration passed; only the controller's status disagrees.
     assert!(namespace.serves.contains("from All"));
 }
@@ -516,7 +619,11 @@ fn cross_namespace_route() -> Value {
 }
 
 fn payments_cart() -> BTreeMap<(String, String), BackendRead> {
-    [(("payments".to_owned(), "cart".to_owned()), Ok(Some(service_reading(1, 0, &[8080]))))].into()
+    [(
+        ("payments".to_owned(), "cart".to_owned()),
+        Ok(Some(service_reading(1, 0, &[8080]))),
+    )]
+    .into()
 }
 
 #[test]
@@ -588,7 +695,10 @@ fn a_grant_in_the_wrong_namespace_does_not_count() {
     let mut world = World::healthy();
     world.backends = payments_cart();
     world.grants = Ok(Listing::new(vec![grant], false));
-    assert_eq!(step(&world.trace(cross_namespace_route()), StepId::Refs).verdict, StepVerdict::Fail);
+    assert_eq!(
+        step(&world.trace(cross_namespace_route()), StepId::Refs).verdict,
+        StepVerdict::Fail
+    );
 }
 
 #[test]
@@ -629,7 +739,12 @@ fn a_controller_that_still_refuses_a_granted_ref_is_the_controllers() {
     let refs = step(&trace, StepId::Refs);
     assert_eq!(refs.verdict, StepVerdict::Fail);
     assert_eq!(refs.owner, Some(Owner::Controller));
-    assert!(refs.controller.as_deref().unwrap().contains("RefNotPermitted"));
+    assert!(
+        refs.controller
+            .as_deref()
+            .unwrap()
+            .contains("RefNotPermitted")
+    );
 }
 
 #[test]
@@ -648,14 +763,22 @@ fn names_that_are_not_dns_names_get_no_proposal() {
 #[test]
 fn the_service_must_exist_and_have_the_port() {
     let mut world = World::healthy();
-    world.backends.insert(("shop".into(), "cart".into()), Ok(None));
+    world
+        .backends
+        .insert(("shop".into(), "cart".into()), Ok(None));
     let missing = world.trace(healthy_route());
     assert_eq!(step(&missing, StepId::Service).verdict, StepVerdict::Fail);
     assert_eq!(step(&missing, StepId::Service).owner, Some(Owner::Yours));
-    assert_eq!(step(&missing, StepId::Endpoints).verdict, StepVerdict::NotReached);
+    assert_eq!(
+        step(&missing, StepId::Endpoints).verdict,
+        StepVerdict::NotReached
+    );
     assert_eq!(missing.verdict, RouteVerdict::NotServing);
 
-    world.backends.insert(("shop".into(), "cart".into()), Ok(Some(service_reading(2, 0, &[80, 443]))));
+    world.backends.insert(
+        ("shop".into(), "cart".into()),
+        Ok(Some(service_reading(2, 0, &[80, 443]))),
+    );
     let wrong = world.trace(healthy_route());
     let service = step(&wrong, StepId::Service);
     assert_eq!(service.verdict, StepVerdict::Fail);
@@ -665,13 +788,19 @@ fn the_service_must_exist_and_have_the_port() {
         json!({"rules": [{"backendRefs": [{"name": "cart"}]}]}),
         json!({}),
     ));
-    assert!(step(&no_port, StepId::Service).reason.contains("must name a port"));
+    assert!(
+        step(&no_port, StepId::Service)
+            .reason
+            .contains("must name a port")
+    );
 }
 
 #[test]
 fn a_refused_or_unread_service_is_unknown() {
     let mut world = World::healthy();
-    world.backends.insert(("shop".into(), "cart".into()), Err(refused()));
+    world
+        .backends
+        .insert(("shop".into(), "cart".into()), Err(refused()));
     let trace = world.trace(healthy_route());
     assert_eq!(step(&trace, StepId::Service).verdict, StepVerdict::Unknown);
     assert_eq!(trace.verdict, RouteVerdict::Unknown);
@@ -696,16 +825,28 @@ fn endpoints_pass_warn_or_fail_by_what_is_ready() {
     assert_eq!(warn.verdict, RouteVerdict::Serving);
     with(&mut world, 0, 2);
     let none_ready = world.trace(healthy_route());
-    assert_eq!(step(&none_ready, StepId::Endpoints).verdict, StepVerdict::Fail);
+    assert_eq!(
+        step(&none_ready, StepId::Endpoints).verdict,
+        StepVerdict::Fail
+    );
     assert_eq!(none_ready.verdict, RouteVerdict::NotServing);
     with(&mut world, 0, 0);
     let none = world.trace(healthy_route());
-    assert!(step(&none, StepId::Endpoints).reason.contains("publishes no endpoints"));
+    assert!(
+        step(&none, StepId::Endpoints)
+            .reason
+            .contains("publishes no endpoints")
+    );
     let mut broken = service_reading(1, 0, &[8080]);
     broken.published = Err(refused());
-    world.backends.insert(("shop".into(), "cart".into()), Ok(Some(broken)));
+    world
+        .backends
+        .insert(("shop".into(), "cart".into()), Ok(Some(broken)));
     let unknown = world.trace(healthy_route());
-    assert_eq!(step(&unknown, StepId::Endpoints).verdict, StepVerdict::Unknown);
+    assert_eq!(
+        step(&unknown, StepId::Endpoints).verdict,
+        StepVerdict::Unknown
+    );
     assert_eq!(unknown.verdict, RouteVerdict::Unknown);
 }
 
@@ -720,7 +861,10 @@ fn split_route(weights: [(&str, i64); 2]) -> Value {
 
 fn split_world() -> World {
     let mut world = World::healthy();
-    world.backends.insert(("shop".into(), "canary".into()), Ok(Some(service_reading(1, 0, &[8080]))));
+    world.backends.insert(
+        ("shop".into(), "canary".into()),
+        Ok(Some(service_reading(1, 0, &[8080]))),
+    );
     world
 }
 
@@ -728,17 +872,25 @@ fn split_world() -> World {
 fn weighted_backends_are_a_split_and_a_broken_branch_is_partly_serving() {
     let mut world = split_world();
     let healthy = world.trace(split_route([("cart", 80), ("canary", 20)]));
-    let shares = healthy.parents[0].branches.iter().map(|b| b.share).collect::<Vec<_>>();
+    let shares = healthy.parents[0]
+        .branches
+        .iter()
+        .map(|b| b.share)
+        .collect::<Vec<_>>();
     assert_eq!(shares, [Some(80), Some(20)]);
     assert_eq!(healthy.verdict, RouteVerdict::Serving);
 
-    world.backends.insert(("shop".into(), "canary".into()), Ok(None));
+    world
+        .backends
+        .insert(("shop".into(), "canary".into()), Ok(None));
     let partly = world.trace(split_route([("cart", 80), ("canary", 20)]));
     assert_eq!(partly.verdict, RouteVerdict::Partly);
     assert_eq!(partly.parents[0].branches[1].verdict, BranchVerdict::Broken);
     assert!(partly.summary.stops_at.is_some());
 
-    world.backends.insert(("shop".into(), "cart".into()), Ok(None));
+    world
+        .backends
+        .insert(("shop".into(), "cart".into()), Ok(None));
     let none = world.trace(split_route([("cart", 80), ("canary", 20)]));
     assert_eq!(none.verdict, RouteVerdict::NotServing);
 }
@@ -746,20 +898,29 @@ fn weighted_backends_are_a_split_and_a_broken_branch_is_partly_serving() {
 #[test]
 fn a_branch_with_zero_weight_takes_no_traffic_and_is_not_judged() {
     let mut world = split_world();
-    world.backends.insert(("shop".into(), "canary".into()), Ok(None));
+    world
+        .backends
+        .insert(("shop".into(), "canary".into()), Ok(None));
     let trace = world.trace(split_route([("cart", 1), ("canary", 0)]));
     assert_eq!(trace.verdict, RouteVerdict::Serving);
-    assert_eq!(trace.parents[0].branches[1].verdict, BranchVerdict::Excluded);
+    assert_eq!(
+        trace.parents[0].branches[1].verdict,
+        BranchVerdict::Excluded
+    );
 }
 
 #[test]
 fn an_unknown_branch_beside_a_serving_one_keeps_the_route_unknown() {
     let mut world = split_world();
-    world.backends.insert(("shop".into(), "canary".into()), Err(refused()));
+    world
+        .backends
+        .insert(("shop".into(), "canary".into()), Err(refused()));
     let trace = world.trace(split_route([("cart", 50), ("canary", 50)]));
     assert_eq!(trace.verdict, RouteVerdict::Unknown);
     // A broken branch beside a serving one is still partly serving.
-    world.backends.insert(("shop".into(), "cart".into()), Ok(None));
+    world
+        .backends
+        .insert(("shop".into(), "cart".into()), Ok(None));
     let both = world.trace(split_route([("cart", 50), ("canary", 50)]));
     assert_eq!(both.verdict, RouteVerdict::Unknown);
 }
@@ -780,7 +941,11 @@ fn redirect_only_extension_and_other_backends_are_not_missing_backends() {
     ));
     assert_eq!(extension.verdict, RouteVerdict::Unknown);
     assert_eq!(extension.parents[0].branches[0].kind, BranchKind::Extension);
-    assert!(extension.parents[0].branches[0].steps[0].reason.contains("extension"));
+    assert!(
+        extension.parents[0].branches[0].steps[0]
+            .reason
+            .contains("extension")
+    );
 
     let other = world.trace(route_json(
         json!({"rules": [{"backendRefs": [{"group": "storage.example.io", "kind": "Bucket", "name": "assets"}]}]}),
@@ -809,7 +974,10 @@ fn a_route_with_a_service_parent_is_a_mesh_route_and_is_not_judged() {
 
 #[test]
 fn a_route_with_no_parent_refs_attaches_to_nothing() {
-    let trace = World::healthy().trace(route_json(json!({"parentRefs": []}), json!({"parents": []})));
+    let trace = World::healthy().trace(route_json(
+        json!({"parentRefs": []}),
+        json!({"parents": []}),
+    ));
     assert_eq!(trace.verdict, RouteVerdict::NotServing);
     assert_eq!(trace.summary.stops_at, Some("Parent"));
     assert_eq!(trace.summary.owner, Some(Owner::Yours));
@@ -857,7 +1025,9 @@ fn a_parent_ref_without_a_namespace_means_the_routes_own() {
     );
     let mut world = World::healthy();
     world.gateways = Ok(Listing::new(
-        vec![GatewayFacts::parse(&gateway_json(json!({"metadata": {"namespace": "shop"}}))).unwrap()],
+        vec![
+            GatewayFacts::parse(&gateway_json(json!({"metadata": {"namespace": "shop"}}))).unwrap(),
+        ],
         false,
     ));
     let trace = world.trace(route);
@@ -935,7 +1105,9 @@ fn gateway_api(request: &crate::fake_api::Recorded) -> Option<(u16, String)> {
 }
 
 fn only_gets(recorder: &crate::fake_api::Recorder) {
-    recorder.assert_all("the route trace only reads", |r| r.method == http::Method::GET);
+    recorder.assert_all("the route trace only reads", |r| {
+        r.method == http::Method::GET
+    });
 }
 
 #[tokio::test]
@@ -948,11 +1120,21 @@ async fn reading_routes_traces_them_with_gets_and_lists_only() {
     assert!(read.notes.is_empty(), "{:?}", read.notes);
     only_gets(&recorder);
     let lines = recorder.lines();
-    assert!(lines.iter().any(|l| l == "GET /apis/gateway.networking.k8s.io/v1/httproutes?limit=500"), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "GET /apis/gateway.networking.k8s.io/v1/httproutes?limit=500"),
+        "{lines:?}"
+    );
     assert!(lines.iter().any(|l| l.contains("gateways?limit=200")));
     assert!(lines.iter().any(|l| l.contains("gatewayclasses?limit=100")));
     // Nothing reads a Secret or a namespace the listeners don't select by.
-    assert!(!lines.iter().any(|l| l.contains("secrets") || l.contains("/namespaces?")), "{lines:?}");
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.contains("secrets") || l.contains("/namespaces?")),
+        "{lines:?}"
+    );
 }
 
 #[tokio::test]
@@ -966,19 +1148,28 @@ async fn one_route_is_read_by_name_not_listed() {
     let read = read_routes(&client, Some(("shop", "web"))).await.unwrap();
     assert_eq!(read.routes.len(), 1);
     only_gets(&recorder);
-    assert!(!recorder.lines().iter().any(|l| l.contains("httproutes?limit")));
+    assert!(
+        !recorder
+            .lines()
+            .iter()
+            .any(|l| l.contains("httproutes?limit"))
+    );
 }
 
 #[tokio::test]
 async fn a_missing_route_is_an_error_not_an_empty_list() {
-    let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
+    let (client, _) = crate::fake_api::client(|request| {
+        match request.path.as_str() {
         "/apis/gateway.networking.k8s.io/v1/namespaces/shop/httproutes/web" => Some((
             404,
             json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 404, "reason": "NotFound", "message": "not found"}).to_string(),
         )),
         _ => gateway_api(request),
+    }
     });
-    let error = read_routes(&client, Some(("shop", "web"))).await.unwrap_err();
+    let error = read_routes(&client, Some(("shop", "web")))
+        .await
+        .unwrap_err();
     assert_eq!(error.kind, FailureKind::NotFound);
 }
 
@@ -1003,16 +1194,33 @@ async fn a_partly_installed_gateway_api_names_what_is_missing() {
         _ => None,
     });
     let read = read_routes(&client, None).await.unwrap();
-    assert_eq!(read.api, ApiState::Incomplete { missing: vec!["Gateway", "GatewayClass"] });
-    assert!(read.api.problem().unwrap().contains("Gateway, GatewayClass"));
+    assert_eq!(
+        read.api,
+        ApiState::Incomplete {
+            missing: vec!["Gateway", "GatewayClass"]
+        }
+    );
+    assert!(
+        read.api
+            .problem()
+            .unwrap()
+            .contains("Gateway, GatewayClass")
+    );
 }
 
 #[tokio::test]
 async fn a_mixed_bundle_is_said_and_each_kind_is_read_at_its_own_version() {
     let (client, recorder) = crate::fake_api::client(|request| match request.path.as_str() {
         GROUPS => Some(groups(&["v1", "v1beta1"])),
-        V1 => Some(resources(&[("httproutes", "HTTPRoute"), ("gatewayclasses", "GatewayClass")])),
-        V1BETA1 => Some(resources(&[("gateways", "Gateway"), ("httproutes", "HTTPRoute"), ("referencegrants", "ReferenceGrant")])),
+        V1 => Some(resources(&[
+            ("httproutes", "HTTPRoute"),
+            ("gatewayclasses", "GatewayClass"),
+        ])),
+        V1BETA1 => Some(resources(&[
+            ("gateways", "Gateway"),
+            ("httproutes", "HTTPRoute"),
+            ("referencegrants", "ReferenceGrant"),
+        ])),
         "/apis/gateway.networking.k8s.io/v1/httproutes" => Some(list(vec![])),
         "/apis/gateway.networking.k8s.io/v1beta1/gateways" => Some(list(vec![])),
         "/apis/gateway.networking.k8s.io/v1/gatewayclasses" => Some(list(vec![])),
@@ -1021,31 +1229,45 @@ async fn a_mixed_bundle_is_said_and_each_kind_is_read_at_its_own_version() {
     });
     let read = read_routes(&client, None).await.unwrap();
     let mixed = read.api.mixed().expect("mixed");
-    assert!(mixed.contains("Gateway v1beta1") && mixed.contains("HTTPRoute v1,"), "{mixed}");
+    assert!(
+        mixed.contains("Gateway v1beta1") && mixed.contains("HTTPRoute v1,"),
+        "{mixed}"
+    );
     only_gets(&recorder);
 }
 
 #[tokio::test]
 async fn a_refused_route_list_is_an_error_and_a_refused_gateway_list_is_unknown_steps() {
-    let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
+    let (client, _) = crate::fake_api::client(|request| {
+        match request.path.as_str() {
         "/apis/gateway.networking.k8s.io/v1/httproutes" => Some((
             403,
             json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 403, "reason": "Forbidden", "message": "no"}).to_string(),
         )),
         _ => gateway_api(request),
+    }
     });
-    assert_eq!(read_routes(&client, None).await.unwrap_err().kind, FailureKind::Forbidden);
+    assert_eq!(
+        read_routes(&client, None).await.unwrap_err().kind,
+        FailureKind::Forbidden
+    );
 
-    let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
+    let (client, _) = crate::fake_api::client(|request| {
+        match request.path.as_str() {
         "/apis/gateway.networking.k8s.io/v1/gateways" => Some((
             403,
             json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 403, "reason": "Forbidden", "message": "no"}).to_string(),
         )),
         _ => gateway_api(request),
+    }
     });
     let read = read_routes(&client, None).await.unwrap();
     assert_eq!(read.routes[0].trace.verdict, RouteVerdict::Unknown);
-    assert!(read.notes.iter().any(|n| n.contains("Gateways could not be read")));
+    assert!(
+        read.notes
+            .iter()
+            .any(|n| n.contains("Gateways could not be read"))
+    );
 }
 
 #[tokio::test]
@@ -1058,7 +1280,8 @@ async fn cut_lists_and_backends_past_the_limit_are_said() {
             )
         })
         .collect::<Vec<_>>();
-    let (client, _) = crate::fake_api::client(move |request| match request.path.as_str() {
+    let (client, _) = crate::fake_api::client(move |request| {
+        match request.path.as_str() {
         "/apis/gateway.networking.k8s.io/v1/httproutes" => Some((
             200,
             json!({"metadata": {"continue": "more"}, "items": routes}).to_string(),
@@ -1069,6 +1292,7 @@ async fn cut_lists_and_backends_past_the_limit_are_said() {
         )),
         "/apis/discovery.k8s.io/v1/namespaces/shop/endpointslices" => Some(list(vec![])),
         _ => gateway_api(request),
+    }
     });
     let read = read_routes(&client, None).await.unwrap();
     assert!(read.routes_cut);
@@ -1089,7 +1313,13 @@ fn the_grant_version_in_text_to_copy_is_a_plain_version() {
         route: ResourceKind::new(GATEWAY_GROUP, "v1", "HTTPRoute", "httproutes", true),
         gateway: ResourceKind::new(GATEWAY_GROUP, "v1", "Gateway", "gateways", true),
         class: ResourceKind::new(GATEWAY_GROUP, "v1", "GatewayClass", "gatewayclasses", false),
-        grant: Some(ResourceKind::new(GATEWAY_GROUP, version, "ReferenceGrant", "referencegrants", true)),
+        grant: Some(ResourceKind::new(
+            GATEWAY_GROUP,
+            version,
+            "ReferenceGrant",
+            "referencegrants",
+            true,
+        )),
     };
     use super::read::grant_version as version;
     assert_eq!(version(&kind("v1")), "v1");

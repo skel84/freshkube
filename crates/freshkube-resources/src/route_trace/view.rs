@@ -87,7 +87,13 @@ fn field(label: &'static str, text: &SharedString, cx: &App) -> Option<Div> {
                     .text_color(palette(cx).muted)
                     .child(label),
             )
-            .child(div().min_w_0().flex_1().whitespace_normal().child(text.clone()))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .whitespace_normal()
+                    .child(text.clone()),
+            )
     })
 }
 
@@ -104,7 +110,10 @@ fn step(row: &StepRow, cx: &App) -> impl IntoElement {
                 .gap(dp(8.))
                 .child(ui::tag(row.tone, None, row.state, cx))
                 .child(div().font_weight(FontWeight::MEDIUM).child(row.name))
-                .children(row.owner.map(|owner| ui::tag(Tone::Outline, None, owner, cx)))
+                .children(
+                    row.owner
+                        .map(|owner| ui::tag(Tone::Outline, None, owner, cx)),
+                )
                 .children(row.stale.then(|| ui::tag(Tone::Warn, None, "Stale", cx))),
         )
         .child(
@@ -191,7 +200,11 @@ fn parent(row: &ParentRow, on_link: &Option<OnLink>, cx: &App) -> impl IntoEleme
                 .gap(dp(8.))
                 .flex_wrap()
                 .child(ui::tag(row.tone, None, row.state, cx))
-                .child(div().font_weight(FontWeight::MEDIUM).child(row.title.clone()))
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(row.title.clone()),
+                )
                 .children(row.controller.clone().map(|controller| {
                     div()
                         .text_size(dp(12.))
@@ -236,7 +249,7 @@ fn proposal(row: &ProposalRow, cx: &App) -> impl IntoElement {
                 .id(SharedString::from(format!("{}-yaml", row.id)))
                 .test_support()
                 .p(dp(8.))
-                .rounded(px(4.))
+                .rounded(px(3.))
                 .bg(p.surface_2)
                 .font_family(MONO_FONT)
                 .text_size(dp(12.))
@@ -300,12 +313,7 @@ pub fn backends(model: &TraceModel, cx: &App) -> Option<AnyElement> {
                     .gap(dp(6.))
                     .items_start()
                     .children(ui::status_glyph(row.tone, cx))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .whitespace_normal()
-                            .child(format!(
+                    .child(div().min_w_0().flex_1().whitespace_normal().child(format!(
                                 "{}{} · {}{broken}",
                                 row.title,
                                 row.share
@@ -313,8 +321,7 @@ pub fn backends(model: &TraceModel, cx: &App) -> Option<AnyElement> {
                                     .map(|share| format!(" ({share})"))
                                     .unwrap_or_default(),
                                 row.state
-                            )),
-                    )
+                            )))
             }))
             .into_any_element()
     })

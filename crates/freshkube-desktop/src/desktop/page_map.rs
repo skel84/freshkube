@@ -21,8 +21,8 @@ use crate::{
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
         DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen,
-        OperationsScreen, ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel,
-        SecurityScreen, StorageScreen, WorkloadsScreen,
+        OperationsScreen, ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel, SecurityScreen,
+        StorageScreen, WorkloadsScreen,
     },
 };
 

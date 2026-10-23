@@ -13,8 +13,20 @@ pub(super) const GROUPS: [(&str, &[&str]); 1] = [("gateway.networking.k8s.io", &
 
 /// (group, version, kind, plural, namespaced).
 pub(super) const KINDS: [(&str, &str, &str, &str, bool); 3] = [
-    ("gateway.networking.k8s.io", "v1", "HTTPRoute", "httproutes", true),
-    ("gateway.networking.k8s.io", "v1", "Gateway", "gateways", true),
+    (
+        "gateway.networking.k8s.io",
+        "v1",
+        "HTTPRoute",
+        "httproutes",
+        true,
+    ),
+    (
+        "gateway.networking.k8s.io",
+        "v1",
+        "Gateway",
+        "gateways",
+        true,
+    ),
     (
         "gateway.networking.k8s.io",
         "v1",

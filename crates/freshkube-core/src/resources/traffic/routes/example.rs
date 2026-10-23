@@ -268,7 +268,7 @@ fn route(name: &str) -> Value {
         }
         "stale" => {
             let mut spec = Spec::new("web", "stale", &["stale.example.com"],
-                json!([{"matches": path("/v2"), "backendRefs": [{"name": "cart", "namespace": "shop", "port": 8080}]}]));
+                json!([{"matches": path("/v2"), "backendRefs": [{"name": "ledger", "namespace": "payments", "port": 9000}]}]));
             spec.generation = (5, 3);
             spec
         }
@@ -280,7 +280,13 @@ fn route(name: &str) -> Value {
     .build()
 }
 
-fn service(namespace: &str, name: &str, ready: usize, not_ready: usize, port: i32) -> ServiceReading {
+fn service(
+    namespace: &str,
+    name: &str,
+    ready: usize,
+    not_ready: usize,
+    port: i32,
+) -> ServiceReading {
     let service: Service = serde_json::from_value(json!({
         "metadata": {"name": name, "namespace": namespace, "uid": format!("svc-{name}")},
         "spec": {"selector": {"app": name}, "ports": [{"name": "http", "port": port, "targetPort": 8080}]},
@@ -320,17 +326,39 @@ pub fn world(shape: Shape) -> World {
     unaccepted["listeners"] = json!([{"name": "web", "attachedRoutes": 0,
         "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]}]);
     let gateways = vec![
-        gateway("infra", "edge", "example", https.clone(), programmed(true, listener_ok("https"))),
+        gateway(
+            "infra",
+            "edge",
+            "example",
+            https.clone(),
+            programmed(true, listener_ok("https")),
+        ),
         gateway("infra", "internal", "example", internal, unaccepted),
-        gateway("staging", "edge", "example", https.clone(), programmed(false, listener_ok("https"))),
-        gateway("infra", "legacy-edge", "legacy", https, programmed(true, listener_ok("https"))),
+        gateway(
+            "staging",
+            "edge",
+            "example",
+            https.clone(),
+            programmed(false, listener_ok("https")),
+        ),
+        gateway(
+            "infra",
+            "legacy-edge",
+            "legacy",
+            https,
+            programmed(true, listener_ok("https")),
+        ),
     ];
     World {
         routes: shape.names().iter().map(|name| route(name)).collect(),
         gateways,
         classes: vec![
             class("example", CONTROLLER, Some(("True", "Accepted"))),
-            class("legacy", "legacy.io/gateway", Some(("False", "InvalidParameters"))),
+            class(
+                "legacy",
+                "legacy.io/gateway",
+                Some(("False", "InvalidParameters")),
+            ),
         ],
         grants: vec![grant()],
     }
@@ -360,7 +388,11 @@ pub fn read(shape: Shape) -> Result<RoutesRead, Failure> {
         Listing::new(objects.iter().filter_map(parse).collect(), false)
     };
     let gateways = Ok(Listing::new(
-        world.gateways.iter().filter_map(GatewayFacts::parse).collect(),
+        world
+            .gateways
+            .iter()
+            .filter_map(GatewayFacts::parse)
+            .collect(),
         false,
     ));
     let classes = Ok(listing(&world.classes, ClassFacts::parse));
@@ -370,9 +402,18 @@ pub fn read(shape: Shape) -> Result<RoutesRead, Failure> {
     ));
     let namespaces = Ok(Listing::new(Vec::new(), false));
     let backends: BTreeMap<(String, String), BackendRead> = [
-        (("shop", "cart"), Ok(Some(service("shop", "cart", 3, 0, 8080)))),
-        (("shop", "canary"), Ok(Some(service("shop", "canary", 0, 0, 8080)))),
-        (("payments", "ledger"), Ok(Some(service("payments", "ledger", 2, 1, 9000)))),
+        (
+            ("shop", "cart"),
+            Ok(Some(service("shop", "cart", 3, 0, 8080))),
+        ),
+        (
+            ("shop", "canary"),
+            Ok(Some(service("shop", "canary", 0, 0, 8080))),
+        ),
+        (
+            ("payments", "ledger"),
+            Ok(Some(service("payments", "ledger", 2, 1, 9000))),
+        ),
         (("shop", "ghost"), Ok(None)),
     ]
     .into_iter()

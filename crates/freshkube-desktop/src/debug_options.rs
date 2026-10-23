@@ -13,8 +13,8 @@ use freshkube_ui::motion::Choice;
 use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
-use freshkube_delivery::timeline::example::Shape as TimelineShape;
 use freshkube_core::resources::traffic::routes::example::Shape as RoutesShape;
+use freshkube_delivery::timeline::example::Shape as TimelineShape;
 use freshkube_resources::example::traffic::Shape as ServicesShape;
 
 /// `FRESHKUBE_THEME`.

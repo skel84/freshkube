@@ -139,12 +139,7 @@ impl TraceModel {
         Self {
             label: entry.facts.label().into(),
             verdict: trace.verdict,
-            headline: format!(
-                "{} · {}",
-                trace.verdict.label(),
-                trace.summary.line()
-            )
-            .into(),
+            headline: format!("{} · {}", trace.verdict.label(), trace.summary.line()).into(),
             owner: trace.summary.owner.map(Owner::label),
             stale: trace.stale,
             parents,

@@ -975,8 +975,8 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 
 mod acme;
 mod agent;
-mod gateway;
 mod everyday;
+mod gateway;
 pub use everyday::{autoscaler_of, object_json};
 mod objects;
 mod summary;

@@ -312,11 +312,24 @@ impl RouteTrace {
 /// Which side of the platform a controller's reason points at.
 fn blame(reason: &str) -> Owner {
     match reason {
-        "InvalidCertificateRef" | "InvalidRouteKinds" | "RefNotPermitted" | "BackendNotFound"
-        | "InvalidKind" | "UnsupportedValue" | "NoMatchingListenerHostname"
-        | "NoMatchingParent" | "UnsupportedProtocol" | "InvalidParameters" => Owner::Yours,
-        "NotAllowedByListeners" | "AddressNotAssigned" | "AddressNotUsable" | "NoResources"
-        | "ListenersNotValid" | "PortUnavailable" | "HostnameConflict" | "ProtocolConflict"
+        "InvalidCertificateRef"
+        | "InvalidRouteKinds"
+        | "RefNotPermitted"
+        | "BackendNotFound"
+        | "InvalidKind"
+        | "UnsupportedValue"
+        | "NoMatchingListenerHostname"
+        | "NoMatchingParent"
+        | "UnsupportedProtocol"
+        | "InvalidParameters" => Owner::Yours,
+        "NotAllowedByListeners"
+        | "AddressNotAssigned"
+        | "AddressNotUsable"
+        | "NoResources"
+        | "ListenersNotValid"
+        | "PortUnavailable"
+        | "HostnameConflict"
+        | "ProtocolConflict"
         | "UnsupportedAddress" => Owner::Platform,
         _ => Owner::Controller,
     }
@@ -382,7 +395,11 @@ fn class_step(gateway: &GatewayFacts, inputs: &Inputs) -> TraceStep {
             return TraceStep::unknown(
                 id,
                 Owner::Platform,
-                format!("GatewayClasses unreadable ({}: {})", failure.kind.label(), failure.message),
+                format!(
+                    "GatewayClasses unreadable ({}: {})",
+                    failure.kind.label(),
+                    failure.message
+                ),
             )
             .quoting(asks, "unknown");
         }
@@ -423,11 +440,13 @@ fn class_step(gateway: &GatewayFacts, inputs: &Inputs) -> TraceStep {
         )
         .quoting(asks, serves)
         .reported(Some(cond.says())),
-        Some(cond) => {
-            TraceStep::unknown(id, Owner::Controller, "pending: the class is not accepted yet")
-                .quoting(asks, serves)
-                .reported(Some(cond.says()))
-        }
+        Some(cond) => TraceStep::unknown(
+            id,
+            Owner::Controller,
+            "pending: the class is not accepted yet",
+        )
+        .quoting(asks, serves)
+        .reported(Some(cond.says())),
     }
 }
 
@@ -463,9 +482,13 @@ fn gateway_step(gateway: &GatewayFacts) -> TraceStep {
         .quoting(asks, serves);
     };
     match programmed.status {
-        Tri::False => TraceStep::fail(id, blame(&programmed.reason), "the Gateway is not programmed")
-            .quoting(asks, serves)
-            .reported(Some(programmed.says())),
+        Tri::False => TraceStep::fail(
+            id,
+            blame(&programmed.reason),
+            "the Gateway is not programmed",
+        )
+        .quoting(asks, serves)
+        .reported(Some(programmed.says())),
         Tri::Unknown => TraceStep::unknown(id, Owner::Controller, "pending: not programmed yet")
             .quoting(asks, serves)
             .reported(Some(programmed.says())),
@@ -498,7 +521,11 @@ enum Pick<'a> {
     Miss(String),
 }
 
-fn pick_listener<'a>(gateway: &'a GatewayFacts, parent: &ParentRef, route: &RouteFacts) -> Pick<'a> {
+fn pick_listener<'a>(
+    gateway: &'a GatewayFacts,
+    parent: &ParentRef,
+    route: &RouteFacts,
+) -> Pick<'a> {
     let mut candidates = gateway
         .listeners
         .iter()
@@ -524,7 +551,11 @@ fn pick_listener<'a>(gateway: &'a GatewayFacts, parent: &ParentRef, route: &Rout
             "no HTTP or HTTPS listener to attach an HTTPRoute to (listeners speak {protocols})"
         ));
     }
-    candidates.retain(|l| l.kinds.as_ref().is_none_or(|k| k.iter().any(|k| k == "HTTPRoute")));
+    candidates.retain(|l| {
+        l.kinds
+            .as_ref()
+            .is_none_or(|k| k.iter().any(|k| k == "HTTPRoute"))
+    });
     if candidates.is_empty() {
         return Pick::Miss("the listener does not allow HTTPRoute".into());
     }
@@ -555,9 +586,7 @@ fn pick_listener<'a>(gateway: &'a GatewayFacts, parent: &ParentRef, route: &Rout
             .listener_status
             .iter()
             .find(|s| s.name == l.name)
-            .is_some_and(|s| {
-                find(&s.conditions, "Accepted").is_some_and(|c| c.status == Tri::True)
-            })
+            .is_some_and(|s| find(&s.conditions, "Accepted").is_some_and(|c| c.status == Tri::True))
     };
     let best = matching
         .iter()
@@ -612,23 +641,39 @@ fn listener_step(
                 .map(Cond::says);
             return (
                 TraceStep::fail(id, Owner::Yours, reason)
-                    .quoting(asks, if served.is_empty() { "no listeners".into() } else { served })
+                    .quoting(
+                        asks,
+                        if served.is_empty() {
+                            "no listeners".into()
+                        } else {
+                            served
+                        },
+                    )
                     .reported(controller),
                 None,
             );
         }
     };
     let serves = describe_listener(listener);
-    let reported = gateway.listener_status.iter().find(|s| s.name == listener.name);
+    let reported = gateway
+        .listener_status
+        .iter()
+        .find(|s| s.name == listener.name);
     let step = match reported {
         None if !gateway.listener_status.is_empty() || !gateway.conditions.is_empty() => {
             TraceStep::unknown(
                 id,
                 Owner::Controller,
-                format!("the controller reports nothing for listener {}", listener.name),
+                format!(
+                    "the controller reports nothing for listener {}",
+                    listener.name
+                ),
             )
         }
-        None => TraceStep::pass(id, format!("listener {} fits by configuration", listener.name)),
+        None => TraceStep::pass(
+            id,
+            format!("listener {} fits by configuration", listener.name),
+        ),
         Some(reported) => {
             let bad = ["Accepted", "Programmed", "ResolvedRefs", "Conflicted"]
                 .into_iter()
@@ -644,8 +689,10 @@ fn listener_step(
                     format!("listener {} is not accepted", listener.name),
                 )
                 .reported(Some(cond.says())),
-                None => TraceStep::pass(id, format!("listener {} accepts HTTPRoute", listener.name))
-                    .reported(find(&reported.conditions, "Accepted").map(Cond::says)),
+                None => {
+                    TraceStep::pass(id, format!("listener {} accepts HTTPRoute", listener.name))
+                        .reported(find(&reported.conditions, "Accepted").map(Cond::says))
+                }
             }
         }
     };
@@ -703,7 +750,11 @@ fn namespace_step(
                 )
                 .quoting(asks, serves),
                 Ok(namespaces) => {
-                    match namespaces.items.iter().find(|(name, _)| *name == route.namespace) {
+                    match namespaces
+                        .items
+                        .iter()
+                        .find(|(name, _)| *name == route.namespace)
+                    {
                         Some((_, labels)) if selector.matches(labels) => {
                             TraceStep::pass(id, "the namespace's labels match the selector")
                                 .quoting(asks, serves)
@@ -735,7 +786,8 @@ fn namespace_step(
         (None, _) => {
             step.verdict = StepVerdict::Unknown;
             step.owner = Some(Owner::Controller);
-            step.reason = "blind: the controller reports nothing for this route on this parent".into();
+            step.reason =
+                "blind: the controller reports nothing for this route on this parent".into();
         }
         (Some(_), None) => {}
         (Some(_), Some(cond)) if cond.status == Tri::False => {
@@ -776,7 +828,10 @@ fn refs_step(
     inputs: &Inputs,
 ) -> (TraceStep, Option<GrantProposal>) {
     let id = StepId::Refs;
-    let asks = format!("Service {namespace}/{} from {}", backend.name, route.namespace);
+    let asks = format!(
+        "Service {namespace}/{} from {}",
+        backend.name, route.namespace
+    );
     let refused = route_condition(status, "ResolvedRefs")
         .filter(|c| c.status == Tri::False && c.reason == "RefNotPermitted")
         .map(Cond::says);
@@ -813,13 +868,18 @@ fn refs_step(
         .find(|g| g.namespace == namespace && g.allows(&route.namespace, &backend.name));
     match granted {
         Some(grant) => {
-            let step = TraceStep::pass(id, format!("granted by {}/{}", grant.namespace, grant.name))
-                .quoting(asks, format!("ReferenceGrant {}/{}", grant.namespace, grant.name));
+            let step =
+                TraceStep::pass(id, format!("granted by {}/{}", grant.namespace, grant.name))
+                    .quoting(
+                        asks,
+                        format!("ReferenceGrant {}/{}", grant.namespace, grant.name),
+                    );
             if refused.is_some() {
                 let mut step = step;
                 step.verdict = StepVerdict::Fail;
                 step.owner = Some(Owner::Controller);
-                step.reason = "a grant exists, but the controller still refuses the reference".into();
+                step.reason =
+                    "a grant exists, but the controller still refuses the reference".into();
                 step.controller = refused;
                 (step, None)
             } else {
@@ -837,10 +897,16 @@ fn refs_step(
             None,
         ),
         None => {
-            let grant = (dns_name(&route.namespace) && dns_name(namespace) && dns_name(&backend.name))
-                .then(|| {
-                    proposal(inputs.grant_version, &route.namespace, namespace, &backend.name)
-                });
+            let grant =
+                (dns_name(&route.namespace) && dns_name(namespace) && dns_name(&backend.name))
+                    .then(|| {
+                        proposal(
+                            inputs.grant_version,
+                            &route.namespace,
+                            namespace,
+                            &backend.name,
+                        )
+                    });
             (
                 TraceStep::fail(
                     id,
@@ -870,7 +936,9 @@ fn service_step(
         None => format!("Service {namespace}/{}, no port", backend.name),
     };
     let missing = route_condition(status, "ResolvedRefs")
-        .filter(|c| c.status == Tri::False && matches!(c.reason.as_str(), "BackendNotFound" | "InvalidKind"))
+        .filter(|c| {
+            c.status == Tri::False && matches!(c.reason.as_str(), "BackendNotFound" | "InvalidKind")
+        })
         .map(Cond::says);
     let reading = match read {
         None => {
@@ -885,21 +953,41 @@ fn service_step(
             return TraceStep::unknown(
                 id,
                 Owner::Yours,
-                format!("the Service could not be read ({}: {})", failure.kind.label(), failure.message),
+                format!(
+                    "the Service could not be read ({}: {})",
+                    failure.kind.label(),
+                    failure.message
+                ),
             )
             .quoting(asks, "unknown")
             .reported(missing);
         }
         Some(Ok(None)) => {
-            return TraceStep::fail(id, Owner::Yours, format!("Service {namespace}/{} does not exist", backend.name))
-                .quoting(asks, "no such Service")
-                .reported(missing);
+            return TraceStep::fail(
+                id,
+                Owner::Yours,
+                format!("Service {namespace}/{} does not exist", backend.name),
+            )
+            .quoting(asks, "no such Service")
+            .reported(missing);
         }
         Some(Ok(Some(reading))) => reading,
     };
     let facts = &reading.facts;
-    let ports = facts.ports.iter().map(|p| p.port.to_string()).collect::<Vec<_>>().join(", ");
-    let serves = format!("ports {}", if ports.is_empty() { "none".into() } else { ports });
+    let ports = facts
+        .ports
+        .iter()
+        .map(|p| p.port.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let serves = format!(
+        "ports {}",
+        if ports.is_empty() {
+            "none".into()
+        } else {
+            ports
+        }
+    );
     if let ServiceShape::ExternalName(target) = facts.shape() {
         return TraceStep::new(
             id,
@@ -936,7 +1024,11 @@ fn endpoints_step(backend: &BackendRef, namespace: &str, reading: &ServiceReadin
             return TraceStep::unknown(
                 id,
                 Owner::Yours,
-                format!("endpoints unreadable ({}: {})", failure.kind.label(), failure.message),
+                format!(
+                    "endpoints unreadable ({}: {})",
+                    failure.kind.label(),
+                    failure.message
+                ),
             )
             .quoting(asks, "unknown");
         }
@@ -990,11 +1082,7 @@ fn branch_verdict(steps: &[TraceStep]) -> BranchVerdict {
     }
 }
 
-fn branches(
-    route: &RouteFacts,
-    status: Option<&ParentStatus>,
-    inputs: &Inputs,
-) -> Vec<Branch> {
+fn branches(route: &RouteFacts, status: Option<&ParentStatus>, inputs: &Inputs) -> Vec<Branch> {
     let mut out = Vec::new();
     for rule in &route.rules {
         let rule_label = rule.paths.join(", ");
@@ -1011,7 +1099,12 @@ fn branches(
         };
         if rule.backends.is_empty() {
             out.push(if rule.redirect {
-                simple(BranchKind::Redirect, "redirect", BranchVerdict::Serving, None)
+                simple(
+                    BranchKind::Redirect,
+                    "redirect",
+                    BranchVerdict::Serving,
+                    None,
+                )
             } else if rule.extension {
                 simple(
                     BranchKind::Extension,
@@ -1066,12 +1159,17 @@ fn branches(
                 branch.steps.push(TraceStep::new(
                     StepId::Refs,
                     StepVerdict::Neutral,
-                    format!("a {} backend is not a Service, so it is not judged", backend.kind),
+                    format!(
+                        "a {} backend is not a Service, so it is not judged",
+                        backend.kind
+                    ),
                 ));
                 out.push(branch);
                 continue;
             }
-            let read = inputs.backends.get(&(namespace.to_owned(), backend.name.clone()));
+            let read = inputs
+                .backends
+                .get(&(namespace.to_owned(), backend.name.clone()));
             let mut chain = Chain::new();
             let mut proposal = None;
             chain.run(StepId::Refs, || {
@@ -1079,10 +1177,14 @@ fn branches(
                 proposal = p;
                 step
             });
-            chain.run(StepId::Service, || service_step(backend, namespace, read, status));
+            chain.run(StepId::Service, || {
+                service_step(backend, namespace, read, status)
+            });
             chain.run(StepId::Endpoints, || match read {
                 Some(Ok(Some(reading))) => endpoints_step(backend, namespace, reading),
-                _ => TraceStep::unknown(StepId::Endpoints, Owner::Yours, "the Service was not read"),
+                _ => {
+                    TraceStep::unknown(StepId::Endpoints, Owner::Yours, "the Service was not read")
+                }
             });
             branch.verdict = branch_verdict(&chain.steps);
             branch.steps = chain.steps;
@@ -1123,7 +1225,9 @@ fn trace_parent(
     inputs: &Inputs,
 ) -> ParentTrace {
     let label = parent.label(&route.namespace);
-    let controller = status.map(|s| s.controller.clone()).filter(|c| !c.is_empty());
+    let controller = status
+        .map(|s| s.controller.clone())
+        .filter(|c| !c.is_empty());
     if !parent.is_gateway() {
         return ParentTrace {
             parent: parent.clone(),
@@ -1140,7 +1244,11 @@ fn trace_parent(
         Err(failure) => Err(TraceStep::unknown(
             StepId::Class,
             Owner::Platform,
-            format!("Gateways unreadable ({}: {})", failure.kind.label(), failure.message),
+            format!(
+                "Gateways unreadable ({}: {})",
+                failure.kind.label(),
+                failure.message
+            ),
         )),
         Ok(list) => list
             .items
@@ -1157,7 +1265,10 @@ fn trace_parent(
                     TraceStep::fail(
                         StepId::Class,
                         Owner::Yours,
-                        format!("the parent Gateway {} no longer exists", parent.label(&route.namespace)),
+                        format!(
+                            "the parent Gateway {} no longer exists",
+                            parent.label(&route.namespace)
+                        ),
                     )
                 }
             }),
@@ -1165,7 +1276,10 @@ fn trace_parent(
     let gateway = match gateway {
         Ok(gateway) => gateway,
         Err(step) => {
-            let step = step.quoting(format!("parent Gateway {}", parent.label(&route.namespace)), "not found");
+            let step = step.quoting(
+                format!("parent Gateway {}", parent.label(&route.namespace)),
+                "not found",
+            );
             let mut steps = vec![step];
             steps.extend(
                 [StepId::Gateway, StepId::Listener, StepId::Namespace].map(TraceStep::not_reached),
@@ -1194,7 +1308,11 @@ fn trace_parent(
         None => TraceStep::not_reached(StepId::Namespace),
     });
     let reached = !chain.stopped;
-    let branches = if reached { branches(route, status, inputs) } else { Vec::new() };
+    let branches = if reached {
+        branches(route, status, inputs)
+    } else {
+        Vec::new()
+    };
     let verdict = parent_verdict(&chain.steps, &branches);
     ParentTrace {
         parent: parent.clone(),
@@ -1215,7 +1333,11 @@ fn route_verdict(parents: &[ParentTrace]) -> RouteVerdict {
         .filter(|v| *v != RouteVerdict::Mesh)
         .collect::<Vec<_>>();
     if judged.is_empty() {
-        return if parents.is_empty() { RouteVerdict::NotServing } else { RouteVerdict::Mesh };
+        return if parents.is_empty() {
+            RouteVerdict::NotServing
+        } else {
+            RouteVerdict::Mesh
+        };
     }
     let has = |v| judged.contains(&v);
     if has(RouteVerdict::Partly) || (has(RouteVerdict::Serving) && has(RouteVerdict::NotServing)) {
@@ -1274,7 +1396,11 @@ fn summarize(route: &RouteFacts, parents: &[ParentTrace], verdict: RouteVerdict)
                 .filter(|p| p.verdict == wanted || wanted == RouteVerdict::Partly)
                 .find_map(step);
             match first {
-                Some((at, reason, owner)) => Summary { stops_at: Some(at), reason, owner },
+                Some((at, reason, owner)) => Summary {
+                    stops_at: Some(at),
+                    reason,
+                    owner,
+                },
                 None => Summary {
                     stops_at: None,
                     reason: "no step explains the verdict".into(),
@@ -1305,8 +1431,17 @@ pub fn trace_route(route: &RouteFacts, inputs: &Inputs) -> RouteTrace {
     let verdict = route_verdict(&parents);
     let stale = parents
         .iter()
-        .flat_map(|p| p.steps.iter().chain(p.branches.iter().flat_map(|b| &b.steps)))
+        .flat_map(|p| {
+            p.steps
+                .iter()
+                .chain(p.branches.iter().flat_map(|b| &b.steps))
+        })
         .any(|s| s.stale);
     let summary = summarize(route, &parents, verdict);
-    RouteTrace { parents, verdict, summary, stale }
+    RouteTrace {
+        parents,
+        verdict,
+        summary,
+        stale,
+    }
 }

@@ -20,7 +20,7 @@ impl RoutesScreen {
         let filter = div().w(dp(190.)).child(
             Input::new(&self.filter_input)
                 .id("routes-filter")
-                .aria_label("Filter by host, name, gateway or where the trace stops")
+                .aria_label("Filter by host, name, gateway, backend or where the trace stops")
                 .small()
                 .h(dp(ui::CONTROL_HEIGHT)),
         );
@@ -30,18 +30,14 @@ impl RoutesScreen {
             .h(dp(ui::CONTROL_HEIGHT))
             .label("Open trace")
             .disabled(self.selected.is_none())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.open(crate::resources::Tab::Trace, cx)
-            }));
+            .on_click(cx.listener(|this, _, _, cx| this.open(crate::resources::Tab::Trace, cx)));
         let route = Button::new("routes-open-route")
             .ghost()
             .small()
             .h(dp(ui::CONTROL_HEIGHT))
             .label("Open route")
             .disabled(self.selected.is_none())
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.open(crate::resources::Tab::Overview, cx)
-            }));
+            .on_click(cx.listener(|this, _, _, cx| this.open(crate::resources::Tab::Overview, cx)));
         let refresh = Button::new("routes-refresh")
             .ghost()
             .small()
@@ -93,7 +89,7 @@ impl RoutesScreen {
                     .child(row.cells[1].clone()),
             );
         let fields = v_flex()
-            .id("routes-detail-route")
+            .id("routes-detail-fields")
             .test_support()
             .gap(dp(7.))
             .text_size(dp(12.))
@@ -105,26 +101,27 @@ impl RoutesScreen {
                     cx,
                 )
             }));
-        let open = h_flex()
-            .gap_2()
-            .child(
-                Button::new("routes-detail-trace")
-                    .small()
-                    .outline()
-                    .label("Open trace")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.open(crate::resources::Tab::Trace, cx)
-                    })),
-            )
-            .child(
-                Button::new("routes-detail-route")
-                    .small()
-                    .ghost()
-                    .label("Open route")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.open(crate::resources::Tab::Overview, cx)
-                    })),
-            );
+        let open =
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new("routes-detail-trace")
+                        .small()
+                        .outline()
+                        .label("Open trace")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open(crate::resources::Tab::Trace, cx)
+                        })),
+                )
+                .child(
+                    Button::new("routes-detail-route")
+                        .small()
+                        .ghost()
+                        .label("Open route")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open(crate::resources::Tab::Overview, cx)
+                        })),
+                );
         Some(
             Inspector::new("routes-detail")
                 .selection(selected)
@@ -262,9 +259,11 @@ impl Render for RoutesScreen {
                     cx.propagate()
                 }
             }))
-            .on_action(cx.listener(|this, _: &OpenTrace, _, cx| {
-                this.open(crate::resources::Tab::Trace, cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &OpenTrace, _, cx| {
+                    this.open(crate::resources::Tab::Trace, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &OpenRoute, _, cx| {
                 this.open(crate::resources::Tab::Overview, cx)
             }))

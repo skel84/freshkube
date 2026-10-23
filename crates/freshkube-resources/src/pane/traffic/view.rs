@@ -210,7 +210,13 @@ impl DetailPane {
                     .gap(dp(8.))
                     .items_start()
                     .children(ui::status_glyph(tone, cx))
-                    .child(div().min_w_0().flex_1().whitespace_normal().child(text.clone())),
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .whitespace_normal()
+                            .child(text.clone()),
+                    ),
             )
             .when(tone == Tone::Unknown, |this| {
                 this.child(h_flex().child(self.retry_button(cx)))
@@ -232,7 +238,11 @@ impl DetailPane {
     }
 
     /// The Trace tab: every step of every parent and backend.
-    pub(in crate::pane) fn trace_page(&self, _detail: &Detail, cx: &mut Context<Self>) -> AnyElement {
+    pub(in crate::pane) fn trace_page(
+        &self,
+        _detail: &Detail,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let pad = dp(freshkube_ui::page::PANE_PADDING);
         let body = match &self.traffic.route {
             None => div()
@@ -269,7 +279,7 @@ impl DetailPane {
     }
 
     /// A link from the trace goes through the normal object entry point.
-    fn open_trace_link(&mut self, link: &TraceLink, cx: &mut Context<Self>) {
+    pub(super) fn open_trace_link(&mut self, link: &TraceLink, cx: &mut Context<Self>) {
         let Some(detail) = self.detail.as_ref() else {
             return;
         };
@@ -287,11 +297,7 @@ impl DetailPane {
                 Tab::Overview,
             ),
             TraceLink::Gateway { namespace, name } => ResourceLink::Owner {
-                api_version: format!(
-                    "{}/{}",
-                    routes::GATEWAY_GROUP,
-                    detail.target.kind.version
-                ),
+                api_version: format!("{}/{}", routes::GATEWAY_GROUP, detail.target.kind.version),
                 kind: "Gateway".to_owned(),
                 object: object(namespace, name),
             },
