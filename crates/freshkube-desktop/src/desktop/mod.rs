@@ -45,6 +45,7 @@ mod switch;
 #[cfg(test)]
 mod switch_tests;
 mod system_services;
+mod tabs;
 mod target;
 #[cfg(test)]
 mod testing;
@@ -344,6 +345,8 @@ pub(crate) struct Pilot {
     navigation: shell::Navigation,
     /// Deep links (#873).
     deep_link: deep_link::State,
+    /// The view tabs of the cluster that is open (#877).
+    tabs: tabs::Tabs,
     /// Example data or a live cluster, and Talos or a kubeconfig alone
     /// (`source::Mode`): what the window shows.
     mode: source::Mode,
@@ -432,6 +435,7 @@ impl Pilot {
             Some(freshkube_ui::page::SHELL_CONTEXT),
         )]);
         shell::Navigation::bind_keys(cx);
+        tabs::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new(
                 "alt-up",
@@ -530,8 +534,12 @@ impl Pilot {
                 nodes::ExpandNode,
                 Some("NodeWorkspace"),
             ),
-            KeyBinding::new("secondary-}", nodes::NextNodeTab, Some("NodeWorkspace")),
-            KeyBinding::new("secondary-{", nodes::PreviousNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new("secondary-alt-]", nodes::NextNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new(
+                "secondary-alt-[",
+                nodes::PreviousNodeTab,
+                Some("NodeWorkspace"),
+            ),
             KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
             KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
         ]);
@@ -824,6 +832,7 @@ impl Pilot {
             subscriptions,
             tick,
         } = owners;
+        let tabs = tabs::Tabs::new(&pages.resources, &pages.node_workspace, cx);
         Self {
             runtime,
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
@@ -861,6 +870,7 @@ impl Pilot {
             kubeconfig_draft: Default::default(),
             navigation,
             deep_link: deep_link::State::new(options.debug.links, options.preferences.as_deref()),
+            tabs,
             // The one place a hold is set: example data's, from
             // `DebugOptions::hold`.
             mode: source::Mode::new(options.starts_with_examples().then_some(options.debug.hold)),
@@ -1127,6 +1137,7 @@ impl Pilot {
             page.set_page_source(source.clone(), window, cx);
         }
         self.offer_followed(cx);
+        self.adopt_cluster(source.kube_identity.as_deref(), window, cx);
     }
 
     /// Hands pod and node history the Monitoring page's Prometheus.

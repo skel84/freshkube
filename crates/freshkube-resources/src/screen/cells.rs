@@ -240,13 +240,24 @@ pub(super) fn owner(
                 |this| this.child(div().text_color(p.ink_2).child(owner.name.clone())),
             )
             .when_some(destination, |this, destination| {
-                this.cursor_pointer().on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |_, _, _, cx| {
-                        cx.stop_propagation();
-                        cx.emit(destination.clone());
-                    }),
-                )
+                // A middle-click opens it too; the shell turns that into a
+                // background tab.
+                let middle = destination.clone();
+                this.cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(destination.clone());
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Middle,
+                        cx.listener(move |_, _, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(middle.clone());
+                        }),
+                    )
             }),
         move || label.clone(),
     )
@@ -500,6 +511,20 @@ pub(super) fn node(
             .cursor_pointer()
             .on_mouse_down(
                 MouseButton::Left,
+                cx.listener({
+                    let destination = destination.clone();
+                    move |_, _, _, cx| {
+                        cx.stop_propagation();
+                        cx.emit(super::super::ResourceLink::Node(
+                            destination.clone(),
+                            freshkube_nav::NodeTab::Overview,
+                        ));
+                    }
+                }),
+            )
+            // A middle-click opens it too, as a background tab.
+            .on_mouse_down(
+                MouseButton::Middle,
                 cx.listener(move |_, _, _, cx| {
                     cx.stop_propagation();
                     cx.emit(super::super::ResourceLink::Node(
