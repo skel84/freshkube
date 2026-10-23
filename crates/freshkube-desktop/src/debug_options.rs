@@ -14,6 +14,7 @@ use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
 use freshkube_delivery::timeline::example::Shape as TimelineShape;
+use freshkube_resources::example::traffic::Shape as ServicesShape;
 
 /// `FRESHKUBE_THEME`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +124,11 @@ pub struct DebugOptions {
     /// could read (`busy`, `quiet`, `partial`, `short-events`, `none-read`);
     /// anything else is `busy`.
     pub(crate) timeline: TimelineShape,
+    /// `FRESHKUBE_SERVICES`: what the Service and workload panes' example
+    /// traffic reads answer (`mixed`, `healthy`, `nothing`, `draining`,
+    /// `legacy`, `pending`, `no-selector`, `external-name`, `refused`,
+    /// `services-refused`); anything else is `mixed`.
+    pub(crate) services: ServicesShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -224,6 +230,9 @@ impl DebugOptions {
                 .unwrap_or_default(),
             timeline: text("FRESHKUBE_TIMELINE")
                 .and_then(|shape| TimelineShape::parse(&shape))
+                .unwrap_or_default(),
+            services: text("FRESHKUBE_SERVICES")
+                .and_then(|shape| ServicesShape::parse(&shape))
                 .unwrap_or_default(),
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
@@ -544,6 +553,20 @@ mod tests {
     }
 
     #[test]
+    fn services_take_each_shape_and_fall_back_to_mixed() {
+        for name in ServicesShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_SERVICES", name)]).services,
+                ServicesShape::parse(name).unwrap(),
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_SERVICES", "bogus")]).services,
+            ServicesShape::Mixed
+        );
+    }
+
+    #[test]
     fn timeline_takes_each_shape_and_falls_back_to_busy() {
         for name in TimelineShape::NAMES {
             assert_eq!(
@@ -687,6 +710,7 @@ mod tests {
                     | "FRESHKUBE_APPLICATIONS"
                     | "FRESHKUBE_ALERTS"
                     | "FRESHKUBE_TIMELINE"
+                    | "FRESHKUBE_SERVICES"
             )
             .then(bad)
         });
@@ -696,6 +720,7 @@ mod tests {
         assert_eq!(options.applications, Variant::Acme);
         assert_eq!(options.alerts, AlertsShape::Firing);
         assert_eq!(options.timeline, TimelineShape::Busy);
+        assert_eq!(options.services, ServicesShape::Mixed);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }

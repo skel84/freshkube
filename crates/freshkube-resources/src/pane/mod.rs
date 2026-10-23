@@ -42,6 +42,7 @@ mod overview;
 mod ports;
 #[cfg(test)]
 mod tests;
+mod traffic;
 mod view;
 mod yaml;
 
@@ -160,6 +161,7 @@ pub struct DetailPane {
     title: SharedString,
     summary: Option<Summary>,
     external: external_secrets::ExternalView,
+    traffic: traffic::TrafficView,
     node_facts: std::sync::Arc<Vec<crate::NodeFacts>>,
     cross_links: cross_links::CrossLinks,
     pod_links: Option<freshkube_core::resources::PodLinks>,
@@ -292,6 +294,7 @@ impl DetailPane {
             title: SharedString::default(),
             summary: None,
             external: Default::default(),
+            traffic: Default::default(),
             node_facts: Default::default(),
             cross_links: Default::default(),
             pod_links: None,
@@ -407,6 +410,7 @@ impl DetailPane {
         self.follow = Follow::new(version);
         self.summary = None;
         self.external.reset();
+        self.traffic.reset();
         self.cross_links = Default::default();
         self.pod_links = None;
         self.event_lines.clear();
@@ -438,6 +442,7 @@ impl DetailPane {
         self.detail = None;
         self.summary = None;
         self.external.reset();
+        self.traffic.reset();
         self.cross_links = Default::default();
         self.pod_links = None;
         self.event_lines.clear();
@@ -487,6 +492,7 @@ impl DetailPane {
         if detail.gone(successor) {
             // Nothing read now could bring it back.
             self.external.stop();
+            self.traffic.stop();
             self.read_job = None;
             self.timer = None;
             self.reveal_jobs.clear();
@@ -497,6 +503,7 @@ impl DetailPane {
 
     fn stop_reads(&mut self) {
         self.external.stop();
+        self.traffic.stop();
         self.read_job = None;
         self.events_job = None;
         self.timer = None;
@@ -600,6 +607,7 @@ impl DetailPane {
         detail.finish_read(result);
         if detail.read == DocumentRead::Deleted {
             self.external.stop();
+            self.traffic.stop();
         }
         if detail.reveal_epoch != epoch {
             self.reveal_jobs.clear();
@@ -637,6 +645,7 @@ impl DetailPane {
         self.rebuild_links();
         self.start_links(cx);
         self.start_external_stores(cx);
+        self.start_traffic(cx);
         self.matches = view.find(&self.query);
         self.current = match self.current {
             Some(current) if current < self.matches.len() => Some(current),
