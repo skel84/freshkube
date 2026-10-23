@@ -295,9 +295,26 @@ impl Operations {
 /// The writes audit log (`<preferences>/audit/writes.jsonl`, #853): one for the
 /// app, across contexts.
 pub(crate) fn write_audit_store() -> Option<freshkube_core::write::AuditStore> {
+    #[cfg(test)]
+    if let Some(dir) = TEST_AUDIT.with(|dir| dir.borrow().clone()) {
+        return Some(freshkube_core::write::AuditStore::new(dir));
+    }
     crate::preferences_path()
         .and_then(|path| path.parent().map(|dir| dir.join("audit")))
         .map(freshkube_core::write::AuditStore::new)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Where a test's writes are audited: never the user's own folder.
+    static TEST_AUDIT: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Audits this test's writes under `dir`.
+#[cfg(test)]
+pub(crate) fn audit_under(dir: std::path::PathBuf) {
+    TEST_AUDIT.with(|slot| *slot.borrow_mut() = Some(dir));
 }
 
 /// The audit store for `context`, shared with the other frontends.

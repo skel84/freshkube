@@ -154,6 +154,9 @@ impl Pilot {
         // What writes ask: the slot for the operations (the dock's shells
         // read their own cluster's level).
         crate::mutation::set_protection(level, cx);
+        self.pages.resources.update(cx, |resources, cx| {
+            resources.set_write_block(level.refusal(), cx)
+        });
         // Hide details defaults on for a protected or read-only cluster.
         self.offer_followed(cx);
         true
