@@ -775,3 +775,30 @@ fn a_shell_blocked_on_the_shown_cluster_offers_logs(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(titles(&dock(&pilot, cx), cx).len(), 2);
 }
+
+/// An entry is gone only once the setup has been read and does not list it:
+/// before that its level is unknown, with its own reason.
+#[gpui_kit::test]
+fn an_entry_is_not_called_gone_before_the_setup_is_read(cx: &mut TestAppContext) {
+    use super::super::Origin;
+    use freshkube_core::workspace::{SourceRecovery, Workspace};
+    use freshkube_core::write::OwnLevel;
+    cx.update(|cx| {
+        let origin = Origin {
+            source: crate::resources::ClusterSource {
+                id: "access:test".into(),
+                context: "acme".into(),
+                access: crate::resources::ClusterAccess::EXAMPLE,
+            },
+            entry: Some("acme".into()),
+            cluster: "acme".into(),
+        };
+        assert_eq!(origin.level(cx), OwnLevel::Unknown);
+        crate::mutation::set_workspace_levels(
+            &Workspace::default(),
+            &SourceRecovery::default(),
+            cx,
+        );
+        assert_eq!(origin.level(cx), OwnLevel::EntryGone);
+    });
+}

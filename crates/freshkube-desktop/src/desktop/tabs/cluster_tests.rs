@@ -750,3 +750,102 @@ fn a_context_bound_tab_is_saved_and_comes_back_bound() {
     let without: Saved = serde_json::from_str(r#"{"selected":0,"views":[]}"#).unwrap();
     assert!(without.contexts.is_empty());
 }
+
+/// While "Choose a cluster" shows, the header and the status bar name no
+/// cluster and show no level; the pick brings them back.
+#[gpui_kit::test]
+fn a_tab_with_no_cluster_shows_no_cluster_name_or_level(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_dev(cx);
+    open_in_new_tab(cx, handle, &pilot, "prod-ams");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_ne!(
+            window.find("context-short-name").label(),
+            Some("No cluster")
+        );
+        assert!(window.try_find("header-protection").is_some());
+        assert!(window.try_find("status-protection").is_some());
+    })
+    .unwrap();
+    change_setup(cx, &pilot, |workspace| {
+        workspace.clusters.retain(|entry| entry.id != "prod-ams")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("context-short-name").label(),
+            Some("No cluster")
+        );
+        assert!(window.try_find("header-protection").is_none());
+        assert!(window.try_find("status-protection").is_none());
+        assert!(window.try_find("status-no-cluster").is_some());
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("choose-cluster-dev-fra", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_ne!(
+            window.find("context-short-name").label(),
+            Some("No cluster")
+        );
+        assert!(window.try_find("header-protection").is_some());
+        assert!(window.try_find("status-protection").is_some());
+        assert!(window.try_find("status-no-cluster").is_none());
+    })
+    .unwrap();
+}
+
+/// Leaving an entry for the context it names re-derives what the window
+/// shows: the level, what writes ask, and the entry the dock thinks is shown.
+#[gpui_kit::test]
+fn leaving_an_entry_for_the_context_it_names_re_derives_the_shown_level(cx: &mut TestAppContext) {
+    use freshkube_core::write::Protection;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let opened = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let entry = cx.read(|cx| {
+        pilot
+            .read(cx)
+            .settings_page
+            .read(cx)
+            .workspace()
+            .clusters
+            .iter()
+            .find(|entry| entry.context == opened)
+            .map(|entry| entry.id.clone())
+            .unwrap()
+    });
+    cx.update(|cx| pilot.update(cx, |pilot, cx| pilot.sync_tabs(cx)));
+    let dock = cx.read(|cx| pilot.read(cx).pages.dock.clone());
+    open_in_new_tab(cx, handle, &pilot, &entry);
+    assert_eq!(
+        cx.read(|cx| dock.read(cx).shown_entry().map(str::to_owned)),
+        Some(entry)
+    );
+    // Whatever the level is now, leaving must leave what the window shows
+    // consistent with the window that is open.
+    let first = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[0].id);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.select_tab(first, window, cx))
+    })
+    .unwrap();
+    // Read straight after the selection, before anything else runs.
+    assert_eq!(active(cx, &pilot), SessionKey::Implicit);
+    assert_eq!(
+        cx.read(|cx| dock.read(cx).shown_entry().map(str::to_owned)),
+        None
+    );
+    let (shown, derived) = cx.read(|cx| {
+        let pilot = pilot.read(cx);
+        (pilot.context_display.level, pilot.current_level(cx))
+    });
+    assert_eq!(shown, derived);
+    // What writes ask is the shown level's.
+    assert_eq!(
+        cx.read(|cx| crate::mutation::refusal(cx).is_some()),
+        shown == Protection::ReadOnly
+    );
+}

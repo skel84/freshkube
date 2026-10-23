@@ -166,9 +166,13 @@ impl Origin {
     /// own reason (`may_start_shell`).
     pub(crate) fn level(&self, cx: &App) -> OwnLevel {
         match &self.entry {
-            Some(entry) => {
-                crate::mutation::entry_level(entry, cx).map_or(OwnLevel::EntryGone, OwnLevel::Known)
-            }
+            // An entry is gone only once the setup has been read and does
+            // not list it; before that nothing says what its level is.
+            Some(entry) => match crate::mutation::entry_level(entry, cx) {
+                Some(level) => OwnLevel::Known(level),
+                None if crate::mutation::setup_read(cx) => OwnLevel::EntryGone,
+                None => OwnLevel::Unknown,
+            },
             None => crate::mutation::context_level(&self.source.context, cx)
                 .map_or(OwnLevel::Unknown, OwnLevel::Known),
         }
@@ -1068,6 +1072,12 @@ impl Dock {
     pub(crate) fn set_shown(&mut self, entry: Option<String>, cx: &mut Context<Self>) {
         self.shown_entry = entry;
         self.refresh_gates(cx);
+    }
+
+    /// The entry the dock was last told the window shows.
+    #[cfg(test)]
+    pub(crate) fn shown_entry(&self) -> Option<&str> {
+        self.shown_entry.as_deref()
     }
 
     /// What the window shows, as the wrong-cluster header names it.

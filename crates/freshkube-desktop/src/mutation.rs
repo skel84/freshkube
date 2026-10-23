@@ -136,6 +136,13 @@ pub(crate) fn set_workspace_levels(
     cx.default_global::<GlobalProtection>().2 = Some((workspace.clone(), recovery.clone()));
 }
 
+/// Whether any setup has been published: until one has, no level is known
+/// and no entry can be called gone.
+pub(crate) fn setup_read(cx: &App) -> bool {
+    cx.try_global::<GlobalProtection>()
+        .is_some_and(|global| global.2.is_some())
+}
+
 /// The level of the kubeconfig context `context` under the setup as it is
 /// now: the stricter of the entries naming it, guarded for one no entry
 /// names, or what a skipped row locked it to. `None` before any setup was

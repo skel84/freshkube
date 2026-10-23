@@ -327,10 +327,10 @@ impl ShellView {
             .is_some_and(|container| matches!(container.state, ContainerState::Running(_)))
     }
 
-    /// The level of this shell's own cluster entry, `None` when the entry
-    /// is gone or has no level cell (#878). The gate is core's
-    /// `may_start_shell`, which takes no other level, so the cluster shown
-    /// never decides. A refusal disables Start, whatever else is ready.
+    /// What this shell's own cluster's level is: known, or an entry that is
+    /// gone, or not read yet (#878). The gate is core's `may_start_shell`,
+    /// which takes no other level, so the cluster shown never decides. A
+    /// refusal disables Start, whatever else is ready.
     pub fn set_own_level(&mut self, level: OwnLevel, cx: &mut Context<Self>) {
         let blocked = may_start_shell(level).err();
         if self.blocked != blocked {

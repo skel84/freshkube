@@ -298,6 +298,13 @@ impl Pilot {
             self.leave_entry(cx);
             if self.applied.context.as_ref() != Some(&binding.name) {
                 self.select_context(binding.name, window, cx);
+            } else {
+                // The context is already the one applied, so nothing else
+                // re-derives what the window shows: its name, its level, what
+                // writes ask and the dock's shown entry would stay the left
+                // entry's.
+                self.prepare_context_display(window, cx);
+                cx.notify();
             }
         }
         self.tabs.applying = Some((view.clone(), cx.background_executor().now()));
