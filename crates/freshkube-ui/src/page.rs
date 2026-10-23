@@ -146,7 +146,7 @@ pub fn inset() -> Div {
 /// Notes under a page's header, capped to leave room for its body. The cap
 /// accepts pixels or dp; [`Length::Auto`] keeps an uncapped block scrollable.
 /// An optional bottom hairline counts towards the cap. The caller keeps its
-/// padding, or draws a separate edge when it must sit outside the scroll.
+/// padding on the outer frame, outside the scroll viewport and its overlay.
 /// The scrollbar stays visible whenever the notes overflow the cap.
 pub fn capped_notes(
     id: impl Into<ElementId>,
@@ -157,23 +157,37 @@ pub fn capped_notes(
 ) -> Observed<Stateful<Div>> {
     let cap: Length = cap.into();
     let id = id.into();
-    div()
+    v_flex()
         .id(id.clone())
         .test_support()
+        .min_w_0()
         .when_some(bottom_edge, |this, color| {
             this.border_b_1().border_color(color)
         })
         .max_h(cap)
-        .overflow_y_scroll()
-        .restrict_scroll_to_axis()
-        .track_scroll(scroll)
-        .children(children)
         .child(
-            div().absolute().inset_0().child(
-                Scrollbar::vertical(scroll)
-                    .id((id, "scrollbar"))
-                    .mode(ScrollbarMode::Always),
-            ),
+            v_flex()
+                .relative()
+                .min_h_0()
+                .min_w_0()
+                .child(
+                    div()
+                        .id((id.clone(), "viewport"))
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .track_scroll(scroll)
+                        .children(children),
+                )
+                // A sibling of the viewport: absolute children contribute to
+                // GPUI's scroll extent, even when the content itself fits.
+                .child(
+                    div().absolute().inset_0().child(
+                        Scrollbar::vertical(scroll)
+                            .id((id, "scrollbar"))
+                            .mode(ScrollbarMode::Always),
+                    ),
+                ),
         )
 }
 
@@ -1042,6 +1056,78 @@ mod tests {
     struct Notes {
         scroll: ScrollHandle,
         cap: Length,
+    }
+
+    struct PaddedNotes {
+        scroll: ScrollHandle,
+    }
+
+    impl Render for PaddedNotes {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex().id("parent").test_support().size_full().child(
+                capped_notes(
+                    "notes",
+                    dp(80.),
+                    &self.scroll,
+                    [crate::ui::warning_banner(
+                        Some("Read coverage".into()),
+                        "Some databases could not be read.",
+                        None,
+                        cx,
+                    )
+                    .id("banner")
+                    .test_support()],
+                    Some(palette(cx).line),
+                )
+                .px(dp(PANE_PADDING))
+                .py(dp(PANE_PADDING_Y)),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_banner_just_under_the_cap_does_not_scroll_or_cross_its_parent(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            cx.set_reduce_motion(true);
+        });
+        for text in [13., 20.] {
+            cx.update(|cx| crate::text_size::set(text, cx));
+            for width in [488., 1008.] {
+                let scroll = ScrollHandle::new();
+                let handle = cx.open_window(size(px(width), px(560.)), |window, cx| {
+                    let view = cx.new(|_| PaddedNotes {
+                        scroll: scroll.clone(),
+                    });
+                    Root::new(view, window, cx)
+                });
+                cx.update_window(handle.into(), |_, window, cx| {
+                    window.render_frame(cx);
+                    let parent = window.find("parent").bounds();
+                    let notes = window.find("notes").bounds();
+                    let banner = window.find("banner").bounds();
+                    assert!(banner.size.height < dp_px(80., window));
+                    assert!(notes.right() <= parent.right());
+                    assert!(banner.right() <= notes.right() - dp_px(PANE_PADDING, window) + px(1.));
+                    assert_eq!(
+                        scroll.max_offset().y,
+                        px(0.),
+                        "{text}px at {width}: {notes:?}"
+                    );
+                    window.scroll(
+                        "notes",
+                        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-100.))),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                    assert_eq!(scroll.offset().y, px(0.));
+                    assert_eq!(window.find("banner").bounds(), banner);
+                })
+                .unwrap();
+            }
+        }
     }
 
     impl Render for Notes {

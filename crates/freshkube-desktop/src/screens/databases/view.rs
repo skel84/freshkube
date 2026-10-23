@@ -355,7 +355,9 @@ impl Render for DatabasesScreen {
                         this.child(
                             page::capped_notes(
                                 "databases-notices",
-                                dp(72.),
+                                // Two lines, the banner's padding and this
+                                // inset fit whole before scrolling begins.
+                                dp(80.),
                                 &self.notes_scroll,
                                 notice.into_iter().chain(failure),
                                 // A bottom edge, so a clipped banner reads as

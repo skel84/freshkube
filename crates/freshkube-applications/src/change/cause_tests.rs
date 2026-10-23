@@ -12,6 +12,42 @@ fn count(page: &ChangePage, tone: Tone) -> usize {
     page.counts[ix]
 }
 
+#[gpui_kit::test]
+fn the_causes_pull_request_banner_fits_without_scrolling(cx: &mut TestAppContext) {
+    // Page widths after the shell's 272 dp rail and column.
+    for (width, height) in [(488., 560.), (1008., 880.)] {
+        let (handle, page) = open(cx, width, height, Shape::Causes, Duration::ZERO, 13.);
+        cx.update_window(handle, |_, window, cx| {
+            for _ in 0..3 {
+                window.render_frame(cx);
+            }
+            let notes = window.find("change-notes").bounds();
+            let banner = window.find("change-pull").bounds();
+            assert!(
+                banner.is_contained_within(&notes),
+                "{width}: {banner:?} in {notes:?}"
+            );
+            let scroll = page.read(cx).notes_scroll.clone();
+            assert_eq!(
+                scroll.max_offset().y,
+                gpui_kit::px(0.),
+                "{width}: {banner:?} in {notes:?}"
+            );
+            window.scroll(
+                "change-notes",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-100.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+            assert_eq!(scroll.offset().y, gpui_kit::px(0.));
+        })
+        .unwrap();
+    }
+}
+
 fn row_tone(page: &ChangePage, key: &str) -> Tone {
     page.rows.iter().find(|row| row.key == key).unwrap().tone
 }

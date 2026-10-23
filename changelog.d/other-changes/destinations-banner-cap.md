@@ -1,1 +1,1 @@
-- **Settings:** long destination save banners scroll within a cap in short windows and keep the new row in view; capped page banners show a scrollbar when they overflow.
+- **Settings:** long destination save banners scroll within a cap in short windows and keep the new row in view; capped page banners keep their borders whole and show a scrollbar only when their text overflows.

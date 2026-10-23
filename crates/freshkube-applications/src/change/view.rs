@@ -193,7 +193,9 @@ impl ChangePage {
         if refresh.is_none() && missing.is_none() && pull.is_none() {
             return None;
         }
-        let children = refresh.into_iter().chain(missing).chain(pull);
+        let children = [v_flex()
+            .gap(dp(page::PANE_PADDING_Y))
+            .children(refresh.into_iter().chain(missing).chain(pull))];
         // A short window caps the block, so the banners leave the trail
         // its room; any other shows every banner whole.
         let notes = if short {
@@ -211,9 +213,6 @@ impl ChangePage {
         .min_w_0()
         .px(dp(page::PANE_PADDING))
         .py(dp(page::PANE_PADDING_Y))
-        .flex()
-        .flex_col()
-        .gap(dp(page::PANE_PADDING_Y))
         .when(short, |this| {
             let scroll = self.notes_scroll.clone();
             this.on_scroll_wheel(move |event, window, cx| {
