@@ -29,7 +29,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 mod keep;
-pub use keep::{KEEP, Notice, take_notices};
+pub use keep::{KEEP, Notice, Why, take_notices, watch};
 
 /// The version a save writes and a load understands.
 pub const VERSION: u64 = 1;
@@ -156,10 +156,7 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
                 problem: None,
             },
             Found::Newer(version) => {
-                keep::tell(Notice {
-                    file: self.path.clone(),
-                    kept_as: None,
-                });
+                self.tell_newer(version);
                 self.unusable(newer(version))
             }
             Found::Corrupt(why) => {
@@ -243,24 +240,47 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         result
     }
 
+    fn tell_newer(&self, version: u64) {
+        keep::tell(Notice {
+            file: self.path.clone(),
+            why: Why::Newer { version },
+        });
+    }
+
     /// What a save may do to the file that is there: refuse to replace a
-    /// newer version's, and keep a copy of one that can't be parsed. A file
-    /// that is missing, can't be read or is past the limit is left to the
-    /// save, as before.
+    /// newer version's (and tell the person, since a save that never loaded
+    /// it has not), keep a copy of one that can't be parsed, and refuse one
+    /// that can't be read or checked (past the limit, not a regular file,
+    /// an I/O error), which could not be kept either. Only a missing file
+    /// is replaced without a look.
+    ///
+    /// ponytail: another process can write between this check and the
+    /// rename; an exclusive lock on the directory if that is ever seen.
     fn before_replacing(&self) -> std::io::Result<()> {
-        let Ok(Ok(bytes)) = self.read_bytes() else {
-            return Ok(());
+        let bytes = match self.read_bytes() {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(why)) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{} {why}; not overwritten", self.path.display()),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
         };
         match parse::<T>(&bytes) {
             Found::Value(_) => Ok(()),
-            Found::Newer(version) => Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!(
-                    "{} {}; not overwritten",
-                    self.path.display(),
-                    newer(version)
-                ),
-            )),
+            Found::Newer(version) => {
+                self.tell_newer(version);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "{} {}; not overwritten",
+                        self.path.display(),
+                        newer(version)
+                    ),
+                ))
+            }
             Found::Corrupt(_) => keep::copy(&self.path, &bytes).map(drop),
         }
     }
@@ -401,7 +421,8 @@ fn describe(error: &serde_json::Error) -> String {
         Category::Data => "a value of the wrong type or shape",
         Category::Eof => "the file ends too early",
     };
-    // An error from a value already parsed has no position.
+    // An error from a value already parsed (a file with a `version`, which
+    // is taken out before the typed read) has no position in the file.
     match error.line() {
         0 => kind.to_owned(),
         line => format!("{kind} at line {line}, column {}", error.column()),

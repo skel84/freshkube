@@ -308,7 +308,8 @@ fn read_coroot(file: &Path) -> Option<SavedCoroot> {
     coroot.extra = object
         .iter()
         .filter(|(key, _)| {
-            !["url", "auth", "project", "reconnect", "remember"].contains(&key.as_str())
+            // `version` is the file's own, written by `freshkube-prefs`.
+            !["url", "auth", "project", "reconnect", "remember", "version"].contains(&key.as_str())
         })
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();

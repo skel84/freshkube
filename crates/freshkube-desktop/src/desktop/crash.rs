@@ -176,16 +176,44 @@ impl Pilot {
 }
 
 impl Pilot {
-    /// Tells once, at launch, of each settings file that was kept aside or
-    /// left alone as a newer build's (`freshkube_prefs::take_notices`).
-    /// ponytail: a file first read after launch (Monitoring's, on its first
-    /// visit) is told at the next start; poll the queue if that matters.
+    /// Tells each settings file that was kept aside or left alone as a newer
+    /// build's (`freshkube_prefs::take_notices`): those queued before the
+    /// window opened at once, and any queued later (a file first read when
+    /// its page opens, a save that is refused) as it happens.
     pub(super) fn tell_settings_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (wake, woken) = futures::channel::mpsc::unbounded();
+        let _ = wake.unbounded_send(());
         // A test shares the process-wide queue with every other test.
         #[cfg(not(test))]
-        tell_notices(freshkube_prefs::take_notices(), window, cx);
+        {
+            freshkube_prefs::watch(move || drop(wake.unbounded_send(())));
+            self.watch_settings_files(woken, freshkube_prefs::take_notices, window, cx);
+        }
         #[cfg(test)]
-        let _ = (window, cx);
+        let _ = (wake, woken, window, cx);
+    }
+
+    /// Takes the queue each time `woken` fires and tells what it holds.
+    pub(super) fn watch_settings_files(
+        &mut self,
+        mut woken: futures::channel::mpsc::UnboundedReceiver<()>,
+        take: impl Fn() -> Vec<freshkube_prefs::Notice> + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use futures::StreamExt as _;
+        cx.spawn_in(window, async move |this, cx| {
+            while woken.next().await.is_some() {
+                let notices = take();
+                if this
+                    .update_in(cx, |_, window, cx| tell_notices(notices, window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 }
 

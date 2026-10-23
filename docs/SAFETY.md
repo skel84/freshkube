@@ -74,6 +74,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 - `safety_g08_a_cluster_without_agent_access_refuses_before_any_request` (`crates/freshkube-core/src/agent_reads/tests.rs`)
 - `safety_g08_a_grant_for_another_context_reads_as_off` (`crates/freshkube-core/src/agent_reads/tests.rs`)
+- `safety_g08_a_corrupt_or_newer_marker_beside_a_grant_grants_nothing` (`crates/freshkube-agent/tests/saved.rs`)
 - `safety_g08_a_missing_file_grants_nothing_and_an_unparsable_one_grants_nothing_and_logs_once` (`crates/freshkube-agent/tests/saved.rs`)
 - `safety_g08_a_truncated_corrupt_or_newer_file_grants_nothing_and_a_newer_one_is_not_written` (`crates/freshkube-agent/tests/saved.rs`)
 - `safety_g08_every_agent_read_is_a_get` (`crates/freshkube-core/src/agent_reads/tests.rs`)

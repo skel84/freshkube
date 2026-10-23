@@ -693,3 +693,90 @@ fn a_version_that_is_not_a_number_is_corrupt() {
     assert!(document.load().problem.is_some());
     assert_eq!(copies(&directory).len(), 1);
 }
+
+#[test]
+fn a_save_over_a_newer_file_that_was_never_loaded_still_tells_the_person() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "{\"version\":3}").unwrap();
+    assert!(document.save(&Sample::default()).is_err());
+    let mine: Vec<_> = take_notices()
+        .into_iter()
+        .filter(|notice| notice.file == document.path())
+        .collect();
+    assert_eq!(mine.len(), 1, "{mine:?}");
+    assert_eq!(mine[0].why, Why::Newer { version: 3 });
+    let line = mine[0].to_string();
+    assert!(line.contains("version 3"), "{line}");
+    assert!(line.contains("changes to it are not saved"), "{line}");
+}
+
+#[test]
+fn a_watcher_is_woken_when_a_notice_is_queued() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static WOKEN: AtomicUsize = AtomicUsize::new(0);
+    watch(|| {
+        WOKEN.fetch_add(1, Ordering::SeqCst);
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "{").unwrap();
+    document.load();
+    assert!(WOKEN.load(Ordering::SeqCst) >= 1);
+    watch(|| {});
+}
+
+#[test]
+fn a_typed_file_keeps_its_field_order_and_ends_with_the_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    document
+        .save(&Sample {
+            name: "shop-api".into(),
+            count: 3,
+        })
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(document.path()).unwrap(),
+        "{\"name\":\"shop-api\",\"count\":3,\"version\":1}\n"
+    );
+}
+
+#[test]
+fn a_file_too_large_to_read_is_not_overwritten_by_a_save() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory).limited_to(16);
+    let big = "x".repeat(64);
+    std::fs::write(document.path(), &big).unwrap();
+    assert!(document.save(&Sample::default()).is_err());
+    assert_eq!(std::fs::read_to_string(document.path()).unwrap(), big);
+}
+
+/// A directory where the copy can't be made: the load still gives the
+/// default and says so, and a save is refused and leaves the file.
+#[cfg(unix)]
+#[test]
+fn a_copy_that_cannot_be_made_refuses_the_save_and_keeps_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    std::fs::write(document.path(), "{ broken").unwrap();
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::File::create(directory.path().join("probe")).is_ok() {
+        // Running as a user who ignores permissions (root): nothing to prove.
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    let loaded = document.load();
+    let saved = document.save(&Sample::default());
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(loaded.value, Sample::default());
+    let problem = loaded.problem.expect("a problem");
+    assert!(problem.contains("a copy could not be kept"), "{problem}");
+    assert!(saved.is_err());
+    assert_eq!(
+        std::fs::read_to_string(document.path()).unwrap(),
+        "{ broken"
+    );
+    assert!(copies(&directory).is_empty());
+}

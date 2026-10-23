@@ -161,15 +161,21 @@ fn about_after_a_crash_copies_the_crashed_log_without_the_token(cx: &mut TestApp
     assert!(!text.contains(SEED), "{text}");
 }
 
+fn corrupt(dir: &Path) -> freshkube_prefs::Notice {
+    freshkube_prefs::Notice {
+        file: dir.join("preferences.json"),
+        why: freshkube_prefs::Why::Corrupt {
+            kept_as: dir.join("preferences.corrupt-20261024T101500Z.json"),
+        },
+    }
+}
+
 #[gpui_kit::test]
 fn a_settings_file_kept_aside_is_told_once_with_its_copy(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let (_runtime, handle) = open(cx, session(dir.path(), None), None);
     assert_eq!(notices(cx, handle), 0);
-    let notice = freshkube_prefs::Notice {
-        file: dir.path().join("preferences.json"),
-        kept_as: Some(dir.path().join("preferences.corrupt-20261024T101500Z.json")),
-    };
+    let notice = corrupt(dir.path());
     for _ in 0..2 {
         cx.update_window(handle, |_, window, cx| {
             crash::tell_notices(vec![notice.clone()], window, cx)
@@ -182,4 +188,43 @@ fn a_settings_file_kept_aside_is_told_once_with_its_copy(cx: &mut TestAppContext
         notice.to_string(),
         "preferences.json could not be read; the old file is kept as preferences.corrupt-20261024T101500Z.json"
     );
+}
+
+/// A notice queued after the window is open (a file first read when its page
+/// opens, a save over a newer file) is told when the queue wakes the
+/// watcher, and not only at launch.
+#[gpui_kit::test]
+fn a_notice_queued_after_launch_is_told_when_the_queue_wakes(cx: &mut TestAppContext) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let dir = tempfile::tempdir().unwrap();
+    cx.update(|cx| crash::set_session(session(dir.path(), None), cx));
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture(), 1280., 880.);
+    cx.run_until_parked();
+    assert_eq!(notices(cx, handle), 0);
+
+    let queue = Rc::new(RefCell::new(Vec::new()));
+    let (wake, woken) = futures::channel::mpsc::unbounded();
+    let taken = queue.clone();
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.watch_settings_files(woken, move || taken.take(), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(notices(cx, handle), 0, "nothing queued, nothing told");
+
+    queue.borrow_mut().push(corrupt(dir.path()));
+    wake.unbounded_send(()).unwrap();
+    cx.run_until_parked();
+    assert_eq!(notices(cx, handle), 1);
+
+    queue.borrow_mut().push(freshkube_prefs::Notice {
+        file: dir.path().join("follows.json"),
+        why: freshkube_prefs::Why::Newer { version: 2 },
+    });
+    wake.unbounded_send(()).unwrap();
+    cx.run_until_parked();
+    assert_eq!(notices(cx, handle), 2, "a later notice is told too");
 }

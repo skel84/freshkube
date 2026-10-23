@@ -129,7 +129,8 @@ async fn safety_g08_a_missing_file_grants_nothing_and_an_unparsable_one_grants_n
 
 /// A file with a grant in it, then damaged three ways: cut short, not JSON,
 /// and written by a newer build. None of them grants anything, and the
-/// newer one is never written over.
+/// newer one is never written over. The revocation marker beside a granting
+/// file, corrupt or newer, holds every entry off too.
 #[tokio::test]
 async fn safety_g08_a_truncated_corrupt_or_newer_file_grants_nothing_and_a_newer_one_is_not_written()
  {
@@ -183,6 +184,32 @@ async fn safety_g08_a_truncated_corrupt_or_newer_file_grants_nothing_and_a_newer
                 .collect::<Vec<_>>();
             assert_eq!(kept, [text], "{name} is kept");
         }
+    }
+}
+
+#[tokio::test]
+async fn safety_g08_a_corrupt_or_newer_marker_beside_a_grant_grants_nothing() {
+    capture::install();
+    let granted = tempfile::tempdir().unwrap();
+    let gate = AgentAccess::new();
+    let access = Access::open(&granted.path().join("preferences.json"), &gate);
+    access.set_access(ENTRY, CONTEXT, true, "settings").unwrap();
+    let grant = std::fs::read_to_string(access.file_path()).unwrap();
+    for (name, marker) in [
+        ("corrupt", "{ not json"),
+        ("truncated", "{\"revoked\":[{\"entry\":"),
+        ("newer", "{\"version\":2,\"revoked\":[]}"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let preferences = dir.path().join("preferences.json");
+        std::fs::write(preferences.with_file_name("agent.json"), &grant).unwrap();
+        std::fs::write(preferences.with_file_name("agent-pending.json"), marker).unwrap();
+        let gate = AgentAccess::new();
+        let access = Access::open(&preferences, &gate);
+        assert!(gate.granted().is_empty(), "{name}: the gate is off");
+        assert!(access.grants().is_empty(), "{name}: nothing is held");
+        assert!(!can_read(&gate).await, "{name}");
+        assert!(!access.held_off().is_empty(), "{name}: the dock says why");
     }
 }
 

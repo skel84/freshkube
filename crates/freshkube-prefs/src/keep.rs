@@ -17,9 +17,17 @@ pub const KEEP: usize = 3;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Notice {
     pub file: PathBuf,
-    /// The copy of a file that could not be parsed. `None`: the file was
-    /// written by a newer Freshkube and is left as it is.
-    pub kept_as: Option<PathBuf>,
+    pub why: Why,
+}
+
+/// What happened to the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Why {
+    /// It could not be parsed; this is the copy of it.
+    Corrupt { kept_as: PathBuf },
+    /// A newer Freshkube wrote it, at this version. It is not used, and a
+    /// save over it is refused.
+    Newer { version: u64 },
 }
 
 impl fmt::Display for Notice {
@@ -30,30 +38,49 @@ impl fmt::Display for Notice {
                 .to_string_lossy()
                 .into_owned()
         };
-        match &self.kept_as {
-            Some(copy) => write!(
+        match &self.why {
+            Why::Corrupt { kept_as } => write!(
                 f,
                 "{} could not be read; the old file is kept as {}",
                 name(&self.file),
-                name(copy)
+                name(kept_as)
             ),
-            None => write!(
+            Why::Newer { version } => write!(
                 f,
-                "{} was written by a newer Freshkube; it is not used or changed",
+                "{} was written by a newer Freshkube (version {version}); it is not used, \
+                 and changes to it are not saved",
                 name(&self.file)
             ),
         }
     }
 }
 
+type Wake = Box<dyn Fn() + Send + Sync>;
+
+/// The notices not yet taken, those told this run, and who to wake.
 static NOTICES: Mutex<(Vec<Notice>, Vec<Notice>)> = Mutex::new((Vec::new(), Vec::new()));
+static WAKE: Mutex<Option<Wake>> = Mutex::new(None);
+
+/// Calls `wake` whenever a notice is queued, from the thread that queued it,
+/// so the app can take it (and tell it) at once and not only at launch. One
+/// watcher: a later call replaces the earlier. `wake` must not call
+/// [`take_notices`] itself.
+pub fn watch(wake: impl Fn() + Send + Sync + 'static) {
+    *WAKE.lock().unwrap_or_else(|p| p.into_inner()) = Some(Box::new(wake));
+}
 
 /// Queues `notice` unless this run has told it already.
 pub(crate) fn tell(notice: Notice) {
-    let mut notices = NOTICES.lock().unwrap_or_else(|p| p.into_inner());
-    if !notices.1.contains(&notice) {
+    {
+        let mut notices = NOTICES.lock().unwrap_or_else(|p| p.into_inner());
+        if notices.1.contains(&notice) {
+            return;
+        }
         notices.1.push(notice.clone());
         notices.0.push(notice);
+    }
+    if let Some(wake) = &*WAKE.lock().unwrap_or_else(|p| p.into_inner()) {
+        wake();
     }
 }
 
@@ -105,7 +132,9 @@ pub(crate) fn copy_at(file: &Path, bytes: &[u8], now: SystemTime) -> std::io::Re
     };
     tell(Notice {
         file: file.to_path_buf(),
-        kept_as: Some(kept_as.clone()),
+        why: Why::Corrupt {
+            kept_as: kept_as.clone(),
+        },
     });
     Ok(kept_as)
 }
@@ -135,6 +164,12 @@ fn create(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
+    // A copy that is only partly there would pass for a good one, and
+    // rotation would keep it over an older whole one.
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    if written.is_err() {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+    }
+    written
 }
