@@ -15,6 +15,8 @@ Code:
 
 Tests that prove it: `freshkube-nav`'s `view/tests.rs` and `outcome.rs`; core's `fingerprint/tests.rs`, `resources/discovery.rs` and `setup/tests/identity.rs`; desktop's `desktop/deep_link/tests.rs` and `cluster_tests.rs`, the unit tests in `identity.rs`, `desktop/tests/keys.rs` (the key) and `debug_options.rs` (the knob).
 
+An agent's reads reach the page through the same `apply_view`, and only from the endpoint's own `ViewState`s, built from reads that ran ([the agent's follow](agent.md#follow-slice-d1d)). What the agent writes is never parsed into a view. The move is under the deep link's rules (it only navigates) and never switches the cluster; its one difference is that a log read shows its pod in the dock tab that following owns.
+
 ## The link
 
 A link holds identities only. `ViewState` is a place inside one cluster: a page, then for Resources a kind, a namespace, an object (its name, and its UID when known) and a tab, and for Nodes a node and its tab. The cluster is not in it (`Link` pairs a `ClusterRef` with a `ViewState`), so a saved tab or an agent's read can pair a view with its own entry.

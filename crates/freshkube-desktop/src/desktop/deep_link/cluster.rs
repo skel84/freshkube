@@ -568,7 +568,7 @@ impl Pilot {
     /// under way, or the window has a Kubernetes source it hasn't started
     /// identifying (a Talos session installs its access before the summary
     /// that does).
-    pub(super) fn identifying(&self) -> bool {
+    pub(in crate::desktop) fn identifying(&self) -> bool {
         let identities = &self.deep_link.identities;
         match self.source().kube {
             Some(source) => {
