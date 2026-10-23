@@ -190,7 +190,10 @@ pub fn capped_notes(
                     div().absolute().inset_0().child(
                         Scrollbar::vertical(scroll)
                             .id((id, "scrollbar"))
-                            .mode(ScrollbarMode::Always),
+                            .mode(ScrollbarMode::Always)
+                            // The padded viewport can be shorter than Kit's
+                            // 48 px minimum thumb. Leave room for it to move.
+                            .styles(|styles| styles.thumb(|style| style.min_length(px(16.)))),
                     ),
                 ),
         )
@@ -1061,6 +1064,7 @@ mod tests {
     struct Notes {
         scroll: ScrollHandle,
         cap: Length,
+        tone: Option<Tone>,
     }
 
     struct PaddedNotes {
@@ -1145,7 +1149,7 @@ mod tests {
                 &self.scroll,
                 [div().flex_none().h(dp(180.))],
                 None,
-                None,
+                self.tone,
                 cx,
             ))
         }
@@ -1153,6 +1157,15 @@ mod tests {
 
     #[gpui_kit::test]
     fn capped_notes_show_a_scrollbar_only_when_their_content_overflows(cx: &mut TestAppContext) {
+        assert_capped_notes_scroll(cx, None);
+    }
+
+    #[gpui_kit::test]
+    fn capped_banner_thumb_tracks_its_inner_scroll_viewport(cx: &mut TestAppContext) {
+        assert_capped_notes_scroll(cx, Some(Tone::Good));
+    }
+
+    fn assert_capped_notes_scroll(cx: &mut TestAppContext, tone: Option<Tone>) {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
@@ -1166,6 +1179,7 @@ mod tests {
             let view = cx.new(|_| Notes {
                 scroll: scroll.clone(),
                 cap: dp(48.).into(),
+                tone,
             });
             notes = Some(view.clone());
             Root::new(view, window, cx)
@@ -1189,7 +1203,12 @@ mod tests {
                     })
                     .map(|quad| quad.bounds)
             };
+            assert!(scroll.max_offset().y > px(0.));
             let before = thumb(window).expect("an overflowing block shows its thumb immediately");
+            assert!(
+                before.size.height < scroll.bounds().size.height.scale(window.scale_factor()),
+                "the thumb must leave room to move inside the inner viewport"
+            );
             window.scroll(
                 "notes",
                 gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-4000.))),
