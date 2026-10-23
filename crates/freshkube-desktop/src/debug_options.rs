@@ -78,6 +78,11 @@ pub(crate) enum LinkShape {
 pub struct DebugOptions {
     /// Invented database inventory shape, parsed once with the other knobs.
     pub(crate) databases: String,
+    /// `FRESHKUBE_DB_EXPLORE`: how an example explorer connection ends
+    /// (`connected`, `no-secret`, `forward-failed`, `refused`, `timed-out`,
+    /// `not-read-only`, `loading`); a known value also opens the first
+    /// PostgreSQL database in the explorer.
+    pub(crate) db_explore: String,
     /// `FRESHKUBE_PAGE`: a page slug or a fixture check's name.
     pub(crate) page: Option<String>,
     /// `FRESHKUBE_KIND`: a Kubernetes kind's kubectl key.
@@ -170,6 +175,7 @@ impl DebugOptions {
         let text = |name: &str| var(name).and_then(|value| value.into_string().ok());
         Self {
             databases: text("FRESHKUBE_DATABASES").unwrap_or_default(),
+            db_explore: text("FRESHKUBE_DB_EXPLORE").unwrap_or_default(),
             page: text("FRESHKUBE_PAGE"),
             kind: text("FRESHKUBE_KIND"),
             theme: match text("FRESHKUBE_THEME").as_deref() {

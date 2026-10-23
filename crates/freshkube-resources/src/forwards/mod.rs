@@ -175,7 +175,7 @@ impl ForwardList {
     }
 
     /// Takes an ended forward off the list.
-    pub(crate) fn remove(&mut self, id: u64, cx: &mut Context<Self>) {
+    pub fn remove(&mut self, id: u64, cx: &mut Context<Self>) {
         self.stop(id, cx);
         self.items.retain(|item| item.read(cx).id != id);
         self.observers.remove(&id);
