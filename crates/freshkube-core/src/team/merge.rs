@@ -149,6 +149,9 @@ pub struct ClusterView {
     pub level: Origin,
     /// Your level was looser than the floor, so the floor applies.
     pub floor_held: bool,
+    /// The level the team's file and your overrides settle on, floor held;
+    /// none when neither sets one.
+    pub resolved: Option<Protection>,
 }
 
 impl ClusterView {
@@ -160,6 +163,22 @@ impl ClusterView {
     /// Why the looser levels are off; none without a floor.
     pub fn floor_words(&self) -> Option<String> {
         self.floor.map(floor_words)
+    }
+
+    /// The level that applies to a cluster whose own entry says `own` (none
+    /// reads as the default): the strictest of that, the level you and the
+    /// team settled on and the team's floor. The second is whether the floor
+    /// is what raised it above `own`.
+    pub fn effective(&self, own: Option<Protection>) -> (Protection, bool) {
+        let base = own.unwrap_or_default();
+        let level = [self.resolved, self.floor]
+            .into_iter()
+            .flatten()
+            .fold(base, Protection::min);
+        let raised = self
+            .floor
+            .is_some_and(|floor| floor < base && level == floor);
+        (level, raised)
     }
 }
 
@@ -183,5 +202,6 @@ pub fn cluster_view(id: &str, team: &Values, yours: &Overrides) -> Option<Cluste
         floor: floor(id, team),
         level: level.origin,
         floor_held: level.floor_held,
+        resolved: self::level(level.value.as_ref()),
     })
 }

@@ -460,7 +460,8 @@ fn the_inspector_says_why_looser_levels_are_off(cx: &mut TestAppContext) {
 fn a_waiting_version_shows_a_banner_and_a_status_item_until_it_is_applied(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = clusters(cx, Shape::Update);
     assert!(visible(cx, handle, "team-banner"));
-    assert!(label(cx, handle, "team-update-status").contains("e4f5a6b"));
+    let status = label(cx, handle, "team-update-status");
+    assert!(status.contains("e4f5a6b"), "{status}");
     // The banner sits above the table and inside the window.
     cx.update_window(handle, |_, window, _| {
         let banner = window.find("team-banner").bounds();
@@ -617,4 +618,175 @@ fn the_banner_fits_the_smallest_window_at_the_largest_text(cx: &mut TestAppConte
         assert!(banner.top() >= gpui_kit::px(0.));
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_chip_for_your_own_value_says_so_in_a_tooltip(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = clusters(cx, Shape::Joined);
+    for id in ["settings-cluster-core-fra-origin"] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.hover(id, cx);
+        })
+        .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(600));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        assert!(freshkube_ui::tooltip::drawn("Yours · over the team’s") > 0);
+    }
+}
+
+#[gpui_kit::test]
+fn the_banner_mentions_trust_changes_only_when_there_are_some(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = clusters(cx, Shape::Update);
+    let plain = label(cx, handle, "team-banner");
+    assert!(!plain.contains("trust"), "{plain}");
+    let (_runtime, handle, _view) = clusters(cx, Shape::Trust);
+    let trust = label(cx, handle, "team-banner");
+    assert!(trust.contains("trust changes first"), "{trust}");
+}
+
+#[gpui_kit::test]
+fn the_status_item_is_short_fits_a_small_window_and_opens_by_keyboard(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open_on(
+        cx,
+        "settings-clusters",
+        Some(Shape::Update),
+        (760., 560.),
+        Some(20.),
+    );
+    cx.update_window(handle, |_, window, _| {
+        let item = window.find("team-update-status").bounds();
+        assert!(item.left() >= gpui_kit::px(0.), "{item:?}");
+        assert!(item.right() <= window.viewport_size().width, "{item:?}");
+        assert_eq!(
+            window.find("team-update-status-text").label(),
+            Some("Team update waits")
+        );
+    })
+    .unwrap();
+    // Tab from the end of the window reaches the item, and Enter opens it.
+    for _ in 0..8 {
+        if visible(cx, handle, "team-update") {
+            break;
+        }
+        cx.update_window(handle, |_, window, cx| {
+            window.focus_prev(cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    }
+    assert!(visible(cx, handle, "team-update"));
+}
+
+#[gpui_kit::test]
+fn the_banner_lines_up_with_the_title_and_the_table_on_clusters(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = clusters(cx, Shape::Update);
+    cx.update_window(handle, |_, window, _| {
+        let banner = window.find("team-banner-content").bounds();
+        let title = window.find("settings-title").bounds();
+        let row = window.find("settings-cluster-core-fra").bounds();
+        let one = gpui_kit::px(1.);
+        assert!(
+            (banner.left() - title.left()).abs() <= one,
+            "banner {banner:?} title {title:?}"
+        );
+        assert!(
+            (banner.right()
+                - (row.right() - crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window)))
+            .abs()
+                <= one,
+            "banner {banner:?} row {row:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_form_section_keeps_the_banner_inside_the_page_margins(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open_on(
+        cx,
+        "settings-general",
+        Some(Shape::Update),
+        (1280., 880.),
+        None,
+    );
+    cx.update_window(handle, |_, window, _| {
+        let banner = window.find("team-banner").bounds();
+        assert!(banner.left() >= gpui_kit::px(26.), "{banner:?}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn review_is_held_back_by_unsaved_edits(cx: &mut TestAppContext) {
+    use crate::desktop::Page;
+    use crate::desktop::settings::SettingsSection;
+    use crate::desktop::settings::edit_tests::{open_settings, write};
+    use crate::desktop::settings::tests::launch;
+    use freshkube_core::write::Protection;
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        r#"{"version":1,"clusters":[{"id":"mgmt","role":"core","context":"acme-mgmt"}]}"#,
+    );
+    let (_runtime, handle, view) = launch(cx, dir.path());
+    open_settings(cx, handle, &view).await;
+    let settings = page(cx, &view);
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.set_team_for_test("version: 1\nclusters:\n  - id: mgmt\n    role: core\n", cx);
+            page.team_fetched(Ok(newer("zz-waiting")), chrono::Utc::now(), cx);
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-cluster-mgmt", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // An unsaved level in the Inspector.
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.set_entry_protection(Protection::ReadOnly, cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("team-banner-review", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-unsaved-dialog").visible());
+        window.click("settings-unsaved-stay", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        assert_eq!(view.read(cx).navigation.page, Page::Settings);
+        assert_eq!(settings.read(cx).section(), SettingsSection::Clusters);
+    });
+    // Discarding lets Review through to Team setup.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("team-banner-review", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-unsaved-discard", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| assert_eq!(settings.read(cx).section(), SettingsSection::Team));
 }

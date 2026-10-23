@@ -529,21 +529,26 @@ impl Pilot {
     /// The status-bar item for a team version waiting for review (#849). It
     /// stays while the person has put the review off; it opens Team setup.
     fn render_team_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let words = self.settings_page.read(cx).team_waiting_words()?.to_owned();
+        let (segment, words) = self.settings_page.read(cx).team_waiting_status()?.clone();
+        let text = freshkube_ui::status::segment("team-update-status-text", &segment, None, cx)?;
+        // A button, so Tab reaches it and Enter or Space opens the review.
         Some(
             div()
                 .id("team-update-status")
                 .test_support()
-                .role(Role::Button)
-                .aria_label(words.clone())
+                .aria_label(words)
                 .flex_none()
-                .cursor_pointer()
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.settings_page
-                        .update(cx, |page, cx| page.team_review_open(cx));
-                    this.show_settings(SettingsSection::Team, window, cx);
-                }))
-                .child(words)
+                .child(
+                    Button::new("team-update-button")
+                        .ghost()
+                        .xsmall()
+                        .child(text)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.settings_page
+                                .update(cx, |page, cx| page.team_review_open(cx));
+                            this.show_settings(SettingsSection::Team, window, cx);
+                        })),
+                )
                 .into_any_element(),
         )
     }

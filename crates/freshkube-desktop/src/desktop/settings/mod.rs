@@ -97,6 +97,11 @@ pub(crate) struct ClusterRow {
     talosconfig: SharedString,
     /// What the file sets; `None` reads as guarded, by default.
     protection: Option<freshkube_core::write::Protection>,
+    /// The level that applies: `protection` or the default, never looser than
+    /// the team's floor. Derived with the rows and the team (`derive_levels`).
+    level: freshkube_core::write::Protection,
+    /// The team's floor is what raised `level` above `protection`.
+    floor_raised: bool,
     /// The row's tooltip: the cluster, the talosconfig path in full and the
     /// note about how it opened, if there is one.
     tooltip: SharedString,
@@ -492,10 +497,13 @@ impl SettingsPage {
                     context: entry.context.clone().into(),
                     talosconfig: talosconfig.into(),
                     protection: entry.protection,
+                    level: entry.protection.unwrap_or_default(),
+                    floor_raised: false,
                     tooltip: tooltip.into(),
                 }
             })
             .collect();
+        self.derive_levels();
         self.banner = match &origin {
             Origin::Refused(why) => Some(
                 format!(

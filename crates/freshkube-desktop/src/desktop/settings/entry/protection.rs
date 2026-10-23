@@ -62,9 +62,8 @@ impl Level {
 
     /// What the group says under the choice: the level's meaning, that an
     /// unset level is guarded, and what enforces it today.
-    fn hint(&self) -> String {
-        let shown = self.values.shown();
-        let unset = if self.values.level.is_none() {
+    fn hint(&self, shown: Protection, raised: bool) -> String {
+        let unset = if self.values.level.is_none() && !raised {
             "Not set in freshkube.yaml: guarded. "
         } else {
             ""
@@ -82,7 +81,11 @@ impl Level {
         team: Option<&ClusterView>,
         cx: &Context<SettingsPage>,
     ) -> AnyElement {
-        let shown = self.values.shown();
+        // Never looser than the team's floor, whatever the draft holds.
+        let (shown, raised) = match team {
+            Some(view) => view.effective(self.values.level),
+            None => (self.values.shown(), false),
+        };
         // The team's level is a floor: the looser levels are off, and the
         // group says why.
         let allowed = team.map(ClusterView::allowed);
@@ -115,9 +118,18 @@ impl Level {
                 .aria_label(words.clone())
                 .child(words)
         });
+        let raised = raised.then(|| {
+            let words = format!("{} · team floor", shown.label());
+            div()
+                .id("settings-protection-raised")
+                .test_support()
+                .aria_label(words.clone())
+                .child(words)
+        });
         let hint = v_flex()
             .gap(ui::dp(4.))
-            .child(div().child(self.hint()))
+            .child(div().child(self.hint(shown, raised.is_some())))
+            .children(raised)
             .children(floor);
         let page = cx.weak_entity();
         form::group("settings-protection", "Protection")

@@ -180,13 +180,20 @@ impl TableSource for SettingsPage {
             },
             Field::Role => text_cell("role", &row.role).into_any_element(),
             Field::Protection => {
-                // An unset level is guarded, and says it is the default.
-                let level = row.protection.unwrap_or_default();
+                // The level that applies: an unset one is guarded and says it
+                // is the default; one the team's floor raised says so.
+                let level = row.level;
                 let id = format!("settings-cluster-{}-protection", row.id);
-                let words = if row.protection.is_none() {
-                    format!("{} · default", level.label())
+                let note = if row.floor_raised {
+                    Some("· team floor")
+                } else if row.protection.is_none() {
+                    Some("· default")
                 } else {
-                    level.label().to_owned()
+                    None
+                };
+                let words = match note {
+                    Some(note) => format!("{} {note}", level.label()),
+                    None => level.label().to_owned(),
                 };
                 table::cell(column)
                     .id(SharedString::from(format!("{id}-cell")))
@@ -203,16 +210,17 @@ impl TableSource for SettingsPage {
                         .test_support()
                         .aria_label(words.clone()),
                     )
-                    .when(row.protection.is_none(), |this| {
+                    .when_some(note, |this, note| {
+                        let kind = if row.floor_raised { "floor" } else { "default" };
                         this.child(
                             div()
-                                .id(SharedString::from(format!("{id}-default")))
+                                .id(SharedString::from(format!("{id}-{kind}")))
                                 .test_support()
-                                .aria_label("· default")
+                                .aria_label(note)
                                 .text_size(dp(12.))
                                 .text_color(style.p.muted)
                                 .whitespace_nowrap()
-                                .child("· default"),
+                                .child(note),
                         )
                     })
                     .into_any_element()

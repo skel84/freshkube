@@ -9,6 +9,7 @@ use freshkube_core::team::{
     Change, ChangeKind, ClusterView, Leave, Membership, NotReviewed, Origin, Review, Step,
     cluster_view, example::Shape, resolve,
 };
+use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{form, page};
 use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -18,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use freshkube_ui::tooltip::FollowTooltip as _;
 
-use super::SettingsPage;
+use super::{SettingsPage, SettingsSection};
 use crate::ui::{self, Tone, dp};
 
 /// What the section holds: the membership, the review of a waiting version,
@@ -76,10 +77,13 @@ pub(super) struct Shown {
     yours: Vec<YoursRow>,
     /// Each cluster the team or you set something for, against the team.
     clusters: BTreeMap<String, ClusterView>,
-    /// The status-bar item's words while a version waits.
-    waiting: Option<String>,
+    /// The status-bar item while a version waits: a short line, the version
+    /// in its tooltip.
+    waiting: Option<(Segment, String)>,
     /// The review: its lead, its count line and the rows of the current step.
     lead: &'static str,
+    /// What the banner above the other sections says about the order.
+    banner: &'static str,
     pub(super) counts: String,
     step: Option<Step>,
     rows: Vec<ChangeRow>,
@@ -152,6 +156,11 @@ impl TeamState {
                 Step::Trust => "A new team version waits: review trust changes first",
                 Step::Rest => "A new team version waits: review the other changes",
             };
+            shown.banner = if review.trust_changes().next().is_some() {
+                "It applies only after you review it, trust changes first."
+            } else {
+                "It applies only after you review it."
+            };
             shown.counts = counts(review);
             let listed: Vec<&Change> = match step {
                 Step::Trust => review.trust_changes().collect(),
@@ -169,10 +178,15 @@ impl TeamState {
                 })
                 .collect();
         }
-        shown.waiting = self
-            .review
-            .as_ref()
-            .map(|review| format!("Team update {} waits", review.target_id()));
+        shown.waiting = self.review.as_ref().map(|review| {
+            let id = review.target_id();
+            (
+                Segment::new(None::<&str>, [Part::new("Team update waits")]).note(format!(
+                    "Version {id} waits for your review. Opens Team setup."
+                )),
+                format!("Team update waits · version {id}"),
+            )
+        });
         shown.refusal = self.refusal.map(|why| why.to_string());
         self.shown = shown;
     }
@@ -218,6 +232,7 @@ pub(super) fn origin_chip(id: String, origin: Origin, cx: &App) -> Option<AnyEle
             .id(SharedString::from(id))
             .test_support()
             .aria_label(origin.words())
+            .follow_tooltip(origin.words())
             .into_any_element(),
     )
 }
@@ -345,9 +360,22 @@ fn change_line(change: &Change) -> String {
 }
 
 impl SettingsPage {
+    /// Sets each row's level against the team's floor. Run whenever the rows
+    /// or the team change, so a draw only reads it.
+    pub(super) fn derive_levels(&mut self) {
+        let views = &self.team.shown.clusters;
+        for row in &mut self.rows {
+            (row.level, row.floor_raised) = match views.get(row.id.as_ref()) {
+                Some(view) => view.effective(row.protection),
+                None => (row.protection.unwrap_or_default(), false),
+            };
+        }
+    }
+
     /// Plays an example team (`--fixture`).
     pub(in crate::desktop) fn set_team_example(&mut self, shape: Shape, cx: &mut Context<Self>) {
         self.team = TeamState::example(shape, Utc::now());
+        self.derive_levels();
         self.refit_columns();
         cx.notify();
     }
@@ -574,19 +602,33 @@ impl SettingsPage {
             .label("Review")
             .on_click(move |_, _, cx| this.update(cx, |page, cx| page.team_banner_open(cx)))
             .into_any_element();
-        Some(
-            div()
-                .id("team-banner")
-                .test_support()
+        let banner = ui::banner(
+            Tone::Info,
+            Some("A new team version waits".into()),
+            self.team.shown.banner,
+            Some(review),
+            cx,
+        )
+        .id("team-banner-content")
+        .test_support();
+        // A table section's banners take the header's inset and the whole
+        // width; a form section's sit inside the page margins, no wider than
+        // its groups.
+        let framed = match self.section {
+            SettingsSection::Clusters
+            | SettingsSection::Destinations
+            | SettingsSection::Sources
+            | SettingsSection::AuditLog => page::inset().w_full().child(banner),
+            _ => div()
                 .px(dp(page::PAGE_PADDING))
                 .pt(dp(page::PAGE_GAP))
-                .child(contained(ui::banner(
-                    Tone::Info,
-                    Some("A new team version waits".into()),
-                    "It applies only after you review it, trust changes first.",
-                    Some(review),
-                    cx,
-                )))
+                .child(contained(banner)),
+        };
+        Some(
+            framed
+                .id("team-banner")
+                .test_support()
+                .aria_label(self.team.shown.banner)
                 .into_any_element(),
         )
     }
@@ -671,6 +713,7 @@ impl SettingsPage {
             ..TeamState::default()
         };
         self.team.derive();
+        self.derive_levels();
         self.refit_columns();
         cx.notify();
     }
@@ -714,8 +757,8 @@ impl SettingsPage {
     }
 
     /// The status-bar item's words while a version waits for review.
-    pub(in crate::desktop) fn team_waiting_words(&self) -> Option<&str> {
-        self.team.shown.waiting.as_deref()
+    pub(in crate::desktop) fn team_waiting_status(&self) -> Option<&(Segment, String)> {
+        self.team.shown.waiting.as_ref()
     }
 
     /// How many reviewed versions this page has applied.
@@ -748,6 +791,7 @@ impl SettingsPage {
             self.team.refusal = None;
         }
         self.team.derive();
+        self.derive_levels();
         cx.notify();
     }
 
@@ -781,6 +825,7 @@ impl SettingsPage {
                 }
             }
             self.team.derive();
+            self.derive_levels();
         }
         cx.notify();
     }
@@ -793,6 +838,7 @@ impl SettingsPage {
             self.team.left = Some(how);
             self.team.later = false;
             self.team.derive();
+            self.derive_levels();
             self.refit_columns();
             cx.notify();
         }
