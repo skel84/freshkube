@@ -2182,3 +2182,108 @@ fn banners_use_the_room_the_trail_leaves_at_the_default_text_size(cx: &mut TestA
     })
     .unwrap();
 }
+
+/// #927: a toast shows at the bottom right, above the status bar and the
+/// Inspector's actions, so while one stays the header's buttons, the
+/// actions and the toast's own Undo can all be pressed.
+#[gpui_kit::test]
+fn a_toast_covers_neither_the_header_nor_the_inspector_actions(cx: &mut TestAppContext) {
+    use gpui_kit::component::{WindowExt as _, button::Button, notification::Notification};
+    use gpui_kit::prelude::*;
+    use gpui_kit::{TestSupportExt as _, div};
+    use std::{cell::Cell, rc::Rc};
+
+    let followed_runtime = tokio::runtime::Runtime::new().unwrap();
+    cx.update(|cx| {
+        freshkube_followed::owner::install(
+            freshkube_followed::owner::Options {
+                runtime: followed_runtime.handle().clone(),
+                preferences: None,
+                script: None,
+            },
+            cx,
+        )
+    });
+    for (width, height, text) in [(1280., 880., 13.), (760., 560., 13.), (1280., 880., 20.)] {
+        let (_runtime, handle, _view) = open(cx, width, height);
+        let undone = Rc::new(Cell::new(false));
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            let heard = undone.clone();
+            let note = Notification::new()
+                .title("Refreshed the Warehouse")
+                .content(|_, _, _| {
+                    div()
+                        .id("toast-probe")
+                        .test_support()
+                        .w_full()
+                        .child("A toast that stays until it's closed")
+                        .into_any_element()
+                })
+                .action(move |_, _, _| {
+                    let heard = heard.clone();
+                    Button::new("toast-probe-undo")
+                        .label("Undo")
+                        .on_click(move |_, _, _| heard.set(true))
+                });
+            window.push_notification(note, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let at = format!("{width}x{height} at {text}");
+            // The card: its content and button inside Kit's padding.
+            let toast = window
+                .find("toast-probe")
+                .bounds()
+                .union(&window.find("toast-probe-undo").bounds())
+                .dilate(gpui_kit::px(16.));
+            let status = window.find("status-bar").bounds();
+            assert!(
+                toast.bottom() <= status.top(),
+                "{at}: {toast:?} over the status bar"
+            );
+            assert!(
+                toast.right() <= window.viewport_size().width,
+                "{at}: {toast:?} in the window"
+            );
+            let header = window.find("change-toolbar").bounds();
+            assert!(
+                !toast.intersects(&header),
+                "{at}: {toast:?} over the header {header:?}"
+            );
+            // Wide and at the default size every one shows; narrower, the
+            // header folds some away and the Inspector stacks.
+            let roomy = width == 1280. && text == 13.;
+            for id in [
+                "change-detail-actions",
+                "change-copy-link",
+                "change-follow-trigger",
+            ] {
+                let part = window.try_find(id).filter(|part| part.visible());
+                assert!(part.is_some() || !roomy, "{at}: {id} shows");
+                if let Some(part) = part {
+                    let part = part.bounds();
+                    assert!(
+                        !toast.intersects(&part),
+                        "{at}: {toast:?} over {id} {part:?}"
+                    );
+                }
+            }
+            if let Some(copy) = window.try_find("change-copy-link").filter(|c| c.visible()) {
+                assert_eq!(copy.label(), Some("Copy the Freight's Kargo address"));
+                window.click("change-copy-link", cx);
+                window.render_frame(cx);
+                assert_eq!(
+                    window.find("change-copy-link").label(),
+                    Some("Copied the Freight's Kargo address"),
+                    "{at}: the header's button takes the click"
+                );
+            }
+            window.click("toast-probe-undo", cx);
+            assert!(undone.get(), "{at}: the toast's Undo takes the click");
+        })
+        .unwrap();
+    }
+}

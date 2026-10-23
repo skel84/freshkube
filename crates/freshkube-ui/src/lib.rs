@@ -30,6 +30,7 @@ pub mod stream_status;
 pub mod table;
 pub mod text_size;
 pub mod theme;
+pub mod toast;
 pub mod tooltip;
 pub mod ui;
 pub mod url;
