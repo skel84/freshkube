@@ -183,6 +183,12 @@ pub(crate) struct AgentView {
     /// The tail of the speech so far, so a citation split across two chunks
     /// is still read without scanning the whole answer again.
     cite_carry: String,
+    /// What each failed step of Freshkube's own reads stands for, by its
+    /// entry's index: refused, or a read that broke. Derived when a step or a
+    /// read arrives, by the order of the turn's steps and reads.
+    step_marks: std::collections::HashMap<usize, trail::Mark>,
+    #[cfg(test)]
+    targets: Option<std::sync::Arc<dyn freshkube_agent::Targets>>,
     /// The text of each transcript entry as shown, kept when it changes so a
     /// frame copies none of it.
     texts: Vec<SharedString>,
@@ -265,6 +271,9 @@ impl AgentView {
             listening: None,
             focus: cx.focus_handle(),
             cite_carry: String::new(),
+            step_marks: Default::default(),
+            #[cfg(test)]
+            targets: None,
             texts: Vec::new(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             _subscriptions: subscriptions,
@@ -575,7 +584,13 @@ impl AgentView {
         let launch = run::Launch {
             entry: own.entry.clone(),
             gate: self.host.gate.clone(),
-            targets: DockTargets::new(&own, workspace.as_ref()).shared(),
+            targets: {
+                #[cfg(test)]
+                let injected = self.targets.clone();
+                #[cfg(not(test))]
+                let injected = None;
+                injected.unwrap_or_else(|| DockTargets::new(&own, workspace.as_ref()).shared())
+            },
             agent,
         };
         let (job, commands, mut receiver) = run::start(&self.runtime, launch);
@@ -624,7 +639,49 @@ impl AgentView {
                 }
             }
         }
+        self.refresh_steps();
         cx.notify();
+    }
+
+    /// Says what each failed step of Freshkube's own reads stands for. A
+    /// turn's steps of ours and its reads come in the same order, so the
+    /// k-th step is the k-th read; a failed step with no read has failed for
+    /// another reason and stays Failed.
+    fn refresh_steps(&mut self) {
+        if self.investigation.trimmed() {
+            // Indices moved when text was trimmed off the front.
+            self.step_marks.clear();
+        }
+        let entries = self.investigation.entries();
+        let Some(start) = entries
+            .iter()
+            .rposition(|entry| matches!(entry, Entry::Asked(_)))
+        else {
+            return;
+        };
+        let reads: Vec<trail::Mark> = self
+            .trail
+            .rows()
+            .iter()
+            .filter(|row| row.number > 0)
+            .map(|row| row.mark)
+            .collect();
+        let mut next = 0;
+        for (ix, entry) in entries.iter().enumerate().skip(start) {
+            let Entry::Step(step) = entry else {
+                continue;
+            };
+            if !is_ours(&step.tool) {
+                continue;
+            }
+            if step.state == freshkube_agent::investigation::StepState::Failed
+                && let Some(mark @ (trail::Mark::Refused | trail::Mark::CouldntRead)) =
+                    reads.get(next)
+            {
+                self.step_marks.insert(ix, *mark);
+            }
+            next += 1;
+        }
     }
 
     fn record(&mut self, event: Event, cx: &mut Context<Self>) {
@@ -704,6 +761,11 @@ impl AgentView {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_targets(&mut self, targets: std::sync::Arc<dyn freshkube_agent::Targets>) {
+        self.targets = Some(targets);
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_script(&mut self, script: Script) {
         self.script = Some(script);
     }
@@ -777,6 +839,21 @@ impl AgentView {
     pub(crate) fn host(&self) -> AgentHost {
         self.host.clone()
     }
+}
+
+/// Whether a step's tool is one of Freshkube's four reads, under the names
+/// the agents use for an MCP tool.
+fn is_ours(tool: &str) -> bool {
+    use freshkube_agent::tools::{SERVER, TOOLS};
+    TOOLS.iter().any(|name| {
+        [
+            format!("{SERVER}_{name}"),
+            format!("mcp__{SERVER}__{name}"),
+            format!("mcp.{SERVER}.{name}"),
+        ]
+        .iter()
+        .any(|ours| ours == tool)
+    })
 }
 
 /// An entry of the setup other than `own`, for the example's read on another

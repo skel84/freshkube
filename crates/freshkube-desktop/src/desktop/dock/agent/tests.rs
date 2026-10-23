@@ -294,6 +294,12 @@ fn turning_access_off_ends_a_read_in_flight(cx: &mut TestAppContext) {
     let view = tab.view.clone();
     let steps = cx.update(|cx| view.read(cx).steps());
     assert!(steps.iter().all(|(_, state)| *state == StepState::Failed));
+    // Access off is a refusal, not a read that broke.
+    for (id, _) in &steps {
+        let id: &'static str = Box::leak(format!("agent-step-{id}").into_boxed_str());
+        let label = tab.label(id, cx).unwrap();
+        assert!(label.ends_with("Refused"), "{label}");
+    }
     // agent.json and the audit line record it.
     let (grants, audit) = cx.update(|cx| {
         let host = view.read(cx).host();
@@ -921,4 +927,70 @@ fn a_temporary_host_removes_its_directory_when_it_is_dropped(cx: &mut TestAppCon
     drop(host);
     assert!(!dir.exists());
     let _ = cx;
+}
+
+/// A cluster nothing can be asked of.
+struct Unreachable;
+
+impl freshkube_core::cluster_source::KubeClientSource for Unreachable {
+    fn client(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>>
+    {
+        Box::pin(async {
+            Err(freshkube_core::failure::Failure::new(
+                freshkube_core::failure::FailureKind::Unreachable,
+                "no route to host",
+            ))
+        })
+    }
+}
+
+struct DeadCluster;
+
+impl freshkube_agent::Targets for DeadCluster {
+    fn resolve(
+        &self,
+        _: Option<&freshkube_core::agent_reads::EntryId>,
+    ) -> Option<freshkube_core::agent_reads::AgentTarget> {
+        Some(freshkube_core::agent_reads::AgentTarget {
+            entry: "prod-fra".into(),
+            context: "prod-fra".into(),
+            source: freshkube_core::agent_reads::Source::Live(
+                freshkube_core::cluster_source::ClusterAccess::Live(std::sync::Arc::new(
+                    Unreachable,
+                )),
+            ),
+        })
+    }
+}
+
+#[gpui_kit::test]
+fn a_read_that_broke_reads_couldnt_read_and_not_refused(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    tab.view.update(cx, |view, _| {
+        view.with_targets(std::sync::Arc::new(DeadCluster))
+    });
+    tab.script(tour(Duration::ZERO), cx);
+    tab.ask("why is api restarting?", cx);
+    tab.click("agent-turn-on", cx);
+    tab.answered(cx);
+
+    // The cluster did not answer: the trail says the reads broke, in amber,
+    // and the steps say the same.
+    let rows = tab.rows(cx);
+    assert_eq!(rows.len(), 3);
+    assert!(
+        rows.iter()
+            .all(|row| row.mark == Mark::CouldntRead
+                && row.place == "The cluster couldn't be reached"),
+        "{rows:?}"
+    );
+    let steps = cx.update(|cx| tab.view.read(cx).steps());
+    assert!(steps.iter().all(|(_, state)| *state == StepState::Failed));
+    for (id, _) in steps {
+        let id: &'static str = Box::leak(format!("agent-step-{id}").into_boxed_str());
+        let label = tab.label(id, cx).unwrap();
+        assert!(label.ends_with("Couldn't read"), "{label}");
+    }
 }

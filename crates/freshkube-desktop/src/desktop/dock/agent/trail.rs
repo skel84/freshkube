@@ -19,8 +19,13 @@ pub(crate) enum Mark {
     Evidence,
     /// The agent cited it as `[r7]` in its words.
     Cited,
-    /// Not read: access off, the cluster refused, or a shell asked for.
+    /// Not read because the app or the cluster said no: access off, another
+    /// context, a tool that isn't one of the four reads, a kind that isn't
+    /// served, a 401 or 403, or a bound. Neutral: nothing broke.
     Refused,
+    /// The read broke: the cluster was unreachable, it took too long, or the
+    /// server's answer was an error or couldn't be read.
+    CouldntRead,
 }
 
 impl Mark {
@@ -29,6 +34,7 @@ impl Mark {
             Self::Evidence => "evidence",
             Self::Cited => "cited",
             Self::Refused => "refused",
+            Self::CouldntRead => "couldn't read",
         }
     }
 }
@@ -70,7 +76,14 @@ impl Trail {
         }
         let number = event.read.number();
         let (place, mark) = match &event.outcome {
-            Outcome::Refused(code) => (refusal(*code).to_owned(), Mark::Refused),
+            Outcome::Refused(code) => (
+                refusal(*code).to_owned(),
+                if broke(*code) {
+                    Mark::CouldntRead
+                } else {
+                    Mark::Refused
+                },
+            ),
             Outcome::Answered { .. } => (
                 event.view.as_ref().map(place).unwrap_or_default(),
                 if self.cited.contains(&number) {
@@ -149,6 +162,22 @@ pub(crate) fn citations(text: &str) -> Vec<u32> {
     found
 }
 
+/// Whether a refused read's code means the read broke, rather than that
+/// something said no.
+pub(crate) fn broke(code: Code) -> bool {
+    match code {
+        Code::Unreachable | Code::TimedOut | Code::Failed => true,
+        Code::Invalid
+        | Code::UnknownCluster
+        | Code::NotEnabled
+        | Code::Refused
+        | Code::NotFound
+        | Code::NotServed
+        | Code::TooLarge
+        | Code::LimitReached => false,
+    }
+}
+
 /// A refusal in words, for the trail.
 fn refusal(code: Code) -> &'static str {
     match code {
@@ -196,6 +225,25 @@ fn place(view: &freshkube_nav::ViewState) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_broken_read_is_not_a_refusal() {
+        for code in [Code::Unreachable, Code::TimedOut, Code::Failed] {
+            assert!(broke(code), "{code}");
+        }
+        for code in [
+            Code::NotEnabled,
+            Code::UnknownCluster,
+            Code::Refused,
+            Code::NotServed,
+            Code::NotFound,
+            Code::TooLarge,
+            Code::LimitReached,
+            Code::Invalid,
+        ] {
+            assert!(!broke(code), "{code}");
+        }
+    }
 
     #[test]
     fn citations_are_bounded_and_exact() {

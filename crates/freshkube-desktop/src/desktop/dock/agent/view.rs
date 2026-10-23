@@ -416,7 +416,7 @@ impl AgentView {
         )
     }
 
-    fn render_step(&self, step: &Step, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_step(&self, ix: usize, step: &Step, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let over = self.investigation.outcome() != Outcome::Running;
         let (tone, state) = match step.state {
@@ -433,9 +433,15 @@ impl AgentView {
             StepState::Done => (Tone::Good, "Done"),
             // A tool that isn't one of Freshkube's four is refused by the
             // app; that is not the app failing.
-            // A read of ours that failed is on the trail as refused, so the
-            // transcript says the same.
-            StepState::Failed => (Tone::Unknown, "Refused"),
+            // A read of ours that failed is what its trail row says: refused
+            // (neutral) or a read that broke (amber). Failed is for a step
+            // whose failure isn't a read's.
+            StepState::Failed if !super::is_ours(&step.tool) => (Tone::Unknown, "Refused"),
+            StepState::Failed => match self.step_marks.get(&ix) {
+                Some(TrailMark::Refused) => (Tone::Unknown, "Refused"),
+                Some(TrailMark::CouldntRead) => (Tone::Warn, "Couldn't read"),
+                _ => (Tone::Crit, "Failed"),
+            },
         };
         h_flex()
             .id(SharedString::from(format!("agent-step-{}", step.id)))
@@ -492,7 +498,7 @@ impl AgentView {
                     .text_color(p.warn_ink)
                     .child(self.texts[ix].clone())
                     .into_any_element(),
-                Entry::Step(step) => self.render_step(step, cx).into_any_element(),
+                Entry::Step(step) => self.render_step(ix, step, cx).into_any_element(),
             })
             .collect();
         let outcome = match self.investigation.outcome() {
@@ -538,6 +544,8 @@ impl AgentView {
             TrailMark::Cited => Tone::Good,
             // Neutral, as the transcript's Refused is: the app refused it.
             TrailMark::Refused => Tone::Unknown,
+            // The read broke: amber, not red.
+            TrailMark::CouldntRead => Tone::Warn,
         };
         v_flex()
             .id(SharedString::from(format!("agent-trail-{}", row.id)))
