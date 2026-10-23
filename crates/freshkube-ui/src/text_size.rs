@@ -129,9 +129,9 @@ fn step(by: isize, cx: &mut App) {
     set(STEPS[next], cx);
 }
 
-/// Writes the size into both registered themes and reloads the current one.
-/// Kit reloads a theme's font sizes with it, so an appearance change keeps
-/// the size.
+/// Writes the size into both registered themes, places the toasts for it
+/// and reloads the current theme. Kit reloads a theme's font sizes with it,
+/// so an appearance change keeps the size.
 fn apply(cx: &mut App) {
     let size = current(cx);
     let theme = Theme::global_mut(cx);
@@ -142,6 +142,7 @@ fn apply(cx: &mut App) {
         *config = Rc::new(sized);
     }
     let mode = theme.mode;
+    crate::toast::place(size, cx);
     Theme::change(mode, None, cx);
 }
 

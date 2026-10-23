@@ -58,6 +58,7 @@ pub mod security_lifecycle;
 pub mod setup;
 pub mod snapshot;
 pub mod talos_nodes;
+pub mod team;
 pub mod types;
 pub mod workloads;
 pub mod workspace;

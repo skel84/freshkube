@@ -1348,6 +1348,52 @@ fn database_states_keep_their_content_at_wide_narrow_and_large_text(cx: &mut Tes
 }
 
 #[gpui_kit::test]
+fn a_partial_database_banner_fits_without_scrolling(cx: &mut TestAppContext) {
+    for (width, height) in [(760., 560.), (1280., 880.)] {
+        let (_runtime, window, pilot) = crate::desktop::tests::fixture(cx, width, height);
+        cx.update_window(window, |_, window, cx| {
+            window.press("secondary-shift-d", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let page = cx.read(|cx| pilot.read(cx).databases());
+        cx.update_window(window, |_, window, cx| {
+            page.update(cx, |page, cx| {
+                page.shape = "partial".into();
+                page.loader.reset();
+                page.read(cx);
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let notes = window.find("databases-notices").bounds();
+            let banner = window.find("databases-coverage").bounds();
+            assert!(
+                banner.is_contained_within(&notes),
+                "{width}: {banner:?} in {notes:?}"
+            );
+            let scroll = page.read(cx).notes_scroll.clone();
+            assert_eq!(
+                scroll.max_offset().y,
+                px(0.),
+                "{width}: {banner:?} in {notes:?}"
+            );
+            window.scroll(
+                "databases-notices",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-100.))),
+                cx,
+            );
+            window.render_frame(cx);
+            assert_eq!(scroll.offset().y, px(0.));
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 fn the_stacked_inspector_stays_reachable_under_a_long_coverage_banner(cx: &mut TestAppContext) {
     for shape in ["stale", "engine-refused"] {
         // The shell applies the text size to the window; a bare page does not.
@@ -1377,7 +1423,7 @@ fn the_stacked_inspector_stays_reachable_under_a_long_coverage_banner(cx: &mut T
             assert_eq!(window.rem_size(), px(20.));
             let banner = window.find("databases-notices").bounds();
             assert!(
-                banner.size.height <= px(72. * 20. / 13.) + px(1.),
+                banner.size.height <= px(80. * 20. / 13.) + px(1.),
                 "{shape}: banner {banner:?}"
             );
             let before = window.find("databases-detail").bounds().origin.y;

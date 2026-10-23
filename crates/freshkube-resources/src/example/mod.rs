@@ -15,7 +15,8 @@ use super::rows::{self, PodState};
 use crate::fixture;
 
 /// Kinds the example data includes; the rest say so instead of listing.
-pub(crate) const KINDS: [&str; 12] = [
+pub(crate) const KINDS: [&str; 13] = [
+    "cronjobs.batch",
     "pods",
     "replicasets.apps",
     "events",
@@ -284,6 +285,10 @@ pub fn read(
         "replicasets.apps" | "events" | "persistentvolumeclaims" | "persistentvolumes" => {
             summary::extra_rows(&connection, context, key, now)
         }
+        "cronjobs.batch" => (
+            everyday::cronjob_columns(),
+            everyday::cronjobs(&connection, now),
+        ),
         "services" => (service_columns(), services(&connection, now)),
         "nodes" => (node_columns(), nodes(&connection, context, now)),
         "secrets" => (secret_columns(), secrets(&connection, now)),
@@ -961,6 +966,8 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 }
 
 mod acme;
+mod everyday;
+pub use everyday::{autoscaler_of, object_json};
 mod objects;
 mod summary;
 pub use objects::{document, events, pod_log, pod_log_line, secret_value};

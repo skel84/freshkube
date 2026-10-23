@@ -100,6 +100,7 @@ pub fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument>
         }
         "pods" => pod_yaml(&row, ix, created, now),
         "deployments.apps" => deployment_yaml(&row, ix, created),
+        "cronjobs.batch" => super::everyday::cronjob_yaml(&row, ix, created),
         "services" => service_yaml(&row, ix),
         "nodes" => node_yaml(&row, created),
         "namespaces" => format!(
@@ -471,7 +472,7 @@ fn sidecar_log(
 }
 
 pub(super) fn deployment_yaml(row: &ResourceRow, ix: usize, created: i64) -> String {
-    let (_, app, image, _) = WORKLOADS[ix % WORKLOADS.len()];
+    let (namespace, app, image, _) = WORKLOADS[ix % WORKLOADS.len()];
     let (replicas, available) = (&row.cells[2], &row.cells[3]);
     let progressing = if replicas == available {
         "NewReplicaSetAvailable"
@@ -485,7 +486,8 @@ pub(super) fn deployment_yaml(row: &ResourceRow, ix: usize, created: i64) -> Str
             "apps/v1",
             row,
             &format!(
-                "  generation: 3\n  labels:\n    app: {app}\n  annotations:\n    deployment.kubernetes.io/revision: '3'\n"
+                "  generation: 3\n  labels:\n    app: {app}\n  annotations:\n    deployment.kubernetes.io/revision: '3'\n{}",
+                super::everyday::gitops_annotation(namespace, app)
             ),
         ),
         if replicas == available {
