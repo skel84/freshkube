@@ -242,6 +242,11 @@ fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
         assert_eq!(screen.read(cx).namespace.as_deref(), Some("payments"));
         assert_eq!(screen.read(cx).query.read(cx).value(), identity.name);
         assert_eq!(shown(&screen, cx), Some(identity.clone()));
+        // A drawer already on the object stays open beside its logs (#922).
+        screen.update(cx, |screen, cx| {
+            screen.open_identity_on(identity.clone(), crate::Tab::Logs, window, cx);
+        });
+        assert_eq!(shown(&screen, cx), Some(identity.clone()));
         screen.update(cx, |screen, cx| {
             screen.set_namespace(Some("batch".into()), window, cx);
             screen.set_filter("does-not-match", window, cx);
@@ -249,8 +254,10 @@ fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
         });
         assert!(screen.read(cx).namespace.is_none());
         assert!(screen.read(cx).query.read(cx).value().is_empty());
-        assert_eq!(shown(&screen, cx), Some(identity));
-        // Logs open in the dock; the pane stays on its tab.
+        // Logs open in the dock: the row is selected, and the drawer,
+        // which the namespace closed, reads nothing and stays on its tab.
+        assert_eq!(screen.read(cx).selected_row(), Some(&identity));
+        assert_eq!(shown(&screen, cx), None);
         assert_eq!(screen.read(cx).detail.read(cx).tab(), crate::Tab::Overview);
         let missing = ResourceIdentity {
             name: "absent-from-list".into(),
