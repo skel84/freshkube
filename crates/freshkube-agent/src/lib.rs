@@ -25,6 +25,7 @@
 pub mod acp;
 mod child;
 pub mod endpoint;
+pub mod follow;
 pub mod investigation;
 pub mod profile;
 pub mod saved;
@@ -35,6 +36,7 @@ pub mod tools;
 
 pub use child::Link;
 pub use endpoint::{Endpoint, Outcome, ReadEvent, Targets, Timeouts};
+pub use follow::{Fed, Follower, Move};
 pub use saved::{Access, DataMode, Revoked};
 pub use session::{ReadId, SessionId, Token};
 

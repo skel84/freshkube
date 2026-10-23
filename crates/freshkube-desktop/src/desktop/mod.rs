@@ -1,4 +1,5 @@
 mod access;
+mod agent_follow;
 mod alerts;
 mod app_menu;
 #[cfg(test)]
@@ -336,6 +337,9 @@ pub(crate) struct Pilot {
     followed_offer: Option<followed::Offered>,
     config_error: Option<String>,
     config_loading: bool,
+    /// The strip's height is kept under a click that handed the page back,
+    /// until the pointer moves, so the click lands on the row it was on.
+    follow_spacer: bool,
     configuration_read: Loader<(), Option<ConfigurationRead>>,
     epoch: u64,
     overview: Snapshot<ClusterOverview, AppliedConfig, String>,
@@ -741,6 +745,8 @@ impl Pilot {
         // their connection, and an example seeds notices the toast shows.
         let followed = self.watch_followed(window, cx);
         self._subscriptions.extend(followed);
+        let keys = self.watch_follow_keys(cx);
+        self._subscriptions.push(keys);
         self.load_workspace(cx);
         self.rebuild_switcher(cx);
         // The followed-items example `hidden` is a protected cluster, so
@@ -884,6 +890,7 @@ impl Pilot {
             followed_offer: None,
             config_error: None,
             config_loading: false,
+            follow_spacer: false,
             configuration_read: Loader::default(),
             epoch: 0,
             overview: Snapshot::default(),
