@@ -13,6 +13,7 @@ fn quiet_rows(timeline: &Timeline) -> Vec<(i64, i64, Vec<Source>, Vec<Source>)> 
                 until,
                 read,
                 not_read,
+                ..
             } => Some((*from, *until, read.clone(), not_read.clone())),
             _ => None,
         })
@@ -66,6 +67,7 @@ fn events_stop_where_the_cluster_stops_keeping_them() {
             count: 2,
             kept_from: Some(NOW - EVENT_RETENTION),
             cut: None,
+            state_only: false,
         }
     );
     // A window the retention covers needs no marker.
@@ -113,7 +115,8 @@ fn a_source_cut_by_a_cap_says_so_and_speaks_for_no_quiet_hour() {
         ChipState::Read {
             count: 0,
             kept_from: None,
-            cut: Some("cut after 1000 events in shop".into())
+            cut: Some("cut after 1000 events in shop".into()),
+            state_only: false,
         }
     );
     // Every hour is quiet for Deploys alone; Events, which may hold what
@@ -122,6 +125,41 @@ fn a_source_cut_by_a_cap_says_so_and_speaks_for_no_quiet_hour() {
     assert_eq!(quiet.len(), 1);
     assert_eq!(quiet[0].2, vec![Source::Deploys]);
     assert!(quiet[0].3.contains(&Source::Events));
+}
+
+#[test]
+fn a_source_that_shows_only_the_present_state_speaks_for_no_quiet_hour() {
+    // Only state-only sources read: nothing can say the hours were quiet.
+    let reads = vec![
+        SourceRead::read(Source::Restarts, "c", NOW, Vec::new()).state_only(),
+        SourceRead::read(Source::Nodes, "c", NOW, Vec::new()).state_only(),
+    ];
+    let timeline = derive(&reads, NOW, 3);
+    assert!(quiet_rows(&timeline).is_empty(), "{:?}", timeline.rows);
+    // With a source that can, the row lists them apart.
+    let reads = vec![
+        SourceRead::read(Source::Events, "c", NOW, Vec::new()),
+        SourceRead::read(Source::Restarts, "c", NOW, Vec::new()).state_only(),
+        SourceRead::read(Source::Nodes, "c", NOW, Vec::new()).state_only(),
+    ];
+    let timeline = derive(&reads, NOW, 3);
+    let rows: Vec<_> = timeline
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Quiet {
+                read,
+                state_only,
+                not_read,
+                ..
+            } => Some((read.clone(), state_only.clone(), not_read.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, vec![Source::Events]);
+    assert_eq!(rows[0].1, vec![Source::Restarts, Source::Nodes]);
+    assert!(!rows[0].2.contains(&Source::Restarts));
 }
 
 #[test]
@@ -166,12 +204,14 @@ fn a_quiet_hour_names_every_source_it_read() {
     let timeline = derive(&example::reads(NOW, Shape::Quiet), NOW, 3);
     let quiet = quiet_rows(&timeline);
     // Events are kept for the last hour only, so the older two hours are one
-    // row read by six sources and the last hour another read by all seven.
+    // row and the last hour another. Deploys, Restarts and Nodes show only
+    // the present state and vouch for neither.
     assert_eq!(quiet.len(), 2);
-    assert_eq!(quiet[0].2, Source::ALL.to_vec());
+    let sources = [Source::Promotions, Source::Syncs, Source::Incidents];
+    assert_eq!(quiet[0].2, [&sources[..], &[Source::Events]].concat());
     assert!(quiet[0].3.is_empty());
     assert_eq!(quiet[1].0, NOW - 3 * 3600);
-    assert_eq!(quiet[1].2.len(), 6);
+    assert_eq!(quiet[1].2, sources.to_vec());
     assert_eq!(quiet[1].3, vec![Source::Events]);
     assert_eq!(timeline.entries(), 0);
 }
@@ -211,10 +251,11 @@ fn every_entry_says_where_and_when_it_was_read() {
 mod live {
     use serde_json::{Value, json};
 
-    use super::super::live::{self, Place};
+    use super::super::live::{self, Place, Workload};
     use super::super::*;
     use crate::fixtures::FixtureReader;
     use freshkube_core::resources::{Failure, FailureKind};
+    use freshkube_core::workloads::WorkloadKind;
 
     const NOW: i64 = 1_800_000_000;
 
@@ -227,43 +268,62 @@ mod live {
     fn place() -> Place {
         Place {
             cluster: "core-fra".into(),
-            workloads: vec![("shop".into(), vec!["api".into()])],
+            workloads: vec![(
+                "shop".into(),
+                vec![Workload::new("api", WorkloadKind::Deployment)],
+            )],
         }
     }
 
     fn cluster() -> FixtureReader {
-        let event = |name: &str, kind: &str, ago: i64| -> Value {
+        let event = |name: &str, object: &str, kind: &str, ago: i64| -> Value {
             json!({"metadata": {"namespace": "shop", "name": format!("{name}.1")},
                 "type": kind, "reason": "BackOff", "message": "Back-off restarting",
-                "involvedObject": {"name": name}, "lastTimestamp": stamp(ago), "count": 3})
+                "involvedObject": {"kind": object, "name": name},
+                "lastTimestamp": stamp(ago), "count": 3})
         };
+        let owned_by =
+            |kind: &str, name: &str| json!([{"kind": kind, "name": name, "controller": true}]);
         FixtureReader::default()
             .with(
                 "events",
                 vec![
-                    event("api-7d9f-x2k4", "Warning", 300),
-                    event("api-7d9f-x2k4", "Normal", 200),
-                    event("other-1", "Warning", 100),
-                    event("api-7d9f-x2k4", "Warning", 5 * 3600),
+                    event("api-7d9f-x2k4", "Pod", "Warning", 300),
+                    event("api-7d9f-x2k4", "Pod", "Normal", 200),
+                    // A pod that is gone is still the ReplicaSet's.
+                    event("api-7d9f-gone1", "Pod", "Warning", 700),
+                    event("api", "Deployment", "Warning", 800),
+                    event("api-gateway-5c4d-abcde", "Pod", "Warning", 100),
+                    event("api-gateway", "Deployment", "Warning", 150),
+                    event("api-7d9f-x2k4", "Pod", "Warning", 5 * 3600),
                 ],
             )
             .with(
                 "pods",
                 vec![
-                    json!({"metadata": {"namespace": "shop", "name": "api-7d9f-x2k4"},
+                    json!({"metadata": {"namespace": "shop", "name": "api-7d9f-x2k4",
+                        "ownerReferences": owned_by("ReplicaSet", "api-7d9f")},
                         "spec": {"nodeName": "worker-2"},
                         "status": {"containerStatuses": [{"name": "api", "restartCount": 5,
                             "lastState": {"terminated": {"reason": "OOMKilled", "finishedAt": stamp(400)}}}]}}),
-                    json!({"metadata": {"namespace": "shop", "name": "other-1"},
-                        "spec": {"nodeName": "worker-3"}}),
+                    json!({"metadata": {"namespace": "shop", "name": "api-gateway-5c4d-abcde",
+                        "ownerReferences": owned_by("ReplicaSet", "api-gateway-5c4d")},
+                        "spec": {"nodeName": "worker-3"},
+                        "status": {"containerStatuses": [{"name": "gw", "restartCount": 2,
+                            "lastState": {"terminated": {"reason": "Error", "finishedAt": stamp(300)}}}]}}),
                 ],
             )
             .with(
                 "replicasets",
-                vec![json!({"metadata": {"namespace": "shop", "name": "api-7d9f",
-                    "creationTimestamp": stamp(1000),
-                    "annotations": {"deployment.kubernetes.io/revision": "14"},
-                    "ownerReferences": [{"kind": "Deployment", "name": "api", "controller": true}]}})],
+                vec![
+                    json!({"metadata": {"namespace": "shop", "name": "api-7d9f",
+                        "creationTimestamp": stamp(1000),
+                        "annotations": {"deployment.kubernetes.io/revision": "14"},
+                        "ownerReferences": owned_by("Deployment", "api")}}),
+                    json!({"metadata": {"namespace": "shop", "name": "api-gateway-5c4d",
+                        "creationTimestamp": stamp(900),
+                        "ownerReferences": owned_by("Deployment", "api-gateway")}}),
+                ],
             )
             .with(
                 "nodes",
@@ -292,7 +352,16 @@ mod live {
     #[tokio::test]
     async fn reads_only_the_applications_objects_in_the_window() {
         let reads = live::read(&cluster(), &place(), NOW, 3).await;
-        assert_eq!(titles(&reads, Source::Events), ["BackOff: api-7d9f-x2k4"]);
+        // The Deployment's own and its pods', the gone one's too; not
+        // api-gateway's, whose name starts the same.
+        assert_eq!(
+            titles(&reads, Source::Events),
+            [
+                "BackOff: api-7d9f-x2k4",
+                "BackOff: api-7d9f-gone1",
+                "BackOff: api"
+            ]
+        );
         assert_eq!(
             titles(&reads, Source::Restarts),
             ["api-7d9f-x2k4 restarted"]
@@ -304,7 +373,18 @@ mod live {
         // Only the node the application's pod runs on.
         assert_eq!(titles(&reads, Source::Nodes), ["worker-2 NotReady"]);
         let events = reads.iter().find(|r| r.source == Source::Events).unwrap();
-        assert_eq!(events.kept_from, Some(NOW - EVENT_RETENTION));
+        // The oldest event read is older than the default retention.
+        assert_eq!(events.kept_from, Some(NOW - 5 * 3600));
+        assert!(!events.state_only);
+        for source in [Source::Restarts, Source::Nodes, Source::Deploys] {
+            assert!(
+                reads
+                    .iter()
+                    .find(|r| r.source == source)
+                    .unwrap()
+                    .state_only
+            );
+        }
         assert_eq!(events.from, "core-fra");
     }
 
@@ -332,6 +412,51 @@ mod live {
         assert!(timeline.chips.iter().any(
             |chip| chip.source == Source::Events && matches!(chip.state, ChipState::NotRead(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_workload_does_not_claim_a_neighbour_whose_name_starts_the_same() {
+        let reads = live::read(&cluster(), &place(), NOW, 3).await;
+        for source in [
+            Source::Events,
+            Source::Restarts,
+            Source::Deploys,
+            Source::Nodes,
+        ] {
+            let titles = titles(&reads, source);
+            assert!(
+                titles
+                    .iter()
+                    .all(|title| !title.contains("gateway") && !title.contains("worker-3")),
+                "{source:?}: {titles:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn retention_is_the_default_unless_an_older_event_shows_more() {
+        let fresh = FixtureReader::default()
+            .with("events", Vec::new())
+            .with("pods", Vec::new())
+            .with("replicasets", Vec::new())
+            .with("nodes", Vec::new());
+        let reads = live::read(&fresh, &place(), NOW, 3).await;
+        let events = reads.iter().find(|r| r.source == Source::Events).unwrap();
+        assert_eq!(events.kept_from, Some(NOW - EVENT_RETENTION));
+    }
+
+    #[tokio::test]
+    async fn pods_that_could_not_be_listed_leave_the_nodes_cut() {
+        let refused = cluster().failing("pods", Failure::new(FailureKind::Forbidden, "no"));
+        let reads = live::read(&refused, &place(), NOW, 3).await;
+        let nodes = reads.iter().find(|r| r.source == Source::Nodes).unwrap();
+        assert!(nodes.outcome.is_ok());
+        assert_eq!(
+            nodes.cut.as_deref(),
+            Some("hosts unknown: pods not listed in shop")
+        );
+        let restarts = reads.iter().find(|r| r.source == Source::Restarts).unwrap();
+        assert_eq!(restarts.outcome, Err("Forbidden: can't list pods".into()));
     }
 
     #[tokio::test]
@@ -364,7 +489,12 @@ mod live {
         let many = Place {
             cluster: "core-fra".into(),
             workloads: (0..live::MAX_NAMESPACES + 2)
-                .map(|ix| (format!("shop-{ix}"), vec!["api".into()]))
+                .map(|ix| {
+                    (
+                        format!("shop-{ix}"),
+                        vec![Workload::new("api", WorkloadKind::Deployment)],
+                    )
+                })
                 .collect(),
         };
         let reads = live::read(&cluster(), &many, NOW, 3).await;

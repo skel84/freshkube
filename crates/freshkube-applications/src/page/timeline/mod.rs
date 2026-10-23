@@ -51,19 +51,28 @@ pub(crate) enum Fetch {
     Live {
         runtime: tokio::runtime::Handle,
         access: ClusterAccess,
+        /// The connection the list reads, as its own loader keys it.
+        source_id: String,
         place: Place,
     },
 }
 
 impl Fetch {
-    /// Which cluster and application a read is for, so an answer for another
-    /// never lands.
+    /// Which connection, application and workloads a read is for, so an
+    /// answer for another never lands.
     fn identity(&self, app: &str) -> String {
         match self {
             Self::Example { shape, .. } => format!("example/{shape:?}/{app}"),
-            Self::Live { place, .. } => {
-                format!("{}/{app}/{}", place.cluster, place.workloads.len())
-            }
+            Self::Live {
+                source_id, place, ..
+            } => format!("{source_id}/{app}/{place:?}"),
+        }
+    }
+
+    fn cluster(&self) -> String {
+        match self {
+            Self::Example { .. } => String::new(),
+            Self::Live { place, .. } => place.cluster.clone(),
         }
     }
 }
@@ -90,6 +99,8 @@ pub struct TimelineChip {
     pub text: SharedString,
     pub tone: freshkube_ui::ui::Tone,
     pub label: SharedString,
+    /// The source was read (in whole or in part), not refused or missing.
+    pub read: bool,
 }
 
 pub struct TimelineView {
@@ -101,6 +112,11 @@ pub struct TimelineView {
     /// kept, so a window or a refresh doesn't date it again and pass old
     /// lines for new ones.
     anchor: Anchor,
+    /// Every source not read, for a first read that failed whole.
+    fallback: Vec<SourceRead>,
+    /// A failure the next example read answers with, for tests.
+    #[cfg(any(test, feature = "testing"))]
+    fail_next: Option<String>,
     visible: bool,
     /// Derived when an answer lands.
     pub(super) chips: Vec<TimelineChip>,
@@ -125,6 +141,9 @@ impl TimelineView {
             loader,
             hours: WINDOWS[0],
             anchor: Anchor::default(),
+            fallback: Vec::new(),
+            #[cfg(any(test, feature = "testing"))]
+            fail_next: None,
             visible: false,
             chips: Vec::new(),
             rows: Vec::new(),
@@ -151,6 +170,7 @@ impl TimelineView {
         }
         self.fetch = fetch;
         self.anchor = Anchor::default();
+        self.fallback.clear();
         self.loader.reset();
         self.derive(cx);
         if self.visible {
@@ -200,18 +220,25 @@ impl TimelineView {
         let hours = self.hours;
         let identity = (self.fetch.identity(&self.app), hours);
         let request = self.loader.start(identity);
+        let cluster = self.fetch.cluster();
         match self.fetch.clone() {
             Fetch::Example { shape, delay } => {
                 let now = self.anchor.at(Utc::now().timestamp());
-                let reads = example::reads(now, shape);
+                #[cfg(any(test, feature = "testing"))]
+                let result = match self.fail_next.take() {
+                    Some(why) => Err(why),
+                    None => Ok(example::reads(now, shape)),
+                };
+                #[cfg(not(any(test, feature = "testing")))]
+                let result = Ok(example::reads(now, shape));
                 if delay.is_zero() {
-                    if self.loader.land(&request, Ok(reads), cx) {
-                        self.derive(cx);
-                    }
+                    self.answer(&request, result, &cluster, now, cx);
                 } else {
                     let task = cx.spawn(async move |this, cx| {
                         cx.background_executor().timer(delay).await;
-                        _ = this.update(cx, |this, cx| this.answer(&request, Ok(reads), cx));
+                        _ = this.update(cx, |this, cx| {
+                            this.answer(&request, result, &cluster, now, cx)
+                        });
                     });
                     self.loader.run(None, task);
                 }
@@ -220,6 +247,7 @@ impl TimelineView {
                 runtime,
                 access,
                 place,
+                ..
             } => {
                 let now = Utc::now().timestamp();
                 let (job, receiver) = backend::spawn_job(
@@ -232,18 +260,13 @@ impl TimelineView {
                         Ok(live::read(&reader, &place, now, hours).await)
                     },
                 );
-                let cluster = match &self.fetch {
-                    Fetch::Live { place, .. } => place.cluster.clone(),
-                    Fetch::Example { .. } => String::new(),
-                };
                 let task = cx.spawn(async move |this, cx| {
                     let result = receiver
                         .await
-                        .unwrap_or_else(|_| Err("Reading the timeline stopped".into()))
-                        // A read that failed whole leaves every source not
-                        // read, with why, never quiet.
-                        .or_else(|why| Ok::<_, String>(unread(&cluster, now, &why)));
-                    _ = this.update(cx, |this, cx| this.answer(&request, result, cx));
+                        .unwrap_or_else(|_| Err("Reading the timeline stopped".into()));
+                    _ = this.update(cx, |this, cx| {
+                        this.answer(&request, result, &cluster, now, cx)
+                    });
                 });
                 self.loader.run(Some(job), task);
             }
@@ -251,22 +274,50 @@ impl TimelineView {
         cx.notify();
     }
 
+    /// An answer, published only while it is the one in flight. A read that
+    /// failed whole keeps the last answer, marked stale; with none, every
+    /// source is not read, with why, never quiet.
     fn answer(
         &mut self,
         request: &freshkube_core::snapshot::Request<(String, u32)>,
         result: Result<Vec<SourceRead>, String>,
+        cluster: &str,
+        now: i64,
         cx: &mut Context<Self>,
     ) {
+        let failure = result.as_ref().err().cloned();
         if self.loader.land(request, result, cx) {
+            self.fallback = match failure {
+                Some(why) if self.loader.data().is_none() => unread(cluster, now, &why),
+                _ => Vec::new(),
+            };
             self.derive(cx);
         }
         cx.notify();
     }
 
+    /// The banner for a refresh that failed over an earlier read: what shows
+    /// is that read, from when it was made.
+    pub(super) fn stale(&self) -> Option<(SharedString, SharedString)> {
+        let data = self.loader.data()?;
+        let why = self.loader.error()?;
+        let at = data.iter().map(|read| read.read_at).max()?;
+        let text = format!(
+            "Showing the last read, from {} UTC. {why}",
+            timeline::clock(at)
+        );
+        let label = format!("Couldn't read again: {text}");
+        Some((text.into(), label.into()))
+    }
+
     /// The chips and the list for the answer and window, derived when they
     /// change.
     fn derive(&mut self, _: &mut Context<Self>) {
-        let Some(reads) = self.loader.data() else {
+        let reads = self
+            .loader
+            .data()
+            .or(Some(&self.fallback).filter(|reads| !reads.is_empty()));
+        let Some(reads) = reads else {
             self.chips.clear();
             self.rows.clear();
             (self.columns, self.width) = table::columns(&[]);
@@ -332,6 +383,33 @@ impl TimelineView {
     /// Rises with every read begun or forgotten.
     pub fn read_revision(&self) -> u64 {
         self.loader.revision()
+    }
+
+    /// Reads from example data of another shape, slowly, as a source change
+    /// does: the answer still in flight must not land.
+    pub fn use_example(&mut self, shape: Shape, cx: &mut Context<Self>) {
+        self.set_fetch(
+            Fetch::Example {
+                shape,
+                delay: Duration::from_secs(5),
+            },
+            cx,
+        );
+    }
+
+    /// Reads again now.
+    pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
+        self.refresh(cx);
+    }
+
+    /// The next example read fails whole with `why`.
+    pub fn fail_next_read(&mut self, why: &str) {
+        self.fail_next = Some(why.to_owned());
+    }
+
+    /// The stale banner's text, when there is one.
+    pub fn stale_text(&self) -> Option<String> {
+        self.stale().map(|(text, _)| text.to_string())
     }
 
     pub fn answered(&self) -> bool {

@@ -132,6 +132,11 @@ pub struct SourceRead {
     /// are real, but nothing is known of what is missing, so it speaks for
     /// no quiet hour.
     pub cut: Option<String>,
+    /// The source only shows what is true now: a container's last
+    /// termination, a node's current Ready transition. What it reads can't
+    /// say that nothing else happened earlier, so it speaks for no quiet
+    /// hour; a quiet row lists it apart.
+    pub state_only: bool,
 }
 
 impl SourceRead {
@@ -143,6 +148,7 @@ impl SourceRead {
             outcome: Ok(items),
             kept_from: None,
             cut: None,
+            state_only: false,
         }
     }
 
@@ -154,11 +160,18 @@ impl SourceRead {
             outcome: Err(why.to_owned()),
             kept_from: None,
             cut: None,
+            state_only: false,
         }
     }
 
     pub fn kept_from(mut self, at: i64) -> Self {
         self.kept_from = Some(at);
+        self
+    }
+
+    /// Marks the source as showing the present state only.
+    pub fn state_only(mut self) -> Self {
+        self.state_only = true;
         self
     }
 
@@ -199,6 +212,8 @@ pub enum ChipState {
         kept_from: Option<i64>,
         /// What a cap cut off: the count is of what was read.
         cut: Option<String>,
+        /// It shows the present state only, not what happened before.
+        state_only: bool,
     },
     NotRead(String),
 }
@@ -215,11 +230,13 @@ pub enum Row {
         until: i64,
     },
     /// Hours with no entry. `read` names each source that covered every
-    /// hour of it, `not_read` the others.
+    /// hour of it, `state_only` the ones that read the present state alone
+    /// and can't vouch for the hours, `not_read` the others.
     Quiet {
         from: i64,
         until: i64,
         read: Vec<Source>,
+        state_only: Vec<Source>,
         not_read: Vec<Source>,
     },
 }
@@ -296,6 +313,7 @@ pub fn derive(reads: &[SourceRead], now: i64, hours: u32) -> Timeline {
                         count: entries.len() - before,
                         kept_from: read.kept_from.filter(|at| *at > since),
                         cut: read.cut.clone(),
+                        state_only: read.state_only,
                     },
                 });
             }
@@ -353,19 +371,27 @@ fn quiet(reads: &[SourceRead], rows: &[Row], now: i64, since: i64) -> Vec<Row> {
         let busy = rows
             .iter()
             .any(|row| matches!(row, Row::Entry(entry) if entry.at >= lo && (entry.at < hi || hi == now)));
-        let (read, not_read) = coverage(reads, lo);
+        let (read, state_only, not_read) = coverage(reads, lo);
         if !busy && !read.is_empty() {
             match quiet.last_mut() {
                 Some(Row::Quiet {
                     from,
                     read: before,
+                    state_only: latest,
                     not_read: missing,
                     ..
-                }) if *from == hi && *before == read && *missing == not_read => *from = lo,
+                }) if *from == hi
+                    && *before == read
+                    && *latest == state_only
+                    && *missing == not_read =>
+                {
+                    *from = lo
+                }
                 _ => quiet.push(Row::Quiet {
                     from: lo,
                     until: hi,
                     read,
+                    state_only,
                     not_read,
                 }),
             }
@@ -375,19 +401,25 @@ fn quiet(reads: &[SourceRead], rows: &[Row], now: i64, since: i64) -> Vec<Row> {
     quiet
 }
 
-/// The sources that can speak for the hour starting at `lo`, and the rest.
-fn coverage(reads: &[SourceRead], lo: i64) -> (Vec<Source>, Vec<Source>) {
-    let (mut read, mut not_read) = (Vec::new(), Vec::new());
+/// The sources that can speak for the hour starting at `lo`, the ones that
+/// only show the present state, and the rest.
+fn coverage(reads: &[SourceRead], lo: i64) -> (Vec<Source>, Vec<Source>, Vec<Source>) {
+    let (mut read, mut state_only, mut not_read) = (Vec::new(), Vec::new(), Vec::new());
     for source in Source::ALL {
-        let covers = reads.iter().any(|read| {
+        let found = reads.iter().find(|read| {
             read.source == source
                 && read.outcome.is_ok()
                 && read.cut.is_none()
                 && read.kept_from.is_none_or(|at| at <= lo)
         });
-        if covers { &mut read } else { &mut not_read }.push(source);
+        match found {
+            Some(read) if read.state_only => &mut state_only,
+            Some(_) => &mut read,
+            None => &mut not_read,
+        }
+        .push(source);
     }
-    (read, not_read)
+    (read, state_only, not_read)
 }
 
 /// The time of day in UTC, `14:02`, as the list prints it.

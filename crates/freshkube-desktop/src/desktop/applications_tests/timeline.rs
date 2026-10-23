@@ -182,10 +182,10 @@ fn every_source_is_a_chip_and_events_say_where_the_cluster_stops_keeping_them(
             "Promotions 2",
             "Syncs 1",
             "Incidents 1",
-            "Deploys 1",
+            "Deploys 1 · latest state only",
             "Events 2 · kept 1 h",
-            "Restarts 1",
-            "Nodes 0",
+            "Restarts 1 · latest state only",
+            "Nodes 0 · latest state only",
         ]
     );
     let lines = lines(&view, cx);
@@ -217,7 +217,7 @@ fn the_window_is_3_h_and_goes_up_to_24_h(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., Shape::Busy);
     show_timeline(cx, handle);
     assert_eq!(cx.read(|cx| timeline(&view, cx).read(cx).window_hours()), 3);
-    assert_eq!(chips(&view, cx)[6], "Nodes 0");
+    assert_eq!(chips(&view, cx)[6], "Nodes 0 · latest state only");
     cx.update_window(handle, |_, window, cx| {
         window.click("timeline-window-6", cx);
         window.render_frame(cx);
@@ -225,7 +225,7 @@ fn the_window_is_3_h_and_goes_up_to_24_h(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     // The node went NotReady four hours ago.
-    assert_eq!(chips(&view, cx)[6], "Nodes 1");
+    assert_eq!(chips(&view, cx)[6], "Nodes 1 · latest state only");
     assert!(
         lines(&view, cx)
             .iter()
@@ -256,7 +256,7 @@ fn a_source_that_could_not_be_read_says_why_beside_the_ones_that_were(cx: &mut T
         chips.contains(&"Syncs not read: Argo CD isn't installed".to_owned()),
         "{chips:?}"
     );
-    assert!(chips.contains(&"Deploys 1".to_owned()));
+    assert!(chips.contains(&"Deploys 1 · latest state only".to_owned()));
     let lines = lines(&view, cx);
     assert!(
         !lines.iter().any(|line| line.contains("Incidents")),
@@ -295,16 +295,17 @@ fn a_quiet_window_names_every_source_it_read(cx: &mut TestAppContext) {
         .filter(|(line, _)| line.contains("Quiet"))
         .map(|(_, detail)| detail.as_str())
         .collect();
-    // The last hour was read by all seven; the two before it by six, Events
-    // reaching back an hour only.
+    // The last hour: the sources that can vouch for it. Deploys, Restarts
+    // and Nodes show the present state only, so they are listed apart. The
+    // older hours were read without Events, which reach back an hour only.
     assert_eq!(quiet.len(), 2, "{lines:?}");
     assert_eq!(
         quiet[0],
-        "Read: Promotions, Syncs, Incidents, Deploys, Events, Restarts, Nodes"
+        "Read: Promotions, Syncs, Incidents, Events · Latest state only: Deploys, Restarts, Nodes"
     );
     assert_eq!(
         quiet[1],
-        "Read: Promotions, Syncs, Incidents, Deploys, Restarts, Nodes · Not read: Events"
+        "Read: Promotions, Syncs, Incidents · Latest state only: Deploys, Restarts, Nodes · Not read: Events"
     );
 }
 
@@ -339,4 +340,88 @@ fn the_timeline_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn a_failed_refresh_keeps_the_last_read_marked_stale(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Shape::Busy);
+    show_timeline(cx, handle);
+    let before = lines(&view, cx);
+    assert!(!before.is_empty());
+    cx.update_window(handle, |_, _, cx| {
+        timeline(&view, cx).update(cx, |timeline, _| timeline.fail_next_read("no answer"));
+        timeline(&view, cx).update(cx, |timeline, cx| timeline.refresh_now(cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let text = timeline(&view, cx).read(cx).stale_text().expect("a banner");
+        assert!(text.starts_with("Showing the last read, from "), "{text}");
+        assert!(text.ends_with("no answer"), "{text}");
+        assert!(window.find("timeline-stale").visible());
+    })
+    .unwrap();
+    assert_eq!(lines(&view, cx), before);
+    // A read that works takes the banner away.
+    cx.update_window(handle, |_, _, cx| {
+        timeline(&view, cx).update(cx, |timeline, cx| timeline.refresh_now(cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(
+        cx.read(|cx| timeline(&view, cx).read(cx).stale_text())
+            .is_none()
+    );
+}
+
+#[gpui_kit::test]
+fn a_first_read_that_failed_leaves_every_source_not_read_never_quiet(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Shape::Busy);
+    cx.update_window(handle, |_, _, cx| {
+        timeline(&view, cx).update(cx, |timeline, _| timeline.fail_next_read("no answer"));
+    })
+    .unwrap();
+    show_timeline(cx, handle);
+    assert!(lines(&view, cx).is_empty());
+    let chips = chips(&view, cx);
+    assert_eq!(chips.len(), 7);
+    assert!(
+        chips
+            .iter()
+            .all(|chip| chip.ends_with("not read: no answer")),
+        "{chips:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn a_source_change_drops_the_answer_still_in_flight(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, _| page.set_variant(Variant::Acme));
+        window.render_frame(cx);
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, _| page.set_example_delay(Duration::from_secs(5)));
+        window.click(CHECKOUT, cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        window.click("application-tab-timeline", cx);
+        window.render_frame(cx);
+        // Another source while the busy answer is on its way.
+        timeline(&view, cx).update(cx, |timeline, cx| timeline.use_example(Shape::NoneRead, cx));
+    })
+    .unwrap();
+    cx.executor().advance_clock(Duration::from_secs(6));
+    cx.run_until_parked();
+    let chips = chips(&view, cx);
+    assert_eq!(chips.len(), 7);
+    assert!(
+        chips.iter().all(|chip| chip.contains("not read")),
+        "{chips:?}"
+    );
 }

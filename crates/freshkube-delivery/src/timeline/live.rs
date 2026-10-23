@@ -6,9 +6,20 @@
 //! fails leaves its source not read, with the failure's kind and the
 //! collection, and the others stand. A listing cut at the page cap, and
 //! namespaces past the cap, leave the source read in part: its `cut` says
-//! what, and it speaks for no quiet hour. Kargo, Argo CD and Coroot are not read
-//! here yet: their sources say so.
+//! what, and it speaks for no quiet hour. Restarts, Nodes and Deploys show
+//! only the present state (a container keeps its last termination, a node
+//! its current Ready transition, a rollback reuses an old ReplicaSet), so
+//! they are `state_only` and vouch for no quiet hour either.
+//!
+//! An object is the application's by what owns it, never by its name's
+//! start: a pod through its ReplicaSet to the Deployment (or directly its
+//! StatefulSet or DaemonSet), an event through its involved object's kind and
+//! name (a pod that is gone through its ReplicaSet's name). Kargo, Argo CD
+//! and Coroot are not read here yet: their sources say so.
+use std::collections::HashSet;
+
 use chrono::DateTime;
+use freshkube_core::workloads::WorkloadKind;
 use serde_json::Value;
 
 use super::{EVENT_RETENTION, Item, Severity, Source, SourceRead};
@@ -21,13 +32,120 @@ pub const MAX_NAMESPACES: usize = 5;
 /// Why the sources this version doesn't read yet say.
 pub const NOT_YET: &str = "not read yet";
 
+/// One of the application's workloads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Workload {
+    pub name: String,
+    pub kind: WorkloadKind,
+}
+
+impl Workload {
+    pub fn new(name: &str, kind: WorkloadKind) -> Self {
+        Self {
+            name: name.to_owned(),
+            kind,
+        }
+    }
+}
+
 /// Which objects of the open cluster the application is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Place {
     /// The cluster's name, for "read from".
     pub cluster: String,
-    /// The workloads' namespaces, each with the names of its workloads.
-    pub workloads: Vec<(String, Vec<String>)>,
+    /// The workloads' namespaces, each with its workloads.
+    pub workloads: Vec<(String, Vec<Workload>)>,
+}
+
+/// What belongs to the application in one namespace, from its owners.
+struct Owned<'a> {
+    workloads: &'a [Workload],
+    /// ReplicaSets a Deployment of the application controls.
+    replicasets: HashSet<String>,
+    /// Pods one of its ReplicaSets, StatefulSets or DaemonSets controls.
+    pods: HashSet<String>,
+}
+
+fn kind_name(kind: WorkloadKind) -> &'static str {
+    match kind {
+        WorkloadKind::Deployment => "Deployment",
+        WorkloadKind::StatefulSet => "StatefulSet",
+        WorkloadKind::DaemonSet => "DaemonSet",
+    }
+}
+
+/// The controlling owner's kind and name.
+fn controller(object: &Value) -> Option<(&str, &str)> {
+    object
+        .pointer("/metadata/ownerReferences")?
+        .as_array()?
+        .iter()
+        .find(|owner| owner.get("controller").and_then(Value::as_bool) == Some(true))
+        .and_then(|owner| Some((text(owner, &["kind"])?, text(owner, &["name"])?)))
+}
+
+/// `name` is `base`, a dash and one more segment: a pod of a StatefulSet
+/// (`db-0`), a DaemonSet (`agent-x2k4`) or a ReplicaSet (`api-7d9f-x2k4`
+/// under `api-7d9f`).
+fn one_segment_after(name: &str, base: &str) -> bool {
+    name.strip_prefix(base)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|rest| !rest.is_empty() && !rest.contains('-'))
+}
+
+impl<'a> Owned<'a> {
+    fn new(workloads: &'a [Workload], replicasets: &[Value], pods: &[Value]) -> Self {
+        let has = |kind: &str, name: &str| {
+            workloads
+                .iter()
+                .any(|workload| kind_name(workload.kind) == kind && workload.name == name)
+        };
+        let replicasets: HashSet<String> = replicasets
+            .iter()
+            .filter(|set| controller(set).is_some_and(|(kind, name)| has(kind, name)))
+            .filter_map(|set| text(set, &["metadata", "name"]).map(str::to_owned))
+            .collect();
+        let pods = pods
+            .iter()
+            .filter(|pod| {
+                controller(pod).is_some_and(|(kind, name)| {
+                    if kind == "ReplicaSet" {
+                        replicasets.contains(name)
+                    } else {
+                        has(kind, name)
+                    }
+                })
+            })
+            .filter_map(|pod| text(pod, &["metadata", "name"]).map(str::to_owned))
+            .collect();
+        Self {
+            workloads,
+            replicasets,
+            pods,
+        }
+    }
+
+    /// An event's object is the application's, or one of its pods.
+    fn owns_event_object(&self, kind: &str, name: &str) -> bool {
+        match kind {
+            "ReplicaSet" => self.replicasets.contains(name),
+            "Pod" => {
+                self.pods.contains(name)
+                    || self
+                        .replicasets
+                        .iter()
+                        .any(|set| one_segment_after(name, set))
+                    || self.workloads.iter().any(|workload| {
+                        workload.kind != WorkloadKind::Deployment
+                            && one_segment_after(name, &workload.name)
+                    })
+            }
+            _ => self
+                .workloads
+                .iter()
+                .any(|workload| kind_name(workload.kind) == kind && workload.name == name),
+        }
+    }
 }
 
 /// Reads every cluster source for the window of `hours` ending at `now`.
@@ -49,25 +167,46 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
             .collect();
     }
 
-    let (mut events, mut restarts, mut deploys) =
-        (Part::default(), Part::default(), Part::default());
-    let mut hosts: Vec<String> = Vec::new();
+    let (mut events, mut restarts, mut deploys, mut nodes) = (
+        Part::default(),
+        Part::default(),
+        Part::default(),
+        Part::default(),
+    );
+    let mut hosts: HashSet<String> = HashSet::new();
+    let mut oldest_event: Option<i64> = None;
     for (namespace, workloads) in &namespaces {
         let (event_list, pod_list, set_list) = futures::join!(
             list(reader, events_resource(), namespace, "events"),
             list(reader, pods_resource(), namespace, "pods"),
             list(reader, replicasets_resource(), namespace, "replicasets"),
         );
-        events.take(event_list, |list| warnings(list, workloads, since));
-        deploys.take(set_list, |list| rollouts(list, workloads, since));
-        if let Ok(listed) = &pod_list {
-            hosts.extend(hosting(&listed.items, workloads));
+        let no_items = Vec::new();
+        let pods_items = pod_list.as_ref().map_or(&no_items, |listed| &listed.items);
+        let sets_items = set_list.as_ref().map_or(&no_items, |listed| &listed.items);
+        let owned = Owned::new(workloads, sets_items, pods_items);
+        // What couldn't be listed leaves what hangs on it unknown.
+        if pod_list.is_err() {
+            nodes
+                .cuts
+                .push(format!("hosts unknown: pods not listed in {namespace}"));
         }
-        restarts.take(pod_list, |list| restarted(list, workloads, since));
+        if set_list.is_err() && workloads.iter().any(|w| w.kind == WorkloadKind::Deployment) {
+            let note =
+                format!("ReplicaSets not listed in {namespace}: Deployments' pods not matched");
+            for part in [&mut events, &mut restarts, &mut nodes] {
+                part.cuts.push(note.clone());
+            }
+        }
+        if let Ok(listed) = &event_list {
+            let oldest = listed.items.iter().filter_map(event_time).min();
+            oldest_event = oldest_event.into_iter().chain(oldest).min();
+        }
+        hosts.extend(hosting(pods_items, &owned));
+        events.take(event_list, |list| warnings(list, &owned, since));
+        restarts.take(pod_list, |list| restarted(list, &owned, since));
+        deploys.take(set_list, |list| rollouts(list, &owned, since));
     }
-    hosts.sort();
-    hosts.dedup();
-    let mut nodes = Part::default();
     // The hosts are the pods' nodes: a pod list that was cut leaves some
     // unknown.
     nodes.cuts.extend(restarts.cuts.iter().cloned());
@@ -86,6 +225,10 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
             part.cuts.push(note.clone());
         }
     }
+    // The cluster's retention is at least what its oldest event shows.
+    let kept_from = oldest_event.map_or(now - EVENT_RETENTION, |oldest| {
+        oldest.min(now - EVENT_RETENTION)
+    });
     let read = |source, part: Part| {
         let cut = (!part.cuts.is_empty()).then(|| part.cuts.join("; "));
         SourceRead {
@@ -95,16 +238,17 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
             outcome: part.items,
             kept_from: None,
             cut,
+            state_only: false,
         }
     };
     vec![
         not_read(Source::Promotions, now),
         not_read(Source::Syncs, now),
         not_read(Source::Incidents, now),
-        read(Source::Deploys, deploys),
-        read(Source::Events, events).kept_from(now - EVENT_RETENTION),
-        read(Source::Restarts, restarts),
-        read(Source::Nodes, nodes),
+        read(Source::Deploys, deploys).state_only(),
+        read(Source::Events, events).kept_from(kept_from),
+        read(Source::Restarts, restarts).state_only(),
+        read(Source::Nodes, nodes).state_only(),
     ]
 }
 
@@ -192,13 +336,6 @@ async fn list(
         .map_err(|Failure { kind, .. }| format!("{}: can't list {what}", kind.label()))
 }
 
-/// Whether an object's name is one of the workloads' or a child's.
-fn belongs(name: &str, workloads: &[String]) -> bool {
-    workloads
-        .iter()
-        .any(|workload| name == workload || name.starts_with(&format!("{workload}-")))
-}
-
 fn text<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
     path.iter()
         .try_fold(value, |value, key| value.get(key))?
@@ -211,17 +348,24 @@ fn time(value: &Value, path: &[&str]) -> Option<i64> {
         .map(|time| time.timestamp())
 }
 
-fn warnings(list: &[Value], workloads: &[String], since: i64) -> Vec<Item> {
+/// When an event happened, as far as it says.
+fn event_time(event: &Value) -> Option<i64> {
+    time(event, &["lastTimestamp"])
+        .or_else(|| time(event, &["series", "lastObservedTime"]))
+        .or_else(|| time(event, &["eventTime"]))
+        .or_else(|| time(event, &["metadata", "creationTimestamp"]))
+}
+
+fn warnings(list: &[Value], owned: &Owned, since: i64) -> Vec<Item> {
     list.iter()
         .filter(|event| text(event, &["type"]) == Some("Warning"))
         .filter(|event| {
-            text(event, &["involvedObject", "name"]).is_some_and(|name| belongs(name, workloads))
+            let kind = text(event, &["involvedObject", "kind"]).unwrap_or_default();
+            text(event, &["involvedObject", "name"])
+                .is_some_and(|name| owned.owns_event_object(kind, name))
         })
         .filter_map(|event| {
-            let at = time(event, &["lastTimestamp"])
-                .or_else(|| time(event, &["series", "lastObservedTime"]))
-                .or_else(|| time(event, &["eventTime"]))
-                .or_else(|| time(event, &["metadata", "creationTimestamp"]))?;
+            let at = event_time(event)?;
             (at >= since).then(|| {
                 let name = text(event, &["involvedObject", "name"]).unwrap_or_default();
                 let count = event.get("count").and_then(Value::as_u64).unwrap_or(1);
@@ -241,10 +385,10 @@ fn warnings(list: &[Value], workloads: &[String], since: i64) -> Vec<Item> {
         .collect()
 }
 
-fn restarted(list: &[Value], workloads: &[String], since: i64) -> Vec<Item> {
+fn restarted(list: &[Value], owned: &Owned, since: i64) -> Vec<Item> {
     let mut items = Vec::new();
     for pod in list {
-        let Some(name) = text(pod, &["metadata", "name"]).filter(|name| belongs(name, workloads))
+        let Some(name) = text(pod, &["metadata", "name"]).filter(|name| owned.pods.contains(*name))
         else {
             continue;
         };
@@ -282,20 +426,14 @@ fn restarted(list: &[Value], workloads: &[String], since: i64) -> Vec<Item> {
     items
 }
 
-fn rollouts(list: &[Value], workloads: &[String], since: i64) -> Vec<Item> {
+fn rollouts(list: &[Value], owned: &Owned, since: i64) -> Vec<Item> {
     list.iter()
+        .filter(|set| {
+            text(set, &["metadata", "name"]).is_some_and(|n| owned.replicasets.contains(n))
+        })
         .filter_map(|set| {
             let at = time(set, &["metadata", "creationTimestamp"]).filter(|at| *at >= since)?;
-            let owner = set
-                .pointer("/metadata/ownerReferences")?
-                .as_array()?
-                .iter()
-                .find(|owner| {
-                    text(owner, &["kind"]) == Some("Deployment")
-                        && owner.get("controller").and_then(Value::as_bool) == Some(true)
-                })?;
-            let deployment =
-                text(owner, &["name"]).filter(|name| workloads.contains(&name.to_string()))?;
+            let (_, deployment) = controller(set)?;
             let name = text(set, &["metadata", "name"]).unwrap_or_default();
             let to = match (
                 text(set, &["metadata", "labels", "app.kubernetes.io/version"]),
@@ -318,18 +456,18 @@ fn rollouts(list: &[Value], workloads: &[String], since: i64) -> Vec<Item> {
 }
 
 /// The nodes the application's pods run on.
-fn hosting(list: &[Value], workloads: &[String]) -> Vec<String> {
+fn hosting(list: &[Value], owned: &Owned) -> Vec<String> {
     list.iter()
-        .filter(|pod| text(pod, &["metadata", "name"]).is_some_and(|name| belongs(name, workloads)))
+        .filter(|pod| {
+            text(pod, &["metadata", "name"]).is_some_and(|name| owned.pods.contains(name))
+        })
         .filter_map(|pod| text(pod, &["spec", "nodeName"]).map(str::to_owned))
         .collect()
 }
 
-fn node_changes(list: &[Value], hosts: &[String], since: i64) -> Vec<Item> {
+fn node_changes(list: &[Value], hosts: &HashSet<String>, since: i64) -> Vec<Item> {
     list.iter()
-        .filter(|node| {
-            text(node, &["metadata", "name"]).is_some_and(|name| hosts.iter().any(|h| h == name))
-        })
+        .filter(|node| text(node, &["metadata", "name"]).is_some_and(|name| hosts.contains(name)))
         .filter_map(|node| {
             let name = text(node, &["metadata", "name"])?;
             let ready = node

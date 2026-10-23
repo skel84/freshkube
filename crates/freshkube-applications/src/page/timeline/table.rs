@@ -168,10 +168,14 @@ pub fn rows(timeline: &Timeline) -> Vec<TimelineRow> {
                 from,
                 until,
                 read,
+                state_only,
                 not_read,
             } => {
                 let hours = (until - from + 1799) / 3600;
                 let mut detail = format!("Read: {}", names(read));
+                if !state_only.is_empty() {
+                    detail.push_str(&format!(" · Latest state only: {}", names(state_only)));
+                }
                 if !not_read.is_empty() {
                     detail.push_str(&format!(" · Not read: {}", names(not_read)));
                 }
@@ -293,12 +297,44 @@ impl TableSource for TimelineView {
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
-        (self.rows.is_empty()).then(|| {
-            if self.loader.data().is_some() {
-                "No source could be read for this window; the chips say why.".into_any_element()
-            } else {
-                "Nothing read yet.".into_any_element()
-            }
-        })
+        self.rows
+            .is_empty()
+            .then(|| empty_words(&self.chips).into_any_element())
+    }
+}
+
+/// What an empty list says, from what the chips say was read.
+fn empty_words(chips: &[TimelineChip]) -> &'static str {
+    if chips.is_empty() {
+        "Nothing read yet."
+    } else if chips.iter().any(|chip| chip.read) {
+        // Some source answered and found nothing it can vouch for.
+        "Nothing was reported in this window. The chips say what was read."
+    } else {
+        "No source could be read for this window; the chips say why."
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TimelineChip, empty_words};
+    use freshkube_delivery::timeline::Source;
+    use freshkube_ui::ui::Tone;
+
+    fn chip(read: bool) -> TimelineChip {
+        TimelineChip {
+            source: Source::Events,
+            text: "Events".into(),
+            tone: Tone::Outline,
+            label: "Events".into(),
+            read,
+        }
+    }
+
+    #[test]
+    fn an_empty_list_is_worded_from_what_was_read() {
+        assert_eq!(empty_words(&[]), "Nothing read yet.");
+        assert!(empty_words(&[chip(false), chip(false)]).starts_with("No source could be read"));
+        assert!(empty_words(&[chip(false), chip(true)]).starts_with("Nothing was reported"));
     }
 }

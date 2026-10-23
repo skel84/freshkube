@@ -162,10 +162,10 @@ pub fn reads(now: i64, shape: Shape) -> Vec<SourceRead> {
         SourceRead::read(Source::Promotions, "Kargo in cicd-fra", now, promotions),
         SourceRead::read(Source::Syncs, "Argo CD in core-fra", now, syncs),
         SourceRead::read(Source::Incidents, "Coroot", now, incidents),
-        SourceRead::read(Source::Deploys, CLUSTER, now, deploys),
+        SourceRead::read(Source::Deploys, CLUSTER, now, deploys).state_only(),
         SourceRead::read(Source::Events, CLUSTER, now, events).kept_from(now - retention),
-        SourceRead::read(Source::Restarts, CLUSTER, now, restarts),
-        SourceRead::read(Source::Nodes, CLUSTER, now, nodes),
+        SourceRead::read(Source::Restarts, CLUSTER, now, restarts).state_only(),
+        SourceRead::read(Source::Nodes, CLUSTER, now, nodes).state_only(),
     ];
     if shape == Shape::Partial {
         reads[1] = SourceRead::not_read(

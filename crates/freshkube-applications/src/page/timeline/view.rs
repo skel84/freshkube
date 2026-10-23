@@ -18,11 +18,15 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
                     count,
                     kept_from,
                     cut,
+                    state_only,
                 } => {
                     let kept = kept_from.map(|at| span_words(timeline.now - at));
                     let mut text = format!("{name} {count}");
                     if let Some(kept) = &kept {
                         text.push_str(&format!(" · kept {kept}"));
+                    }
+                    if *state_only {
+                        text.push_str(" · latest state only");
                     }
                     if cut.is_some() {
                         text.push_str(" · cut");
@@ -40,6 +44,11 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
                             clock(*at)
                         ));
                     }
+                    if *state_only {
+                        label.push_str(
+                            ". It shows the present state only, so it speaks for no quiet hour",
+                        );
+                    }
                     if let Some(cut) = cut {
                         label.push_str(&format!(". Read in part: {cut}"));
                     }
@@ -52,6 +61,7 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
                             Tone::Outline
                         },
                         label: label.into(),
+                        read: true,
                     }
                 }
                 ChipState::NotRead(why) => TimelineChip {
@@ -59,6 +69,7 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
                     text: format!("{name} not read: {why}").into(),
                     tone: Tone::Unknown,
                     label: format!("{name}: not read: {why}").into(),
+                    read: false,
                 },
             }
         })
@@ -67,6 +78,15 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
 
 impl Render for TimelineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let stale = self.stale().map(|(text, label)| {
+            freshkube_ui::page::inset().child(
+                crate::ui::warning_banner(Some("Couldn't read again".into()), text, None, cx)
+                    .id("timeline-stale")
+                    .aria_label(label)
+                    .test_support()
+                    .role(Role::Status),
+            )
+        });
         div()
             .id("timeline")
             .test_support()
@@ -75,6 +95,7 @@ impl Render for TimelineView {
             .size_full()
             .min_w_0()
             .min_h_0()
+            .children(stale)
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
     }
 }

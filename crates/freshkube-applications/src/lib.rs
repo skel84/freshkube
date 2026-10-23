@@ -1111,24 +1111,33 @@ impl ApplicationsPage {
         if matches!(source.access, ClusterAccess::Example(_)) {
             return example();
         }
-        let mut workloads: Vec<(String, Vec<String>)> = Vec::new();
+        use freshkube_delivery::timeline::live::Workload;
+        let mut workloads: Vec<(String, Vec<Workload>)> = Vec::new();
         for member in &app.members {
             let at = &member.at;
-            if !matches!(at.kind, MemberKind::Workload(_)) || !connections.opens(&at.session) {
+            let MemberKind::Workload(kind) = at.kind else {
+                continue;
+            };
+            if !connections.opens(&at.session) {
                 continue;
             }
             let Some(namespace) = &at.namespace else {
                 continue;
             };
+            let workload = Workload::new(&at.name, kind);
             match workloads.iter_mut().find(|(known, _)| known == namespace) {
-                Some((_, names)) => names.push(at.name.clone()),
-                None => workloads.push((namespace.clone(), vec![at.name.clone()])),
+                Some((_, known)) => known.push(workload),
+                None => workloads.push((namespace.clone(), vec![workload])),
             }
         }
-        workloads.sort();
+        workloads.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, known) in &mut workloads {
+            known.sort_by(|a, b| a.name.cmp(&b.name));
+        }
         page::timeline::Fetch::Live {
             runtime: self.runtime.clone(),
             access: source.access.clone(),
+            source_id: source.id.to_string(),
             place: freshkube_delivery::timeline::live::Place {
                 cluster: self
                     .clusters
