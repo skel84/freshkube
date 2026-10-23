@@ -100,12 +100,13 @@ pub struct TimelineRow {
 /// A chip as drawn.
 #[derive(Clone, Debug)]
 pub struct TimelineChip {
-    pub source: Source,
     pub text: SharedString,
     pub tone: freshkube_ui::ui::Tone,
     pub label: SharedString,
     /// The source was read (in whole or in part), not refused or missing.
     pub read: bool,
+    /// The element id, `timeline-chip-⟨source⟩`.
+    pub id: SharedString,
 }
 
 pub struct TimelineView {

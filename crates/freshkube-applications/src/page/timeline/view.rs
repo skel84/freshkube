@@ -6,6 +6,10 @@ use freshkube_ui::ui::Tone;
 use super::*;
 use freshkube_ui::tooltip::FollowTooltip as _;
 
+fn chip_id(source: freshkube_delivery::timeline::Source) -> SharedString {
+    format!("timeline-chip-{}", source.slug()).into()
+}
+
 /// One chip for each source: its count, and from when the cluster keeps it
 /// if that is after the window starts; or why it wasn't read.
 pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
@@ -54,7 +58,6 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
                         label.push_str(&format!(". Read in part: {cut}"));
                     }
                     TimelineChip {
-                        source: chip.source,
                         text: text.into(),
                         tone: if kept.is_some() || cut.is_some() {
                             Tone::Warn
@@ -63,14 +66,15 @@ pub fn chips(timeline: &Timeline) -> Vec<TimelineChip> {
                         },
                         label: label.into(),
                         read: true,
+                        id: chip_id(chip.source),
                     }
                 }
                 ChipState::NotRead(why) => TimelineChip {
-                    source: chip.source,
                     text: format!("{name} not read: {why}").into(),
                     tone: Tone::Unknown,
                     label: format!("{name}: not read: {why}").into(),
                     read: false,
+                    id: chip_id(chip.source),
                 },
             }
         })
@@ -117,10 +121,7 @@ impl TimelineView {
             .py(crate::ui::dp(6.))
             .children(self.chips.iter().map(|chip| {
                 div()
-                    .id(SharedString::from(format!(
-                        "timeline-chip-{}",
-                        chip.source.slug()
-                    )))
+                    .id(chip.id.clone())
                     .test_support()
                     .flex_none()
                     .aria_label(chip.label.clone())

@@ -537,6 +537,19 @@ mod live {
         );
         let restarts = reads.iter().find(|r| r.source == Source::Restarts).unwrap();
         assert_eq!(restarts.outcome, Err("Forbidden: can't list pods".into()));
+        // Pod events can't be matched without the pods: Events is cut too,
+        // and speaks for no quiet hour.
+        let events = reads.iter().find(|r| r.source == Source::Events).unwrap();
+        assert_eq!(
+            events.cut.as_deref(),
+            Some("pods not listed in shop: pod events not matched")
+        );
+        let timeline = derive(&reads, NOW, 3);
+        for row in &timeline.rows {
+            if let Row::Quiet { read, .. } = row {
+                assert!(!read.contains(&Source::Events), "{row:?}");
+            }
+        }
     }
 
     #[tokio::test]

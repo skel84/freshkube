@@ -207,6 +207,10 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
             nodes
                 .cuts
                 .push(format!("hosts unknown: pods not listed in {namespace}"));
+            // Without the pods, a pod event can't be matched to its owner.
+            events.cuts.push(format!(
+                "pods not listed in {namespace}: pod events not matched"
+            ));
         }
         if set_list.is_err() && workloads.iter().any(|w| w.kind == WorkloadKind::Deployment) {
             let note =

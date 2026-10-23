@@ -332,16 +332,15 @@ fn empty_words(chips: &[TimelineChip]) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{TimelineChip, empty_words};
-    use freshkube_delivery::timeline::Source;
     use freshkube_ui::ui::Tone;
 
     fn chip(read: bool) -> TimelineChip {
         TimelineChip {
-            source: Source::Events,
             text: "Events".into(),
             tone: Tone::Outline,
             label: "Events".into(),
             read,
+            id: "timeline-chip-events".into(),
         }
     }
 
