@@ -16,6 +16,11 @@ const TAIL_BYTES: u64 = 256 * 1024;
 /// The longest a single line is copied; a longer one is cut.
 const LINE_MAX: usize = 2000;
 
+/// The system as diagnostics and About name it: `linux x86_64`.
+pub fn system() -> String {
+    format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
 /// The last lines of a log, redacted and cut to a bounded size. A missing log
 /// answers no lines.
 pub fn tail(path: &Path, lines: usize) -> Vec<String> {
@@ -53,11 +58,7 @@ pub fn text(version: &str, log: &Path, crash: Option<&CrashReport>) -> String {
     let mut out = String::new();
     out.push_str("Freshkube diagnostics\n");
     out.push_str(&format!("Version: {version}\n"));
-    out.push_str(&format!(
-        "System: {} {}\n",
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    ));
+    out.push_str(&format!("System: {}\n", system()));
     out.push_str(&format!("Time: {}\n", chrono::Utc::now().to_rfc3339()));
     match crash {
         Some(crash) => {

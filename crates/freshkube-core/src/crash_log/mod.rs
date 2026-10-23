@@ -132,10 +132,10 @@ pub fn start(log: &Path, marker_folder: Option<&Path>, version: &str) -> io::Res
     let marker = marker_folder.map(marker::path_in);
     let last_crash = marker.as_deref().and_then(marker::read);
     let report = CrashReport::started(version, log);
-    if let Some(path) = &marker {
-        if let Err(error) = marker::write(path, &report) {
-            eprintln!("freshkube: could not write the crash marker: {error}");
-        }
+    if let Some(path) = &marker
+        && let Err(error) = marker::write(path, &report)
+    {
+        eprintln!("freshkube: could not write the crash marker: {error}");
     }
     panic::install(Arc::new(Recorder {
         marker: marker.clone(),

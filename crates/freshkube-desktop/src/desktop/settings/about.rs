@@ -53,7 +53,7 @@ impl SettingsPage {
             .row(form::row(
                 "about-system",
                 "System",
-                format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+                freshkube_core::crash_log::diagnostics::system(),
             ))
             .row(form::row("about-log", "Log", log));
         if session
