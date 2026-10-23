@@ -1,5 +1,6 @@
 //! The clusters table as a `TableSource`.
 use super::*;
+use freshkube_ui::tooltip::FollowTooltip as _;
 use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,8 +37,12 @@ impl TableColumn for Column {
     }
 }
 
+/// What a Team or Yours chip adds to the Cluster column, in dp.
+const CHIP_ROOM: f32 = 64.;
+
 /// Derives widths using the shared table's DESIGN.md sizing rules.
-pub(super) fn columns(rows: &[ClusterRow]) -> (Vec<Column>, f32) {
+/// `chips` leaves the Cluster column room for a Team or Yours chip.
+pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
     let column = |field, label: &str, width| Column {
         field,
         label: label.to_owned().into(),
@@ -48,7 +53,8 @@ pub(super) fn columns(rows: &[ClusterRow]) -> (Vec<Column>, f32) {
         column(
             Field::Name,
             "Cluster",
-            table::fit("Cluster", rows.iter().map(|row| &row.id), table::WIDEST),
+            table::fit("Cluster", rows.iter().map(|row| &row.id), table::WIDEST)
+                + if chips { CHIP_ROOM } else { 0. },
         ),
         column(Field::Role, "Role", 120.),
         column(Field::Protection, "Protection", 170.),
@@ -144,22 +150,53 @@ impl TableSource for SettingsPage {
                     ))
                 })
                 .into_any_element(),
-            Field::Name => text_cell("name", &row.id).into_any_element(),
-            Field::Role => text_cell("role", &row.role).into_any_element(),
-            Field::Protection => {
-                // An unset level is guarded, and says it is the default.
-                let level = row.protection.unwrap_or_default();
-                let id = format!("settings-cluster-{}-protection", row.id);
-                let words = if row.protection.is_none() {
-                    format!("{} · default", level.label())
-                } else {
-                    level.label().to_owned()
-                };
-                table::cell(column)
-                    .id(SharedString::from(format!("{id}-cell")))
+            Field::Name => match self.team_cluster(&row.id).and_then(|view| view.row) {
+                Some(origin) => table::cell(column)
+                    .id(SharedString::from(format!(
+                        "settings-cluster-{}-name-cell",
+                        row.id
+                    )))
                     .flex()
                     .items_center()
                     .gap(dp(6.))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "settings-cluster-{}-name",
+                                row.id
+                            )))
+                            .test_support()
+                            .aria_label(row.id.clone())
+                            .min_w_0()
+                            .truncate()
+                            .child(row.id.clone()),
+                    )
+                    .children(super::team::origin_chip(
+                        format!("settings-cluster-{}-origin", row.id),
+                        origin,
+                        cx,
+                    ))
+                    .into_any_element(),
+                None => text_cell("name", &row.id).into_any_element(),
+            },
+            Field::Role => text_cell("role", &row.role).into_any_element(),
+            Field::Protection => {
+                // The level that applies, and where it comes from when that
+                // is not the entry alone.
+                let level = row.level;
+                let id = format!("settings-cluster-{}-protection", row.id);
+                let note = super::team::level_note(level, row.level_source);
+                let words = match &note {
+                    Some((_, note, _)) => format!("{} {note}", level.label()),
+                    None => level.label().to_owned(),
+                };
+                table::cell(column)
+                    .id(SharedString::from(format!("{id}-cell")))
+                    .test_support()
+                    .flex()
+                    .items_center()
+                    .gap(dp(6.))
+                    .overflow_hidden()
                     .child(
                         freshkube_ui::level::tag(
                             crate::desktop::shell::mark(level),
@@ -168,18 +205,21 @@ impl TableSource for SettingsPage {
                         )
                         .id(SharedString::from(id.clone()))
                         .test_support()
+                        .flex_none()
                         .aria_label(words.clone()),
                     )
-                    .when(row.protection.is_none(), |this| {
+                    .when_some(note, |this, (kind, note, whole)| {
                         this.child(
                             div()
-                                .id(SharedString::from(format!("{id}-default")))
+                                .id(SharedString::from(format!("{id}-{kind}")))
                                 .test_support()
-                                .aria_label("· default")
+                                .aria_label(note)
+                                .min_w_0()
+                                .truncate()
                                 .text_size(dp(12.))
                                 .text_color(style.p.muted)
-                                .whitespace_nowrap()
-                                .child("· default"),
+                                .follow_tooltip(whole)
+                                .child(note),
                         )
                     })
                     .into_any_element()
