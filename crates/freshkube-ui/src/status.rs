@@ -230,9 +230,9 @@ impl Segment {
 }
 
 /// Draws `segment`, or nothing when it is empty: the longest of its lines
-/// that fits, the shortest cut at its end when none does, with the whole
-/// line in its tooltip and accessibility label. `named` is the context
-/// the shell's status already names.
+/// that fits, the shortest cut at its end when none does. If even its first
+/// word won't fit, draw no text. The tooltip and accessibility label keep
+/// the whole line. `named` is the context the shell's status already names.
 pub fn segment(
     id: impl Into<ElementId>,
     segment: &Segment,
@@ -395,8 +395,15 @@ impl Fit {
             let mut wrapper = cx
                 .text_system()
                 .line_wrapper(self.key().font.clone(), font_size);
-            let (text, runs) =
+            let (mut text, mut runs) =
                 wrapper.truncate_line(last.text.clone(), width, "…", &runs, TruncateFrom::End);
+            // The page gives way to the shell's controls. A fragment of its
+            // first word (or an ellipsis alone) conveys no useful status.
+            let first = last.text.split_whitespace().next().unwrap_or_default();
+            if !text.starts_with(first) {
+                text = SharedString::default();
+                runs = std::borrow::Cow::Borrowed(&[]);
+            }
             let shaped = window
                 .text_system()
                 .shape_line(text, font_size, &runs, None);
