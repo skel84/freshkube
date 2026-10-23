@@ -801,3 +801,112 @@ fn the_sentence_says_a_promotion_for_one_stage_and_one_for_each_of_several() {
         "{text}"
     );
 }
+
+fn described(kind: Kind, destination: Option<Destination>) -> Option<ActionDescription> {
+    let mut stage = acts();
+    stage.holds = true;
+    stage.verification = Some("ver-1".into());
+    if kind == Kind::Abort {
+        stage.promoting = vec![running()];
+    } else if kind == Kind::Promote {
+        stage.holds = false;
+    }
+    describe(
+        kind,
+        &stage,
+        &change(),
+        destination,
+        "t",
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
+    )
+}
+
+#[test]
+fn describe_holds_every_kind_that_reaches_the_destination_and_says_which_do_not() {
+    let protected = dest("prod-ams", Protection::Protected);
+    for (kind, reaches) in [
+        (Kind::RefreshStage, true),
+        (Kind::RefreshWarehouse, false),
+        (Kind::Reverify, true),
+        (Kind::Promote, true),
+        (Kind::Abort, true),
+    ] {
+        let action = described(kind, Some(protected.clone())).expect("on offer");
+        if reaches {
+            assert_eq!(action.destinations.len(), 1, "{kind:?}");
+            assert_eq!(action.destinations[0].entry, "prod-ams", "{kind:?}");
+            assert_eq!(action.destinations[0].covers, ["prod-ams"], "{kind:?}");
+            // The Stage is the typed subject, not the generated object.
+            assert_eq!(action.subjects, ["prod-ams"], "{kind:?}");
+            assert_eq!(action.level(Protection::Open), Protection::Protected);
+        } else {
+            assert!(action.destinations.is_empty(), "{kind:?}");
+        }
+    }
+    // An unknown destination counts as guarded, and every dialog says so.
+    for kind in [
+        Kind::RefreshStage,
+        Kind::Reverify,
+        Kind::Promote,
+        Kind::Abort,
+    ] {
+        let action = described(kind, None).unwrap();
+        assert_eq!(
+            action.level(Protection::Open),
+            Protection::Guarded,
+            "{kind:?}"
+        );
+        let text: String = action
+            .preview
+            .iter()
+            .flat_map(|p| p.lines.clone())
+            .collect();
+        assert!(
+            text.contains("held to Guarded at least"),
+            "{kind:?}: {text}"
+        );
+    }
+}
+
+#[test]
+fn describe_offers_only_what_the_stage_can_do() {
+    let mut stage = acts();
+    stage.holds = false;
+    let ask = |kind, stage: &StageActs| {
+        describe(
+            kind,
+            stage,
+            &change(),
+            None,
+            "t",
+            "01k8d2qy4v9z3m6n7p8r5t0w1x",
+        )
+    };
+    assert!(ask(Kind::Abort, &stage).is_none(), "nothing runs");
+    assert!(ask(Kind::Promote, &stage).is_some());
+    assert!(
+        ask(Kind::Reverify, &stage).is_none(),
+        "not its current Freight"
+    );
+    stage.promoting = vec![running()];
+    assert!(ask(Kind::Promote, &stage).is_none(), "Promote is Abort now");
+    assert!(ask(Kind::Abort, &stage).is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn abort_sends_nothing_unasked_or_for_the_promotion_s_own_name() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    for wrong in [
+        Confirmation::NotAsked,
+        Confirmation::Typed(running().promotion.name),
+    ] {
+        let Verdict::Ready(prepared) = runner.preflight(abort_held_to(Protection::Protected)).await
+        else {
+            panic!("ready")
+        };
+        let finished = runner.execute(*prepared, wrong, || false, |_| {}).await;
+        assert_eq!(finished.status, Status::NotSent(NotSent::Unconfirmed));
+    }
+    assert!(writes(&cluster).is_empty());
+}
