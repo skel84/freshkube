@@ -223,7 +223,7 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
 
 /// The shell's keys on macOS, where `secondary` is Command.
 #[cfg(target_os = "macos")]
-const SHELL_KEYS: [&str; 28] = [
+const SHELL_KEYS: [&str; 37] = [
     "alt-cmd-i inspector::ToggleInspector ",
     "cmd-+ text_size::LargerText ",
     "cmd-= text_size::LargerText ",
@@ -246,6 +246,15 @@ const SHELL_KEYS: [&str; 28] = [
     "ctrl-shift- pilot::PreviousScreen MenuBarOnly",
     "ctrl-tab pilot::NextScreen Freshkube",
     "ctrl-shift-tab pilot::PreviousScreen Freshkube",
+    "cmd-t tabs::DuplicateTab Freshkube",
+    "cmd-shift-t tabs::ReopenViewTab Freshkube",
+    "cmd-w tabs::CloseViewTab Freshkube",
+    "cmd-[ tabs::TabBack Freshkube",
+    "cmd-] tabs::TabForward Freshkube",
+    "cmd-} tabs::NextViewTab Freshkube",
+    "cmd-{ tabs::PreviousViewTab Freshkube",
+    "ctrl-tab tabs::NextViewTab Freshkube",
+    "ctrl-shift-tab tabs::PreviousViewTab Freshkube",
     "alt-up pilot::PreviousContext Freshkube",
     "alt-down pilot::NextContext Freshkube",
     "cmd-k pilot::GoToKind Freshkube",
@@ -258,7 +267,7 @@ const SHELL_KEYS: [&str; 28] = [
 /// The shell's keys on Linux and Windows, where `secondary` is Control
 /// and Kit's inspector takes Control-Shift-I.
 #[cfg(not(target_os = "macos"))]
-const SHELL_KEYS: [&str; 28] = [
+const SHELL_KEYS: [&str; 37] = [
     "ctrl-shift-i inspector::ToggleInspector ",
     "ctrl-+ text_size::LargerText ",
     "ctrl-= text_size::LargerText ",
@@ -281,6 +290,15 @@ const SHELL_KEYS: [&str; 28] = [
     "ctrl-shift- pilot::PreviousScreen MenuBarOnly",
     "ctrl-tab pilot::NextScreen Freshkube",
     "ctrl-shift-tab pilot::PreviousScreen Freshkube",
+    "ctrl-t tabs::DuplicateTab Freshkube",
+    "ctrl-shift-t tabs::ReopenViewTab Freshkube",
+    "ctrl-shift-w tabs::CloseViewTab Freshkube",
+    "ctrl-[ tabs::TabBack Freshkube",
+    "ctrl-] tabs::TabForward Freshkube",
+    "ctrl-} tabs::NextViewTab Freshkube",
+    "ctrl-{ tabs::PreviousViewTab Freshkube",
+    "ctrl-tab tabs::NextViewTab Freshkube",
+    "ctrl-shift-tab tabs::PreviousViewTab Freshkube",
     "alt-up pilot::PreviousContext Freshkube",
     "alt-down pilot::NextContext Freshkube",
     "ctrl-k pilot::GoToKind Freshkube",
@@ -381,16 +399,19 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
         "pilot::UseSystemAppearance",
         "root::Tab",
         "root::TabPrev",
+        "tabs::DuplicateTab",
         "text_size::DefaultText",
         "text_size::LargerText",
         "text_size::SmallerText",
     ];
     // Overview has no column.
     assert_eq!(answered(cx), expected);
-    // Resources has one, so ToggleColumn joins.
+    // Resources has one, so ToggleColumn joins; the shown tab has been
+    // somewhere before, so TabBack does.
     cx.update_window(handle, |_, window, cx| open_kind(window, cx, "pods"))
         .unwrap();
     expected.push("pilot::ToggleColumn");
+    expected.push("tabs::TabBack");
     expected.sort_unstable();
     assert_eq!(answered(cx), expected);
     // The menu button answers OpenAppMenu.

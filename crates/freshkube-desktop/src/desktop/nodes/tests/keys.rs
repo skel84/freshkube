@@ -392,7 +392,7 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
             pilot.read(cx).pages.node_workspace.read(cx).tab,
             NodeTab::Storage
         );
-        window.press("secondary-{", cx);
+        window.press("secondary-alt-[", cx);
     });
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
