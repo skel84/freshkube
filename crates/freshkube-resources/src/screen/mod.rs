@@ -673,6 +673,16 @@ impl ResourcesScreen {
 
     /// Only a visible page reads: showing it lists again and watches,
     /// hiding it drops the watch.
+    /// What the example Service and workload traffic reads answer.
+    pub fn set_services_shape(
+        &mut self,
+        shape: crate::example::traffic::Shape,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |detail, _| detail.set_services_shape(shape));
+    }
+
     pub fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.visible == visible {
             return;
