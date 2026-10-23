@@ -311,6 +311,10 @@ restarting delivery reads. Effective setup or source-availability changes do
 invalidate them. A successful explicit Reload always invalidates reads, even
 for identical configuration, since referenced key files can change.
 
+## A shared team file
+
+A team can share one `freshkube.yaml` from a git repository or an HTTPS address ([#849](https://github.com/skel84/freshkube/issues/849), [Team setup](features/settings.md#team-setup)). The person's own file stays the one the app writes. The team's values sit under it: yours over the team's over the defaults, except that the team's protection level is a floor. The team file never sets contexts, local paths, keys and tokens, agent access, notification and follow settings or history. A new version waits for review and never applies on its own.
+
 ## Reload on change
 
 No dependency is needed. The app has no file watcher today (it reads `workspace.json` at start and on Reload, `settings/mod.rs` and `settings/edit.rs`); `notify` is in the build only inside GPUI Kit's theme registry. A watcher would also have to watch the directory, since editors save by renaming a new file over the old one. A poll is simpler and costs nothing that matters:

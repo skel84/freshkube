@@ -115,6 +115,10 @@ pub struct DebugOptions {
     /// example (`freshkube_followed::example::Shape`); anything else plays
     /// the example story. Needs `--fixture`.
     pub(crate) follows: Option<freshkube_followed::example::Shape>,
+    /// `FRESHKUBE_TEAM`: the shape of the example team in Settings › Team
+    /// setup (`freshkube_core::team::example::Shape`); anything else is no
+    /// team. Needs `--fixture`.
+    pub(crate) team: Option<freshkube_core::team::example::Shape>,
 }
 
 impl DebugOptions {
@@ -198,6 +202,9 @@ impl DebugOptions {
             follows: text("FRESHKUBE_FOLLOWS")
                 .as_deref()
                 .and_then(freshkube_followed::example::Shape::parse),
+            team: text("FRESHKUBE_TEAM")
+                .as_deref()
+                .and_then(freshkube_core::team::example::Shape::parse),
         }
     }
 
@@ -267,6 +274,21 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn team_names_the_shape_of_the_example_team_and_ignores_anything_else() {
+        use freshkube_core::team::example::Shape;
+        for (value, shape) in [
+            ("none", Shape::NoTeam),
+            ("joined", Shape::Joined),
+            ("update", Shape::Update),
+            ("trust", Shape::Trust),
+            ("failed", Shape::Failed),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_TEAM", value)]).team, Some(shape));
+        }
+        assert_eq!(parse(&[("FRESHKUBE_TEAM", "Joined")]).team, None);
     }
 
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
