@@ -442,6 +442,40 @@ fn a_refusal_offers_a_read_only_access_request_and_no_retry(cx: &mut TestAppCont
     assert!(!copied.to_lowercase().contains("secrets"), "{copied}");
 }
 
+/// In the smallest window at the largest text size the refused state
+/// scrolls, and its one action can be brought into view.
+#[gpui_kit::test]
+fn the_refused_state_keeps_its_action_reachable_when_small(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open(cx, 760., 560., |page| page.set_variant(Variant::Refused));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        let viewport = window.find("empty-state-scroll").bounds();
+        let inside = |window: &mut gpui_kit::Window| {
+            let action = window.find("applications-copy-access").bounds();
+            action.top() >= viewport.top() && action.bottom() <= viewport.bottom()
+        };
+        let mut reached = inside(window);
+        for _ in 0..60 {
+            if reached {
+                break;
+            }
+            window.scroll(
+                "empty-state-scroll",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-20.))),
+                cx,
+            );
+            window.render_frame(cx);
+            reached = inside(window);
+        }
+        assert!(
+            reached,
+            "Copy access request is out of reach in {viewport:?}"
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn the_refused_state_holds_a_packaged_icon_at_every_text_size(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) =

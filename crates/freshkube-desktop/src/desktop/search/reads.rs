@@ -34,6 +34,11 @@ impl Search {
                 }
                 let kind = builtin(key).unwrap();
                 if matches!(source.access, ClusterAccess::Example(_)) {
+                    if self.refuse_example && key == "secrets" {
+                        self.parts
+                            .insert(key, Err("secrets is forbidden for this identity".into()));
+                        continue;
+                    }
                     let objects = resources::example::read(
                         &source.context,
                         key,

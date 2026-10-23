@@ -115,6 +115,34 @@ fn search_names_kinds_in_plain_words() {
     assert_eq!(kind_display("ingresses.networking.k8s.io"), "ingresses");
 }
 
+/// With example data and `FRESHKUBE_LINKS=refused`, Search refuses the
+/// Secrets list so its refused line can be smoked.
+#[gpui_kit::test]
+fn the_refused_link_shape_makes_search_refuse_secrets_in_example_data(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);
+    cx.update(|cx| {
+        pilot.update(cx, |pilot, _| {
+            pilot
+                .deep_link
+                .force(Some(crate::debug_options::LinkShape::Refused))
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.open_search(window, cx))
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let label = window
+            .find("search-status-secrets")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(label.contains("Can't list secrets"), "{label}");
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn refusal_is_visible_and_other_groups_still_open(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);

@@ -906,11 +906,22 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
         }
     };
     if !refused.is_empty() {
+        // Several sources would make a title of four lines; the sources go
+        // in the details with the server's reason.
+        let named = sources(&refused);
+        let (what, listed) = if named.contains(", ") {
+            ("applications".to_owned(), Some(named))
+        } else {
+            (named, None)
+        };
         let state = ReadState::Refused {
-            what: sources(&refused),
+            what,
             cluster: clusters(&refused),
             manifest: Some(access_request(&refused)),
-            reason: Some(reason(&refused).to_string()),
+            reason: Some(match listed {
+                Some(listed) => format!("Refused: {listed}. {}", reason(&refused)),
+                None => reason(&refused).to_string(),
+            }),
         };
         let body = Body::Refused {
             title: state.title().into(),
@@ -1493,10 +1504,13 @@ mod tests {
             }
         }
         let display = shown(&inputs);
-        let Body::Refused { title, .. } = &display.body else {
+        let Body::Refused { title, state, .. } = &display.body else {
             panic!("expected the refused state");
         };
-        assert!(title.contains("Argo CD Applications"), "{title}");
+        // Several sources keep the title short and are named in the details.
+        assert_eq!(title.as_ref(), "Not allowed to read applications");
+        let details = state.reason().unwrap_or_default();
+        assert!(details.contains("Argo CD Applications"), "{details}");
         let (missing, _) = display.missing_text.clone().expect("a banner");
         assert!(
             missing.contains("Couldn't reach cicd-fra: connection refused"),
