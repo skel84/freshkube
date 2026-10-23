@@ -6,8 +6,6 @@
 //! decides a level's requirement.
 
 mod scale;
-#[cfg(test)]
-mod tests;
 
 use std::sync::Arc;
 use std::time::Duration;

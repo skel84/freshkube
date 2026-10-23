@@ -122,3 +122,18 @@ impl Render for ScaleDialog {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_count_is_a_whole_number_up_to_the_most() {
+        assert_eq!(parse(" 3 "), Ok(3));
+        assert_eq!(parse("0"), Ok(0));
+        assert_eq!(parse("10000"), Ok(MOST));
+        for bad in ["", "-1", "2.5", "three", "10001"] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+    }
+}
