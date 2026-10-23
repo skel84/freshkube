@@ -510,7 +510,9 @@ fn direct_tab_close_can_be_cancelled_then_sends_one_eof(cx: &mut TestAppContext)
 /// that runs nothing, Start is off, and the same press works once the
 /// window shows a context that allows writes.
 #[gpui_kit::test]
-fn a_read_only_context_opens_its_shell_tab_idle_and_start_does_nothing(cx: &mut TestAppContext) {
+fn safety_g05_a_read_only_context_opens_its_shell_tab_idle_and_start_does_nothing(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let dock = dock(&pilot, cx);
     let show = |id: &'static str, cx: &mut TestAppContext| {
@@ -565,7 +567,9 @@ fn show_cluster(handle: AnyWindowHandle, pilot: &Entity<Pilot>, id: &str, cx: &m
 /// The shown cluster gates Resources writes (#935), while each dock shell
 /// keeps its own entry's gate across a cluster switch (#878). Logs still read.
 #[gpui_kit::test]
-fn resources_follow_the_shown_level_while_a_dock_shell_keeps_its_own(cx: &mut TestAppContext) {
+fn safety_g04_resources_follow_the_shown_level_while_a_dock_shell_keeps_its_own(
+    cx: &mut TestAppContext,
+) {
     use crate::resources::WorkloadAct;
     use freshkube_core::write::{READ_ONLY_REASON, everyday::Everyday};
     use std::{cell::RefCell, rc::Rc, time::Duration};
@@ -720,7 +724,7 @@ fn a_running_shell_names_its_own_cluster_after_a_switch(cx: &mut TestAppContext)
 /// A blocked shell on another cluster offers logs on its own cluster, and
 /// a stricter level reaches an open tab's Start at once.
 #[gpui_kit::test]
-fn a_blocked_shell_opens_logs_on_its_own_cluster_and_a_stricter_level_blocks_at_once(
+fn safety_g05_a_blocked_shell_opens_logs_on_its_own_cluster_and_a_stricter_level_blocks_at_once(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
@@ -855,7 +859,9 @@ fn a_setup_change_reaches_a_shell_tab_on_a_window_with_no_entry(cx: &mut TestApp
 /// An open cluster's shell can start while a read-only cluster is shown:
 /// the shown level is never consulted.
 #[gpui_kit::test]
-fn an_open_clusters_shell_can_start_while_a_read_only_cluster_is_shown(cx: &mut TestAppContext) {
+fn safety_g04_an_open_clusters_shell_can_start_while_a_read_only_cluster_is_shown(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     show_cluster(handle, &pilot, "dev-fra", cx);
     let pods = running_pods(&pilot, cx);
@@ -871,7 +877,7 @@ fn an_open_clusters_shell_can_start_while_a_read_only_cluster_is_shown(cx: &mut 
 
 /// A shell blocked on the shown cluster gets the offer too.
 #[gpui_kit::test]
-fn a_shell_blocked_on_the_shown_cluster_offers_logs(cx: &mut TestAppContext) {
+fn safety_g05_a_shell_blocked_on_the_shown_cluster_offers_logs(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     show_cluster(handle, &pilot, "stage-fra", cx);
     let pods = running_pods(&pilot, cx);

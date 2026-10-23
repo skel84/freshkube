@@ -215,7 +215,9 @@ fn cancelling_the_dialog_sends_no_request(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn read_only_blocks_every_tier_with_its_reason_and_makes_no_request(cx: &mut TestAppContext) {
+fn safety_g01_read_only_blocks_every_tier_with_its_reason_and_makes_no_request(
+    cx: &mut TestAppContext,
+) {
     for action in [fake::scale(3), fake::set_image("x"), fake::delete_web()] {
         let h = harness(cx, Protection::ReadOnly);
         h.begin(cx, action);
@@ -227,7 +229,9 @@ fn read_only_blocks_every_tier_with_its_reason_and_makes_no_request(cx: &mut Tes
 }
 
 #[gpui_kit::test]
-fn protected_asks_for_the_name_and_a_wrong_or_empty_one_sends_nothing(cx: &mut TestAppContext) {
+fn safety_g02_protected_asks_for_the_name_and_a_wrong_or_empty_one_sends_nothing(
+    cx: &mut TestAppContext,
+) {
     let h = harness(cx, Protection::Protected);
     h.begin(cx, fake::scale(3));
     assert_eq!(h.label(cx, "write-type-prompt"), "Type web to confirm");
@@ -243,7 +247,7 @@ fn protected_asks_for_the_name_and_a_wrong_or_empty_one_sends_nothing(cx: &mut T
 }
 
 #[gpui_kit::test]
-fn protected_sends_once_the_exact_name_is_typed(cx: &mut TestAppContext) {
+fn safety_g02_protected_sends_once_the_exact_name_is_typed(cx: &mut TestAppContext) {
     let h = harness(cx, Protection::Protected);
     h.begin(cx, fake::scale(3));
     h.type_name(cx, "web");
@@ -550,7 +554,9 @@ fn another_operation_holding_the_slot_refuses_the_confirm_and_sends_nothing(
 }
 
 #[gpui_kit::test]
-fn the_level_turning_read_only_after_the_dialog_opened_sends_nothing(cx: &mut TestAppContext) {
+fn safety_g01_the_level_turning_read_only_after_the_dialog_opened_sends_nothing(
+    cx: &mut TestAppContext,
+) {
     let h = harness(cx, Protection::Guarded);
     h.begin(cx, fake::scale(3));
     cx.update(|cx| set_protection(Protection::ReadOnly, cx));

@@ -204,7 +204,7 @@ async fn refresh_of_the_warehouse_and_reverify_go_on_their_own_objects() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn read_only_blocks_every_stage_action_and_asks_the_cluster_nothing() {
+async fn safety_g01_read_only_blocks_every_stage_action_and_asks_the_cluster_nothing() {
     let stage = acts();
     let all = [
         refresh_stage(&stage, "t"),
@@ -701,7 +701,7 @@ async fn abort_on_a_protected_destination_asks_for_the_stage_name_though_kargo_i
 }
 
 #[tokio::test(start_paused = true)]
-async fn abort_on_a_read_only_destination_is_blocked_with_no_request() {
+async fn safety_g01_abort_on_a_read_only_destination_is_blocked_with_no_request() {
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
     let runner = kargo_runner(&cluster, dir.path(), Protection::Open);
     assert!(matches!(

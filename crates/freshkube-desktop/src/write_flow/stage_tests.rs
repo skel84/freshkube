@@ -153,7 +153,7 @@ fn a_protected_destination_asks_for_the_stage_name_and_send_waits_for_it(cx: &mu
 }
 
 #[gpui_kit::test]
-fn the_exact_stage_name_unlocks_the_send(cx: &mut TestAppContext) {
+fn safety_g02_the_exact_stage_name_unlocks_the_send(cx: &mut TestAppContext) {
     let h = harness_on(cx, Protection::Guarded, kargo);
     h.begin(cx, promote(Protection::Protected));
     h.type_name(cx, "prod-ams");
@@ -175,7 +175,7 @@ fn a_protected_kargo_cluster_asks_for_the_name_though_the_destination_is_open(
 }
 
 #[gpui_kit::test]
-fn a_read_only_destination_blocks_a_promotion_and_asks_the_cluster_nothing(
+fn safety_g01_a_read_only_destination_blocks_a_promotion_and_asks_the_cluster_nothing(
     cx: &mut TestAppContext,
 ) {
     let h = harness_on(cx, Protection::Open, kargo);
@@ -248,7 +248,7 @@ fn refresh_asks_nothing_at_any_writable_level_says_why_and_is_audited(cx: &mut T
 }
 
 #[gpui_kit::test]
-fn read_only_blocks_refresh_with_no_request(cx: &mut TestAppContext) {
+fn safety_g01_read_only_blocks_refresh_with_no_request(cx: &mut TestAppContext) {
     let h = harness_on(cx, Protection::ReadOnly, kargo);
     h.begin(cx, acts::refresh_stage(&example_acts("prod-ams"), "t"));
     assert_eq!(h.label(cx, "write-disabled"), "This cluster is read-only.");

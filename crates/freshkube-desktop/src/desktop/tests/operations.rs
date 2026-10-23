@@ -36,7 +36,7 @@ fn open_confirmation(
 }
 
 #[gpui_kit::test]
-fn confirmation_runs_only_against_the_preview_shown(cx: &mut TestAppContext) {
+fn safety_g10_confirmation_runs_only_against_the_preview_shown(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     let current = Rc::new(Cell::new(1));
     let confirmed = Rc::new(Cell::new(0));
@@ -315,7 +315,7 @@ fn dangerous_services_are_confirmed_by_name(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_stale_restart_preview_is_refused_and_runs_nothing(cx: &mut TestAppContext) {
+fn safety_g10_a_stale_restart_preview_is_refused_and_runs_nothing(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     open_restart(cx, handle, "containerd");
     // The target moved on while the dialog was open.
@@ -374,7 +374,7 @@ fn a_restart_is_refused_while_another_operation_runs(cx: &mut TestAppContext) {
 /// A read-only cluster (#852) turns Restart off with the reason: pressing it
 /// opens no confirmation and takes no slot.
 #[gpui_kit::test]
-fn a_read_only_cluster_refuses_a_restart_and_takes_no_slot(cx: &mut TestAppContext) {
+fn safety_g10_a_read_only_cluster_refuses_a_restart_and_takes_no_slot(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);

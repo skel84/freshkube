@@ -124,6 +124,11 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)
         run: cargo test --workspace --locked
+      - name: Safety suite
+        # The read-only and protection guarantees, by name (docs/SAFETY.md).
+        run: |
+          scripts/check-safety-suite.sh
+          cargo test --workspace --locked safety_g
       - name: Stress API checks
         # Enabling stress for the UI suite would start its timed app quit.
         # Test the synthetic server binary separately from the normal app.
