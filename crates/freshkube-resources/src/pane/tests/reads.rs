@@ -175,7 +175,7 @@ fn new_versions_are_read_once_each_and_at_most_once_a_second(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn a_hidden_pane_reads_nothing_and_hides_revealed_values(cx: &mut TestAppContext) {
+fn safety_g09_a_hidden_pane_reads_nothing_and_hides_revealed_values(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
     let (secret, _) = target("secrets", |_, name| name == "ledger-database");
     cx.update_window(handle, |_, window, cx| {

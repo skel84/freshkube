@@ -13,6 +13,7 @@ impl DetailPane {
         let mut body = v_flex()
             .gap(dp(18.))
             .children(self.external_secret_section(cx))
+            .children(self.traffic_section(cx))
             .when(detail.target.kind.is_pod(), |this| {
                 this.child(self.pod_sections(cx))
             })

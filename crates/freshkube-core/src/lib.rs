@@ -17,6 +17,7 @@
 //! - [`network`] - Network analysis utilities (port mapping, connection classification)
 //! - [`diagnostics`] - Diagnostic types for health checks and CNI detection
 //! - [`constants`] - Shared constants (thresholds, CRD names, refresh intervals)
+//! - [`crash_log`] - The kept log, panics in it, the crash marker and redacted diagnostics
 //! - [`resources`] - Read-only listing and watching of any Kubernetes kind
 //! - [`monitoring`] - Prometheus dashboards through the service proxy, GET only
 
@@ -29,6 +30,7 @@ pub mod cluster_source;
 
 pub mod constants;
 pub mod coroot;
+pub mod crash_log;
 pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;

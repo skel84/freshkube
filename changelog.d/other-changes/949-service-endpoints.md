@@ -1,0 +1,1 @@
+- **Service endpoints:** a Service's Details now show what it publishes (ready, draining, not ready and unrouted endpoints, the selected pods nothing publishes and why, and whether EndpointSlices or the legacy Endpoints answered), and a workload's Details show the Services that select its pods and what each publishes; a refused read reads unknown, never zero.

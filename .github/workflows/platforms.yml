@@ -113,6 +113,11 @@ jobs:
         # GPUI's test platform needs no display; the workspace run includes
         # the terminal keyboard tests.
         run: cargo test --workspace --locked --no-fail-fast
+      - name: Safety suite
+        # The read-only and protection guarantees, by name (docs/SAFETY.md).
+        run: |
+          scripts/check-safety-suite.sh
+          cargo test --workspace --locked safety_g
 
   windows:
     name: Compile and lint (Windows)
