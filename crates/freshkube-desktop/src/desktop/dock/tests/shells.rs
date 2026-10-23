@@ -562,6 +562,116 @@ fn show_cluster(handle: AnyWindowHandle, pilot: &Entity<Pilot>, id: &str, cx: &m
     cx.run_until_parked();
 }
 
+/// The shown cluster gates Resources writes (#935), while each dock shell
+/// keeps its own entry's gate across a cluster switch (#878). Logs still read.
+#[gpui_kit::test]
+fn resources_follow_the_shown_level_while_a_dock_shell_keeps_its_own(cx: &mut TestAppContext) {
+    use crate::resources::WorkloadAct;
+    use freshkube_core::write::{READ_ONLY_REASON, everyday::Everyday};
+    use std::{cell::RefCell, rc::Rc, time::Duration};
+
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let resources = cx.read(|cx| pilot.read(cx).pages.resources.clone());
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    cx.update(|cx| {
+        let heard = heard.clone();
+        cx.subscribe(&resources, move |_, act: &WorkloadAct, _| {
+            heard.borrow_mut().push((act.act, act.identity.clone()));
+        })
+        .detach();
+    });
+    let click = |id: &'static str, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(id, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let deployment = |cx: &mut TestAppContext| {
+        let identity = objects(&pilot, "deployments.apps", |_, name| name == "api", cx)
+            .pop()
+            .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_object(
+                    builtin("deployments.apps").unwrap(),
+                    identity.clone().into(),
+                    Tab::Overview,
+                    window,
+                    cx,
+                )
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        identity
+    };
+
+    // stage-fra is read-only in the example workspace. A toolbar press
+    // must not even ask the shell to write, rather than rely on its refusal.
+    show_cluster(handle, &pilot, "stage-fra", cx);
+    deployment(cx);
+    click("resource-scale", cx);
+    assert!(
+        heard.borrow().is_empty(),
+        "read-only Resources emitted a write"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("scale-dialog").is_none());
+    })
+    .unwrap();
+
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let refusal = window.find("dock-origin").label().unwrap().to_owned();
+        assert!(refusal.contains(READ_ONLY_REASON), "{refusal}");
+    })
+    .unwrap();
+    click("pod-shell-start", cx);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Idle);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+    let blocked = shell_view(&dock, 0, cx);
+    assert_eq!(
+        cx.read(|cx| blocked.read(cx).blocked()),
+        Some(READ_ONLY_REASON)
+    );
+    click("dock-open-logs-instead", cx);
+    let logs = pod_view(&dock, 1, cx);
+    assert_eq!(
+        cx.read(|cx| dock.read(cx).tabs[0].origin.source.id.clone()),
+        cx.read(|cx| dock.read(cx).tabs[1].origin.source.id.clone())
+    );
+    let before = cx.read(|cx| logs.read(cx).retained().len());
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| logs.read(cx).source().stream_open()));
+    assert!(cx.read(|cx| logs.read(cx).retained().len()) > before);
+
+    show_cluster(handle, &pilot, "dev-fra", cx);
+    let identity = deployment(cx);
+    click("resource-scale", cx);
+    assert_eq!(*heard.borrow(), [(Everyday::Scale, identity)]);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("scale-dialog").is_some());
+    })
+    .unwrap();
+    click("scale-cancel", cx);
+    click("dock-tab-0", cx);
+    click("pod-shell-start", cx);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Idle);
+    assert!(cx.read(shell::running_anywhere).is_empty());
+    assert_eq!(
+        cx.read(|cx| blocked.read(cx).blocked()),
+        Some(READ_ONLY_REASON)
+    );
+}
+
 /// A shell that runs on one cluster says whose it is once another is
 /// shown, while it still runs: its own header names its cluster and
 /// context with the level's tag, and that this is not the shown cluster.
