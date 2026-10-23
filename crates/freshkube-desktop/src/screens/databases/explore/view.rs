@@ -1,5 +1,6 @@
 use super::*;
 use crate::ui::{self, dp};
+use freshkube_db::wire::Encryption;
 use freshkube_ui::{page, palette::palette};
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
@@ -8,6 +9,13 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     h_flex,
 };
+
+/// The page width from which the browser sits beside the rows, in dp.
+const BESIDE_WIDTH: f32 = 900.;
+const BROWSER_WIDTH: f32 = 400.;
+/// Stacked, the browser's height and the rows' least.
+const BROWSER_HEIGHT: f32 = 200.;
+const DATA_LEAST: f32 = 280.;
 
 impl ExploreView {
     /// The connect step while it isn't connected: where it is, or why it stopped.
@@ -51,13 +59,21 @@ impl ExploreView {
         } else {
             Vec::new()
         };
-        page::inset()
+        // A narrow window or a large text size may not fit the words and the
+        // button: the state scrolls, so Try again can always be reached.
+        div()
+            .id("explore-state-scroll")
+            .size_full()
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .child(
-                ui::empty_state(IconName::Database, title, words.clone(), None, actions, cx)
-                    .h_auto()
-                    .id(SharedString::from(id))
-                    .aria_label(words)
-                    .test_support(),
+                page::inset().child(
+                    ui::empty_state(IconName::Database, title, words.clone(), None, actions, cx)
+                        .h_auto()
+                        .id(SharedString::from(id))
+                        .aria_label(words)
+                        .test_support(),
+                ),
             )
             .into_any_element()
     }
@@ -70,9 +86,12 @@ impl ExploreView {
         h_flex()
             .id("explore-strip")
             .test_support()
-            .gap(dp(8.))
+            .flex_wrap()
+            .gap_x(dp(8.))
+            .gap_y(dp(2.))
             .px(dp(page::PANE_PADDING))
-            .h(dp(34.))
+            .py(dp(3.))
+            .min_h(dp(34.))
             .flex_none()
             .items_center()
             .border_b_1()
@@ -84,6 +103,16 @@ impl ExploreView {
                     .aria_label("Read-only session")
                     .test_support(),
             )
+            .children(self.encryption().map(|encryption| {
+                let tone = match encryption {
+                    Encryption::Verified => ui::Tone::Good,
+                    Encryption::Unverified | Encryption::Plain => ui::Tone::Warn,
+                };
+                ui::tag(tone, None, encryption.label(), cx)
+                    .id("explore-encryption")
+                    .aria_label(encryption.label())
+                    .test_support()
+            }))
             .children(self.who().map(|who| {
                 div()
                     .id("explore-who")
@@ -154,30 +183,43 @@ impl ExploreView {
 }
 
 impl Render for ExploreView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = if self.phase == Phase::Connected {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Below this the rows would have no room beside the browser.
+        let beside = crate::screens::page_width(window) >= BESIDE_WIDTH;
+        let connected = self.phase == Phase::Connected;
+        let body = if connected {
             let p = palette(cx);
+            let browser = div()
+                .flex_none()
+                .border_color(p.line)
+                .child(self.browser.clone());
+            let data = div().flex_1().min_w_0().min_h_0().child(self.data.clone());
+            let panes = if beside {
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(browser.w(dp(BROWSER_WIDTH)).h_full().border_r_1())
+                    .child(data.h_full())
+            } else {
+                v_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(browser.w_full().h(dp(BROWSER_HEIGHT)).border_b_1())
+                    .child(data.min_h(dp(DATA_LEAST)))
+            };
             v_flex()
                 .size_full()
                 .child(self.strip(cx))
-                .child(
-                    h_flex()
-                        .flex_1()
-                        .min_h_0()
-                        .child(
-                            div()
-                                .w(dp(380.))
-                                .flex_none()
-                                .h_full()
-                                .border_r_1()
-                                .border_color(p.line)
-                                .child(self.browser.clone()),
-                        )
-                        .child(div().flex_1().min_w_0().h_full().child(self.data.clone())),
-                )
+                .child(panes)
                 .into_any_element()
         } else {
             self.step(cx)
+        };
+        // A short window scrolls the page; the stacked panes keep their room.
+        let least = if connected && !beside {
+            34. + BROWSER_HEIGHT + DATA_LEAST
+        } else {
+            0.
         };
         div()
             .id("explore")
@@ -185,7 +227,7 @@ impl Render for ExploreView {
             .size_full()
             .flex()
             .flex_col()
-            .min_h_0()
+            .min_h(dp(least))
             .child(body)
     }
 }

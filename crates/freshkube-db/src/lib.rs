@@ -23,4 +23,4 @@ pub mod wire;
 
 pub use dbflux_core::{DbError, Value};
 pub use limits::Limits;
-pub use session::{ColumnEntry, ConnectError, Session, TableEntry, TableKind, TablePage};
+pub use session::{ColumnEntry, ConnectError, Listed, Session, TableEntry, TableKind, TablePage};

@@ -102,7 +102,9 @@ fn split(sql: &str) -> Vec<String> {
                 current.push(' ');
                 continue;
             }
-            '$' => {
+            // A `$` after an identifier character belongs to the identifier
+            // (`a$b$`), not to a dollar-quoted string.
+            '$' if !prev_is_ident(&chars, i) => {
                 if let Some(end) = skip_dollar(&chars, i) {
                     current.extend(&chars[i..end]);
                     i = end;
@@ -121,6 +123,10 @@ fn split(sql: &str) -> Vec<String> {
     }
     push(&mut out, &mut current);
     out
+}
+
+fn prev_is_ident(chars: &[char], i: usize) -> bool {
+    i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_' || chars[i - 1] == '$')
 }
 
 fn push(out: &mut Vec<String>, current: &mut String) {
@@ -207,6 +213,15 @@ mod tests {
         assert_eq!(check_statement("end"), Err(Refusal::Transaction));
         assert_eq!(check_statement("ROLLBACK"), Err(Refusal::Transaction));
         assert_eq!(check_statement("SAVEPOINT a"), Err(Refusal::Transaction));
+    }
+
+    #[test]
+    fn a_dollar_inside_an_identifier_does_not_open_a_quote() {
+        let sql =
+            "SELECT 1 AS a$b$; COMMIT; SET TRANSACTION READ WRITE; DELETE FROM t; SELECT 1 AS c$b$";
+        assert_eq!(check_statement(sql), Err(Refusal::Several));
+        // A real dollar quote still hides its semicolons.
+        assert_eq!(check_statement("SELECT $b$; COMMIT;$b$"), Ok(()));
     }
 
     #[test]

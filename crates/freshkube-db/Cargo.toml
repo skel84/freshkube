@@ -17,6 +17,9 @@ async-trait = "0.1"
 thiserror.workspace = true
 tokio.workspace = true
 tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.14"
+rustls.workspace = true
+rustls-pemfile = "2"
 zeroize = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]

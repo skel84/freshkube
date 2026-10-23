@@ -4,10 +4,15 @@
 use super::reading::read;
 use super::{Shared, session_of};
 use crate::ui::{self, dp};
-use freshkube_db::{TableEntry, TableKind};
+use freshkube_db::{Listed, TableEntry, TableKind};
 use freshkube_reads::Loader;
 use freshkube_ui::table::{
     self as kit, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
+};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{
+    Sizable,
+    button::{Button, ButtonVariants},
 };
 use gpui_kit::*;
 use std::collections::{BTreeSet, HashMap};
@@ -25,9 +30,13 @@ pub(super) struct Open {
 }
 
 pub(super) struct Column {
+    /// The cell it draws; none for the glyph column that lines the rows up
+    /// under the schemas' group rows.
+    cell: Option<usize>,
     label: SharedString,
     width: f32,
     flexible: bool,
+    pinned: bool,
 }
 impl TableColumn for Column {
     fn label(&self) -> &SharedString {
@@ -40,7 +49,7 @@ impl TableColumn for Column {
         self.flexible
     }
     fn pinned(&self) -> bool {
-        self.flexible
+        self.pinned
     }
 }
 
@@ -49,7 +58,7 @@ pub(super) struct Row {
     id: SharedString,
     schema: String,
     name: String,
-    cells: [SharedString; 4],
+    cells: [SharedString; 3],
 }
 
 enum Entry {
@@ -69,8 +78,8 @@ pub(super) struct Browser {
     runtime: Handle,
     session: Option<(u64, Shared)>,
     epoch: u64,
-    schemas: Loader<Vec<String>, u64>,
-    tables: HashMap<String, Loader<Vec<TableEntry>, u64>>,
+    schemas: Loader<Listed<String>, u64>,
+    tables: HashMap<String, Loader<Listed<TableEntry>, u64>>,
     expanded: BTreeSet<String>,
     groups: Vec<Group>,
     rows: Vec<Row>,
@@ -105,24 +114,32 @@ impl Browser {
             revision: 0,
             columns: vec![
                 Column {
+                    cell: None,
+                    label: "".into(),
+                    width: kit::GLYPH_WIDTH,
+                    flexible: false,
+                    pinned: true,
+                },
+                Column {
+                    cell: Some(0),
                     label: "Table".into(),
-                    width: 150.,
+                    width: 140.,
                     flexible: true,
+                    pinned: false,
                 },
                 Column {
-                    label: "Kind".into(),
-                    width: 64.,
-                    flexible: false,
-                },
-                Column {
+                    cell: Some(1),
                     label: "Rows ≈".into(),
-                    width: 72.,
+                    width: 84.,
                     flexible: false,
+                    pinned: false,
                 },
                 Column {
+                    cell: Some(2),
                     label: "Size".into(),
-                    width: 72.,
+                    width: 88.,
                     flexible: false,
+                    pinned: false,
                 },
             ],
             selected: None,
@@ -183,9 +200,10 @@ impl Browser {
             |this, cx| {
                 // Open the schema people mean first; the rest wait for a click.
                 let first = this.schemas.data().and_then(|s| {
-                    s.iter()
+                    s.items
+                        .iter()
                         .find(|s| *s == "public")
-                        .or_else(|| s.first())
+                        .or_else(|| s.items.first())
                         .cloned()
                 });
                 if let Some(first) = first {
@@ -272,7 +290,11 @@ impl Browser {
         self.groups.clear();
         self.rows.clear();
         self.lines.clear();
-        let schemas = self.schemas.data().cloned().unwrap_or_default();
+        let schemas = self
+            .schemas
+            .data()
+            .map(|l| l.items.clone())
+            .unwrap_or_default();
         for schema in schemas {
             let open = self.expanded.contains(&schema);
             let loader = self.tables.get(&schema);
@@ -280,7 +302,13 @@ impl Browser {
                 _ if !open => "closed".to_owned(),
                 Some(l) if l.error().is_some() => "couldn't read".to_owned(),
                 Some(l) => match l.data() {
-                    Some(t) => format!("{} table{}", t.len(), if t.len() == 1 { "" } else { "s" }),
+                    Some(t) => format!(
+                        "{}{} table{}{}",
+                        t.items.len(),
+                        if t.capped { "+" } else { "" },
+                        if t.items.len() == 1 { "" } else { "s" },
+                        if t.capped { " (capped)" } else { "" }
+                    ),
                     None => "reading…".to_owned(),
                 },
                 None => "reading…".to_owned(),
@@ -296,7 +324,11 @@ impl Browser {
             if !open {
                 continue;
             }
-            for table in loader.and_then(|l| l.data()).into_iter().flatten() {
+            for table in loader
+                .and_then(|l| l.data())
+                .into_iter()
+                .flat_map(|l| &l.items)
+            {
                 let ix = self.rows.len();
                 self.lines.push(Entry::Row(ix));
                 self.rows.push(Row {
@@ -305,8 +337,11 @@ impl Browser {
                     schema: schema.clone(),
                     name: table.name.clone(),
                     cells: [
-                        table.name.clone().into(),
-                        kind_word(table.kind).into(),
+                        match table.kind {
+                            TableKind::Table => table.name.clone(),
+                            other => format!("{} ({})", table.name, kind_word(other)),
+                        }
+                        .into(),
                         table.rows_estimate.map_or("–".to_owned(), count).into(),
                         table.size_bytes.map_or("–".to_owned(), size).into(),
                     ],
@@ -405,11 +440,9 @@ impl TableSource for Browser {
         column: &Column,
         _: &mut Context<Self>,
     ) -> AnyElement {
-        let ix = self
-            .columns
-            .iter()
-            .position(|c| c.label == column.label)
-            .unwrap_or_default();
+        let Some(ix) = column.cell else {
+            return kit::glyph_cell(column).into_any_element();
+        };
         kit::word_cell(
             column,
             format!("{}-text-{}", row.data.id, ix + 1),
@@ -437,23 +470,48 @@ impl TableSource for Browser {
     }
     fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let line = self.groups.get(group)?;
-        let schema = line.schema.clone();
-        let chevron = if line.open { "▾" } else { "▸" };
+        let (open, toggled) = (line.schema.clone(), line.schema.clone());
+        let chevron = Button::new(SharedString::from(format!(
+            "explore-schema-{}-toggle",
+            line.slug
+        )))
+        .ghost()
+        .xsmall()
+        .icon(if line.open {
+            IconName::ChevronDown
+        } else {
+            IconName::ChevronRight
+        })
+        .tooltip(if line.open {
+            "Close schema"
+        } else {
+            "Open schema"
+        })
+        .accessibility_label(format!(
+            "{} schema {}",
+            if line.open { "Close" } else { "Open" },
+            line.schema
+        ))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            cx.stop_propagation();
+            this.toggle(&toggled, cx)
+        }));
         Some(
             div()
                 .id(SharedString::from(format!("explore-schema-{}", line.slug)))
                 .test_support()
                 .aria_label(format!("Schema {} · {}", line.schema, line.detail))
                 .cursor_pointer()
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle(&schema, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle(&open, cx)))
                 .child(
                     kit::GroupRow::new(
                         self.table.id(&format!("group-{}", line.slug)),
                         ui::Tone::Outline,
-                        format!("{chevron} {}", line.schema),
+                        line.schema.clone(),
                         kit::ROW_HEIGHT,
                     )
                     .detail(vec![line.detail.clone()])
+                    .chevron(chevron)
                     .render(cx),
                 )
                 .into_any_element(),

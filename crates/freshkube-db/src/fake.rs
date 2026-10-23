@@ -7,7 +7,7 @@
 //! connection to it ends.
 use crate::{
     limits::Limits,
-    session::{ColumnEntry, ConnectError, Session, TableEntry, TableKind, TablePage},
+    session::{ColumnEntry, ConnectError, Listed, Session, TableEntry, TableKind, TablePage},
     wire::{Rows, Wire},
 };
 use async_trait::async_trait;
@@ -33,7 +33,7 @@ pub fn connect(shape: Shape, limits: Limits) -> Result<FakeSession, ConnectError
         )),
         Shape::TimedOut => Err(ConnectError::TimedOut),
         Shape::NotReadOnly => Err(ConnectError::NotReadOnly(
-            "the server reports default_transaction_read_only = off".into(),
+            "The server reports default_transaction_read_only = off".into(),
         )),
     }
 }
@@ -56,6 +56,8 @@ pub struct FakeWire {
     /// What `SHOW default_transaction_read_only` answers; a server that
     /// ignores the setting says `off`.
     read_only_setting: Arc<Mutex<String>>,
+    /// Texts the fake server's parser takes for several statements.
+    multi: Arc<Mutex<Vec<String>>>,
 }
 
 impl FakeWire {
@@ -96,6 +98,12 @@ impl FakeWire {
         self
     }
 
+    /// The server refuses to prepare statements containing `needle`.
+    pub fn refuse_as_several(&self, needle: &str) -> &Self {
+        self.multi.lock().unwrap().push(needle.into());
+        self
+    }
+
     pub fn sent(&self) -> Vec<String> {
         self.sent.lock().unwrap().clone()
     }
@@ -132,6 +140,23 @@ impl Wire for FakeWire {
             }
         }
         Ok(Rows::default())
+    }
+
+    async fn single_statement(&mut self, sql: &str) -> Result<(), DbError> {
+        self.sent.lock().unwrap().push(format!("PARSE {sql}"));
+        // The server's rule: more than one statement can't be prepared.
+        if self
+            .multi
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|n| sql.contains(n.as_str()))
+        {
+            return Err(DbError::query_failed(
+                "cannot insert multiple commands into a prepared statement",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -174,12 +199,15 @@ impl Session for FakeSession {
         true
     }
 
-    async fn schemas(&mut self) -> Result<Vec<String>, DbError> {
-        Ok(vec!["audit".into(), "public".into()])
+    async fn schemas(&mut self) -> Result<Listed<String>, DbError> {
+        Ok(Listed {
+            items: vec!["audit".into(), "public".into()],
+            capped: false,
+        })
     }
 
-    async fn tables(&mut self, schema: &str) -> Result<Vec<TableEntry>, DbError> {
-        Ok(match schema {
+    async fn tables(&mut self, schema: &str) -> Result<Listed<TableEntry>, DbError> {
+        let items = match schema {
             "public" => vec![
                 entry("customers", TableKind::Table, 12, 16_384),
                 entry("order_items", TableKind::Table, 740, 65_536),
@@ -189,6 +217,10 @@ impl Session for FakeSession {
             ],
             "audit" => vec![entry("events", TableKind::Table, 3, 8_192)],
             _ => Vec::new(),
+        };
+        Ok(Listed {
+            items,
+            capped: false,
         })
     }
 

@@ -1,6 +1,6 @@
 # Databases
 
-The inventory below reads no Secret. **Explore** (a database's tab, [database-explorer.md](database-explorer.md)) reads one login Secret per connection, when the user connects it; nothing else on this page does.
+The inventory below reads no Secret. **Explore** (a database's tab, [database-explorer.md](database-explorer.md)) reads one login Secret per connection (and the cluster CA's `ca.crt`), when the user connects it; nothing else on this page does.
 
 Code: `freshkube-core/src/databases/` contains the operator-neutral model
 (`model.rs`), the CloudNativePG v1 projection (`cnpg.rs`) and the MariaDB

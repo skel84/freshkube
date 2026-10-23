@@ -11,6 +11,9 @@ pub(crate) enum Fail {
     /// Neither Secret exists; the name is the one looked for last.
     NoSecret(String),
     SecretIncomplete(String),
+    /// The Secret or login is a superuser's.
+    Superuser(String),
+    NoUid(String),
     /// The cluster refused or failed a read before the database was reached.
     Cluster(String),
     ForwardFailed(String),
@@ -18,6 +21,8 @@ pub(crate) enum Fail {
     TimedOut,
     Unreachable(String),
     NotReadOnly(String),
+    /// TLS was offered and the certificate was not accepted.
+    Untrusted(String),
 }
 
 impl Fail {
@@ -27,6 +32,8 @@ impl Fail {
             ExploreError::NoReadyPod => Self::NoReadyPod,
             ExploreError::NoSecret => Self::NoSecret(app_secret.to_owned()),
             ExploreError::SecretIncomplete(name) => Self::SecretIncomplete(name),
+            ExploreError::Superuser(name) => Self::Superuser(name),
+            ExploreError::NoUid(pod) => Self::NoUid(pod),
             ExploreError::Read(failure) => {
                 Self::Cluster(format!("{}: {}", failure.kind.label(), failure.message))
             }
@@ -39,6 +46,7 @@ impl Fail {
             ConnectError::TimedOut => Self::TimedOut,
             ConnectError::Unreachable(why) => Self::Unreachable(why),
             ConnectError::NotReadOnly(why) => Self::NotReadOnly(why),
+            ConnectError::Untrusted(why) => Self::Untrusted(why),
         }
     }
 
@@ -49,6 +57,9 @@ impl Fail {
             Self::NoReadyPod => "no-ready-pod",
             Self::NoSecret(_) => "no-secret",
             Self::SecretIncomplete(_) => "secret-incomplete",
+            Self::Superuser(_) => "superuser",
+            Self::NoUid(_) => "no-uid",
+            Self::Untrusted(_) => "untrusted",
             Self::Cluster(_) => "cluster",
             Self::ForwardFailed(_) => "forward-failed",
             Self::Refused(_) => "refused",
@@ -64,6 +75,9 @@ impl Fail {
             Self::NoReadyPod => "No pod is ready",
             Self::NoSecret(_) => "No reader Secret",
             Self::SecretIncomplete(_) => "The Secret has no login",
+            Self::Superuser(_) => "That is a superuser login",
+            Self::NoUid(_) => "The pod can't be tied to a forward",
+            Self::Untrusted(_) => "The server's certificate was not accepted",
             Self::Cluster(_) => "Couldn't read the cluster",
             Self::ForwardFailed(_) => "The forward failed",
             Self::Refused(_) => "The database refused the connection",
@@ -86,6 +100,15 @@ impl Fail {
             Self::SecretIncomplete(name) => format!(
                 "The Secret {name} has no username or password. Fix the Secret, then try again."
             ),
+            Self::Superuser(name) => format!(
+                "{name} is a superuser's login. Freshkube never connects with one; ask your team for a reader Secret."
+            ),
+            Self::NoUid(pod) => format!(
+                "The pod {pod} reports no UID, so a forward could not stay on it. Try again once it is running."
+            ),
+            Self::Untrusted(why) => format!(
+                "{why}. The server offers TLS but its certificate doesn't match the cluster's CA for this Service, so Freshkube didn't send a login to it."
+            ),
             Self::Cluster(why) => format!("{why}. Check your access to this namespace, then try again."),
             Self::ForwardFailed(why) => format!(
                 "{why}. The forward needs your permission to create pods/portforward; its state is in the status bar."
@@ -103,6 +126,11 @@ impl Fail {
 
     /// Whether trying again could help.
     pub(crate) fn retry(&self) -> bool {
-        !matches!(self, Self::Unsupported(_))
+        // Trying again can't change these: the engine, the setting the
+        // server keeps off, or a Secret that is the wrong kind.
+        !matches!(
+            self,
+            Self::Unsupported(_) | Self::NotReadOnly(_) | Self::Superuser(_)
+        )
     }
 }

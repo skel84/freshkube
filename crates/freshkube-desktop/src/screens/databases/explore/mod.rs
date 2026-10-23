@@ -31,7 +31,7 @@ use freshkube_db::{
     credentials::Password,
     fake,
     postgres::Postgres,
-    wire::{Target, TokioPostgres},
+    wire::{Encryption, Target, TlsPlan, TokioPostgres},
 };
 use freshkube_reads::{Loader, OnShow};
 use freshkube_resources::forwards::{self, ForwardSpec, ForwardView, State};
@@ -56,6 +56,10 @@ pub(crate) enum Example {
     Refused,
     TimedOut,
     NotReadOnly,
+    /// Connected over TLS whose certificate was not checked.
+    Unverified,
+    /// Connected without TLS.
+    Plain,
     /// Stays on the first step, as a capture of the loading state.
     Loading,
 }
@@ -69,6 +73,8 @@ impl Example {
             "refused" => Self::Refused,
             "timed-out" => Self::TimedOut,
             "not-read-only" => Self::NotReadOnly,
+            "unverified" => Self::Unverified,
+            "plain" => Self::Plain,
             "loading" => Self::Loading,
             _ => return None,
         })
@@ -89,11 +95,23 @@ struct Connected {
     session: Shared,
     /// Who the session is, for the header: no secret in it.
     who: SharedString,
+    /// What protects the connection to the server.
+    encryption: Encryption,
+}
+
+// By hand: the session is not printable, and nothing here is a secret.
+impl std::fmt::Debug for Connected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connected")
+            .field("who", &self.who)
+            .field("encryption", &self.encryption)
+            .finish_non_exhaustive()
+    }
 }
 
 struct Link {
     view: Entity<ForwardView>,
-    _observer: Subscription,
+    _observer: Option<Subscription>,
 }
 
 pub(super) struct ExploreView {
@@ -109,6 +127,9 @@ pub(super) struct ExploreView {
     link: Option<Link>,
     /// The pod used and the local port, for the header.
     route: Option<SharedString>,
+    /// Whether the pod chosen is a replica, which decides the Service name
+    /// its certificate is checked against.
+    replica: bool,
     /// A forward that listened while the tab was hidden; connecting waits.
     waiting_port: Option<u16>,
     browser: Entity<Browser>,
@@ -146,6 +167,7 @@ impl ExploreView {
             connect: Loader::default(),
             link: None,
             route: None,
+            replica: true,
             waiting_port: None,
             browser,
             data,
@@ -226,7 +248,7 @@ impl ExploreView {
             Example::ForwardFailed => {
                 return self.fail(Fail::ForwardFailed("Port 15432 is in use".into()), cx);
             }
-            Example::Connected => fake::Shape::Connected,
+            Example::Connected | Example::Unverified | Example::Plain => fake::Shape::Connected,
             Example::Refused => fake::Shape::Refused,
             Example::TimedOut => fake::Shape::TimedOut,
             Example::NotReadOnly => fake::Shape::NotReadOnly,
@@ -235,9 +257,15 @@ impl ExploreView {
         match fake::connect(shape, Limits::default()) {
             Ok(session) => {
                 let who = "shop_reader · reader Secret · example".into();
+                let encryption = match example {
+                    Example::Unverified => Encryption::Unverified,
+                    Example::Plain => Encryption::Plain,
+                    _ => Encryption::Verified,
+                };
                 let connected = Connected {
                     session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
                     who,
+                    encryption,
                 };
                 self.connect.resolve(self.epoch, Ok(Ok(connected)));
                 self.connected(cx);
@@ -299,6 +327,7 @@ impl ExploreView {
 
     fn start_forward(&mut self, choice: PodChoice, cx: &mut Context<Self>) {
         self.phase = Phase::Forwarding;
+        self.replica = choice.replica;
         let identity = freshkube_nav::ResourceIdentity {
             connection: self.source.id.clone(),
             resource: "pods".into(),
@@ -328,7 +357,7 @@ impl ExploreView {
         });
         self.link = Some(Link {
             view: view.clone(),
-            _observer: observer,
+            _observer: Some(observer),
         });
         cx.notify();
     }
@@ -373,13 +402,14 @@ impl ExploreView {
         let database = self.database.clone();
         let runtime = self.runtime.clone();
         let epoch = self.epoch;
+        let replica = self.replica;
         reading::read(
             self,
             |this: &mut Self| &mut this.connect,
             epoch,
             &runtime,
             "the database",
-            async move { Ok(connect_live(access, database, port).await) },
+            async move { Ok(connect_live(access, database, port, replica).await) },
             |this, cx| this.connected(cx),
             cx,
         );
@@ -422,6 +452,22 @@ impl ExploreView {
         forwards::list(cx).update(cx, |list, cx| list.remove(id, cx));
     }
 
+    pub(super) fn encryption(&self) -> Option<Encryption> {
+        self.connect
+            .data()
+            .and_then(|r| r.as_ref().ok())
+            .map(|c| c.encryption)
+    }
+
+    /// Makes `view` the forward this tab owns, as connecting would.
+    #[cfg(test)]
+    pub(super) fn adopt_forward(&mut self, view: Entity<ForwardView>) {
+        self.link = Some(Link {
+            _observer: None,
+            view,
+        });
+    }
+
     pub(super) fn who(&self) -> Option<SharedString> {
         self.connect
             .data()
@@ -437,6 +483,7 @@ async fn connect_live(
     access: freshkube_core::cluster_source::ClusterAccess,
     database: Database,
     port: u16,
+    replica: bool,
 ) -> Result<Connected, Fail> {
     let app = explore::app_secret_name(&database.identity.name);
     let client = access
@@ -446,17 +493,24 @@ async fn connect_live(
     let login = explore::read_login(&client, &database, None)
         .await
         .map_err(|e| Fail::of_explore(e, &app))?;
+    // Only the CA's certificate, to check who answers; without it the
+    // connection is still encrypted, and says it was not verified.
+    let tls = TlsPlan {
+        server_name: explore::server_name(&database, replica),
+        ca_pem: explore::read_ca(&client, &database).await,
+    };
     let limits = Limits::default();
     let password = Password::new(login.password());
-    let wire = TokioPostgres::connect(
+    let (wire, encryption) = TokioPostgres::connect(
         Target {
-            host: "127.0.0.1",
+            address: std::net::Ipv4Addr::LOCALHOST.into(),
             port,
             user: &login.user,
             database: &login.database,
         },
         &password,
         &limits,
+        &tls,
     )
     .await
     .map_err(Fail::of_connect)?;
@@ -467,6 +521,7 @@ async fn connect_live(
     Ok(Connected {
         session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
         who: format!("{} · {}", login.user, login.kind.label()).into(),
+        encryption,
     })
 }
 

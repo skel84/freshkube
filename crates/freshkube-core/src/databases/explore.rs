@@ -10,7 +10,10 @@
 use super::{Database, Engine, Fact, Role};
 use crate::failure::Failure;
 use k8s_openapi::api::core::v1::{Pod, Secret};
-use kube::Api;
+use kube::{
+    Api,
+    api::{ApiResource, DynamicObject},
+};
 use std::fmt;
 use zeroize::Zeroizing;
 
@@ -37,6 +40,10 @@ pub enum ExploreError {
     NoSecret,
     /// The Secret exists but lacks a username or password.
     SecretIncomplete(String),
+    /// The Secret or login is a superuser's; it is never offered.
+    Superuser(String),
+    /// The chosen pod reports no UID, so a forward could not stay on it.
+    NoUid(String),
     Read(Failure),
 }
 
@@ -74,11 +81,10 @@ pub async fn pick_pod(
         .get_metadata(&name)
         .await
         .map_err(|e| ExploreError::Read(Failure::from_kube(e)))?;
-    Ok(PodChoice {
-        name,
-        uid: meta.metadata.uid.unwrap_or_default(),
-        replica,
-    })
+    let Some(uid) = meta.metadata.uid.filter(|uid| !uid.is_empty()) else {
+        return Err(ExploreError::NoUid(name));
+    };
+    Ok(PodChoice { name, uid, replica })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,15 +137,97 @@ pub fn app_secret_name(cluster: &str) -> String {
     format!("{cluster}-app")
 }
 
+/// The Secret CloudNativePG keeps for a cluster's superuser by default.
+pub fn superuser_secret_name(cluster: &str) -> String {
+    format!("{cluster}-superuser")
+}
+
+/// The Secret CloudNativePG keeps for a cluster's CA by default.
+pub fn ca_secret_name(cluster: &str) -> String {
+    format!("{cluster}-ca")
+}
+
+/// The Service name a server certificate covers: the read-only Service when
+/// the pod is a replica, the read-write one for the primary.
+pub fn server_name(database: &Database, replica: bool) -> String {
+    format!(
+        "{}-{}.{}.svc",
+        database.identity.name,
+        if replica { "ro" } else { "rw" },
+        database.identity.namespace
+    )
+}
+
+/// What the Cluster's spec names, so a renamed Secret is still recognised.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpecNames {
+    pub superuser_secret: Option<String>,
+    pub server_ca_secret: Option<String>,
+}
+
+fn spec_names(object: &DynamicObject) -> SpecNames {
+    let name = |path: &[&str]| {
+        let mut value = object.data.get("spec")?;
+        for key in path {
+            value = value.get(key)?;
+        }
+        value.as_str().map(str::to_owned).filter(|n| !n.is_empty())
+    };
+    SpecNames {
+        superuser_secret: name(&["superuserSecret", "name"]),
+        server_ca_secret: name(&["certificates", "serverCASecret"]),
+    }
+}
+
+async fn read_spec_names(client: &kube::Client, database: &Database) -> SpecNames {
+    let id = &database.identity;
+    let resource = ApiResource {
+        group: id.group.clone(),
+        version: id.version.clone(),
+        api_version: format!("{}/{}", id.group, id.version),
+        kind: id.kind.clone(),
+        plural: id.plural.clone(),
+    };
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), &id.namespace, &resource);
+    match api.get_opt(&id.name).await {
+        Ok(Some(object)) => spec_names(&object),
+        _ => SpecNames::default(),
+    }
+}
+
+/// Refuses a Secret that is the superuser's, by the default name or the
+/// one the Cluster's spec gives.
+pub fn refuse_superuser_secret(
+    cluster: &str,
+    names: &SpecNames,
+    secret: &str,
+) -> Result<(), ExploreError> {
+    let is_superuser = secret == superuser_secret_name(cluster)
+        || names.superuser_secret.as_deref() == Some(secret);
+    if is_superuser {
+        Err(ExploreError::Superuser(secret.to_owned()))
+    } else {
+        Ok(())
+    }
+}
+
 /// Reads the login once: the reader Secret if one is named and exists, else
-/// the app user's. `reader` is the team's name for it (E4 supplies it).
+/// the app user's. `reader` is the team's name for it (E4 supplies it). A
+/// Secret that is the cluster's superuser's, however it was named, and a
+/// login whose user is `postgres` are refused.
 pub async fn read_login(
     client: &kube::Client,
     database: &Database,
     reader: Option<&str>,
 ) -> Result<Login, ExploreError> {
+    let cluster = &database.identity.name;
+    let names = read_spec_names(client, database).await;
+    if let Some(reader) = reader {
+        refuse_superuser_secret(cluster, &names, reader)?;
+    }
     let secrets: Api<Secret> = Api::namespaced(client.clone(), &database.identity.namespace);
-    let app = app_secret_name(&database.identity.name);
+    let app = app_secret_name(cluster);
+    refuse_superuser_secret(cluster, &names, &app)?;
     let candidates = reader
         .map(|name| (LoginKind::Reader, name.to_owned()))
         .into_iter()
@@ -156,23 +244,48 @@ pub async fn read_login(
     Err(ExploreError::NoSecret)
 }
 
+/// The cluster CA's certificate, when it can be read: `ca.crt` only. The
+/// Secret also holds the CA's private key, which is dropped unread. `None`
+/// means the connection is encrypted without being verified.
+pub async fn read_ca(client: &kube::Client, database: &Database) -> Option<String> {
+    let names = read_spec_names(client, database).await;
+    let name = names
+        .server_ca_secret
+        .unwrap_or_else(|| ca_secret_name(&database.identity.name));
+    let secrets: Api<Secret> = Api::namespaced(client.clone(), &database.identity.namespace);
+    let secret = secrets.get_opt(&name).await.ok()??;
+    let mut data = secret.data.unwrap_or_default();
+    let ca = data
+        .remove("ca.crt")
+        .and_then(|v| String::from_utf8(v.0).ok());
+    drop(data);
+    ca.filter(|pem| pem.contains("BEGIN CERTIFICATE"))
+}
+
 fn login_of(kind: LoginKind, name: String, secret: Secret) -> Result<Login, ExploreError> {
-    let data = secret.data.unwrap_or_default();
-    let text = |key: &str| {
-        data.get(key)
-            .and_then(|v| String::from_utf8(v.0.clone()).ok())
+    let mut data = secret.data.unwrap_or_default();
+    let mut take = |key: &str| {
+        data.remove(key)
+            .and_then(|v| String::from_utf8(v.0).ok())
             .filter(|v| !v.is_empty())
     };
-    let user = text("username").or_else(|| text("user"));
-    let password = text("password");
+    let user = take("username").or_else(|| take("user"));
+    let password = take("password");
+    let database = take("dbname");
+    // The Secret's other keys (connection strings that embed the password)
+    // are dropped as soon as the three needed values are out.
+    drop(data);
     let (Some(user), Some(password)) = (user, password) else {
         return Err(ExploreError::SecretIncomplete(name));
     };
+    if user == "postgres" {
+        return Err(ExploreError::Superuser(name));
+    }
     Ok(Login {
         kind,
         secret: name,
         user,
-        database: text("dbname").unwrap_or_else(|| "app".into()),
+        database: database.unwrap_or_else(|| "app".into()),
         password: Zeroizing::new(password),
     })
 }
@@ -289,5 +402,84 @@ mod tests {
     #[test]
     fn the_app_secret_is_never_the_superuser_secret() {
         assert_eq!(app_secret_name("orders-db"), "orders-db-app");
+    }
+
+    #[test]
+    fn a_reader_named_as_the_superuser_secret_is_refused_by_default_name_or_spec() {
+        let none = SpecNames::default();
+        assert_eq!(
+            refuse_superuser_secret("orders-db", &none, "orders-db-superuser"),
+            Err(ExploreError::Superuser("orders-db-superuser".into()))
+        );
+        let renamed = SpecNames {
+            superuser_secret: Some("dba-login".into()),
+            ..none.clone()
+        };
+        assert_eq!(
+            refuse_superuser_secret("orders-db", &renamed, "dba-login"),
+            Err(ExploreError::Superuser("dba-login".into()))
+        );
+        assert_eq!(
+            refuse_superuser_secret("orders-db", &renamed, "orders-reader"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_login_whose_user_is_postgres_is_refused_whatever_the_secret_is_called() {
+        let s = secret(&[("username", "postgres"), ("password", "x")]);
+        assert_eq!(
+            login_of(LoginKind::Reader, "orders-reader".into(), s).err(),
+            Some(ExploreError::Superuser("orders-reader".into()))
+        );
+    }
+
+    #[test]
+    fn the_spec_names_come_from_the_cluster_object() {
+        let object: DynamicObject = serde_json::from_value(serde_json::json!({
+            "apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster",
+            "metadata": {"name": "orders-db"},
+            "spec": {"superuserSecret": {"name": "dba-login"},
+                     "certificates": {"serverCASecret": "my-ca"}}
+        }))
+        .unwrap();
+        assert_eq!(
+            spec_names(&object),
+            SpecNames {
+                superuser_secret: Some("dba-login".into()),
+                server_ca_secret: Some("my-ca".into())
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reader_input_naming_the_superuser_secret_never_reads_any_secret() {
+        let (client, recorder) = crate::fake_api::client(|r| {
+            r.path
+                .contains("/clusters/")
+                .then(|| crate::fake_api::json(404, "{}"))
+        });
+        let db = database(
+            &[("orders-db-1", Role::Primary, true)],
+            Engine::CloudNativePg,
+        );
+        let error = read_login(&client, &db, Some("orders-db-superuser"))
+            .await
+            .err();
+        assert_eq!(
+            error,
+            Some(ExploreError::Superuser("orders-db-superuser".into()))
+        );
+        recorder.assert_all("only the cluster is read", |r| !r.path.contains("/secrets"));
+    }
+
+    #[test]
+    fn the_server_name_is_the_service_a_replica_or_the_primary_answers() {
+        let db = database(
+            &[("orders-db-1", Role::Primary, true)],
+            Engine::CloudNativePg,
+        );
+        assert_eq!(server_name(&db, true), "orders-db-ro.staging.svc");
+        assert_eq!(server_name(&db, false), "orders-db-rw.staging.svc");
     }
 }

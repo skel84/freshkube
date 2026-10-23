@@ -3,7 +3,8 @@
 //! the team's reader Secret, then the operator's app user, never the
 //! superuser). The caller reads that Secret once, when it connects, and puts
 //! the password in a [`Password`], which is only in memory, wiped when
-//! dropped, and prints as `<redacted>`.
+//! dropped, and its `Debug` prints `<redacted>`. It has no `Display`, `Clone` or
+//! `Serialize`.
 use std::fmt;
 use zeroize::Zeroizing;
 
@@ -26,12 +27,6 @@ impl fmt::Debug for Password {
     }
 }
 
-impl fmt::Display for Password {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("<redacted>")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,7 +34,7 @@ mod tests {
     #[test]
     fn a_password_never_prints() {
         let p = Password::new("hunter2");
-        assert!(!format!("{p:?} {p}").contains("hunter2"));
+        assert!(!format!("{p:?}").contains("hunter2"));
         assert_eq!(p.expose(), "hunter2");
     }
 }

@@ -215,13 +215,18 @@ async fn an_empty_table_says_it_has_no_rows(cx: &mut TestAppContext) {
 
 async fn state(shape: Example, id: &'static str, cx: &mut TestAppContext) {
     let (_runtime, page, window) = open(cx, shape).await;
+    // Trying again can't change a setting the server keeps off.
+    let retry = shape != Example::NotReadOnly;
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find(id).is_some(), "{id}");
-        // A failed connection offers to try again and stays in its state.
-        window.click("explore-retry", cx);
-        window.render_frame(cx);
-        assert!(window.try_find(id).is_some(), "{id} after Try again");
+        assert_eq!(window.try_find("explore-retry").is_some(), retry);
+        if retry {
+            // A failed connection offers to try again and stays in its state.
+            window.click("explore-retry", cx);
+            window.render_frame(cx);
+            assert!(window.try_find(id).is_some(), "{id} after Try again");
+        }
         assert!(window.try_find("explore-read-only").is_none());
     })
     .unwrap();
@@ -373,4 +378,164 @@ async fn arrow_keys_step_the_browser_and_open_the_table_under_them(cx: &mut Test
             .is_some_and(|s| s.starts_with("public.products"))
     })
     .await;
+}
+
+#[gpui_kit::test]
+async fn the_strip_says_what_protects_the_connection(cx: &mut TestAppContext) {
+    for (shape, words) in [
+        (Example::Connected, "encrypted, certificate verified"),
+        (Example::Unverified, "encrypted, certificate not verified"),
+        (Example::Plain, "not encrypted"),
+    ] {
+        let (_runtime, page, window) = open(cx, shape).await;
+        connected(cx, &page, &window).await;
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.find("explore-encryption").label(), Some(words));
+            window.click("databases-explore-close-orders-db", cx);
+        })
+        .unwrap();
+    }
+}
+
+/// Nothing a failed or finished connection prints holds the password.
+#[gpui_kit::test]
+async fn no_state_prints_a_password(cx: &mut TestAppContext) {
+    use super::{Connected, Fail};
+    use freshkube_db::{ConnectError, wire::Encryption};
+    let secret = "hunter2";
+    let fails = [
+        Fail::of_connect(ConnectError::Refused(
+            "password authentication failed for \"u\"".to_owned(),
+        )),
+        Fail::of_connect(ConnectError::TimedOut),
+        Fail::of_connect(ConnectError::Untrusted("invalid peer certificate".into())),
+        Fail::NoSecret("orders-db-app".into()),
+        Fail::Superuser("orders-db-superuser".into()),
+    ];
+    for fail in fails {
+        let phase = Phase::Failed(fail.clone());
+        for text in [
+            format!("{fail:?}"),
+            fail.words(),
+            fail.title().to_owned(),
+            format!("{phase:?}"),
+        ] {
+            assert!(!text.contains(secret), "{text}");
+        }
+    }
+    let (_runtime, page, window) = open(cx, Example::Connected).await;
+    connected(cx, &page, &window).await;
+    cx.update(|cx| {
+        let view = explorer(&page, cx);
+        let connected: Connected = view.read(cx).connect.data().unwrap().clone().unwrap();
+        assert!(!format!("{connected:?}").contains(secret));
+        assert_eq!(connected.encryption, Encryption::Verified);
+    });
+}
+
+#[gpui_kit::test]
+async fn closing_the_tab_removes_the_forward_it_started(cx: &mut TestAppContext) {
+    use freshkube_core::resources::ForwardTarget;
+    use freshkube_resources::forwards::{self, ForwardSpec};
+    let (runtime, page, window) = open(cx, Example::Connected).await;
+    connected(cx, &page, &window).await;
+    cx.update_window(window.into(), |_, _, cx| {
+        let spec = ForwardSpec {
+            runtime: runtime.handle().clone(),
+            access: freshkube_core::cluster_source::ClusterAccess::EXAMPLE,
+            identity: freshkube_nav::ResourceIdentity {
+                connection: "invented-access".into(),
+                resource: "pods".into(),
+                namespace: "staging".into(),
+                name: "orders-db-2".into(),
+                uid: "invented-uid".into(),
+            },
+            target: ForwardTarget::Pod {
+                name: "orders-db-2".into(),
+                uid: "invented-uid".into(),
+            },
+            context: "invented-db-context".into(),
+            port: 8080,
+            local_port: None,
+        };
+        let list = forwards::list(cx);
+        let view = list.update(cx, |list, cx| list.start(spec, cx));
+        explorer(&page, cx).update(cx, |explorer, _| explorer.adopt_forward(view));
+        assert_eq!(list.read(cx).len(), 1);
+    })
+    .unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("databases-explore-close-orders-db", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // The tab's release runs once the update that dropped it ends.
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            forwards::list(cx).read(cx).len(),
+            0,
+            "the forward outlived its tab"
+        )
+    });
+}
+
+#[gpui_kit::test]
+async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_reach(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let (_runtime, page, window) = super::super::tests::mount(cx, 760.);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, _| {
+            page.explore_example = Some(Example::Connected)
+        });
+        window.render_frame(cx);
+        let id = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|r| r.identity.name == "orders-db")
+            .unwrap()
+            .id
+            .clone();
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.click("databases-explore", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    connected(cx, &page, &window).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("explore-table-public-orders", cx);
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, cx| {
+        explorer(&page, cx)
+            .read(cx)
+            .data
+            .read(cx)
+            .summary()
+            .is_some()
+    })
+    .await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let browser = window.find("explore-browser").bounds();
+        let rows = window.find("explore-data-table").bounds();
+        assert!(
+            rows.top() >= browser.bottom(),
+            "stacked: {browser:?} above {rows:?}"
+        );
+        assert!(rows.size.width > gpui_kit::px(500.), "{rows:?}");
+        // The strip wraps instead of cutting its actions off.
+        let gate = window.find("explore-writes-gate").bounds();
+        assert!(gate.right() <= window.viewport_size().width, "{gate:?}");
+    })
+    .unwrap();
 }

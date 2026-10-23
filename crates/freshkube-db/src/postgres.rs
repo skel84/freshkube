@@ -9,7 +9,10 @@
 use crate::{
     limits::Limits,
     readonly::{self, Refusal},
-    session::{ColumnEntry, ConnectError, Session, TableEntry, TableKind, TablePage},
+    session::{
+        ColumnEntry, ConnectError, Listed, MAX_SCHEMAS, MAX_TABLES, Session, TableEntry, TableKind,
+        TablePage,
+    },
     wire::{Rows, Wire},
 };
 use async_trait::async_trait;
@@ -35,7 +38,7 @@ impl<W: Wire> Postgres<W> {
             match held.rows.first().and_then(|r| r.first()) {
                 Some(Some(v)) if v == "on" => Ok(()),
                 other => Err(ConnectError::NotReadOnly(format!(
-                    "the server reports default_transaction_read_only = {}",
+                    "The server reports default_transaction_read_only = {}",
                     other.and_then(|v| v.as_deref()).unwrap_or("nothing")
                 ))),
             }
@@ -51,14 +54,28 @@ impl<W: Wire> Postgres<W> {
     /// that is always rolled back. Reads at most `row_cap + 1` rows' worth is the
     /// caller's SQL (`LIMIT`); this cuts anything longer.
     pub async fn read(&mut self, sql: &str) -> Result<Rows, DbError> {
+        self.read_up_to(sql, self.limits.rows + 1).await
+    }
+
+    /// As [`read`](Self::read), keeping at most `keep` rows.
+    async fn read_up_to(&mut self, sql: &str, keep: usize) -> Result<Rows, DbError> {
         readonly::check_statement(sql).map_err(|r: Refusal| DbError::query_failed(r.explain()))?;
+        // A request cut off earlier may have left the connection inside its
+        // transaction; end any before starting this one.
+        self.wire.simple("ROLLBACK").await?;
         self.wire.simple("BEGIN READ ONLY").await?;
+        // The server's word that this is one statement, whatever our
+        // splitter made of the text.
+        if let Err(e) = self.wire.single_statement(sql).await {
+            let _ = self.wire.simple("ROLLBACK").await;
+            return Err(e);
+        }
         let result = self.wire.simple(sql).await;
         // The rollback also ends an aborted transaction after a failed statement.
         let rolled = self.wire.simple("ROLLBACK").await;
         let mut rows = result?;
         rolled?;
-        rows.rows.truncate(self.limits.rows + 1);
+        rows.rows.truncate(keep);
         Ok(rows)
     }
 }
@@ -66,6 +83,8 @@ impl<W: Wire> Postgres<W> {
 fn setup_statements(limits: &Limits) -> Vec<String> {
     vec![
         "SET default_transaction_read_only = on".to_string(),
+        // The string literals we build rely on backslashes being plain.
+        "SET standard_conforming_strings = on".to_string(),
         format!(
             "SET statement_timeout = '{}ms'",
             limits.statement_timeout.as_millis()
@@ -106,32 +125,40 @@ impl<W: Wire> Session for Postgres<W> {
         true
     }
 
-    async fn schemas(&mut self) -> Result<Vec<String>, DbError> {
+    async fn schemas(&mut self) -> Result<Listed<String>, DbError> {
         let rows = self
-            .read(
-                "SELECT nspname FROM pg_namespace \
+            .read_up_to(
+                &format!(
+                    "SELECT nspname FROM pg_namespace \
                  WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' \
-                 ORDER BY nspname",
+                 ORDER BY nspname LIMIT {}",
+                    MAX_SCHEMAS + 1
+                ),
+                MAX_SCHEMAS + 1,
             )
             .await?;
-        Ok(rows
+        let mut items: Vec<String> = rows
             .rows
             .into_iter()
             .filter_map(|r| r.into_iter().next().flatten())
-            .collect())
+            .collect();
+        let capped = items.len() > MAX_SCHEMAS;
+        items.truncate(MAX_SCHEMAS);
+        Ok(Listed { items, capped })
     }
 
-    async fn tables(&mut self, schema: &str) -> Result<Vec<TableEntry>, DbError> {
+    async fn tables(&mut self, schema: &str) -> Result<Listed<TableEntry>, DbError> {
         let sql = format!(
             "SELECT c.relname, c.relkind::text, c.reltuples::bigint::text, \
                     pg_total_relation_size(c.oid)::text \
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = {} AND c.relkind IN ('r','v','m','f','p') \
-             ORDER BY c.relname",
-            quote_literal(schema)
+             ORDER BY c.relname LIMIT {}",
+            quote_literal(schema),
+            MAX_TABLES + 1
         );
-        let rows = self.read(&sql).await?;
-        Ok(rows
+        let rows = self.read_up_to(&sql, MAX_TABLES + 1).await?;
+        let mut items: Vec<TableEntry> = rows
             .rows
             .into_iter()
             .filter_map(|r| {
@@ -152,7 +179,10 @@ impl<W: Wire> Session for Postgres<W> {
                     size_bytes: count(r.get(3)?),
                 })
             })
-            .collect())
+            .collect();
+        let capped = items.len() > MAX_TABLES;
+        items.truncate(MAX_TABLES);
+        Ok(Listed { items, capped })
     }
 
     async fn columns(&mut self, schema: &str, table: &str) -> Result<Vec<ColumnEntry>, DbError> {
@@ -238,6 +268,7 @@ mod tests {
             wire.sent(),
             vec![
                 "SET default_transaction_read_only = on",
+                "SET standard_conforming_strings = on",
                 "SET statement_timeout = '1500ms'",
                 "SET lock_timeout = '2000ms'",
                 "SET idle_in_transaction_session_timeout = '45000ms'",
@@ -261,7 +292,13 @@ mod tests {
         session.read("SELECT 1").await.unwrap();
         assert_eq!(
             wire.sent()[before..],
-            ["BEGIN READ ONLY", "SELECT 1", "ROLLBACK"]
+            [
+                "ROLLBACK",
+                "BEGIN READ ONLY",
+                "PARSE SELECT 1",
+                "SELECT 1",
+                "ROLLBACK"
+            ]
         );
     }
 
@@ -274,7 +311,39 @@ mod tests {
         let error = session.read("SELECT boom").await.unwrap_err();
         assert!(matches!(error, DbError::Timeout));
         assert_eq!(wire.sent().last().unwrap(), "ROLLBACK");
-        assert_eq!(wire.sent().len() - before, 3);
+        assert_eq!(wire.sent().len() - before, 5);
+    }
+
+    #[tokio::test]
+    async fn the_server_refusing_several_statements_stops_a_request_our_splitter_passed() {
+        let wire = FakeWire::new();
+        wire.refuse_as_several("hidden");
+        let mut session = open(&wire, Limits::default()).await;
+        let error = session.read("SELECT 1 /* hidden */").await.unwrap_err();
+        assert!(error.to_string().contains("multiple commands"), "{error}");
+        // The statement itself was never sent, and the transaction was ended.
+        let sent = wire.sent();
+        assert!(
+            !sent.iter().any(|s| s == "SELECT 1 /* hidden */"),
+            "{sent:?}"
+        );
+        assert_eq!(sent.last().unwrap(), "ROLLBACK");
+    }
+
+    #[tokio::test]
+    async fn catalog_listings_stop_at_their_bound_and_say_so() {
+        let wire = FakeWire::new();
+        let many: Vec<Vec<Option<&str>>> = (0..=MAX_SCHEMAS).map(|_| vec![Some("s")]).collect();
+        let refs: Vec<&[Option<&str>]> = many.iter().map(|r| r.as_slice()).collect();
+        wire.answer("FROM pg_namespace", text_rows(&["nspname"], &refs));
+        let mut session = open(&wire, Limits::default()).await;
+        let listed = session.schemas().await.unwrap();
+        assert_eq!((listed.items.len(), listed.capped), (MAX_SCHEMAS, true));
+        assert!(
+            wire.sent()
+                .iter()
+                .any(|s| s.ends_with(&format!("LIMIT {}", MAX_SCHEMAS + 1)))
+        );
     }
 
     #[tokio::test]
@@ -365,7 +434,7 @@ mod tests {
             ),
         );
         let mut session = open(&wire, Limits::default()).await;
-        let tables = session.tables("public").await.unwrap();
+        let tables = session.tables("public").await.unwrap().items;
         assert_eq!(tables[0].rows_estimate, None);
         assert_eq!(tables[0].size_bytes, Some(8192));
         assert_eq!(tables[1].kind, TableKind::View);

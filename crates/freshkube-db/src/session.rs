@@ -61,18 +61,33 @@ pub enum ConnectError {
     /// Nothing answered at the address (a closed forward, a reset).
     #[error("The database could not be reached: {0}")]
     Unreachable(String),
+    /// TLS was offered and the server's certificate was not accepted.
+    #[error("The server's certificate was not accepted: {0}")]
+    Untrusted(String),
     /// The server did not accept the read-only setting; the session is not used.
     #[error("The session could not be made read-only: {0}")]
     NotReadOnly(String),
 }
+
+/// A catalog listing cut at a bound, so a huge database can't fill memory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed<T> {
+    pub items: Vec<T>,
+    /// There were more than the bound.
+    pub capped: bool,
+}
+
+/// The most schemas and tables a listing returns.
+pub const MAX_SCHEMAS: usize = 500;
+pub const MAX_TABLES: usize = 2000;
 
 #[async_trait]
 pub trait Session: Send {
     /// True for every session this crate makes; a screen shows it and a
     /// future write path would have to be asked for separately.
     fn read_only(&self) -> bool;
-    async fn schemas(&mut self) -> Result<Vec<String>, DbError>;
-    async fn tables(&mut self, schema: &str) -> Result<Vec<TableEntry>, DbError>;
+    async fn schemas(&mut self) -> Result<Listed<String>, DbError>;
+    async fn tables(&mut self, schema: &str) -> Result<Listed<TableEntry>, DbError>;
     async fn columns(&mut self, schema: &str, table: &str) -> Result<Vec<ColumnEntry>, DbError>;
     /// The first rows of a table, at most the session's row cap.
     async fn table_rows(&mut self, schema: &str, table: &str) -> Result<TablePage, DbError>;
