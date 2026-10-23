@@ -17,6 +17,7 @@
 //! turn it back on at the next start.
 
 mod example;
+mod follow;
 mod host;
 mod run;
 mod setup;
@@ -24,6 +25,8 @@ mod targets;
 mod trail;
 mod view;
 
+#[cfg(test)]
+mod follow_tests;
 #[cfg(test)]
 mod tests;
 
@@ -42,6 +45,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::agent_shape::AgentShape;
+pub(crate) use follow::{AgentEvent, FollowStrip};
 pub(crate) use host::AgentHost;
 use targets::DockTargets;
 pub(crate) use targets::Own;
@@ -187,6 +191,9 @@ pub(crate) struct AgentView {
     /// entry's index: refused, or a read that broke. Derived when a step or a
     /// read arrives, by the order of the turn's steps and reads.
     step_marks: std::collections::HashMap<usize, trail::Mark>,
+    /// Which read the page shows, when, and the strip that says so; `None`
+    /// for a tab that isn't an entry of the setup, which reads nothing.
+    follow: Option<follow::Follow>,
     #[cfg(test)]
     targets: Option<std::sync::Arc<dyn freshkube_agent::Targets>>,
     /// The text of each transcript entry as shown, kept when it changes so a
@@ -272,12 +279,17 @@ impl AgentView {
             focus: cx.focus_handle(),
             cite_carry: String::new(),
             step_marks: Default::default(),
+            follow: None,
             #[cfg(test)]
             targets: None,
             texts: Vec::new(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             _subscriptions: subscriptions,
         };
+        view.follow = view
+            .own
+            .as_ref()
+            .map(|own| follow::Follow::new(&own.entry, cx.entity().downgrade(), cx));
         view.chosen = view.host.access.opencode_path();
         if view
             .own
@@ -553,6 +565,10 @@ impl AgentView {
     pub(crate) fn end(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
         self.session = None;
+        // The page is handed back, so the followed log tab goes with it.
+        self.hand_back(cx);
+        cx.emit(AgentEvent::Ended);
+        self.follow = None;
         self.listening = None;
         self.check = None;
         self.working = false;
@@ -633,21 +649,29 @@ impl AgentView {
                 if let Some(own) = &self.own {
                     self.trail.read(&read, &own.entry);
                 }
+                self.follow_read(&read, cx);
             }
             run::Message::Models(models) => self.models = models,
             run::Message::Listening(addr) => self.listening = Some(addr),
-            run::Message::Ended(reason) => {
-                self.session = None;
-                self.listening = None;
-                self.working = false;
-                self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
-                if let Some(reason) = reason {
-                    self.notice = Some(Notice::Failed(reason));
-                }
-            }
+            run::Message::Ended(reason) => self.session_ended(reason, cx),
         }
         self.refresh_steps();
         cx.notify();
+    }
+
+    /// The session is over (the agent exited, or it could not start): the
+    /// page is handed back, so no pending move and no followed log tab
+    /// outlive it.
+    fn session_ended(&mut self, reason: Option<String>, cx: &mut Context<Self>) {
+        self.session = None;
+        self.listening = None;
+        self.working = false;
+        self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
+        self.hand_back(cx);
+        cx.emit(AgentEvent::Ended);
+        if let Some(reason) = reason {
+            self.notice = Some(Notice::Failed(reason));
+        }
     }
 
     /// Says what each failed step of Freshkube's own reads stands for. A
@@ -682,8 +706,10 @@ impl AgentView {
                 continue;
             }
             if step.state == freshkube_agent::investigation::StepState::Failed
-                && let Some(mark @ (trail::Mark::Refused | trail::Mark::CouldntRead)) =
-                    reads.get(next)
+                && let Some(
+                    mark
+                    @ (trail::Mark::Refused | trail::Mark::NotFound | trail::Mark::CouldntRead),
+                ) = reads.get(next)
             {
                 self.step_marks.insert(ix, *mark);
             }
@@ -726,6 +752,7 @@ impl AgentView {
         if matches!(event, Event::Prompt(_)) {
             self.trail.clear();
             self.cite_carry.clear();
+            self.follow_new_turn(cx);
         }
         self.investigation.record(event);
         self.refresh_texts();
@@ -734,6 +761,7 @@ impl AgentView {
             // most nine bytes, so eight carry a split one.
             let scan = format!("{}{chunk}", self.cite_carry);
             self.trail.cite(&scan);
+            self.follow_cited(&scan, cx);
             let mut from = scan.len().saturating_sub(CITE_CARRY);
             while !scan.is_char_boundary(from) {
                 from += 1;
@@ -765,6 +793,11 @@ impl AgentView {
                 *last = shown(entry);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn end_session_for_test(&mut self, cx: &mut Context<Self>) {
+        self.session_ended(None, cx);
     }
 
     #[cfg(test)]

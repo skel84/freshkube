@@ -34,6 +34,10 @@ pub(super) struct State {
     /// Links from the operating system or the command line, waiting for the
     /// window to have a cluster to read.
     waiting: Vec<String>,
+    /// The view being applied is an Agent tab's move, not the person's: a
+    /// log read then shows its pod in the tab that following owns. Set per
+    /// `apply_view`, so an open still being read is the latest one's.
+    followed: bool,
 }
 
 /// The most links held while the window has no cluster yet.
@@ -51,6 +55,7 @@ impl State {
             shape,
             identities: cluster::Identities::open(preferences),
             waiting: Vec::new(),
+            followed: false,
         }
     }
 }
@@ -310,6 +315,23 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.deep_link.followed = false;
+        self.apply_view_now(view, window, cx);
+    }
+
+    /// `apply_view` for a move an Agent tab made, which only differs in
+    /// where a log read shows its pod.
+    pub(super) fn apply_followed_view(
+        &mut self,
+        view: &ViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.deep_link.followed = true;
+        self.apply_view_now(view, window, cx);
+    }
+
+    fn apply_view_now(&mut self, view: &ViewState, window: &mut Window, cx: &mut Context<Self>) {
         self.target.cancel_object_open();
         match view.page {
             LinkPage::Resources => self.apply_resources(view, window, cx),
@@ -608,7 +630,13 @@ impl Pilot {
                 target: resources::detail::DetailTarget { identity, kind },
                 at: None,
             };
-            self.resource_link(resources::ResourceLink::Logs(request), window, cx);
+            if self.deep_link.followed {
+                self.pages
+                    .dock
+                    .update(cx, |dock, cx| dock.open_followed_logs(request, window, cx));
+            } else {
+                self.resource_link(resources::ResourceLink::Logs(request), window, cx);
+            }
         }
     }
 
