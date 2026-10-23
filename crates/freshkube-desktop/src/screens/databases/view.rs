@@ -353,18 +353,18 @@ impl Render for DatabasesScreen {
                         // Capped, so a long coverage line leaves the table and
                         // the Inspector their room in a short window.
                         this.child(
-                            page::inset()
+                            page::capped_notes(
+                                "databases-notices",
+                                dp(72.),
+                                notice.into_iter().chain(failure),
                                 // A bottom edge, so a clipped banner reads as
                                 // scrollable, not cut off by the table.
-                                .border_b_1()
-                                .border_color(palette(cx).line)
-                                .max_h(dp(72.))
-                                .id("databases-notices")
-                                .test_support()
-                                .overflow_y_scroll()
-                                .restrict_scroll_to_axis()
-                                .children(notice)
-                                .children(failure),
+                                Some(palette(cx).line),
+                            )
+                            .flex_none()
+                            .min_w_0()
+                            .px(dp(page::PANE_PADDING))
+                            .py(dp(page::PANE_PADDING_Y)),
                         )
                     })
                     .child(body),

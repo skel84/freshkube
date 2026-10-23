@@ -616,17 +616,17 @@ fn tabs_take_the_keyboard_and_command_brackets_switch_them(cx: &mut TestAppConte
         window.render_frame(cx);
         assert_eq!(tab(window, "detail-tab-yaml"), (Some(true), Some(true)));
 
-        // From the pane, Command-Shift-] and [ switch the tab and hand the
+        // From the pane, Option-Command-] and [ switch the tab and hand the
         // keyboard to the pane.
         pane.update(cx, |pane, cx| pane.set_tab(super::Tab::Overview, cx));
         let focus = pane.read(cx).focus.clone();
         window.focus(&focus, cx);
         window.render_frame(cx);
-        window.press("secondary-{", cx);
+        window.press("secondary-alt-[", cx);
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-yaml").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
-        window.press("secondary-}", cx);
+        window.press("secondary-alt-]", cx);
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-details").selected(), Some(true));
         assert_eq!(window.find("resource-detail").focused(), Some(true));
