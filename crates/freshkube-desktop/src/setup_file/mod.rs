@@ -255,6 +255,12 @@ impl SetupFile {
         self.setup_revision
     }
 
+    /// A reviewed team version was applied (#849): the setup the reads were
+    /// made against changed, so they restart, as for a saved change.
+    pub(crate) fn team_applied(&mut self) {
+        self.setup_revision += 1;
+    }
+
     /// The compact status text; the full receipt stays in its tooltip.
     pub(crate) fn receipt_label(&self) -> &str {
         &self.receipt_label

@@ -44,6 +44,6 @@ The strip's Motion group applies to every story: System follows the OS (and name
 2. List it in `STORIES` in `stories/mod.rs`.
 3. Draw it from `freshkube_ui` (`page`, `table`, `ui`) as a page would. `scripts/check-style.sh` checks the workbench as it checks pages.
 4. Use invented names only (`app-a`, `shop-redis`, `cluster-a`, `registry.example`).
-5. Give its own states controls in its header, with ids starting `<slug>-`, and test them in `src/tests.rs`. The shared test already draws every story in both themes at text sizes 13 and 20.
+5. Give its own states controls in its header, with ids starting `<slug>-`, and test them in the matching scenario under `src/tests/`. The shared test already draws every story in both themes at text sizes 13 and 20.
 
 The crate depends on `freshkube-ui`, `freshkube-graph` and `freshkube-probe` only, never on `freshkube-desktop` or `freshkube-core`. A story needs nothing a page outside the shared components owns.

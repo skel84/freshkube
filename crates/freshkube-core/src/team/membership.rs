@@ -1,14 +1,16 @@
 //! Joining, failing and leaving. The applied version only changes through a
 //! finished [`super::review::Review`]; a failed fetch keeps it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::file::{Values, Version, VersionError};
+use super::merge;
 use super::review::{NotReviewed, Review};
 use super::source::Source;
+use crate::write::Protection;
 
 /// Your own values over the team's, as saved in your `freshkube.yaml`.
 pub type Overrides = BTreeMap<String, Value>;
@@ -43,6 +45,10 @@ pub struct Membership {
     overrides: Overrides,
     /// Your overrides from before joining.
     before_joining: Overrides,
+    /// Floors an applied version would have loosened, held at the stricter
+    /// level for as long as this membership lasts. A floor tightens and
+    /// never relaxes.
+    held: BTreeMap<String, Protection>,
 }
 
 impl Membership {
@@ -56,6 +62,7 @@ impl Membership {
             failure: None,
             before_joining: overrides.clone(),
             overrides,
+            held: BTreeMap::new(),
         }
     }
 
@@ -88,17 +95,31 @@ impl Membership {
         self.overrides.insert(key.into(), value);
     }
 
-    /// The team's applied values; none before the first review.
+    /// The team's applied values; none before the first review. A floor that
+    /// a later version loosened stays at the stricter level it had.
     pub fn team_values(&self) -> Values {
-        self.applied
+        let mut values = self
+            .applied
             .as_ref()
             .map(|v| v.values().clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        for (id, level) in &self.held {
+            values.insert(merge::protection_key(id), Value::String(level.key().into()));
+        }
+        values
+    }
+
+    /// The clusters whose floor is held above what the applied version says,
+    /// with the level it is held at.
+    pub fn held_floors(&self) -> &BTreeMap<String, Protection> {
+        &self.held
     }
 
     /// Takes the outcome of a fetch. A failure keeps what is applied and says
-    /// since when; a version equal to the applied one is no update.
-    pub fn fetched(&mut self, result: Result<Version, FetchFailed>, now: DateTime<Utc>) {
+    /// since when; a version equal to the applied one is no update. True when
+    /// a different version now waits than the one that waited before, so a
+    /// choice to review later no longer holds.
+    pub fn fetched(&mut self, result: Result<Version, FetchFailed>, now: DateTime<Utc>) -> bool {
         match result {
             Ok(version) => {
                 self.failure = None;
@@ -108,8 +129,11 @@ impl Membership {
                     .is_some_and(|a| a.id() == version.id())
                 {
                     self.pending = None;
+                    false
                 } else {
+                    let new = self.pending.as_ref().map(|p| p.id()) != Some(version.id());
                     self.pending = Some(version);
+                    new
                 }
             }
             Err(error) => {
@@ -119,14 +143,15 @@ impl Membership {
                     last_try: now,
                     reason: error.0,
                 });
+                false
             }
         }
     }
 
-    /// Fetches again and takes the outcome.
-    pub fn refresh(&mut self, fetch: &dyn Fetch, now: DateTime<Utc>) {
+    /// Fetches again and takes the outcome; true as for [`Self::fetched`].
+    pub fn refresh(&mut self, fetch: &dyn Fetch, now: DateTime<Utc>) -> bool {
         let result = fetch.fetch(&self.source);
-        self.fetched(result, now);
+        self.fetched(result, now)
     }
 
     /// The review of the waiting version, if any.
@@ -138,10 +163,38 @@ impl Membership {
     /// Applies a finished review. Nothing else changes the applied version.
     pub fn apply(&mut self, review: Review, now: DateTime<Utc>) -> Result<(), NotReviewed> {
         let version = review.apply(self.applied.as_ref(), self.pending.as_ref())?;
+        self.hold_floors(&version);
         self.applied = Some(version);
         self.applied_at = Some(now);
         self.pending = None;
         Ok(())
+    }
+
+    /// A version may only make a cluster's level stricter for the session:
+    /// where it loosens a floor, or stops setting one, the stricter floor is
+    /// held; where it tightens past a held one, the hold ends.
+    fn hold_floors(&mut self, next: &Version) {
+        let before = self.team_values();
+        let ids: BTreeSet<String> = before
+            .keys()
+            .filter_map(|key| {
+                let rest = key.strip_prefix("clusters[")?;
+                rest.split_once(']').map(|(id, _)| id.to_string())
+            })
+            .collect();
+        for id in ids {
+            let Some(was) = merge::floor(&id, &before) else {
+                continue;
+            };
+            match merge::floor(&id, next.values()) {
+                Some(now) if now <= was => {
+                    self.held.remove(&id);
+                }
+                _ => {
+                    self.held.insert(id, was);
+                }
+            }
+        }
     }
 
     /// Leaves the team, returning the overrides to save.

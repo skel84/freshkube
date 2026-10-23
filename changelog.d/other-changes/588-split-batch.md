@@ -1,0 +1,1 @@
+- **Maintenance:** split large test suites into scenario modules and use the `mod.rs` layout for the moved modules, preserving existing test coverage and behavior.
