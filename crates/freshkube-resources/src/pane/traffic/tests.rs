@@ -146,6 +146,11 @@ fn a_selectorless_and_an_alias_service_are_neutral_not_broken(cx: &mut TestAppCo
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].1, Tone::Outline);
         assert!(all[0].2.contains("ExternalName"));
+        // An alias publishes nothing: no source and no group is drawn.
+        assert!(pane.read(cx).traffic.source.is_none());
+        assert!(pane.read(cx).traffic.groups.is_empty());
+        assert!(window.try_find("traffic-group-ready").is_none());
+        assert!(window.try_find("traffic-pods-unknown").is_none());
     })
     .unwrap();
 }

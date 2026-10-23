@@ -139,7 +139,9 @@ pub(crate) fn reading(facts: ServiceFacts, shape: Shape, with_pods: bool) -> Ser
     };
     let published: Result<Published, Failure> = match shape {
         Shape::Refused => Err(refused()),
-        Shape::Nothing | Shape::NoSelector => Ok(slices(Vec::new(), ports.clone())),
+        Shape::Nothing | Shape::NoSelector | Shape::ExternalName => {
+            Ok(slices(Vec::new(), ports.clone()))
+        }
         Shape::Healthy | Shape::Pending => Ok(slices(
             vec![endpoint(11, ready.clone()), endpoint(12, ready.clone())],
             ports.clone(),
@@ -160,7 +162,7 @@ pub(crate) fn reading(facts: ServiceFacts, shape: Shape, with_pods: bool) -> Ser
             .expect("invented endpoints");
             Ok(Published::from_endpoints(&facts, &endpoints))
         }
-        Shape::Mixed | Shape::ServicesRefused | Shape::ExternalName => {
+        Shape::Mixed | Shape::ServicesRefused => {
             let mut all = slices(
                 vec![
                     endpoint(11, ready.clone()),

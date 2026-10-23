@@ -137,10 +137,12 @@ impl DetailPane {
                 }))
                 .when(view.has_unknown(), |this| {
                     this.child(
-                        Button::new("traffic-retry")
-                            .small()
-                            .label("Retry traffic")
-                            .on_click(cx.listener(|pane, _, _, cx| pane.retry_traffic(cx))),
+                        h_flex().child(
+                            Button::new("traffic-retry")
+                                .small()
+                                .label("Retry traffic")
+                                .on_click(cx.listener(|pane, _, _, cx| pane.retry_traffic(cx))),
+                        ),
                     )
                 })
                 .into_any_element(),

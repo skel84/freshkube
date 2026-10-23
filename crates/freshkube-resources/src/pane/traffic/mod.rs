@@ -153,6 +153,15 @@ impl TrafficView {
             }
         };
         self.steps = Self::lines(&traffic::service_chain(&reading));
+        // An alias publishes nothing, so there is no source or group to draw.
+        let alias = matches!(
+            reading.facts.shape(),
+            freshkube_core::resources::traffic::ServiceShape::ExternalName(_)
+        );
+        if alias {
+            return;
+        }
+        let endpoints_failed = reading.published.is_err();
         if let Ok(published) = &reading.published {
             self.source = Some(published.source.label().into());
             for state in EndpointState::ALL {
@@ -219,14 +228,17 @@ impl TrafficView {
                     .collect();
             }
             Some(Err(failure)) => {
-                self.pods_note = Some(
+                // The endpoints step already quotes a failed endpoint read.
+                self.pods_note = Some(if endpoints_failed {
+                    "Unpublished pods unknown: the endpoints could not be read".into()
+                } else {
                     format!(
                         "Unpublished pods unknown: {}: {}",
                         failure.kind.label(),
                         failure.message
                     )
-                    .into(),
-                );
+                    .into()
+                });
             }
             None => {}
         }

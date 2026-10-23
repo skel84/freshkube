@@ -217,9 +217,17 @@ impl ServiceReading {
             })
             .collect::<Vec<_>>();
         let via = format!("via {}", published.source.label());
-        let cut = published
-            .truncated
-            .then_some("The list was cut; more may exist".to_owned());
+        let cut = [
+            published
+                .truncated
+                .then_some("The list was cut; more may exist"),
+            (published.count(EndpointState::Unrouted) > 0)
+                .then_some("Unrouted: no port on this slice matches a Service port"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let cut = (!cut.is_empty()).then(|| cut.join(". "));
         if published.endpoints.is_empty() {
             return match self.facts.shape() {
                 ServiceShape::NoSelector => step(
@@ -298,10 +306,13 @@ pub fn workload_chain(
             } else {
                 step(
                     Verdict::Neutral,
-                    format!(
-                        "Selected by {} Service(s)",
-                        found.total.max(selecting.len())
-                    ),
+                    {
+                        let total = found.total.max(selecting.len());
+                        format!(
+                            "Selected by {total} Service{}",
+                            if total == 1 { "" } else { "s" }
+                        )
+                    },
                     (found.total > selecting.len())
                         .then(|| format!("and {} more not shown", found.total - selecting.len())),
                 )

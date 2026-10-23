@@ -603,3 +603,27 @@ async fn a_cut_pod_list_is_marked() {
     assert!(reading.pods_cut);
     only_gets(&recorder);
 }
+
+#[test]
+fn an_unrouted_count_carries_its_hint_in_the_chain() {
+    let slices = vec![slice(
+        "api-a",
+        json!([{"name": "metrics", "port": 9090}]),
+        json!([endpoint("10.0.0.1", "web-1", json!({}))]),
+    )];
+    let published = Published::from_slices(&web(), slices, false);
+    let step = last(&reading(web(), Ok(published)));
+    assert!(step.detail.unwrap().contains("matches a Service port"));
+    let labels = [("app".to_owned(), "web".to_owned())].into();
+    let one = workload_chain(
+        "Deployment",
+        "shop",
+        "web",
+        &labels,
+        &Ok(WorkloadServices::new(
+            vec![reading(web(), Ok(published_of(json!([]))))],
+            1,
+        )),
+    );
+    assert_eq!(one.steps[0].summary, "Selected by 1 Service");
+}
