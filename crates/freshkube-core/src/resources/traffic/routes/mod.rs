@@ -22,8 +22,7 @@ pub use read::{
 };
 pub use trace::{
     BackendRead, Branch, BranchKind, BranchVerdict, Inputs, Listing, NamespaceLabels, Owner,
-    ParentTrace,
-    RouteTrace, RouteVerdict, StepId, StepVerdict, Summary, TraceStep, trace_route,
+    ParentTrace, RouteTrace, RouteVerdict, StepId, StepVerdict, Summary, TraceStep, trace_route,
 };
 
 #[cfg(test)]

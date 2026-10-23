@@ -4,7 +4,7 @@ Where traffic stops on its way from a hostname to the pods behind it. The Servic
 
 Code:
 
-- `crates/freshkube-core/src/resources/traffic/routes/`: `facts.rs` (HTTPRoute, Gateway, GatewayClass and ReferenceGrant parsed from the objects as returned, with their conditions and `observedGeneration`; no gateway-api crate), `trace.rs` (the pure trace), `read.rs` (discovery and the bounded reads), `grant.rs` (the ReferenceGrant text) and `example.rs` (the invented cluster behind `FRESHKUBE_ROUTES`). No UI types.
+- `crates/freshkube-core/src/resources/traffic/routes/`: `facts.rs` (HTTPRoute, Gateway, GatewayClass and ReferenceGrant parsed from the objects as returned, with their conditions and `observedGeneration`; no gateway-api crate), `trace/` (the pure trace: `mod.rs`, `parent.rs` for the parent's steps and `backend.rs` for a backend's), `read.rs` (discovery and the bounded reads), `grant.rs` (the ReferenceGrant text) and `example.rs` (the invented cluster behind `FRESHKUBE_ROUTES`). No UI types.
 - `crates/freshkube-resources/src/route_trace/`: a route's trace as rows, drawn compact or in full, shared by the pane and the page. `pane/traffic/` reads it for an open HTTPRoute; `example/gateway.rs` lists the example HTTPRoutes, Gateways and GatewayClasses in Resources.
 - `crates/freshkube-desktop/src/screens/routes/`: the Routes page (`Page::Routes`, in the Networking column under Traffic).
 
