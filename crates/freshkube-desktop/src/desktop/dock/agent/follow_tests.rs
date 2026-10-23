@@ -592,6 +592,30 @@ fn a_log_tab_the_person_used_stays_when_following_stops(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
+fn the_follow_owned_log_tab_is_saved_nowhere_until_the_person_uses_it(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view(
+            "pods",
+            Some(&at.namespace),
+            Some(&at.pods[0]),
+            ViewTab::Logs,
+        ),
+        cx,
+    );
+    let id = tab.follow_tab(cx).expect("follow's tab");
+    assert!(cx.update(|cx| tab.dock.read(cx).saved(cx)).tabs.is_empty());
+    cx.update_window(tab.handle, |_, window, cx| {
+        tab.dock
+            .update(cx, |dock, cx| dock.select(id, false, window, cx))
+    })
+    .unwrap();
+    assert_eq!(cx.update(|cx| tab.dock.read(cx).saved(cx)).tabs.len(), 1);
+}
+
+#[gpui_kit::test]
 fn closing_the_agent_tab_takes_follows_log_tab_with_it(cx: &mut TestAppContext) {
     let tab = open(cx, "ready", 1280., 880.);
     let at = places(&tab, cx);

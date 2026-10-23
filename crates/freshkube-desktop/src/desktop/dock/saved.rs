@@ -79,23 +79,30 @@ impl Dock {
         NavigationFile::global(cx).set_dock(&saved, cx);
     }
 
+    /// Whether a tab is saved: not an Agent tab, and not the log tab that
+    /// following owns.
+    fn is_saved(&self, tab: &DockTab) -> bool {
+        !tab.is_agent() && Some(tab.id) != self.follow_tab
+    }
+
     /// The dock as it saves: its state and tabs by name.
     pub(super) fn saved(&self, cx: &App) -> SavedDock {
         SavedDock {
             open: self.open,
             maximized: self.maximized,
             // An agent tab is user-started and saved nowhere: a session
-            // never comes back on its own.
+            // never comes back on its own. Nor is the log tab that following
+            // owns, until the person uses it.
             selected: self.selected.and_then(|id| {
                 self.tabs
                     .iter()
-                    .filter(|tab| !tab.is_agent())
+                    .filter(|tab| self.is_saved(tab))
                     .position(|tab| tab.id == id)
             }),
             tabs: self
                 .tabs
                 .iter()
-                .filter(|tab| !tab.is_agent())
+                .filter(|tab| self.is_saved(tab))
                 .map(|tab| {
                     // A container still waiting for the pod's containers
                     // is the one the tab was asked for.
