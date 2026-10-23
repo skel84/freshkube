@@ -16,25 +16,25 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 ### 1. Read-only blocks every write path
 
-- `safety_g01_a_prepared_action_is_still_refused_by_a_read_only_runner` (`crates/freshkube-core/src/write/tests.rs`)
+- `safety_g01_a_prepared_action_is_still_refused_by_a_read_only_runner` (`crates/freshkube-core/src/write/tests/levels.rs`)
 - `safety_g01_a_read_only_destination_blocks_a_promotion_and_asks_the_cluster_nothing` (`crates/freshkube-desktop/src/write_flow/stage_tests.rs`)
 - `safety_g01_abort_on_a_read_only_destination_is_blocked_with_no_request` (`crates/freshkube-delivery/src/acts/tests.rs`)
 - `safety_g01_read_only_blocks_every_everyday_action_and_makes_no_request` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
 - `safety_g01_read_only_blocks_every_stage_action_and_asks_the_cluster_nothing` (`crates/freshkube-delivery/src/acts/tests.rs`)
-- `safety_g01_read_only_blocks_every_tier_and_makes_no_request_at_all` (`crates/freshkube-core/src/write/tests.rs`)
+- `safety_g01_read_only_blocks_every_tier_and_makes_no_request_at_all` (`crates/freshkube-core/src/write/tests/levels.rs`)
 - `safety_g01_read_only_blocks_every_tier_with_its_reason_and_makes_no_request` (`crates/freshkube-desktop/src/write_flow/tests.rs`)
 - `safety_g01_read_only_blocks_refresh_with_no_request` (`crates/freshkube-desktop/src/write_flow/stage_tests.rs`)
 - `safety_g01_the_level_turning_read_only_after_the_dialog_opened_sends_nothing` (`crates/freshkube-desktop/src/write_flow/tests.rs`)
 
 ### 2. Protected needs the typed name; Guarded and Open act as their tier says
 
-- `safety_g02_guarded_scale_asks_then_sends_one_apply_and_is_observed` (`crates/freshkube-core/src/write/tests.rs`)
-- `safety_g02_nothing_is_sent_without_the_confirmation_the_level_asks_for` (`crates/freshkube-core/src/write/tests.rs`)
-- `safety_g02_open_sends_a_reversible_action_without_a_dialog_but_not_a_spec_change` (`crates/freshkube-core/src/write/tests.rs`)
+- `safety_g02_guarded_scale_asks_then_sends_one_apply_and_is_observed` (`crates/freshkube-core/src/write/tests/apply.rs`)
+- `safety_g02_nothing_is_sent_without_the_confirmation_the_level_asks_for` (`crates/freshkube-core/src/write/tests/levels.rs`)
+- `safety_g02_open_sends_a_reversible_action_without_a_dialog_but_not_a_spec_change` (`crates/freshkube-core/src/write/tests/levels.rs`)
 - `safety_g02_protected_asks_for_the_name_and_a_wrong_or_empty_one_sends_nothing` (`crates/freshkube-desktop/src/write_flow/tests.rs`)
 - `safety_g02_protected_scale_sends_only_after_the_name_is_typed` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
 - `safety_g02_protected_sends_once_the_exact_name_is_typed` (`crates/freshkube-desktop/src/write_flow/tests.rs`)
-- `safety_g02_protected_takes_the_typed_name_and_the_entry_id_for_several_objects` (`crates/freshkube-core/src/write/tests.rs`)
+- `safety_g02_protected_takes_the_typed_name_and_the_entry_id_for_several_objects` (`crates/freshkube-core/src/write/tests/levels.rs`)
 - `safety_g02_the_exact_stage_name_unlocks_the_send` (`crates/freshkube-desktop/src/write_flow/stage_tests.rs`)
 
 ### 3. A team floor is never loosened by a personal setting
@@ -82,13 +82,13 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 ### 9. Secrets: no value in Search, the document or copy without a per-key reveal, forgotten on hide or a new version
 
-- `safety_g09_a_hidden_pane_reads_nothing_and_hides_revealed_values` (`crates/freshkube-resources/src/pane/tests.rs`)
+- `safety_g09_a_hidden_pane_reads_nothing_and_hides_revealed_values` (`crates/freshkube-resources/src/pane/tests/reads.rs`)
 - `safety_g09_a_new_version_hides_revealed_values_again` (`crates/freshkube-resources/src/detail.rs`)
 - `safety_g09_a_secret_document_shows_keys_and_sizes_never_values` (`crates/freshkube-core/src/resources/object/tests.rs`)
-- `safety_g09_a_secret_is_diffed_and_audited_by_key_names_never_values` (`crates/freshkube-core/src/write/tests.rs`)
+- `safety_g09_a_secret_is_diffed_and_audited_by_key_names_never_values` (`crates/freshkube-core/src/write/tests/audit.rs`)
 - `safety_g09_a_secret_value_is_revealed_only_for_the_same_incarnation` (`crates/freshkube-core/src/resources/object/tests.rs`)
 - `safety_g09_searching_secret_names_never_reads_a_secret_document` (`crates/freshkube-desktop/src/desktop/search/tests.rs`)
-- `safety_g09_secret_values_stay_hidden_until_one_is_revealed` (`crates/freshkube-resources/src/pane/tests.rs`)
+- `safety_g09_secret_values_stay_hidden_until_one_is_revealed` (`crates/freshkube-resources/src/pane/tests/secrets.rs`)
 
 ### 10. Operations and maintenance: nothing runs without the explicit confirm flow
 
