@@ -84,10 +84,18 @@ impl Dock {
         SavedDock {
             open: self.open,
             maximized: self.maximized,
-            selected: self.selected.and_then(|id| self.position(id)),
+            // An agent tab is user-started and saved nowhere: a session
+            // never comes back on its own.
+            selected: self.selected.and_then(|id| {
+                self.tabs
+                    .iter()
+                    .filter(|tab| !tab.is_agent())
+                    .position(|tab| tab.id == id)
+            }),
             tabs: self
                 .tabs
                 .iter()
+                .filter(|tab| !tab.is_agent())
                 .map(|tab| {
                     // A container still waiting for the pod's containers
                     // is the one the tab was asked for.
@@ -104,9 +112,9 @@ impl Dock {
                                 view.shows_all(),
                             )
                         }
-                        (None, TabKind::Workload(_)) => (None, false, false),
+                        (None, TabKind::Workload(_) | TabKind::Agent(_)) => (None, false, false),
                     };
-                    let shell = !tab.is_log();
+                    let shell = tab.is_shell();
                     SavedTab {
                         kind: tab.target.kind.key(),
                         context: tab.origin.source.context.clone(),

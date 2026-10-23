@@ -118,7 +118,7 @@ impl Pages {
         .collect();
         node_workspace.update(cx, |nodes, _| nodes.screens = screens);
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
-        let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
+        let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), options.debug.agent, cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         let secrets = options

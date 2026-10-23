@@ -13,6 +13,9 @@ doctest = false
 fastrand = "2"
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+# The agent in the dock. `scripted` is the in-process agent that `--fixture`
+# runs instead of opencode; the real agent is never started by tests or CI.
+freshkube-agent = { workspace = true, features = ["scripted"] }
 freshkube-applications.workspace = true
 freshkube-delivery.workspace = true
 freshkube-followed.workspace = true

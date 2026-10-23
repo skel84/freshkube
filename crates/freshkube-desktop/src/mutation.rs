@@ -152,6 +152,16 @@ pub(crate) fn context_level(context: &str, cx: &App) -> Option<Protection> {
     Some(workspace.level_of(context, recovery))
 }
 
+/// The setup as it is now: the entries an agent session may be pointed at,
+/// and the kubeconfig their contexts are read from. `None` before any setup
+/// was published.
+pub(crate) fn workspace(cx: &App) -> Option<freshkube_core::workspace::Workspace> {
+    cx.try_global::<GlobalProtection>()?
+        .2
+        .as_ref()
+        .map(|(workspace, _)| workspace.clone())
+}
+
 /// The level of the workspace entry `entry` as it is now, or `None` when no
 /// entry of that id is listed. A dock shell's gate reads this and nothing
 /// else (#878); it never creates a cell, so a gone entry stays gone.

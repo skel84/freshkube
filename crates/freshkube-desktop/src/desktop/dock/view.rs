@@ -310,7 +310,7 @@ impl Dock {
     /// not do. All of it is read from the badge `refresh_gates` derived.
     fn render_origin(&self, tab: &DockTab, cx: &mut Context<Self>) -> Option<AnyElement> {
         let badge = tab.badge.as_ref()?;
-        if tab.is_log() || (!badge.foreign && badge.blocked.is_none()) {
+        if !tab.is_shell() || (!badge.foreign && badge.blocked.is_none()) {
             return None;
         }
         let id = tab.id;
@@ -396,6 +396,7 @@ impl Dock {
             TabKind::Pod(view) => view.clone().into_any_element(),
             TabKind::Workload(view) => view.clone().into_any_element(),
             TabKind::Shell(view) => view.clone().into_any_element(),
+            TabKind::Agent(view) => view.clone().into_any_element(),
         };
         Some(
             v_flex()

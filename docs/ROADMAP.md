@@ -18,6 +18,7 @@ One row per step: its commit, its pull requests, and where to read what it did, 
 
 | Step | Commit | Pull requests | Read more |
 |------|--------|---------------|-----------|
+| Agent in the dock D1c. The Agent dock tab: setup, per-cluster access, the model picker, the transcript, steps and Stop ([#874](https://github.com/skel84/freshkube/issues/874), [#908](https://github.com/skel84/freshkube/issues/908)) | — | PRPLACEHOLDER | [agent.md](features/agent.md#the-dock-tab-slice-d1c); the page following the agent's reads is D1d, and Settings' per-entry switch and audit Source remain |
 | Agent in the dock D1b. The ACP client, the opencode profile, lock-down and version check ([#874](https://github.com/skel84/freshkube/issues/874), [#907](https://github.com/skel84/freshkube/issues/907)) | — | [#912](https://github.com/skel84/freshkube/pull/912) | [agent.md](features/agent.md); the endpoint, the dock tab and following remain D1a, D1c and D1d, and the live check on a real opencode is the lead's |
 | Results forward 2. Explicit Applications actions and app-owned routes ([#268](https://github.com/skel84/freshkube/issues/268)) | — | [#841](https://github.com/skel84/freshkube/pull/841) | [PORT_FORWARD.md](PORT_FORWARD.md#tekton-results), [applications.md](features/applications.md) |
 | Agent D1a. `agent_reads` in core, the per-cluster access gate and the loopback read endpoint ([#906](https://github.com/skel84/freshkube/issues/906), part of [#874](https://github.com/skel84/freshkube/issues/874)) | — | — | [agent.md](features/agent.md) |

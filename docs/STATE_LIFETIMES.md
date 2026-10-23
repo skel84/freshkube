@@ -315,7 +315,7 @@ owner in [`write_flow/`](../crates/freshkube-desktop/src/write_flow/mod.rs).
 
 ### User-started sessions
 
-Logs, shells, forwards and packet capture belong to the explicit session the
+Logs, shells, forwards, packet capture and agent sessions belong to the explicit session the
 user opened or started. Page visibility is not their stop signal. Their
 streams may use `Watch`, but must preserve collection while hidden instead of
 forwarding the page's hide to `Watch::set_visible`.
@@ -364,6 +364,21 @@ forwarding the page's hide to `Watch::set_visible`.
   [`pcap.rs`](../crates/freshkube-core/src/pcap.rs) owns capture/save state.
   Leaving the Network tab does not cancel it. Stop, capture completion,
   target replacement or owner drop ends its work.
+- **Agent sessions:** [`AgentView`](../crates/freshkube-desktop/src/desktop/dock/agent/mod.rs)
+  is the Agent dock tab and owns its session: one Tokio `OwnedJob`
+  ([`run.rs`](../crates/freshkube-desktop/src/desktop/dock/agent/run.rs)) that
+  holds the loopback endpoint (port and bearer token) and the ACP session
+  (the agent and its process group), and one GPUI delivery task. It starts
+  with the person's first question, once agent access is on for the tab's
+  cluster, never by opening or selecting the tab; reads on any page and while
+  the dock is minimized; and ends when the tab closes (dropping the job closes
+  the port, ends the token and ends the agent), the agent exits, or the app
+  quits. Every message carries its session's generation and one from an ended
+  or replaced session publishes nothing. The tab's cluster is fixed when it
+  opens, as a shell's `Origin` is, and a context switch moves nothing. Turning
+  access off (`Access::set_access`) revokes the gate first, which ends the
+  reads in flight. The tab is saved nowhere. See
+  [the agent](features/agent.md#the-dock-tab-slice-d1c).
 - **Followed items:** [`Followed`](../crates/freshkube-followed/src/owner/mod.rs)
   is the app's follows, made once at startup like `ForwardList` and kept as
   a global. See [Followed items](#followed-items).

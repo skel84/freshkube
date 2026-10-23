@@ -111,6 +111,9 @@ pub struct DebugOptions {
     /// could read (`busy`, `quiet`, `partial`, `short-events`, `none-read`);
     /// anything else is `busy`.
     pub(crate) timeline: TimelineShape,
+    /// `FRESHKUBE_AGENT`: what the Agent dock tab's example shows (see
+    /// `AgentShape`); anything else is `ready`.
+    pub(crate) agent: crate::agent_shape::AgentShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -202,6 +205,9 @@ impl DebugOptions {
                 .unwrap_or_default(),
             timeline: text("FRESHKUBE_TIMELINE")
                 .and_then(|shape| TimelineShape::parse(&shape))
+                .unwrap_or_default(),
+            agent: text("FRESHKUBE_AGENT")
+                .and_then(|shape| crate::agent_shape::AgentShape::parse(&shape))
                 .unwrap_or_default(),
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
@@ -525,6 +531,25 @@ mod tests {
     }
 
     #[test]
+    fn agent_takes_each_shape_and_falls_back_to_ready() {
+        use crate::agent_shape::AgentShape;
+        for name in AgentShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_AGENT", name)]).agent,
+                AgentShape::parse(name).unwrap(),
+                "{name}"
+            );
+        }
+        for bad in ["Answered", "", "answered ", "nope"] {
+            assert_eq!(
+                parse(&[("FRESHKUBE_AGENT", bad)]).agent,
+                AgentShape::Ready,
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn alerts_takes_each_shape_and_falls_back_to_firing() {
         for name in AlertsShape::NAMES {
             assert_eq!(
@@ -646,6 +671,7 @@ mod tests {
                     | "FRESHKUBE_APPLICATIONS"
                     | "FRESHKUBE_ALERTS"
                     | "FRESHKUBE_TIMELINE"
+                    | "FRESHKUBE_AGENT"
             )
             .then(bad)
         });
@@ -655,6 +681,7 @@ mod tests {
         assert_eq!(options.applications, Variant::Acme);
         assert_eq!(options.alerts, AlertsShape::Firing);
         assert_eq!(options.timeline, TimelineShape::Busy);
+        assert_eq!(options.agent, crate::agent_shape::AgentShape::Ready);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }

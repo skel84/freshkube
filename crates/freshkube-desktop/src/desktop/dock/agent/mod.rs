@@ -1,0 +1,756 @@
+//! The Agent dock tab: the person's own agent investigates the cluster for
+//! them, reading only through Freshkube's four read tools (docs/features/agent.md).
+//!
+//! **One owner for the session.** `AgentView` owns the Tokio job that holds
+//! the endpoint and the ACP session (`run.rs`) and the GPUI task that
+//! delivers what it reports. Both are user-started, like a dock log tab: a
+//! session starts with the first question once access is on, reads while the
+//! tab is open on any page, and ends when the tab closes (the job is dropped,
+//! which closes the port, ends the token and ends the agent), the agent
+//! exits, or the app quits. Every message carries the generation of the
+//! session that sent it; one from a session that has ended publishes nothing.
+//!
+//! **Access is per cluster and off by default.** Nothing is read, and no
+//! session starts, until the person turns it on from the egress card. Turning
+//! it off is `Access::set_access`, which ends the reads in flight first and
+//! then saves; a failed save leaves access off here and says the file may
+//! turn it back on at the next start.
+
+mod example;
+mod host;
+mod run;
+mod setup;
+mod targets;
+mod trail;
+mod view;
+
+#[cfg(test)]
+mod tests;
+
+use std::time::{Duration, Instant};
+
+use freshkube_agent::acp::Models;
+use freshkube_agent::investigation::{Entry, Event, Investigation, Outcome};
+use freshkube_agent::scripted::Script;
+use freshkube_core::job::OwnedJob;
+use freshkube_core::workspace::Workspace;
+use freshkube_ui::level::Mark;
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::agent_shape::AgentShape;
+pub(crate) use host::AgentHost;
+use targets::DockTargets;
+pub(crate) use targets::Own;
+use trail::Trail;
+
+/// At most this many transcript entries are drawn, the newest; the
+/// transcript itself is bounded by `freshkube-agent` (1 MiB of text, 1,000
+/// steps), so this is a hard cap on what a frame draws.
+const DRAWN_ENTRIES: usize = 300;
+/// A question is cut here before it is sent.
+const MAX_QUESTION_BYTES: usize = 4 * 1024;
+
+/// What the tab says above its body when something went wrong.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Notice {
+    /// The session could not start, or the turn failed.
+    Failed(String),
+    /// Turning access on could not be saved: it stays off.
+    AccessNotSaved(String),
+    /// Turning access off could not be saved. It is off now. The file may
+    /// still say on, so a note beside it keeps the cluster off at the next
+    /// start; a retry, or the quit, writes the file.
+    SaveFailed(String),
+    /// Turning access off was never saved, so at start the file's `on` was
+    /// not trusted and the cluster began off.
+    HeldOff,
+}
+
+/// A running session: dropping it ends everything.
+struct Running {
+    _job: OwnedJob,
+    commands: UnboundedSender<run::Command>,
+    _delivery: Task<()>,
+}
+
+/// The elapsed time of the turn, in an entity of its own so its tick draws
+/// nothing else.
+pub(crate) struct Elapsed {
+    since: Option<Instant>,
+    total: Duration,
+    tick: Option<Task<()>>,
+}
+
+impl Elapsed {
+    fn new() -> Self {
+        Self {
+            since: None,
+            total: Duration::ZERO,
+            tick: None,
+        }
+    }
+
+    fn start(&mut self, cx: &mut Context<Self>) {
+        self.since = Some(cx.background_executor().now());
+        self.total = Duration::ZERO;
+        self.tick = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        }));
+    }
+
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        if let Some(since) = self.since.take() {
+            self.total = cx.background_executor().now().duration_since(since);
+        }
+        self.tick = None;
+        cx.notify();
+    }
+
+    pub(crate) fn seconds(&self, cx: &App) -> Option<u64> {
+        match self.since {
+            Some(since) => Some(
+                cx.background_executor()
+                    .now()
+                    .duration_since(since)
+                    .as_secs(),
+            ),
+            None => (!self.total.is_zero()).then_some(self.total.as_secs()),
+        }
+    }
+}
+
+impl Render for Elapsed {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = crate::palette::palette(cx);
+        let text = self
+            .seconds(cx)
+            .map(|s| format!("{}:{:02}", s / 60, s % 60))
+            .unwrap_or_default();
+        div()
+            .id("agent-elapsed")
+            .test_support()
+            .text_color(p.muted)
+            .child(text)
+    }
+}
+
+pub(crate) struct AgentView {
+    runtime: Handle,
+    host: AgentHost,
+    /// The session's own cluster: fixed when the tab opens, shown in the
+    /// toolbar, never moved by a context switch. `None` when the cluster
+    /// the tab opened on is not an entry of the setup, so it can't be granted.
+    own: Option<Own>,
+    /// "⟨entry⟩ · ⟨context⟩".
+    cluster: SharedString,
+    level: Mark,
+    example: bool,
+    shape: AgentShape,
+    script: Option<Script>,
+    setup: setup::Setup,
+    found: Option<setup::Found>,
+    chosen: Option<std::path::PathBuf>,
+    check: Option<(OwnedJob, Task<()>)>,
+    investigation: Investigation,
+    trail: Trail,
+    models: Models,
+    input: Entity<InputState>,
+    elapsed: Entity<Elapsed>,
+    session: Option<Running>,
+    generation: u64,
+    /// The question waiting for the egress card's "Turn on".
+    pending: Option<String>,
+    working: bool,
+    notice: Option<Notice>,
+    /// Presses Stop as soon as a step starts (the `stopped` shape).
+    stop_at_first_step: bool,
+    shared_shape: bool,
+    /// The endpoint's port while the session runs.
+    #[cfg_attr(not(test), allow(dead_code))]
+    listening: Option<std::net::SocketAddr>,
+    focus: FocusHandle,
+    /// The least height the dock keeps for this tab: the toolbar and a few
+    /// rows.
+    least: Pixels,
+    _subscriptions: Vec<Subscription>,
+}
+
+/// The least the dock gives an Agent tab, in dp.
+const LEAST_HEIGHT: f32 = 180.;
+
+impl AgentView {
+    pub(crate) fn new(
+        runtime: Handle,
+        own: Option<Own>,
+        level: Mark,
+        shape: AgentShape,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let host = AgentHost::get(cx);
+        let example = own.as_ref().is_some_and(|own| {
+            matches!(
+                own.access,
+                freshkube_core::cluster_source::ClusterAccess::Example(_)
+            )
+        });
+        let cluster: SharedString = match &own {
+            Some(own) if own.entry != own.context => format!("{} · {}", own.entry, own.context),
+            Some(own) => own.entry.clone(),
+            None => String::new(),
+        }
+        .into();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Ask about this cluster"));
+        let subscriptions =
+            vec![
+                cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        this.ask(window, cx);
+                    }
+                }),
+            ];
+        let mut view = Self {
+            runtime,
+            host,
+            own,
+            cluster,
+            level,
+            example,
+            shape,
+            script: None,
+            setup: if example {
+                setup::example(shape)
+            } else {
+                setup::Setup::Checking
+            },
+            found: None,
+            chosen: None,
+            check: None,
+            investigation: Investigation::default(),
+            trail: Trail::default(),
+            models: Models::default(),
+            input,
+            elapsed: cx.new(|_| Elapsed::new()),
+            session: None,
+            generation: 0,
+            pending: None,
+            working: false,
+            notice: None,
+            stop_at_first_step: false,
+            shared_shape: shape == AgentShape::Shared,
+            listening: None,
+            focus: cx.focus_handle(),
+            least: crate::ui::dp_px(LEAST_HEIGHT, window),
+            _subscriptions: subscriptions,
+        };
+        view.chosen = view.host.access.opencode_path();
+        if view
+            .own
+            .as_ref()
+            .is_some_and(|own| view.host.access.held_off().contains(&own.entry))
+        {
+            view.notice = Some(Notice::HeldOff);
+        }
+        if example {
+            view.apply_shape(cx);
+        } else {
+            view.check_again(cx);
+        }
+        view
+    }
+
+    /// The example shapes that start somewhere past the setup.
+    fn apply_shape(&mut self, cx: &mut Context<Self>) {
+        let shape = self.shape;
+        if shape.grants() {
+            self.turn_on_access("egress card", cx);
+        }
+        if shape == AgentShape::SaveFailed {
+            // The file can't be written: a directory sits where it should be.
+            let path = self.host.access.file_path().to_path_buf();
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::create_dir_all(&path);
+            self.turn_off_access(cx);
+        }
+        self.stop_at_first_step = shape == AgentShape::Stopped;
+        if shape.asks() {
+            self.submit(example::QUESTION.to_owned(), cx);
+        }
+    }
+
+    pub(crate) fn least_height(&self) -> Pixels {
+        self.least
+    }
+
+    pub(crate) fn focus_input(&self, window: &mut Window, cx: &mut App) {
+        let handle = self.input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    }
+
+    /// The level tag of the cluster this tab belongs to, as the dock last
+    /// read it.
+    pub(crate) fn set_level(&mut self, level: Mark, cx: &mut Context<Self>) {
+        if self.level != level {
+            self.level = level;
+            cx.notify();
+        }
+    }
+
+    /// Looks for opencode again (or, for an example, does nothing).
+    pub(crate) fn check_again(&mut self, cx: &mut Context<Self>) {
+        if self.example {
+            return;
+        }
+        self.setup = setup::Setup::Checking;
+        let chosen = self.chosen.clone();
+        let data = self.data();
+        let (sender, mut receiver) = tokio::sync::oneshot::channel();
+        let job = OwnedJob::new(self.runtime.spawn(async move {
+            let _ = sender.send(setup::check(chosen, data).await);
+        }));
+        let delivery = cx.spawn(async move |this, cx| {
+            if let Ok((setup, found)) = (&mut receiver).await {
+                _ = this.update(cx, |view, cx| {
+                    view.setup = setup;
+                    view.found = found;
+                    cx.notify();
+                });
+            }
+        });
+        self.check = Some((job, delivery));
+        cx.notify();
+    }
+
+    /// "Choose a file": the person picks an opencode; the path is kept in
+    /// `agent.json` and tried first.
+    pub(crate) fn choose_file(&mut self, cx: &mut Context<Self>) {
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Use opencode".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = selection.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            _ = this.update(cx, |view, cx| view.use_file(path, cx));
+        })
+        .detach();
+    }
+
+    pub(crate) fn use_file(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        if let Err(error) = self.host.access.set_opencode_path(Some(path.clone())) {
+            self.notice = Some(Notice::Failed(format!(
+                "The chosen file couldn't be kept in agent.json: {error}"
+            )));
+        }
+        self.chosen = Some(path);
+        self.check_again(cx);
+    }
+
+    fn data(&self) -> freshkube_agent::profile::Data {
+        if self.data_shared() {
+            freshkube_agent::profile::Data::Shared
+        } else {
+            freshkube_agent::profile::Data::Own(self.host.own_data())
+        }
+    }
+
+    /// Whether opencode runs on the person's own data (`data: shared` in
+    /// `agent.json`).
+    pub(crate) fn data_shared(&self) -> bool {
+        self.shared_shape || self.host.access.data_mode() == freshkube_agent::DataMode::Shared
+    }
+
+    /// Whether agent access is on for this tab's cluster.
+    pub(crate) fn access_on(&self) -> bool {
+        self.own
+            .as_ref()
+            .is_some_and(|own| self.host.gate.is_on(&own.entry, &own.context))
+    }
+
+    /// Reads the question box and asks it.
+    pub(crate) fn ask(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.input.read(cx).value().trim().to_owned();
+        if text.is_empty() || self.working {
+            return;
+        }
+        self.input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.submit(text, cx);
+    }
+
+    /// Asks `question`. With access off nothing starts: the egress card
+    /// shows and the question waits for "Turn on".
+    pub(crate) fn submit(&mut self, mut question: String, cx: &mut Context<Self>) {
+        if !self.setup.can_start() || self.own.is_none() || self.working {
+            return;
+        }
+        if question.len() > MAX_QUESTION_BYTES {
+            let mut end = MAX_QUESTION_BYTES;
+            while !question.is_char_boundary(end) {
+                end -= 1;
+            }
+            question.truncate(end);
+        }
+        self.notice = self
+            .notice
+            .take()
+            .filter(|notice| matches!(notice, Notice::SaveFailed(_) | Notice::HeldOff));
+        if !self.access_on() {
+            self.pending = Some(question);
+            cx.notify();
+            return;
+        }
+        self.send(question, cx);
+    }
+
+    fn send(&mut self, question: String, cx: &mut Context<Self>) {
+        if self.session.is_none() && !self.start_session(cx) {
+            return;
+        }
+        let Some(session) = &self.session else {
+            return;
+        };
+        let _ = session.commands.send(run::Command::Prompt(question));
+        self.working = true;
+        self.elapsed.update(cx, |elapsed, cx| elapsed.start(cx));
+        cx.notify();
+    }
+
+    /// The egress card's "Turn on".
+    pub(crate) fn turn_on(&mut self, cx: &mut Context<Self>) {
+        if self.turn_on_access("egress card", cx)
+            && let Some(question) = self.pending.take()
+        {
+            self.send(question, cx);
+        }
+    }
+
+    /// "Not now" on the egress card: nothing was read, nothing starts.
+    pub(crate) fn decline(&mut self, cx: &mut Context<Self>) {
+        self.pending = None;
+        cx.notify();
+    }
+
+    fn turn_on_access(&mut self, from: &str, cx: &mut Context<Self>) -> bool {
+        let Some(own) = &self.own else {
+            return false;
+        };
+        match self
+            .host
+            .access
+            .set_access(&own.entry, &own.context, true, from)
+        {
+            Ok(()) => {
+                self.notice = None;
+                cx.notify();
+                true
+            }
+            Err(error) => {
+                self.notice = Some(Notice::AccessNotSaved(error.to_string()));
+                cx.notify();
+                false
+            }
+        }
+    }
+
+    /// Turns agent access off for this cluster. The gate ends the reads in
+    /// flight at once; the save follows, and if it fails the tab says so.
+    pub(crate) fn turn_off_access(&mut self, cx: &mut Context<Self>) {
+        let Some(own) = &self.own else {
+            return;
+        };
+        match self
+            .host
+            .access
+            .set_access(&own.entry, &own.context, false, "agent tab")
+        {
+            Ok(()) => {
+                if matches!(self.notice, Some(Notice::SaveFailed(_))) {
+                    self.notice = None;
+                }
+            }
+            Err(error) => self.notice = Some(Notice::SaveFailed(error.to_string())),
+        }
+        cx.notify();
+    }
+
+    /// Writes `agent.json` again after a failed save of turning access off.
+    pub(crate) fn retry_save(&mut self, cx: &mut Context<Self>) {
+        match self.host.access.retry_save() {
+            Ok(()) => self.notice = None,
+            Err(error) => self.notice = Some(Notice::SaveFailed(error.to_string())),
+        }
+        cx.notify();
+    }
+
+    /// Stop: cancels the prompt. The session stays for the next question.
+    pub(crate) fn stop(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.commands.send(run::Command::Cancel);
+        }
+        cx.notify();
+    }
+
+    /// Chooses one of the models the agent offered.
+    pub(crate) fn choose_model(&mut self, id: String, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            let _ = session.commands.send(run::Command::SetModel(id));
+        }
+        cx.notify();
+    }
+
+    /// Ends the session now, as closing the tab does: the endpoint's port
+    /// closes, its token ends and the agent and its group are gone.
+    pub(crate) fn end(&mut self, cx: &mut Context<Self>) {
+        self.generation += 1;
+        self.session = None;
+        self.listening = None;
+        self.check = None;
+        self.working = false;
+        self.pending = None;
+        self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
+    }
+
+    fn start_session(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(own) = self.own.clone() else {
+            return false;
+        };
+        let workspace = crate::mutation::workspace(cx);
+        let agent = if self.example {
+            let other = other_entry(workspace.as_ref(), &own.entry);
+            run::Agent::Scripted(
+                self.script
+                    .clone()
+                    .unwrap_or_else(|| example::script(&own.context, other.as_deref(), self.shape)),
+            )
+        } else {
+            match &self.found {
+                Some(found) => run::Agent::Opencode {
+                    profile: found.profile.clone(),
+                    checked: found.checked.clone(),
+                },
+                None => return false,
+            }
+        };
+        let launch = run::Launch {
+            entry: own.entry.clone(),
+            gate: self.host.gate.clone(),
+            targets: DockTargets::new(&own, workspace.as_ref()).shared(),
+            agent,
+        };
+        let (job, commands, mut receiver) = run::start(&self.runtime, launch);
+        self.generation += 1;
+        let generation = self.generation;
+        let delivery = cx.spawn(async move |this, cx| {
+            while let Some(message) = receiver.recv().await {
+                if this
+                    .update(cx, |view, cx| view.apply(generation, message, cx))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        self.session = Some(Running {
+            _job: job,
+            commands,
+            _delivery: delivery,
+        });
+        true
+    }
+
+    /// Publishes what the session reported, unless it came from a session
+    /// that has since ended or been replaced.
+    fn apply(&mut self, generation: u64, message: run::Message, cx: &mut Context<Self>) {
+        if generation != self.generation || self.session.is_none() {
+            return;
+        }
+        match message {
+            run::Message::Event(event) => self.record(event, cx),
+            run::Message::Read(read) => {
+                if let Some(own) = &self.own {
+                    self.trail.read(&read, &own.entry);
+                }
+            }
+            run::Message::Models(models) => self.models = models,
+            run::Message::Listening(addr) => self.listening = Some(addr),
+            run::Message::Ended(reason) => {
+                self.session = None;
+                self.listening = None;
+                self.working = false;
+                self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
+                if let Some(reason) = reason {
+                    self.notice = Some(Notice::Failed(reason));
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn record(&mut self, event: Event, cx: &mut Context<Self>) {
+        match &event {
+            Event::Note(note) => {
+                if let Some(what) = note.strip_prefix("Refused: ") {
+                    self.trail.refused_tool(what);
+                }
+            }
+            Event::StepStarted { .. } if self.stop_at_first_step => {
+                self.stop_at_first_step = false;
+                self.stop(cx);
+            }
+            Event::Ended(outcome) => {
+                self.working = false;
+                self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
+                if let Outcome::Failed(reason) = outcome {
+                    if signed_out(reason) {
+                        if let setup::Setup::Ready { version } = &self.setup {
+                            self.setup = setup::Setup::SignedOut {
+                                version: version.clone(),
+                            };
+                        }
+                    } else {
+                        self.notice = Some(Notice::Failed(reason.clone()));
+                    }
+                }
+            }
+            _ => {}
+        }
+        let said = matches!(event, Event::Said(_));
+        if matches!(event, Event::Prompt(_)) {
+            self.trail.clear();
+        }
+        self.investigation.record(event);
+        if said
+            && let Some(Entry::Said(text)) = self
+                .investigation
+                .entries()
+                .iter()
+                .rev()
+                .find(|entry| matches!(entry, Entry::Said(_)))
+        {
+            let text = text.text.clone();
+            self.trail.cite(&text);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_script(&mut self, script: Script) {
+        self.script = Some(script);
+    }
+
+    /// What tests read of the session.
+    #[cfg(test)]
+    pub(crate) fn outcome(&self) -> Outcome {
+        self.investigation.outcome()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn steps(&self) -> Vec<(String, freshkube_agent::investigation::StepState)> {
+        self.investigation
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Step(step) => Some((step.id.clone(), step.state)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn said(&self) -> String {
+        self.investigation
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Said(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn trail_rows(&self) -> Vec<trail::Row> {
+        self.trail.rows().to_vec()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn models(&self) -> Models {
+        self.models.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_session(&self) -> bool {
+        self.session.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn listening(&self) -> Option<std::net::SocketAddr> {
+        self.listening
+    }
+
+    #[cfg(test)]
+    pub(crate) fn waiting_on_access(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_working(&self) -> bool {
+        self.working
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notice(&self) -> Option<Notice> {
+        self.notice.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn host(&self) -> AgentHost {
+        self.host.clone()
+    }
+}
+
+/// An entry of the setup other than `own`, for the example's read on another
+/// cluster.
+fn other_entry(workspace: Option<&Workspace>, own: &str) -> Option<String> {
+    workspace?
+        .clusters
+        .iter()
+        .find(|entry| entry.id != own)
+        .map(|entry| entry.id.clone())
+}
+
+/// Whether a failure reads as opencode not being signed in to a provider.
+fn signed_out(reason: &str) -> bool {
+    let reason = reason.to_ascii_lowercase();
+    [
+        "auth",
+        "sign in",
+        "sign-in",
+        "log in",
+        "login",
+        "credential",
+    ]
+    .iter()
+    .any(|word| reason.contains(word))
+}
+
+impl Focusable for AgentView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
