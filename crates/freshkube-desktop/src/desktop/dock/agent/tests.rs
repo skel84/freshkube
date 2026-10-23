@@ -716,6 +716,8 @@ fn closing_the_tab_ends_the_session(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_session_reads_while_another_page_shows(cx: &mut TestAppContext) {
     let tab = open(cx, "ready", 1280., 880.);
+    // Not following: the page the person chose stays.
+    tab.click("agent-following", cx);
     tab.script(tour(Duration::from_millis(300)), cx);
     tab.ask("why is api restarting?", cx);
     tab.click("agent-turn-on", cx);
