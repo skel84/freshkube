@@ -1,1 +1,0 @@
-- **Notifications:** prepare the bell's tooltip when its counts change and correct the documented Settings section count.

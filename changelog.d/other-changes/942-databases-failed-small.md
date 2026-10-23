@@ -1,1 +1,0 @@
-- **Databases:** keep read coverage scrollable and Retry reachable in short windows, including at the largest text size.

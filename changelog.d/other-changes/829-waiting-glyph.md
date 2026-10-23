@@ -1,1 +1,0 @@
-- **Pods:** a Pending pod with a regular init container running shows the Waiting clock. Pods waiting to start, missing status, terminating, on an unready node or reporting a failure keep their existing glyph.
