@@ -41,6 +41,9 @@ impl Watching {
     }
 }
 
+/// Why an action with nothing to watch is not seen to take effect.
+pub const NOT_WATCHABLE: &str = "This action has no outcome the app can watch.";
+
 /// The API took the write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Accepted {
@@ -120,7 +123,7 @@ pub async fn observe(
     if matches!(observation, Observation::Unobservable) {
         return Observed::NotObserved {
             waited: Duration::ZERO,
-            why: "This action has no outcome the app can watch.",
+            why: NOT_WATCHABLE,
         };
     }
     let started = Instant::now();

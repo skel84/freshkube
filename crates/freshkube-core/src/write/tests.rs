@@ -1693,3 +1693,36 @@ async fn a_cancel_on_example_data_writes_nothing_to_any_audit_log() {
     assert!(cluster.recorder.requests().is_empty());
     assert!(phases(&AuditStore::new(dir.path().join("audit"))).is_empty());
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_action_with_nothing_to_watch_is_told_plainly_and_does_not_stay() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Open);
+    let mut action = fake::annotate_web();
+    action.changes[0].observe = Observation::Unobservable;
+    let finished = run(
+        &runner,
+        ready(&runner, action).await,
+        Confirmation::NotAsked,
+    )
+    .await;
+    assert_eq!(finished.headline(), Headline::NotObserved);
+    assert!(!finished.sticky(), "nothing to watch is not a doubt");
+    assert!(
+        finished.message().contains("can't watch"),
+        "{}",
+        finished.message()
+    );
+    // An accepted write that was watched and never arrived still stays.
+    let (cluster, dir) = (Cluster::new(), tmp());
+    cluster.never_reaches_the_state();
+    let runner = fake::runner(&cluster, dir.path(), Protection::Open);
+    let stuck = run(
+        &runner,
+        ready(&runner, fake::scale(3)).await,
+        Confirmation::NotAsked,
+    )
+    .await;
+    assert_eq!(stuck.headline(), Headline::NotObserved);
+    assert!(stuck.sticky());
+}

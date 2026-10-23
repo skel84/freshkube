@@ -1059,6 +1059,23 @@ fn promoting(change: &mut Change) {
             pushed: vec![],
         }];
     }
+    // The Promotion row and what it waits for come from the running Promotion,
+    // not from auto-promotion being off.
+    let running = "Promoting: Kargo reports Running, at git-push (2 of 4 steps done)";
+    for hop in change
+        .hops
+        .iter_mut()
+        .filter(|h| h.key == "prod-ams-promotion")
+    {
+        hop.state = Info;
+        hop.detail = running.into();
+        hop.cause = Some(Cause::waiting(
+            "the running Promotion to finish, which then starts the Stage's verification",
+        ));
+    }
+    let Some(stage) = change.stages.iter_mut().find(|s| s.name == "prod-ams") else {
+        return;
+    };
     for check in &mut stage.steps {
         if check.name == "git-clone" || check.name == "kustomize-set-image" {
             check.state = Healthy;

@@ -171,10 +171,28 @@ impl Dialog {
 }
 
 impl Finished {
-    /// Whether the report stays until the person closes it. Only an observed
-    /// success may go away by itself.
+    /// Whether the report stays until the person closes it. An observed
+    /// success may go away by itself, and so may a report that only says
+    /// there was nothing to watch (Reverify) or no cluster to send to
+    /// (example data): neither is a doubt about what happened. The rest stay.
     pub fn sticky(&self) -> bool {
-        self.headline() != Headline::Done
+        !(self.headline() == Headline::Done
+            || self.nothing_to_watch()
+            || matches!(self.status, super::run::Status::NotSent(NotSent::Example)))
+    }
+
+    /// Every accepted object is one the app has no way to watch.
+    fn nothing_to_watch(&self) -> bool {
+        self.headline() == Headline::NotObserved
+            && self.objects.iter().all(|o| {
+                matches!(
+                    &o.step,
+                    Step::Accepted {
+                        observed: Observed::NotObserved { why, .. },
+                        ..
+                    } if *why == super::outcome::NOT_WATCHABLE
+                )
+            })
     }
 
     /// The sentence a toast leads with. Words that only fit success are used
@@ -182,6 +200,9 @@ impl Finished {
     pub fn message(&self) -> String {
         match self.headline() {
             Headline::Done => "Done. The cluster reached the new state.".to_owned(),
+            Headline::NotObserved if self.nothing_to_watch() => {
+                "Accepted. The app can't watch this take effect; check the object.".to_owned()
+            }
             Headline::NotObserved => {
                 let waited = self
                     .objects

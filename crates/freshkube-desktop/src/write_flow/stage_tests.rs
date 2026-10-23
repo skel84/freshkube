@@ -110,11 +110,11 @@ fn promote_on_a_guarded_pair_shows_the_preview_and_asks_for_no_typing(cx: &mut T
     // What runs now against what would run, the change, and the way back.
     assert!(
         h.label(cx, "write-preview-0")
-            .contains("Runs now: Freight brave-l")
+            .contains("Runs now: Freight brave-lynx")
     );
     assert!(
         h.label(cx, "write-preview-0")
-            .contains("Would run: Freight wonky-o")
+            .contains("Would run: Freight wonky-otter")
     );
     assert!(h.present(cx, "write-destinations"));
     assert!(

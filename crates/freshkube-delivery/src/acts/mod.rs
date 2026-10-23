@@ -239,7 +239,7 @@ pub fn abort(acts: &StageActs, running: &Promoting) -> ActionDescription {
     let mut impact = vec![format!(
         "Promotion {} of Freight {} to {stage} is {}.",
         running.promotion.name,
-        short(&running.freight),
+        running.freight,
         running.phase.to_lowercase()
     )];
     let ran = if running.ran.is_empty() {
@@ -457,9 +457,13 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
         tier: Tier::SpecChange,
         verb: "Promote".into(),
         sentence: format!(
-            "Promote Freight {} to {}: create a Promotion for each Stage.",
-            short(freight),
-            names.join(", ")
+            "Promote Freight {freight} to {}: create a Promotion{}.",
+            names.join(", "),
+            if names.len() > 1 {
+                " for each Stage"
+            } else {
+                ""
+            }
         ),
         changes,
         destinations,
@@ -477,12 +481,12 @@ fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
         let stage = &pick.acts.stage.name;
         let model = change.stages.iter().find(|s| &s.name == stage);
         let runs_now = match model.and_then(|s| s.running.as_deref()) {
-            Some(running) => format!("Freight {}", short(running)),
+            Some(running) => format!("Freight {running}"),
             None => "Nothing else is recorded.".to_owned(),
         };
         let mut lines = vec![
             format!("Runs now: {runs_now}"),
-            format!("Would run: Freight {}", short(&pick.acts.freight)),
+            format!("Would run: Freight {}", pick.acts.freight),
         ];
         lines.extend(pick.acts.would_run.iter().map(|line| format!("  {line}")));
         match &pick.destination {

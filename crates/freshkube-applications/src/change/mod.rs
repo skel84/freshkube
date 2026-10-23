@@ -262,7 +262,9 @@ fn settings_title(slug: &str) -> &'static str {
 /// buttons for these come with the Why / Needs / Fix block.
 pub(super) fn next_words(next: &Next) -> String {
     match next {
-        Next::OpenInKargo => "Open the Freight in Kargo; this page never promotes.".into(),
+        Next::OpenInKargo => {
+            "Open the Freight in Kargo, or promote it to the Stage from here.".into()
+        }
         Next::CopyAccessRequest(role) => format!(
             "Ask for read access to {}{}{}.",
             role.resource,

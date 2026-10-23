@@ -262,8 +262,8 @@ async fn promote_creates_a_promotion_and_the_dialog_names_the_destination_and_th
     assert!(titles.contains(&"Stage prod-ams"), "{titles:?}");
     assert!(titles.contains(&"This change") && titles.contains(&"Going back"));
     let lines = ask.preview[0].lines.join("\n");
-    assert!(lines.contains("Runs now: Freight brave-l"), "{lines}");
-    assert!(lines.contains("Would run: Freight wonky-o"), "{lines}");
+    assert!(lines.contains("Runs now: Freight brave-lynx"), "{lines}");
+    assert!(lines.contains("Would run: Freight wonky-otter"), "{lines}");
     assert!(lines.contains("Image registry.example.test"), "{lines}");
     let Verdict::Ready(prepared) = verdict else {
         panic!()
@@ -765,4 +765,39 @@ async fn the_stage_actions_that_reach_a_destination_are_all_held_to_it() {
     // An unknown destination holds them to guarded, never to nothing.
     let unknown = held_to(abort(&stage, &running()), "prod-ams", None);
     assert_eq!(unknown.destinations[0].protection, Protection::Guarded);
+}
+
+#[test]
+fn the_sentence_says_a_promotion_for_one_stage_and_one_for_each_of_several() {
+    let one = promote_action(Protection::Guarded);
+    assert_eq!(
+        one.sentence,
+        "Promote Freight wonky-otter to prod-ams: create a Promotion."
+    );
+    let (dev, prod) = (example_acts("dev"), example_acts("prod-ams"));
+    let several = promote(
+        &change(),
+        &[
+            Pick {
+                acts: &dev,
+                destination: None,
+            },
+            Pick {
+                acts: &prod,
+                destination: None,
+            },
+        ],
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
+    );
+    assert!(
+        several
+            .sentence
+            .ends_with("create a Promotion for each Stage.")
+    );
+    // The whole Freight name is shown, never cut.
+    let text = abort(&acts(), &running()).preview[0].lines.join(" ");
+    assert!(
+        text.contains("of Freight wonky-otter to prod-ams"),
+        "{text}"
+    );
 }
