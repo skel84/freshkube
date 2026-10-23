@@ -313,7 +313,9 @@ async fn the_table_shows_each_level_and_says_when_guarded_is_the_default(cx: &mu
 const TEAM: &str = "version: 1\nclusters:\n  - id: prod\n    role: environment\n    protection: protected\n  - id: mgmt\n    role: core\n";
 
 #[gpui_kit::test]
-async fn the_teams_level_is_a_floor_the_inspector_will_not_go_under(cx: &mut TestAppContext) {
+async fn safety_g03_the_teams_level_is_a_floor_the_inspector_will_not_go_under(
+    cx: &mut TestAppContext,
+) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), THREE);
@@ -375,7 +377,9 @@ async fn without_a_team_every_level_still_chooses(cx: &mut TestAppContext) {
 const FLOORS: &str = "version: 1\nclusters:\n  - id: unset\n    role: core\n    protection: protected\n  - id: loose\n    role: environment\n    protection: protected\n  - id: strict\n    role: environment\n    protection: protected\n";
 
 #[gpui_kit::test]
-async fn an_own_or_default_level_looser_than_the_floor_shows_the_floor(cx: &mut TestAppContext) {
+async fn safety_g03_an_own_or_default_level_looser_than_the_floor_shows_the_floor(
+    cx: &mut TestAppContext,
+) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     write(

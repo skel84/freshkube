@@ -623,7 +623,7 @@ status:
     }
 
     #[test]
-    fn a_new_version_hides_revealed_values_again() {
+    fn safety_g09_a_new_version_hides_revealed_values_again() {
         let mut detail = Detail::new(target("u-1"));
         detail.finish_read(Ok(view(DEPLOYMENT)));
         let epoch = detail.reveal_epoch;

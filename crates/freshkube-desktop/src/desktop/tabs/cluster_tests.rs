@@ -806,7 +806,7 @@ fn a_tab_with_no_cluster_shows_no_cluster_name_or_level(cx: &mut TestAppContext)
 /// (Etcd, a page) re-derives nothing of its own, so only the explicit call
 /// does.
 #[gpui_kit::test]
-fn leaving_an_open_entry_for_a_stricter_context_re_derives_level_and_write_refusal(
+fn safety_g04_leaving_an_open_entry_for_a_stricter_context_re_derives_level_and_write_refusal(
     cx: &mut TestAppContext,
 ) {
     use super::set::ContextBinding;
