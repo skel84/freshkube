@@ -89,11 +89,13 @@ impl TableSource for ResourcesScreen {
             .into(),
             tooltip: None,
             marked: self.marked.contains(identity),
-            muted: row.terminating,
+            muted: row.terminating || self.frozen.is_some(),
             data: RowCells {
                 entry,
                 node_ready,
-                stale: self.usage_state == UsageState::Stale || !node_ready,
+                stale: self.usage_state == UsageState::Stale
+                    || !node_ready
+                    || self.frozen.is_some(),
             },
         }))
     }
@@ -257,8 +259,10 @@ impl TableSource for ResourcesScreen {
     }
 
     fn loading(&self) -> Option<&table::LoadingRows> {
-        (self.source.is_some() && *self.store.read_state() == ReadState::Loading)
-            .then_some(&self.loading)
+        (self.source.is_some()
+            && *self.store.read_state() == ReadState::Loading
+            && self.frozen.is_none())
+        .then_some(&self.loading)
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

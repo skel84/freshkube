@@ -18,7 +18,8 @@ pub const READ_ONLY_REASON: &str = "This cluster is read-only.";
 pub enum Protection {
     /// No writes at all.
     ReadOnly,
-    /// Every write asks the user to type the object's name.
+    /// Every write asks the user to type the object's name, except one that
+    /// only adds an annotation (it declares `no_confirmation`).
     Protected,
     /// Each action's own confirmation: the level of an entry that sets none.
     #[default]
@@ -58,7 +59,9 @@ impl Protection {
     pub fn meaning(self) -> &'static str {
         match self {
             Protection::ReadOnly => "No writes at all.",
-            Protection::Protected => "Every write asks you to type the object's name.",
+            Protection::Protected => {
+                "Every write asks you to type the object's name, except one that only adds an annotation (Refresh, Reverify)."
+            }
             Protection::Guarded => "Each action asks for its own confirmation.",
             Protection::Open => "Reversible actions skip their confirmation.",
         }
@@ -111,6 +114,15 @@ impl LevelCell {
         self.0.store(Self::code(level), Ordering::SeqCst);
     }
 }
+
+/// Two cells are equal when they hold the same level now.
+impl PartialEq for LevelCell {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+impl Eq for LevelCell {}
 
 #[cfg(test)]
 mod tests {

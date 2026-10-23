@@ -1,5 +1,6 @@
 //! Relationship navigation uses the same object entry point as cards and search.
 use super::switch::LinkWork;
+use super::tabs::{self, OpenIn};
 use super::*;
 use crate::resources::ResourceLink;
 use gpui_kit::component::WindowExt;
@@ -44,9 +45,11 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The click that made the link, if any, says where it opens.
+        let open_in = self.take_gesture(cx);
         match intent {
             ResourceLink::Object(kind, object, tab) => {
-                self.open_object(kind, object, tab, window, cx)
+                self.open_object_in(open_in, kind, object, tab, window, cx)
             }
             ResourceLink::Logs(request) => self
                 .pages
@@ -58,6 +61,12 @@ impl Pilot {
                 .update(cx, |dock, cx| dock.open_shell(request, window, cx)),
             ResourceLink::CopyLink => self.copy_link(window, cx),
             ResourceLink::Node(name, tab) => {
+                if open_in != OpenIn::Here
+                    && let Some(view) = tabs::node_view(&name, tab)
+                {
+                    self.open_view_tab(view, open_in, window, cx);
+                    return;
+                }
                 self.pages
                     .resources
                     .update(cx, |resources, cx| resources.close_for_link(cx));
@@ -69,7 +78,14 @@ impl Pilot {
                 object,
             } => {
                 if let Some(kind) = freshkube_core::resources::builtin_by_gvk(&api_version, &kind) {
-                    self.open_object(kind, object, resources::Tab::Overview, window, cx);
+                    self.open_object_in(
+                        open_in,
+                        kind,
+                        object,
+                        resources::Tab::Overview,
+                        window,
+                        cx,
+                    );
                     return;
                 }
                 let work = LinkWork::Owner {

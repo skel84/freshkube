@@ -579,6 +579,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             link: None,
             reach: reach.clone(),
             object: object(CICD, GROUP, "Stage", "stages", project, name),
+            acts: None,
         });
     }
     Change {

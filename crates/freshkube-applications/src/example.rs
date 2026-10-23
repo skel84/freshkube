@@ -69,6 +69,9 @@ pub enum Variant {
     /// One change shows all four causes of an Unknown: Waiting, Can't read,
     /// Not set up and Not found.
     Causes,
+    /// Someone else's Promotion of the Freight to `prod-ams` is running, so
+    /// its Stage offers Abort in place of Promote.
+    Promoting,
     /// Every Deployment hop of a change shows one outcome of what Coroot
     /// found after its deploy, so a capture can show each.
     Outcome(crate::change::OutcomeKind),
@@ -77,7 +80,7 @@ pub enum Variant {
 impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
     /// `spread`, `not-found`, `unlabelled`, `stages`, `workloads`,
-    /// `unreachable`, `argo-refused`, `destination`, `image-only`, `causes`,
+    /// `unreachable`, `argo-refused`, `destination`, `image-only`, `causes`, `promoting`,
     /// `github-limited`, `github-refused`, `github-offline` or `outcome-<name>`
     /// (`OutcomeKind::ALL` names them) from
     /// `FRESHKUBE_APPLICATIONS`, parsed into `DebugOptions` (debug and
@@ -103,6 +106,7 @@ impl Variant {
             Some("github-refused") => Self::GitHubRefused,
             Some("github-offline") => Self::GitHubOffline,
             Some("causes") => Self::Causes,
+            Some("promoting") => Self::Promoting,
             Some(other) => other
                 .strip_prefix("outcome-")
                 .and_then(crate::change::OutcomeKind::parse)
@@ -134,6 +138,7 @@ impl Variant {
             Self::GitHubRefused => Shape::GitHubRefused,
             Self::GitHubOffline => Shape::GitHubOffline,
             Self::Causes => Shape::Causes,
+            Self::Promoting => Shape::Promoting,
             _ => Shape::Whole,
         }
     }
@@ -173,6 +178,7 @@ pub fn inputs(variant: Variant) -> Inputs {
         Variant::Acme
         | Variant::ImageOnly
         | Variant::Causes
+        | Variant::Promoting
         | Variant::GitHubLimited
         | Variant::GitHubRefused
         | Variant::GitHubOffline

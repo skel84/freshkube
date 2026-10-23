@@ -21,6 +21,7 @@ use serde_json::{Map, Value};
 
 const COLLAPSED: &str = "collapsed";
 const DOCK: &str = "dock";
+const TABS: &str = "tabs";
 const WORKSPACE: &str = "workspace";
 const ACTIVE: &str = "active";
 
@@ -121,6 +122,21 @@ impl NavigationFile {
             for (field, value) in fields {
                 dock.insert(field, value);
             }
+        });
+    }
+
+    /// The view tabs as last saved, if they read as such.
+    pub(crate) fn tabs<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
+        self.read(|map| serde_json::from_value(map.get(TABS)?.clone()).ok())
+    }
+
+    /// Replaces the view tabs: the whole object, since they are one value.
+    pub(crate) fn set_tabs<T: serde::Serialize>(&self, tabs: &T, cx: &App) {
+        let Ok(value) = serde_json::to_value(tabs) else {
+            return;
+        };
+        self.change(cx, |map| {
+            map.insert(TABS.into(), value);
         });
     }
 

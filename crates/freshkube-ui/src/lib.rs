@@ -27,6 +27,7 @@ pub mod split_size;
 pub mod squares;
 pub mod status;
 pub mod stream_status;
+pub mod tab_strip;
 pub mod table;
 pub mod text_size;
 pub mod theme;

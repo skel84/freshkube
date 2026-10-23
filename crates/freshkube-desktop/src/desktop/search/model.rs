@@ -4,7 +4,7 @@ use crate::resources::{custom::Discovery, navigation::NAVIGATION};
 use gpui_kit::component::Disableable;
 
 #[derive(Clone)]
-pub(super) enum Destination {
+pub(in crate::desktop) enum Destination {
     Page(Page),
     Kind(ResourceKind),
     Node(String),

@@ -32,7 +32,8 @@ pub async fn review(client: &kube::Client, target: &Target, verb: &str) -> Acces
                 resource: Some(target.resource.clone()),
                 verb: Some(verb.to_owned()),
                 namespace: target.namespace.clone(),
-                name: Some(target.name.clone()),
+                // RBAC cannot name an object that does not exist yet.
+                name: (verb != "create").then(|| target.name.clone()),
                 subresource: target.subresource.clone(),
                 version: Some(target.version.clone()),
                 ..Default::default()
