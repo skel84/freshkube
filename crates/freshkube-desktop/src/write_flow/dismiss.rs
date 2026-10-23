@@ -7,9 +7,12 @@ use std::rc::Rc;
 
 use gpui_kit::{App, AsyncApp};
 
+/// What runs once, with the app, when the dialog is gone.
+type Run = Box<dyn FnOnce(&mut App)>;
+
 pub(crate) struct OnDismiss {
     cx: AsyncApp,
-    run: Option<Box<dyn FnOnce(&mut App)>>,
+    run: Option<Run>,
 }
 
 impl OnDismiss {
