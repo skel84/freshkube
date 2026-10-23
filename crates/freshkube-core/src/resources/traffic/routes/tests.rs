@@ -96,7 +96,7 @@ struct World {
     gateways: Result<Listing<GatewayFacts>, Failure>,
     classes: Result<Listing<ClassFacts>, Failure>,
     grants: Result<Listing<GrantFacts>, Failure>,
-    namespaces: Result<Listing<(String, BTreeMap<String, String>)>, Failure>,
+    namespaces: Result<NamespaceLabels, Failure>,
     backends: BTreeMap<(String, String), BackendRead>,
 }
 

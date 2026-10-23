@@ -21,7 +21,8 @@ pub use read::{
     NAMESPACE_LIMIT, ROUTE_LIMIT, RouteEntry, RoutesRead, discover, read_routes,
 };
 pub use trace::{
-    BackendRead, Branch, BranchKind, BranchVerdict, Inputs, Listing, Owner, ParentTrace,
+    BackendRead, Branch, BranchKind, BranchVerdict, Inputs, Listing, NamespaceLabels, Owner,
+    ParentTrace,
     RouteTrace, RouteVerdict, StepId, StepVerdict, Summary, TraceStep, trace_route,
 };
 

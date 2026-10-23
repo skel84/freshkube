@@ -162,6 +162,9 @@ impl<T> Listing<T> {
     }
 }
 
+/// Each namespace with its labels, for a listener that selects by label.
+pub type NamespaceLabels = Listing<(String, BTreeMap<String, String>)>;
+
 /// A backend Service as read: not found is an answer (`None`).
 pub type BackendRead = Result<Option<ServiceReading>, Failure>;
 
@@ -172,7 +175,7 @@ pub struct Inputs<'a> {
     pub classes: &'a Result<Listing<ClassFacts>, Failure>,
     pub grants: &'a Result<Listing<GrantFacts>, Failure>,
     /// Namespace labels, read only for a listener that selects by label.
-    pub namespaces: &'a Result<Listing<(String, BTreeMap<String, String>)>, Failure>,
+    pub namespaces: &'a Result<NamespaceLabels, Failure>,
     pub backends: &'a BTreeMap<(String, String), BackendRead>,
     /// The ReferenceGrant version the cluster serves, for a proposal.
     pub grant_version: &'a str,
@@ -1073,9 +1076,10 @@ fn endpoints_step(backend: &BackendRef, namespace: &str, reading: &ServiceReadin
 fn branch_verdict(steps: &[TraceStep]) -> BranchVerdict {
     if steps.iter().any(|s| s.verdict == StepVerdict::Fail) {
         BranchVerdict::Broken
-    } else if steps.iter().any(|s| s.verdict == StepVerdict::Unknown) {
-        BranchVerdict::Unknown
-    } else if steps.iter().any(|s| s.verdict == StepVerdict::Neutral) {
+    } else if steps
+        .iter()
+        .any(|s| matches!(s.verdict, StepVerdict::Unknown | StepVerdict::Neutral))
+    {
         BranchVerdict::Unknown
     } else {
         BranchVerdict::Serving
