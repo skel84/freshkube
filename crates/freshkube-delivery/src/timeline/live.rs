@@ -64,6 +64,9 @@ struct Owned<'a> {
     replicasets: HashSet<String>,
     /// Pods one of its ReplicaSets, StatefulSets or DaemonSets controls.
     pods: HashSet<String>,
+    /// Every pod the namespace's listing held, whoever owns it; `None` when
+    /// the listing failed.
+    listed: Option<HashSet<String>>,
 }
 
 fn kind_name(kind: WorkloadKind) -> &'static str {
@@ -94,7 +97,13 @@ fn one_segment_after(name: &str, base: &str) -> bool {
 }
 
 impl<'a> Owned<'a> {
-    fn new(workloads: &'a [Workload], replicasets: &[Value], pods: &[Value]) -> Self {
+    fn new(workloads: &'a [Workload], replicasets: &[Value], pods: Option<&[Value]>) -> Self {
+        let listed = pods.map(|pods| {
+            pods.iter()
+                .filter_map(|pod| text(pod, &["metadata", "name"]).map(str::to_owned))
+                .collect()
+        });
+        let pods = pods.unwrap_or_default();
         let has = |kind: &str, name: &str| {
             workloads
                 .iter()
@@ -122,6 +131,7 @@ impl<'a> Owned<'a> {
             workloads,
             replicasets,
             pods,
+            listed,
         }
     }
 
@@ -131,14 +141,17 @@ impl<'a> Owned<'a> {
             "ReplicaSet" => self.replicasets.contains(name),
             "Pod" => {
                 self.pods.contains(name)
-                    || self
-                        .replicasets
-                        .iter()
-                        .any(|set| one_segment_after(name, set))
-                    || self.workloads.iter().any(|workload| {
-                        workload.kind != WorkloadKind::Deployment
-                            && one_segment_after(name, &workload.name)
-                    })
+                    // A pod that is gone is the application's by its name's
+                    // shape, but one that was listed is whoever's it is.
+                    || self.listed.as_ref().is_some_and(|listed| !listed.contains(name))
+                        && (self
+                            .replicasets
+                            .iter()
+                            .any(|set| one_segment_after(name, set))
+                            || self.workloads.iter().any(|workload| {
+                                workload.kind != WorkloadKind::Deployment
+                                    && one_segment_after(name, &workload.name)
+                            }))
             }
             _ => self
                 .workloads
@@ -184,7 +197,11 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
         let no_items = Vec::new();
         let pods_items = pod_list.as_ref().map_or(&no_items, |listed| &listed.items);
         let sets_items = set_list.as_ref().map_or(&no_items, |listed| &listed.items);
-        let owned = Owned::new(workloads, sets_items, pods_items);
+        let owned = Owned::new(
+            workloads,
+            sets_items,
+            pod_list.as_ref().ok().map(|listed| listed.items.as_slice()),
+        );
         // What couldn't be listed leaves what hangs on it unknown.
         if pod_list.is_err() {
             nodes
@@ -194,7 +211,8 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
         if set_list.is_err() && workloads.iter().any(|w| w.kind == WorkloadKind::Deployment) {
             let note =
                 format!("ReplicaSets not listed in {namespace}: Deployments' pods not matched");
-            for part in [&mut events, &mut restarts, &mut nodes] {
+            // Nodes inherits the Restarts' cuts below.
+            for part in [&mut events, &mut restarts] {
                 part.cuts.push(note.clone());
             }
         }

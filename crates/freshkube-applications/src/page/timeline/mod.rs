@@ -65,7 +65,7 @@ impl Fetch {
             Self::Example { shape, .. } => format!("example/{shape:?}/{app}"),
             Self::Live {
                 source_id, place, ..
-            } => format!("{source_id}/{app}/{place:?}"),
+            } => live_identity(source_id, app, place),
         }
     }
 
@@ -75,6 +75,11 @@ impl Fetch {
             Self::Live { place, .. } => place.cluster.clone(),
         }
     }
+}
+
+/// Which connection, application and workloads a live read is for.
+fn live_identity(source_id: &str, app: &str, place: &Place) -> String {
+    format!("{source_id}/{app}/{place:?}")
 }
 
 /// One line of the list as the table draws it.
@@ -114,6 +119,9 @@ pub struct TimelineView {
     anchor: Anchor,
     /// Every source not read, for a first read that failed whole.
     fallback: Vec<SourceRead>,
+    /// The banner for a refresh that failed over an earlier read: its text
+    /// and label, derived with the answer.
+    stale: Option<(SharedString, SharedString)>,
     /// A failure the next example read answers with, for tests.
     #[cfg(any(test, feature = "testing"))]
     fail_next: Option<String>,
@@ -142,6 +150,7 @@ impl TimelineView {
             hours: WINDOWS[0],
             anchor: Anchor::default(),
             fallback: Vec::new(),
+            stale: None,
             #[cfg(any(test, feature = "testing"))]
             fail_next: None,
             visible: false,
@@ -298,7 +307,7 @@ impl TimelineView {
 
     /// The banner for a refresh that failed over an earlier read: what shows
     /// is that read, from when it was made.
-    pub(super) fn stale(&self) -> Option<(SharedString, SharedString)> {
+    fn stale_banner(&self) -> Option<(SharedString, SharedString)> {
         let data = self.loader.data()?;
         let why = self.loader.error()?;
         let at = data.iter().map(|read| read.read_at).max()?;
@@ -310,9 +319,14 @@ impl TimelineView {
         Some((text.into(), label.into()))
     }
 
+    pub(super) fn stale(&self) -> Option<(SharedString, SharedString)> {
+        self.stale.clone()
+    }
+
     /// The chips and the list for the answer and window, derived when they
     /// change.
     fn derive(&mut self, _: &mut Context<Self>) {
+        self.stale = self.stale_banner();
         let reads = self
             .loader
             .data()
@@ -409,7 +423,7 @@ impl TimelineView {
 
     /// The stale banner's text, when there is one.
     pub fn stale_text(&self) -> Option<String> {
-        self.stale().map(|(text, _)| text.to_string())
+        self.stale.as_ref().map(|(text, _)| text.to_string())
     }
 
     pub fn answered(&self) -> bool {
@@ -424,6 +438,34 @@ impl TimelineView {
 #[cfg(test)]
 mod tests {
     use super::{Source, timeline, unread, view};
+
+    #[test]
+    fn a_live_read_is_keyed_by_the_connection_the_application_and_its_place() {
+        use freshkube_core::workloads::WorkloadKind;
+        use freshkube_delivery::timeline::live::{Place, Workload};
+        let place = |name: &str, count: usize| Place {
+            cluster: "core-fra".into(),
+            workloads: vec![(
+                "shop".into(),
+                (0..count)
+                    .map(|ix| {
+                        let name = if ix == 0 { name } else { "worker" };
+                        Workload::new(name, WorkloadKind::Deployment)
+                    })
+                    .collect(),
+            )],
+        };
+        let key = |source: &str, place: &Place| super::live_identity(source, "checkout", place);
+        let base = key("conn-a", &place("api", 1));
+        assert_ne!(base, key("conn-b", &place("api", 1)), "another connection");
+        assert_ne!(
+            base,
+            key("conn-a", &place("web", 1)),
+            "another workload, same count"
+        );
+        assert_ne!(base, key("conn-a", &place("api", 2)), "another count");
+        assert_eq!(base, key("conn-a", &place("api", 1)));
+    }
 
     #[test]
     fn example_data_is_dated_from_its_first_read_and_not_again() {

@@ -412,11 +412,22 @@ fn a_source_change_drops_the_answer_still_in_flight(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("application-tab-timeline", cx);
         window.render_frame(cx);
-        // Another source while the busy answer is on its way.
+    })
+    .unwrap();
+    // The busy answer is due at 5 s.
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        // Another source while it is on its way: its own answer is due at 8 s.
         timeline(&view, cx).update(cx, |timeline, cx| timeline.use_example(Shape::NoneRead, cx));
     })
     .unwrap();
-    cx.executor().advance_clock(Duration::from_secs(6));
+    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.run_until_parked();
+    // 6 s: the old answer's time has passed, and it must not have landed.
+    assert!(!cx.read(|cx| timeline(&view, cx).read(cx).answered()));
+    assert!(chips(&view, cx).is_empty(), "{:?}", chips(&view, cx));
+    cx.executor().advance_clock(Duration::from_secs(3));
     cx.run_until_parked();
     let chips = chips(&view, cx);
     assert_eq!(chips.len(), 7);

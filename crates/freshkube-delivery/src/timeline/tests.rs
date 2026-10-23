@@ -446,6 +446,86 @@ mod live {
     }
 
     #[tokio::test]
+    async fn a_name_stands_in_for_an_owner_only_for_pods_the_listing_lacks() {
+        let event = |name: &str| -> Value {
+            json!({"metadata": {"namespace": "data", "name": format!("{name}.1")},
+                "type": "Warning", "reason": "Unhealthy", "message": "probe failed",
+                "involvedObject": {"kind": "Pod", "name": name},
+                "lastTimestamp": stamp(100), "count": 1})
+        };
+        let owned_by =
+            |kind: &str, name: &str| json!([{"kind": kind, "name": name, "controller": true}]);
+        let reader = FixtureReader::default()
+            .with(
+                "events",
+                vec![
+                    event("db-0"),
+                    event("db-3"),
+                    event("db-shell"),
+                    event("agent-x2k4"),
+                    event("agent-gone"),
+                    event("agent-x2k4-extra"),
+                ],
+            )
+            .with(
+                "pods",
+                vec![
+                    json!({"metadata": {"namespace": "data", "name": "db-0",
+                        "ownerReferences": owned_by("StatefulSet", "db")}}),
+                    // Bare, or someone else's: not the StatefulSet's, though
+                    // its name starts like a pod's.
+                    json!({"metadata": {"namespace": "data", "name": "db-shell"}}),
+                    json!({"metadata": {"namespace": "data", "name": "agent-x2k4",
+                        "ownerReferences": owned_by("DaemonSet", "agent")}}),
+                ],
+            )
+            .with("replicasets", Vec::new())
+            .with("nodes", Vec::new());
+        let place = Place {
+            cluster: "core-fra".into(),
+            workloads: vec![(
+                "data".into(),
+                vec![
+                    Workload::new("agent", WorkloadKind::DaemonSet),
+                    Workload::new("db", WorkloadKind::StatefulSet),
+                ],
+            )],
+        };
+        let reads = live::read(&reader, &place, NOW, 3).await;
+        let mut events = titles(&reads, Source::Events);
+        events.sort();
+        // `db-3` and `agent-gone` are gone from the listing: theirs by name.
+        assert_eq!(
+            events,
+            [
+                "Unhealthy: agent-gone",
+                "Unhealthy: agent-x2k4",
+                "Unhealthy: db-0",
+                "Unhealthy: db-3"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn replicasets_not_listed_cut_nodes_once() {
+        let refused = cluster().failing("replicasets", Failure::new(FailureKind::Forbidden, "no"));
+        let reads = live::read(&refused, &place(), NOW, 3).await;
+        let cut = |source| {
+            reads
+                .iter()
+                .find(|r| r.source == source)
+                .unwrap()
+                .cut
+                .clone()
+                .unwrap_or_default()
+        };
+        let note = "ReplicaSets not listed in shop: Deployments' pods not matched";
+        assert_eq!(cut(Source::Events), note);
+        assert_eq!(cut(Source::Restarts), note);
+        assert_eq!(cut(Source::Nodes), note, "once, not twice");
+    }
+
+    #[tokio::test]
     async fn pods_that_could_not_be_listed_leave_the_nodes_cut() {
         let refused = cluster().failing("pods", Failure::new(FailureKind::Forbidden, "no"));
         let reads = live::read(&refused, &place(), NOW, 3).await;
