@@ -427,6 +427,7 @@ pub fn scale(count: u64) -> ActionDescription {
         sentence: format!("Scale web to {count}"),
         destinations: vec![],
         no_confirmation: false,
+        title: None,
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
@@ -462,6 +463,7 @@ pub fn set_image(image: &str) -> ActionDescription {
         sentence: "Change web's image".into(),
         destinations: vec![],
         no_confirmation: false,
+        title: None,
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
@@ -488,6 +490,7 @@ pub fn delete_web() -> ActionDescription {
         sentence: "Delete web".into(),
         destinations: vec![],
         no_confirmation: false,
+        title: None,
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
@@ -509,6 +512,7 @@ pub fn rotate_password() -> ActionDescription {
         sentence: "Rotate db's password".into(),
         destinations: vec![],
         no_confirmation: false,
+        title: None,
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {
@@ -559,6 +563,7 @@ pub fn create_notes(names: &[&str]) -> ActionDescription {
         sentence: "Create notes".into(),
         destinations: vec![],
         no_confirmation: false,
+        title: None,
         subjects: names.iter().map(|name| (*name).to_owned()).collect(),
         preview: vec![],
         changes: names
@@ -598,6 +603,7 @@ pub fn annotate_web() -> ActionDescription {
         sentence: "Ask web to refresh".into(),
         destinations: vec![],
         no_confirmation: true,
+        title: None,
         subjects: vec![],
         preview: vec![],
         changes: vec![ObjectChange {

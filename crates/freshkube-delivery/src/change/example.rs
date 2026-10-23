@@ -1069,9 +1069,9 @@ fn promoting(change: &mut Change) {
     {
         hop.state = Info;
         hop.detail = running.into();
-        hop.cause = Some(Cause::waiting(
-            "the running Promotion to finish, which then starts the Stage's verification",
-        ));
+        // Nothing is waited for: the Promotion is running, so no cause (and no
+        // Waiting chip) is derived for this row.
+        hop.cause = None;
     }
     let Some(stage) = change.stages.iter_mut().find(|s| s.name == "prod-ams") else {
         return;

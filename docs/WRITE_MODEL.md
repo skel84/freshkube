@@ -25,7 +25,7 @@ Each cluster entry in `freshkube.yaml` has a level ([SETUP_FILE.md](SETUP_FILE.m
 | Level | Means |
 |-------|-------|
 | `read-only` | no writes at all |
-| `protected` | every write asks the user to type the object's name |
+| `protected` | every write asks the user to type the object's name, except one that only adds an annotation (Refresh, Reverify) |
 | `guarded` | each action's own confirmation. The default for an entry with no `protection` key, and for any context outside the workspace |
 | `open` | reversible actions skip their confirmation |
 

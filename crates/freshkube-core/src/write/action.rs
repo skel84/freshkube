@@ -257,6 +257,9 @@ pub struct ActionDescription {
     /// `read-only`, which still blocks it: it only adds an annotation. It is
     /// still audited.
     pub no_confirmation: bool,
+    /// The dialog's title, when what the person does reads better than the
+    /// verb and the objects' labels ("Promote wonky-otter to prod-ams").
+    pub title: Option<String>,
     /// What a person calls the objects when a protected cluster asks for a
     /// name: the Stages a Promotion is for, not the Promotions' generated
     /// names. Empty means the objects' own names.

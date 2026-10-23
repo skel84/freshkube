@@ -140,6 +140,7 @@ impl Runner {
             changes,
             destinations: offer.destinations.clone(),
             no_confirmation: false,
+            title: None,
             subjects: vec![],
             preview: vec![],
         };

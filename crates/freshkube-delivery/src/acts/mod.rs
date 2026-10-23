@@ -189,6 +189,7 @@ fn refresh(kind: &str, sentence: String, target: Target, token: &str) -> ActionD
         }],
         destinations: vec![],
         no_confirmation: true,
+        title: None,
         subjects: vec![],
         preview: vec![],
     }
@@ -222,6 +223,7 @@ pub fn reverify(acts: &StageActs) -> Option<ActionDescription> {
         }],
         destinations: vec![],
         no_confirmation: true,
+        title: None,
         subjects: vec![],
         preview: vec![],
     })
@@ -271,6 +273,10 @@ pub fn abort(acts: &StageActs, running: &Promoting) -> ActionDescription {
         }],
         destinations: vec![],
         no_confirmation: false,
+        title: Some(format!(
+            "Abort the promotion of {} to {stage}",
+            running.freight
+        )),
         subjects: vec![stage.clone()],
         preview: vec![
             Preview {
@@ -519,6 +525,7 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
         changes,
         destinations,
         no_confirmation: false,
+        title: Some(format!("Promote {freight} to {}", names.join(", "))),
         subjects: names,
         preview: preview(change, picks),
     }

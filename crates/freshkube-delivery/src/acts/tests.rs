@@ -910,3 +910,33 @@ async fn abort_sends_nothing_unasked_or_for_the_promotion_s_own_name() {
     }
     assert!(writes(&cluster).is_empty());
 }
+
+#[test]
+fn promote_and_abort_are_titled_by_what_the_person_does_with_the_object_in_the_details() {
+    let promote = promote_action(Protection::Guarded);
+    assert_eq!(
+        promote.title.as_deref(),
+        Some("Promote wonky-otter to prod-ams")
+    );
+    assert!(promote.changes[0].target.name.starts_with("prod-ams."));
+    let abort = abort(&acts(), &running());
+    assert_eq!(
+        abort.title.as_deref(),
+        Some("Abort the promotion of wonky-otter to prod-ams")
+    );
+    assert_eq!(
+        abort.changes[0].target.label(),
+        format!("Promotion/{}", running().promotion.name)
+    );
+}
+
+#[test]
+fn the_promoting_example_has_no_waiting_cause_on_the_promotion_row() {
+    use crate::change::example::Shape;
+    let promoting = Shape::Promoting.apply(change()).unwrap();
+    let hop = promoting.hop("prod-ams-promotion").unwrap();
+    assert!(hop.cause.is_none());
+    assert!(hop.detail.starts_with("Promoting: Kargo reports Running"));
+    // The plain example still waits for someone to promote.
+    assert!(change().hop("prod-ams-promotion").unwrap().cause.is_some());
+}

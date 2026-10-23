@@ -1730,3 +1730,36 @@ async fn an_action_with_nothing_to_watch_is_told_plainly_and_does_not_stay() {
     assert_eq!(stuck.headline(), Headline::NotObserved);
     assert!(stuck.sticky());
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_cancel_leaves_no_doubt_so_its_report_goes_away_like_done() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, fake::delete_web()).await;
+    let finished = runner
+        .execute(*prepared, Confirmation::Confirmed, || true, |_| {})
+        .await;
+    assert_eq!(finished.headline(), Headline::Cancelled);
+    assert!(!finished.sticky());
+    // A cancel whose audit line failed still stays.
+    let mut unlogged = finished.clone();
+    unlogged.audit_error = Some("full".into());
+    assert!(unlogged.sticky());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_action_may_title_its_dialog_by_what_the_person_does() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let mut action = fake::scale(3);
+    let plain = match Dialog::for_verdict(&runner.preflight(action.clone()).await, "e") {
+        Dialog::Ask(ask) => ask.title,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(plain, "Scale Deployment/web");
+    action.title = Some("Scale the web tier to 3".into());
+    match Dialog::for_verdict(&runner.preflight(action).await, "e") {
+        Dialog::Ask(ask) => assert_eq!(ask.title, "Scale the web tier to 3"),
+        other => panic!("{other:?}"),
+    }
+}

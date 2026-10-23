@@ -91,7 +91,10 @@ fn ask(prepared: &Prepared, entry: &str) -> Ask {
     let objects = prepared.impact();
     let action = prepared.description();
     Ask {
-        title: format!("{} {}", action.verb, objects.join(", ")),
+        title: action
+            .title
+            .clone()
+            .unwrap_or_else(|| format!("{} {}", action.verb, objects.join(", "))),
         sentence: action.sentence.clone(),
         verb: action.verb.clone(),
         type_name: requirement.type_name.then(|| prepared.expected_name(entry)),
@@ -180,6 +183,7 @@ impl Finished {
         // log is incomplete.
         self.audit_error.is_some()
             || !(self.headline() == Headline::Done
+                || self.headline() == Headline::Cancelled
                 || self.nothing_to_watch()
                 || matches!(self.status, super::run::Status::NotSent(NotSent::Example)))
     }
