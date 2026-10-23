@@ -352,3 +352,25 @@ async fn the_explorer_keeps_the_shared_frame_and_table_sizes_at_each_text_size(
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+async fn arrow_keys_step_the_browser_and_open_the_table_under_them(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = open(cx, Example::Connected).await;
+    connected(cx, &page, &window).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("explore-table-public-orders", cx);
+        window.render_frame(cx);
+        window.press("down", cx);
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, cx| {
+        explorer(&page, cx)
+            .read(cx)
+            .data
+            .read(cx)
+            .summary()
+            .is_some_and(|s| s.starts_with("public.products"))
+    })
+    .await;
+}

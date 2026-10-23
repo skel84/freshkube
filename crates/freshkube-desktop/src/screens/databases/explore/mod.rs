@@ -162,6 +162,7 @@ impl ExploreView {
         &self.database.identity.uid
     }
 
+    #[cfg(test)]
     pub(super) fn phase(&self) -> &Phase {
         &self.phase
     }

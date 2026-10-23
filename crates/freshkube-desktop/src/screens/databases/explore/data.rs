@@ -19,6 +19,8 @@ use tokio::runtime::Handle;
 
 pub(super) const PREFIX: &str = "explore-data";
 
+actions!(explore_data, [Next, Previous, Close]);
+
 pub(super) struct Column {
     label: SharedString,
     width: f32,
@@ -76,6 +78,11 @@ pub(super) struct DataView {
 
 impl DataView {
     pub(super) fn new(runtime: Handle, cx: &mut Context<Self>) -> Self {
+        cx.bind_keys([
+            KeyBinding::new("down", Next, Some("ExploreData")),
+            KeyBinding::new("up", Previous, Some("ExploreData")),
+            KeyBinding::new("escape", Close, Some("ExploreData")),
+        ]);
         Self {
             runtime,
             session: None,
@@ -102,10 +109,6 @@ impl DataView {
         self.selected = None;
         self.prepared = (u64::MAX, u64::MAX);
         cx.notify();
-    }
-
-    pub(super) fn target(&self) -> Option<&(String, String)> {
-        self.target.as_ref()
     }
 
     pub(super) fn open(&mut self, schema: String, table: String, cx: &mut Context<Self>) {
@@ -371,6 +374,15 @@ impl Render for DataView {
         div()
             .key_context("ExploreData")
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &Next, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &Previous, _, cx| this.step(-1, cx)))
+            .on_action(cx.listener(|this, _: &Close, _, cx| {
+                if this.selected.take().is_some() {
+                    cx.notify()
+                } else {
+                    cx.propagate()
+                }
+            }))
             .size_full()
             .flex()
             .flex_col()

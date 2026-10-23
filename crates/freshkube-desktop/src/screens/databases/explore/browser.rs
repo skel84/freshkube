@@ -15,6 +15,8 @@ use tokio::runtime::Handle;
 
 pub(super) const PREFIX: &str = "explore-browser";
 
+actions!(explore_browser, [Next, Previous]);
+
 /// A table was chosen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Open {
@@ -85,6 +87,10 @@ impl EventEmitter<Open> for Browser {}
 
 impl Browser {
     pub(super) fn new(runtime: Handle, cx: &mut Context<Self>) -> Self {
+        cx.bind_keys([
+            KeyBinding::new("down", Next, Some("ExploreBrowser")),
+            KeyBinding::new("up", Previous, Some("ExploreBrowser")),
+        ]);
         Self {
             runtime,
             session: None,
@@ -146,6 +152,7 @@ impl Browser {
         self.set_session(session, cx);
     }
 
+    #[cfg(test)]
     /// Whether the schema's tables were asked for, and whether they landed.
     pub(super) fn tables_of(&self, schema: &str) -> Option<bool> {
         self.tables.get(schema).map(|l| l.data().is_some())
@@ -153,10 +160,6 @@ impl Browser {
 
     pub(super) fn is_loading(&self) -> bool {
         self.schemas.is_loading() || self.tables.values().any(|t| t.is_loading())
-    }
-
-    pub(super) fn error(&self) -> Option<String> {
-        self.schemas.error().map(ToString::to_string)
     }
 
     fn read_schemas(&mut self, cx: &mut Context<Self>) {
@@ -249,12 +252,6 @@ impl Browser {
         cx.notify();
     }
 
-    pub(super) fn selected(&self) -> Option<(String, String)> {
-        let key = self.selected.as_ref()?;
-        let row = self.rows.iter().find(|r| &r.key == key)?;
-        Some((row.schema.clone(), row.name.clone()))
-    }
-
     pub(super) fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         self.prepare();
         if let Some(key) = kit::step(self, delta, cx) {
@@ -337,7 +334,7 @@ fn count(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -491,6 +488,8 @@ impl Render for Browser {
         div()
             .key_context("ExploreBrowser")
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &Next, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &Previous, _, cx| this.step(-1, cx)))
             .size_full()
             .flex()
             .flex_col()
