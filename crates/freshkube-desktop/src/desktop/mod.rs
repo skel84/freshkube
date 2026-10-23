@@ -38,6 +38,7 @@ mod settings;
 mod setup_startup;
 mod shell;
 mod source;
+mod stage_acts;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
 mod states;

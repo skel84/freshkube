@@ -72,7 +72,7 @@ impl SettingsField {
 /// The one next step a cause offers. None changes anything in a cluster.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Next {
-    /// The Freight's page in Kargo; the page itself never promotes.
+    /// The Freight's page in Kargo, for approvals; Promote is on the Stage.
     OpenInKargo,
     /// Copy the read-only Role that would let the source answer.
     CopyAccessRequest(Role),

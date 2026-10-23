@@ -3,13 +3,15 @@
 //! a server-side dry run. None of it is skipped at any level, and none of it
 //! changes anything.
 
+use serde_json::Value;
+
 use super::{
     Protection,
     access::{self, Access},
-    action::{ActionDescription, Inverse, ObjectChange},
+    action::{ActionDescription, Change, Depends, Inverse, ObjectChange},
     audit::{Phase, RunId, scrub},
     diff::{FieldChange, diff},
-    requirement::{Requirement, Tier, expected_name, requirement},
+    requirement::{Requirement, Tier, expected_name, requirement_for},
     run::Runner,
     send::{ChangedWhat, Conflict, Refusal, get, send},
 };
@@ -103,6 +105,9 @@ pub struct Prepared {
     pub(super) undo: bool,
     /// The level it was prepared under; a stricter one at send time sends nothing.
     pub(super) level: Protection,
+    /// The level of the cluster its objects are in alone, to tell which
+    /// subjects a protected destination covers.
+    pub(super) own: Protection,
     /// The way back for each object, worked out from the object read here.
     pub(super) inverses: Vec<Option<Inverse>>,
 }
@@ -137,7 +142,13 @@ impl Prepared {
 
     /// What a protected dialog asks to be typed.
     pub fn expected_name(&self, entry: &str) -> String {
-        expected_name(&self.description.names(), entry).to_owned()
+        expected_name(&self.description.subject_names(), entry).to_owned()
+    }
+
+    /// The subjects held to `protected`, which a typed name for several
+    /// names so the person knows why.
+    pub fn protected_subjects(&self) -> Vec<String> {
+        self.description.protected_subjects(self.own)
     }
 }
 
@@ -154,7 +165,7 @@ impl Runner {
     /// resourceVersion, and the dry run.
     pub async fn preflight(&self, action: ActionDescription) -> Verdict {
         let level = self.level_for(&action);
-        let requirement = requirement(action.tier, level);
+        let requirement = requirement_for(&action, level);
         self.preflight_with(action, requirement, level, false).await
     }
 
@@ -178,6 +189,24 @@ impl Runner {
         let mut diffs = vec![];
         let mut inverses = vec![];
         for change in &action.changes {
+            // Example data has no cluster: the fields the action names are
+            // what it would change, and nothing is asked.
+            if self.example {
+                diffs.push(ObjectDiff {
+                    object: change.target.label(),
+                    changes: change
+                        .change
+                        .field_paths()
+                        .into_iter()
+                        .map(|path| FieldChange {
+                            path,
+                            kind: super::diff::ChangeKind::Added,
+                        })
+                        .collect(),
+                });
+                inverses.push(None);
+                continue;
+            }
             match self.check_object(change).await {
                 Ok((diff, inverse)) => {
                     diffs.push(ObjectDiff {
@@ -199,6 +228,7 @@ impl Runner {
             diffs,
             undo,
             level,
+            own: self.level.get(),
             inverses,
         }))
     }
@@ -210,6 +240,7 @@ impl Runner {
         let target = &change.target;
         let object = target.label();
         let verb = change.change.verb();
+        let creates = matches!(change.change, Change::Create(_));
         match access::review(&self.client, target, verb).await {
             Access::Allowed => {}
             Access::Denied { reason } => {
@@ -221,7 +252,16 @@ impl Runner {
             }
             Access::Unknown { message } => return Err(Block::AccessUnknown { object, message }),
         }
-        let before = match get(&self.client, target).await {
+        for depends in &change.depends {
+            self.check_depends(depends).await?;
+        }
+        // A new object has nothing to read and no version to have seen.
+        let before = if creates {
+            Ok(serde_json::json!({}))
+        } else {
+            get(&self.client, target).await
+        };
+        let before = match before {
             Ok(before) => before,
             Err(Refusal::Changed(what)) => return Err(Block::Changed { object, what }),
             Err(Refusal::Denied(reason)) => {
@@ -234,15 +274,24 @@ impl Runner {
             Err(Refusal::NoAnswer(message) | Refusal::Rejected { message, .. }) => {
                 return Err(Block::NoAnswer { object, message });
             }
-            Err(Refusal::Conflict(_)) => unreachable!("a read does not conflict"),
+            // A read does not conflict, but a proxy can answer it with a 409
+            // that reads as one: that is an answer we can't use, not a panic.
+            Err(Refusal::Conflict(_)) => {
+                return Err(Block::NoAnswer {
+                    object,
+                    message: "the cluster answered a read with a conflict".to_owned(),
+                });
+            }
         };
-        if before["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
+        if !creates && before["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
             return Err(Block::Changed {
                 object,
                 what: ChangedWhat::Recreated,
             });
         }
-        if before["metadata"]["resourceVersion"].as_str() != Some(target.resource_version.as_str())
+        if !creates
+            && before["metadata"]["resourceVersion"].as_str()
+                != Some(target.resource_version.as_str())
         {
             return Err(Block::Changed {
                 object,
@@ -265,6 +314,67 @@ impl Runner {
                 Err(Block::DryRunFailed { object, message })
             }
         }
+    }
+
+    /// An object the change depends on: the access review for the verb it
+    /// names, a read that finds it with the UID the person saw, and the
+    /// fields that must still hold what the page showed.
+    pub(super) async fn check_depends(&self, depends: &Depends) -> Result<(), Block> {
+        let target = &depends.target;
+        let object = target.label();
+        if let Some(verb) = depends.verb {
+            match access::review(&self.client, target, verb).await {
+                Access::Allowed => {}
+                Access::Denied { reason } => {
+                    return Err(Block::AccessDenied {
+                        object,
+                        verb,
+                        reason,
+                    });
+                }
+                Access::Unknown { message } => {
+                    return Err(Block::AccessUnknown { object, message });
+                }
+            }
+        }
+        let now = match get(&self.client, target).await {
+            Ok(now) => now,
+            Err(Refusal::Changed(what)) => return Err(Block::Changed { object, what }),
+            Err(Refusal::Denied(reason)) => {
+                return Err(Block::AccessDenied {
+                    object,
+                    verb: "get",
+                    reason,
+                });
+            }
+            Err(Refusal::NoAnswer(message) | Refusal::Rejected { message, .. }) => {
+                return Err(Block::NoAnswer { object, message });
+            }
+            // A read does not conflict, but a proxy can answer it with a 409
+            // that reads as one: that is an answer we can't use, not a panic.
+            Err(Refusal::Conflict(_)) => {
+                return Err(Block::NoAnswer {
+                    object,
+                    message: "the cluster answered a read with a conflict".to_owned(),
+                });
+            }
+        };
+        if now["metadata"]["uid"].as_str() != Some(target.uid.as_str()) {
+            return Err(Block::Changed {
+                object,
+                what: ChangedWhat::Recreated,
+            });
+        }
+        let null = Value::Null;
+        for (pointer, expected) in &depends.holds {
+            if now.pointer(pointer).unwrap_or(&null) != expected {
+                return Err(Block::Changed {
+                    object,
+                    what: ChangedWhat::Moved,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// A dry run the cluster refused is a request the app made, so it is

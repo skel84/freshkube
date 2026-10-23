@@ -14,7 +14,12 @@
 //! Its breadcrumb, and Escape with nothing selected, go back to the
 //! application's page.
 //! An action that leads into Resources goes through the shell, as every
-//! object link does; the page never approves, promotes or syncs.
+//! object link does. A Stage's own actions (Refresh, Reverify, Promote,
+//! Abort; `act.rs`) ask the shell to describe the write and send it through
+//! core's write module; approvals and syncs stay in Kargo and Argo CD.
+mod act;
+#[cfg(test)]
+mod act_tests;
 #[cfg(test)]
 mod cause_tests;
 mod chain;
@@ -58,6 +63,7 @@ use super::links::Connections;
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{LogsAt, LogsRequest, ResourceLink, Tab, model::ObjectRef};
+pub use act::{ActKind, KargoAt, StageAct};
 pub use changes::Changes;
 #[cfg(any(test, feature = "testing"))]
 pub use changes::LiveChanges;
@@ -108,6 +114,8 @@ pub enum ChangeEvent {
     Switch(SharedString, Box<ResourceLink>),
     /// A Deployment's revision to show in Observability.
     Revision(crate::observability::RevisionLink),
+    /// A Stage action to describe and run: Refresh, Reverify, Promote, Abort.
+    Act(Box<StageAct>),
 }
 
 /// Stacked, the trail and the Inspector share the height evenly: the
@@ -254,7 +262,7 @@ fn settings_title(slug: &str) -> &'static str {
 /// buttons for these come with the Why / Needs / Fix block.
 pub(super) fn next_words(next: &Next) -> String {
     match next {
-        Next::OpenInKargo => "Open the Freight in Kargo; this page never promotes.".into(),
+        Next::OpenInKargo => "Open the Freight in Kargo, or promote it here.".into(),
         Next::CopyAccessRequest(role) => format!(
             "Ask for read access to {}{}{}.",
             role.resource,

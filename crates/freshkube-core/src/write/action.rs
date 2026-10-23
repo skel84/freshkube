@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::{Protection, requirement::Tier};
+use super::{LevelCell, Protection, requirement::Tier};
 
 /// One object an action touches, as the person saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +60,11 @@ pub enum Change {
     MergePatch(Value),
     /// A delete, with the UID and resourceVersion as preconditions.
     Delete,
+    /// A new object, created with field manager `freshkube`. There is no
+    /// object to GET before it, so the target's UID and resourceVersion are
+    /// empty and preflight reads nothing: the access review and the dry run
+    /// are what it checks, and a name already taken refuses the dry run.
+    Create(Value),
 }
 
 impl Change {
@@ -68,6 +73,7 @@ impl Change {
         match self {
             Change::Apply(_) | Change::MergePatch(_) => "patch",
             Change::Delete => "delete",
+            Change::Create(_) => "create",
         }
     }
 
@@ -75,7 +81,7 @@ impl Change {
     /// the audit log records.
     pub fn field_paths(&self) -> Vec<String> {
         match self {
-            Change::Apply(body) | Change::MergePatch(body) => {
+            Change::Apply(body) | Change::MergePatch(body) | Change::Create(body) => {
                 let mut paths = vec![];
                 leaf_paths(body, String::new(), &mut paths);
                 // The object's identity is in `objects`; only what changes is a field.
@@ -121,6 +127,8 @@ pub enum Observation {
     FieldEquals { pointer: String, value: Value },
     /// The object is gone.
     Gone,
+    /// The object exists: what a created object is seen by.
+    Exists,
     /// Nothing can be watched. The result says so; it is never success.
     Unobservable,
 }
@@ -177,6 +185,23 @@ pub struct ObjectChange {
     pub observe: Observation,
     /// For a reversible action: how to work out the way back.
     pub inverse: Option<InverseFrom>,
+    /// Other objects this change depends on, checked in preflight.
+    pub depends: Vec<Depends>,
+}
+
+/// Another object a change depends on, which preflight reads and finds as
+/// the person saw it, so a page left open can't quietly act on a state that
+/// has moved on (a Promotion on a Stage that runs other Freight now).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Depends {
+    /// The object, with the UID the person saw.
+    pub target: Target,
+    /// A verb the access review also asks about on it, such as Kargo's
+    /// `promote` on a Stage.
+    pub verb: Option<&'static str>,
+    /// Fields that must still hold what the person saw: a JSON pointer and
+    /// its value, where `null` means the field is absent.
+    pub holds: Vec<(String, Value)>,
 }
 
 /// A second cluster an action also touches, such as the cluster a promotion
@@ -185,8 +210,32 @@ pub struct ObjectChange {
 pub struct Destination {
     /// The destination entry's id.
     pub entry: String,
-    /// Its level.
+    /// Its level when the action was described.
     pub protection: Protection,
+    /// The cell that holds its level now, when the app keeps one: the action
+    /// follows it, as it follows the level of the cluster its objects are in,
+    /// so a level changed in Settings reaches a dialog already open.
+    pub cell: Option<LevelCell>,
+    /// The subjects of the action it holds (`ActionDescription::subjects`),
+    /// such as the Stages that deploy there; the dialog names them when the
+    /// level asks for a name typed once for several.
+    pub covers: Vec<String>,
+}
+
+impl Destination {
+    /// The level now: the cell's when there is one, else the level it had.
+    pub fn level(&self) -> Protection {
+        self.cell.as_ref().map_or(self.protection, LevelCell::get)
+    }
+}
+
+/// A titled list of lines the dialog shows under the sentence, which the
+/// action supplies (a preview, a note). Lines hold no value that could be
+/// secret, as the sentence does not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Preview {
+    pub title: String,
+    pub lines: Vec<String>,
 }
 
 /// An action, described. Not sent until the framework has run its preflight
@@ -201,17 +250,64 @@ pub struct ActionDescription {
     /// One sentence about what is sent, with no values that could be secret.
     pub sentence: String,
     pub changes: Vec<ObjectChange>,
-    /// The other cluster the action reaches, when it names one.
-    pub destination: Option<Destination>,
+    /// The other clusters the action reaches. It is held to the strictest of
+    /// these and the cluster its objects are in.
+    pub destinations: Vec<Destination>,
+    /// The action declares that it needs no confirmation at any level but
+    /// `read-only`, which still blocks it: it only adds an annotation. It is
+    /// still audited.
+    pub no_confirmation: bool,
+    /// The dialog's title, when what the person does reads better than the
+    /// verb and the objects' labels ("Promote wonky-otter to prod-ams").
+    pub title: Option<String>,
+    /// What a person calls the objects when a protected cluster asks for a
+    /// name: the Stages a Promotion is for, not the Promotions' generated
+    /// names. Empty means the objects' own names.
+    pub subjects: Vec<String>,
+    /// What the dialog shows under the sentence.
+    pub preview: Vec<Preview>,
 }
 
 impl ActionDescription {
     /// The level the action is held to: the strictest of the cluster the
     /// objects are in (`own`) and its destination's.
     pub fn level(&self, own: Protection) -> Protection {
-        self.destination
-            .as_ref()
-            .map_or(own, |destination| own.stricter(destination.protection))
+        self.destinations.iter().fold(own, |level, destination| {
+            level.stricter(destination.level())
+        })
+    }
+
+    /// The subjects a protected level asks to be named: the declared ones,
+    /// else the objects' names.
+    pub fn subject_names(&self) -> Vec<&str> {
+        if self.subjects.is_empty() {
+            self.names()
+        } else {
+            self.subjects.iter().map(String::as_str).collect()
+        }
+    }
+
+    /// The subjects held to `protected`: all of them when the cluster the
+    /// objects are in is, else those a protected destination covers.
+    pub fn protected_subjects(&self, own: Protection) -> Vec<String> {
+        if own == Protection::Protected {
+            return self
+                .subject_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+        }
+        let mut names: Vec<String> = vec![];
+        for destination in &self.destinations {
+            if destination.level() == Protection::Protected {
+                for name in &destination.covers {
+                    if !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                }
+            }
+        }
+        names
     }
 
     pub fn names(&self) -> Vec<&str> {
