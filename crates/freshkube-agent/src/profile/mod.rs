@@ -9,6 +9,8 @@
 
 mod locate;
 mod opencode;
+#[cfg(test)]
+mod schema_copy;
 mod version;
 
 use std::any::Any;
@@ -20,7 +22,8 @@ use std::process::Stdio;
 
 pub use locate::{locate, search_dirs};
 pub use opencode::{
-    BUILTIN_AGENTS, BUILTIN_TOOLS, Data, LOCKDOWN_SOURCES, SUPPORTED, Sources, organisation_sources,
+    BUILTIN_AGENTS, BUILTIN_TOOLS, Data, LOCKDOWN_SOURCES, PLUGIN_PACKAGE, SUPPORTED, Sources,
+    organisation_sources, plugin_files, plugin_source,
 };
 pub use version::{CHECK_TIMEOUT, Checked, Range, Version, VersionState};
 
@@ -104,6 +107,12 @@ impl Dirs {
     /// Empty: the person's agent configuration isn't read.
     pub fn config(&self) -> PathBuf {
         self.root.path().join("config")
+    }
+
+    /// Where the opencode profile writes its plugin at each launch; made
+    /// only for that profile, private to the person.
+    pub fn plugin(&self) -> PathBuf {
+        self.root.path().join("plugin")
     }
 
     pub fn tmp(&self) -> PathBuf {
@@ -207,12 +216,27 @@ impl Profile {
     /// and removes the directories. `checked` is the proof [`Profile::check`]
     /// gave for this profile's binary; one for another binary is refused.
     pub fn spawn(&self, host: &Host, checked: &Checked) -> io::Result<Link> {
+        self.spawn_staged(host, checked, &opencode::stage_plugin)
+    }
+
+    /// [`Profile::spawn`], with the step that writes and checks the plugin
+    /// passed in, so a test can change what it checks. Nothing is started if
+    /// it fails.
+    fn spawn_staged(
+        &self,
+        host: &Host,
+        checked: &Checked,
+        stage: &dyn Fn(&Dirs) -> io::Result<()>,
+    ) -> io::Result<Link> {
         checked.is_for(self).map_err(io::Error::other)?;
         if self.kind == Kind::Opencode {
             self.data.prepare(host)?;
             self.data.check_sources(host)?;
         }
         let dirs = Dirs::create()?;
+        if self.kind == Kind::Opencode {
+            stage(&dirs)?;
+        }
         let plan = self.plan(&dirs, host);
         let workspace = dirs.workspace();
         let mut running = plan.spawn(&dirs)?;
