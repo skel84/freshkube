@@ -1,1 +1,0 @@
-- **Status bar:** squeezed page segments disappear before losing their first word, and status controls keep their whole focus ring in small windows with large text.
