@@ -119,6 +119,14 @@ pub fn text_rows(columns: &[&str], rows: &[&[Option<&str>]]) -> Rows {
     }
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
+#[allow(
+    clippy::result_large_err,
+    reason = "DbError is DBFlux's type, and large; every read here returns it"
+)]
 #[async_trait]
 impl Wire for FakeWire {
     async fn simple(&mut self, sql: &str) -> Result<Rows, DbError> {
@@ -193,6 +201,14 @@ fn column(name: &str, type_name: &str, nullable: bool, pk: bool) -> ColumnEntry 
     }
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
+#[allow(
+    clippy::result_large_err,
+    reason = "DbError is DBFlux's type, and large; every read here returns it"
+)]
 #[async_trait]
 impl Session for FakeSession {
     fn read_only(&self) -> bool {

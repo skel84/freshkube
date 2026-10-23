@@ -53,11 +53,19 @@ impl<W: Wire> Postgres<W> {
     /// One request of a caller's: checked, then run in a read-only transaction
     /// that is always rolled back. Reads at most `row_cap + 1` rows' worth is the
     /// caller's SQL (`LIMIT`); this cuts anything longer.
+    #[allow(
+        clippy::result_large_err,
+        reason = "DbError is DBFlux's type, and large; every read here returns it"
+    )]
     pub async fn read(&mut self, sql: &str) -> Result<Rows, DbError> {
         self.read_up_to(sql, self.limits.rows + 1).await
     }
 
     /// As [`read`](Self::read), keeping at most `keep` rows.
+    #[allow(
+        clippy::result_large_err,
+        reason = "DbError is DBFlux's type, and large; every read here returns it"
+    )]
     async fn read_up_to(&mut self, sql: &str, keep: usize) -> Result<Rows, DbError> {
         readonly::check_statement(sql).map_err(|r: Refusal| DbError::query_failed(r.explain()))?;
         // A request cut off earlier may have left the connection inside its
@@ -119,6 +127,14 @@ fn count(text: &Option<String>) -> Option<u64> {
         .and_then(|n| u64::try_from(n).ok())
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
+#[allow(
+    clippy::result_large_err,
+    reason = "DbError is DBFlux's type, and large; every read here returns it"
+)]
 #[async_trait]
 impl<W: Wire> Session for Postgres<W> {
     fn read_only(&self) -> bool {

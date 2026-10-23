@@ -81,6 +81,14 @@ pub struct Listed<T> {
 pub const MAX_SCHEMAS: usize = 500;
 pub const MAX_TABLES: usize = 2000;
 
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
+#[allow(
+    clippy::result_large_err,
+    reason = "DbError is DBFlux's type, and large; every read here returns it"
+)]
 #[async_trait]
 pub trait Session: Send {
     /// True for every session this crate makes; a screen shows it and a

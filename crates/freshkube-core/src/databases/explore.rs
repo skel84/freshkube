@@ -179,6 +179,9 @@ fn spec_names(object: &DynamicObject) -> SpecNames {
     }
 }
 
+/// The names the Cluster's spec gives its Secrets. A failed or missing read
+/// is not an error here: the default names are still refused and read, and
+/// the `postgres` username check backs the superuser guard up either way.
 async fn read_spec_names(client: &kube::Client, database: &Database) -> SpecNames {
     let id = &database.identity;
     let resource = ApiResource {

@@ -404,7 +404,50 @@ async fn no_state_prints_a_password(cx: &mut TestAppContext) {
     use super::{Connected, Fail};
     use freshkube_db::{ConnectError, wire::Encryption};
     let secret = "hunter2";
+    // The real error of a connect with that password to a closed port.
+    let real = {
+        use freshkube_db::{
+            Limits,
+            credentials::Password,
+            wire::{Target, TlsPlan, TokioPostgres},
+        };
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let password = Password::new(secret);
+        let limits = Limits {
+            connect_timeout: std::time::Duration::from_secs(2),
+            ..Limits::default()
+        };
+        let plan = TlsPlan {
+            server_name: "orders-db-ro.staging.svc".into(),
+            ca_pem: None,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(TokioPostgres::connect(
+                Target {
+                    address: "127.0.0.1".parse().unwrap(),
+                    port,
+                    user: "shop_reader",
+                    database: "shop",
+                },
+                &password,
+                &limits,
+                &plan,
+            ))
+            .err()
+            .expect("nothing listens there");
+        assert!(!format!("{error:?} {error}").contains(secret));
+        Fail::of_connect(error)
+    };
     let fails = [
+        real,
         Fail::of_connect(ConnectError::Refused(
             "password authentication failed for \"u\"".to_owned(),
         )),

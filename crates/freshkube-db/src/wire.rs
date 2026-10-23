@@ -23,6 +23,14 @@ pub struct Rows {
     pub rows: Vec<Vec<Option<String>>>,
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
+#[allow(
+    clippy::result_large_err,
+    reason = "DbError is DBFlux's type, and large; every read here returns it"
+)]
 #[async_trait]
 pub trait Wire: Send {
     async fn simple(&mut self, sql: &str) -> Result<Rows, DbError>;
@@ -259,6 +267,14 @@ pub(crate) fn to_db_error(error: &tokio_postgres::Error) -> DbError {
     }
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
+#[allow(
+    clippy::result_large_err,
+    reason = "DbError is DBFlux's type, and large; every read here returns it"
+)]
 #[async_trait]
 impl Wire for TokioPostgres {
     async fn single_statement(&mut self, sql: &str) -> Result<(), DbError> {
