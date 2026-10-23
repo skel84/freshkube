@@ -317,6 +317,11 @@ impl DestinationForm {
                 window.close_dialog(cx);
                 if let Some(key) = saved {
                     _ = self.list.update(cx, |list, cx| list.select(key, cx));
+                    table::reveal_when_settled(
+                        self.list.clone(),
+                        |list| list.selected.is_some(),
+                        window,
+                    );
                 }
             }
         }

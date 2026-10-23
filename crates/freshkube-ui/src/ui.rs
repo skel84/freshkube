@@ -546,11 +546,14 @@ pub fn banner(
     action: Option<AnyElement>,
     cx: &App,
 ) -> Div {
+    banner_frame(banner_content(tone, lead, body, action, cx), tone, cx)
+}
+
+/// A banner's border, fill and padding, kept outside a scrolling body.
+pub(crate) fn banner_frame<E: Styled>(element: E, tone: Tone, cx: &App) -> E {
     let p = palette(cx);
-    let (icon, ink, soft, line) = banner_look(tone, &p);
-    h_flex()
-        .items_start()
-        .gap_2p5()
+    let (_, _, soft, line) = banner_look(tone, &p);
+    element
         .px_3()
         .py_2p5()
         .rounded(px(8.))
@@ -559,6 +562,21 @@ pub fn banner(
         .bg(soft)
         .text_size(dp(12.5))
         .text_color(p.ink)
+}
+
+/// A banner's icon, words and action, without a border or padding. A capped
+/// banner puts this inside its viewport and keeps its frame outside it.
+pub fn banner_content(
+    tone: Tone,
+    lead: Option<SharedString>,
+    body: impl IntoElement,
+    action: Option<AnyElement>,
+    cx: &App,
+) -> Div {
+    let (icon, ink, _, _) = banner_look(tone, &palette(cx));
+    h_flex()
+        .items_start()
+        .gap_2p5()
         .child(Icon::new(icon).size(dp(16.)).text_color(ink).mt(dp(1.)))
         .child(
             div()

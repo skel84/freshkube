@@ -193,11 +193,21 @@ impl ChangePage {
         if refresh.is_none() && missing.is_none() && pull.is_none() {
             return None;
         }
-        let children = refresh.into_iter().chain(missing).chain(pull);
+        let children = [v_flex()
+            .gap(dp(page::PANE_PADDING_Y))
+            .children(refresh.into_iter().chain(missing).chain(pull))];
         // A short window caps the block, so the banners leave the trail
         // its room; any other shows every banner whole.
         let notes = if short {
-            page::capped_notes("change-notes", self.notes_cap(window), children, None)
+            page::capped_notes(
+                "change-notes",
+                self.notes_cap(window),
+                &self.notes_scroll,
+                children,
+                None,
+                None,
+                cx,
+            )
         } else {
             div().id("change-notes").test_support().children(children)
         }
@@ -205,26 +215,22 @@ impl ChangePage {
         .min_w_0()
         .px(dp(page::PANE_PADDING))
         .py(dp(page::PANE_PADDING_Y))
-        .flex()
-        .flex_col()
-        .gap(dp(page::PANE_PADDING_Y))
         .when(short, |this| {
             let scroll = self.notes_scroll.clone();
-            this.track_scroll(&self.notes_scroll)
-                .on_scroll_wheel(move |event, window, cx| {
-                    // The block keeps the wheel until it reaches its end
-                    // in that direction, instead of also scrolling the page.
-                    let delta = event.delta.pixel_delta(window.line_height()).y;
-                    let (offset, most) = (scroll.offset().y, scroll.max_offset().y);
-                    let more = if delta < gpui_kit::px(0.) {
-                        offset > -most
-                    } else {
-                        offset < gpui_kit::px(0.)
-                    };
-                    if most > gpui_kit::px(0.) && more {
-                        cx.stop_propagation();
-                    }
-                })
+            this.on_scroll_wheel(move |event, window, cx| {
+                // The block keeps the wheel until it reaches its end
+                // in that direction, instead of also scrolling the page.
+                let delta = event.delta.pixel_delta(window.line_height()).y;
+                let (offset, most) = (scroll.offset().y, scroll.max_offset().y);
+                let more = if delta < gpui_kit::px(0.) {
+                    offset > -most
+                } else {
+                    offset < gpui_kit::px(0.)
+                };
+                if most > gpui_kit::px(0.) && more {
+                    cx.stop_propagation();
+                }
+            })
         });
         // The edge below a capped block is its own element, which the block's
         // scrolling can't move, so a clipped banner reads as scrollable. The
