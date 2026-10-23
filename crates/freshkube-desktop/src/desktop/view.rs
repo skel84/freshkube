@@ -69,6 +69,11 @@ impl Pilot {
             }))
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
             .on_action(cx.listener(|view, _: &CopyLink, window, cx| view.copy_link(window, cx)))
+            .on_action(cx.listener(|view, _: &dock::OpenAgent, window, cx| {
+                view.pages
+                    .dock
+                    .update(cx, |dock, cx| dock.open_agent(window, cx))
+            }))
             // Each handler is there only while it can act, so the menus grey
             // it otherwise and its key goes on to whatever else binds it.
             .when(self.pages.dock.read(cx).has_tabs(), |this| {

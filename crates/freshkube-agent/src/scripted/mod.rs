@@ -41,11 +41,27 @@ pub struct ScriptModel {
     pub name: String,
 }
 
+/// One read of the tour: one of Freshkube's four tools and its arguments.
+#[derive(Debug, Clone)]
+pub struct TourRead {
+    pub tool: String,
+    pub arguments: serde_json::Value,
+}
+
 #[derive(Debug, Clone)]
 pub struct Script {
     pub models: Vec<ScriptModel>,
     /// Never answers `initialize`.
     pub never_initialize: bool,
+    /// What an ordinary prompt does when it is not empty: these reads, one
+    /// step each, then an answer citing them. The dock's fixture sets it from
+    /// its example objects; without it an ordinary prompt reads the
+    /// `shop/checkout` Deployment.
+    pub tour: Vec<TourRead>,
+    /// After the tour, ask to run a shell command, which is refused.
+    pub tour_shell: bool,
+    /// Wait this long before each tour read, so a step shows as running.
+    pub tour_pause: std::time::Duration,
 }
 
 impl Default for Script {
@@ -61,6 +77,9 @@ impl Default for Script {
                 model("ollama/small", "ollama/Small"),
             ],
             never_initialize: false,
+            tour: Vec::new(),
+            tour_shell: false,
+            tour_pause: std::time::Duration::ZERO,
         }
     }
 }
@@ -197,10 +216,15 @@ pub async fn serve(
         )
         .on_receive_request(
             async move |request: PromptRequest, responder, cx: ConnectionTo<Client>| {
-                let (mcp, model, cancel) = {
+                let (mcp, model, cancel, script) = {
                     let mut state = prompts.lock().unwrap();
                     state.cancel = CancellationToken::new();
-                    (state.mcp.clone(), state.model.clone(), state.cancel.clone())
+                    (
+                        state.mcp.clone(),
+                        state.model.clone(),
+                        state.cancel.clone(),
+                        state.script.clone(),
+                    )
                 };
                 let text = request
                     .prompt
@@ -220,6 +244,7 @@ pub async fn serve(
                         mcp,
                         model,
                         cancel,
+                        script: &script,
                     };
                     let stop = match prompts::run(&turn, &text).await? {
                         prompts::Ending::Stop(stop) => stop,

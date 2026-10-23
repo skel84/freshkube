@@ -324,6 +324,7 @@ pub fn validate_maintenance_endpoint(endpoint: &str) -> color_eyre::Result<()> {
 }
 
 mod actions;
+mod agent_shape;
 mod ambient;
 mod backend;
 mod connection_preferences;

@@ -209,3 +209,247 @@ async fn safety_g08_turning_access_off_fails_closed_even_when_the_save_or_the_au
     );
     assert!(access.grants().is_empty());
 }
+
+#[tokio::test]
+async fn a_failed_save_of_turning_off_is_pending_until_it_is_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    assert!(!access.save_pending());
+
+    // A directory sits where the file should be, so the save fails.
+    std::fs::remove_file(access.file_path()).unwrap();
+    std::fs::create_dir(access.file_path()).unwrap();
+    assert!(
+        access
+            .set_access(ENTRY, CONTEXT, false, "settings")
+            .is_err()
+    );
+    assert!(
+        !can_read(&gate).await,
+        "the endpoint refuses from that moment"
+    );
+    assert!(access.save_pending(), "the file may still hold the grant");
+    assert!(access.retry_save().is_err(), "still in the way");
+    assert!(access.save_pending());
+
+    std::fs::remove_dir(access.file_path()).unwrap();
+    access.retry_save().unwrap();
+    assert!(!access.save_pending());
+    let gate = AgentAccess::new();
+    assert!(
+        access.pending_revocations().is_empty(),
+        "the marker is cleared"
+    );
+    let again = Access::open(&preferences, &gate);
+    assert!(
+        again.grants().is_empty(),
+        "nothing comes back at the next start"
+    );
+    assert!(!can_read(&gate).await);
+}
+
+#[test]
+fn the_chosen_opencode_and_the_data_mode_are_kept_beside_the_grants() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    assert_eq!(access.data_mode(), freshkube_agent::DataMode::Own);
+    assert_eq!(access.opencode_path(), None);
+    access
+        .set_opencode_path(Some("/opt/tools/opencode".into()))
+        .unwrap();
+    access.set_access(ENTRY, CONTEXT, true, "settings").unwrap();
+    let again = Access::open(&preferences, &AgentAccess::new());
+    assert_eq!(again.opencode_path(), Some("/opt/tools/opencode".into()));
+    assert_eq!(again.grants().len(), 1, "a grant keeps the chosen file");
+
+    // `data: shared` is a setting the person writes in the file.
+    let text = std::fs::read_to_string(again.file_path()).unwrap();
+    std::fs::write(
+        again.file_path(),
+        text.replace("\"data\": \"own\"", "\"data\": \"shared\""),
+    )
+    .unwrap();
+    let shared = Access::open(&preferences, &AgentAccess::new());
+    assert_eq!(shared.data_mode(), freshkube_agent::DataMode::Shared);
+}
+
+#[tokio::test]
+async fn a_revocation_that_was_not_saved_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    let file = access.file_path().to_path_buf();
+    let kept = std::fs::read(&file).unwrap();
+
+    // Turning it off can't be saved: the file still says on.
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    assert!(
+        access
+            .set_access(ENTRY, CONTEXT, false, "agent tab")
+            .is_err()
+    );
+    assert!(!can_read(&gate).await);
+    let marker = access.pending_revocations();
+    assert_eq!(marker.len(), 1);
+    assert_eq!(marker[0].entry, ENTRY);
+    drop(access);
+
+    // After a restart the file is as it was, and says on. It is not trusted:
+    // the marker beside it says that turning it off was never saved.
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::write(&file, &kept).unwrap();
+    let gate = AgentAccess::new();
+    let again = Access::open(&preferences, &gate);
+    assert!(!can_read(&gate).await, "the cluster is still off");
+    assert!(again.grants().is_empty());
+    assert_eq!(again.held_off(), [ENTRY.to_owned()]);
+    // The save succeeded this time, so the marker is cleared and the file
+    // says off.
+    assert!(!again.save_pending());
+    assert!(again.pending_revocations().is_empty());
+    drop(again);
+    let gate = AgentAccess::new();
+    let third = Access::open(&preferences, &gate);
+    assert!(!can_read(&gate).await);
+    assert!(third.held_off().is_empty());
+
+    // Turning it on again is the person's choice, and works.
+    third
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    assert!(can_read(&gate).await);
+}
+
+#[tokio::test]
+async fn a_revocation_that_still_cannot_be_saved_stays_off_across_restarts() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    let file = access.file_path().to_path_buf();
+    let kept = std::fs::read(&file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    assert!(
+        access
+            .set_access(ENTRY, CONTEXT, false, "agent tab")
+            .is_err()
+    );
+    drop(access);
+
+    // Two restarts with the file still unwritable: off both times, marker kept.
+    for _ in 0..2 {
+        let gate = AgentAccess::new();
+        let again = Access::open(&preferences, &gate);
+        assert!(!can_read(&gate).await);
+        assert!(again.save_pending());
+        assert_eq!(again.pending_revocations().len(), 1);
+    }
+
+    // Once the file can be written the marker is cleared, and only then.
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::write(&file, &kept).unwrap();
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    assert!(!can_read(&gate).await);
+    assert!(access.pending_revocations().is_empty());
+}
+
+#[tokio::test]
+async fn a_marker_that_cannot_be_read_grants_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    drop(access);
+    std::fs::write(dir.path().join("agent-pending.json"), "{ not json").unwrap();
+    let gate = AgentAccess::new();
+    let again = Access::open(&preferences, &gate);
+    assert!(!can_read(&gate).await, "what can't be known is off");
+    assert!(again.grants().is_empty());
+}
+
+#[tokio::test]
+async fn when_neither_the_file_nor_the_marker_can_be_written_it_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    let file = access.file_path().to_path_buf();
+    let marker = dir.path().join("agent-pending.json");
+    assert!(access.revocation_remembered());
+
+    // A directory sits at both files, as a folder that can't be written
+    // would stop both.
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    std::fs::create_dir(&marker).unwrap();
+    assert!(
+        access
+            .set_access(ENTRY, CONTEXT, false, "agent tab")
+            .is_err()
+    );
+    assert!(
+        !can_read(&gate).await,
+        "off now, whatever happens to the files"
+    );
+    assert!(access.save_pending());
+    assert!(
+        !access.revocation_remembered(),
+        "the marker could not be written, so access can come back at the next start"
+    );
+
+    // Once the file can be written, the save clears the worry.
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::remove_dir(&marker).unwrap();
+    access.retry_save().unwrap();
+    assert!(access.revocation_remembered());
+    assert!(!access.save_pending());
+}
+
+#[tokio::test]
+async fn the_marker_is_written_before_the_file_is_saved() {
+    // A crash between the revoke and the save leaves the marker behind: the
+    // file is blocked here, so the marker is all there is.
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    let file = access.file_path().to_path_buf();
+    let kept = std::fs::read(&file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let _ = access.set_access(ENTRY, CONTEXT, false, "agent tab");
+    assert!(dir.path().join("agent-pending.json").exists());
+    assert!(access.revocation_remembered());
+    drop(access);
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::write(&file, kept).unwrap();
+    let gate = AgentAccess::new();
+    let _again = Access::open(&preferences, &gate);
+    assert!(!can_read(&gate).await);
+}

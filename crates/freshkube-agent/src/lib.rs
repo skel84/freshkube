@@ -35,7 +35,7 @@ pub mod tools;
 
 pub use child::Link;
 pub use endpoint::{Endpoint, Outcome, ReadEvent, Targets, Timeouts};
-pub use saved::Access;
+pub use saved::{Access, DataMode, Revoked};
 pub use session::{ReadId, SessionId, Token};
 
 /// Log directives that keep the ACP and MCP libraries at info. At debug they

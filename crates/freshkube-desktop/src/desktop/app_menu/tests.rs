@@ -90,6 +90,7 @@ fn the_menus_differ_only_by_the_systems_entries() {
             "Next tab",
             "Previous tab",
             "Close tab",
+            "Open Agent",
             "Minimize dock"
         ]
     );
@@ -142,6 +143,7 @@ fn the_menus_differ_only_by_the_systems_entries() {
                 "Next tab",
                 "Previous tab",
                 "Close tab",
+                "Open Agent",
                 "Minimize dock"
             ]
         );

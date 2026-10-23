@@ -675,6 +675,15 @@ impl Pilot {
         let navigation_file =
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
         navigation_file.clone().install(cx);
+        // The agent's saved access. An example window keeps it in a
+        // directory of its own, never in the user's files.
+        dock::AgentHost::install(
+            options
+                .preferences
+                .as_deref()
+                .filter(|_| !options.starts_with_examples()),
+            cx,
+        );
         Self::bind_shell_keys(cx);
         let mut subscriptions = Self::subscribe_shell(window, cx);
         let age_label = cx.new(|_| switch::AgeLabel::new());

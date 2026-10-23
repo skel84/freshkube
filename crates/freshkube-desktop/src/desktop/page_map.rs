@@ -126,7 +126,7 @@ impl Pages {
         resources.update(cx, |screen, cx| {
             screen.set_services_shape(options.debug.services, cx)
         });
-        let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
+        let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), options.debug.agent, cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         let secrets = options

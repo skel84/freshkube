@@ -375,6 +375,7 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
         "app::OpenDestinationsSettings",
         "app::OpenSettings",
         "app::OpenSourcesSettings",
+        "dock::OpenAgent",
         "input::Copy",
         "inspector::ToggleInspector",
         "pilot::CopyLink",

@@ -23,6 +23,7 @@ pub(super) struct Turn<'a> {
     pub mcp: Option<Mcp>,
     pub model: String,
     pub cancel: CancellationToken,
+    pub script: &'a super::Script,
 }
 
 pub(super) enum Ending {
@@ -54,6 +55,8 @@ pub(super) async fn run(turn: &Turn<'_>, prompt: &str) -> agent_client_protocol:
     } else if prompt.contains("model") {
         say(turn, &format!("model={}", turn.model))?;
         StopReason::EndTurn
+    } else if !turn.script.tour.is_empty() {
+        tour(turn).await?
     } else {
         investigate(turn).await?
     };
@@ -413,5 +416,98 @@ async fn investigate(turn: &Turn<'_>) -> agent_client_protocol::Result<StopReaso
     )
     .await?;
     say(turn, "Cause: scripted.")?;
+    Ok(StopReason::EndTurn)
+}
+
+/// The scripted tour: each read as a step through MCP, then an answer that
+/// cites them by read id (`r1`, `r2`, …, the order the endpoint numbers them
+/// in), and, if asked, a shell command that is refused.
+async fn tour(turn: &Turn<'_>) -> agent_client_protocol::Result<StopReason> {
+    let mcp = turn
+        .mcp
+        .clone()
+        .ok_or_else(|| fail("no MCP server in session/new"))?;
+    send(
+        turn.cx,
+        turn.session,
+        SessionUpdate::AgentThoughtChunk(chunk("Looking at what the cluster says.")),
+    )?;
+    let client = ()
+        .serve(StreamableHttpClientTransport::from_config(
+            StreamableHttpClientTransportConfig::with_uri(mcp.url).auth_header(mcp.token),
+        ))
+        .await
+        .map_err(fail)?;
+    let mut cited = Vec::new();
+    for (ix, read) in turn.script.tour.iter().enumerate() {
+        let id = format!("t{}", ix + 1);
+        let name = format!("freshkube_{}", read.tool);
+        send(
+            turn.cx,
+            turn.session,
+            SessionUpdate::ToolCall(
+                ToolCall::new(id.clone(), name.clone())
+                    .name(name)
+                    .status(ToolCallStatus::InProgress)
+                    .raw_input(read.arguments.clone()),
+            ),
+        )?;
+        // The step shows as running while the agent waits.
+        let wait = turn.script.tour_pause;
+        tokio::select! {
+            () = turn.cancel.cancelled() => return Ok(StopReason::Cancelled),
+            () = tokio::time::sleep(wait) => {}
+        }
+        let status = if ask(turn, &id, ToolCallUpdateFields::new()).await? {
+            let Value::Object(arguments) = read.arguments.clone() else {
+                return Err(fail("a tour read takes an object"));
+            };
+            let result = tokio::select! {
+                () = turn.cancel.cancelled() => return Ok(StopReason::Cancelled),
+                result = client.call_tool(
+                    CallToolRequestParams::new(read.tool.clone()).with_arguments(arguments),
+                ) => result.map_err(fail)?,
+            };
+            if result.is_error == Some(true) {
+                ToolCallStatus::Failed
+            } else {
+                cited.push(ix + 1);
+                ToolCallStatus::Completed
+            }
+        } else {
+            ToolCallStatus::Failed
+        };
+        send(
+            turn.cx,
+            turn.session,
+            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                id,
+                ToolCallUpdateFields::new().status(status),
+            )),
+        )?;
+    }
+    if turn.script.tour_shell {
+        attempt(
+            turn,
+            Call {
+                id: "shell",
+                title: "kubectl get pods -A",
+                name: Some("shell"),
+                kind: ToolKind::Execute,
+                input: json!({"command": "kubectl get pods -A"}),
+                claim: None,
+                rename: None,
+            },
+        )
+        .await?;
+    }
+    let citations: Vec<String> = cited.iter().map(|n| format!("[r{n}]")).collect();
+    say(
+        turn,
+        &format!(
+            "The Deployment is rolling out and its pods restart; the events and logs agree {}.",
+            citations.join(" ")
+        ),
+    )?;
     Ok(StopReason::EndTurn)
 }

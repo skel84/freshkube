@@ -380,6 +380,11 @@ impl ServerHandler for Handler {
             }
             done = shared.run(&request.name, arguments, read) => done,
         };
+        // A read that finished as the endpoint was dropped publishes nothing
+        // either: not the log line, not the `ReadEvent`.
+        if shared.stop.is_cancelled() {
+            return Err(ErrorData::internal_error("the endpoint is closed", None));
+        }
         let (wire, outcome, code) = match done.result {
             Ok((wire, cut)) => (wire, Outcome::Answered { cut }, "ok"),
             Err(refusal) => (

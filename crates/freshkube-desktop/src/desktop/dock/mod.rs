@@ -12,6 +12,7 @@
 //! are saved in `navigation.json` (`saved.rs`) and come back for the same
 //! context, reading nothing until one shows; a shell tab comes back idle.
 
+mod agent;
 mod feed;
 mod saved;
 #[cfg(test)]
@@ -36,6 +37,8 @@ use crate::resources::model::ResourceIdentity;
 use crate::resources::shell::{self, ShellEvent, ShellView};
 use crate::resources::{ClusterAccess, ClusterSource, LogsAt, LogsRequest, ShellRequest};
 use crate::ui::dp_px;
+pub(crate) use agent::AgentHost;
+use agent::AgentView;
 use feed::Feed;
 
 /// The dock's key context, on its root in every state that draws it.
@@ -69,6 +72,8 @@ actions!(
         MinimizeDock,
         /// Escape in a log tab with nothing left to clear.
         LeaveDock,
+        /// Opens the Agent tab of the cluster the window shows.
+        OpenAgent,
     ]
 );
 
@@ -117,6 +122,19 @@ impl TabKey {
         }
     }
 
+    /// An agent tab's key: one per cluster.
+    fn agent(origin: &Origin) -> Self {
+        Self {
+            connection: origin.source.id.clone(),
+            resource: "agent".into(),
+            namespace: String::new(),
+            name: origin.cluster.to_string(),
+            uid: String::new(),
+            wildcard: false,
+            container: String::new(),
+        }
+    }
+
     /// A shell tab's key: its pod and container.
     fn shell(identity: &ResourceIdentity, container: &str) -> Self {
         Self {
@@ -142,6 +160,8 @@ pub(crate) enum TabKind {
     Pod(Entity<PodLogView>),
     Workload(Entity<WorkloadLogView>),
     Shell(Entity<ShellView>),
+    /// The agent: user-started like a log tab, saved nowhere.
+    Agent(Entity<AgentView>),
 }
 
 /// The cluster a tab belongs to, captured when the tab starts (#878): its
@@ -233,6 +253,7 @@ impl DockTab {
             TabKind::Pod(view) => view.read(cx).least_height(),
             TabKind::Workload(view) => view.read(cx).least_height(),
             TabKind::Shell(view) => view.read(cx).least_height(),
+            TabKind::Agent(view) => view.read(cx).least_height(),
         }
     }
 
@@ -249,6 +270,7 @@ impl DockTab {
                 };
                 window.focus(&focus, cx);
             }
+            TabKind::Agent(view) => view.update(cx, |view, cx| view.focus_input(window, cx)),
         }
         true
     }
@@ -258,7 +280,7 @@ impl DockTab {
             TabKind::Pod(view) => view.update(cx, |view, cx| view.set_visible(visible, cx)),
             TabKind::Workload(view) => view.update(cx, |view, cx| view.set_visible(visible, cx)),
             // A session runs whether its tab shows or not.
-            TabKind::Shell(_) => {}
+            TabKind::Shell(_) | TabKind::Agent(_) => {}
         }
     }
 
@@ -267,6 +289,8 @@ impl DockTab {
             TabKind::Pod(view) => view.update(cx, |view, _| view.set_access(access.clone())),
             TabKind::Workload(view) => view.update(cx, |view, _| view.set_access(access.clone())),
             TabKind::Shell(view) => view.update(cx, |view, _| view.set_access(access.clone())),
+            // A session keeps the access it started with.
+            TabKind::Agent(_) => {}
         }
     }
 
@@ -285,7 +309,15 @@ impl DockTab {
     }
 
     fn is_log(&self) -> bool {
-        !matches!(self.kind, TabKind::Shell(_))
+        matches!(self.kind, TabKind::Pod(_) | TabKind::Workload(_))
+    }
+
+    fn is_shell(&self) -> bool {
+        matches!(self.kind, TabKind::Shell(_))
+    }
+
+    fn is_agent(&self) -> bool {
+        matches!(self.kind, TabKind::Agent(_))
     }
 
     /// The pod of a shell running in this tab.
@@ -301,6 +333,7 @@ impl DockTab {
             TabKind::Pod(view) => view.entity_id(),
             TabKind::Workload(view) => view.entity_id(),
             TabKind::Shell(view) => view.entity_id(),
+            TabKind::Agent(view) => view.entity_id(),
         }
     }
 }
@@ -341,10 +374,16 @@ pub(crate) struct Dock {
     body_width: Option<Pixels>,
     /// The status bar's "2 logs · 1 shell", derived when the tabs change.
     pub(crate) count_label: SharedString,
+    /// `FRESHKUBE_AGENT`: how an Agent tab's example starts.
+    agent_shape: crate::agent_shape::AgentShape,
 }
 
 impl Dock {
-    pub(crate) fn new(runtime: Handle, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        runtime: Handle,
+        agent_shape: crate::agent_shape::AgentShape,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let keys_close = freshkube_ui::platform::Platform::current().close_tab_key();
         cx.bind_keys([
             KeyBinding::new(
@@ -386,6 +425,7 @@ impl Dock {
             notice_height: 0.,
             body_width: None,
             count_label: SharedString::default(),
+            agent_shape,
         };
         if let Some(restore) = restore {
             dock.open = restore.open;
@@ -555,7 +595,7 @@ impl Dock {
     }
 
     fn shell_tabs(&self) -> usize {
-        self.tabs.iter().filter(|tab| !tab.is_log()).count()
+        self.tabs.iter().filter(|tab| tab.is_shell()).count()
     }
 
     /// The pane's Shell menu: a shell in `request`'s container, in a tab of
@@ -579,7 +619,7 @@ impl Dock {
             .tabs
             .iter()
             .rev()
-            .find(|tab| !tab.is_log() && tab.key.shows(&key))
+            .find(|tab| tab.is_shell() && tab.key.shows(&key))
             .map(|tab| tab.id);
         let id = match found {
             Some(id) => {
@@ -614,6 +654,75 @@ impl Dock {
         });
     }
 
+    /// Opens the Agent tab of the cluster the window shows, or selects the
+    /// one it has. Nothing is read and no session starts until the person
+    /// asks and turns access on.
+    pub(crate) fn open_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(origin) = self.current_origin() else {
+            return;
+        };
+        let key = TabKey::agent(&origin);
+        let found = self
+            .tabs
+            .iter()
+            .find(|tab| tab.is_agent() && tab.key.shows(&key))
+            .map(|tab| tab.id);
+        if let Some(id) = found {
+            self.select(id, true, window, cx);
+            return;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let example = matches!(
+            origin.source.access,
+            crate::resources::ClusterAccess::Example(_)
+        );
+        // A window on an example cluster stands for an entry of its own
+        // name; a live one needs an entry of the setup to be granted.
+        let entry = origin
+            .entry
+            .clone()
+            .or_else(|| example.then(|| origin.source.context.clone()));
+        let own = entry.map(|entry| agent::Own {
+            entry,
+            context: origin.source.context.clone(),
+            access: origin.source.access.clone(),
+        });
+        let level = match origin.level(cx) {
+            OwnLevel::Known(level) => crate::desktop::shell::context::mark(level),
+            OwnLevel::EntryGone | OwnLevel::Unknown => freshkube_ui::level::Mark::ReadOnly,
+        };
+        let runtime = self.runtime.clone();
+        let shape = self.agent_shape;
+        let view = cx.new(|cx| AgentView::new(runtime, own, level, shape, window, cx));
+        let base = format!("Agent {}", origin.cluster);
+        let target = DetailTarget {
+            identity: ResourceIdentity {
+                connection: origin.source.id.clone(),
+                resource: "agent".into(),
+                namespace: String::new(),
+                name: origin.cluster.to_string(),
+                uid: String::new(),
+            },
+            kind: builtin("namespaces").expect("namespaces is a built-in kind"),
+        };
+        self.push_tab(
+            id,
+            origin,
+            key,
+            target,
+            base,
+            TabKind::Agent(view),
+            None,
+            Vec::new(),
+            cx,
+        );
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.started = true;
+        }
+        self.select(id, true, window, cx);
+    }
+
     /// Makes room for `request`'s shell tab and opens it: the oldest shell
     /// tab that runs nothing closes without asking; when every one runs,
     /// the oldest asks "End the shell in ⟨pod⟩?" first.
@@ -623,7 +732,7 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let shells = || self.tabs.iter().filter(|tab| !tab.is_log());
+        let shells = || self.tabs.iter().filter(|tab| tab.is_shell());
         let idle = shells()
             .filter(|tab| tab.running_shell(cx).is_none())
             .min_by_key(|tab| tab.id)
@@ -818,6 +927,8 @@ impl Dock {
                     view.choose_container(container, cx);
                 }
             }),
+            // Started by the person's first question, never by selecting.
+            TabKind::Agent(_) => return,
         }
         self.start_feed(id, access, cx);
     }
@@ -963,8 +1074,12 @@ impl Dock {
             return;
         }
         for kind in removed {
-            if let TabKind::Shell(view) = kind {
-                view.update(cx, |view, cx| view.close_session(cx));
+            match kind {
+                TabKind::Shell(view) => view.update(cx, |view, cx| view.close_session(cx)),
+                // The endpoint's port closes, its token ends and the agent
+                // and its group go with the tab.
+                TabKind::Agent(view) => view.update(cx, |view, cx| view.end(cx)),
+                TabKind::Pod(_) | TabKind::Workload(_) => {}
             }
         }
         if self.selected.is_some_and(|id| self.position(id).is_none()) {
@@ -1146,6 +1261,13 @@ impl Dock {
             } else {
                 None
             };
+            if let TabKind::Agent(view) = &tab.kind {
+                let mark = match level {
+                    OwnLevel::Known(level) => crate::desktop::shell::context::mark(level),
+                    OwnLevel::EntryGone | OwnLevel::Unknown => freshkube_ui::level::Mark::ReadOnly,
+                };
+                view.update(cx, |view, cx| view.set_level(mark, cx));
+            }
             let badge = Badge {
                 mark: match level {
                     OwnLevel::Known(level) => crate::desktop::shell::context::mark(level),
@@ -1236,18 +1358,23 @@ impl Dock {
             tab.title = title;
         }
         let logs = self.log_tabs();
-        let shells = self.tabs.len() - logs;
+        let shells = self.shell_tabs();
+        let agents = self.tabs.iter().filter(|tab| tab.is_agent()).count();
         let count = |count: usize, one: &str, many: &str| match count {
             0 => None,
             1 => Some(format!("1 {one}")),
             count => Some(format!("{count} {many}")),
         };
-        self.count_label = [count(logs, "log", "logs"), count(shells, "shell", "shells")]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ")
-            .into();
+        self.count_label = [
+            count(logs, "log", "logs"),
+            count(shells, "shell", "shells"),
+            count(agents, "agent", "agents"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+        .into();
     }
 
     #[cfg(test)]
@@ -1285,7 +1412,7 @@ impl Dock {
     pub(crate) fn selected_container(&self, cx: &App) -> Option<String> {
         match &self.selected_tab()?.kind {
             TabKind::Pod(view) => view.read(cx).selected_container().map(str::to_owned),
-            TabKind::Workload(_) | TabKind::Shell(_) => None,
+            TabKind::Workload(_) | TabKind::Shell(_) | TabKind::Agent(_) => None,
         }
     }
 }

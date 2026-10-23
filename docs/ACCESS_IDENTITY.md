@@ -190,3 +190,9 @@ switch the person confirms (`Pilot::open_on_entry`).
 This is the local configuration/session boundary from #2. Independent revisions
 for remotely rotated credentials, auth-plugin state and Prometheus/provider
 identity remain future F07/F10 integration work.
+
+An Agent dock tab keeps the access it opened with, as a shell tab does: its
+`Origin` (source, entry and context) is fixed when the tab opens, and a refreshed
+handle for the same connection does not reach a running session. Agent access
+is a separate grant per `(entry, context)` in `agent.json`, and a grant counts
+only while the entry opens that context ([the agent](features/agent.md)).

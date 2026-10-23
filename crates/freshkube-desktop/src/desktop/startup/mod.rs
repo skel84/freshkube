@@ -201,6 +201,11 @@ impl Pilot {
                         .update(cx, |resources, cx| resources.answer_history_now(cx));
                 }
             }
+            // The Agent tab of the cluster shown; `FRESHKUBE_AGENT` shapes it.
+            Some("agent") => self
+                .pages
+                .dock
+                .update(cx, |dock, cx| dock.open_agent(window, cx)),
             Some("workload-logs") if self.mode().is_example() => {
                 let context = self.applied.context.as_deref().unwrap_or("prod-fra");
                 let now = chrono::Utc::now().timestamp();

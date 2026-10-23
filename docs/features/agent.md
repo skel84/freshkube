@@ -1,6 +1,6 @@
 # The agent in the dock
 
-What an agent may read of a cluster, and the way it reaches those reads. This is slice D1a of the agent in the dock ([#874](https://github.com/skel84/freshkube/issues/874), [#906](https://github.com/skel84/freshkube/issues/906)): the app starts no endpoint and no agent yet, and desktop does not depend on the agent crate.
+What an agent may read of a cluster, and the way it reaches those reads. This starts as slice D1a of the agent in the dock ([#874](https://github.com/skel84/freshkube/issues/874), [#906](https://github.com/skel84/freshkube/issues/906)); the client is D1b ([#907](https://github.com/skel84/freshkube/issues/907)) and the dock tab is D1c ([#908](https://github.com/skel84/freshkube/issues/908), [below](#the-dock-tab-slice-d1c)). Desktop depends on the agent crate; the tab starts an endpoint and an agent only when the person asks a question and has turned agent access on for the cluster.
 
 **Modules.** `crates/freshkube-core/src/agent_reads/` (`call.rs`, `gate.rs`, `read.rs`, `live.rs`, `example.rs`, `shape.rs`, `answer.rs`, `refusal.rs`, `target.rs`); `crates/freshkube-core/src/constants.rs` (`agent`); `crates/freshkube-agent/src/endpoint/`, `session.rs`, `saved.rs`; core's `resources/discovery.rs` (`resolve_kind_name`) and `write/audit.rs` (`AuditStore::named`).
 
@@ -95,7 +95,7 @@ Code:
 - `crates/freshkube-agent/src/`: `acp/` (`mod.rs` the session, `permission.rs` what is allowed, `updates.rs` session updates to events, `lines.rs` the line bound), `investigation.rs` (the transcript), `profile/` (`mod.rs` profiles, the locked environment and the launch, `opencode.rs` the lock-down, `locate.rs`, `version.rs`), `child.rs` (the process group and what ends it), `tools.rs` (the server and tool names), `scripted/` (the scripted agent), `bin/fake_acp_agent.rs` (that agent as a process).
 - `crates/freshkube-agent/tests/`: `acp.rs` (in process), `process.rs`, `group.rs` and `environment.rs` (the scripted binary), `log.rs` (the token and the debug log), `support/` (the stub for the endpoint).
 
-The crate has no GPUI and names nothing of desktop, `freshkube-ui` or the feature crates. Desktop does not depend on it yet, so the app starts no agent. The scripted agent and the MCP client it needs are behind the `scripted` feature, which the crate's own tests turn on from a dev-dependency; the app's build has neither.
+The crate has no GPUI and names nothing of desktop, `freshkube-ui` or the feature crates. The scripted agent and the MCP client it needs are behind the `scripted` feature: the crate's own tests turn it on from a dev-dependency, and desktop turns it on because `--fixture` runs the scripted agent in the Agent tab. Nothing but `--fixture` and tests starts it.
 
 ### The ACP client
 
@@ -253,7 +253,7 @@ In `crates/freshkube-agent`; none runs opencode.
 | `the_document_has_the_shape_opencodes_schema_accepts` (with `profile/schema_copy.rs`), `a_tampered_plugin_is_refused`, `a_missing_or_unreadable_plugin_is_refused`, `a_start_with_a_changed_plugin_never_starts_the_agent`, `the_plugin_text_is_fixed_and_reaches_nothing` | `profile/opencode.rs` |
 | `the_group_ends_when_the_parent_dies_without_ending_it` (Linux) | `child.rs` |
 
-A stub MCP server in `tests/support/` stands in for the endpoint. The end-to-end test through the real endpoint lands with D1c.
+A stub MCP server in `tests/support/` stands in for the endpoint. The end-to-end test through the real endpoint is `tests/tour.rs` (`the_scripted_agent_reads_through_the_real_endpoint_and_answers`, D1c): the scripted agent's four reads go over ACP to MCP and the real `Endpoint`, then to example objects, and the answer cites them by read id.
 
 ### The live check
 
@@ -283,3 +283,70 @@ First run by the lead on a Mac, at `0ed1df5`, with opencode 2.1.3 signed in to a
 | Config sources loaded | `config.get` on the private server returned two entries: the session's config directory and the inline document. The person's `~/.config/opencode` was not loaded. |
 | Killing the app ends opencode and its server | Passed in 0.037 s. |
 | Session cleanup | Passed: dropping the session removed its plugin directory. |
+
+## The dock tab: slice D1c
+
+The Agent tab in the dock (issue [#908](https://github.com/skel84/freshkube/issues/908)). Open it from the app menu (View › Open Agent), or with `FRESHKUBE_PAGE=agent` in a debug build.
+
+**Modules.** `crates/freshkube-desktop/src/desktop/dock/agent/` (`mod.rs` the owner `AgentView`, `run.rs` the Tokio task, `setup.rs` opencode's state, `targets.rs` the `Targets` impl, `trail.rs`, `host.rs` the app-wide access, `example.rs` the fixture's script, `view.rs`); `crates/freshkube-desktop/src/agent_shape.rs` (the `FRESHKUBE_AGENT` knob); `crates/freshkube-resources/src/example/agent.rs` (`ExampleObjects` over Resources' example data); `crates/freshkube-agent/src/saved.rs` (`DataMode`, the chosen opencode file, `save_pending`) and `scripted/` (the tour).
+
+**Proved by.** Desktop, `dock/agent/tests.rs`: `setup_states_show_what_to_do`, `no_cluster_is_read_before_its_access_is_turned_on`, `turning_access_off_ends_a_read_in_flight`, `a_failed_save_of_turning_access_off_is_shown_and_access_stays_off`, `a_cluster_whose_revocation_was_never_saved_starts_off_and_says_why`, `the_model_picker_lists_the_agents_models_and_marks_local_ones`, `steps_update_in_place_and_stop_ends_the_prompt`, `a_shell_request_shows_refused_on_the_trail`, `another_clusters_read_warns_and_needs_its_own_access`, `closing_the_tab_ends_the_session`, `the_session_reads_while_another_page_shows`, `the_page_never_moves_on_a_read`, `quitting_ends_the_agent`, `the_setup_and_egress_cards_say_what_is_shared_and_what_is_not_prevented`; `debug_options.rs`: `agent_takes_each_shape_and_falls_back_to_ready`. Resources, `example/agent/tests.rs`. Agent, `tests/tour.rs` and `tests/saved.rs` (`a_failed_save_of_turning_off_is_pending_until_it_is_written`, `a_revocation_that_was_not_saved_survives_a_restart`, `a_revocation_that_still_cannot_be_saved_stays_off_across_restarts`, `a_marker_that_cannot_be_read_grants_nothing`, `when_neither_the_file_nor_the_marker_can_be_written_it_says_so`, `the_marker_is_written_before_the_file_is_saved`).
+
+### The tab
+
+Top to bottom: the toolbar, the setup card, notices, the egress card, the transcript and the trail (60/40), and the question box.
+
+- **Toolbar.** The model picker (local models are marked "local"; the list is the agent's own and appears when the session starts), "reads with your access · ⟨cluster⟩" with the cluster's protection tag, the elapsed time, the access switch ("Access on · Turn off") and Stop.
+- **The cluster is fixed** when the tab opens, shown in the toolbar and never moved by a context switch. A window on a cluster that is not an entry of the setup has no entry, so access cannot be granted; the tab says so. An example cluster stands for an entry of its own name.
+- **Transcript** shows what was asked, thoughts, speech, steps and notes. A step updates in place: Running, Done or Failed. A step that did not read says why, by the endpoint's answer: **Refused** (neutral) when something said no (access off, another cluster, a tool that is not one of the four reads, a kind that is not served, a 401 or 403, an object that is not found or over a bound), **Couldn't read** (amber) when the read broke (the cluster was unreachable, it took too long, or the server's answer was an error), and **Failed** (red) only for a step whose failure is not a read's. The trail's marks follow the same codes. and a step still running when the turn ends reads Stopped. At most the newest 300 entries are drawn; the transcript itself is bounded by `freshkube-agent`.
+- **Trail** lists each read with its place as text (`pods · shop/api-0 · Logs`) and a mark: *evidence* (read), *cited* (the agent's words contain its id as `[r7]`, parsed with a bound of six digits and 1,000 citations a text) or *refused*, with the reason in words ("Agent access is off for this cluster", "This kind isn't served on this cluster"). A shell, or any tool but the four, is refused and shown on the trail too, labelled with what it was. A read on another cluster shows a warning on its row and needs that cluster's own access. Rows are not clickable yet: following the agent's reads on the page is D1d.
+- **Stop** cancels the prompt (the session answers within 500 ms) and the session stays for the next question.
+
+### Setup states
+
+From D1b's version check (`Profile::check`), run off the UI thread when the tab opens and by Check again:
+
+| State | The card shows | Start |
+|---|---|---|
+| Supported | `opencode ⟨version⟩` | on |
+| Newer than checked | a warning naming both versions | on |
+| Unsupported | the supported range and the upgrade command (`opencode upgrade`) | off |
+| Not installed | the install command, Check again and Choose a file; the chosen path is kept in `agent.json` and tried first | off |
+| Signed out | `opencode auth login`, to run outside the app; Freshkube keeps no keys | on |
+
+Signed out is shown when a turn fails with an authentication message. The card also always says, plainly:
+
+- **The agent reads with your own access.** Prefer a read-only identity ([below](#a-read-only-identity)). Nothing detects, enforces or requires it.
+- **Other opencode configuration may still load.** A live check of opencode 2.1.3 found that a session loaded no `~/.config/opencode` of the person's; it did not test a populated plugin folder or an organisation configuration, and a source loaded after Freshkube's inline profile could widen `agents.*.permissions`. Freshkube can't rule that out yet; the card says so and links to [#945](https://github.com/skel84/freshkube/issues/945). This slice does not change the profile's lock-down.
+- **`data: shared`.** When `agent.json` says `data: shared`, opencode runs on the person's own data directories: investigations land in their own opencode history and configs saved there load. The setup card and the egress card both say so. The default is Freshkube's own directory, `opencode/` beside the preferences.
+
+### The egress card is the access switch
+
+On the first question to a cluster whose agent access is off, nothing starts and the card shows: everything the agent reads (names, specs, logs and events) goes to the model provider opencode uses for the chosen model; logs, ConfigMaps and env literals can still hold secrets; a local model keeps it on the machine; the agent changes nothing. **Turn on** calls `Access::set_access(…, "egress card")` (all or none: if the save or the audit line fails, access stays off and the tab says so) and then starts the session with the waiting question. **Not now** drops the question. Until then no endpoint exists and the recorder shows zero reads.
+
+**Turning access off** (the toolbar switch) calls `set_access(…, "agent tab")`, which turns the gate off first, so a read in flight is refused (`not_enabled`) and what it had read is dropped. **If the save fails**, the grant is gone from the gate, so the endpoint refuses that cluster from that moment whatever the file says, and the tab shows a banner with "Save again". `Access` writes a small marker beside the file, `agent-pending.json`, which does not depend on `agent.json`, **before** it saves the file, so a crash between the revoke and the save is covered too; a successful save clears it (`Access::save_pending`, `pending_revocations`). The marker stays until a save of `agent.json` succeeds: one is tried again from the banner, when the app opens (`Access::open`), and at a clean quit (`AgentHost::install`). At the next start the file's `on` for a cluster in the marker is not trusted: it starts off, and the tab says so (`held_off`, the "Access to this cluster started off" banner). A marker that cannot be read is not known to be empty, so nothing is granted. If the marker cannot be written either (a full disk, a folder that cannot be written), `Access::revocation_remembered` is false and the banner says plainly that access will come back at the next start unless Save again succeeds first. Turning access on again is the person's choice, from the egress card. Settings › Clusters' per-entry switch and the audit log's "Agent access" Source are not part of this slice.
+
+### The session's lifetime
+
+User-started, like a dock log tab (`docs/STATE_LIFETIMES.md`). The session starts with the first question once access is on, reads while the tab is open on any page and whether the dock is minimized, and ends when the tab closes, the agent exits or the app quits. `AgentView` owns one Tokio `OwnedJob` that holds the endpoint and the ACP session, and one GPUI delivery task. Closing the tab drops the job: the port closes, the token ends and the agent's process group goes. Every message carries the generation of its session; one from a session that ended or was replaced publishes nothing. The tab is saved nowhere, so no session comes back after a restart. The page never moves on a read: the tab only draws the trail.
+
+### With `--fixture`
+
+`Targets` answers from Resources' example objects (`ExampleObjects`, through the same bounds, Secret rule and places as a live answer) and the tab runs the scripted agent in process instead of opencode. Asking anything runs a tour: it reads the pods of the `api` Deployment's namespace, the Deployment, one pod's log and the namespace's events, each as a step through the four read tools, asks to run a shell command (refused), and answers citing the reads. `FRESHKUBE_AGENT` (AGENTS.md) opens the tab in a setup state or in the middle of a session.
+
+### A read-only identity
+
+Suggested, never required. Give the agent a kubeconfig context bound to Kubernetes' built-in `view` ClusterRole, list it as its own entry in `freshkube.yaml`, and turn agent access on for that entry alone:
+
+```yaml
+clusters:
+  - id: shop-reader
+    context: shop-reader   # a context whose user is bound to the built-in "view" ClusterRole
+    protection: read-only
+```
+
+```sh
+kubectl create clusterrolebinding shop-reader-view --clusterrole=view --user=shop-reader
+```
+
+The agent then reads with that identity: it can't read Secrets (the `view` role doesn't grant them) and a 403 reads as `refused` on the trail. Open the Agent tab on that entry. The entry's other roles and your own entries stay off.
