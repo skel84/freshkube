@@ -43,6 +43,9 @@ pub(super) struct Search {
     sequence: u64,
     closed_at: Option<Instant>,
     jobs: Vec<(OwnedJob, Task<()>)>,
+    /// Debug (`FRESHKUBE_LINKS=refused`, example data): the Secrets list
+    /// is refused, so a smoke can see the refused line.
+    refuse_example: bool,
 }
 impl Search {
     pub(super) fn invalidate(&mut self, cx: &mut Context<Self>) {
@@ -74,6 +77,7 @@ impl Search {
             sequence: 0,
             closed_at: None,
             jobs: Vec::new(),
+            refuse_example: false,
         }
     }
     #[cfg(any(debug_assertions, feature = "stress"))]
@@ -122,7 +126,12 @@ impl Pilot {
         let local = self.local_search_entries(cx);
         let source = self.source().kube;
         let search = self.pages.search.clone();
-        search.update(cx, |search, cx| search.begin(local, source, window, cx));
+        let refuse = self.deep_link.shape == Some(crate::debug_options::LinkShape::Refused)
+            && self.mode().is_example();
+        search.update(cx, |search, cx| {
+            search.refuse_example = refuse;
+            search.begin(local, source, window, cx)
+        });
         let pilot = cx.entity().downgrade();
         let on_close = search.downgrade();
         window.open_dialog(cx, move |dialog, window, _| {

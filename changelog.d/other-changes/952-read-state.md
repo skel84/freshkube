@@ -1,0 +1,1 @@
+- **Plain empty states:** Pages that find nothing now say so in plain words: what Freshkube looked for and where, whether it is missing, not installed, not allowed or out of reach, and what to do next. Optional tools such as Kargo, Argo CD, Coroot and Prometheus are described as optional, and a refusal no longer offers Retry.

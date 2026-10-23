@@ -473,66 +473,87 @@ pub fn empty_state(
     cx: &App,
 ) -> Div {
     let p = palette(cx);
-    v_flex()
-        .size_full()
-        .items_center()
-        .justify_center()
-        .p_6()
-        .child(
-            gpui_kit::component::empty::Empty::new()
-                .max_w(dp(480.))
-                .header(
-                    EmptyHeader::new()
-                        .media(
-                            EmptyMedia::new()
-                                .with_variant(EmptyMediaVariant::Icon)
-                                .child(
-                                    svg()
-                                        .path(icon.path())
-                                        .id((ElementId::from("empty-state-icon"), icon.path()))
-                                        .test_support()
-                                        .flex_shrink_0()
-                                        .size(dp(20.))
-                                        .text_color(p.ink),
+    // The state centres while it fits and scrolls from its top when it
+    // doesn't (a narrow window, a large text size), so its description,
+    // error and actions are never cut off out of reach.
+    v_flex().size_full().min_h_0().child(
+        v_flex()
+            .id("empty-state-scroll")
+            .test_support()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .items_center()
+            .overflow_y_scroll()
+            .p_6()
+            .child(
+                div().my_auto().child(
+                    gpui_kit::component::empty::Empty::new()
+                        .max_w(dp(480.))
+                        .header(
+                            EmptyHeader::new()
+                                .media(
+                                    EmptyMedia::new()
+                                        .with_variant(EmptyMediaVariant::Icon)
+                                        .child(
+                                            svg()
+                                                .path(icon.path())
+                                                .id((
+                                                    ElementId::from("empty-state-icon"),
+                                                    icon.path(),
+                                                ))
+                                                .test_support()
+                                                .flex_shrink_0()
+                                                .size(dp(20.))
+                                                .text_color(p.ink),
+                                        ),
+                                )
+                                .title(
+                                    EmptyTitle::new()
+                                        .font_weight(HEADING_WEIGHT)
+                                        .text_size(dp(19.))
+                                        .text_color(p.ink)
+                                        .child(title.into()),
+                                )
+                                .description(
+                                    EmptyDescription::new().child(
+                                        div()
+                                            .id("empty-state-description")
+                                            .test_support()
+                                            .child(description.into()),
+                                    ),
                                 ),
                         )
-                        .title(
-                            EmptyTitle::new()
-                                .font_weight(HEADING_WEIGHT)
-                                .text_size(dp(19.))
-                                .text_color(p.ink)
-                                .child(title.into()),
-                        )
-                        .description(EmptyDescription::new().child(description.into())),
-                )
-                .when_some(error, |this, error| {
-                    this.child(
-                        div()
-                            .mt_2()
-                            .px_2p5()
-                            .py_1p5()
-                            .rounded(px(6.))
-                            .bg(p.crit_soft)
-                            .text_color(p.crit_ink)
-                            .font_family(MONO_FONT)
-                            .text_size(dp(12.))
-                            .child(error),
-                    )
-                })
-                .when(!actions.is_empty(), |this| {
-                    // The actions wrap inside the state's width, so a narrow window or
-                    // a large text size never cuts one off.
-                    this.content(
-                        EmptyContent::new().child(
-                            h_flex()
-                                .gap_2()
-                                .flex_wrap()
-                                .justify_center()
-                                .children(actions),
-                        ),
-                    )
-                }),
-        )
+                        .when_some(error, |this, error| {
+                            this.child(
+                                div()
+                                    .mt_2()
+                                    .px_2p5()
+                                    .py_1p5()
+                                    .rounded(px(6.))
+                                    .bg(p.crit_soft)
+                                    .text_color(p.crit_ink)
+                                    .font_family(MONO_FONT)
+                                    .text_size(dp(12.))
+                                    .child(error),
+                            )
+                        })
+                        .when(!actions.is_empty(), |this| {
+                            // The actions wrap inside the state's width, so a narrow window or
+                            // a large text size never cuts one off.
+                            this.content(
+                                EmptyContent::new().child(
+                                    h_flex()
+                                        .gap_2()
+                                        .flex_wrap()
+                                        .justify_center()
+                                        .children(actions),
+                                ),
+                            )
+                        }),
+                ),
+            ),
+    )
 }
 
 /// Accent-free inline warning banner with an optional action.
@@ -667,6 +688,65 @@ mod tests {
     use gpui_kit::{AppContext, Context, Render, SvgRenderer, TestAppContext, size};
 
     use super::*;
+
+    struct Narrow;
+
+    impl Render for Narrow {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            empty_state(
+                IconName::Lock,
+                "Not allowed to read applications",
+                "The cluster refused the read. This says nothing about whether any exist. Ask an administrator for read access, then open this page again to check.",
+                Some("applications.argoproj.io is forbidden: User cannot list resource".into()),
+                vec![
+                    Button::new("narrow-action")
+                        .label("Copy access request")
+                        .into_any_element(),
+                ],
+                cx,
+            )
+        }
+    }
+
+    /// In a short window at a large text size the state scrolls, and its
+    /// action can be scrolled into view.
+    #[gpui_kit::test]
+    fn the_empty_state_scrolls_so_its_action_stays_reachable(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(360.), px(200.)), |window, cx| {
+            let view = cx.new(|_| Narrow);
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let viewport = window.find("empty-state-scroll").bounds();
+            let visible = |window: &mut Window| {
+                let action = window.find("narrow-action").bounds();
+                action.top() >= viewport.top() && action.bottom() <= viewport.bottom()
+            };
+            let mut reached = visible(window);
+            for _ in 0..40 {
+                if reached {
+                    break;
+                }
+                window.scroll(
+                    "empty-state-scroll",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-20.))),
+                    cx,
+                );
+                window.render_frame(cx);
+                reached = visible(window);
+            }
+            assert!(reached, "the action never came into view in {viewport:?}");
+        })
+        .unwrap();
+    }
 
     const STATUS: [(Tone, &str); 8] = [
         (Tone::Good, "Running"),

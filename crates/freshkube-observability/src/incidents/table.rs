@@ -289,7 +289,7 @@ impl ObservabilityPage {
             ui::empty_state(
                 IconName::ShieldCheck,
                 "No incidents in the latest sample",
-                "Coroot can also return no data before its project world is ready. Refresh to check again.",
+                "Coroot may also have nothing yet for a project it has only just started watching. Refresh to check again.",
                 None,
                 Vec::new(),
                 cx,

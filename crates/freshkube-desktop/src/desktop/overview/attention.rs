@@ -146,9 +146,9 @@ pub(in crate::desktop) fn render_attention(
             .text_size(dp(12.5))
             .text_color(p.muted)
             .child(if attention.complete {
-                "No problems reported"
+                SharedString::from("No problems reported")
             } else {
-                "Some sources are unavailable; attention may be incomplete"
+                attention.incomplete_note.clone()
             })
     });
     let body = v_flex().children(bar).children(empty).child(

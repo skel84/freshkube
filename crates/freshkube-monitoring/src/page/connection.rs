@@ -6,9 +6,10 @@
 use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::monitoring::scope::{self, Place, Resolved};
 use freshkube_core::monitoring::{
-    Backend, Candidate, Discovery, Endpoint, ErrorKind, Prometheus, PrometheusService, QueryError,
-    Tried, cluster_client, confirm, confirm_url, discover, forget_after,
+    Backend, Candidate, Discovery, Endpoint, ErrorKind, LOOKED_FOR, Prometheus, PrometheusService,
+    QueryError, Tried, cluster_client, confirm, confirm_url, discover, forget_after,
 };
+use freshkube_ui::read_state::ReadState;
 use gpui_kit::{Context, EntityId, SharedString, WeakEntity};
 
 use super::{MonitoringEvent, MonitoringPage, Read, ReadKind, Request};
@@ -64,6 +65,34 @@ pub(super) struct Missing {
     pub(super) tried: Option<SharedString>,
     /// A candidate being confirmed.
     pub(super) confirming: Option<(PrometheusService, Request)>,
+    /// What the empty state says, derived once with the answer.
+    pub(super) state: ReadState,
+    /// What was looked for and tried, for the details box.
+    pub(super) details: String,
+}
+
+/// Discovery found no Prometheus. Prometheus may run under a name
+/// Freshkube doesn't search for, so this says "not found", not "not
+/// installed".
+pub(super) fn not_found_state(cluster: &str) -> ReadState {
+    ReadState::Empty {
+        looked_for: "Prometheus".into(),
+        cluster: cluster.into(),
+        hint: Some(
+            "Prometheus may run under a name Freshkube doesn't look for. It is optional: it adds charts of CPU, memory and your own queries, and the rest of Freshkube works without it."
+                .into(),
+        ),
+    }
+}
+
+/// The setup names no metrics store for this cluster.
+pub(super) fn not_set_up_state() -> &'static ReadState {
+    static STATE: std::sync::OnceLock<ReadState> = std::sync::OnceLock::new();
+    STATE.get_or_init(|| ReadState::NotSetUp {
+        what: "A metrics source".into(),
+        gap: "Freshkube doesn't know which metrics store to read for this cluster, so it asked nothing. Prometheus is optional; the rest of Freshkube works without it.".into(),
+        setting: Some("Monitoring".into()),
+    })
 }
 
 /// Building a Ready Service's cluster client again after a read through it
@@ -113,7 +142,14 @@ impl Connection {
         }
     }
 
-    fn missing(candidates: Vec<Candidate>, tried: Vec<Tried>) -> Self {
+    fn missing(candidates: Vec<Candidate>, tried: Vec<Tried>, cluster: &str) -> Self {
+        let tried_lines: Option<String> = (!tried.is_empty()).then(|| {
+            tried
+                .iter()
+                .map(|tried| format!("{}: {}", tried.service.label(), tried.error))
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
         Self::Missing(Missing {
             candidates: candidates
                 .into_iter()
@@ -122,15 +158,16 @@ impl Connection {
                     (candidate.service, label)
                 })
                 .collect(),
-            tried: (!tried.is_empty()).then(|| {
-                tried
-                    .iter()
-                    .map(|tried| format!("{}: {}", tried.service.label(), tried.error))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .into()
-            }),
+            tried: tried_lines.clone().map(Into::into),
             confirming: None,
+            state: not_found_state(cluster),
+            details: {
+                let mut details = format!("Looked for {LOOKED_FOR}.");
+                if let Some(tried) = &tried_lines {
+                    details = format!("{details}\n{tried}");
+                }
+                details
+            },
         })
     }
 }
@@ -465,7 +502,11 @@ impl MonitoringPage {
                 ..
             }) => self.use_prometheus(prometheus, version, cx),
             Ok(Discovery::Missing { candidates, tried }) => {
-                self.connection = Connection::missing(candidates, tried);
+                let cluster = self.source.as_ref().map_or_else(
+                    || "this cluster".to_owned(),
+                    |source| source.context.to_string(),
+                );
+                self.connection = Connection::missing(candidates, tried, &cluster);
             }
             Err(error) if error.is_refused() => {
                 self.connection = Connection::Refused(error.message.into());
@@ -672,5 +713,34 @@ fn through_host(error: QueryError, host: Option<&str>) -> QueryError {
             ),
         ),
         None => error,
+    }
+}
+
+#[cfg(test)]
+mod read_state_tests {
+    use super::*;
+
+    #[test]
+    fn nothing_found_says_not_found_and_that_prometheus_is_optional() {
+        let state = not_found_state("prod-fra");
+        assert_eq!(state.title(), "No Prometheus found");
+        let text = state.description();
+        assert!(
+            text.contains("Looked for Prometheus in prod-fra and found none"),
+            "{text}"
+        );
+        assert!(text.contains("optional"), "{text}");
+        assert!(text.contains("works without it"), "{text}");
+        assert!(!text.contains("installed"), "{text}");
+    }
+
+    #[test]
+    fn no_named_store_is_not_set_up_and_points_at_settings() {
+        let state = not_set_up_state();
+        assert_eq!(state.title(), "A metrics source isn't set up");
+        let text = state.description();
+        assert!(text.contains("Settings › Monitoring"), "{text}");
+        assert!(text.contains("optional"), "{text}");
+        assert!(!text.contains("freshkube.yaml"), "{text}");
     }
 }

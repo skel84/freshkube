@@ -20,6 +20,7 @@ pub mod motion;
 pub mod page;
 pub mod palette;
 pub mod platform;
+pub mod read_state;
 #[cfg(feature = "testing")]
 pub mod real_io;
 pub mod source_list;

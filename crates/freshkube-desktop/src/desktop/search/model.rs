@@ -57,6 +57,22 @@ pub(super) const KINDS: [&str; 9] = [
     "secrets",
     "namespaces",
 ];
+/// A kind's name for a person: no API group, no plural key.
+pub(super) fn kind_display(key: &str) -> &'static str {
+    match key {
+        "pods" => "pods",
+        "deployments.apps" => "deployments",
+        "statefulsets.apps" => "stateful sets",
+        "daemonsets.apps" => "daemon sets",
+        "services" => "services",
+        "ingresses.networking.k8s.io" => "ingresses",
+        "configmaps" => "config maps",
+        "secrets" => "secrets",
+        "namespaces" => "namespaces",
+        _ => "objects",
+    }
+}
+
 pub(super) fn object_group(key: &str) -> &'static str {
     match key {
         "pods" => "Pods",
@@ -234,15 +250,15 @@ impl Search {
             .filter_map(|key| match self.parts.get(key) {
                 Some(Err(error)) => Some((
                     format!("search-status-{key}").into(),
-                    format!("Can't list {key}: {error}").into(),
+                    format!("Can't list {}: {error}", kind_display(key)).into(),
                 )),
                 Some(Ok(part)) if part.capped => Some((
                     format!("search-status-{key}").into(),
-                    format!("{key}: First 2,000 shown").into(),
+                    format!("{}: First 2,000 shown", kind_display(key)).into(),
                 )),
                 None if self.open => Some((
                     format!("search-status-{key}").into(),
-                    format!("Listing {key}…").into(),
+                    format!("Listing {}…", kind_display(key)).into(),
                 )),
                 _ => None,
             })

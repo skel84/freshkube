@@ -6,6 +6,7 @@
 //! An unread source is never "no applications". With none found, a refused
 //! read is the refused state and a failed one the failed state; only when
 //! every source answered (or isn't served) is it the empty state.
+use freshkube_ui::read_state::ReadState;
 use std::collections::{BTreeMap, BTreeSet};
 
 use freshkube_core::resources::FailureKind;
@@ -188,6 +189,9 @@ pub enum Body {
         title: SharedString,
         description: SharedString,
         reason: SharedString,
+        /// The state the page draws it with; `title`, `description`,
+        /// `reason` and the access request are its words.
+        state: ReadState,
     },
     /// No applications, and a source failed: nothing is known missing.
     Failed {
@@ -833,6 +837,33 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     lines
 }
 
+/// The read-only Roles that would let the identity read what was refused,
+/// one per kind, to paste to an administrator.
+fn access_request(refused: &[&Coverage]) -> String {
+    let kinds: BTreeSet<(&str, &str)> = refused
+        .iter()
+        .flat_map(|c| match c.source {
+            SourceKind::KargoProjects => vec![("kargo.akuity.io", "projects")],
+            SourceKind::KargoStages => vec![("kargo.akuity.io", "stages")],
+            SourceKind::KargoWarehouses => vec![("kargo.akuity.io", "warehouses")],
+            SourceKind::ArgoApplications => vec![("argoproj.io", "applications")],
+            SourceKind::ArgoApplicationSets => vec![("argoproj.io", "applicationsets")],
+            SourceKind::Workloads => vec![
+                ("apps", "deployments"),
+                ("apps", "statefulsets"),
+                ("apps", "daemonsets"),
+            ],
+        })
+        .collect();
+    kinds
+        .into_iter()
+        .map(|(group, resource)| {
+            freshkube_delivery::change::Role::new(group, resource, None).manifest()
+        })
+        .collect::<Vec<_>>()
+        .join("---\n")
+}
+
 /// Whether a coverage is one a body says.
 type Names = fn(&CoverageState) -> bool;
 
@@ -875,15 +906,28 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
         }
     };
     if !refused.is_empty() {
+        // Several sources would make a title of four lines; the sources go
+        // in the details with the server's reason.
+        let named = sources(&refused);
+        let (what, listed) = if named.contains(", ") {
+            ("applications".to_owned(), Some(named))
+        } else {
+            (named, None)
+        };
+        let state = ReadState::Refused {
+            what,
+            cluster: clusters(&refused),
+            manifest: Some(access_request(&refused)),
+            reason: Some(match listed {
+                Some(listed) => format!("Refused: {listed}. {}", reason(&refused)),
+                None => reason(&refused).to_string(),
+            }),
+        };
         let body = Body::Refused {
-            title: format!("Not permitted to list {}", sources(&refused)).into(),
-            description: format!(
-                "The identity of {} may not list {}. That says nothing about whether any applications exist.",
-                clusters(&refused),
-                sources(&refused)
-            )
-            .into(),
+            title: state.title().into(),
+            description: state.description().into(),
             reason: reason(&refused),
+            state,
         };
         return (
             body,
@@ -936,7 +980,7 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
     }
     let sessions: BTreeSet<&SessionKey> = coverage.iter().map(|c| &c.session).collect();
     let mut description = format!(
-        "Looked for Kargo Projects, Argo CD ApplicationSets and Applications where Argo CD runs, and Deployments, StatefulSets and DaemonSets labelled {PART_OF}."
+        "Freshkube groups applications by Kargo Project, by Argo CD Application, or by the {PART_OF} label on a Deployment, StatefulSet or DaemonSet. Kargo and Argo CD are optional: the label alone is enough. To list an application here, label its workloads, for example {PART_OF}=shop."
     );
     let not_found = coverage.iter().filter(|c| {
         c.source == SourceKind::ArgoApplications
@@ -954,11 +998,7 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
         description.push('.');
     }
     let body = Body::Empty {
-        title: format!(
-            "No applications found in what was read on {}",
-            labels.all(sessions)
-        )
-        .into(),
+        title: format!("No applications found on {}", labels.all(sessions)).into(),
         description: description.into(),
     };
     (body, None)
@@ -1074,6 +1114,48 @@ mod tests {
         }
     }
 
+    /// A cluster with no Kargo and no Argo CD says how applications are
+    /// grouped, that both are optional, and how to add the label.
+    #[test]
+    fn an_empty_cluster_says_how_applications_are_grouped() {
+        let display = shown(&one(empty_session()));
+        let Body::Empty { title, description } = &display.body else {
+            panic!("{:?}", display.body);
+        };
+        assert_eq!(title.as_ref(), "No applications found on acme-solo");
+        assert!(description.contains("Kargo Project"), "{description}");
+        assert!(description.contains("Argo CD Application"), "{description}");
+        assert!(description.contains("optional"), "{description}");
+        assert!(
+            description.contains(&format!("{PART_OF}=")),
+            "{description}"
+        );
+    }
+
+    /// A refusal names the Role to ask for.
+    #[test]
+    fn a_refusal_carries_the_access_request() {
+        let mut session = empty_session();
+        session.workloads = Source::Refused("deployments.apps is forbidden".into());
+        let display = shown(&one(session));
+        let Body::Refused { state, .. } = &display.body else {
+            panic!("{:?}", display.body);
+        };
+        let access = state.access_request().expect("a Role to ask for");
+        assert!(access.contains("kind: ClusterRole"), "{access}");
+        assert!(access.contains("\"deployments\""), "{access}");
+        // Read-only, and never Secrets.
+        assert!(
+            access.contains("verbs: [\"get\", \"list\", \"watch\"]"),
+            "{access}"
+        );
+        assert!(!access.to_lowercase().contains("secrets"), "{access}");
+        assert!(
+            !access.contains("create") && !access.contains("delete"),
+            "{access}"
+        );
+    }
+
     #[test]
     fn acme_groups_by_rule_in_precedence_order() {
         let display = shown(&example::acme());
@@ -1106,11 +1188,8 @@ mod tests {
         let Body::Empty { title, description } = &display.body else {
             panic!("{:?}", display.body);
         };
-        assert_eq!(
-            title.as_ref(),
-            "No applications found in what was read on acme-solo"
-        );
-        assert!(description.contains("Kargo isn't served on acme-solo"));
+        assert_eq!(title.as_ref(), "No applications found on acme-solo");
+        assert!(description.contains("Kargo isn't installed on acme-solo"));
     }
 
     #[test]
@@ -1121,7 +1200,7 @@ mod tests {
         let Body::Refused { title, reason, .. } = &display.body else {
             panic!("{:?}", display.body);
         };
-        assert_eq!(title.as_ref(), "Not permitted to list labelled workloads");
+        assert_eq!(title.as_ref(), "Not allowed to read labelled workloads");
         assert_eq!(reason.as_ref(), "deployments.apps is forbidden");
         assert!(display.missing_text.is_none(), "the state says it already");
     }
@@ -1425,10 +1504,13 @@ mod tests {
             }
         }
         let display = shown(&inputs);
-        let Body::Refused { title, .. } = &display.body else {
+        let Body::Refused { title, state, .. } = &display.body else {
             panic!("expected the refused state");
         };
-        assert!(title.contains("Argo CD Applications"), "{title}");
+        // Several sources keep the title short and are named in the details.
+        assert_eq!(title.as_ref(), "Not allowed to read applications");
+        let details = state.reason().unwrap_or_default();
+        assert!(details.contains("Argo CD Applications"), "{details}");
         let (missing, _) = display.missing_text.clone().expect("a banner");
         assert!(
             missing.contains("Couldn't reach cicd-fra: connection refused"),

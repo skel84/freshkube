@@ -77,8 +77,13 @@ fn part<T>(
                     format!("Last known · {kind}: {error}"),
                     CardState::LastKnown(error.to_string().into()),
                 )
+            } else if matches!(value, Some(Part::Refused(_))) {
+                (
+                    format!("Not allowed to read {kind}: {error}"),
+                    CardState::Current,
+                )
             } else {
-                (format!("Can't read {kind}: {error}"), CardState::Current)
+                (format!("Couldn't read {kind}: {error}"), CardState::Current)
             };
             (figure, detail, Tone::Unknown, state)
         }

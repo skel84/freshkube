@@ -7,6 +7,7 @@ use crate::ui::{self, dp};
 use freshkube_ui::inspector::{self, Inspector};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
+use freshkube_ui::read_state::{ReadActions, read_state};
 use freshkube_ui::tooltip::FollowTooltip as _;
 use freshkube_ui::ui::{field, mono};
 use gpui_kit::assets::IconName;
@@ -160,23 +161,33 @@ impl ApplicationsPage {
                     None,
                     Vec::new(),
                     cx,
-                ),
+                )
+                .into_any_element(),
             ),
-            Body::Refused {
-                title,
-                description,
-                reason,
-            } => (
-                "applications-refused",
-                ui::empty_state(
-                    IconName::Lock,
-                    title.clone(),
-                    description.clone(),
-                    Some(reason.to_string()),
-                    Vec::new(),
-                    cx,
-                ),
-            ),
+            Body::Refused { state, .. } => {
+                // A refusal gets no Retry: asking again gets the same answer.
+                let access = state.access_request().unwrap_or_default().to_owned();
+                let copy = Button::new("applications-copy-access")
+                    .primary()
+                    .label("Copy access request")
+                    .tooltip("Copies a read-only Role: get, list and watch")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(access.clone()));
+                    })
+                    .into_any_element();
+                (
+                    "applications-refused",
+                    read_state(
+                        "applications-refused-body",
+                        state,
+                        ReadActions {
+                            copy_access: Some(copy),
+                            ..ReadActions::default()
+                        },
+                        cx,
+                    ),
+                )
+            }
             Body::Failed {
                 title,
                 description,
@@ -190,13 +201,28 @@ impl ApplicationsPage {
                     Some(reason.to_string()),
                     vec![retry()],
                     cx,
-                ),
+                )
+                .into_any_element(),
             ),
         };
+        // The inset takes the body's height and no more, so the state's own
+        // scroll holds what doesn't fit instead of running past the window.
         Some(
             page::inset()
+                .flex()
+                .flex_col()
                 .flex_1()
-                .child(state.id(id).test_support().role(Role::Status))
+                .min_h_0()
+                .child(
+                    div()
+                        .id(id)
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .test_support()
+                        .role(Role::Status)
+                        .child(state),
+                )
                 .into_any_element(),
         )
     }
