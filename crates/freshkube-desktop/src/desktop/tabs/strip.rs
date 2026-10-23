@@ -122,6 +122,12 @@ impl ViewTabs {
         });
     }
 
+    /// What the strip draws, for tests.
+    #[cfg(test)]
+    pub(super) fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
     /// Sets what the strip draws; draws it again only when that differs.
     pub(super) fn set(&mut self, entries: Vec<Entry>, active: usize, cx: &mut Context<Self>) {
         if self.entries == entries && self.active == active {

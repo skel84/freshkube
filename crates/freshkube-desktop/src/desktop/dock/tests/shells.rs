@@ -87,7 +87,10 @@ fn closing_a_running_shells_tab_asks_first(cx: &mut TestAppContext) {
     // The tab's ×: Cancel keeps it and its shell.
     click("dock-tab-1-close", cx);
     let (message, _) = cx.pending_prompt().unwrap();
-    assert_eq!(message, format!("End the shell in {}?", pods[1].name));
+    assert_eq!(
+        message,
+        format!("End the shell in {} on prod-fra?", pods[1].name)
+    );
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert_eq!(titles(&dock, cx).len(), 2);
@@ -135,7 +138,10 @@ fn a_ninth_shell_tab_asks_to_close_the_oldest(cx: &mut TestAppContext) {
     // Every shell runs: the oldest asks first, and Cancel opens nothing.
     start_shell(handle, &pilot, &pods[MAX_SHELL_TABS], cx);
     let (message, _) = cx.pending_prompt().unwrap();
-    assert_eq!(message, format!("End the shell in {}?", pods[0].name));
+    assert_eq!(
+        message,
+        format!("End the shell in {} on prod-fra?", pods[0].name)
+    );
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert_eq!(titles(&dock, cx).len(), MAX_SHELL_TABS + 1);
@@ -211,7 +217,10 @@ fn every_way_of_closing_a_running_shells_tab_asks(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    asked(format!("End the shell in {}?", pods[1].name), cx);
+    asked(
+        format!("End the shell in {} on prod-fra?", pods[1].name),
+        cx,
+    );
 
     // Command-W from the selected shell's terminal.
     let close = if cfg!(target_os = "macos") {
@@ -222,7 +231,10 @@ fn every_way_of_closing_a_running_shells_tab_asks(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| window.press(close, cx))
         .unwrap();
     cx.run_until_parked();
-    asked(format!("End the shell in {}?", pods[2].name), cx);
+    asked(
+        format!("End the shell in {} on prod-fra?", pods[2].name),
+        cx,
+    );
 
     // Close others and Close to the right, from the log tab.
     for close in [Dock::close_others, Dock::close_to_right] {
@@ -525,9 +537,142 @@ fn a_read_only_context_opens_its_shell_tab_idle_and_start_does_nothing(cx: &mut 
     assert!(cx.read(shell::running_anywhere).is_empty());
     let view = shell_view(&dock, 0, cx);
     assert!(!cx.read(|cx| view.read(cx).can_start()));
-    // A context that allows writes: a tab there starts.
+    // A context that allows writes: a tab there starts. The read-only
+    // cluster's tab stays blocked under it, whatever is shown (#878).
     show("dev-fra", cx);
     let pods = running_pods(&pilot, cx);
     pick_shell(handle, &pilot, &pods[0], cx);
-    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
+    assert_eq!(titles(&dock, cx).len(), 2);
+    assert_eq!(shell_state(&dock, 1, cx), ShellState::Running);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Idle);
+    let blocked = shell_view(&dock, 0, cx);
+    assert!(!cx.read(|cx| blocked.read(cx).can_start()));
+    assert_eq!(
+        cx.read(|cx| blocked.read(cx).blocked()),
+        Some(freshkube_core::write::READ_ONLY_REASON)
+    );
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
+}
+
+fn show_cluster(handle: AnyWindowHandle, pilot: &Entity<Pilot>, id: &str, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.switch_cluster(id.into(), window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+/// A shell that runs on one cluster says whose it is once another is
+/// shown, while it still runs: its own header names its cluster and
+/// context with the level's tag, and that this is not the shown cluster.
+#[gpui_kit::test]
+fn a_running_shell_names_its_own_cluster_after_a_switch(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    show_cluster(handle, &pilot, "dev-fra", cx);
+    let pods = running_pods(&pilot, cx);
+    start_shell(handle, &pilot, &pods[0], cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The cluster it runs on is the one shown: no header.
+        assert!(window.try_find("dock-origin").is_none());
+    })
+    .unwrap();
+    show_cluster(handle, &pilot, "stage-fra", cx);
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
+    assert!(!cx.has_pending_prompt(), "switching asks nothing");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let label = window.find("dock-origin").label().unwrap().to_owned();
+        assert!(label.contains("Shell on dev-fra"), "{label}");
+        assert!(
+            label.contains("Not the shown cluster: you're looking at stage-fra"),
+            "{label}"
+        );
+    })
+    .unwrap();
+    // The shell kept its own cluster's level: dev-fra is open, so it was
+    // never held to the read-only cluster shown now.
+    let own = cx.read(|cx| dock.read(cx).tabs[0].origin.level(cx));
+    assert_eq!(own, Some(freshkube_core::write::Protection::Open));
+    // Its dock tab wears that level.
+    show_cluster(handle, &pilot, "dev-fra", cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("dock-origin").is_none());
+    })
+    .unwrap();
+}
+
+/// A blocked shell on another cluster offers logs on its own cluster, and
+/// a stricter level reaches an open tab's Start at once.
+#[gpui_kit::test]
+fn a_blocked_shell_opens_logs_on_its_own_cluster_and_a_stricter_level_blocks_at_once(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    show_cluster(handle, &pilot, "stage-fra", cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Idle);
+    let own = cx.read(|cx| dock.read(cx).tabs[0].origin.source.id.clone());
+    show_cluster(handle, &pilot, "dev-fra", cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("dock-open-logs-instead", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let tabs = cx.read(|cx| {
+        dock.read(cx)
+            .tabs
+            .iter()
+            .map(|tab| (tab.is_log(), tab.origin.source.id.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(tabs.len(), 2, "{tabs:?}");
+    // The log tab is on the shell's cluster, never the shown one.
+    assert_eq!(tabs[1], (true, own.clone()));
+    let shown = cx.read(|cx| pilot.read(cx).source().kube.unwrap().id);
+    assert_ne!(own, shown);
+
+    // The entry's level turning read-only reaches an open tab at once; the
+    // entry disappearing blocks it with its own reason.
+    show_cluster(handle, &pilot, "dev-fra", cx);
+    pick_shell(handle, &pilot, &running_pods(&pilot, cx)[1], cx);
+    let ix = cx.read(|cx| {
+        dock.read(cx)
+            .tabs
+            .iter()
+            .position(|tab| {
+                !tab.is_log()
+                    && tab.origin.level(cx) == Some(freshkube_core::write::Protection::Open)
+            })
+            .unwrap()
+    });
+    let view = shell_view(&dock, ix, cx);
+    assert!(cx.read(|cx| view.read(cx).blocked().is_none()));
+    cx.update(|cx| {
+        crate::mutation::set_entry_levels(
+            [(
+                "dev-fra".to_owned(),
+                freshkube_core::write::Protection::ReadOnly,
+            )],
+            cx,
+        );
+        dock.update(cx, |dock, cx| dock.refresh_gates(cx));
+    });
+    assert_eq!(
+        cx.read(|cx| view.read(cx).blocked()),
+        Some(freshkube_core::write::READ_ONLY_REASON)
+    );
+    cx.update(|cx| {
+        crate::mutation::set_entry_levels([], cx);
+        dock.update(cx, |dock, cx| dock.refresh_gates(cx));
+    });
+    assert_eq!(
+        cx.read(|cx| view.read(cx).blocked()),
+        Some(freshkube_core::write::ENTRY_GONE_REASON)
+    );
 }

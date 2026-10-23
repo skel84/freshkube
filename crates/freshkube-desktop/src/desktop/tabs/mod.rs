@@ -17,6 +17,8 @@ use std::time::Duration;
 mod choose;
 #[cfg(test)]
 mod click_tests;
+#[cfg(test)]
+mod cluster_tests;
 mod commands;
 #[cfg(test)]
 mod guard_tests;
