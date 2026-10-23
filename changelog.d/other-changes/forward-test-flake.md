@@ -1,1 +1,0 @@
-- **Port-forward tests:** verify relayed bytes despite short-lived loopback probes on automatic ports, avoiding flaky request counts under load.

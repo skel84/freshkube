@@ -1,1 +1,0 @@
-- **Resources:** a wheel over Details while the next row's details still load goes on to where it was sent once they arrive, instead of stopping where the loading rows ended.

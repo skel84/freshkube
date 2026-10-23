@@ -1,1 +1,0 @@
-- **Table headers:** sortable and unsortable columns share visible-edge ellipses and full-text tooltips, with a layout regression for Settings › Sources at 760×560 and text size 20.

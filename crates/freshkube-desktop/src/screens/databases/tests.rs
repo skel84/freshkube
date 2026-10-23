@@ -1205,6 +1205,149 @@ fn kept_rows_say_so_in_the_row_and_the_inspector() {
 }
 
 #[gpui_kit::test]
+fn failed_state_retry_and_coverage_are_reachable_in_a_short_window(cx: &mut TestAppContext) {
+    let (_runtime, window, pilot) = crate::desktop::tests::fixture(cx, 760., 560.);
+    cx.update_window(window, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("secondary-shift-d", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let page = cx.read(|cx| pilot.read(cx).databases());
+    cx.update_window(window, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.shape = "failed".into();
+            page.loader.reset();
+            page.read(cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window, |_, window, cx| {
+        layout_check::settle_header(window, cx);
+        window.render_frame(cx);
+        assert_eq!(window.rem_size(), px(20.));
+        let notes = window.find("databases-notices").bounds();
+        let coverage = window.find("databases-coverage").bounds();
+        assert!(
+            coverage.top() >= notes.top(),
+            "{coverage:?} above {notes:?}"
+        );
+        window.scroll(
+            "databases-notices",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-2000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let notes = window.find("databases-notices").bounds();
+        let coverage = window.find("databases-coverage").bounds();
+        assert!(
+            coverage.bottom() <= notes.bottom(),
+            "coverage end {coverage:?} clipped by {notes:?} after scrolling"
+        );
+        window.scroll(
+            "databases-page",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-2000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let retry = window.find("databases-retry").bounds();
+        let frame = window.find("databases-page").bounds();
+        let status = window.find("status-bar").bounds();
+        assert!(
+            retry.top() >= frame.top() && retry.bottom() <= status.top(),
+            "Retry {retry:?} outside {frame:?} above status {status:?} after scrolling"
+        );
+        page.update(cx, |page, _| page.shape.clear());
+        window.click("databases-retry", cx);
+        window.render_frame(cx);
+        assert!(!page.read(cx).display.rows.is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn database_states_keep_their_content_at_wide_narrow_and_large_text(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        for text in [13., 20.] {
+            let (_runtime, window, pilot) = crate::desktop::tests::fixture(cx, width, height);
+            cx.update_window(window, |_, window, cx| {
+                crate::text_size::set(text, cx);
+                window.press("secondary-shift-d", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            let page = cx.read(|cx| pilot.read(cx).databases());
+            for shape in [
+                "",
+                "not-installed",
+                "refused",
+                "unsupported",
+                "failed",
+                "empty",
+                "backup-refused",
+                "partial",
+                "stale",
+                "engine-refused",
+            ] {
+                cx.update_window(window, |_, window, cx| {
+                    page.update(cx, |page, cx| {
+                        page.shape = shape.into();
+                        page.loader.reset();
+                        page.read(cx);
+                    });
+                    window.render_frame(cx);
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update_window(window, |_, window, cx| {
+                    layout_check::settle_header(window, cx);
+                    window.scroll(
+                        "databases-page",
+                        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(2000.))),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                    if !freshkube_ui::page::is_short(window)
+                        && let Some(notes) = window.try_find("databases-notices")
+                    {
+                        let coverage = window.find("databases-coverage").bounds();
+                        assert!(
+                            coverage.top() >= notes.bounds().top()
+                                && coverage.bottom() <= notes.bounds().bottom(),
+                            "{width} / {text} / {shape}: {coverage:?} clipped by {:?}",
+                            notes.bounds()
+                        );
+                    }
+                    let id = if page.read(cx).display.lines.is_empty() {
+                        "databases-empty-state"
+                    } else {
+                        "databases-table"
+                    };
+                    assert!(window.find(id).bounds().size.height > px(0.), "{shape}");
+                    window.scroll(
+                        "databases-page",
+                        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-2000.))),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                    if let Some(retry) = window.try_find("databases-retry") {
+                        let frame = window.find("databases-page").bounds();
+                        let retry = retry.bounds();
+                        assert!(
+                            retry.top() >= frame.top() && retry.bottom() <= frame.bottom(),
+                            "{width} / {text} / {shape}: {retry:?} outside {frame:?}"
+                        );
+                    }
+                })
+                .unwrap();
+            }
+        }
+    }
+}
+
+#[gpui_kit::test]
 fn a_partial_database_banner_fits_without_scrolling(cx: &mut TestAppContext) {
     for (width, height) in [(760., 560.), (1280., 880.)] {
         let (_runtime, window, pilot) = crate::desktop::tests::fixture(cx, width, height);
