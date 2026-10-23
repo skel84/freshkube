@@ -79,6 +79,7 @@ impl ResourcesScreen {
                 SelectGroup,
             ));
         }
+        actions.extend(self.act_menu());
         if let Some(node) = self.selected_node() {
             actions.push(MenuAction::Separator);
             actions.push(MenuAction::new(format!("Open node {node}"), OpenNode));

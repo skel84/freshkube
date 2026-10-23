@@ -100,7 +100,8 @@ impl ResourcesScreen {
                 page::action_item("Refresh", page::Refresh, &self.focus),
             )
         };
-        header.foldable(button, fold).render(window, cx)
+        self.act_buttons(header.foldable(button, fold), cx)
+            .render(window, cx)
     }
 
     /// The namespace picker's choices as menu items, its folded form: each

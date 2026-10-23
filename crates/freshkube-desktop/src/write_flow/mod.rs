@@ -12,12 +12,9 @@
 //! write, and the slot is freed exactly once, when the runner has finished
 //! (docs/STATE_LIFETIMES.md, "Kubernetes writes").
 
-// No page starts a write yet: this change ships the framework only, proved by
-// the tests below against core's fake API, and the first action that uses it
-// takes this allowance away.
-#![allow(dead_code)]
-
 mod dialog;
+#[cfg(test)]
+mod everyday_tests;
 mod report;
 #[cfg(test)]
 mod tests;
@@ -124,6 +121,22 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
     }
     flow.update(cx, |flow, cx| flow.check(window, cx));
     flow
+}
+
+/// The flows that are open. A page that starts one keeps no handle, so they
+/// are held here until they close: dropping the entity would drop its check
+/// and the dialog's state with it.
+#[derive(Default)]
+struct Open(Vec<Entity<WriteFlow>>);
+
+impl Global for Open {}
+
+/// Keeps `flow` alive until it closes, and lets go of the ones that have.
+pub(crate) fn retain(flow: Entity<WriteFlow>, cx: &mut App) {
+    let mut open = std::mem::take(&mut cx.default_global::<Open>().0);
+    open.retain(|flow| flow.read(cx).stage != Stage::Closed);
+    open.push(flow);
+    cx.default_global::<Open>().0 = open;
 }
 
 /// Opens the flow for an action that has already passed preflight, such as

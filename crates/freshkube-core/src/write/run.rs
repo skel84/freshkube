@@ -26,6 +26,9 @@ pub struct Runner {
     /// The cluster's level as it is now. A write reads it again just before
     /// it is sent.
     pub(super) level: LevelCell,
+    /// Example data: it asks nothing of the cluster and sends nothing, so a
+    /// dialog can be shown without one.
+    pub(super) example: bool,
 }
 
 /// Something the front end can draw while a write runs.
@@ -48,6 +51,8 @@ pub enum NotSent {
     ReadOnly(&'static str),
     /// What the person did does not meet the level's requirement.
     Unconfirmed,
+    /// A runner for example data, which has no cluster to send to.
+    Example,
     /// The audit log can't be written, so nothing is sent.
     AuditUnavailable(String),
     /// The level got stricter after the action was prepared: nothing was
@@ -210,7 +215,32 @@ impl Runner {
             who,
             watching: Watching::default(),
             level,
+            example: false,
         }
+    }
+
+    /// A runner for example data: preflight shows the dialog the level asks
+    /// for from the action alone, and nothing is ever sent or even asked of
+    /// a cluster. `client` is never used.
+    pub fn example(client: kube::Client, audit: AuditStore, who: Who) -> Self {
+        Self {
+            example: true,
+            ..Self::new(client, audit, who)
+        }
+    }
+
+    /// [`Self::example`] with a client that reaches nothing, for a window
+    /// that has no cluster behind the example data. Call it where a Tokio
+    /// runtime is entered.
+    pub fn example_offline(audit: AuditStore, who: Who) -> Self {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let config = kube::Config::new("http://127.0.0.1:9".parse().expect("a static address"));
+        let client = crate::kube_client::client(config).expect("a client that reaches nothing");
+        Self::example(client, audit, who)
+    }
+
+    pub fn is_example(&self) -> bool {
+        self.example
     }
 
     /// Follows a level that changes while the app runs, such as the one the
@@ -324,18 +354,26 @@ impl Runner {
         // line of this run records.
         let level = self.level_for(&description);
         if cancel() {
-            let _ = self.record(
-                &run,
-                &description,
-                level,
-                &all,
-                Phase::Cancelled,
-                "Cancelled before sending.",
-            );
+            // Example data audits nothing.
+            if !self.example {
+                let _ = self.record(
+                    &run,
+                    &description,
+                    level,
+                    &all,
+                    Phase::Cancelled,
+                    "Cancelled before sending.",
+                );
+            }
             return finished(Status::Cancelled, vec![], None, None);
         }
         if let Some(not_sent) = refused_at(level) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
+        // Example data has no cluster to send to; everything the level and the
+        // person decide has been decided as for a real one.
+        if self.example {
+            return finished(Status::NotSent(NotSent::Example), vec![], None, None);
         }
         let first = if is_undo {
             Phase::UndoSent

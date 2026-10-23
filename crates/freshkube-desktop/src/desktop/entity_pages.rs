@@ -26,7 +26,9 @@ use super::{Page, Pilot, nodes};
 use crate::applications::{ApplicationsPage, SwitchLink};
 use crate::monitoring::page::{MonitoringEvent, MonitoringPage, Scope};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
-use crate::resources::{self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen};
+use crate::resources::{
+    self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen, WorkloadAct,
+};
 use crate::screens::{
     PageEvent, PageEventFn, PageSource, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
 };
@@ -129,6 +131,7 @@ impl ScreenPanel for ResourcesScreen {
             hear::<_, ResourceLink>(this, &on_event, window, cx),
             hear::<_, NotServed>(this, &on_event, window, cx),
             hear::<_, NodePodsEvent>(this, &on_event, window, cx),
+            hear::<_, WorkloadAct>(this, &on_event, window, cx),
         ]
     }
 
@@ -475,6 +478,7 @@ impl Pilot {
                     .custom
                     .update(cx, |custom, cx| custom.not_served(&group, cx));
             }
+            PageEvent::Act(act) => self.everyday_act(act, window, cx),
             PageEvent::Service(event) => self.service_event(event, window, cx),
             PageEvent::Overview(event) => self.overview_event(event, window, cx),
             PageEvent::Settings(SettingsEvent::Connect(request)) => {

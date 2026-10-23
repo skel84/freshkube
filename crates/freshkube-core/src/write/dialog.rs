@@ -208,6 +208,9 @@ impl Finished {
                     "The audit log can't be written, so nothing was sent: {}",
                     scrub(why)
                 ),
+                super::run::Status::NotSent(NotSent::Example) => {
+                    "This is example data. Nothing was sent.".to_owned()
+                }
                 _ => "Nothing was sent.".to_owned(),
             },
         }

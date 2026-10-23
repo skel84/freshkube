@@ -178,6 +178,24 @@ impl Runner {
         let mut diffs = vec![];
         let mut inverses = vec![];
         for change in &action.changes {
+            // Example data has no cluster: the fields the action names are
+            // what it would change, and nothing is asked.
+            if self.example {
+                diffs.push(ObjectDiff {
+                    object: change.target.label(),
+                    changes: change
+                        .change
+                        .field_paths()
+                        .into_iter()
+                        .map(|path| FieldChange {
+                            path,
+                            kind: super::diff::ChangeKind::Added,
+                        })
+                        .collect(),
+                });
+                inverses.push(None);
+                continue;
+            }
             match self.check_object(change).await {
                 Ok((diff, inverse)) => {
                     diffs.push(ObjectDiff {

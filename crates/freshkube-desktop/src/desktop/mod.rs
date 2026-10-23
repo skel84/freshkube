@@ -9,6 +9,7 @@ mod connection;
 mod deep_link;
 pub(crate) mod dock;
 mod entity_pages;
+mod everyday_acts;
 mod followed;
 #[cfg(test)]
 mod followed_tests;

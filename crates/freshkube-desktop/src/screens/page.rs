@@ -57,6 +57,8 @@ pub(crate) enum PageEvent {
     Overview(OverviewEvent),
     /// A Settings section that points to where its controls are.
     Settings(SettingsEvent),
+    /// Resources asks to act on the selected workload.
+    Act(crate::resources::WorkloadAct),
 }
 
 impl From<ScreenEvent> for PageEvent {
@@ -133,6 +135,12 @@ impl From<SettingsEvent> for PageEvent {
 impl From<OverviewEvent> for PageEvent {
     fn from(event: OverviewEvent) -> Self {
         Self::Overview(event)
+    }
+}
+
+impl From<crate::resources::WorkloadAct> for PageEvent {
+    fn from(act: crate::resources::WorkloadAct) -> Self {
+        Self::Act(act)
     }
 }
 

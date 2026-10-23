@@ -4,7 +4,7 @@ How Freshkube decides what a person may change in a cluster, and what it asks fi
 
 ## What is enforced today
 
-The framework that sends changes to Kubernetes objects exists ([How a write goes](#how-a-write-goes-853)), but no page offers an action through it yet, so no tier applies to a real object. What the level does today:
+The framework that sends changes to Kubernetes objects exists ([How a write goes](#how-a-write-goes-853)). The first actions on it are the Resources page's Scale, Restart and Suspend or resume ([#857](https://github.com/skel84/freshkube/issues/857), `write/everyday.rs`), all reversible tier. What the level does today:
 
 | Writer | `read-only` | `protected`, `guarded`, `open` |
 |--------|-------------|--------------------------------|
@@ -48,6 +48,7 @@ A tier belongs to the action and is declared in core, never by a page. The acces
 
 - `open` skips only the reversible tier's confirmation. Nothing else loosens at `open`.
 - For an action on several objects, "the name" is the entry's `id`, typed once. The impact preview lists every object.
+- A reversible action with no way back has no Undo: Restart stamps the pod template and a rollout can't be taken back, so its toast offers none. The tier's confirmation still applies.
 - A level's block is shown the way a denied access review is: the action is disabled with its reason, never hidden.
 
 ### Sessions

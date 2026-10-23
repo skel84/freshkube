@@ -37,6 +37,15 @@ impl Workload {
         }
     }
 
+    fn offered(self) -> &'static [Everyday] {
+        match self {
+            Self::Deployment | Self::StatefulSet => &[Everyday::Scale, Everyday::Restart],
+            Self::ReplicaSet => &[Everyday::Scale],
+            Self::DaemonSet => &[Everyday::Restart],
+            Self::CronJob => &[Everyday::Suspend],
+        }
+    }
+
     fn resource(self) -> &'static str {
         match self {
             Self::Deployment => "deployments",
@@ -46,6 +55,13 @@ impl Workload {
             Self::CronJob => "cronjobs",
         }
     }
+}
+
+/// The everyday actions a kind offers, by its API group and kind (`apps`,
+/// `Deployment`); none for a kind with none. A list asks this before it has
+/// read the object.
+pub fn offered_for(group: &str, kind: &str) -> &'static [Everyday] {
+    Workload::of(group, kind).map_or(&[], Workload::offered)
 }
 
 /// Which everyday actions a kind offers.
@@ -128,14 +144,7 @@ impl Subject {
 
     /// The everyday actions this kind has.
     pub fn offered(&self) -> Vec<Everyday> {
-        match self.workload {
-            Workload::Deployment | Workload::StatefulSet => {
-                vec![Everyday::Scale, Everyday::Restart]
-            }
-            Workload::ReplicaSet => vec![Everyday::Scale],
-            Workload::DaemonSet => vec![Everyday::Restart],
-            Workload::CronJob => vec![Everyday::Suspend],
-        }
+        self.workload.offered().to_vec()
     }
 
     /// The replica count it has now (a missing one is the API's default, 1).
@@ -204,6 +213,56 @@ impl Subject {
             Some(tool) => format!("{what}.{}", tool.warning()),
             None => format!("{what}."),
         }
+    }
+}
+
+/// What a list row names: the kind and the object's address, with the UID the
+/// row was listed with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub group: String,
+    pub version: String,
+    pub kind: String,
+    pub resource: String,
+    pub namespace: Option<String>,
+    pub name: String,
+    pub uid: String,
+}
+
+impl Subject {
+    /// Reads the object a row names, as it is now, so the action is
+    /// described against the UID and resourceVersion the person is about to
+    /// act on. An object that is another one now (a different UID) is not
+    /// acted on.
+    pub async fn read(client: &kube::Client, row: &Row) -> Result<Self, String> {
+        use super::send::{Refusal, get};
+        let target = Target {
+            group: row.group.clone(),
+            version: row.version.clone(),
+            kind: row.kind.clone(),
+            resource: row.resource.clone(),
+            namespace: row.namespace.clone(),
+            name: row.name.clone(),
+            uid: row.uid.clone(),
+            resource_version: String::new(),
+            subresource: None,
+        };
+        let object = get(client, &target)
+            .await
+            .map_err(|refusal| match refusal {
+                Refusal::Changed(what) => format!("{}: {}", target.label(), what.text()),
+                Refusal::Denied(why) => {
+                    format!("You are not allowed to read {}: {why}", target.label())
+                }
+                _ => format!("{} could not be read.", target.label()),
+            })?;
+        if object["metadata"]["uid"].as_str() != Some(row.uid.as_str()) {
+            return Err(format!(
+                "{} is a different object now. Refresh the list.",
+                target.label()
+            ));
+        }
+        Self::from_object(&object).ok_or_else(|| format!("{} has no action here.", target.label()))
     }
 }
 

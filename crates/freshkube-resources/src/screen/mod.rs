@@ -89,7 +89,10 @@ actions!(
         SelectGroup,
         OpenNode,
         ToggleHealthy,
-        FollowCrashLoop
+        FollowCrashLoop,
+        ScaleSelected,
+        RestartSelected,
+        SuspendSelected
     ]
 );
 
@@ -166,6 +169,9 @@ pub fn title(kind: &ResourceKind) -> SharedString {
 #[derive(Clone, Debug)]
 pub struct NotServed(pub ResourceKind);
 
+pub use acts::WorkloadAct;
+use freshkube_core::write::everyday::Everyday;
+
 pub struct ResourcesScreen {
     field_selector: Option<String>,
     embedded: bool,
@@ -236,6 +242,8 @@ pub struct ResourcesScreen {
     /// Reads pods' use while the pods list shows.
     usage: Watch<UsageRead, (String, Option<String>)>,
     usage_state: UsageState,
+    /// Why writes are not allowed on this cluster, set by the shell.
+    write_block: Option<&'static str>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -266,6 +274,9 @@ impl ResourcesScreen {
             KeyBinding::new("shift-x", SelectGroup, Some(CONTEXT)),
             KeyBinding::new("o", OpenNode, Some(CONTEXT)),
             KeyBinding::new("h", ToggleHealthy, Some(CONTEXT)),
+            KeyBinding::new("s", ScaleSelected, Some(CONTEXT)),
+            KeyBinding::new("r", RestartSelected, Some(CONTEXT)),
+            KeyBinding::new("p", SuspendSelected, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
@@ -417,6 +428,7 @@ impl ResourcesScreen {
             marked: BTreeSet::new(),
             usage: Watch::default(),
             usage_state: UsageState::default(),
+            write_block: None,
             _subscriptions: subscriptions,
         }
     }
@@ -1412,6 +1424,7 @@ pub enum NodePodsEvent {
 }
 impl EventEmitter<NodePodsEvent> for ResourcesScreen {}
 
+mod acts;
 mod cells;
 mod controls;
 mod layout;
