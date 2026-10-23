@@ -43,6 +43,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
+#[cfg(test)]
+use super::Target;
 use super::{Change, Gap, Missing};
 use crate::applications::ArgoFound;
 use crate::applications::read::{
