@@ -13,6 +13,7 @@ use freshkube_ui::motion::Choice;
 use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
+use freshkube_delivery::timeline::example::Shape as TimelineShape;
 
 /// `FRESHKUBE_THEME`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,6 +98,10 @@ pub struct DebugOptions {
     /// (`firing`, `quiet`, `not-found`, `refused`, `several`, `no-label`,
     /// `stale`, `rules-only`); anything else is `firing`.
     pub(crate) alerts: AlertsShape,
+    /// `FRESHKUBE_TIMELINE`: what the application Timeline's example sources
+    /// could read (`busy`, `quiet`, `partial`, `short-events`, `none-read`);
+    /// anything else is `busy`.
+    pub(crate) timeline: TimelineShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -178,6 +183,9 @@ impl DebugOptions {
             applications: Variant::parse(text("FRESHKUBE_APPLICATIONS").as_deref()),
             alerts: text("FRESHKUBE_ALERTS")
                 .and_then(|shape| AlertsShape::parse(&shape))
+                .unwrap_or_default(),
+            timeline: text("FRESHKUBE_TIMELINE")
+                .and_then(|shape| TimelineShape::parse(&shape))
                 .unwrap_or_default(),
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
@@ -443,6 +451,28 @@ mod tests {
     }
 
     #[test]
+    fn timeline_takes_each_shape_and_falls_back_to_busy() {
+        for name in TimelineShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_TIMELINE", name)]).timeline,
+                TimelineShape::parse(name).unwrap(),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_TIMELINE", "partial")]).timeline,
+            TimelineShape::Partial
+        );
+        for bad in ["Partial", "", "busy ", "nope"] {
+            assert_eq!(
+                parse(&[("FRESHKUBE_TIMELINE", bad)]).timeline,
+                TimelineShape::Busy,
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn alerts_takes_each_shape_and_falls_back_to_firing() {
         for name in AlertsShape::NAMES {
             assert_eq!(
@@ -563,6 +593,7 @@ mod tests {
                     | "FRESHKUBE_FIXTURE_HOLD"
                     | "FRESHKUBE_APPLICATIONS"
                     | "FRESHKUBE_ALERTS"
+                    | "FRESHKUBE_TIMELINE"
             )
             .then(bad)
         });
@@ -571,6 +602,7 @@ mod tests {
         assert_eq!(options.hold, Hold::default());
         assert_eq!(options.applications, Variant::Acme);
         assert_eq!(options.alerts, AlertsShape::Firing);
+        assert_eq!(options.timeline, TimelineShape::Busy);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }
