@@ -237,13 +237,13 @@ A stub MCP server in `tests/support/` stands in for the endpoint. The end-to-end
 
 ### The live check
 
-Run once by the lead on a Mac, at `0ed1df5`, with opencode 2.1.3 signed in to a model provider, an in-process stub for the endpoint and invented data (no cluster). **It failed**, and the live acceptance check is not counted as passed:
+First run by the lead on a Mac, at `0ed1df5`, with opencode 2.1.3 signed in to a model provider, an in-process stub for the endpoint and invented data (no cluster). **It failed**, and the live acceptance check is not counted as passed. Rows 2 and 3 were repeated on 23 October 2026 at `7b5f670a5adf2280a67689f5b20c02dcf136fdf3` (main after #958), using the same setup, shared provider login and `openai/gpt-6.1-sol`, with no cluster, kubeconfig or context. They still did not pass. Killing the harness again ended opencode and its private server, in 0.036 s:
 
 | Check | Result |
 | --- | --- |
 | The profile's permissions and `default_agent` as opencode reads them | The private `opencode api --standalone config.get` matched the profile's document, all seven agents included. `opencode debug config` and `debug agents` attach the shared service and showed the person's own configuration; they are not what an agent session uses. |
-| opencode refuses a shell, a file read and a fetch | Not shown: the model was offered none of these, so no permission request was made. Repeat with Code Mode off for our server (#946). |
-| The first MCP `tool_call.name` is `freshkube_get_object` | Not shown: the model was offered none of Freshkube's tools (the Code Mode point above). Repeat with `codemode: false` (#946). |
+| opencode refuses a shell, a file read and a fetch | Still not demonstrated on the repeat: prompted separately to run `printf 946-shell`, read `/etc/hosts` and fetch `https://example.com`, the model reported `shell`, `read` and `webfetch` unavailable. For each: permission request none, answer none; the ACP observer recorded zero permission exchanges. These are unavailable-tool responses, not observed permission refusals (#946). |
+| The first MCP `tool_call.name` is `freshkube_get_object` | Failed on the repeat: the model reported an empty tool list, the ACP observer recorded zero `tool_call` notifications, and the stub received zero tool calls. `execute` was also reported unavailable. Although the profile supplied `mcp.freshkube.codemode: false`, the private server's parsed inline document contained no `mcp` field; opencode 2.1.3's [configuration schema](https://github.com/anomalyco/opencode/blob/e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b/packages/schema/src/config/mcp.ts) expects `mcp.servers`, and its [server entries](https://github.com/anomalyco/opencode/blob/e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b/packages/schema/src/mcp.ts) require a transport. #958 has not established that the four tools are offered directly (#946). |
 | An organisation login, then a refused start | Skipped; it needs an organisation sign-in. |
 | `opencode --version` loads no config and uses no network | Passed under a sandbox that denied both. |
 | Project configuration is off | Passed: both `OPENCODE_CONFIG_PROJECT_DISABLE` and `OPENCODE_DISABLE_PROJECT_CONFIG` work on 2.1.3. |
