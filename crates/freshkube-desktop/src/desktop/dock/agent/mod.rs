@@ -567,6 +567,7 @@ impl AgentView {
         self.session = None;
         // The page is handed back, so the followed log tab goes with it.
         self.hand_back(cx);
+        cx.emit(AgentEvent::Ended);
         self.follow = None;
         self.listening = None;
         self.check = None;
@@ -667,6 +668,7 @@ impl AgentView {
         self.working = false;
         self.elapsed.update(cx, |elapsed, cx| elapsed.stop(cx));
         self.hand_back(cx);
+        cx.emit(AgentEvent::Ended);
         if let Some(reason) = reason {
             self.notice = Some(Notice::Failed(reason));
         }

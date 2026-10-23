@@ -43,6 +43,8 @@ pub(crate) enum AgentEvent {
     /// Following started again (Jump, the toggle, the next question): the
     /// hand-back toast has nothing left to offer.
     Resumed,
+    /// The session or the tab ended: a hand-back toast has nothing to resume.
+    Ended,
 }
 
 impl EventEmitter<AgentEvent> for AgentView {}

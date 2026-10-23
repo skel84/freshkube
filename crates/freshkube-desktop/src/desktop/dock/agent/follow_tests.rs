@@ -1107,3 +1107,104 @@ fn the_click_that_hands_back_selects_the_row_under_it(cx: &mut TestAppContext) {
         "the page moved up by the strip"
     );
 }
+
+fn hand_back_by_click(tab: &Tab, cx: &mut TestAppContext) {
+    tab.draw(cx);
+    cx.update_window(tab.handle, |_, window, cx| window.click("nav-nodes", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(!tab.following(cx));
+    assert_eq!(toasts(tab, cx), 1);
+}
+
+#[gpui_kit::test]
+fn the_hand_back_toast_goes_with_the_session(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    hand_back_by_click(&tab, cx);
+    tab.view
+        .update(cx, |view, cx| view.end_session_for_test(cx));
+    assert_eq!(toasts(&tab, cx), 0);
+}
+
+#[gpui_kit::test]
+fn the_hand_back_toast_goes_with_the_cluster(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    hand_back_by_click(&tab, cx);
+    cx.update_window(tab.handle, |_, window, cx| {
+        tab.pilot.update(cx, |pilot, cx| {
+            pilot.switch_cluster("dev-fra".into(), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(toasts(&tab, cx), 0);
+}
+
+#[gpui_kit::test]
+fn a_move_with_the_button_down_keeps_the_strips_room(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    hand_back_by_click(&tab, cx);
+    assert!(tab.present("follow-spacer", cx));
+    let target = cx
+        .update_window(tab.handle, |_, window, _| {
+            window.find("page-cell").bounds().center()
+        })
+        .unwrap();
+    let moved = |button: Option<gpui_kit::MouseButton>, cx: &mut TestAppContext| {
+        cx.update_window(tab.handle, |_, window, cx| {
+            window.dispatch_event(
+                gpui_kit::PlatformInput::MouseMove(gpui_kit::MouseMoveEvent {
+                    position: target,
+                    pressed_button: button,
+                    modifiers: Default::default(),
+                }),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    moved(Some(gpui_kit::MouseButton::Left), cx);
+    assert!(tab.present("follow-spacer", cx), "down: the room stays");
+    moved(None, cx);
+    assert!(!tab.present("follow-spacer", cx), "free: the room goes");
+}
+
+#[gpui_kit::test]
+fn a_hand_back_open_waits_for_a_window_that_is_still_loading(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    tab.view.update(cx, |view, cx| {
+        view.record(
+            freshkube_agent::investigation::Event::Prompt("q".into()),
+            cx,
+        );
+    });
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    let before = tab.shown(cx);
+    cx.update(|cx| tab.pilot.update(cx, |pilot, _| pilot.config_loading = true));
+    tab.click("agent-trail-r1", cx);
+    assert_eq!(tab.shown(cx), before, "the guard held the move");
+}

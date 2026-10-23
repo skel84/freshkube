@@ -281,8 +281,10 @@ impl Pilot {
             |_, _, _| (),
             move |_, _, window, _| {
                 let pilot = pilot.clone();
-                window.on_mouse_event(move |_: &MouseMoveEvent, phase, _, cx| {
-                    if phase == DispatchPhase::Capture {
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                    // A move while the button is still down belongs to the
+                    // click; only a free pointer gives the room back.
+                    if phase == DispatchPhase::Capture && event.pressed_button.is_none() {
                         _ = pilot.update(cx, |pilot, cx| {
                             pilot.follow_spacer = false;
                             cx.notify();
