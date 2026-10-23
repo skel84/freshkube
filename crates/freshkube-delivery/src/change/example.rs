@@ -63,8 +63,7 @@ pub fn freight_of(project: &str, stage: &str) -> Option<&'static str> {
 }
 
 /// The change of a Stage of a project, when example mode has one.
-#[cfg(test)]
-pub(crate) fn for_stage(project: &str, stage: &str, now: DateTime<Utc>) -> Option<Change> {
+pub fn for_stage(project: &str, stage: &str, now: DateTime<Utc>) -> Option<Change> {
     freight_of(project, stage).map(|_| change(now))
 }
 
@@ -254,6 +253,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
         link: stage_link(name),
         reach: Reach::Linked(Confidence::Confirmed),
         object: stage_object(name),
+        acts: Some(example_acts(name)),
     };
     vec![
         stage(
@@ -347,6 +347,49 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
             ],
         ),
     ]
+}
+
+/// What a Stage's actions need in the example: handles a cluster would have
+/// read (invented UIDs, a resourceVersion), and what the Freight holds.
+///
+/// The writes follow Kargo's API package, `github.com/akuity/kargo/api/v1alpha1`
+/// at v1alpha1 (`AnnotationKeyRefresh`, `AnnotationKeyReverify`,
+/// `AnnotationKeyAbort`, `AbortPromotionRequest`; pkg.go.dev lists them):
+/// refresh goes on a Stage or a Warehouse with any changing token, reverify
+/// on a Stage with the id of the verification to repeat, abort on the
+/// Promotion with `{"action":"terminate"}`, and Promote creates a `Promotion`
+/// whose `spec` names the `stage` and the `freight`.
+pub fn example_acts(name: &str) -> crate::acts::StageActs {
+    use crate::acts::{Handle, StageActs};
+    let handle = |kind: &str, name: &str| Handle {
+        name: name.into(),
+        uid: format!("uid-{kind}-{name}"),
+        resource_version: "100".into(),
+    };
+    StageActs {
+        project: PROJECT.into(),
+        stage: handle("stage", name),
+        freight: FREIGHT.into(),
+        // dev and stage run it; so does prod-lon, whose verification failed.
+        holds: name != "prod-ams",
+        warehouse: Some(handle("warehouse", "checkout-images")),
+        promoting: Vec::new(),
+        verification: (name != "prod-ams").then(|| format!("ver-{name}-1")),
+        // Kargo's newest history entry maps each origin to the Freight.
+        current: vec![(
+            "/status/freightHistory/0/items/Warehouse~1checkout-images/name".into(),
+            if name == "prod-ams" {
+                PREVIOUS
+            } else {
+                FREIGHT
+            }
+            .into(),
+        )],
+        would_run: vec![
+            format!("Image {REGISTRY}/acme/checkout-api:1.14.2 @ {DIGEST}"),
+            format!("Commit {COMMIT}: {TITLE}"),
+        ],
+    }
 }
 
 /// Why an example Stage follows its parent without a confirmed join key.
@@ -984,6 +1027,66 @@ fn name_causes(hops: &mut [Hop]) {
     }
 }
 
+/// [`Shape::Promoting`]: a Promotion of the Freight to `prod-ams`, made by
+/// someone else, is running.
+fn promoting(change: &mut Change) {
+    use crate::acts::{Handle, Promoting};
+    let Some(stage) = change.stages.iter_mut().find(|s| s.name == "prod-ams") else {
+        return;
+    };
+    stage.state = Info;
+    stage.words = "Promoting".into();
+    stage.promotion = Promotion::Running {
+        phase: "Running".into(),
+    };
+    if let Some(acts) = &mut stage.acts {
+        acts.promoting = vec![Promoting {
+            promotion: Handle {
+                name: format!(
+                    "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.{}",
+                    FREIGHT.chars().take(7).collect::<String>()
+                ),
+                uid: "uid-promotion-prod-ams-running".into(),
+                resource_version: "100".into(),
+            },
+            freight: FREIGHT.into(),
+            phase: "Running".into(),
+            ran: vec![
+                "git-clone: Succeeded".into(),
+                "kustomize-set-image: Succeeded".into(),
+                "git-push: Running".into(),
+            ],
+            pushed: vec![],
+        }];
+    }
+    // The Promotion row and what it waits for come from the running Promotion,
+    // not from auto-promotion being off.
+    let running = "Promoting: Kargo reports Running, at git-push (2 of 4 steps done)";
+    for hop in change
+        .hops
+        .iter_mut()
+        .filter(|h| h.key == "prod-ams-promotion")
+    {
+        hop.state = Info;
+        hop.detail = running.into();
+        // Nothing is waited for: the Promotion is running, so no cause (and no
+        // Waiting chip) is derived for this row.
+        hop.cause = None;
+    }
+    let Some(stage) = change.stages.iter_mut().find(|s| s.name == "prod-ams") else {
+        return;
+    };
+    for check in &mut stage.steps {
+        if check.name == "git-clone" || check.name == "kustomize-set-image" {
+            check.state = Healthy;
+            check.found = "done".into();
+        } else if check.name == "git-push" {
+            check.state = Info;
+            check.found = "running".into();
+        }
+    }
+}
+
 /// [`Shape::Causes`]: the whole change, with its policy result missing and
 /// the Application of `stage` unfound, beside the waiting Stage and the
 /// forbidden pods it already has, so one change shows every cause.
@@ -1181,6 +1284,9 @@ pub enum Shape {
     /// promotion, pods a user may not list, a policy result that isn't
     /// there, and an Application the setup never told how to find.
     Causes,
+    /// Someone else's Promotion of the Freight to `prod-ams` is running, so
+    /// the Stage offers Abort in place of Promote.
+    Promoting,
 }
 
 impl Shape {
@@ -1209,6 +1315,7 @@ impl Shape {
             | Self::Spread
             | Self::ImageOnly
             | Self::Causes
+            | Self::Promoting
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline => None,
@@ -1246,6 +1353,10 @@ impl Shape {
             all_causes(&mut change);
             return Ok(change);
         }
+        if self == Self::Promoting {
+            promoting(&mut change);
+            return Ok(change);
+        }
         if let Some(trouble) = self.github() {
             github(&mut change, trouble);
             return Ok(change);
@@ -1258,6 +1369,7 @@ impl Shape {
             | Self::Spread
             | Self::ImageOnly
             | Self::Causes
+            | Self::Promoting
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline => {}
