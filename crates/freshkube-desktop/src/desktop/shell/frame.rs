@@ -237,10 +237,7 @@ impl Pilot {
         } else {
             (
                 glyph(Tone::Unknown),
-                self.overview
-                    .error()
-                    .map(|error| format!("Couldn't read the cluster: {error}"))
-                    .unwrap_or_else(|| "Couldn't read the cluster".into()),
+                overview_unavailable(self.overview.error().map(String::as_str)),
             )
         };
         (
@@ -531,5 +528,28 @@ impl Pilot {
                 }))
                 .into_any_element(),
         )
+    }
+}
+
+/// The status bar's words when the overview has no data, isn't loading and
+/// isn't stale: a failure only when there is an error, otherwise Unknown.
+pub(super) fn overview_unavailable(error: Option<&str>) -> String {
+    match error {
+        Some(error) => format!("Couldn't read the cluster: {error}"),
+        None => "Haven't read the cluster yet".into(),
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::overview_unavailable;
+
+    #[test]
+    fn the_status_bar_keeps_unknown_apart_from_failed() {
+        assert_eq!(overview_unavailable(None), "Haven't read the cluster yet");
+        assert_eq!(
+            overview_unavailable(Some("connection refused")),
+            "Couldn't read the cluster: connection refused"
+        );
     }
 }

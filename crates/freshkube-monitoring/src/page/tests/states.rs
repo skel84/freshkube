@@ -11,7 +11,9 @@ fn without_a_source_the_page_says_it_is_not_connected(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn discovery_states_show_what_was_looked_for_and_offer_retry(cx: &mut TestAppContext) {
+fn discovery_states_show_what_was_looked_for_and_a_refusal_offers_no_retry(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, page) = mount(cx, Some(example_source()));
     show(cx, handle, &page);
     let service = PrometheusService::new("monitoring", "metrics", 9090);

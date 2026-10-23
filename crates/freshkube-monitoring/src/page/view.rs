@@ -1,7 +1,7 @@
 //! Drawing the page: the header with the time picker and auto-refresh, the
 //! variables, then the grid or the state that stands in for it. Everything
 //! shown was derived when it changed; `render` only reads it.
-use freshkube_core::monitoring::{LOOKED_FOR, catalog::REFRESH_CHOICES, catalog::refresh_label};
+use freshkube_core::monitoring::{catalog::REFRESH_CHOICES, catalog::refresh_label};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, Sizable,
@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 
 use super::board::Board;
-use super::connection::{Connection, Missing};
+use super::connection::{Connection, Missing, not_set_up_state};
 use super::layout::{NARROW, ROW_HEADER};
 use super::markers::MarkerToggle;
 use super::{MonitoringEvent, MonitoringPage, Section, Viewport};
@@ -25,7 +25,7 @@ use crate::panel::marker_glyph;
 use crate::store::Choice;
 use crate::ui::{self, dp, dp_px};
 use freshkube_ui::page::{self, Fold, MenuItems, PageHeader};
-use freshkube_ui::read_state::{ReadActions, ReadState, read_state};
+use freshkube_ui::read_state::{ReadActions, read_state};
 use std::rc::Rc;
 
 impl Render for MonitoringPage {
@@ -456,28 +456,21 @@ impl MonitoringPage {
                 cx,
             )
             .into_any_element(),
-            Connection::Unknown(why) => {
-                let state = ReadState::NotSetUp {
-                    what: "A metrics source".into(),
-                    gap: "Freshkube doesn't know which metrics store to read for this cluster, so it asked nothing. Prometheus is optional; the rest of Freshkube works without it.".into(),
-                    setting: Some("Monitoring".into()),
-                };
-                div()
-                    .id("monitoring-unknown")
-                    .size_full()
-                    .child(read_state(
-                        "monitoring-not-set-up",
-                        &state,
-                        ReadActions {
-                            open_settings: Some(open_settings_button("monitoring-open-settings")),
-                            details: Some(why.to_string()),
-                            ..ReadActions::default()
-                        },
-                        cx,
-                    ))
-                    .test_support()
-                    .into_any_element()
-            }
+            Connection::Unknown(why) => div()
+                .id("monitoring-unknown")
+                .size_full()
+                .child(read_state(
+                    "monitoring-not-set-up",
+                    not_set_up_state(),
+                    ReadActions {
+                        open_settings: Some(open_settings_button("monitoring-open-settings")),
+                        details: Some(why.to_string()),
+                        ..ReadActions::default()
+                    },
+                    cx,
+                ))
+                .test_support()
+                .into_any_element(),
             _ => self.render_grid(narrow, short, window, cx),
         }
     }
@@ -509,25 +502,12 @@ impl MonitoringPage {
                     .into_any_element()
             })
             .collect();
-        let cluster = self.source.as_ref().map_or_else(
-            || "this cluster".to_owned(),
-            |source| source.context.to_string(),
-        );
-        let state = ReadState::NotInstalled {
-            tool: "Prometheus".into(),
-            adds: "charts of CPU, memory and your own queries".into(),
-            cluster,
-        };
-        let mut details = format!("Looked for {LOOKED_FOR}.");
-        if let Some(tried) = &missing.tried {
-            details = format!("{details}\n{tried}");
-        }
         read_state(
-            "monitoring-not-installed",
-            &state,
+            "monitoring-not-found",
+            &missing.state,
             ReadActions {
                 open_settings: Some(open_settings_button("monitoring-open-settings")),
-                details: Some(details),
+                details: Some(missing.details.clone()),
                 extra: {
                     actions.push(retry("monitoring-retry", "Look again"));
                     actions
@@ -536,6 +516,7 @@ impl MonitoringPage {
             },
             cx,
         )
+        .into_any_element()
     }
 
     /// The dashboard's rows and panels, scrolled as one: by the grid, or by

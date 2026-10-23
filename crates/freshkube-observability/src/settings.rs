@@ -82,15 +82,27 @@ impl ObservabilityPage {
         } else {
             format!("Couldn't read {}", self.destination.label().to_lowercase())
         };
+        // A refusal gets no Retry: asking again gets the same answer.
+        let actions = if unreadable_offers_retry(refused) {
+            vec![
+                action("obs-retry", "Retry")
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
+                    .into_any_element(),
+            ]
+        } else {
+            Vec::new()
+        };
         Some(
             ui::empty_state(
-                if refused { IconName::Shield } else { IconName::TriangleAlert },
+                if refused {
+                    IconName::Shield
+                } else {
+                    IconName::TriangleAlert
+                },
                 title,
-                "Coroot did not answer, so nothing is shown. That does not mean the project is empty.",
+                unreadable_words(refused),
                 error.cloned(),
-                vec![action("obs-retry", "Retry")
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
-                    .into_any_element()],
+                actions,
                 cx,
             )
             .id(if refused { "obs-refused" } else { "obs-failed" })
@@ -269,5 +281,33 @@ impl ObservabilityPage {
             );
         }
         None
+    }
+}
+
+/// What an unreadable Coroot page says: a refusal and a failure are not
+/// the same, and neither says the project is empty.
+pub(super) fn unreadable_words(refused: bool) -> &'static str {
+    if refused {
+        "Coroot refused the request, so nothing is shown. That does not mean the project is empty."
+    } else {
+        "Coroot did not answer, so nothing is shown. That does not mean the project is empty."
+    }
+}
+
+/// Retry is for a failure, never a refusal.
+pub(super) fn unreadable_offers_retry(refused: bool) -> bool {
+    !refused
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::{unreadable_offers_retry, unreadable_words};
+
+    #[test]
+    fn a_refusal_is_not_an_unanswered_read_and_offers_no_retry() {
+        assert!(unreadable_words(true).starts_with("Coroot refused"));
+        assert!(unreadable_words(false).starts_with("Coroot did not answer"));
+        assert!(!unreadable_offers_retry(true));
+        assert!(unreadable_offers_retry(false));
     }
 }

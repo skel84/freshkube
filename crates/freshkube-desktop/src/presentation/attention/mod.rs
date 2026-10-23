@@ -119,6 +119,9 @@ pub(crate) struct Attention {
     pub(crate) complete: bool,
     /// What couldn't be read now, in plain words, when `complete` is false.
     pub(crate) unread: Vec<&'static str>,
+    /// The empty list's sentence when it may be incomplete, derived when
+    /// the rows are.
+    pub(crate) incomplete_note: SharedString,
     pub(crate) rows: Vec<AttentionRow>,
     pub(crate) details: GroupDetails,
     pub(crate) by_node: BTreeMap<String, Vec<AttentionRow>>,
@@ -257,6 +260,7 @@ pub(crate) fn build_with_alerts(
             .collect();
     }
     result.complete = kubernetes.is_some() && result.unread.is_empty();
+    result.incomplete_note = incomplete_note(&result.unread).into();
     result
 }
 
@@ -614,6 +618,7 @@ fn finish(mut rows: Vec<AttentionRow>) -> Attention {
     Attention {
         complete: false,
         unread: Vec::new(),
+        incomplete_note: SharedString::default(),
         rows,
         details: details(counts),
         by_node,
@@ -628,3 +633,15 @@ fn finish(mut rows: Vec<AttentionRow>) -> Attention {
 
 #[cfg(test)]
 mod tests;
+
+/// What an empty list says when something couldn't be read.
+fn incomplete_note(unread: &[&str]) -> String {
+    if unread.is_empty() {
+        "Nothing has been read yet, so this list may be incomplete.".to_owned()
+    } else {
+        format!(
+            "Couldn't read {}, so this list may be incomplete.",
+            unread.join(", ")
+        )
+    }
+}

@@ -146,14 +146,9 @@ pub(in crate::desktop) fn render_attention(
             .text_size(dp(12.5))
             .text_color(p.muted)
             .child(if attention.complete {
-                "No problems reported".to_owned()
-            } else if attention.unread.is_empty() {
-                "Nothing has been read yet, so this list may be incomplete.".to_owned()
+                SharedString::from("No problems reported")
             } else {
-                format!(
-                    "Couldn't read {}, so this list may be incomplete.",
-                    attention.unread.join(", ")
-                )
+                attention.incomplete_note.clone()
             })
     });
     let body = v_flex().children(bar).children(empty).child(

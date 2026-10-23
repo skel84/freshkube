@@ -416,6 +416,32 @@ fn a_refused_read_with_nothing_found_is_never_empty(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// A refusal says what was refused in plain words, offers the Role to ask
+/// for and no Retry: asking again gets the same answer.
+#[gpui_kit::test]
+fn a_refusal_offers_a_read_only_access_request_and_no_retry(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) =
+        open(cx, 1280., 880., |page| page.set_variant(Variant::Refused));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("applications-copy-access").visible());
+        assert!(window.try_find("applications-retry").is_none());
+        window.click("applications-copy-access", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let copied = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text())
+        .expect("the Role was copied");
+    assert!(copied.contains("kind: ClusterRole"), "{copied}");
+    assert!(
+        copied.contains("verbs: [\"get\", \"list\", \"watch\"]"),
+        "{copied}"
+    );
+    assert!(!copied.to_lowercase().contains("secrets"), "{copied}");
+}
+
 #[gpui_kit::test]
 fn the_refused_state_holds_a_packaged_icon_at_every_text_size(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) =

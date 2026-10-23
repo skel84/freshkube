@@ -6,6 +6,7 @@
 //! An unread source is never "no applications". With none found, a refused
 //! read is the refused state and a failed one the failed state; only when
 //! every source answered (or isn't served) is it the empty state.
+use freshkube_ui::read_state::ReadState;
 use std::collections::{BTreeMap, BTreeSet};
 
 use freshkube_core::resources::FailureKind;
@@ -188,8 +189,9 @@ pub enum Body {
         title: SharedString,
         description: SharedString,
         reason: SharedString,
-        /// The read-only Role to ask an administrator for.
-        access: SharedString,
+        /// The state the page draws it with; `title`, `description`,
+        /// `reason` and the access request are its words.
+        state: ReadState,
     },
     /// No applications, and a source failed: nothing is known missing.
     Failed {
@@ -904,16 +906,17 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
         }
     };
     if !refused.is_empty() {
+        let state = ReadState::Refused {
+            what: sources(&refused),
+            cluster: clusters(&refused),
+            manifest: Some(access_request(&refused)),
+            reason: Some(reason(&refused).to_string()),
+        };
         let body = Body::Refused {
-            title: format!("Not permitted to list {}", sources(&refused)).into(),
-            description: format!(
-                "The identity of {} may not list {}. That says nothing about whether any applications exist.",
-                clusters(&refused),
-                sources(&refused)
-            )
-            .into(),
+            title: state.title().into(),
+            description: state.description().into(),
             reason: reason(&refused),
-            access: access_request(&refused).into(),
+            state,
         };
         return (
             body,
@@ -1124,11 +1127,22 @@ mod tests {
         let mut session = empty_session();
         session.workloads = Source::Refused("deployments.apps is forbidden".into());
         let display = shown(&one(session));
-        let Body::Refused { access, .. } = &display.body else {
+        let Body::Refused { state, .. } = &display.body else {
             panic!("{:?}", display.body);
         };
+        let access = state.access_request().expect("a Role to ask for");
         assert!(access.contains("kind: ClusterRole"), "{access}");
         assert!(access.contains("\"deployments\""), "{access}");
+        // Read-only, and never Secrets.
+        assert!(
+            access.contains("verbs: [\"get\", \"list\", \"watch\"]"),
+            "{access}"
+        );
+        assert!(!access.to_lowercase().contains("secrets"), "{access}");
+        assert!(
+            !access.contains("create") && !access.contains("delete"),
+            "{access}"
+        );
     }
 
     #[test]
@@ -1175,7 +1189,7 @@ mod tests {
         let Body::Refused { title, reason, .. } = &display.body else {
             panic!("{:?}", display.body);
         };
-        assert_eq!(title.as_ref(), "Not permitted to list labelled workloads");
+        assert_eq!(title.as_ref(), "Not allowed to read labelled workloads");
         assert_eq!(reason.as_ref(), "deployments.apps is forbidden");
         assert!(display.missing_text.is_none(), "the state says it already");
     }
