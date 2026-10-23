@@ -190,6 +190,8 @@ pub(crate) struct SettingsPage {
     kubeconfig_path: Option<SharedString>,
     /// A list section's frame, which scrolls in a short window.
     page_scroll: ScrollHandle,
+    /// The page's banners keep their own scroll when capped.
+    banners_scroll: ScrollHandle,
     /// Monitoring's form scrolls independently from the workspace lists.
     monitoring_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -411,6 +413,7 @@ impl SettingsPage {
                 trail: inspector::Pane::new(inspector::STACKED_HEIGHT).least(80.),
             }),
             page_scroll: ScrollHandle::new(),
+            banners_scroll: ScrollHandle::new(),
             monitoring_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             section: SettingsSection::default(),
@@ -797,6 +800,25 @@ impl SettingsPage {
 }
 
 impl SettingsPage {
+    fn render_banner_block(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
+        page::capped_notes(
+            "settings-banners",
+            if page::is_short(window) {
+                dp(48.).into()
+            } else {
+                gpui_kit::Length::Auto
+            },
+            &self.banners_scroll,
+            self.render_banners(cx),
+            None,
+        )
+        .min_h_0()
+    }
+
     /// The toolbar: Add, and the actions on the selected cluster. Each acts
     /// on the selection, and each is off, with its reason in the tooltip,
     /// while nothing can be saved or nothing is selected.
@@ -1039,19 +1061,7 @@ impl SettingsPage {
         page::page("settings-page")
             .overflow_hidden()
             .child(page::toolbar(cx).child(header))
-            .child(
-                page::capped_notes(
-                    "settings-banners",
-                    if page::is_short(window) {
-                        dp(48.).into()
-                    } else {
-                        gpui_kit::Length::Auto
-                    },
-                    self.render_banners(cx),
-                    None,
-                )
-                .min_h_0(),
-            )
+            .child(self.render_banner_block(window, cx))
             .child(split)
             .into_any_element()
     }

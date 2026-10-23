@@ -458,8 +458,7 @@ impl Render for Destinations {
         let banners = self
             .page
             .upgrade()
-            .map(|page| page.read(cx).render_banners(cx))
-            .unwrap_or_default();
+            .map(|page| page.read(cx).render_banner_block(window, cx));
         v_flex()
             .id("settings-destinations")
             .size_full()

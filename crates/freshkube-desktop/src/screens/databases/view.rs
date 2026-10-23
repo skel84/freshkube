@@ -356,6 +356,7 @@ impl Render for DatabasesScreen {
                             page::capped_notes(
                                 "databases-notices",
                                 dp(72.),
+                                &self.notes_scroll,
                                 notice.into_iter().chain(failure),
                                 // A bottom edge, so a clipped banner reads as
                                 // scrollable, not cut off by the table.

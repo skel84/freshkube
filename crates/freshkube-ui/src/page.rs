@@ -5,6 +5,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{ActiveTheme, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use std::cell::{Cell, RefCell};
@@ -12,7 +13,7 @@ use std::rc::Rc;
 
 use gpui_kit::{
     Action, Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla,
-    Length, Pixels, SharedString, Stateful, TestSupportExt, Window, canvas, div, px,
+    Length, Pixels, ScrollHandle, SharedString, Stateful, TestSupportExt, Window, canvas, div, px,
 };
 
 use crate::menu::{self, MenuAction};
@@ -146,15 +147,18 @@ pub fn inset() -> Div {
 /// accepts pixels or dp; [`Length::Auto`] keeps an uncapped block scrollable.
 /// An optional bottom hairline counts towards the cap. The caller keeps its
 /// padding, or draws a separate edge when it must sit outside the scroll.
+/// The scrollbar stays visible whenever the notes overflow the cap.
 pub fn capped_notes(
     id: impl Into<ElementId>,
     cap: impl Into<Length>,
+    scroll: &ScrollHandle,
     children: impl IntoIterator<Item = impl IntoElement>,
     bottom_edge: Option<Hsla>,
 ) -> Observed<Stateful<Div>> {
     let cap: Length = cap.into();
+    let id = id.into();
     div()
-        .id(id)
+        .id(id.clone())
         .test_support()
         .when_some(bottom_edge, |this, color| {
             this.border_b_1().border_color(color)
@@ -162,7 +166,15 @@ pub fn capped_notes(
         .max_h(cap)
         .overflow_y_scroll()
         .restrict_scroll_to_axis()
+        .track_scroll(scroll)
         .children(children)
+        .child(
+            div().absolute().inset_0().child(
+                Scrollbar::vertical(scroll)
+                    .id((id, "scrollbar"))
+                    .mode(ScrollbarMode::Always),
+            ),
+        )
 }
 
 /// A [`page`]'s toolbar: its [`PageHeader`], padded 12 at the sides, with a
@@ -1026,6 +1038,93 @@ mod tests {
     };
 
     use super::*;
+
+    struct Notes {
+        scroll: ScrollHandle,
+        cap: Length,
+    }
+
+    impl Render for Notes {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            v_flex().size_full().child(capped_notes(
+                "notes",
+                self.cap,
+                &self.scroll,
+                [div().flex_none().h(dp(180.))],
+                None,
+            ))
+        }
+    }
+
+    #[gpui_kit::test]
+    fn capped_notes_show_a_scrollbar_only_when_their_content_overflows(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let scroll = ScrollHandle::new();
+        let mut notes = None;
+        let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+            let view = cx.new(|_| Notes {
+                scroll: scroll.clone(),
+                cap: dp(48.).into(),
+            });
+            notes = Some(view.clone());
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let viewport = window.find("notes").bounds();
+            assert!((viewport.size.height - dp_px(48., window)).abs() <= px(1.));
+            // The empty content paints nothing: the only visible narrow quad
+            // is the scrollbar thumb, even before any hover or scroll input.
+            let thumb = |window: &Window| {
+                let viewport = window.find("notes").bounds().scale(window.scale_factor());
+                window
+                    .painted_quads()
+                    .into_iter()
+                    .find(|quad| {
+                        !quad.background.is_transparent()
+                            && quad.bounds.is_contained_within(&viewport)
+                            && quad.bounds.size.width < px(10.).scale(window.scale_factor())
+                            && quad.bounds.size.height > quad.bounds.size.width
+                    })
+                    .map(|quad| quad.bounds)
+            };
+            let before = thumb(window).expect("an overflowing block shows its thumb immediately");
+            window.scroll(
+                "notes",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-4000.))),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(scroll.offset().y < px(0.));
+            assert_eq!(window.find("notes").bounds(), viewport);
+            assert!(
+                thumb(window)
+                    .expect("the thumb stays in the viewport")
+                    .top()
+                    > before.top()
+            );
+            notes.as_ref().unwrap().update(cx, |view, cx| {
+                view.cap = Length::Auto;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                scroll.max_offset().y,
+                px(0.),
+                "uncapped: {:?}, handle {:?}",
+                window.find("notes").bounds(),
+                scroll.bounds()
+            );
+            assert!(thumb(window).is_none(), "an uncapped block needs no thumb");
+        })
+        .unwrap();
+    }
 
     /// Applications-like controls: the first never folds, the rest do.
     const CONTROLS: [f32; 5] = [160., 132., 80., 100., 24.];
