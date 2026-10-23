@@ -125,7 +125,8 @@ impl Render for ScaleDialog {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
+    use super::{MOST, parse};
 
     #[test]
     fn a_count_is_a_whole_number_up_to_the_most() {
