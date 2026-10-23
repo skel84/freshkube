@@ -82,6 +82,8 @@ pub(crate) fn script(context: &str, other_entry: Option<&str>, shape: AgentShape
         tour_pause: match shape {
             // A step that stays running.
             AgentShape::Running | AgentShape::Stopped => Duration::from_secs(3600),
+            // Slower than a hold, so the page shows each place in turn.
+            AgentShape::Following => Duration::from_secs(2),
             _ => Duration::ZERO,
         },
         ..Script::default()

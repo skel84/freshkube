@@ -27,6 +27,10 @@ pub enum AgentShape {
     Answered,
     /// Access is on, the question was asked and Stop pressed.
     Stopped,
+    /// Access is on and the question is asked; the example agent reads a
+    /// place every two seconds, so the page follows it: the list, the
+    /// Deployment, a pod's log in the follow-owned dock tab, and the events.
+    Following,
     /// Access is on; the trail shows a refused shell, a refused read and a
     /// read on another cluster.
     Refused,
@@ -44,7 +48,7 @@ pub enum AgentShape {
 impl AgentShape {
     /// The names `FRESHKUBE_AGENT` takes.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const NAMES: [&'static str; 13] = [
+    pub const NAMES: [&'static str; 14] = [
         "ready",
         "not-installed",
         "unsupported",
@@ -54,6 +58,7 @@ impl AgentShape {
         "running",
         "answered",
         "stopped",
+        "following",
         "refused",
         "save-failed",
         "no-tools",
@@ -71,6 +76,7 @@ impl AgentShape {
             "running" => Self::Running,
             "answered" => Self::Answered,
             "stopped" => Self::Stopped,
+            "following" => Self::Following,
             "refused" => Self::Refused,
             "save-failed" => Self::SaveFailed,
             "no-tools" => Self::NoTools,
@@ -86,6 +92,7 @@ impl AgentShape {
             Self::Running
                 | Self::Answered
                 | Self::Stopped
+                | Self::Following
                 | Self::Refused
                 | Self::SaveFailed
                 | Self::NoTools
@@ -100,6 +107,7 @@ impl AgentShape {
                 | Self::Running
                 | Self::Answered
                 | Self::Stopped
+                | Self::Following
                 | Self::Refused
                 | Self::NoTools
         )
