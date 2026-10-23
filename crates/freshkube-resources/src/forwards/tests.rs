@@ -574,11 +574,12 @@ async fn a_service_without_a_selector_and_a_pod_not_running_fail(cx: &mut TestAp
 async fn stop_all_stops_every_forward_and_frees_their_ports(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let forwards = mount(cx);
+    // System-picked ports keep the post-stop checks independent of other tests.
     let first = forwards
-        .start(cx, forwards.spec("pods", "grafana", 8080, None))
+        .start(cx, forwards.spec("pods", "grafana", 8080, Some(0)))
         .await;
     let second = forwards
-        .start(cx, forwards.spec("pods", "grafana", 8080, None))
+        .start(cx, forwards.spec("pods", "grafana", 8080, Some(0)))
         .await;
     let ports = [
         forwards.local_port(cx, first),
@@ -602,8 +603,9 @@ async fn stop_all_stops_every_forward_and_frees_their_ports(cx: &mut TestAppCont
 async fn closing_the_window_asks_then_stops_every_forward(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let forwards = mount(cx);
+    // System-picked ports keep the post-stop checks independent of other tests.
     let id = forwards
-        .start(cx, forwards.spec("pods", "grafana", 8080, None))
+        .start(cx, forwards.spec("pods", "grafana", 8080, Some(0)))
         .await;
     let port = forwards.local_port(cx, id);
     let closed = std::rc::Rc::new(std::cell::Cell::new(false));

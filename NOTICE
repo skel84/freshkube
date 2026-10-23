@@ -51,6 +51,23 @@ promql-parser 0.11.0
   Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
   Used unmodified, as a library.
 
+rmcp 3.5.0, with sse-stream 0.2.6 and pastey
+  The MCP server behind the agent's loopback read endpoint
+  (freshkube-agent). Pinned exactly.
+  https://github.com/modelcontextprotocol/rust-sdk
+  Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
+  sse-stream and pastey are MIT OR Apache-2.0; taken under the Apache License.
+  Used unmodified, as libraries.
+
+axum 0.8, axum-core 0.5 and matchit 0.8
+  Routes and guards the same loopback endpoint.
+  https://github.com/tokio-rs/axum
+  https://github.com/ibraheemdev/matchit
+  Copyright (c) 2019 axum Contributors; Copyright (c) 2022 Ibraheem Ahmed
+  Licensed under the MIT License (matchit also carries a BSD-3-Clause part);
+  see licenses/axum-MIT.txt and licenses/matchit-LICENSE.txt.
+  Used unmodified, as libraries.
+
 ring 0.17.14
   Checks a signature on a Tekton Chains attestation against a public key the
   person names (ECDSA over P-256 with SHA-256). Already in the build for TLS.

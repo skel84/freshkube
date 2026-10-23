@@ -190,6 +190,11 @@ pub struct DetailPane {
     /// until the user scrolls, while the document loads and the sections
     /// above it grow; it is resolved after layout (`watch_sections`).
     section_pinned: Rc<Cell<Option<usize>>>,
+    /// Where the wheel sent Details, as a scroll offset, while a read was
+    /// still loading. The loading rows are far shorter than what arrives,
+    /// so the scroll stops at their end; once the reads have drawn,
+    /// Details goes on to here, as far as it goes (`watch_sections`).
+    wheel_held: Rc<Cell<Option<Pixels>>>,
     /// How far the tabs scrolled when the pane is too narrow for them.
     tab_strip: freshkube_ui::inspector::TabStrip,
     find: Entity<InputState>,
@@ -237,9 +242,10 @@ impl DetailPane {
             KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
             KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
             KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
-            // Command-Shift-] and [, as macOS reports them.
-            KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
-            KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
+            // Option-Command-] and [: the pane's tabs. Command-Shift-] and [,
+            // as macOS reports them, step the shell's view tabs everywhere.
+            KeyBinding::new("secondary-alt-]", NextTab, Some(CONTEXT)),
+            KeyBinding::new("secondary-alt-[", PreviousTab, Some(CONTEXT)),
             KeyBinding::new("secondary-g", FindNext, Some(CONTEXT)),
             KeyBinding::new("secondary-shift-g", FindPrevious, Some(CONTEXT)),
             KeyBinding::new("f3", FindNext, Some(CONTEXT)),
@@ -304,6 +310,7 @@ impl DetailPane {
             details_scroll: ScrollHandle::new(),
             shown_section: Rc::new(Cell::new(Section::Overview)),
             section_pinned: Rc::default(),
+            wheel_held: Rc::default(),
             tab_strip: Default::default(),
             find,
             query: String::new(),
@@ -375,6 +382,7 @@ impl DetailPane {
         self.details_scroll = ScrollHandle::new();
         self.shown_section.set(Section::Overview);
         self.section_pinned.set(None);
+        self.wheel_held.set(None);
         self.ports.update(cx, |ports, cx| {
             ports.show(
                 Some((target.identity.clone(), target.kind.clone())),
@@ -914,6 +922,7 @@ impl DetailPane {
         let ix = sections.iter().position(|s| *s == section).unwrap_or(0);
         self.shown_section.set(sections[ix]);
         self.section_pinned.set(Some(ix));
+        self.wheel_held.set(None);
     }
 
     /// Moves `delta` tabs along, wrapping, from outside the pane.
@@ -936,7 +945,7 @@ impl DetailPane {
         window.focus(&self.focus, cx);
     }
 
-    /// Command-Shift-] and [ in the pane: the next tab, with the keyboard
+    /// Option-Command-] and [ in the pane: the next tab, with the keyboard
     /// on what it shows.
     fn switch_tab(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         if self.step_tab(delta, cx).is_some() {

@@ -151,6 +151,7 @@ impl ObservabilityPage {
                 )
         });
         let inspector = Inspector::new("obs-trace-detail")
+            .selection(traces.waterfall.as_ref().map(|fall| &fall.trace_id))
             .heading(self.trace_heading(read_tag, cx))
             .children(failed);
         let Some(fall) = &traces.waterfall else {

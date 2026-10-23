@@ -1,4 +1,15 @@
-//! The agent in the dock, without GPUI and without anything of desktop.
+//! The agent in the dock (`docs/features/agent.md`), without GPUI and without
+//! anything of desktop, `freshkube-ui` or the feature crates.
+//!
+//! The way to the cluster (slice D1a):
+//!
+//! - [`endpoint`]: the MCP Streamable HTTP server, one per session, and the
+//!   [`Targets`] the app implements. The reads themselves are core's
+//!   [`freshkube_core::agent_reads`].
+//! - [`session`]: [`SessionId`], [`ReadId`] and the [`Token`].
+//! - [`saved`]: `agent.json` and its audit line, behind [`Access`].
+//!
+//! The agent itself (slice D1b):
 //!
 //! - [`acp`]: the ACP client over a child's stdio. It starts the agent, hands
 //!   it Freshkube's MCP endpoint as a URL and a token, and refuses every tool
@@ -7,20 +18,25 @@
 //!   lock-down, where opencode is found and which versions are supported.
 //! - [`investigation`]: the transcript the agent's session updates become,
 //!   bounded in every dimension.
-//! - `scripted` (feature `scripted`): an ACP agent that follows a script, for tests and for the
-//!   fixture; in process over a pipe, or as the `fake_acp_agent` binary.
-//!
-//! Docs: `docs/features/agent.md`.
+//! - `scripted` (feature `scripted`): an ACP agent that follows a script, for
+//!   tests and for the fixture; in process over a pipe, or as the
+//!   `fake_acp_agent` binary.
 
 pub mod acp;
 mod child;
+pub mod endpoint;
 pub mod investigation;
 pub mod profile;
+pub mod saved;
 #[cfg(feature = "scripted")]
 pub mod scripted;
+pub mod session;
 pub mod tools;
 
 pub use child::Link;
+pub use endpoint::{Endpoint, Outcome, ReadEvent, Targets, Timeouts};
+pub use saved::Access;
+pub use session::{ReadId, SessionId, Token};
 
 /// Log directives that keep the ACP and MCP libraries at info. At debug they
 /// log every message they send, and `session/new` carries the session's

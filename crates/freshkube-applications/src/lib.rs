@@ -71,7 +71,8 @@ pub mod testing {
     }
     pub mod page {
         pub use crate::page::table::columns;
-        pub use crate::page::{ApplicationPage, PartRow, unchecked_words};
+        pub use crate::page::timeline::TimelineView;
+        pub use crate::page::{ApplicationPage, PageTab, PartRow, unchecked_words};
     }
 }
 
@@ -110,8 +111,10 @@ use gpui_kit::*;
 
 use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
+pub use change::{
+    ActKind, KargoAt, Links as CorootLinks, Live as CorootLive, OutcomeKind, StageAct,
+};
 use change::{ChangeEvent, ChangePage, Changes, Coroot};
-pub use change::{Links as CorootLinks, Live as CorootLive, OutcomeKind};
 use changes::ChangesEvent;
 pub use changes::ChangesPage;
 pub use column::Column;
@@ -344,6 +347,8 @@ pub struct ApplicationsPage {
     pub display: Display,
     #[cfg(not(any(test, feature = "testing")))]
     display: Display,
+    /// `FRESHKUBE_TIMELINE`: the shape of the Timeline's example sources.
+    timeline_shape: freshkube_delivery::timeline::example::Shape,
     /// The banner for a refresh that failed over an earlier read, and its
     /// label, derived with the display.
     stale: Option<(SharedString, SharedString)>,
@@ -406,6 +411,7 @@ pub struct ApplicationsPage {
 /// A part to open in Resources, from the open application's page.
 impl EventEmitter<ResourceLink> for ApplicationsPage {}
 impl EventEmitter<SwitchLink> for ApplicationsPage {}
+impl EventEmitter<StageAct> for ApplicationsPage {}
 impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
@@ -448,6 +454,7 @@ impl ApplicationsPage {
                 link: link.as_ref().clone(),
             }),
             ChangesEvent::Revision(link) => cx.emit(link.clone()),
+            ChangesEvent::Act(act) => cx.emit(act.as_ref().clone()),
         });
         Self {
             runtime,
@@ -492,6 +499,7 @@ impl ApplicationsPage {
             open: None,
             change: None,
             changes,
+            timeline_shape: Default::default(),
             changes_shown: false,
             waiting,
             waiting_shown: false,
@@ -501,6 +509,11 @@ impl ApplicationsPage {
             column_revision: 0,
             _subscriptions: [subscription, links],
         }
+    }
+
+    /// The shape of the Timeline's example sources (`FRESHKUBE_TIMELINE`).
+    pub fn set_timeline_shape(&mut self, shape: freshkube_delivery::timeline::example::Shape) {
+        self.timeline_shape = shape;
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -875,6 +888,7 @@ impl ApplicationsPage {
         // Fresh only by when an answer arrived: a read dropped on hide, or
         // a refresh that failed, doesn't make old data new.
         let reads_again = self.loader.set_visible(visible, ON_SHOW, cx);
+        self.sync_timeline(cx);
         if !visible {
             self.derive_column();
             cx.notify();
@@ -901,6 +915,9 @@ impl ApplicationsPage {
         // A change shown reads itself; the applications read on below it.
         if let Some((change, _)) = &self.change {
             change.update(cx, |change, cx| change.refresh(cx));
+        }
+        if let Some((open, _)) = &self.open {
+            open.update(cx, |page, cx| page.refresh(cx));
         }
         self.read(cx);
     }
@@ -1068,6 +1085,74 @@ impl ApplicationsPage {
         self.rebuild(cx);
     }
 
+    /// The open application's Timeline reads only while its tab shows on a
+    /// page that shows: not under the Changes list, Waiting to ship or a
+    /// change.
+    pub(crate) fn sync_timeline(&self, cx: &mut Context<Self>) {
+        let Some((open, _)) = &self.open else {
+            return;
+        };
+        let shown =
+            self.visible && !self.changes_shown && !self.waiting_shown && self.change.is_none();
+        open.update(cx, |page, cx| page.set_visible(shown, cx));
+    }
+
+    /// Where an application's Timeline reads from: example data's shape, or
+    /// its workloads in the open cluster.
+    fn timeline_fetch(
+        &self,
+        app: &freshkube_delivery::applications::Application,
+        connections: &Connections,
+    ) -> page::timeline::Fetch {
+        use freshkube_delivery::applications::MemberKind;
+        let example = || page::timeline::Fetch::Example {
+            shape: self.timeline_shape,
+            delay: self.example_delay,
+        };
+        let Some(source) = &self.source else {
+            return example();
+        };
+        if matches!(source.access, ClusterAccess::Example(_)) {
+            return example();
+        }
+        use freshkube_delivery::timeline::live::Workload;
+        let mut workloads: Vec<(String, Vec<Workload>)> = Vec::new();
+        for member in &app.members {
+            let at = &member.at;
+            let MemberKind::Workload(kind) = at.kind else {
+                continue;
+            };
+            if !connections.opens(&at.session) {
+                continue;
+            }
+            let Some(namespace) = &at.namespace else {
+                continue;
+            };
+            let workload = Workload::new(&at.name, kind);
+            match workloads.iter_mut().find(|(known, _)| known == namespace) {
+                Some((_, known)) => known.push(workload),
+                None => workloads.push((namespace.clone(), vec![workload])),
+            }
+        }
+        workloads.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, known) in &mut workloads {
+            known.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        page::timeline::Fetch::Live {
+            runtime: self.runtime.clone(),
+            access: source.access.clone(),
+            source_id: source.id.to_string(),
+            place: freshkube_delivery::timeline::live::Place {
+                cluster: self
+                    .clusters
+                    .active
+                    .clone()
+                    .unwrap_or_else(|| source.id.to_string()),
+                workloads,
+            },
+        }
+    }
+
     /// Hands the open page its application's new read; without it there,
     /// the page closes.
     fn update_open(&mut self, cx: &mut Context<Self>) {
@@ -1080,8 +1165,10 @@ impl ApplicationsPage {
             Some((app, read)) => {
                 let stale = self.stale.clone();
                 let connections = self.connections(read);
+                let fetch = self.timeline_fetch(app, &connections);
                 open.update(cx, |page, cx| {
-                    page.update(app, read, &connections, stale, cx)
+                    page.update(app, read, &connections, stale, cx);
+                    page.set_fetch(fetch, cx);
                 });
             }
             None => self.close_open(cx),
@@ -1136,7 +1223,8 @@ impl ApplicationsPage {
         self.change = None;
         let stale = self.stale.clone();
         let connections = self.connections(read);
-        let page = cx.new(|cx| ApplicationPage::new(app, read, &connections, stale, cx));
+        let fetch = self.timeline_fetch(app, &connections);
+        let page = cx.new(|cx| ApplicationPage::new(app, read, &connections, stale, fetch, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ApplicationEvent::Back => this.close_application(window, cx),
@@ -1149,6 +1237,7 @@ impl ApplicationsPage {
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.open = Some((page, subscription));
+        self.sync_timeline(cx);
         self.column_revision += 1;
         cx.notify();
     }
@@ -1195,15 +1284,18 @@ impl ApplicationsPage {
                     link: link.as_ref().clone(),
                 }),
                 ChangeEvent::Revision(link) => cx.emit(link.clone()),
+                ChangeEvent::Act(act) => cx.emit(act.as_ref().clone()),
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.change = Some((page, subscription));
+        self.sync_timeline(cx);
         cx.notify();
     }
 
     /// Back to the application's page, with the selection it had.
     pub(crate) fn close_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.change.take().is_some() {
+            self.sync_timeline(cx);
             self.focus_shown(window, cx);
             cx.notify();
         }
@@ -1350,8 +1442,8 @@ impl ApplicationsPage {
         if let Some(change) = self.change_page() {
             return change.read(cx).loading_motion();
         }
-        if self.open.is_some() {
-            return None;
+        if let Some((open, _)) = &self.open {
+            return open.read(cx).loading_motion(cx);
         }
         kit::TableSource::loading(self)
             .is_some()

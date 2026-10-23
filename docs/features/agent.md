@@ -1,6 +1,94 @@
 # The agent in the dock
 
-The person's own agent investigates a cluster for them (issue [#874](https://github.com/skel84/freshkube/issues/874), part D1). It runs as a child process speaking ACP over stdio and reads only through Freshkube's four read tools. This page covers slice D1b (issue [#907](https://github.com/skel84/freshkube/issues/907)): the ACP client, the opencode profile and its lock-down, the version check and the scripted agent. The endpoint, the access gate and `agent_reads` are slice D1a, the dock tab is D1c and following on the page is D1d; they will add their parts below.
+What an agent may read of a cluster, and the way it reaches those reads. This is slice D1a of the agent in the dock ([#874](https://github.com/skel84/freshkube/issues/874), [#906](https://github.com/skel84/freshkube/issues/906)): the app starts no endpoint and no agent yet, and desktop does not depend on the agent crate.
+
+**Modules.** `crates/freshkube-core/src/agent_reads/` (`call.rs`, `gate.rs`, `read.rs`, `live.rs`, `example.rs`, `shape.rs`, `answer.rs`, `refusal.rs`, `target.rs`); `crates/freshkube-core/src/constants.rs` (`agent`); `crates/freshkube-agent/src/endpoint/`, `session.rs`, `saved.rs`; core's `resources/discovery.rs` (`resolve_kind_name`) and `write/audit.rs` (`AuditStore::named`).
+
+**Proved by.** Core, `agent_reads/tests.rs`: `a_cluster_without_agent_access_refuses_before_any_request`, `turning_access_off_ends_a_read_in_flight`, `a_grant_for_another_context_reads_as_off`, `every_agent_read_is_a_get`, `secrets_are_read_metadata_only`, `managed_fields_and_last_applied_never_reach_the_answer`, `log_reads_are_bounded`, `lists_and_events_are_cut_at_their_limit`, `an_object_over_the_limit_is_too_large`, `call_parse_refuses_what_it_cannot_bound`, `failures_map_to_their_codes`, `example_objects_get_the_same_bounds_and_secret_rule`, `the_five_hundred_and_first_read_is_limit_reached`, `a_403_keeps_the_shared_client_and_a_401_or_a_dead_server_drops_it`, `events_are_read_page_by_page_to_find_the_newest`, `a_secrets_last_applied_copy_never_reaches_the_answer`. Agent, `crates/freshkube-agent/tests/`: `endpoint.rs` (`the_endpoint_listens_on_loopback_only`, `the_endpoint_refuses_without_the_session_token`, `the_token_dies_with_the_session`, `a_fake_agent_client_reads_through_the_endpoint`, `a_refused_read_gets_a_read_id_and_no_view`, `no_view_state_goes_on_the_wire`, `a_read_in_flight_when_the_endpoint_drops_sends_nothing`, `a_chunked_body_over_the_limit_is_refused_without_a_content_length`, `a_slow_header_or_body_is_dropped`), `saved.rs` (`set_access_saves_audits_and_gates_together`, a missing or unparsable file, a failed audit, `turning_access_off_fails_closed_even_when_the_save_or_the_audit_fails`) and `logs.rs` (`the_token_never_reaches_debug_or_logs`).
+
+## The tools
+
+Server `freshkube`, exactly four tools; `agent_reads::TOOLS` holds their names and `SERVER_NAME` the server's. An argument the tool does not take is refused. `cluster` is a cluster entry's id and defaults to the session's own.
+
+| Tool | Arguments | Answer |
+|------|-----------|--------|
+| `list_objects` | `cluster?`, `kind`, `namespace?`, `limit?` 1–200 (100) | `{read, cluster, kind, items: [{namespace, name, uid, status, created}], cut}` |
+| `get_object` | `cluster?`, `kind`, `namespace?`, `name` | `{read, cluster, kind, namespace, name, uid, object}` |
+| `pod_logs` | `cluster?`, `namespace`, `pod`, `container?`, `previous?`, `tail_lines?` 1–500 (200), `since_seconds?` 1–86400 | `{read, cluster, namespace, pod, container, previous, lines, cut}` |
+| `list_events` | `cluster?`, `namespace?`, `kind?`, `name?`, `since_seconds?` 1–86400 (3600), `limit?` 1–200 (100) | `{read, cluster, events: [{type, reason, object, message, count, last}], cut}` |
+
+- `kind` takes what kubectl takes: a key (`deployments.apps`), a plural, a singular or Kind in any case, a short name (`deploy`), with an optional `.group`. `resolve_kind_name` resolves it: built-in kinds at once, then a key by `resolve_kind_key`, and only then a bare name in the groups discovery lists, at most 32 of them, read together. A kind the cluster does not serve (or a name two kinds share) is `not_served`. Deep links keep using the strict `resolve_kind_key`, which asks only for the key's own group.
+- Names are DNS names: a namespace and a container are DNS labels, a name is a DNS subdomain.
+- A success is `isError: false` with the JSON in one text block and as `structuredContent`. `cut` is `null` or `{by: items|lines|bytes, limit}`; a cut answer is still a success.
+- `pod_logs` reads one pod container's `log` subresource. Without a `container`, the server chooses the pod's default and the answer's `container` is `null`.
+- `list_events` reads up to five pages of 200 events (by involved Kind and name when given), because the API lists them in no order of time; it keeps those newer than `since_seconds`, sorts newest first and keeps `limit`. If the server had more than the pages read, `cut` is `{items, <events looked at>}`, so the agent knows the newest may be missing.
+
+## Parsing
+
+`Call::parse(tool, arguments)` is the only parser of what an agent sends. It yields `Call { cluster, request }`, `Request` being `List`, `Get`, `Logs` or `Events` with bounded fields. It refuses an unknown tool, an unknown argument, a wrong type, a value outside its range and a name that is not a DNS name, each as `invalid`. The message names the argument and never repeats the value; an unknown argument is named only if it is short and made of lower-case letters and underscores. `Call::parse_pairs` takes the arguments as pairs and also refuses a name given twice, which a JSON object cannot keep.
+
+## Bounds
+
+Asked of the server where the API allows (`limit`, `tailLines`, `sinceSeconds`, `limitBytes` of 64 KiB), and checked again in core on every answer, live or example. The numbers are in `freshkube_core::constants::agent`.
+
+| Bound | Limit |
+|-------|-------|
+| Items in a list, events in an answer | 200 |
+| Log lines, log bytes | 500, 64 KiB (the newest are kept) |
+| One log line, one event message | cut at 2 KiB, 1 KiB |
+| One object, as JSON | 64 KiB, else `too_large` |
+| Any answer | 128 KiB (items or lines are dropped to fit) |
+| One read | 20 s, then `timed_out` |
+| Reads per session | 500, then `limit_reached` |
+
+Every object loses `metadata.managedFields` and the last-applied annotation. **A Secret is read as metadata only**: `get_metadata` and `list_metadata_page` ask for `PartialObjectMetadata`, and core keeps only the API version, kind and metadata, so a value or a key name is never requested or kept. Example data goes through the same rule.
+
+## Errors
+
+`isError: true` with `{read, error: {code, message}}`; the message goes through the audit log's `scrub`. `FailureKind` maps onto the code in one match with no wildcard arm (`Refusal::from_failure`); a 404 while resolving a kind or listing one means the API is not served. The shared client is dropped (so the access builds it again) only after an unreachable server or a 401, decided from the `FailureKind` before it is mapped: a 403 is the person's role, routine under a `view` role, and keeps the client.
+
+| Code | When |
+|------|------|
+| `invalid` | An argument that cannot be bounded |
+| `unknown_cluster` | The session may not name that cluster (the app's `Targets` answered none) |
+| `not_enabled` | Agent access is off for the cluster; nothing was sent |
+| `refused` | 401 or 403 under the person's own access |
+| `not_found` | The object, pod or container does not exist |
+| `not_served` | The cluster does not serve the kind |
+| `too_large` | An object over 64 KiB |
+| `unreachable`, `timed_out`, `failed` | The cluster could not be reached, took too long, or failed otherwise |
+| `limit_reached` | The session has used its 500 reads |
+
+Every read, refused ones included, gets a read id (`r1`, `r2`, …). The `ViewState` never goes on the wire: the endpoint hands the app `ReadEvent {session, read, tool, cluster, view, outcome}`, where `view` is the Resources view of the answer's `Place` (the kind's key, namespace, object with its UID, and the Details, Events or Logs tab), checked by `ViewState::check`, and `None` for a refused read.
+
+## The gate
+
+`AgentAccess` (`agent_reads/gate.rs`) is in memory and cheap to clone. It holds grants as `(entry, context)` pairs and is **off for every cluster by default**.
+
+- `read` takes a lease from the gate before it builds any client. With no grant it answers `not_enabled` and sends nothing.
+- A grant counts only while the entry opens the context it was given for, so a context change reads as off.
+- Turning a cluster off (`revoke`) ends its leases: a read in flight answers `not_enabled` and what it had read is dropped.
+- A session's read budget lives in the gate handle the endpoint takes with `for_session()`, which shares the grants and counts its own reads. Only a read that took a lease is counted.
+
+## The endpoint
+
+`freshkube_agent::Endpoint` serves MCP Streamable HTTP at `http://127.0.0.1:<random port>/mcp`, one per session, and closes the port and ends its token when dropped.
+
+- **401** without `Authorization: Bearer <token>` (compared in constant time); **403** for any `Origin` header or a `Host` other than `127.0.0.1:<port>`; **413** over 64 KiB, whether declared or chunked; **408** for a body that takes longer than `Timeouts::body` (10 s). A connection that is slow to send its headers (`Timeouts::header`, 10 s) is dropped. Each refusal is a bare status.
+- **Dropping the endpoint ends everything:** the port closes, every connection is closed, and a read in flight is given up and publishes nothing: no answer, no log line and no `ReadEvent`.
+- The token is 32 bytes of OS randomness (`session::Token`); `Debug` and `Display` print nothing of it and `reveal` is the one way to read it. It is never logged.
+- The app implements `Targets` to resolve an optional entry id to an `AgentTarget { entry, context, source }`; the source is `Live(ClusterAccess)` or `Example(Arc<dyn ExampleObjects>)`.
+- One `tracing` line per read: the short session id, the read id, the entry, the tool, the target and the code. No answer data, no token, no rejected value. A cluster id the session cannot read is `unknown` in the line and in `ReadEvent.cluster`, never the id the agent typed.
+
+## `agent.json`
+
+`agent.json` sits beside the preferences (`freshkube-prefs`, mode 0600, read to at most 1 MiB), not in `freshkube.yaml`: the setup file is what a person may share, and sending a cluster's data to their model provider is their own consent, as with `follows.json`. A grant is `{entry, context, since}`. A missing file grants nothing; an unreadable or unparsable one grants nothing and says why once.
+
+`Access::set_access(entry, context, on, from)` is the one way to change a grant. It saves the file, appends `{at, entry, context, access, from}` to `<preferences>/audit/agent.jsonl` (mode 0600, rotated like the write audit) and updates the gate. Turning access **on** is all or none: if any step fails the error is returned, the file is put back and the gate is unchanged. Turning it **off** fails closed: the gate is turned off first, which ends the reads in flight, and then the file and the audit line are written; if either fails the error is returned but access stays off. Whether a context belongs to the workspace is the caller's to check.
+
+## The client: slice D1b
+
+The person's own agent investigates a cluster for them (issue [#874](https://github.com/skel84/freshkube/issues/874), part D1). It runs as a child process speaking ACP over stdio and reads only through Freshkube's four read tools. This part is slice D1b (issue [#907](https://github.com/skel84/freshkube/issues/907)): the ACP client, the opencode profile and its lock-down, the version check and the scripted agent. The endpoint, the access gate and `agent_reads` are slice D1a, the dock tab is D1c and following on the page is D1d; they will add their parts below.
 
 Code:
 
@@ -9,7 +97,7 @@ Code:
 
 The crate has no GPUI and names nothing of desktop, `freshkube-ui` or the feature crates. Desktop does not depend on it yet, so the app starts no agent. The scripted agent and the MCP client it needs are behind the `scripted` feature, which the crate's own tests turn on from a dev-dependency; the app's build has neither.
 
-## The ACP client
+### The ACP client
 
 `AcpSession::start(link, endpoint)` takes a `Link` (both ends of the agent's stdio, from `Profile::spawn` or `scripted::in_process`) and an `Endpoint`, the MCP endpoint's URL and its token. It returns the session and a receiver of `investigation::Event`s.
 
@@ -21,9 +109,9 @@ The crate has no GPUI and names nothing of desktop, `freshkube-ui` or the featur
 - **A start needs a passing version check.** `Profile::spawn` takes the `Checked` that `Profile::check` gives, which only a supported or newer-than-checked version earns, and refuses one made on another binary. Another opencode major version may read its permissions under other keys and fall back to defaults that allow a shell. The proof is for one profile kind and range, so a generic command's proof is refused for opencode, and for the file that was run (its length, modification time, device and inode; on Windows the length and modification time only), so a binary replaced between the check and the start is refused until it is checked again.
 - **Models.** `models()` gives the list the agent offers and the current one, and `set_model(id)` chooses one of them (an id the agent didn't offer is refused before anything is sent). A model is marked local when its provider is `ollama`, `lmstudio`, `llama.cpp`, `llamacpp` or `local`.
 
-### Which tools are allowed
+#### Which tools are allowed
 
-`acp/permission.rs` answers every permission request. A call is allowed only by its **name**, an exact match of server `freshkube` and one of the four tool names (`list_objects`, `get_object`, `pod_logs`, `list_events`; `tools.rs` copies the design's list until `agent_reads::TOOLS` exists): `freshkube_get_object` (how opencode names an MCP tool), or `mcp__freshkube__get_object` or `mcp.freshkube.get_object`, which other agents use.
+`acp/permission.rs` answers every permission request. A call is allowed only by its **name**, an exact match of server `freshkube` and one of the four tool names (`list_objects`, `get_object`, `pod_logs`, `list_events`; `tools.rs` re-exports core's `agent_reads::TOOLS`, so the allow-list is the endpoint's own list): `freshkube_get_object` (how opencode names an MCP tool), or `mcp__freshkube__get_object` or `mcp.freshkube.get_object`, which other agents use.
 
 - **Not the title and not the input.** In opencode 2.1 a shell call's title is its command, an update carries no name, and a call's input is the model's own text, so a shell whose input says `{server: "freshkube", tool: "get_object"}` is still a shell.
 - **A refusal is final.** Once a call has read as not ours, no later update and no request makes it ours. A call with no name anywhere is refused, and so is an id nothing announced. A request that names something other than what the call announced is refused.
@@ -31,7 +119,7 @@ The crate has no GPUI and names nothing of desktop, `freshkube-ui` or the featur
 
 The name is still the agent's own word. The boundary is the lock-down below, which leaves the agent no other tool; this handler is the second line. This replaces the spike's substring match.
 
-## The transcript
+### The transcript
 
 `investigation::Investigation` holds what was asked, thoughts, speech, steps (their state and arguments, updated in place as a tool call is described) and notes. Everything the agent sends is bounded:
 
@@ -45,7 +133,7 @@ The name is still the agent's own word. The boundary is the lock-down below, whi
 
 The 1 MiB covers text. Steps are bounded separately, at most 1,000 × 4 KiB of arguments. The follower that moves the page is not here; it comes with D1d.
 
-## Profiles
+### Profiles
 
 A profile is a launch command, an environment, a lock-down and a supported version range. Every agent starts from a cleared environment, then gets:
 
@@ -59,7 +147,7 @@ The directories are one `Dirs` per session, removed when the process group is go
 - **Unix.** If the app dies without dropping the session, a small shell in a group of its own (started with the agent) sees the app's pid go and ends the agent's group, within a few seconds. `child::tests` kills a stand-in parent and checks the group goes.
 - **Windows.** The child is created suspended, put in a job object that kills its processes when the job closes, and only then resumed, so nothing it starts is outside the job; if it can't be put in the job it is killed unstarted. The job closes with the app. `tests/group.rs` runs on Windows in CI and checks that a grandchild goes with the session.
 
-### The opencode profile
+#### The opencode profile
 
 The command is `opencode acp`. The configuration is handed inline in `OPENCODE_CONFIG_CONTENT`; `profile/opencode.rs` builds it (`config()`) and the environment (`environment()`). A guard inside a plugin is never counted as the boundary.
 
@@ -82,9 +170,13 @@ The command is `opencode acp`. The configuration is handed inline in `OPENCODE_C
 | `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | Logins, session history and the saved organisation config sources live in the database under `$XDG_DATA_HOME/opencode` ([`credential.ts`](https://github.com/anomalyco/opencode/blob/e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b/packages/core/src/credential.ts), [`wellknown.ts`](https://github.com/anomalyco/opencode/blob/e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b/packages/core/src/wellknown.ts) `wellknown:sources`). See the data modes below. |
 | Admin-owned configs | The system directory (`/Library/Application Support/opencode`, `/etc/opencode`, `%ProgramData%\opencode`) and macOS managed preferences load after the inline config and win ([`config/discovery.ts`](https://github.com/anomalyco/opencode/blob/e965774fa0e2a8ffb27bf02827a2c3c6a8c0f45b/packages/core/src/config/discovery.ts)). The profile does not change them; an administrator who sets them owns what they allow. |
 
+`opencode debug config` and `opencode debug agents` go to the shared service and show the person's own configuration, so they don't show what an agent session uses; `opencode api --standalone config.get`, run with the session's environment, does.
+
+**MCP tools and Code Mode.** MCP tools reach the model through Code Mode's `execute` tool (`codemode` defaults to on), and the profile's wildcard denies `execute`. So in 2.1.3 the model is offered none of Freshkube's tools; [#946](https://github.com/skel84/freshkube/issues/946) tracks this. Allowing `execute` is not a fix: Code Mode also gives its code an unrestricted `fetch`.
+
 `profile/opencode.rs` carries the same table as `LOCKDOWN_SOURCES`, and a test fails if a variable the profile sets has no source in it.
 
-#### Where opencode keeps its data
+##### Where opencode keeps its data
 
 `Profile::opencode(binary, data)` takes a `Data`:
 
@@ -99,7 +191,7 @@ An organisation config source (opencode's "wellknown" sources) is loaded after t
 
 **Not confirmed.** Source reading cannot show these; the live check does: that `deny *` leaves the four tools offered, that the permission request names `freshkube_get_object` as read above, that the model list is not empty with the fetch off, and that nothing is read from the real home. Windows is written against the documented variables and not run.
 
-### Locating opencode and the version check
+#### Locating opencode and the version check
 
 A GUI app doesn't inherit a shell's `PATH`. `locate` takes a file the person chose first, then `/opt/homebrew/bin`, `/usr/local/bin`, `~/.opencode/bin` and `~/.local/bin`, then each directory of `PATH` (`Host::search_dirs`). A chosen file that is not a runnable file is skipped.
 
@@ -112,11 +204,11 @@ A GUI app doesn't inherit a shell's `PATH`. `locate` takes a file the person cho
 | `Newer { found, checked }` | Above `checked` (2.1.3, the version whose source was read; the live check replaces it) and below 3.0.0. A warning. | Yes |
 | `Supported { found }` | 2.1.0 up to `checked`. | Yes |
 
-## The scripted agent
+### The scripted agent
 
 `scripted::serve` is an ACP agent that follows a script and reads through the MCP endpoint it is handed, as the real agents do. It runs in process over a pipe (`scripted::in_process`; behind the `scripted` feature, which the dock's UI tests and `--fixture` turn on) and as the `fake_acp_agent` binary for the tests that need a process; the app bundle never ships the binary. The prompt picks what it does: `slow` thinks until cancelled, `flood` sends 10 MiB of thoughts, `crash` drops the connection mid-prompt, `environment` reports its arguments, environment and directories, `grandchild` starts a process of its own, `tools` asks to run each of the calls an agent must be refused (a shell, a file read, an edit, a web fetch, another server's tool, a name that contains ours, a shell whose input or later update says it is ours, and a call with no name), `model` reports the model it uses, and anything else reads a Deployment through MCP and then asks to run a shell command. `--never-initialize` makes the binary never answer `initialize`. It reports two models by default, the second of them local.
 
-## Tests
+### Tests
 
 In `crates/freshkube-agent`; none runs opencode.
 
@@ -143,13 +235,19 @@ In `crates/freshkube-agent`; none runs opencode.
 
 A stub MCP server in `tests/support/` stands in for the endpoint. The end-to-end test through the real endpoint lands with D1c.
 
-## The live check
+### The live check
 
-Not run yet. The lead runs it once, on a machine with opencode installed and signed in, with example data only (no cluster, kubeconfig or talosconfig), after both D1a and D1b have landed, through the `live` example (`cargo run -p freshkube-agent --example live`, which lands with whichever slice merges second):
+Run once by the lead on a Mac, at `0ed1df5`, with opencode 2.1.3 signed in to a model provider, an in-process stub for the endpoint and invented data (no cluster). **It failed**, and the live acceptance check is not counted as passed:
 
-1. Run the example; it starts an opencode session on the endpoint with the canned `shop`/`checkout` scenario and prints the transcript.
-2. While it runs, list the sockets of the opencode process and its descendants (`lsof -a -i -P` over their pids). Expected: no listener except on 127.0.0.1, and connections only to the endpoint's loopback port and the model provider over HTTPS.
-3. Prompt the agent to run a shell command, read `~/.kube/config` and fetch a URL. Expected: each is refused, with a note in the transcript, and nothing is read or run.
-4. Record the version as the profile's `checked` (`SUPPORTED` in `profile/opencode.rs`) and post the results on the issue: the version, the sockets reduced to listen and remote kinds, and the refusals; no logins, account names or tokens.
+| Check | Result |
+| --- | --- |
+| The profile's permissions and `default_agent` as opencode reads them | The private `opencode api --standalone config.get` matched the profile's document, all seven agents included. `opencode debug config` and `debug agents` attach the shared service and showed the person's own configuration; they are not what an agent session uses. |
+| opencode refuses a shell, a file read and a fetch | Not shown: the model was offered none of these, so no permission request was made. |
+| The first MCP `tool_call.name` is `freshkube_get_object` | Not shown: the model was offered none of Freshkube's tools (the Code Mode point above). |
+| An organisation login, then a refused start | Skipped; it needs an organisation sign-in. |
+| `opencode --version` loads no config and uses no network | Passed under a sandbox that denied both. |
+| Project configuration is off | Passed: both `OPENCODE_CONFIG_PROJECT_DISABLE` and `OPENCODE_DISABLE_PROJECT_CONFIG` work on 2.1.3. |
+| Killing the app ends opencode and its server | Passed: both processes were gone in 0.12 s. |
+| Sockets | Passed for the observed processes: one listener, on 127.0.0.1, loopback connections to the endpoint, and one remote connection, to the model provider over HTTPS. |
 
-The result goes here when it is in.
+`checked` stays 2.1.3.

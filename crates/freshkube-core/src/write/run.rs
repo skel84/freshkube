@@ -11,7 +11,7 @@ use super::{
     action::{ActionDescription, Inverse, ObjectChange, Target},
     audit::{AuditObject, AuditRequest, AuditStore, Record, RunId, SCHEMA, scrub},
     outcome::{Accepted, Observed, Watching, observe},
-    preflight::{Prepared, Who},
+    preflight::{Block, Prepared, Who},
     requirement::{Confirmation, UNDO_WINDOW},
     send::{ChangedWhat, Conflict, Refusal, send},
     undo::UndoOffer,
@@ -26,6 +26,9 @@ pub struct Runner {
     /// The cluster's level as it is now. A write reads it again just before
     /// it is sent.
     pub(super) level: LevelCell,
+    /// Example data: it asks nothing of the cluster and sends nothing, so a
+    /// dialog can be shown without one.
+    pub(super) example: bool,
 }
 
 /// Something the front end can draw while a write runs.
@@ -56,6 +59,15 @@ pub enum NotSent {
     /// Exec and port forwarding keep their own owners; they never go through
     /// this path.
     Session,
+    /// A runner for example data, which has no cluster to send to.
+    Example,
+    /// Something the write depends on (a Stage that runs other Freight now)
+    /// is no longer as the person was shown, so nothing was sent.
+    Moved(String),
+    /// What the write depends on could not be checked again just before the
+    /// send (no answer, an access review that failed, or a refusal), so
+    /// nothing was sent. The text says why.
+    Unchecked(String),
 }
 
 /// What happened to one object.
@@ -210,7 +222,32 @@ impl Runner {
             who,
             watching: Watching::default(),
             level,
+            example: false,
         }
+    }
+
+    /// A runner for example data: preflight shows the dialog the level asks
+    /// for from the action alone, and nothing is ever sent or even asked of
+    /// a cluster. `client` is never used.
+    pub fn example(client: kube::Client, audit: AuditStore, who: Who) -> Self {
+        Self {
+            example: true,
+            ..Self::new(client, audit, who)
+        }
+    }
+
+    /// [`Self::example`] with a client that reaches nothing, for a window
+    /// that has no cluster behind the example data. Call it where a Tokio
+    /// runtime is entered.
+    pub fn example_offline(audit: AuditStore, who: Who) -> Self {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let config = kube::Config::new("http://127.0.0.1:9".parse().expect("a static address"));
+        let client = crate::kube_client::client(config).expect("a client that reaches nothing");
+        Self::example(client, audit, who)
+    }
+
+    pub fn is_example(&self) -> bool {
+        self.example
     }
 
     /// Follows a level that changes while the app runs, such as the one the
@@ -310,7 +347,7 @@ impl Runner {
         if let Some(not_sent) = refused_at(self.level_for(&description)) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
         }
-        if !requirement.satisfied_by(&confirmation, &description.names(), &self.who.entry) {
+        if !requirement.satisfied_by(&confirmation, &description.subject_names(), &self.who.entry) {
             return finished(Status::NotSent(NotSent::Unconfirmed), vec![], None, None);
         }
         if let Some(window) = requirement.cancel_window {
@@ -323,19 +360,54 @@ impl Runner {
         // The one reading the send is decided on, and the level every audit
         // line of this run records.
         let level = self.level_for(&description);
+        // Cancelled before anything is sent. Example data audits nothing.
+        let cancelled = || {
+            if !self.example {
+                let _ = self.record(
+                    &run,
+                    &description,
+                    level,
+                    &all,
+                    Phase::Cancelled,
+                    "Cancelled before sending.",
+                );
+            }
+            finished(Status::Cancelled, vec![], None, None)
+        };
         if cancel() {
-            let _ = self.record(
-                &run,
-                &description,
-                level,
-                &all,
-                Phase::Cancelled,
-                "Cancelled before sending.",
-            );
-            return finished(Status::Cancelled, vec![], None, None);
+            return cancelled();
         }
         if let Some(not_sent) = refused_at(level) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
+        // What the write depends on is read again just before it is sent, as
+        // the level is: a dialog can stay open while someone else promotes the
+        // Stage, and a create from the page as it was would roll it back.
+        if !self.example {
+            for depends in description.changes.iter().flat_map(|c| &c.depends) {
+                if let Err(block) = self.check_depends(depends).await {
+                    let not_sent = match &block {
+                        Block::Changed { .. } => NotSent::Moved(block.text()),
+                        Block::NoAnswer { .. } | Block::AccessUnknown { .. } => {
+                            NotSent::Unchecked(format!(
+                                "{} It couldn't be checked again, so nothing was sent.",
+                                block.text()
+                            ))
+                        }
+                        other => NotSent::Unchecked(format!("{} Nothing was sent.", other.text())),
+                    };
+                    return finished(Status::NotSent(not_sent), vec![], None, None);
+                }
+            }
+            // The check made requests after the last look at Cancel.
+            if cancel() {
+                return cancelled();
+            }
+        }
+        // Example data has no cluster to send to; everything the level and the
+        // person decide has been decided as for a real one.
+        if self.example {
+            return finished(Status::NotSent(NotSent::Example), vec![], None, None);
         }
         let first = if is_undo {
             Phase::UndoSent
@@ -541,6 +613,7 @@ impl Runner {
                     change: inverse.change.clone(),
                     observe: inverse.observe.clone(),
                     inverse: None,
+                    depends: vec![],
                 },
                 inverse.guard.clone(),
             ));
@@ -549,7 +622,7 @@ impl Runner {
             action: description.kind.clone(),
             sentence: description.sentence.clone(),
             window: UNDO_WINDOW,
-            destination: description.destination.clone(),
+            destinations: description.destinations.clone(),
             items,
         })
     }

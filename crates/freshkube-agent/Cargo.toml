@@ -2,25 +2,40 @@
 name = "freshkube-agent"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
 license.workspace = true
 publish = false
-description = "The agent in the dock: an ACP client over a child's stdio, the opencode profile and its lock-down, and the transcript"
+description = "The agent in the dock: the loopback read endpoint, its session token, the saved per-cluster access, the ACP client, the opencode profile and the transcript"
 
-# No GPUI and nothing of desktop. The client takes the endpoint as a URL and a
-# token; it needs nothing of the endpoint's own crate code.
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
+# Core (the reads and the gate), nav (the view a read goes to) and prefs (agent.json):
+# no GPUI, and nothing of desktop, freshkube-ui or the feature crates.
 [dependencies]
+freshkube-core.workspace = true
+freshkube-nav.workspace = true
+freshkube-prefs.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tokio-util = { version = "0.7", features = ["compat"] }
+uuid = { version = "1", features = ["v4"] }
+getrandom = "0.3"
+http = "1"
 agent-client-protocol = "=2.2.0"
 futures.workspace = true
-# The scripted agent reads through the MCP endpoint it is handed, as the real
-# agents do; only it needs an MCP client, so the app's build does not.
-rmcp = { version = "=3.5.0", optional = true, default-features = false, features = [
-    "client",
-    "transport-streamable-http-client-reqwest",
-] }
-serde_json.workspace = true
 tempfile = "3"
-tokio.workspace = true
-tokio-util = { version = "0.7", features = ["compat"] }
+# The MCP Streamable HTTP server, pinned exactly: some MCP clients and rmcp disagree
+# on the 2026-07-28 revision, so a bump is checked against each agent (spikes/agent).
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
+# The accept loop, so a connection can be timed out and ended with the endpoint.
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "service"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -34,10 +49,11 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 # The scripted agent: in process (`scripted::in_process`, for the dock's UI tests
-# and `--fixture`) and as the `fake_acp_agent` binary. A crate that wants it
-# turns this feature on; the tests here do from their own dev-dependency.
+# and `--fixture`) and as the `fake_acp_agent` binary. It reads through the MCP
+# endpoint with an MCP client, which only it needs; a crate that wants it turns
+# this feature on, and the tests here do from their own dev-dependency.
 [features]
-scripted = ["dep:rmcp"]
+scripted = ["rmcp/client", "rmcp/transport-streamable-http-client-reqwest"]
 
 [[bin]]
 name = "fake_acp_agent"
@@ -46,14 +62,11 @@ required-features = ["scripted"]
 
 [dev-dependencies]
 freshkube-agent = { path = ".", features = ["scripted"] }
-tracing.workspace = true
-tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
-axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
-rmcp = { version = "=3.5.0", default-features = false, features = [
-    "server",
-    "transport-streamable-http-server",
-] }
-
-[lib]
-doctest = false
+freshkube-core = { workspace = true, features = ["testing"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client-reqwest"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+tempfile = "3"
+tracing-subscriber.workspace = true
+kube.workspace = true
+futures.workspace = true

@@ -107,8 +107,9 @@ pub enum Tone {
     Died,
     #[default]
     Unknown,
-    /// Not reached yet, and nothing is wrong: drawn as a clock, counted with
-    /// neither warnings nor unknowns (docs/DESIGN.md, "Status and links").
+    /// Not reached yet or confirmed in flight, and nothing is wrong: drawn
+    /// as a clock, counted with neither warnings nor unknowns
+    /// (docs/DESIGN.md, "Status and links").
     Waiting,
     /// Needs an integration before it can say more (docs/DESIGN.md).
     Integration,

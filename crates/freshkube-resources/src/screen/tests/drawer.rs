@@ -474,3 +474,54 @@ fn a_forward_runs_on_through_another_context_and_names_its_own(cx: &mut TestAppC
         assert_eq!(forward.display.context.as_ref(), "homelab");
     });
 }
+
+/// A wheel given while ↓'s row still loads goes on once its details
+/// arrive: the loading skeleton is far shorter than the document, and
+/// Details reaches the end of Events rather than stopping where the
+/// skeleton ended (#910).
+#[gpui_kit::test]
+fn a_wheel_while_the_next_row_loads_reaches_the_end_of_its_details(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 760., 560.);
+    cx.update(|cx| crate::text_size::install(None, cx));
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.update_window(handle, |_, window, cx| open_first(&screen, window, cx))
+        .unwrap();
+    cx.executor().advance_clock(KEYBOARD_PAUSE);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("down", cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("detail-state").label(), Some("Reading"));
+        window.scroll(
+            "detail-details",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-20000.))),
+            cx,
+        );
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor().advance_clock(KEYBOARD_PAUSE);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        for _ in 0..4 {
+            window.render_frame(cx);
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(window.try_find("detail-state").is_none());
+        let details = window.find("detail-details").bounds();
+        let events = window.find("detail-section-events").bounds();
+        assert!(
+            events.bottom() <= details.bottom() + px(1.),
+            "Events ends at {:?}, below Details' end {:?}",
+            events.bottom(),
+            details.bottom()
+        );
+        assert!(events.bottom() > details.top(), "{events:?} {details:?}");
+    })
+    .unwrap();
+}

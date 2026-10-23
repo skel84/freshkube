@@ -129,7 +129,7 @@ fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppCon
         assert_eq!(shown(&screen, cx), Some(first));
         assert!(window.try_find("detail-state").is_none());
         assert_eq!(focused(window, "resource-detail"), Some(true));
-        window.press("secondary-}", cx);
+        window.press("secondary-alt-]", cx);
     });
     step(cx, &|window, cx| {
         assert_eq!(window.find("detail-tab-yaml").selected(), Some(true));
@@ -142,10 +142,10 @@ fn enter_opens_a_row_at_once_and_escape_steps_back_one_level(cx: &mut TestAppCon
         assert!(shown(&screen, cx).is_some());
         // From the list, the brackets switch the tab and keep the keyboard
         // on the list. The two tabs wrap round.
-        window.press("secondary-}", cx);
+        window.press("secondary-alt-]", cx);
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-details").selected(), Some(true));
-        window.press("secondary-{", cx);
+        window.press("secondary-alt-[", cx);
         window.render_frame(cx);
         assert_eq!(window.find("detail-tab-yaml").selected(), Some(true));
         assert_eq!(focused(window, "resource-body"), Some(true));
@@ -270,10 +270,10 @@ fn l_asks_for_the_selected_pods_logs(cx: &mut TestAppContext) {
             window.render_frame(cx);
             window.press("l", cx);
             window.render_frame(cx);
-            // The drawer steps aside for the dock and the row stays
-            // selected, so Enter opens it again.
-            assert_eq!(shown(&screen, cx), None);
-            assert!(window.try_find("resource-drawer").is_none());
+            // The dock opens under the page; the drawer stays open above
+            // it, on the selected row (#922).
+            assert_eq!(shown(&screen, cx), Some(first.clone()));
+            assert!(window.try_find("resource-drawer").is_some());
             assert_eq!(screen.read(cx).selected_row(), Some(&first));
             first
         })

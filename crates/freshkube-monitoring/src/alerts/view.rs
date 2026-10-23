@@ -204,7 +204,10 @@ impl AlertsPage {
                     .child(body.clone()),
             )
         };
-        let mut inspector = Inspector::new(id.clone()).heading(heading).children(fields);
+        let mut inspector = Inspector::new(id.clone())
+            .selection(key)
+            .heading(heading)
+            .children(fields);
         if let Some(summary) = &detail.summary {
             inspector = inspector.child(text("Summary", summary));
         }

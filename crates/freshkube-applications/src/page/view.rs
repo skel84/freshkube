@@ -3,6 +3,7 @@
 //! a narrow one.
 use super::*;
 use crate::ui::{self, dp};
+use freshkube_delivery::timeline::WINDOWS;
 use freshkube_ui::inspector::{self, Inspector};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
@@ -21,12 +22,104 @@ fn value_text(label: &str, value: &SharedString) -> Div {
 impl ApplicationPage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let this = cx.entity().downgrade();
-        PageHeader::new(PREFIX, self.name.clone())
+        let (tabs, tabs_fold) = self.tab_control(cx);
+        let header = PageHeader::new(PREFIX, self.name.clone())
             .parent("back", "Applications", move |_, _, cx| {
                 _ = this.update(cx, |_, cx| cx.emit(ApplicationEvent::Back));
             })
-            .crumb(self.what.clone())
+            .crumb(self.what.clone());
+        if self.tab != PageTab::Timeline {
+            return header.foldable(tabs, tabs_fold).render(window, cx);
+        }
+        let (hours, hours_fold) = self.window_control(cx);
+        header
+            .foldable(hours, hours_fold)
+            .foldable(tabs, tabs_fold)
             .render(window, cx)
+    }
+
+    /// Parts and Timeline: what the page shows.
+    fn tab_control(&self, cx: &mut Context<Self>) -> (Div, page::MenuItems) {
+        let options = [
+            (PageTab::Parts, "parts", "Parts"),
+            (PageTab::Timeline, "timeline", "Timeline"),
+        ];
+        let control = h_flex()
+            .gap(dp(2.))
+            .children(options.map(|(tab, id, label)| {
+                ui::segment(
+                    Button::new(SharedString::from(format!("application-tab-{id}"))),
+                    self.tab == tab,
+                    cx,
+                )
+                .small()
+                .h(dp(ui::CONTROL_HEIGHT))
+                .label(label)
+                .accessibility_label(format!("{label} tab"))
+                .on_click(cx.listener(move |this, _, _, cx| this.set_tab(tab, cx)))
+            }));
+        let parts = page::handler(cx, |this: &mut Self, _, cx| {
+            this.set_tab(PageTab::Parts, cx)
+        });
+        let timeline = page::handler(cx, |this: &mut Self, _, cx| {
+            this.set_tab(PageTab::Timeline, cx)
+        });
+        let fold = std::rc::Rc::new(
+            move |menu: gpui_kit::component::menu::PopupMenu,
+                  window: &mut Window,
+                  cx: &mut Context<gpui_kit::component::menu::PopupMenu>| {
+                let menu = page::item("Parts", parts.clone())(menu, window, cx);
+                page::item("Timeline", timeline.clone())(menu, window, cx)
+            },
+        );
+        (control, fold)
+    }
+
+    /// 3 h by default, up to 24 h.
+    fn window_control(&self, cx: &mut Context<Self>) -> (Div, page::MenuItems) {
+        let chosen = self.timeline.read(cx).hours();
+        let control = h_flex().gap(dp(2.)).children(WINDOWS.map(|hours| {
+            ui::segment(
+                Button::new(SharedString::from(format!("timeline-window-{hours}"))),
+                chosen == hours,
+                cx,
+            )
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .label(format!("{hours} h"))
+            .accessibility_label(format!("The last {hours} hours"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.timeline
+                    .update(cx, |timeline, cx| timeline.set_window(hours, cx));
+                cx.notify();
+            }))
+        }));
+        let handlers: Vec<(u32, page::Handler)> = WINDOWS
+            .iter()
+            .map(|&hours| {
+                let handler = page::handler(cx, move |this: &mut Self, _, cx| {
+                    this.timeline
+                        .update(cx, |timeline, cx| timeline.set_window(hours, cx));
+                    cx.notify();
+                });
+                (hours, handler)
+            })
+            .collect();
+        let fold = std::rc::Rc::new(
+            move |mut menu: gpui_kit::component::menu::PopupMenu,
+                  window: &mut Window,
+                  cx: &mut Context<gpui_kit::component::menu::PopupMenu>| {
+                for (hours, handler) in &handlers {
+                    menu = page::checked_item(
+                        format!("{hours} h"),
+                        chosen == *hours,
+                        handler.clone(),
+                    )(menu, window, cx);
+                }
+                menu
+            },
+        );
+        (control, fold)
     }
 
     /// The selected part's details, then its link: each side, why, and
@@ -87,6 +180,7 @@ impl ApplicationPage {
             .children(why);
         Some(
             Inspector::new("application-detail")
+                .selection(&row.key)
                 .heading(heading)
                 .child(render_open(row, cx).children(render_follow(row, cx)))
                 .children(fields(&row.fields, cx))
@@ -145,7 +239,10 @@ impl Render for ApplicationPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
-        let (body, least) = self.render_table(window, cx);
+        let (body, least) = match self.tab {
+            PageTab::Parts => self.render_table(window, cx),
+            PageTab::Timeline => (self.timeline.clone().into_any_element(), 0.),
+        };
         let short = page::is_short(window);
         // The keys live on a wrapper drawn in every state.
         div()

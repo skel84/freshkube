@@ -2,7 +2,7 @@
 //! `wonky-otter`, followed from its application page's Stage.
 use crate::applications::testing::change::ChangePage;
 use crate::applications::{ApplicationsPage, Variant};
-use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
+use crate::desktop::{Page, Pilot, layout_check, testing::fixture_stepped, tests::fixture};
 
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext, test::TestWindowExt,
@@ -63,6 +63,54 @@ fn on_stage_of(
     .unwrap();
     cx.run_until_parked();
     (runtime, handle, view)
+}
+
+/// [`on_stage`] on a runtime the test steps (see `fixture_stepped`).
+fn on_stage_stepped(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = fixture_stepped(cx, width, height);
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, _| page.set_variant(Variant::Acme));
+        window.render_frame(cx);
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        window.click(CHECKOUT, cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        window.click(PROD_AMS, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (runtime, handle, view)
+}
+
+/// [`open`] on a runtime the test steps.
+fn open_stepped(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = on_stage_stepped(cx, width, height);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (runtime, handle, view)
+}
+
+/// Lets the stepped runtime run `seconds` of its paused clock, and GPUI take
+/// what it sent.
+fn step(cx: &mut TestAppContext, runtime: &tokio::runtime::Runtime, seconds: u64) {
+    for _ in 0..seconds * 4 {
+        runtime.block_on(async { tokio::time::sleep(std::time::Duration::from_millis(250)).await });
+        cx.run_until_parked();
+    }
 }
 
 /// The change, followed from prod-ams with F.
@@ -2000,6 +2048,332 @@ fn turning_a_notify_me_switch_on_closes_the_popover_and_toasts(cx: &mut TestAppC
             window.notifications(cx).len(),
             toasts + 1,
             "the confirmation"
+        );
+    })
+    .unwrap();
+}
+
+/// Stage actions on example data: the dialog at each level, with a runner
+/// that sends nothing because there is no cluster.
+fn stage_action(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    handle: AnyWindowHandle,
+    view: &Entity<Pilot>,
+    hop_key: &str,
+    button: &'static str,
+) {
+    let page = cx.update(|cx| change(view, cx)).expect("the change page");
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| page.select(hop_key, window, cx));
+        window.render_frame(cx);
+        window.click(button, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    step(cx, runtime, 1);
+}
+
+/// The write toast's status, after the stepped runtime has answered.
+fn toast(cx: &mut TestAppContext, handle: AnyWindowHandle) -> String {
+    found(cx, handle, "write-toast-status").unwrap_or_default()
+}
+
+fn found(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> Option<String> {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window
+            .try_find(id)
+            .map(|found| found.label().unwrap_or_default().to_owned())
+    })
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn promote_to_a_protected_destination_asks_for_the_stage_name_and_sends_nothing_in_example_data(
+    cx: &mut TestAppContext,
+) {
+    let (runtime, handle, view) = open_stepped(cx, 1280., 1200.);
+    stage_action(
+        cx,
+        &runtime,
+        handle,
+        &view,
+        "prod-ams-promotion",
+        "change-action-4",
+    );
+    // prod-ams is protected in the example workspace; cicd-fra is guarded.
+    assert_eq!(
+        found(cx, handle, "write-type-prompt").as_deref(),
+        Some("Type prod-ams to confirm")
+    );
+    let destinations = found(cx, handle, "write-destinations").unwrap();
+    assert!(
+        destinations.contains("prod-ams (Protected)"),
+        "{destinations}"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.click("write-type-name", cx);
+        window.render_frame(cx);
+        window.input("prod-ams", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("write-confirm", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    step(cx, &runtime, 1);
+    let status = toast(cx, handle);
+    let shown: Vec<_> = [
+        "write-dialog",
+        "write-refused",
+        "write-disabled",
+        "write-confirm",
+    ]
+    .into_iter()
+    .map(|id| (id, found(cx, handle, id)))
+    .collect();
+    assert!(status.contains("Example data"), "{status} {shown:?}");
+}
+
+#[gpui_kit::test]
+fn refresh_on_example_data_asks_nothing_and_says_there_is_no_cluster(cx: &mut TestAppContext) {
+    let (runtime, handle, view) = open_stepped(cx, 1280., 880.);
+    stage_action(
+        cx,
+        &runtime,
+        handle,
+        &view,
+        "prod-ams-promotion",
+        "change-action-1",
+    );
+    assert!(found(cx, handle, "write-dialog").is_none());
+    let status = toast(cx, handle);
+    assert!(status.contains("Example data"), "{status}");
+}
+
+#[gpui_kit::test]
+fn a_destination_changed_in_settings_reaches_a_promote_dialog_the_shell_built(
+    cx: &mut TestAppContext,
+) {
+    let (runtime, handle, view) = open_stepped(cx, 1280., 1200.);
+    stage_action(
+        cx,
+        &runtime,
+        handle,
+        &view,
+        "prod-ams-promotion",
+        "change-action-4",
+    );
+    assert!(found(cx, handle, "write-type-prompt").is_some());
+    // The shell holds each workspace entry's level in a cell the dialog was
+    // given for its destination: Settings making prod-ams read-only reaches it.
+    cx.update(|cx| {
+        crate::mutation::set_entry_levels(
+            [(
+                "prod-ams".to_owned(),
+                freshkube_core::write::Protection::ReadOnly,
+            )],
+            cx,
+        )
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.click("write-type-name", cx);
+        window.render_frame(cx);
+        window.input("prod-ams", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("write-confirm", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    step(cx, &runtime, 1);
+    // Refused for the level, not "Example data": the runner followed the cell.
+    let status = toast(cx, handle);
+    assert!(status.contains("read-only"), "{status}");
+    assert!(!status.contains("Example data"), "{status}");
+}
+
+/// #887: with the fix bar and the banners up in a short window at the
+/// largest text size, the trail keeps at least three rows in view or
+/// reachable by scrolling the page, and every banner still says why: also
+/// with a failed refresh, whose banner leads the capped block.
+#[gpui_kit::test]
+fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut TestAppContext) {
+    const WHY: &str = "connection refused by core-fra.example.test:6443";
+    for stale in [false, true] {
+        let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            window.press("f", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            if stale {
+                change(&view, cx)
+                    .unwrap()
+                    .update(cx, |page, cx| page.fail_read(WHY, window, cx));
+            }
+            window.render_frame(cx);
+            for _ in 0..10 {
+                if window.simulate_next_frame(cx) == 0 {
+                    break;
+                }
+            }
+            window.render_frame(cx);
+            assert!(freshkube_ui::page::is_short(window));
+            for id in ["change-missing", "change-pull"] {
+                let banner = window.find(id);
+                assert!(
+                    banner.label().is_some_and(|words| !words.is_empty()),
+                    "{id}"
+                );
+            }
+            let notes = window.find("change-notes").bounds();
+            let table = window.find("change-table-scroll").bounds();
+            if stale {
+                // The failed refresh leads the block, its reason's first line
+                // in view wherever the trail leaves room, the rest a wheel away.
+                let banner = window.find("change-stale");
+                assert!(banner.label().is_some_and(|words| words.contains(WHY)));
+                let at = banner.bounds();
+                let pad = at.top() - notes.top();
+                assert!(
+                    pad >= gpui_kit::px(0.) && pad <= gpui_kit::px(24.),
+                    "{at:?} leads {notes:?}"
+                );
+                assert!(
+                    notes.bottom() - at.top() >= freshkube_ui::ui::dp_px(20., window),
+                    "{at:?} has no line in {notes:?}"
+                );
+            }
+            // Nothing overlaps: the banners end where the trail begins.
+            assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+            // The notes keep their content's height: the last banner ends within
+            // the block's padding, never past it.
+            let last = window.find("change-pull").bounds();
+            assert!(
+                notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
+                "{notes:?} taller than its banners, last {last:?}"
+            );
+            // The trail keeps three rows' height in the page, which scrolls.
+            let key = change(&view, cx)
+                .unwrap()
+                .read(cx)
+                .selected()
+                .cloned()
+                .unwrap();
+            let row = window.find(hop(&key)).bounds().size.height;
+            assert!(
+                table.size.height >= row * 3.,
+                "table {table:?} for rows of {row:?}"
+            );
+            // And the header with two rows (three rows' height) sit above the
+            // status bar before any scrolling, the banners having given way.
+            let status = window.find("status-bar").bounds();
+            assert!(
+                table.top() + row * 3. <= status.top(),
+                "table {table:?} for rows of {row:?} under the status bar {status:?}"
+            );
+            // A wheel over the block scrolls the block and leaves the page.
+            let banner = window.find("change-missing").bounds().top();
+            window.scroll(
+                "change-notes",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-20.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(
+                window.find("change-missing").bounds().top() < banner,
+                "the block scrolled"
+            );
+            assert_eq!(
+                window.find("change-table-scroll").bounds().top(),
+                table.top(),
+                "the page stayed"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// #887: with room to spare, every banner shows whole and nothing scrolls.
+#[gpui_kit::test]
+fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage_of(cx, 1280., 880., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_some());
+        assert!(!freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let table = window.find("change-table-scroll").bounds();
+        for id in ["change-missing", "change-pull"] {
+            let banner = window.find(id).bounds();
+            assert!(
+                banner.top() >= notes.top() && banner.bottom() <= notes.bottom(),
+                "{id} {banner:?} cut by {notes:?}"
+            );
+        }
+        assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
+        // The notes keep their content's height: the last banner ends within
+        // the block's padding, never past it.
+        let last = window.find("change-pull").bounds();
+        assert!(
+            notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
+            "{notes:?} taller than its banners, last {last:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// #887: at the default text size in a short window the banners keep the
+/// room the table's header and two rows leave them, more than their floor.
+#[gpui_kit::test]
+fn banners_use_the_room_the_trail_leaves_at_the_default_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let table = window.find("change-table-scroll").bounds();
+        let status = window.find("status-bar").bounds();
+        assert!(
+            notes.size.height > freshkube_ui::ui::dp_px(60., window),
+            "{notes:?} left at its floor"
+        );
+        assert!(
+            table.top() + freshkube_ui::ui::dp_px(90., window) <= status.top(),
+            "{table:?} under {status:?}"
         );
     })
     .unwrap();
