@@ -18,10 +18,7 @@ impl SettingsPage {
         let header = page::PageHeader::new("settings-about", "About").render(window, cx);
         let session = crash::session(cx);
         let log = match &session {
-            Some(info) => info
-                .log
-                .file_name()
-                .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+            Some(info) => info.log.display().to_string(),
             None => "This window keeps no log".to_owned(),
         };
         let kept = session.is_some();

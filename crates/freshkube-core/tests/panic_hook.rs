@@ -51,8 +51,8 @@ fn panics_are_recorded_from_a_thread_and_from_a_tokio_task() {
     let marked = marker::read(&marker::path_in(dir.path())).unwrap();
     let message = marked.panic.unwrap();
     assert!(
-        message.contains("task went wrong"),
-        "the last panic is kept: {message}"
+        message.contains("thread went wrong"),
+        "the first panic is kept: {message}"
     );
     assert!(
         !std::fs::read_to_string(marker::path_in(dir.path()))

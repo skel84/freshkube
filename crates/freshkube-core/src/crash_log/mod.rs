@@ -61,6 +61,11 @@ impl Recorder {
     fn note_panic(&self, message: &str, location: Option<String>, thread: &str) {
         let Some(path) = &self.marker else { return };
         let mut report = self.report.lock().unwrap_or_else(|e| e.into_inner());
+        // The first panic is the cause; a later one (a panic while unwinding,
+        // "cannot unwind" out of a platform callback) must not replace it.
+        if report.panic.is_some() {
+            return;
+        }
         *report = report.clone().with_panic(message, location, thread);
         _ = marker::write(path, &report);
     }
@@ -74,9 +79,21 @@ pub struct SessionInfo {
     pub log: PathBuf,
     /// The marker the last session left, when it did not quit cleanly.
     pub last_crash: Option<CrashReport>,
+    /// The marker file this session cleared on quit; `None` where nothing
+    /// is saved.
+    pub marker: Option<PathBuf>,
 }
 
 impl SessionInfo {
+    /// The clean quit from inside the app: a quit that ends the process
+    /// without returning from `main` (the macOS Quit command) never reaches
+    /// [`Session`]'s `Drop`, so the app calls this as it quits. Idempotent.
+    pub fn clean_quit(&self) {
+        if let Some(path) = &self.marker {
+            marker::clear(path);
+        }
+    }
+
     /// The log to open for a problem: the crashed session's (now the previous
     /// log) when there was a crash and its file is still there, else this one.
     pub fn log_to_reveal(&self) -> PathBuf {
@@ -158,6 +175,7 @@ pub fn start(log: &Path, marker_folder: Option<&Path>, version: &str) -> io::Res
             version: version.to_owned(),
             log: log.to_path_buf(),
             last_crash,
+            marker: marker.clone(),
         },
         sink,
         marker,
@@ -204,6 +222,32 @@ mod tests {
     }
 
     #[test]
+    fn a_quit_from_inside_the_app_clears_the_marker_and_a_later_panic_keeps_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = marker::path_in(dir.path());
+        marker::write(&path, &CrashReport::default()).unwrap();
+        let info = SessionInfo {
+            marker: Some(path.clone()),
+            ..SessionInfo::default()
+        };
+        info.clean_quit();
+        info.clean_quit();
+        assert!(marker::read(&path).is_none());
+
+        let recorder = Recorder {
+            marker: Some(path.clone()),
+            report: Mutex::new(CrashReport::default()),
+            sink: LogSink::new(File::create(dir.path().join("l.log")).unwrap()),
+        };
+        recorder.note_panic("the cause", None, "main");
+        recorder.note_panic("cannot unwind", None, "main");
+        assert_eq!(
+            marker::read(&path).unwrap().panic.as_deref(),
+            Some("the cause")
+        );
+    }
+
+    #[test]
     fn the_log_to_open_is_the_crashed_sessions() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("freshkube.log");
@@ -212,6 +256,7 @@ mod tests {
             version: "1".into(),
             log: log.clone(),
             last_crash: None,
+            marker: None,
         };
         assert_eq!(info.log_to_reveal(), log);
         info.last_crash = Some(CrashReport::default());

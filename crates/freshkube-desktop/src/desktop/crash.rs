@@ -40,6 +40,14 @@ pub(super) fn install(options: &GpuiOptions, cx: &mut App) {
     cx.set_global(Current(info));
 }
 
+/// The app is quitting: the session ends cleanly, which a quit that exits the
+/// process without returning from `main` would not otherwise say.
+pub(super) fn clean_quit(cx: &App) {
+    if let Some(info) = session(cx) {
+        info.clean_quit();
+    }
+}
+
 /// Hands a test window the session a launch would have started.
 #[cfg(test)]
 pub(crate) fn set_session(info: SessionInfo, cx: &mut App) {
@@ -54,6 +62,7 @@ fn example_session() -> SessionInfo {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         last_crash: Some(example_crash(&log)),
         log,
+        marker: None,
     }
 }
 
@@ -125,6 +134,19 @@ impl Pilot {
         // A stress build compiles the trigger in, but
         // `DebugOptions::debug_only` clears the knob there: only a debug
         // build ever panics on request.
+        // `FRESHKUBE_CRASH_SEED`: a credential-shaped value the log and the
+        // forced panic carry, so a smoke can check the redaction on the real
+        // path. It is never written anywhere unredacted.
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        let seed = debug
+            .crash_seed
+            .as_deref()
+            .map(|seed| format!(" password={seed}"))
+            .unwrap_or_default();
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        if let Some(seed) = &debug.crash_seed {
+            tracing::info!("signing in with token={seed}");
+        }
         #[cfg(any(debug_assertions, feature = "stress"))]
         match debug.crash {
             Some(CrashShape::Panic) => {
@@ -132,14 +154,14 @@ impl Pilot {
                     cx.background_executor()
                         .timer(std::time::Duration::from_secs(3))
                         .await;
-                    cx.update(|_| panic!("forced panic (FRESHKUBE_CRASH=panic)"));
+                    cx.update(|_| panic!("forced panic (FRESHKUBE_CRASH=panic){seed}"));
                 })
                 .detach();
             }
             Some(CrashShape::Task) => {
-                runtime.spawn(async {
+                runtime.spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    panic!("forced panic in a Tokio task (FRESHKUBE_CRASH=task)");
+                    panic!("forced panic in a Tokio task (FRESHKUBE_CRASH=task){seed}");
                 });
             }
             _ => {}

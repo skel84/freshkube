@@ -159,6 +159,7 @@ pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
     // and its page, but not the app (docs/STATE_LIFETIMES.md).
     fn end(quit: fn(&mut App), cx: &mut App) {
         freshkube_followed::stop_all(cx);
+        crash::clean_quit(cx);
         quit(cx);
     }
     cx.on_action(move |_: &Quit, cx| {
@@ -223,6 +224,13 @@ pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Resu
             cx,
         );
         on_quit(cx, |cx| cx.quit());
+        // Whatever starts the quit (the window's close included) ends the
+        // session cleanly.
+        cx.on_app_quit(|cx| {
+            crash::clean_quit(cx);
+            async {}
+        })
+        .detach();
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();

@@ -25,6 +25,7 @@ fn session(dir: &Path, crash: Option<CrashReport>) -> SessionInfo {
         version: "1.0.0".into(),
         log,
         last_crash: crash,
+        marker: None,
     }
 }
 

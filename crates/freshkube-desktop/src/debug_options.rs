@@ -152,6 +152,10 @@ pub struct DebugOptions {
     /// an invented crash), `panic` and `task` force a panic on the main
     /// thread or in a Tokio task; anything else is ignored. Debug builds only.
     pub(crate) crash: Option<CrashShape>,
+    /// `FRESHKUBE_CRASH_SEED`: a value the startup log line and the forced
+    /// panic carry as a token and a password, to check that the log and the
+    /// copied diagnostics hold neither. Debug builds only.
+    pub(crate) crash_seed: Option<String>,
 }
 
 impl DebugOptions {
@@ -177,6 +181,7 @@ impl DebugOptions {
             self.app_menu_button = false;
             self.text_size = None;
             self.crash = None;
+            self.crash_seed = None;
         }
         self
     }
@@ -253,6 +258,7 @@ impl DebugOptions {
                 Some("task") => Some(CrashShape::Task),
                 _ => None,
             },
+            crash_seed: text("FRESHKUBE_CRASH_SEED"),
         }
     }
 
