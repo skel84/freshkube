@@ -243,7 +243,10 @@ mod tests {
         assert!(check_document(&json!({"permission": []})).is_err());
         assert!(check_document(&json!({"plugins": ["freshkube-plugin"]})).is_err());
         assert!(check_document(&json!({"plugins": ["./plugin"]})).is_err());
-        assert!(check_document(&json!({"plugins": ["/tmp/plugin"]})).is_ok());
+        // An absolute path of this platform (`/tmp/plugin` has no drive on Windows).
+        let absolute = std::env::temp_dir().join("plugin");
+        let absolute = absolute.to_str().unwrap();
+        assert!(check_document(&json!({"plugins": [absolute]})).is_ok());
         assert!(
             check_document(&json!({"permissions": [{"action": "*", "effect": "deny"}]})).is_err()
         );
