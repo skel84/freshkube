@@ -74,8 +74,6 @@ pub struct Follower {
     at: Option<usize>,
     /// Reads kept by number before they arrived or after they were skipped.
     kept: Vec<u32>,
-    /// Places that came since the person took the page back.
-    newer: usize,
     elsewhere: Option<String>,
 }
 
@@ -90,7 +88,6 @@ impl Follower {
             trail: Vec::new(),
             at: None,
             kept: Vec::new(),
-            newer: 0,
             elsewhere: None,
         }
     }
@@ -115,7 +112,6 @@ impl Follower {
             self.trail.push(place.clone());
         }
         if !self.following {
-            self.newer += 1;
             return Fed::Ignored;
         }
         let keep = self.kept.contains(&place.read);
@@ -177,20 +173,17 @@ impl Follower {
             return;
         }
         self.following = false;
-        self.newer = 0;
         self.waiting.clear();
     }
 
     /// Follows again from the next read.
     pub fn resume(&mut self) {
         self.following = true;
-        self.newer = 0;
     }
 
     /// Follows again at the latest place, which the page shows now.
     pub fn jump(&mut self, now: Instant) -> Option<Move> {
         self.following = true;
-        self.newer = 0;
         self.waiting.clear();
         let latest = self.trail.last().cloned()?;
         Some(self.show(latest, now))
@@ -240,9 +233,13 @@ impl Follower {
         Some((self.at? + 1, self.trail.len()))
     }
 
-    /// How many places came since the person took the page back.
+    /// How many places are newer than the one the page shows, once the
+    /// person has taken it back; zero while following.
     pub fn newer(&self) -> usize {
-        self.newer
+        if self.following {
+            return 0;
+        }
+        self.trail.len() - self.at.map_or(0, |at| at + 1)
     }
 
     /// The other cluster the agent last read, if it read one.
@@ -266,12 +263,12 @@ fn held(since: Instant, now: Instant) -> bool {
 mod tests {
     use super::*;
     use crate::endpoint::Outcome;
-    use crate::session::{ReadIds, SessionId};
+    use crate::session::SessionId;
     use freshkube_core::agent_reads::Code;
     use freshkube_nav::{KindKey, LinkPage, ViewState};
 
     struct Run {
-        ids: ReadIds,
+        ids: std::cell::Cell<u32>,
         session: SessionId,
         start: Instant,
     }
@@ -279,7 +276,7 @@ mod tests {
     impl Run {
         fn new() -> Self {
             Self {
-                ids: ReadIds::default(),
+                ids: Default::default(),
                 session: SessionId::new(),
                 start: Instant::now(),
             }
@@ -294,7 +291,10 @@ mod tests {
             view.kind = Some(KindKey::parse(kind).unwrap());
             ReadEvent {
                 session: self.session,
-                read: self.ids.next(),
+                read: {
+                    self.ids.set(self.ids.get() + 1);
+                    crate::ReadId::numbered(self.ids.get())
+                },
                 tool: "list_objects",
                 cluster: cluster.to_owned(),
                 view: viewed.then_some(view),
@@ -414,10 +414,11 @@ mod tests {
         follower.feed(&run.read("services"), run.at(100));
         follower.hand_back();
         assert!(!follower.following());
+        assert_eq!(follower.newer(), 1, "the place that waited is newer");
         assert_eq!(follower.due(run.at(5000)), None, "what waited is dropped");
         follower.feed(&run.read("nodes"), run.at(6000));
         follower.feed(&run.read("events"), run.at(6100));
-        assert_eq!(follower.newer(), 2);
+        assert_eq!(follower.newer(), 3);
         let jumped = follower.jump(run.at(7000)).unwrap();
         assert_eq!(kind(&jumped), "events", "Jump shows the latest place");
         assert!(follower.following());

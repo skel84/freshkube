@@ -277,6 +277,11 @@ impl Pages {
                 this.page_event(&event.clone().into(), window, cx)
             },
         ));
+        subscriptions.push(cx.subscribe_in(
+            dock,
+            window,
+            |this, _, event: &dock::FollowEvent, window, cx| this.follow_event(event, window, cx),
+        ));
         subscriptions.push(cx.observe(custom, |_, _, cx| cx.notify()));
         subscriptions
     }

@@ -6,7 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
+use gpui_kit::component::{Disableable, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -113,6 +113,21 @@ impl AgentView {
                         "Agent access is off for this cluster; the first question asks"
                     })
                     .on_click(cx.listener(|this, _, _, cx| this.turn_off_access(cx))),
+            )
+            .child(
+                Button::new("agent-following")
+                    .outline()
+                    .small()
+                    .icon(IconName::Eye)
+                    .label("Following")
+                    .selected(self.is_following())
+                    .disabled(self.follow.is_none())
+                    .tooltip(if self.is_following() {
+                        "The page follows the agent's reads. Press to stop."
+                    } else {
+                        "Let the page follow the agent's reads again"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_following(cx))),
             )
             .child(
                 Button::new("agent-stop")
@@ -439,6 +454,8 @@ impl AgentView {
             StepState::Failed if !super::is_ours(&step.tool) => (Tone::Unknown, "Refused"),
             StepState::Failed => match self.step_marks.get(&ix) {
                 Some(TrailMark::Refused) => (Tone::Unknown, "Refused"),
+                // The read worked and the object isn't there.
+                Some(TrailMark::NotFound) => (Tone::Unknown, "Not found"),
                 Some(TrailMark::CouldntRead) => (Tone::Warn, "Couldn't read"),
                 _ => (Tone::Crit, "Failed"),
             },
@@ -544,6 +561,7 @@ impl AgentView {
             TrailMark::Cited => Tone::Good,
             // Neutral, as the transcript's Refused is: the app refused it.
             TrailMark::Refused => Tone::Unknown,
+            TrailMark::NotFound => Tone::Unknown,
             // The read broke: amber, not red.
             TrailMark::CouldntRead => Tone::Warn,
         };
@@ -558,6 +576,11 @@ impl AgentView {
                 row.mark.label()
             )))
             .gap(dp(2.))
+            .when(row.view.is_some(), |this| {
+                let number = row.number;
+                this.cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| this.go_to_read(number, cx)))
+            })
             .child(
                 h_flex()
                     .gap(dp(8.))

@@ -1,9 +1,10 @@
 //! The trail: each read the agent made, with its place as text and a mark.
-//! Rows are not clickable yet (the page following the agent's reads is D1d).
+//! A row of a read that has a view is a link the person may press: a click
+//! is their own navigation to that view (`AgentView::go_to_read`).
 
 use freshkube_agent::{Outcome, ReadEvent};
 use freshkube_core::agent_reads::Code;
-use freshkube_nav::ViewTab;
+use freshkube_nav::{ViewState, ViewTab};
 
 /// At most this many reads show; a session has 500 at most, so this is
 /// a bound, not a cut in practice.
@@ -23,6 +24,9 @@ pub(crate) enum Mark {
     /// context, a tool that isn't one of the four reads, a kind that isn't
     /// served, a 401 or 403, or a bound. Neutral: nothing broke.
     Refused,
+    /// The read worked and the object isn't there. Neutral too: nothing
+    /// was refused and nothing broke.
+    NotFound,
     /// The read broke: the cluster was unreachable, it took too long, or the
     /// server's answer was an error or couldn't be read.
     CouldntRead,
@@ -34,6 +38,7 @@ impl Mark {
             Self::Evidence => "evidence",
             Self::Cited => "cited",
             Self::Refused => "refused",
+            Self::NotFound => "Not found",
             Self::CouldntRead => "couldn't read",
         }
     }
@@ -51,6 +56,9 @@ pub(crate) struct Row {
     pub(crate) mark: Mark,
     /// The entry the read was made on when it isn't the session's own.
     pub(crate) elsewhere: Option<String>,
+    /// Where the window would go to show the read, when it ran on the
+    /// session's own cluster and found something to show.
+    pub(crate) view: Option<ViewState>,
 }
 
 #[derive(Debug, Default)]
@@ -78,10 +86,10 @@ impl Trail {
         let (place, mark) = match &event.outcome {
             Outcome::Refused(code) => (
                 refusal(*code).to_owned(),
-                if broke(*code) {
-                    Mark::CouldntRead
-                } else {
-                    Mark::Refused
+                match code {
+                    Code::NotFound => Mark::NotFound,
+                    code if broke(*code) => Mark::CouldntRead,
+                    _ => Mark::Refused,
                 },
             ),
             Outcome::Answered { .. } => (
@@ -100,7 +108,15 @@ impl Trail {
             place,
             mark,
             elsewhere: (event.cluster != own).then(|| event.cluster.clone()),
+            view: event.view.clone().filter(|_| {
+                event.cluster == own && matches!(event.outcome, Outcome::Answered { .. })
+            }),
         });
+    }
+
+    /// The row of read `number`.
+    pub(crate) fn row(&self, number: u32) -> Option<&Row> {
+        self.rows.iter().find(|row| row.number == number)
     }
 
     /// A shell or any other tool the agent asked for that Freshkube refused
@@ -118,6 +134,7 @@ impl Trail {
             place: "Not one of Freshkube's four reads".to_owned(),
             mark: Mark::Refused,
             elsewhere: None,
+            view: None,
         });
     }
 
@@ -196,7 +213,7 @@ fn refusal(code: Code) -> &'static str {
 }
 
 /// A view as words: `pods · shop/api-0 · Logs`.
-fn place(view: &freshkube_nav::ViewState) -> String {
+pub(crate) fn place(view: &ViewState) -> String {
     let mut parts = Vec::new();
     if let Some(kind) = &view.kind {
         parts.push(kind.as_str().to_owned());
@@ -243,6 +260,30 @@ mod tests {
         ] {
             assert!(!broke(code), "{code}");
         }
+    }
+
+    #[test]
+    fn a_missing_object_is_not_found_not_refused() {
+        let mut next = 0;
+        let mut trail = Trail::default();
+        let mut event = |code| ReadEvent {
+            session: freshkube_agent::SessionId::new(),
+            read: {
+                next += 1;
+                freshkube_agent::ReadId::numbered(next)
+            },
+            tool: "get_object",
+            cluster: "a".to_owned(),
+            view: None,
+            outcome: Outcome::Refused(code),
+        };
+        let missing = event(Code::NotFound);
+        let refused = event(Code::Refused);
+        trail.read(&missing, "a");
+        trail.read(&refused, "a");
+        let marks: Vec<_> = trail.rows().iter().map(|row| row.mark).collect();
+        assert_eq!(marks, [Mark::NotFound, Mark::Refused]);
+        assert_eq!(Mark::NotFound.label(), "Not found");
     }
 
     #[test]

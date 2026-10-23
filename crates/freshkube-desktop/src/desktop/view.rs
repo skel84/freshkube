@@ -20,6 +20,7 @@ impl Render for Pilot {
             .lay_out(window)
             .filter(|_| !self.tabs.missing_shown);
         let page = self.render_page(cx);
+        let followed = self.is_followed(cx);
         let root = v_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -30,6 +31,16 @@ impl Render for Pilot {
         let root = self.chrome.listen(root, cx);
         let root = self.listen_tabs(root, cx);
         self.listen(root, cx)
+            // While the page follows an agent, any input of the person
+            // outside the dock takes it back (`agent_follow.rs`).
+            .when(followed, |this| {
+                this.capture_any_mouse_down(cx.listener(
+                    |pilot, event: &MouseDownEvent, window, cx| {
+                        pilot.follow_input(Some(event.position), window, cx)
+                    },
+                ))
+                .child(self.follow_scroll_guard(cx))
+            })
             .child(self.chrome.parts.header())
             .children(
                 self.tabs
@@ -176,6 +187,8 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let dock = self.pages.dock.read(cx).shown_height(window, cx);
+        let strip = self.follow_strip(cx);
+        let accent = crate::palette::palette(cx).accent;
         freshkube_ui::page::set_below(
             dock.map(|height| height / crate::ui::dp_px(1., window))
                 .unwrap_or(0.),
@@ -186,7 +199,28 @@ impl Pilot {
             .flex_1()
             .min_w_0()
             .min_h_0()
-            .child(div().flex_1().min_w_0().min_h_0().child(page))
+            // The strip, beside the cached page, so its hairline's frames
+            // draw nothing else.
+            .children(strip.clone())
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(page)
+                    // A 2 px frame around the followed page that takes no
+                    // room and no pointer.
+                    .children(strip.map(|_| {
+                        div()
+                            .id("follow-frame")
+                            .test_support()
+                            .absolute()
+                            .inset_0()
+                            .border_2()
+                            .border_color(accent)
+                    })),
+            )
             .children(dock.map(|height| {
                 self.pages
                     .dock
@@ -202,4 +236,28 @@ fn tab_strip_style() -> StyleRefinement {
         .w_full()
         .h(crate::ui::dp(freshkube_ui::tab_strip::BAR_HEIGHT))
         .flex_none()
+}
+
+impl Pilot {
+    /// Hears the wheel anywhere in the window while the page follows an
+    /// agent: a scrolling list stops the wheel from reaching its parents, so
+    /// the capture phase is the only place that sees all of it.
+    fn follow_scroll_guard(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let pilot = cx.entity().downgrade();
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let pilot = pilot.clone();
+                window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Capture {
+                        _ = pilot.update(cx, |pilot, cx| {
+                            pilot.follow_input(Some(event.position), window, cx)
+                        });
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_0()
+    }
 }

@@ -379,6 +379,16 @@ forwarding the page's hide to `Watch::set_visible`.
   access off (`Access::set_access`) revokes the gate first, which ends the
   reads in flight. The tab is saved nowhere. See
   [the agent](features/agent.md#the-dock-tab-slice-d1c).
+- **The follow-owned log tab:** while the page follows an Agent tab, a log read
+  shows its pod in one dock log tab that
+  [`Dock`](../crates/freshkube-desktop/src/desktop/dock/follow.rs) owns for
+  following (`follow_tab`). The next log read takes its place, so there is at
+  most one. It lives until following stops (the person's input, ×, the toggle
+  or the Agent tab closing) and then closes, unless the person used it
+  (selected it, pressed in it or opened that pod): it is theirs from then on
+  and ends like any log tab. The follower's timer is dropped with the hand-back
+  and with the session's view. See
+  [follow](features/agent.md#follow-slice-d1d).
 - **Followed items:** [`Followed`](../crates/freshkube-followed/src/owner/mod.rs)
   is the app's follows, made once at startup like `ForwardList` and kept as
   a global. See [Followed items](#followed-items).

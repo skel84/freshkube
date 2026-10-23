@@ -1,4 +1,5 @@
 mod access;
+mod agent_follow;
 mod alerts;
 mod app_menu;
 #[cfg(test)]
@@ -741,6 +742,8 @@ impl Pilot {
         // their connection, and an example seeds notices the toast shows.
         let followed = self.watch_followed(window, cx);
         self._subscriptions.extend(followed);
+        let keys = self.watch_follow_keys(cx);
+        self._subscriptions.push(keys);
         self.load_workspace(cx);
         self.rebuild_switcher(cx);
         // The followed-items example `hidden` is a protected cluster, so
