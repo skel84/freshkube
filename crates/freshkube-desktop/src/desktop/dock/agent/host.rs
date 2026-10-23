@@ -11,6 +11,16 @@ use freshkube_agent::Access;
 use freshkube_core::agent_reads::AgentAccess;
 use gpui_kit::{App, Global};
 
+/// Removes the directory an unsaved host kept its grants in, when the last
+/// clone of the host is dropped.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentHost {
     pub(crate) access: Arc<Access>,
@@ -18,6 +28,7 @@ pub(crate) struct AgentHost {
     /// The preferences file the app runs on; `agent.json` and the opencode
     /// data directory sit beside it. None without preferences.
     pub(crate) preferences: Option<PathBuf>,
+    _scratch: Option<Arc<Scratch>>,
 }
 
 impl Global for AgentHost {}
@@ -31,20 +42,23 @@ impl AgentHost {
     /// into the user's files.
     pub(crate) fn open(preferences: Option<&Path>) -> Self {
         let gate = AgentAccess::new();
-        let file = match preferences {
-            Some(path) => path.to_path_buf(),
-            None => std::env::temp_dir()
-                .join(format!(
-                    "freshkube-agent-{}-{}",
-                    std::process::id(),
-                    UNSAVED.fetch_add(1, Ordering::SeqCst)
-                ))
-                .join("preferences.json"),
+        let scratch = preferences.is_none().then(|| {
+            Arc::new(Scratch(std::env::temp_dir().join(format!(
+                "freshkube-agent-{}-{}",
+                std::process::id(),
+                UNSAVED.fetch_add(1, Ordering::SeqCst)
+            ))))
+        });
+        let file = match (preferences, &scratch) {
+            (Some(path), _) => path.to_path_buf(),
+            (None, Some(scratch)) => scratch.0.join("preferences.json"),
+            (None, None) => unreachable!("a host without preferences has a scratch directory"),
         };
         Self {
             access: Arc::new(Access::open(&file, &gate)),
             gate,
             preferences: preferences.map(Path::to_path_buf),
+            _scratch: scratch,
         }
     }
 

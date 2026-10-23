@@ -7,10 +7,9 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 ```
 crates/
 ├── talos-rs/            Talos gRPC client
-├── freshkube-agent/     the agent in the dock: the ACP client, the opencode profile and its lock-down, the transcript; no GPUI, used by desktop's Agent tab
+├── freshkube-agent/     the agent in the dock: the loopback read endpoint, its session token, the saved per-cluster access, the ACP client, the opencode profile and its lock-down, the transcript; no GPUI, used by desktop's Agent tab
 ├── freshkube-cli/       the read commands of the binary: check and get, JSON and exit codes; no GPUI
 ├── freshkube-core/      domain logic shared by every screen, no UI types
-├── freshkube-agent/     the agent's loopback read endpoint, its session token and the saved per-cluster access; no GPUI
 ├── freshkube-followed/  what the user follows (a pod, a change, an incident): the app-wide owner, its rules, the toasts and the bell; no desktop types
 ├── freshkube-delivery/  the delivery chain (Kargo, Argo CD, builds → pods) and its applications; no UI types
 ├── freshkube-prefs/     the preferences files: a typed JSON Document per file, saved atomically

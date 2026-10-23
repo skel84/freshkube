@@ -385,3 +385,70 @@ async fn a_marker_that_cannot_be_read_grants_nothing() {
     assert!(!can_read(&gate).await, "what can't be known is off");
     assert!(again.grants().is_empty());
 }
+
+#[tokio::test]
+async fn when_neither_the_file_nor_the_marker_can_be_written_it_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    let file = access.file_path().to_path_buf();
+    let marker = dir.path().join("agent-pending.json");
+    assert!(access.revocation_remembered());
+
+    // A directory sits at both files, as a folder that can't be written
+    // would stop both.
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    std::fs::create_dir(&marker).unwrap();
+    assert!(
+        access
+            .set_access(ENTRY, CONTEXT, false, "agent tab")
+            .is_err()
+    );
+    assert!(
+        !can_read(&gate).await,
+        "off now, whatever happens to the files"
+    );
+    assert!(access.save_pending());
+    assert!(
+        !access.revocation_remembered(),
+        "the marker could not be written, so access can come back at the next start"
+    );
+
+    // Once the file can be written, the save clears the worry.
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::remove_dir(&marker).unwrap();
+    access.retry_save().unwrap();
+    assert!(access.revocation_remembered());
+    assert!(!access.save_pending());
+}
+
+#[tokio::test]
+async fn the_marker_is_written_before_the_file_is_saved() {
+    // A crash between the revoke and the save leaves the marker behind: the
+    // file is blocked here, so the marker is all there is.
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    let gate = AgentAccess::new();
+    let access = Access::open(&preferences, &gate);
+    access
+        .set_access(ENTRY, CONTEXT, true, "egress card")
+        .unwrap();
+    let file = access.file_path().to_path_buf();
+    let kept = std::fs::read(&file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let _ = access.set_access(ENTRY, CONTEXT, false, "agent tab");
+    assert!(dir.path().join("agent-pending.json").exists());
+    assert!(access.revocation_remembered());
+    drop(access);
+    std::fs::remove_dir(&file).unwrap();
+    std::fs::write(&file, kept).unwrap();
+    let gate = AgentAccess::new();
+    let _again = Access::open(&preferences, &gate);
+    assert!(!can_read(&gate).await);
+}

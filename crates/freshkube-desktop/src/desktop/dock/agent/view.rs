@@ -311,11 +311,25 @@ impl AgentView {
                 format!("Turning it on couldn't be saved: {error}"),
                 None,
             ),
-            Notice::SaveFailed(error) => (
+            Notice::SaveFailed {
+                error,
+                remembered: true,
+            } => (
                 Tone::Warn,
                 "Access is off, but it could not be saved",
                 format!(
                     "Reads on this cluster are refused now. agent.json may still say on, so a note beside it keeps this cluster off at the next start, and the save is tried again when the app quits: {error}"
+                ),
+                Some(retry),
+            ),
+            Notice::SaveFailed {
+                error,
+                remembered: false,
+            } => (
+                Tone::Crit,
+                "Access is off, but neither the file nor a note beside it could be written",
+                format!(
+                    "Reads on this cluster are refused now, but access will come back at the next start unless Save again succeeds first: {error}"
                 ),
                 Some(retry),
             ),
@@ -429,29 +443,29 @@ impl AgentView {
             .enumerate()
             .skip(hidden)
             .map(|(ix, entry)| match entry {
-                Entry::Asked(text) => div()
+                Entry::Asked(_) => div()
                     .id(("agent-asked", ix))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(text.clone())
+                    .child(self.texts[ix].clone())
                     .into_any_element(),
-                Entry::Thought(text) => div()
+                Entry::Thought(_) => div()
                     .id(("agent-thought", ix))
                     .text_color(p.muted)
-                    .child(text.text.clone())
+                    .child(self.texts[ix].clone())
                     .into_any_element(),
-                Entry::Said(text) => div()
+                Entry::Said(_) => div()
                     .id(("agent-said", ix))
                     .test_support()
-                    .aria_label(SharedString::from(text.text.clone()))
+                    .aria_label(self.texts[ix].clone())
                     .text_color(p.ink)
-                    .child(text.text.clone())
+                    .child(self.texts[ix].clone())
                     .into_any_element(),
-                Entry::Note(text) => div()
+                Entry::Note(_) => div()
                     .id(("agent-note", ix))
                     .test_support()
-                    .aria_label(SharedString::from(text.clone()))
+                    .aria_label(self.texts[ix].clone())
                     .text_color(p.warn_ink)
-                    .child(text.clone())
+                    .child(self.texts[ix].clone())
                     .into_any_element(),
                 Entry::Step(step) => self.render_step(step, cx).into_any_element(),
             })

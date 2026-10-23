@@ -1,7 +1,7 @@
 //! The Agent tab against the scripted agent, through the real endpoint, on
 //! example objects. Nothing here runs opencode.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use freshkube_agent::investigation::{Outcome, StepState};
 use freshkube_agent::scripted::{Script, TourRead};
@@ -337,7 +337,10 @@ fn a_failed_save_of_turning_access_off_is_shown_and_access_stays_off(cx: &mut Te
     );
     assert!(matches!(
         cx.update(|cx| view.read(cx).notice()),
-        Some(Notice::SaveFailed(_))
+        Some(Notice::SaveFailed {
+            remembered: true,
+            ..
+        })
     ));
     // A marker beside the file keeps it off at the next start.
     assert_eq!(host.access.pending_revocations().len(), 1);
@@ -482,16 +485,21 @@ fn steps_update_in_place_and_stop_ends_the_prompt(cx: &mut TestAppContext) {
     );
 
     // Stop answers within 500 ms, and the session takes a new prompt.
-    let started = Instant::now();
+    // Counted on the executor's clock, which steps 10 ms a poll.
+    let started = cx.executor().now();
     tab.click("agent-stop", cx);
-    tab.wait("the prompt is cancelled", cx, |view| {
-        view.outcome() == Outcome::Cancelled
-    });
-    assert!(
-        started.elapsed() < Duration::from_millis(500),
-        "{:?}",
-        started.elapsed()
-    );
+    let view = tab.view.clone();
+    while !cx.update(|cx| view.read(cx).outcome() == Outcome::Cancelled) {
+        cx.executor().advance_clock(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(10));
+        cx.run_until_parked();
+        assert!(
+            cx.executor().now() - started < Duration::from_secs(30),
+            "Stop never ended the prompt"
+        );
+    }
+    let took = cx.executor().now() - started;
+    assert!(took < Duration::from_millis(500), "{took:?}");
     assert!(!cx.update(|cx| tab.view.read(cx).is_working()));
     assert_eq!(tab.label("agent-outcome", cx).as_deref(), Some("Stopped"));
     assert!(
@@ -658,14 +666,9 @@ fn closing_the_tab_ends_the_session(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.update(|cx| !tab.view.read(cx).has_session()));
     // The job is dropped: the port closes, and with it the token.
-    let started = Instant::now();
-    while std::net::TcpStream::connect(addr).is_ok() {
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "the endpoint's port is still open"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    until_io(cx, "the endpoint's port closes", |_| {
+        std::net::TcpStream::connect(addr).is_err()
+    });
     // The tab is saved nowhere.
     let saved = cx.update(|cx| tab.dock.read(cx).saved(cx));
     assert!(saved.tabs.is_empty());
@@ -813,4 +816,81 @@ fn the_agent_page_slug_opens_the_tab_once(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     assert_eq!(agent_tabs(cx), 1);
+}
+
+#[gpui_kit::test]
+fn quitting_ends_the_agent(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    tab.script(tour(Duration::from_secs(3600)), cx);
+    tab.ask("why is api restarting?", cx);
+    tab.click("agent-turn-on", cx);
+    tab.wait("the endpoint listens", cx, |view| {
+        view.listening().is_some()
+    });
+    let addr = cx.update(|cx| tab.view.read(cx).listening()).unwrap();
+    cx.update(|cx| cx.shutdown());
+    cx.run_until_parked();
+    assert!(cx.update(|cx| !tab.view.read(cx).has_session()));
+    until_io(cx, "the endpoint's port closes", |_| {
+        std::net::TcpStream::connect(addr).is_err()
+    });
+}
+
+#[gpui_kit::test]
+fn a_tab_opened_after_access_came_back_does_not_say_it_started_off(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("preferences.json");
+    {
+        let gate = freshkube_core::agent_reads::AgentAccess::new();
+        let access = freshkube_agent::Access::open(&preferences, &gate);
+        access
+            .set_access("prod-fra", "prod-fra", true, "egress card")
+            .unwrap();
+        let file = access.file_path().to_path_buf();
+        let kept = std::fs::read(&file).unwrap();
+        std::fs::remove_file(&file).unwrap();
+        std::fs::create_dir(&file).unwrap();
+        assert!(
+            access
+                .set_access("prod-fra", "prod-fra", false, "agent tab")
+                .is_err()
+        );
+        std::fs::remove_dir(&file).unwrap();
+        std::fs::write(&file, kept).unwrap();
+    }
+    cx.executor().allow_parking();
+    let (_runtime, handle, pilot) = mount(cx, GpuiOptions::fixture(), 1280., 880.);
+    // The host held the cluster off; the person then turned it back on.
+    let host = super::AgentHost::open(Some(&preferences));
+    host.access
+        .set_access("prod-fra", "prod-fra", true, "egress card")
+        .unwrap();
+    cx.update(|cx| cx.set_global(host));
+    let dock = cx.update(|cx| pilot.read(cx).pages.dock.clone());
+    cx.update_window(handle, |_, window, cx| {
+        dock.update(cx, |dock, cx| dock.open_agent(window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let view = cx
+        .update(|cx| {
+            dock.read(cx).tabs.iter().find_map(|tab| match &tab.kind {
+                TabKind::Agent(view) => Some(view.clone()),
+                _ => None,
+            })
+        })
+        .unwrap();
+    assert!(cx.update(|cx| view.read(cx).access_on()));
+    assert!(cx.update(|cx| view.read(cx).notice().is_none()));
+}
+
+#[gpui_kit::test]
+fn a_temporary_host_removes_its_directory_when_it_is_dropped(cx: &mut TestAppContext) {
+    let host = super::AgentHost::open(None);
+    host.access.set_access("a", "a", true, "test").unwrap();
+    let dir = host.access.file_path().parent().unwrap().to_path_buf();
+    assert!(dir.exists());
+    drop(host);
+    assert!(!dir.exists());
+    let _ = cx;
 }

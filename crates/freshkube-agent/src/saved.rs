@@ -104,6 +104,9 @@ pub struct Access {
     /// grant and would turn it back on at the next start. The gate is off
     /// regardless; [`Access::retry_save`] writes the file again.
     unsaved: AtomicBool,
+    /// The marker could not be written either; see
+    /// [`Access::revocation_remembered`].
+    unremembered: AtomicBool,
 }
 
 impl Access {
@@ -160,6 +163,7 @@ impl Access {
             gate: gate.clone(),
             saved: Mutex::new(saved),
             unsaved: AtomicBool::new(unsaved),
+            unremembered: AtomicBool::new(false),
         };
         // Try the file again now; the marker stays until a save succeeds.
         if unsaved {
@@ -182,6 +186,7 @@ impl Access {
     /// A save of `agent.json` succeeded: nothing is pending any more.
     fn saved_ok(&self) {
         self.unsaved.store(false, Ordering::SeqCst);
+        self.unremembered.store(false, Ordering::SeqCst);
         if self.pending.path().exists() {
             let cleared = self.pending.save(&Pending::default());
             if let Err(error) = cleared {
@@ -190,10 +195,11 @@ impl Access {
         }
     }
 
-    /// A save of turning access off failed: remember the revocation apart
-    /// from `agent.json`, which may still say `on`.
-    fn save_failed(&self, entry: &str, context: &str) {
-        self.unsaved.store(true, Ordering::SeqCst);
+    /// Writes the revocation of `entry` to the marker, apart from
+    /// `agent.json`, before `agent.json` is saved: a crash or a failed save
+    /// after it leaves the cluster off at the next start. Returns whether the
+    /// marker was written.
+    fn remember(&self, entry: &str, context: &str) -> bool {
         let mut pending = self.pending.load().value;
         pending.revoked.retain(|revoked| revoked.entry != entry);
         pending.revoked.push(Revoked {
@@ -201,11 +207,23 @@ impl Access {
             context: context.to_owned(),
             since: Utc::now(),
         });
-        if let Err(error) = self.pending.save(&pending) {
-            tracing::warn!(
-                "agent access for {entry} is off, but neither agent.json nor its marker could be written: {error}"
-            );
+        match self.pending.save(&pending) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!("the agent access marker for {entry} could not be written: {error}");
+                self.unremembered.store(true, Ordering::SeqCst);
+                false
+            }
         }
+    }
+
+    /// Whether the last revocation that could not be saved is remembered
+    /// beside the file, so the cluster stays off at the next start. False
+    /// when the marker could not be written either (a full disk, a folder
+    /// that can't be written): then access comes back at the next start
+    /// unless a save succeeds first.
+    pub fn revocation_remembered(&self) -> bool {
+        !self.unremembered.load(Ordering::SeqCst)
     }
 
     /// Where opencode keeps its data in this setup.
@@ -292,10 +310,13 @@ impl Access {
         if !on {
             self.gate.revoke(entry);
             *saved = after.clone();
+            // The marker first: whatever happens to the file, the cluster
+            // stays off at the next start.
+            self.remember(entry, context);
             let written = self.document.save(&after);
             match &written {
                 Ok(()) => self.saved_ok(),
-                Err(_) => self.save_failed(entry, context),
+                Err(_) => self.unsaved.store(true, Ordering::SeqCst),
             }
             let audited = self.audit.append_json(&line);
             return written.and(audited);

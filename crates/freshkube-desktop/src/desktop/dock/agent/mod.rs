@@ -53,6 +53,8 @@ use trail::Trail;
 const DRAWN_ENTRIES: usize = 300;
 /// A question is cut here before it is sent.
 const MAX_QUESTION_BYTES: usize = 4 * 1024;
+/// The bytes of speech kept to read a citation split across two chunks.
+const CITE_CARRY: usize = 8;
 
 /// What the tab says above its body when something went wrong.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,7 +66,7 @@ pub(crate) enum Notice {
     /// Turning access off could not be saved. It is off now. The file may
     /// still say on, so a note beside it keeps the cluster off at the next
     /// start; a retry, or the quit, writes the file.
-    SaveFailed(String),
+    SaveFailed { error: String, remembered: bool },
     /// Turning access off was never saved, so at start the file's `on` was
     /// not trusted and the cluster began off.
     HeldOff,
@@ -178,6 +180,12 @@ pub(crate) struct AgentView {
     #[cfg_attr(not(test), allow(dead_code))]
     listening: Option<std::net::SocketAddr>,
     focus: FocusHandle,
+    /// The tail of the speech so far, so a citation split across two chunks
+    /// is still read without scanning the whole answer again.
+    cite_carry: String,
+    /// The text of each transcript entry as shown, kept when it changes so a
+    /// frame copies none of it.
+    texts: Vec<SharedString>,
     /// The least height the dock keeps for this tab: the toolbar and a few
     /// rows.
     least: Pixels,
@@ -218,6 +226,13 @@ impl AgentView {
                     }
                 }),
             ];
+        let mut subscriptions = subscriptions;
+        // Quitting ends the agent now, rather than leaving it to the process
+        // group's watcher.
+        subscriptions.push(cx.on_app_quit(|this, cx| {
+            this.end(cx);
+            async {}
+        }));
         let mut view = Self {
             runtime,
             host,
@@ -249,6 +264,8 @@ impl AgentView {
             shared_shape: shape == AgentShape::Shared,
             listening: None,
             focus: cx.focus_handle(),
+            cite_carry: String::new(),
+            texts: Vec::new(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             _subscriptions: subscriptions,
         };
@@ -257,6 +274,7 @@ impl AgentView {
             .own
             .as_ref()
             .is_some_and(|own| view.host.access.held_off().contains(&own.entry))
+            && !view.access_on()
         {
             view.notice = Some(Notice::HeldOff);
         }
@@ -409,7 +427,7 @@ impl AgentView {
         self.notice = self
             .notice
             .take()
-            .filter(|notice| matches!(notice, Notice::SaveFailed(_) | Notice::HeldOff));
+            .filter(|notice| matches!(notice, Notice::SaveFailed { .. } | Notice::HeldOff));
         if !self.access_on() {
             self.pending = Some(question);
             cx.notify();
@@ -480,20 +498,27 @@ impl AgentView {
             .set_access(&own.entry, &own.context, false, "agent tab")
         {
             Ok(()) => {
-                if matches!(self.notice, Some(Notice::SaveFailed(_))) {
+                if matches!(self.notice, Some(Notice::SaveFailed { .. })) {
                     self.notice = None;
                 }
             }
-            Err(error) => self.notice = Some(Notice::SaveFailed(error.to_string())),
+            Err(error) => self.notice = Some(self.save_failed(error)),
         }
         cx.notify();
+    }
+
+    fn save_failed(&self, error: std::io::Error) -> Notice {
+        Notice::SaveFailed {
+            error: error.to_string(),
+            remembered: self.host.access.revocation_remembered(),
+        }
     }
 
     /// Writes `agent.json` again after a failed save of turning access off.
     pub(crate) fn retry_save(&mut self, cx: &mut Context<Self>) {
         match self.host.access.retry_save() {
             Ok(()) => self.notice = None,
-            Err(error) => self.notice = Some(Notice::SaveFailed(error.to_string())),
+            Err(error) => self.notice = Some(self.save_failed(error)),
         }
         cx.notify();
     }
@@ -630,21 +655,51 @@ impl AgentView {
             }
             _ => {}
         }
-        let said = matches!(event, Event::Said(_));
+        let chunk = match &event {
+            Event::Said(chunk) => Some(chunk.clone()),
+            _ => None,
+        };
         if matches!(event, Event::Prompt(_)) {
             self.trail.clear();
+            self.cite_carry.clear();
         }
         self.investigation.record(event);
-        if said
-            && let Some(Entry::Said(text)) = self
-                .investigation
-                .entries()
-                .iter()
-                .rev()
-                .find(|entry| matches!(entry, Entry::Said(_)))
-        {
-            let text = text.text.clone();
-            self.trail.cite(&text);
+        self.refresh_texts();
+        if let Some(chunk) = chunk {
+            // Only the new chunk and the tail before it: a citation is at
+            // most nine bytes, so eight carry a split one.
+            let scan = format!("{}{chunk}", self.cite_carry);
+            self.trail.cite(&scan);
+            let mut from = scan.len().saturating_sub(CITE_CARRY);
+            while !scan.is_char_boundary(from) {
+                from += 1;
+            }
+            self.cite_carry = scan[from..].to_owned();
+        }
+    }
+
+    /// Keeps `texts` equal to the transcript's entries: the last one is
+    /// rebuilt, a new one added, and everything rebuilt only when text was
+    /// trimmed off the front.
+    fn refresh_texts(&mut self) {
+        let entries = self.investigation.entries();
+        let shown = |entry: &Entry| -> SharedString {
+            match entry {
+                Entry::Asked(text) | Entry::Note(text) => text.clone().into(),
+                Entry::Thought(text) | Entry::Said(text) => text.text.clone().into(),
+                Entry::Step(_) => SharedString::default(),
+            }
+        };
+        let len = self.texts.len();
+        if self.investigation.trimmed() || entries.len() < len || entries.len() > len + 1 {
+            self.texts = entries.iter().map(shown).collect();
+        } else {
+            if entries.len() == len + 1 {
+                self.texts.push(SharedString::default());
+            }
+            if let (Some(entry), Some(last)) = (entries.last(), self.texts.last_mut()) {
+                *last = shown(entry);
+            }
         }
     }
 
