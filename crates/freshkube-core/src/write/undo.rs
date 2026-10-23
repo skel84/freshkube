@@ -24,7 +24,7 @@ pub struct UndoOffer {
     pub sentence: String,
     pub window: Duration,
     /// The other cluster the write reached, so Undo is held to the same level.
-    pub(super) destination: Option<Destination>,
+    pub(super) destinations: Vec<Destination>,
     /// One inverse per object, each guarded.
     pub(super) items: Vec<(ObjectChange, Observation)>,
 }
@@ -88,7 +88,7 @@ fn holds(guard: &Observation, object: &Value) -> bool {
         Observation::FieldEquals { pointer, value } => object.pointer(pointer) == Some(value),
         Observation::Gone => false,
         // Nothing can be checked, so nothing is known to be safe: not holding.
-        Observation::Unobservable => false,
+        Observation::Exists | Observation::Unobservable => false,
     }
 }
 
@@ -138,7 +138,11 @@ impl Runner {
             tier: Tier::Reversible,
             sentence: format!("Undo: {}", offer.sentence),
             changes,
-            destination: offer.destination.clone(),
+            destinations: offer.destinations.clone(),
+            no_confirmation: false,
+            title: None,
+            subjects: vec![],
+            preview: vec![],
         };
         // Undo is a write like any other at its level: a protected cluster
         // asks for the name, a guarded one for a confirmation, an open one
