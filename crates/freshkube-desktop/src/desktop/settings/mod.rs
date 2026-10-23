@@ -1047,14 +1047,17 @@ impl SettingsPage {
             .overflow_hidden()
             .child(page::toolbar(cx).child(header))
             .child(
-                div()
-                    .id("settings-banners")
-                    .test_support()
-                    .min_h_0()
-                    .when(page::is_short(window), |banners| banners.max_h(dp(48.)))
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .children(self.render_banners(cx)),
+                page::capped_notes(
+                    "settings-banners",
+                    if page::is_short(window) {
+                        dp(48.).into()
+                    } else {
+                        gpui_kit::Length::Auto
+                    },
+                    self.render_banners(cx),
+                    None,
+                )
+                .min_h_0(),
             )
             .child(split)
             .into_any_element()

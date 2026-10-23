@@ -11,8 +11,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui_kit::{
-    Action, Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Pixels,
-    SharedString, Stateful, TestSupportExt, Window, canvas, div, px,
+    Action, Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla,
+    Length, Pixels, SharedString, Stateful, TestSupportExt, Window, canvas, div, px,
 };
 
 use crate::menu::{self, MenuAction};
@@ -140,6 +140,29 @@ pub fn inset() -> Div {
         .min_w_0()
         .px(dp(PANE_PADDING))
         .py(dp(PANE_PADDING_Y))
+}
+
+/// Notes under a page's header, capped to leave room for its body. The cap
+/// accepts pixels or dp; [`Length::Auto`] keeps an uncapped block scrollable.
+/// An optional bottom hairline counts towards the cap. The caller keeps its
+/// padding, or draws a separate edge when it must sit outside the scroll.
+pub fn capped_notes(
+    id: impl Into<ElementId>,
+    cap: impl Into<Length>,
+    children: impl IntoIterator<Item = impl IntoElement>,
+    bottom_edge: Option<Hsla>,
+) -> Observed<Stateful<Div>> {
+    let cap: Length = cap.into();
+    div()
+        .id(id)
+        .test_support()
+        .when_some(bottom_edge, |this, color| {
+            this.border_b_1().border_color(color)
+        })
+        .max_h(cap)
+        .overflow_y_scroll()
+        .restrict_scroll_to_axis()
+        .children(children)
 }
 
 /// A [`page`]'s toolbar: its [`PageHeader`], padded 12 at the sides, with a
