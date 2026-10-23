@@ -9,7 +9,7 @@
 //! separate step; nothing here has been run against opencode.
 
 use std::collections::BTreeMap;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -99,7 +99,7 @@ pub const LOCKDOWN_SOURCES: [(&str, &str, &str); 15] = [
     ),
     (
         "`plugins` lists one Freshkube-owned directory, which turns Code Mode off for our server",
-        "A server added in `session/new` is built without a `codemode` field, and a config entry of the same name is skipped when it exists, so nothing in the configuration can set it. A plugin's `mcp.transform` runs after the server is added and can. The directory is written at each launch into the session's own 0700 directory and read back byte for byte before the agent starts. Other plugin sources: the `plugin` and `plugins` folders of the config directories (the global one is empty, the project ones are off) and the administrators' own.",
+        "A server added in `session/new` is built without a `codemode` field, and a config entry of the same name is skipped when it exists, so nothing in the configuration can set it. A plugin's `mcp.transform` runs after the server is added and can. The directory is written at each launch into the session's own 0700 directory and read back byte for byte before the agent starts. Other plugin sources are not changed by this: the `plugin` and `plugins` folders of the config directories (the global one follows `XDG_CONFIG_HOME`, which the profile points at an empty directory; the project ones are off) and the administrators' own. Whatever source loads after ours, including a `-<path>` entry, can remove our plugin, and nothing here prevents it (#945).",
         "packages/cli/src/acp/sessions.ts (`mcpConfig`), packages/core/src/mcp/index.ts (`add`, `initial`), packages/core/src/config/plugin/mcp.ts, packages/core/src/plugin/host.ts (`mcp.transform`), packages/core/src/config/plugin/source.ts, packages/core/src/plugin/module.ts",
     ),
     (
@@ -242,7 +242,9 @@ pub fn plugin_files() -> [(&'static str, String); 2] {
 
 /// Writes the plugin into the session's own plugin directory (private to the
 /// person, never one of theirs) and reads it back: the agent is not started
-/// if the directory is not exactly what was written.
+/// if the directory is not exactly what was written. The check is of launch
+/// only: opencode watches the directory and loads the plugin again when it
+/// changes.
 pub(super) fn stage_plugin(dirs: &Dirs) -> io::Result<()> {
     stage_plugin_with(dirs, |_| {})
 }
@@ -257,16 +259,27 @@ pub(super) fn stage_plugin_with(dirs: &Dirs, between: impl FnOnce(&Path)) -> io:
     }
     create_private(&dir)?;
     for (name, text) in plugin_files() {
-        let file = dir.join(name);
-        std::fs::write(&file, text)?;
+        // A file that is already there is not ours to reuse.
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o400))?;
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o400);
         }
+        options.open(dir.join(name))?.write_all(text.as_bytes())?;
     }
     between(&dir);
-    verify_plugin(&dir)
+    verify_plugin(&dir)?;
+    // Against accident only: a process running as the same user can still
+    // change the directory back, or opencode itself. [`Dirs`] puts the mode
+    // back when the session ends so the directory can be removed.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500))?;
+    }
+    Ok(())
 }
 
 fn refused(why: String) -> io::Error {
@@ -284,6 +297,11 @@ fn refused(why: String) -> io::Error {
 /// extensions it finds, so a file beside ours could be the one it loads.
 pub(super) fn verify_plugin(dir: &Path) -> io::Result<()> {
     let files = plugin_files();
+    let own = std::fs::symlink_metadata(dir)
+        .map_err(|error| refused(format!("could not be read (its directory: {error})")))?;
+    if !own.is_dir() {
+        return Err(refused("is not in a plain directory".into()));
+    }
     for (name, text) in &files {
         let path = dir.join(name);
         let meta = std::fs::symlink_metadata(&path)
@@ -753,7 +771,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode(&dir), 0o700);
+            assert_eq!(mode(&dir), 0o500);
             assert_eq!(mode(&dir.join("server.js")), 0o400);
         }
     }
@@ -843,6 +861,35 @@ mod tests {
             })
             .unwrap_err();
             assert!(error.to_string().contains("plain file"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_file_already_there_or_a_linked_directory_is_refused_and_the_session_still_cleans_up() {
+        // A file that is already there is not reused.
+        let dirs = Dirs::create().unwrap();
+        std::fs::create_dir(dirs.plugin()).unwrap();
+        std::fs::write(dirs.plugin().join("server.js"), plugin_source()).unwrap();
+        let error = stage_plugin(&dirs).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
+        #[cfg(unix)]
+        {
+            // The plugin directory must be a real directory.
+            let dirs = Dirs::create().unwrap();
+            let real = dirs.root().join("real");
+            std::fs::create_dir(&real).unwrap();
+            for (name, text) in plugin_files() {
+                std::fs::write(real.join(name), text).unwrap();
+            }
+            std::os::unix::fs::symlink(&real, dirs.plugin()).unwrap();
+            let error = verify_plugin(&dirs.plugin()).unwrap_err();
+            assert!(error.to_string().contains("plain directory"), "{error}");
+            // Read-only once checked, and removed with the session all the same.
+            let dirs = Dirs::create().unwrap();
+            stage_plugin(&dirs).unwrap();
+            let root = dirs.root().to_path_buf();
+            drop(dirs);
+            assert!(!root.exists());
         }
     }
 

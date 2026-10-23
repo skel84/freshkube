@@ -3,7 +3,7 @@
 //! instead of showing only in a live run (`mcp.freshkube.codemode` did,
 //! [#946](https://github.com/skel84/freshkube/issues/946)).
 //!
-//! Copied from opencode 2.1.3 (`e965774`): `packages/schema/src/config.ts`
+//! Copied from opencode 2.1.3 (`e965774`, MIT licensed): `packages/schema/src/config.ts`
 //! and `config/*.ts`, `permission.ts`, `mcp.ts`, and how
 //! `packages/core/src/config/normalize.ts` reads `mcp` and `plugins`. Only
 //! what the profile uses is modelled; a key the copy does not know is an

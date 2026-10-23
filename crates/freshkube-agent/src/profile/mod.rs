@@ -132,6 +132,18 @@ impl Dirs {
     }
 }
 
+impl Drop for Dirs {
+    fn drop(&mut self) {
+        // The plugin directory is made read-only once it is checked; it
+        // needs its write bit back for the directory to be removed.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(self.plugin(), std::fs::Permissions::from_mode(0o700));
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Kind {
     Opencode,
