@@ -989,12 +989,40 @@ fn a_team_that_stops_naming_a_cluster_loosens_its_floor_and_needs_a_confirm() {
     assert!(trust(unset, protected).iter().all(|(_, t)| t.is_none()));
     assert!(trust(none, both).iter().all(|(_, t)| t.is_none()));
     assert!(trust(both, both).is_empty());
-    // A cluster the team never gave a floor is not a loosening when it goes.
+    // A rename is one cluster going and one appearing: the one that goes
+    // had a floor, so it needs a confirmation; the new one needs none.
+    let renamed = trust(
+        only_a,
+        "version: 1\nclusters:\n  - id: c\n    role: core\n    protection: guarded\n",
+    );
+    let flagged: Vec<&str> = renamed
+        .iter()
+        .filter(|(_, t)| t.is_some())
+        .map(|(at, _)| at.as_str())
+        .collect();
+    assert_eq!(flagged, ["clusters[a].protection"], "{renamed:?}");
+    // protected to guarded loosens; guarded to read-only does not.
+    let level = |l: &str| format!("version: 1\nclusters:\n  - id: a\n    protection: {l}\n");
+    let loosened = trust(&level("protected"), &level("guarded"));
+    assert_eq!(
+        loosened,
+        [(
+            "clusters[a].protection".to_string(),
+            Some(TrustKind::LoosensProtection)
+        )]
+    );
+    let tightened = trust(&level("guarded"), &level("read-only"));
+    assert_eq!(tightened, [("clusters[a].protection".to_string(), None)]);
+    // A setting with no floor, such as an address, is judged as a setting: a
+    // team that stops setting it needs a confirmation, naming the keys.
     let bare = "version: 1\ncoroot: {server: 'https://c.example.test', sign_in: api-key}\n";
-    assert!(
-        trust(bare, none)
-            .iter()
-            .all(|(at, t)| at.starts_with("coroot") == t.is_some() || t.is_none())
+    let dropped = trust(bare, none);
+    assert_eq!(
+        dropped,
+        [
+            ("coroot.server".to_string(), Some(TrustKind::Reach)),
+            ("coroot.sign_in".to_string(), Some(TrustKind::Reach)),
+        ]
     );
 
     // And the person's open override, held by the floor, needs that confirm

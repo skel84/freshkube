@@ -91,6 +91,29 @@ fn a_joined_team_shows_its_source_version_and_nothing_waiting(cx: &mut TestAppCo
     }
     assert!(!visible(cx, handle, "team-update"));
     assert!(!visible(cx, handle, "team-failure"));
+    // It shows the ignored keys, and the person's own values winning.
+    let ignored = label(cx, handle, "team-ignored-value");
+    assert!(
+        ignored.contains("kubeconfig") && ignored.contains("context"),
+        "{ignored}"
+    );
+    let project = label(cx, handle, "team-yours-coroot.project-value");
+    assert!(
+        project.contains("shop-mine")
+            && project.contains("over the team’s")
+            && project.contains("team has shop"),
+        "{project}"
+    );
+    assert!(visible(
+        cx,
+        handle,
+        "team-yours-clusters[core-fra].protection"
+    ));
+    let level = label(cx, handle, "team-yours-clusters[core-fra].protection-value");
+    assert!(
+        level.starts_with("read-only") && level.contains("team has protected"),
+        "{level}"
+    );
 }
 
 /// The trust changes of the example's waiting version.
@@ -276,4 +299,32 @@ fn long_values_stay_inside_the_page_and_labels_stay_in_their_column(cx: &mut Tes
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn a_refused_apply_shows_why_and_rebuilds_the_review(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Some(Shape::Update), (1280., 880.));
+    assert!(!visible(cx, handle, "team-refusal"));
+    // A newer version arrives while the person is reviewing: the review on
+    // the page is now of a version that is no longer the one waiting.
+    cx.update(|cx| {
+        view.read(cx).settings_page.clone().update(cx, |page, cx| {
+            page.make_team_review_stale();
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    click(cx, handle, "team-apply");
+    assert!(visible(cx, handle, "team-refusal"));
+    // Nothing applied, and the review is made again from the waiting version.
+    assert!(label(cx, handle, "team-version-value").contains("a1b2c3d"));
+    assert!(visible(cx, handle, "team-update"));
+    // The rebuilt review applies as usual once it is confirmed.
+    for at in cx.update(|cx| view.read(cx).settings_page.read(cx).team_trust_pending()) {
+        click(cx, handle, leak(format!("team-confirm-{at}")));
+    }
+    click(cx, handle, "team-apply");
+    assert!(!visible(cx, handle, "team-refusal"));
+    assert!(!visible(cx, handle, "team-update"));
+    assert!(label(cx, handle, "team-version-value").contains("zz-newer"));
 }

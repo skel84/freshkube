@@ -537,6 +537,28 @@ impl SettingsPage {
     }
 
     /// Puts the review off until it is asked for again.
+    /// A newer version arrives while the page holds a review of the older one.
+    #[cfg(test)]
+    pub(super) fn make_team_review_stale(&mut self) {
+        use freshkube_core::team::{Version, example::FakeFetch};
+        let newer = Version::parse("zz-newer", b"version: 1\n", Default::default())
+            .expect("a valid team file");
+        if let Some(team) = self.team.membership.as_mut() {
+            team.refresh(&FakeFetch::new([Ok(newer)]), Utc::now());
+        }
+        // The page keeps showing its review of the version it had.
+    }
+
+    /// The trust changes still to confirm, for the tests.
+    #[cfg(test)]
+    pub(super) fn team_trust_pending(&self) -> Vec<String> {
+        self.team
+            .review
+            .iter()
+            .flat_map(|review| review.trust_pending().map(|c| c.at.clone()))
+            .collect()
+    }
+
     fn team_review_later(&mut self, cx: &mut Context<Self>) {
         self.team.later = true;
         cx.notify();
