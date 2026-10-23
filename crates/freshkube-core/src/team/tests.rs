@@ -1058,3 +1058,236 @@ fn a_refused_apply_says_why() {
             .contains("other changes")
     );
 }
+
+#[test]
+fn a_cluster_stands_against_the_team_by_what_each_of_you_sets() {
+    let team = version("1", TEAM).values().clone();
+    let mut yours = Overrides::new();
+    // The team names cluster-a and cluster-b; you set nothing of them.
+    let a = cluster_view("cluster-a", &team, &yours).unwrap();
+    assert_eq!(a.row, Some(Origin::Team));
+    assert_eq!(a.floor, Some(Protection::Protected));
+    assert_eq!(a.level, Origin::Team);
+    // A cluster the team names with no level has the guarded floor.
+    let b = cluster_view("cluster-b", &team, &yours).unwrap();
+    assert_eq!(b.floor, Some(Protection::Guarded));
+    assert_eq!(
+        b.allowed(),
+        vec![
+            Protection::ReadOnly,
+            Protection::Protected,
+            Protection::Guarded
+        ]
+    );
+    // A cluster neither names has no view, so no chip.
+    assert_eq!(cluster_view("cluster-c", &team, &yours), None);
+    // Your own key makes the row yours, over the team's when it names it.
+    yours.insert("clusters[cluster-a].protection".into(), json!("read-only"));
+    yours.insert("clusters[cluster-c].role".into(), json!("core"));
+    let a = cluster_view("cluster-a", &team, &yours).unwrap();
+    assert_eq!(a.row, Some(Origin::Yours { over_team: true }));
+    assert_eq!(a.level, Origin::Yours { over_team: true });
+    assert!(!a.floor_held);
+    let c = cluster_view("cluster-c", &team, &yours).unwrap();
+    assert_eq!(c.row, Some(Origin::Yours { over_team: false }));
+    assert_eq!(c.floor, None);
+    assert_eq!(c.floor_words(), None);
+    assert_eq!(c.allowed(), Protection::ALL.to_vec());
+}
+
+#[test]
+fn a_cluster_id_that_starts_like_another_is_not_it() {
+    let team = version("1", TEAM).values().clone();
+    // `cluster-a` must not match `cluster-ab`'s keys.
+    let mut yours = Overrides::new();
+    yours.insert("clusters[cluster-ab].role".into(), json!("core"));
+    let a = cluster_view("cluster-a", &team, &yours).unwrap();
+    assert_eq!(a.row, Some(Origin::Team));
+}
+
+#[test]
+fn the_inspector_says_why_the_looser_levels_are_off() {
+    let team = version("1", TEAM).values().clone();
+    let a = cluster_view("cluster-a", &team, &Overrides::new()).unwrap();
+    let words = a.floor_words().unwrap();
+    assert!(
+        words.contains("Protected") || words.contains("protected"),
+        "{words}"
+    );
+    assert!(words.contains("stricter, not looser"), "{words}");
+    assert!(!a.allowed().contains(&Protection::Guarded));
+    assert!(!a.allowed().contains(&Protection::Open));
+    assert!(a.allowed().contains(&Protection::ReadOnly));
+}
+
+#[test]
+fn only_a_different_waiting_version_counts_as_new() {
+    let mut m = Membership::join(source(), Overrides::new());
+    let one = version("1", "version: 1\n");
+    let two = version("2", "version: 1\ncoroot:\n  project: shop\n");
+    // The first version waits, and is new.
+    assert!(m.fetched(Ok(one.clone()), at(1)));
+    // The same one fetched again is not.
+    assert!(!m.fetched(Ok(one.clone()), at(2)));
+    // A failure is not a version.
+    assert!(!m.fetched(Err(FetchFailed("down".into())), at(3)));
+    assert_eq!(m.pending().map(|v| v.id()), Some("1"));
+    // A different one is.
+    assert!(m.fetched(Ok(two), at(4)));
+    assert_eq!(m.pending().map(|v| v.id()), Some("2"));
+    // Applied and fetched again: nothing waits, nothing is new.
+    let mut review = m.review().unwrap();
+    example::confirm_all(&mut review);
+    m.apply(review, at(5)).unwrap();
+    assert!(!m.fetched(Ok(version("2", "version: 1\n")), at(6)));
+    assert!(m.pending().is_none());
+}
+
+/// Applies the waiting version after confirming every step.
+fn apply_waiting(m: &mut Membership, day: u32) {
+    let mut review = m.review().unwrap();
+    example::confirm_all(&mut review);
+    m.apply(review, at(day)).unwrap();
+}
+
+fn level_of(m: &Membership, id: &str, yours: &Overrides) -> Option<Value> {
+    resolve(
+        &merge::protection_key(id),
+        &m.team_values(),
+        yours,
+        &Values::new(),
+    )
+    .value
+}
+
+#[test]
+fn an_applied_version_never_loosens_a_level() {
+    let strict =
+        "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: protected\n";
+    let loose = "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: open\n";
+    let dropped = "version: 1\ncoroot:\n  project: shop\n";
+    let tighter =
+        "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: read-only\n";
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(Ok(version("1", strict)), at(1));
+    apply_waiting(&mut m, 1);
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("protected"))
+    );
+
+    // A version with a looser level applies, and the stricter one stays.
+    m.fetched(Ok(version("2", loose)), at(2));
+    apply_waiting(&mut m, 2);
+    assert_eq!(m.applied().unwrap().id(), "2");
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("protected"))
+    );
+    assert_eq!(
+        m.held_floors().get("cluster-a"),
+        Some(&Protection::Protected)
+    );
+    let floor = merge::floor("cluster-a", &m.team_values());
+    assert_eq!(floor, Some(Protection::Protected));
+    assert_eq!(
+        merge::allowed_levels(floor).last(),
+        Some(&Protection::Protected)
+    );
+
+    // A version that stops naming the cluster does not release it either.
+    m.fetched(Ok(version("3", dropped)), at(3));
+    apply_waiting(&mut m, 3);
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("protected"))
+    );
+
+    // Your own stricter level is untouched by any of it.
+    let mut yours = Overrides::new();
+    yours.insert("clusters[cluster-a].protection".into(), json!("read-only"));
+    assert_eq!(level_of(&m, "cluster-a", &yours), Some(json!("read-only")));
+
+    // A version that tightens past the held floor ends the hold.
+    m.fetched(Ok(version("4", tighter)), at(4));
+    apply_waiting(&mut m, 4);
+    assert!(m.held_floors().is_empty());
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("read-only"))
+    );
+
+    // And a version that loosens from there is held at read-only.
+    m.fetched(Ok(version("5", loose)), at(5));
+    apply_waiting(&mut m, 5);
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("read-only"))
+    );
+}
+
+#[test]
+fn a_held_floor_goes_with_a_copy_when_leaving_and_not_back_to_before() {
+    let strict =
+        "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: protected\n";
+    let loose = "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: open\n";
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(Ok(version("1", strict)), at(1));
+    apply_waiting(&mut m, 1);
+    m.fetched(Ok(version("2", loose)), at(2));
+    apply_waiting(&mut m, 2);
+    let kept = m.clone().leave(Leave::KeepCopy);
+    assert_eq!(
+        kept.get("clusters[cluster-a].protection"),
+        Some(&json!("protected"))
+    );
+    assert!(m.leave(Leave::GoBack).is_empty());
+}
+
+#[test]
+fn the_effective_level_is_never_looser_than_the_floor() {
+    let team: Values = [(merge::protection_key("a"), json!("protected"))].into();
+    let view = cluster_view("a", &team, &Overrides::new()).unwrap();
+    // Unset reads as guarded, which is looser than the floor.
+    assert_eq!(
+        cluster_view(
+            "c",
+            &Values::new(),
+            &[(merge::protection_key("c"), json!("open"))].into()
+        )
+        .unwrap()
+        .effective(None),
+        (Protection::Guarded, LevelSource::Default)
+    );
+    assert_eq!(
+        view.effective(None),
+        (Protection::Protected, LevelSource::Floor)
+    );
+    assert_eq!(
+        view.effective(Some(Protection::Open)),
+        (Protection::Protected, LevelSource::Floor)
+    );
+    assert_eq!(
+        view.effective(Some(Protection::ReadOnly)),
+        (Protection::ReadOnly, LevelSource::Own)
+    );
+    let mine: Overrides = [(merge::protection_key("a"), json!("open"))].into();
+    let held = cluster_view("a", &team, &mine).unwrap();
+    assert_eq!(
+        held.effective(None),
+        (Protection::Protected, LevelSource::Floor)
+    );
+    let strict: Overrides = [(merge::protection_key("a"), json!("read-only"))].into();
+    let stricter = cluster_view("a", &team, &strict).unwrap();
+    assert_eq!(
+        stricter.effective(None),
+        (Protection::ReadOnly, LevelSource::Override)
+    );
+    // A cluster the team doesn't name keeps its own level.
+    let own_b: Overrides = [(merge::protection_key("b"), json!("open"))].into();
+    let free = cluster_view("b", &team, &own_b);
+    assert_eq!(
+        free.unwrap().effective(Some(Protection::Open)).0,
+        Protection::Open
+    );
+}
