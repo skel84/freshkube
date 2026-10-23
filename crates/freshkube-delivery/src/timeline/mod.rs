@@ -293,7 +293,10 @@ pub fn derive(reads: &[SourceRead], now: i64, hours: u32) -> Timeline {
             Ok(items) => {
                 let before = entries.len();
                 for (ix, item) in items.iter().enumerate() {
-                    if item.at < since || item.at > now + 60 {
+                    // Nothing older than what the source keeps: an entry
+                    // below its "not kept" row would contradict it.
+                    let kept = read.kept_from.is_none_or(|from| item.at >= from);
+                    if item.at < since || item.at > now + 60 || !kept {
                         continue;
                     }
                     entries.push(Entry {
@@ -427,6 +430,17 @@ pub fn clock(at: i64) -> String {
     chrono::DateTime::from_timestamp(at, 0)
         .map(|time| time.format("%H:%M").to_string())
         .unwrap_or_default()
+}
+
+/// The time of day in UTC as the list prints it at `now`: `14:02`, and
+/// `yesterday 23:36` for a time on the day before.
+pub fn clock_at(at: i64, now: i64) -> String {
+    let day = |time: i64| time.div_euclid(86_400);
+    if day(at) < day(now) {
+        format!("yesterday {}", clock(at))
+    } else {
+        clock(at)
+    }
 }
 
 /// A length of time in words: `15 min`, `1 h`, `1 h 30 min`.

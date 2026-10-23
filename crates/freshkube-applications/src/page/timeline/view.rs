@@ -4,6 +4,7 @@ use freshkube_delivery::timeline::{ChipState, Timeline, clock, span_words};
 use freshkube_ui::ui::Tone;
 
 use super::*;
+use freshkube_ui::tooltip::FollowTooltip as _;
 
 /// One chip for each source: its count, and from when the cluster keeps it
 /// if that is after the window starts; or why it wasn't read.
@@ -87,6 +88,7 @@ impl Render for TimelineView {
                     .role(Role::Status),
             )
         });
+        let chips = (!self.chips.is_empty()).then(|| self.render_chips(cx));
         div()
             .id("timeline")
             .test_support()
@@ -95,7 +97,36 @@ impl Render for TimelineView {
             .size_full()
             .min_w_0()
             .min_h_0()
+            .children(chips)
             .children(stale)
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
+    }
+}
+
+impl TimelineView {
+    /// A chip for each source: its count, or why it wasn't read. They wrap
+    /// onto more lines, so every one can be reached.
+    fn render_chips(&self, cx: &App) -> AnyElement {
+        freshkube_ui::page::inset()
+            .id("timeline-chips")
+            .test_support()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(crate::ui::dp(6.))
+            .py(crate::ui::dp(6.))
+            .children(self.chips.iter().map(|chip| {
+                div()
+                    .id(SharedString::from(format!(
+                        "timeline-chip-{}",
+                        chip.source.slug()
+                    )))
+                    .test_support()
+                    .flex_none()
+                    .aria_label(chip.label.clone())
+                    .follow_tooltip(chip.label.clone())
+                    .child(crate::ui::tag(chip.tone, None, chip.text.clone(), cx))
+            }))
+            .into_any_element()
     }
 }

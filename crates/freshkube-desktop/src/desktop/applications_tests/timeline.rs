@@ -284,15 +284,15 @@ fn a_quiet_window_names_every_source_it_read(cx: &mut TestAppContext) {
     // Nothing happened, so every row is a note: quiet hours, and where the
     // cluster stops keeping Events.
     assert!(
-        lines
-            .iter()
-            .all(|line| line.contains("Quiet") || line.contains("Not kept")),
+        lines.iter().all(|line| line.contains("Quiet")
+            || line.contains("Not kept")
+            || line.contains("No events found")),
         "{lines:?}"
     );
     let quiet: Vec<_> = lines
         .iter()
         .zip(&details)
-        .filter(|(line, _)| line.contains("Quiet"))
+        .filter(|(line, _)| line.contains("Quiet") || line.contains("No events found"))
         .map(|(_, detail)| detail.as_str())
         .collect();
     // The last hour: the sources that can vouch for it. Deploys, Restarts
@@ -435,4 +435,36 @@ fn a_source_change_drops_the_answer_still_in_flight(cx: &mut TestAppContext) {
         chips.iter().all(|chip| chip.contains("not read")),
         "{chips:?}"
     );
+}
+
+#[gpui_kit::test]
+fn the_chips_wrap_so_every_source_can_be_reached(cx: &mut TestAppContext) {
+    for (width, height, size) in [(1280., 880., None), (760., 560., Some(20.))] {
+        let (_runtime, handle, _view) = open(cx, width, height, Shape::Busy);
+        show_timeline(cx, handle);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(size) = size {
+                crate::text_size::set(size, cx);
+            }
+            window.render_frame(cx);
+            let edge = window.viewport_size().width;
+            for slug in [
+                "promotions",
+                "syncs",
+                "incidents",
+                "deploys",
+                "events",
+                "restarts",
+                "nodes",
+            ] {
+                let chip = window.find(format!("timeline-chip-{slug}")).bounds();
+                assert!(
+                    chip.right() <= edge,
+                    "{slug} at {width}: {chip:?} past {edge:?}"
+                );
+                assert!(chip.size.width > gpui_kit::px(0.), "{slug} at {width}");
+            }
+        })
+        .unwrap();
+    }
 }

@@ -623,3 +623,53 @@ fn times_and_spans_are_printed_in_words() {
     assert_eq!(span_words(5400), "1 h 30 min");
     assert_eq!(span_words(-5), "0 min");
 }
+
+#[test]
+fn nothing_sits_below_the_row_that_says_the_cluster_no_longer_keeps_it() {
+    // An entry older than the source's `kept_from` is dropped, and the chip
+    // counts what is left.
+    let item = |ago: i64| Item {
+        at: NOW - ago,
+        severity: Severity::Warn,
+        title: "BackOff".into(),
+        detail: String::new(),
+    };
+    let reads = vec![
+        SourceRead::read(Source::Events, "c", NOW, vec![item(600), item(1200)])
+            .kept_from(NOW - 900),
+    ];
+    let timeline = derive(&reads, NOW, 3);
+    assert_eq!(timeline.entries(), 1);
+    let marker = timeline
+        .rows
+        .iter()
+        .position(|row| matches!(row, Row::NotKept { .. }))
+        .unwrap();
+    assert!(
+        timeline.rows[marker..]
+            .iter()
+            .all(|row| !matches!(row, Row::Entry(_))),
+        "{:?}",
+        timeline.rows
+    );
+    // The short-events example has none below its row either.
+    let timeline = derive(&example::reads(NOW, Shape::ShortEvents), NOW, 3);
+    let marker = timeline
+        .rows
+        .iter()
+        .position(|row| matches!(row, Row::NotKept { .. }))
+        .unwrap();
+    assert!(
+        timeline.rows[marker..]
+            .iter()
+            .all(|row| !matches!(row, Row::Entry(entry) if entry.source == Source::Events))
+    );
+    assert!(timeline.entries() > 0);
+}
+
+#[test]
+fn a_time_on_the_day_before_says_so() {
+    let now = 3 * 3600 + 1_800_000_000 / 86_400 * 86_400; // 03:00 UTC
+    assert_eq!(clock_at(now - 3600, now), "02:00");
+    assert_eq!(clock_at(now - 4 * 3600, now), "yesterday 23:00");
+}

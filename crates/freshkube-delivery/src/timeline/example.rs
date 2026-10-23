@@ -124,7 +124,7 @@ pub fn reads(now: i64, shape: Shape) -> Vec<SourceRead> {
             ),
             item(
                 now,
-                21 * MIN,
+                12 * MIN,
                 Severity::Warn,
                 "Unhealthy: api-7d9f-x2k4",
                 "Readiness probe failed: HTTP 503",

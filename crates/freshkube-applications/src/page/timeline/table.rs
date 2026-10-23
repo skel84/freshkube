@@ -1,7 +1,7 @@
 //! The list as a `TableSource`: one row for each entry, newest first, with
 //! a row where a source's entries stop and one for each stretch of quiet
 //! hours. The rows are derived when an answer lands.
-use freshkube_delivery::timeline::{Row, Severity, Source, Timeline, clock, span_words};
+use freshkube_delivery::timeline::{Row, Severity, Source, Timeline, clock, clock_at, span_words};
 use freshkube_ui::table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource};
 use freshkube_ui::ui::Tone;
 
@@ -110,6 +110,7 @@ fn names(sources: &[Source]) -> String {
 
 /// The list's rows for a derived timeline.
 pub fn rows(timeline: &Timeline) -> Vec<TimelineRow> {
+    let now = timeline.now;
     timeline
         .rows
         .iter()
@@ -124,13 +125,13 @@ pub fn rows(timeline: &Timeline) -> Vec<TimelineRow> {
                 TimelineRow {
                     key: entry.id.clone().into(),
                     tone: tone(entry.severity),
-                    time: clock(entry.at).into(),
+                    time: clock_at(entry.at, now).into(),
                     source: entry.source.label().into(),
                     what: entry.title.clone().into(),
                     detail: entry.detail.clone().into(),
                     label: format!(
                         "{} {}: {}. {}. {read_from}",
-                        clock(entry.at),
+                        clock_at(entry.at, now),
                         entry.source.label(),
                         entry.title,
                         entry.detail
@@ -149,16 +150,16 @@ pub fn rows(timeline: &Timeline) -> Vec<TimelineRow> {
                 let detail = format!(
                     "The cluster keeps {} for about {kept}; nothing is known of them from {} to {}.",
                     source.label(),
-                    clock(*from),
-                    clock(*until)
+                    clock_at(*from, now),
+                    clock_at(*until, now)
                 );
                 TimelineRow {
                     key: format!("not-kept-{}", source.slug()).into(),
                     tone: Tone::Unknown,
-                    time: format!("before {}", clock(*until)).into(),
+                    time: format!("before {}", clock_at(*until, now)).into(),
                     source: source.label().into(),
                     what: "Not kept by the cluster".into(),
-                    label: format!("{} not kept by the cluster before {}. {detail}", source.label(), clock(*until)).into(),
+                    label: format!("{} not kept by the cluster before {}. {detail}", source.label(), clock_at(*until, now)).into(),
                     detail: detail.into(),
                     read_from: source.origin().into(),
                     note: true,
@@ -186,10 +187,23 @@ pub fn rows(timeline: &Timeline) -> Vec<TimelineRow> {
                     } else {
                         Tone::Unknown
                     },
-                    time: format!("{}–{}", clock(*from), clock(*until)).into(),
+                    time: format!("{}–{}", clock_at(*from, now), clock(*until)).into(),
                     source: SharedString::default(),
-                    what: format!("Quiet for {hours} h").into(),
-                    label: format!("Quiet {}–{}. {detail}", clock(*from), clock(*until)).into(),
+                    // "Quiet" only where every source was read; otherwise the
+                    // words say what was looked at, not that nothing happened.
+                    what: if not_read.is_empty() {
+                        format!("Quiet for {hours} h")
+                    } else {
+                        "No events found in what was read".to_owned()
+                    }
+                    .into(),
+                    label: format!(
+                        "{} {}–{}. {detail}",
+                        if not_read.is_empty() { "Quiet" } else { "No events found in what was read" },
+                        clock_at(*from, now),
+                        clock(*until)
+                    )
+                    .into(),
                     detail: detail.into(),
                     read_from: SharedString::default(),
                     note: true,
@@ -329,6 +343,51 @@ mod tests {
             label: "Events".into(),
             read,
         }
+    }
+
+    #[test]
+    fn a_partly_read_hour_is_not_called_quiet() {
+        use freshkube_delivery::timeline::{self, example};
+        let now = 1_800_000_000;
+        let words = |shape| -> Vec<String> {
+            let timeline = timeline::derive(&example::reads(now, shape), now, 3);
+            super::rows(&timeline)
+                .into_iter()
+                .filter(|row| {
+                    row.note && row.what.contains("Quiet") || row.what.starts_with("No events")
+                })
+                .map(|row| row.what.to_string())
+                .collect()
+        };
+        // Syncs and Incidents weren't read: nothing may say quiet.
+        let partial = words(example::Shape::Partial);
+        assert!(!partial.is_empty());
+        assert!(
+            partial
+                .iter()
+                .all(|what| what == "No events found in what was read"),
+            "{partial:?}"
+        );
+        // The older hours of `quiet` lack Events, which the cluster no longer keeps.
+        let quiet = words(example::Shape::Quiet);
+        assert_eq!(quiet, ["Quiet for 1 h", "No events found in what was read"]);
+    }
+
+    #[test]
+    fn a_row_across_midnight_names_the_day() {
+        use freshkube_delivery::timeline::{self, example};
+        // 03:00 UTC: the 3 h window starts at 00:00, the quiet hours before
+        // the older retention are on the day before when the window is 24 h.
+        let now = 1_800_000_000 / 86_400 * 86_400 + 3 * 3600;
+        let timeline = timeline::derive(&example::reads(now, example::Shape::Quiet), now, 24);
+        let times: Vec<_> = super::rows(&timeline)
+            .into_iter()
+            .map(|row| row.time.to_string())
+            .collect();
+        assert!(
+            times.iter().any(|time| time.starts_with("yesterday ")),
+            "{times:?}"
+        );
     }
 
     #[test]

@@ -31,11 +31,8 @@ impl ApplicationPage {
         if self.tab != PageTab::Timeline {
             return header.foldable(tabs, tabs_fold).render(window, cx);
         }
-        let timeline = self.timeline.read(cx);
-        let chips = (!timeline.chips.is_empty()).then(|| self.render_chips(cx));
         let (hours, hours_fold) = self.window_control(cx);
         header
-            .chips(chips)
             .foldable(hours, hours_fold)
             .foldable(tabs, tabs_fold)
             .render(window, cx)
@@ -123,28 +120,6 @@ impl ApplicationPage {
             },
         );
         (control, fold)
-    }
-
-    /// A chip for each source: its count, or why it wasn't read.
-    fn render_chips(&self, cx: &App) -> AnyElement {
-        let chips = self.timeline.read(cx).chips.clone();
-        h_flex()
-            .id("timeline-chips")
-            .test_support()
-            .gap(dp(6.))
-            .children(chips.into_iter().map(|chip| {
-                div()
-                    .id(SharedString::from(format!(
-                        "timeline-chip-{}",
-                        chip.source.slug()
-                    )))
-                    .test_support()
-                    .flex_none()
-                    .aria_label(chip.label.clone())
-                    .follow_tooltip(chip.label.clone())
-                    .child(ui::tag(chip.tone, None, chip.text.clone(), cx))
-            }))
-            .into_any_element()
     }
 
     /// The selected part's details, then its link: each side, why, and
