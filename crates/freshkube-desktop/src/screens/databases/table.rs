@@ -262,6 +262,7 @@ impl TableSource for DatabasesScreen {
                 },
                 cx,
             )
+            .h_auto()
             .id("databases-empty-state")
             .aria_label(self.display.empty.clone())
             .test_support()
