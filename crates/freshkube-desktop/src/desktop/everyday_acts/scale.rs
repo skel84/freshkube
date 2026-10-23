@@ -93,6 +93,7 @@ impl ScaleDialog {
                     self.runner.clone(),
                     self.runtime.clone(),
                     action,
+                    &self.identity,
                     window,
                     cx,
                 );
