@@ -1,1 +1,0 @@
-- **Settings:** capped save and error banners keep their toned border fixed while the contents scroll in short windows.

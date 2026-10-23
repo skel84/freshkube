@@ -1,1 +1,0 @@
-- Capped banner scrollbars keep a movable thumb when the padded viewport is shorter than the usual minimum thumb length.
