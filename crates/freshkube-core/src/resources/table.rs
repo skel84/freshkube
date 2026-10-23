@@ -17,7 +17,7 @@ use super::pod_row::{self, PodFacts, PodSpec, PodStatus, lenient};
 /// Asks for a table, falling back to plain JSON on servers without one.
 /// `includeObject=Metadata` adds each row's identity; pods include the whole
 /// object, whose status and resources their rows show.
-const TABLE_ACCEPT: &str = "application/json;as=Table;v=v1;g=meta.k8s.io,application/json;as=Table;v=v1beta1;g=meta.k8s.io,application/json";
+pub(crate) const TABLE_ACCEPT: &str = "application/json;as=Table;v=v1;g=meta.k8s.io,application/json;as=Table;v=v1beta1;g=meta.k8s.io,application/json";
 const PAGE_SIZE: usize = 500;
 const WATCH_SECONDS: u32 = 290;
 
@@ -217,7 +217,7 @@ fn include_object(kind: &ResourceKind) -> &'static str {
 
 /// Percent-encodes a query value. Continue tokens are opaque and may carry
 /// characters a query string can't hold as they are.
-fn query_value(value: &str) -> String {
+pub(crate) fn query_value(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {

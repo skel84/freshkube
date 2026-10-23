@@ -398,6 +398,10 @@ pub struct ChangePage {
     split: InspectorSplit,
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
+    /// The capped banners' own scrolling in a short window.
+    notes_scroll: ScrollHandle,
+    /// The cap the banners were last drawn with, to ask for a frame when it moves.
+    notes_cap_used: std::cell::Cell<gpui::Pixels>,
     view: ChangeView,
     view_store: std::rc::Rc<dyn ViewStore>,
     trail: trail::Trail,
@@ -468,6 +472,8 @@ impl ChangePage {
             focus: cx.focus_handle(),
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
             page_scroll: ScrollHandle::new(),
+            notes_scroll: ScrollHandle::new(),
+            notes_cap_used: std::cell::Cell::new(gpui::Pixels::ZERO),
             view: view_store.view(),
             view_store,
             trail: Default::default(),

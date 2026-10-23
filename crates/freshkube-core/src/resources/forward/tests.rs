@@ -30,11 +30,6 @@ const DEPLOYMENTS: &str = "/apis/apps/v1/namespaces/shop/deployments";
 /// How long a test waits for something that should happen at once.
 const SOON: Duration = Duration::from_secs(5);
 
-// These fixtures share the automatic local port candidates. Keep one case
-// from taking a port another case has just released before its assertion.
-// Concurrent connections and forwards within each fixture still run together.
-static PORT_CASE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 /// How a pod answers a forward.
 #[derive(Clone)]
 enum Answer {
@@ -68,14 +63,12 @@ struct State {
 
 #[derive(Clone)]
 struct Fake {
-    _case: Arc<tokio::sync::MutexGuard<'static, ()>>,
     state: Arc<Mutex<State>>,
     watches: PodWatches,
 }
 
 impl Fake {
     async fn start() -> Self {
-        let case = Arc::new(PORT_CASE.lock().await);
         let state = Arc::new(Mutex::new(State::default()));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -104,7 +97,6 @@ impl Fake {
         config.root_cert = Some(Vec::new());
         let client = Client::try_from(config).unwrap();
         Self {
-            _case: case,
             state,
             watches: PodWatches::new(client),
         }
@@ -156,6 +148,14 @@ impl Fake {
 
     fn open(&self) -> usize {
         self.state().open
+    }
+
+    /// A system-picked local port, so other tests cannot take a shared
+    /// automatic candidate before this test checks that the port was freed.
+    async fn start_forward_on_system_port(&self, target: ForwardTarget, port: u16) -> Forward {
+        let mut request = request(target, port);
+        request.local_port = Some(0);
+        start_forward(&self.watches, request).await.unwrap()
     }
 
     async fn start_forward(&self, target: ForwardTarget, port: u16) -> Forward {
@@ -461,7 +461,9 @@ async fn a_pod_forward_relays_bytes_both_ways_on_the_automatic_port() {
 async fn stopping_frees_the_port_and_closes_every_websocket() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
-    let forward = fake.start_forward(pod_target("u-1"), 8080).await;
+    let forward = fake
+        .start_forward_on_system_port(pod_target("u-1"), 8080)
+        .await;
     let port = forward.local_port;
     let mut stream = connect(&forward).await;
     assert_eq!(exchange(&mut stream, "ping").await, "web-0:ping");
@@ -483,7 +485,9 @@ async fn stopping_frees_the_port_and_closes_every_websocket() {
 async fn dropping_the_guard_stops_the_forward() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
-    let forward = fake.start_forward(pod_target("u-1"), 8080).await;
+    let forward = fake
+        .start_forward_on_system_port(pod_target("u-1"), 8080)
+        .await;
     let port = forward.local_port;
     let mut stream = connect(&forward).await;
     assert_eq!(exchange(&mut stream, "ping").await, "web-0:ping");
@@ -583,7 +587,9 @@ async fn being_forbidden_ends_the_forward_and_frees_its_port() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
     fake.answer("web-0", Answer::Refuse(403));
-    let mut forward = fake.start_forward(pod_target("u-1"), 8080).await;
+    let mut forward = fake
+        .start_forward_on_system_port(pod_target("u-1"), 8080)
+        .await;
     let port = forward.local_port;
     let mut stream = connect(&forward).await;
     let status = status_until(&mut forward.status, |status| {
@@ -621,7 +627,9 @@ async fn another_refusal_is_the_connections_error_only() {
 async fn a_pod_forward_ends_when_its_pod_is_deleted_or_replaced() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
-    let mut forward = fake.start_forward(pod_target("u-1"), 8080).await;
+    let mut forward = fake
+        .start_forward_on_system_port(pod_target("u-1"), 8080)
+        .await;
     let port = forward.local_port;
     let mut stream = connect(&forward).await;
     assert_eq!(exchange(&mut stream, "ping").await, "web-0:ping");
@@ -639,7 +647,9 @@ async fn a_pod_forward_ends_when_its_pod_is_deleted_or_replaced() {
     eventually("the websocket closes", || fake.open() == 0).await;
 
     fake.apply(PODS, pod("web-0", "u-2", Some("2026-10-02T09:00:00Z")));
-    let mut forward = fake.start_forward(pod_target("u-2"), 8080).await;
+    let mut forward = fake
+        .start_forward_on_system_port(pod_target("u-2"), 8080)
+        .await;
     // A new incarnation seen without its predecessor's deletion, as after
     // the watch lists again.
     fake.apply(PODS, pod("web-0", "u-3", Some("2026-10-02T09:00:00Z")));
@@ -764,7 +774,9 @@ async fn a_service_change_moves_the_forward_and_its_deletion_ends_it() {
     let fake = Fake::start().await;
     fake.apply(SERVICES, web_service());
     fake.apply(PODS, pod("web-a", "u-a", Some("2026-10-02T09:00:00Z")));
-    let mut forward = fake.start_forward(service_target(), 80).await;
+    let mut forward = fake
+        .start_forward_on_system_port(service_target(), 80)
+        .await;
     let port = forward.local_port;
 
     fake.apply(

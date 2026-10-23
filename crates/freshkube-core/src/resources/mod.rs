@@ -41,7 +41,9 @@ pub use contexts::{
     KubeContext, KubeconfigReport, context_servers, discover_contexts, kubeconfig_sources,
     load as load_kubeconfigs,
 };
-pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds, resolve_kind_key};
+pub use discovery::{
+    ApiGroup, GroupKinds, list_custom_groups, list_group_kinds, resolve_kind_key, resolve_kind_name,
+};
 pub use events::{EventScope, EventUpdate, ObjectEvent, watch_object_events};
 pub use exec::{
     BATCH_BYTES, BATCH_TIME, ExecEnd, ExecFailure, ExecFailureKind, ExecGuard, ExecInput,
@@ -54,7 +56,7 @@ pub use forward::{
     WorkloadKind, candidates, declared_ports, listen_blocking, listen_local, preferred_port,
     start_forward,
 };
-pub use kinds::{ResourceKind, builtin, builtin_by_gvk, find as find_kind};
+pub use kinds::{ResourceKind, builtin, builtin_by_gvk, find as find_kind, find_named};
 pub use node_usage::{NodeUsage, list_node_usage};
 pub use object::{
     Condition, ContainerStatus, Diagnosis, Instance, ObjectDocument, Overview, Owner, PodStatus,
@@ -76,7 +78,12 @@ pub use workload_pods::{
     PodSelector, WorkloadPod, WorkloadPods, follow_pods, runs_pods, workload_selector,
 };
 
-pub use metadata::{MetadataNames, get_metadata, list_metadata};
+pub use metadata::{MetadataNames, get_metadata, list_metadata, list_metadata_page};
+
+// What the agent's reads share with this module (`agent_reads`).
+pub(crate) use kinds::{names_kind, split_name};
+pub(crate) use object::{JSON, LAST_APPLIED, json_get};
+pub(crate) use table::{TABLE_ACCEPT, query_value};
 
 pub use pod_links::{PodLinks, ServiceSelector, collect_pod_links, resolve_owner_kind};
 
