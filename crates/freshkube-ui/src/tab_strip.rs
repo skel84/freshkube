@@ -33,6 +33,8 @@ pub struct Item {
     pub active: bool,
     /// The level of the cluster the tab belongs to, when it shows one.
     pub mark: Option<crate::level::Mark>,
+    /// The tab's cluster is gone: a dashed ring stands for its level.
+    pub missing: bool,
     pub tip: Option<Tip>,
 }
 
@@ -74,6 +76,7 @@ pub fn row<V: 'static>(
                 item.title,
                 item.active,
                 item.mark,
+                item.missing,
                 close,
                 cx,
             )

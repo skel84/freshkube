@@ -520,7 +520,17 @@ pub fn empty_state(
                     )
                 })
                 .when(!actions.is_empty(), |this| {
-                    this.content(EmptyContent::new().child(h_flex().gap_2().children(actions)))
+                    // The actions wrap inside the state's width, so a narrow window or
+                    // a large text size never cuts one off.
+                    this.content(
+                        EmptyContent::new().child(
+                            h_flex()
+                                .gap_2()
+                                .flex_wrap()
+                                .justify_center()
+                                .children(actions),
+                        ),
+                    )
                 }),
         )
 }

@@ -205,7 +205,7 @@ fn tabs_span_clusters_only_when_their_entries_differ() {
 #[test]
 fn a_duplicate_and_a_reopened_tab_keep_their_entry() {
     let mut set = TabSet::new(page(LinkPage::Overview));
-    set.retarget(entry("dev-fra"), page(LinkPage::Overview));
+    set.retarget(entry("dev-fra"), None, page(LinkPage::Overview));
     let copy = set.duplicate().unwrap();
     assert_eq!(set.current().id, copy);
     assert_eq!(set.current().entry, entry("dev-fra"));
@@ -217,11 +217,11 @@ fn a_duplicate_and_a_reopened_tab_keep_their_entry() {
 #[test]
 fn retargeting_binds_the_shown_tab_and_back_returns_to_where_it_was() {
     let mut set = TabSet::new(page(LinkPage::Nodes));
-    assert!(set.retarget(entry("stage-fra"), page(LinkPage::Etcd)));
+    assert!(set.retarget(entry("stage-fra"), None, page(LinkPage::Etcd)));
     assert_eq!(set.current().entry, entry("stage-fra"));
     assert_eq!(set.current().view, page(LinkPage::Etcd));
     assert!(set.current().can_go_back());
     // The same target again changes nothing.
-    assert!(!set.retarget(entry("stage-fra"), page(LinkPage::Etcd)));
+    assert!(!set.retarget(entry("stage-fra"), None, page(LinkPage::Etcd)));
     assert_eq!(set.go_back(), Some(page(LinkPage::Nodes)));
 }

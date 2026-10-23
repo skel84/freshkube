@@ -13,7 +13,12 @@ impl Render for Pilot {
         if WINDOW.pending() {
             window.on_next_frame(|_, _| WINDOW.mark());
         }
-        let column = self.navigation.lay_out(window);
+        // A tab whose cluster entry is gone shows no cluster, so no column of
+        // the cluster that happens to be open stands behind its page.
+        let column = self
+            .navigation
+            .lay_out(window)
+            .filter(|_| !self.tab_entry_missing(cx));
         let page = self.render_page(cx);
         let root = v_flex()
             .size_full()

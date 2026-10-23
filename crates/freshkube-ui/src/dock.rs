@@ -54,6 +54,7 @@ pub fn tab(
     label: impl Into<SharedString>,
     active: bool,
     mark: Option<crate::level::Mark>,
+    missing: bool,
     close: Button,
     cx: &App,
 ) -> Observed<Stateful<Div>> {
@@ -61,7 +62,16 @@ pub fn tab(
     crate::inspector::tab(id, label, active, cx)
         .relative()
         .pr(dp(4.))
-        .when_some(mark, |this, mark| {
+        // A cluster the setup no longer lists wears a dashed ring, not a
+        // level.
+        .when(missing, |this| {
+            this.child(
+                Icon::new(IconName::CircleDashed)
+                    .size(dp(12.))
+                    .text_color(p.muted),
+            )
+        })
+        .when_some(mark.filter(|_| !missing), |this, mark| {
             let inks = mark.inks(&p);
             this.child(crate::level::glyph(mark, inks.glyph)).when_some(
                 mark.cap(&p),

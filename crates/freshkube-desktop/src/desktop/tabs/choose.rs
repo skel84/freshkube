@@ -26,7 +26,7 @@ impl Pilot {
             .take(OFFERED)
             .map(|entry| entry.id.clone())
             .collect();
-        let buttons = offered
+        let buttons: Vec<AnyElement> = offered
             .into_iter()
             .map(|id| {
                 let pick = id.clone();

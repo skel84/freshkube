@@ -77,8 +77,6 @@ pub(super) struct Tabs {
     /// The entry a tab just shown is being opened on, until the window shows
     /// it: the tab's own, never a fallback (#878).
     activating: Option<String>,
-    /// A person picked a cluster for a tab whose entry is gone.
-    chosen: bool,
     /// Whether the shell last drew the "Choose a cluster" page.
     pub(super) missing_shown: bool,
     /// The cluster the set belongs to: its identity once one has opened.
@@ -111,7 +109,6 @@ impl Tabs {
             gesture: None,
             applying: None,
             activating: None,
-            chosen: false,
             missing_shown: false,
             cluster: None,
             restore,

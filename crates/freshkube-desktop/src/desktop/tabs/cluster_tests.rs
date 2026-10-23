@@ -26,6 +26,10 @@ fn entries(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> Vec<Option<String>
     cx.read(|cx| pilot.read(cx).tabs.set.entries())
 }
 
+fn contexts(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> Vec<Option<String>> {
+    cx.read(|cx| pilot.read(cx).tabs.set.contexts())
+}
+
 fn active(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> SessionKey {
     cx.read(|cx| pilot.read(cx).switch.registry.active_key().clone())
 }
@@ -231,11 +235,11 @@ fn a_tab_whose_entry_is_gone_never_falls_back_to_the_shown_cluster(cx: &mut Test
     .unwrap();
 }
 
-/// A window with no entry is no entry's: the tab shown there shows no
-/// cluster rather than the one that was left, and selecting it does not
-/// switch back.
+/// A window with no entry is a context's: the tab shown there is bound to
+/// that context, and selecting it goes back to it by name, leaving the entry
+/// open. It never shows the cluster that was left.
 #[gpui_kit::test]
-fn a_tab_in_a_window_with_no_entry_shows_no_cluster_and_does_not_switch_back(
+fn a_tab_in_a_window_with_no_entry_is_bound_to_its_context_and_goes_back_to_it(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, handle, pilot) = on_dev(cx);
@@ -251,33 +255,78 @@ fn a_tab_in_a_window_with_no_entry_shows_no_cluster_and_does_not_switch_back(
             .unwrap()
     });
     cx.update_window(handle, |_, window, cx| {
-        pilot.update(cx, |pilot, cx| pilot.select_context(other, window, cx))
+        pilot.update(cx, |pilot, cx| {
+            pilot.select_context(other.clone(), window, cx)
+        })
     })
     .unwrap();
     cx.run_until_parked();
     assert_eq!(active(cx, &pilot), SessionKey::Implicit);
     assert_eq!(entries(cx, &pilot), [Some("dev-fra".to_owned()), None]);
-    let strip = strip(cx, &pilot);
-    assert!(!strip[1].0.contains("stage-fra"), "{strip:?}");
-    // Selecting the other tab goes to its cluster; selecting the one that
-    // shows none then never switches back to the cluster it left: it shows
-    // the cluster that is open, honestly.
+    assert_eq!(contexts(cx, &pilot), [None, Some(other.clone())]);
+    let named = strip(cx, &pilot);
+    assert!(!named[1].0.contains("stage-fra"), "{named:?}");
+    // The other tab goes to its entry; this one comes back to its context.
     let (first, second) = cx.read(|cx| {
         let tabs = pilot.read(cx).tabs.set.tabs().to_vec();
         (tabs[0].id, tabs[1].id)
     });
-    for id in [first, second] {
-        cx.update_window(handle, |_, window, cx| {
-            pilot.update(cx, |pilot, cx| pilot.select_tab(id, window, cx))
-        })
-        .unwrap();
-        cx.run_until_parked();
-    }
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.select_tab(first, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
     assert_eq!(active(cx, &pilot), SessionKey::Entry("dev-fra".into()));
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.select_tab(second, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(active(cx, &pilot), SessionKey::Implicit);
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).applied.context.clone()),
+        Some(other.clone())
+    );
+    assert_eq!(entries(cx, &pilot), [Some("dev-fra".to_owned()), None]);
+    assert_eq!(contexts(cx, &pilot), [None, Some(other)]);
+}
+
+/// The window's own first tab is bound from the start, to the cluster the
+/// window opened on: after the window moves on, selecting the first tab
+/// shows that cluster, never the one that is open.
+#[gpui_kit::test]
+fn the_first_tab_keeps_the_cluster_the_window_opened_on(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let opened = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    open_in_new_tab(cx, handle, &pilot, "dev-fra");
+    open_in_new_tab(cx, handle, &pilot, "stage-fra");
+    assert_eq!(active(cx, &pilot), SessionKey::Entry("stage-fra".into()));
+    let first = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[0].id);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.select_tab(first, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Back where the window opened, not "stage-fra · Pods".
+    assert_eq!(active(cx, &pilot), SessionKey::Implicit);
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).applied.context.clone()),
+        Some(opened.clone())
+    );
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).tabs.set.contexts()[0].clone()),
+        Some(opened)
+    );
     assert_eq!(
         entries(cx, &pilot),
-        [Some("dev-fra".to_owned()), Some("dev-fra".to_owned())]
+        [
+            None,
+            Some("dev-fra".to_owned()),
+            Some("stage-fra".to_owned())
+        ]
     );
+    let titles = strip(cx, &pilot);
+    assert!(!titles[0].0.contains("stage-fra"), "{titles:?}");
 }
 
 fn dp_of(window: &gpui_kit::Window, px: gpui_kit::Pixels) -> f32 {
@@ -357,7 +406,11 @@ fn the_choose_a_cluster_page_fills_the_page_cell_under_the_strip(cx: &mut TestAp
 #[test]
 fn each_tab_saves_its_entry_and_an_old_file_binds_none() {
     let mut set = TabSet::new(ViewState::page(LinkPage::Overview));
-    set.retarget(Some("dev-fra".into()), ViewState::page(LinkPage::Overview));
+    set.retarget(
+        Some("dev-fra".into()),
+        None,
+        ViewState::page(LinkPage::Overview),
+    );
     set.open_for(
         ViewState::page(LinkPage::Nodes),
         Some("prod-ams".into()),
@@ -470,4 +523,101 @@ fn a_retarget_drops_an_object_that_does_not_resolve_there(cx: &mut TestAppContex
     assert_eq!(after.kind, before.kind);
     assert_eq!(after.ns, before.ns);
     assert_eq!(after.object, None);
+}
+
+/// A tab whose entry is gone: a dashed ring on the tab, no column of the
+/// open cluster behind the page, and a pick that keeps the tab's page.
+#[gpui_kit::test]
+fn a_missing_entry_has_a_ring_no_column_and_a_pick_keeps_the_tabs_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_dev(cx);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_view_tab(ViewState::page(LinkPage::Etcd), OpenIn::Front, window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("nav-column").is_some());
+    })
+    .unwrap();
+    open_in_new_tab(cx, handle, &pilot, "prod-ams");
+    change_setup(cx, &pilot, |workspace| {
+        workspace.clusters.retain(|entry| entry.id != "prod-ams")
+    });
+    let missing: Vec<_> = cx.read(|cx| {
+        pilot
+            .read(cx)
+            .tabs
+            .strip
+            .read(cx)
+            .entries()
+            .iter()
+            .map(|entry| entry.missing)
+            .collect()
+    });
+    assert_eq!(missing, [false, false, true]);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("choose-cluster").is_some());
+        assert!(
+            window.try_find("nav-column").is_none(),
+            "no column behind it"
+        );
+    })
+    .unwrap();
+    // The missing tab was opened at the page the window had, Etcd; the pick
+    // keeps that page.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("choose-cluster-dev-fra", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(active(cx, &pilot), SessionKey::Entry("dev-fra".into()));
+    assert_eq!(cx.read(|cx| pilot.read(cx).navigation.page), Page::Etcd);
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).tabs.set.current().entry.clone()),
+        Some("dev-fra".to_owned())
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("nav-column").is_some());
+    })
+    .unwrap();
+}
+
+/// At 760 dp and text 20 the cluster buttons wrap inside the page, over
+/// neither the rail nor the right edge.
+#[gpui_kit::test]
+fn the_cluster_buttons_wrap_inside_the_page_at_760_and_text_20(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    open_in_new_tab(cx, handle, &pilot, "prod-ams");
+    change_setup(cx, &pilot, |workspace| {
+        workspace.clusters.retain(|entry| entry.id != "prod-ams")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let page = window.find("choose-cluster").bounds();
+        let rail = window.try_find("nav-rail").map(|rail| rail.bounds());
+        let width = window.viewport_size().width;
+        let mut tops = Vec::new();
+        for entry in ["dev-fra", "stage-fra", "core-fra", "prod-fra"] {
+            let button = window.find(format!("choose-cluster-{entry}")).bounds();
+            assert!(button.right() <= width, "{entry} is cut off on the right");
+            assert!(
+                button.origin.x >= page.origin.x && button.right() <= page.right(),
+                "{entry} spills out of the page"
+            );
+            if let Some(rail) = rail {
+                assert!(button.origin.x >= rail.right(), "{entry} is over the rail");
+            }
+            tops.push(f32::from(button.origin.y).round() as i32);
+        }
+        tops.dedup();
+        assert!(tops.len() >= 2, "the buttons wrap onto another line");
+    })
+    .unwrap();
 }

@@ -157,6 +157,7 @@ impl DockStory {
                         title.clone(),
                         ix == self.selected,
                         None,
+                        false,
                         close,
                         cx,
                     )

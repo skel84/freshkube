@@ -130,10 +130,11 @@ impl Pilot {
         // The tab follows the cluster the window shows, unless it is being
         // opened on its own (`show_tab_view`): then the window has not
         // reached it yet, and the tab keeps its entry.
-        let entry = self.switch.active_cluster().map(str::to_owned);
+        let (entry, context) = self.window_binding();
         // A tab whose entry is gone stays as it is until a person chooses a
-        // cluster for it: the shown cluster never stands in.
-        if self.tab_entry_missing(cx) && !std::mem::take(&mut self.tabs.chosen) {
+        // cluster for it (`choose_cluster_for_tab`): the shown cluster never
+        // stands in.
+        if self.tab_entry_missing(cx) {
             return;
         }
         if let Some(opening) = &self.tabs.activating {
@@ -142,24 +143,33 @@ impl Pilot {
             }
             self.tabs.activating = None;
         }
-        // A window with no entry (a context picked by hand, a kubeconfig or
-        // talosconfig given at launch) is no entry's: the shown tab shows no
-        // cluster rather than the one that was left, and selecting it does
-        // not switch back.
-        let unbound = entry.is_none() && self.tabs.set.unbind_current();
-        self.tabs.set.bind_current(entry.clone());
-        let moved = if self.tabs.set.current().entry != entry && entry.is_some() {
+        // The first cluster a tab shows is the one it started on, the
+        // window's own first tab included: it keeps it from then on.
+        self.tabs.set.bind_current(entry.clone(), context.clone());
+        let tab = self.tabs.set.current();
+        let differs = (&tab.entry, &tab.context) != (&entry, &context);
+        let moved = if differs && (entry.is_some() || context.is_some()) {
             // The context switcher retargets the focused tab: its page,
             // kind and namespace stay, and rows kept for the old cluster
-            // are dropped.
-            let id = self.tabs.set.current().id;
+            // are dropped. A window with no entry binds the tab to its
+            // context, so the tab shows that rather than the one left.
+            let id = tab.id;
             self.tabs.frozen.forget(&id);
-            self.tabs.set.retarget(entry, view)
+            self.tabs.set.retarget(entry, context, view)
         } else {
             self.tabs.set.record(view, list_ns)
         };
-        if unbound || moved {
+        if moved {
             self.tabs_changed(cx);
+        }
+    }
+
+    /// What the window shows, for a tab to be bound to: its workspace entry,
+    /// or with none the context it works in.
+    fn window_binding(&self) -> (Option<String>, Option<String>) {
+        match self.switch.active_cluster() {
+            Some(entry) => (Some(entry.to_owned()), None),
+            None => (None, self.applied.context.clone()),
         }
     }
 
@@ -192,15 +202,17 @@ impl Pilot {
             .map(|tab| {
                 // A tab bound to an entry reads that entry's level, never
                 // the shown one; an unbound tab is the window's own.
-                let level = match &tab.entry {
-                    Some(entry) => crate::mutation::entry_level(entry, cx),
-                    None => Some(shown),
+                let level = match (&tab.entry, &tab.context) {
+                    (Some(entry), _) => crate::mutation::entry_level(entry, cx),
+                    (None, Some(context)) => crate::mutation::context_level(context, cx),
+                    (None, None) => Some(shown),
                 };
-                let missing = level.is_none();
+                let missing = tab.entry.is_some() && level.is_none();
                 let described = describe_tab(&tab.view);
-                let full = match (&tab.entry, missing) {
+                let name = tab.entry.as_ref().or(tab.context.as_ref());
+                let full = match (name, missing) {
                     (Some(entry), true) => format!("Choose a cluster ({entry} is not listed)"),
-                    (Some(entry), false) if spans => format!("{entry} · {described}"),
+                    (Some(name), false) if spans => format!("{name} · {described}"),
                     _ => described,
                 };
                 Entry {
@@ -212,6 +224,7 @@ impl Pilot {
                     },
                     full: full.into(),
                     mark: level.map(crate::desktop::shell::context::mark),
+                    missing,
                 }
             })
             .collect();
@@ -241,6 +254,16 @@ impl Pilot {
             self.tabs.activating = Some(entry.clone());
             self.switch_cluster_to_view(entry, view, window, cx);
             return;
+        }
+        // A tab made in a window with no entry goes back to its context by
+        // name, leaving whatever entry is open.
+        let tab = self.tabs.set.current();
+        if tab.entry.is_none()
+            && let Some(context) = tab.context.clone()
+            && (self.switch.active_cluster().is_some()
+                || self.applied.context.as_ref() != Some(&context))
+        {
+            self.select_context(context, window, cx);
         }
         self.tabs.applying = Some((view.clone(), cx.background_executor().now()));
         // Coming back to a Resources tab shows the rows it kept, muted,
@@ -349,19 +372,23 @@ impl Pilot {
     }
 
     /// "Choose a cluster" on a tab whose entry is gone: the person's pick
-    /// binds the tab to `id`, keeping its page, kind and namespace.
+    /// binds the tab to `id` and opens the tab's own page there, with the
+    /// kind and namespace it had.
     pub(in crate::desktop) fn choose_cluster_for_tab(
         &mut self,
         id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.tabs.chosen = true;
-        if self.switch.active_cluster() == Some(id.as_str()) {
-            self.sync_tabs(cx);
-        } else {
-            self.switch_cluster(id, window, cx);
-        }
+        let mut view = self.tabs.set.current().view.clone();
+        // Its object was another cluster's.
+        view.object = None;
+        view.tab = freshkube_nav::ViewTab::Details;
+        self.tabs.frozen.forget(&self.tabs.set.current().id);
+        self.tabs.set.retarget(Some(id), None, view.clone());
+        self.tabs_changed(cx);
+        self.show_tab_view(view, window, cx);
+        cx.notify();
     }
 
     /// Whether the shown tab belongs to an entry the setup no longer lists.

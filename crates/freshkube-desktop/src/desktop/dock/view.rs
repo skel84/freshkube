@@ -57,6 +57,7 @@ impl Dock {
                     .as_ref()
                     .filter(|badge| badge.foreign)
                     .map(|badge| badge.mark),
+                missing: false,
                 tip: shell_tip(tab).map(|tip| Rc::new(tip) as tab_strip::Tip),
             })
             .collect();

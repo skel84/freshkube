@@ -28,6 +28,8 @@ pub(super) struct Entry {
     /// The level of the tab's own cluster (#878), which its glyph and cap
     /// show; none for a cluster entry the file no longer lists.
     pub mark: Option<freshkube_ui::level::Mark>,
+    /// The tab's entry is gone: it wears a dashed ring instead of a level.
+    pub missing: bool,
 }
 
 /// What of the Resources page is part of a view: the namespace, the object
@@ -236,6 +238,7 @@ impl Render for ViewTabs {
                 title: entry.title.clone(),
                 active: at == self.active,
                 mark: entry.mark,
+                missing: entry.missing,
                 tip: (!menu_open).then(|| {
                     Rc::new(move |window: &mut Window, cx: &mut App| {
                         Tooltip::new(full.clone()).build(window, cx)
