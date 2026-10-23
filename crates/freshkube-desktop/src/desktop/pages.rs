@@ -7,7 +7,7 @@ use super::{
 };
 use crate::desktop::{COLUMN_WIDTH, RAIL_WIDTH};
 use crate::logs::TalosPanel;
-use crate::resources::{self, navigation, shell};
+use crate::resources::{self, navigation};
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::WindowExt;
 use gpui_kit::*;
@@ -373,33 +373,20 @@ impl Pilot {
             }
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
-            this.leave_entry(cx);
-            if !this.mode().has_talos() {
-                this.use_kube_context(Some(context), window, cx);
-                return;
-            }
-            this.applied.context = Some(context);
-            this.remember_connection(window, cx);
-            this.invalidate_target(window, cx);
-            if this.mode().is_example() {
-                this.seed_example_history(cx);
-            }
-            this.refresh(window, cx);
-            this.prepare_context_display(window, cx);
-        });
-    }
 
-    /// Runs `then` at once, or, with shells running in the dock, once the
-    /// user agrees to end them: `then` leaves the connection.
-    pub(super) fn unless_shell(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) {
-        let running = shell::running_anywhere(cx);
-        shell::unless_shell(self, running, window, cx, then);
+        self.leave_entry(cx);
+        if !self.mode().has_talos() {
+            self.use_kube_context(Some(context), window, cx);
+            return;
+        }
+        self.applied.context = Some(context);
+        self.remember_connection(window, cx);
+        self.invalidate_target(window, cx);
+        if self.mode().is_example() {
+            self.seed_example_history(cx);
+        }
+        self.refresh(window, cx);
+        self.prepare_context_display(window, cx);
     }
 
     pub(super) fn adjacent_context(

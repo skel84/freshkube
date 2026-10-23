@@ -1,12 +1,24 @@
 use super::*;
 
+/// The connection id each tab started on.
+fn origins(dock: &Entity<Dock>, cx: &mut TestAppContext) -> Vec<String> {
+    cx.update(|cx| {
+        dock.read(cx)
+            .tabs
+            .iter()
+            .map(|tab| tab.origin.source.id.clone())
+            .collect()
+    })
+}
+
 #[gpui_kit::test]
-fn another_context_closes_every_tab(cx: &mut TestAppContext) {
+fn another_context_keeps_every_tab_on_its_own_connection(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let dock = dock(&pilot, cx);
     let pods = running_pods(&pilot, cx);
     open_logs(handle, &pilot, "pods", &pods[0], cx);
     let view = pod_view(&dock, 0, cx).downgrade();
+    let started = origins(&dock, cx);
     let other = cx.update(|cx| {
         let pilot = pilot.read(cx);
         pilot
@@ -21,17 +33,20 @@ fn another_context_closes_every_tab(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(titles(&dock, cx).is_empty());
-    assert!(view.upgrade().is_none());
+    // The tab keeps the connection it started on (#878).
+    assert_eq!(titles(&dock, cx).len(), 1);
+    assert!(view.upgrade().is_some());
+    assert_eq!(origins(&dock, cx), started);
 }
 
 #[gpui_kit::test]
-fn another_talos_context_closes_every_tab_while_it_loads(cx: &mut TestAppContext) {
+fn another_talos_context_keeps_every_tab_while_it_loads(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let dock = dock(&pilot, cx);
     let pods = running_pods(&pilot, cx);
     open_logs(handle, &pilot, "pods", &pods[0], cx);
     let view = pod_view(&dock, 0, cx).downgrade();
+    let started = origins(&dock, cx);
     let other = cx.update(|cx| {
         let pilot = pilot.read(cx);
         pilot
@@ -45,12 +60,14 @@ fn another_talos_context_closes_every_tab_while_it_loads(cx: &mut TestAppContext
         pilot.select_context(other, window, cx);
         assert!(pilot.source().kube.is_none());
     });
-    assert!(titles(&dock, cx).is_empty());
-    assert!(view.upgrade().is_none());
+    // The tab keeps the connection it started on (#878).
+    assert_eq!(titles(&dock, cx).len(), 1);
+    assert!(view.upgrade().is_some());
+    assert_eq!(origins(&dock, cx), started);
 }
 
 #[gpui_kit::test]
-fn another_kubeconfig_closes_every_tab_while_it_loads(cx: &mut TestAppContext) {
+fn another_kubeconfig_keeps_every_tab_while_it_loads(cx: &mut TestAppContext) {
     use freshkube_core::cluster_overview::KubeconfigSelection;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config");
@@ -60,6 +77,7 @@ fn another_kubeconfig_closes_every_tab_while_it_loads(cx: &mut TestAppContext) {
     let pods = running_pods(&pilot, cx);
     open_logs(handle, &pilot, "pods", &pods[0], cx);
     let view = pod_view(&dock, 0, cx).downgrade();
+    let started = origins(&dock, cx);
     while_loading(handle, &pilot, cx, |pilot, window, cx| {
         let selection = KubeconfigSelection::File {
             path: path.clone(),
@@ -68,12 +86,14 @@ fn another_kubeconfig_closes_every_tab_while_it_loads(cx: &mut TestAppContext) {
         pilot.apply_kubeconfig(selection, window, cx);
         assert!(pilot.source().kube.is_none());
     });
-    assert!(titles(&dock, cx).is_empty());
-    assert!(view.upgrade().is_none());
+    // The tab keeps the connection it started on (#878).
+    assert_eq!(titles(&dock, cx).len(), 1);
+    assert!(view.upgrade().is_some());
+    assert_eq!(origins(&dock, cx), started);
 }
 
 #[gpui_kit::test]
-fn losing_the_source_closes_every_tab_and_its_return_reopens_none(cx: &mut TestAppContext) {
+fn losing_the_source_keeps_every_tab_and_its_return_opens_none_more(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let dock = dock(&pilot, cx);
     let pods = running_pods(&pilot, cx);
@@ -82,17 +102,19 @@ fn losing_the_source_closes_every_tab_and_its_return_reopens_none(cx: &mut TestA
     cx.update_window(handle, |_, window, cx| {
         dock.update(cx, |dock, cx| {
             dock.set_source(None, None, window, cx);
-            assert!(dock.tabs.is_empty());
-            // The same connection back opens nothing it had.
+            assert_eq!(dock.tabs.len(), 1);
+            // The same connection back opens nothing more.
             dock.set_source(source.clone(), None, window, cx);
-            assert!(dock.tabs.is_empty());
+            assert_eq!(dock.tabs.len(), 1);
         })
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-fn a_source_missing_for_a_while_keeps_the_tabs_and_their_shells(cx: &mut TestAppContext) {
+fn a_source_missing_for_a_while_or_another_identity_keeps_the_tabs_and_their_shells(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let dock = dock(&pilot, cx);
     let pods = running_pods(&pilot, cx);
@@ -112,12 +134,13 @@ fn a_source_missing_for_a_while_keeps_the_tabs_and_their_shells(cx: &mut TestApp
     assert_eq!(cx.read(shell::running_anywhere).len(), 1);
     cx.update_window(handle, |_, window, cx| {
         dock.update(cx, |dock, cx| {
-            // Another identity closes them, its source loaded or not.
+            // Another identity leaves them on their own connections (#878),
+            // its source loaded or not.
             dock.set_source(None, Some("access:another"), window, cx);
-            assert!(dock.tabs.is_empty());
+            assert_eq!(dock.tabs.len(), 2);
         })
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(cx.read(shell::running_anywhere).is_empty());
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
 }

@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 publish = false
-description = "The agent's loopback read endpoint, its session token and the saved per-cluster access"
+description = "The agent in the dock: the loopback read endpoint, its session token, the saved per-cluster access, the ACP client, the opencode profile and the transcript"
 
 [lib]
 # This library has no doctests; re-enable them if an example is added.
@@ -22,10 +22,13 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["compat"] }
 uuid = { version = "1", features = ["v4"] }
 getrandom = "0.3"
 http = "1"
+agent-client-protocol = "=2.2.0"
+futures.workspace = true
+tempfile = "3"
 # The MCP Streamable HTTP server, pinned exactly: some MCP clients and rmcp disagree
 # on the 2026-07-28 revision, so a bump is checked against each agent (spikes/agent).
 rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
@@ -34,7 +37,32 @@ axum = { version = "0.8", default-features = false, features = ["tokio", "http1"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "service"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+# The scripted agent: in process (`scripted::in_process`, for the dock's UI tests
+# and `--fixture`) and as the `fake_acp_agent` binary. It reads through the MCP
+# endpoint with an MCP client, which only it needs; a crate that wants it turns
+# this feature on, and the tests here do from their own dev-dependency.
+[features]
+scripted = ["rmcp/client", "rmcp/transport-streamable-http-client-reqwest"]
+
+[[bin]]
+name = "fake_acp_agent"
+path = "src/bin/fake_acp_agent.rs"
+required-features = ["scripted"]
+
 [dev-dependencies]
+freshkube-agent = { path = ".", features = ["scripted"] }
+tokio = { workspace = true, features = ["test-util"] }
 freshkube-core = { workspace = true, features = ["testing"] }
 rmcp = { version = "=3.5.0", default-features = false, features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client-reqwest"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

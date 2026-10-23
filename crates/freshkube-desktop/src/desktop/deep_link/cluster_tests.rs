@@ -419,7 +419,7 @@ fn a_failed_check_is_shown_and_can_be_tried_again(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_running_shell_is_asked_about_only_when_the_link_switches_the_cluster(cx: &mut TestAppContext) {
+fn a_link_that_switches_the_cluster_asks_nothing_of_a_running_shell(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     switch(cx, handle, &view, "dev-fra");
     switch(cx, handle, &view, "core-fra");
@@ -437,28 +437,13 @@ fn a_running_shell_is_asked_about_only_when_the_link_switches_the_cluster(cx: &m
     assert!(cx.pending_prompt().is_none());
     assert_eq!(page(cx, &view), Page::Etcd);
     cx.read(|cx| assert!(!crate::resources::shell::running_anywhere(cx).is_empty()));
-    // Another cluster: the shell question, and Cancel keeps everything.
+    // Another cluster: the link switches and opens the view there, and the
+    // shell goes on on its own connection without a question (#878).
     open_text(cx, handle, &view, &made_in("dev-fra"));
-    let (question, detail) = cx.pending_prompt().expect("the shell question");
-    // It says what it is for, not only that a shell ends.
-    assert!(
-        question.contains("dev-fra") && question.contains("link"),
-        "{question}"
-    );
-    assert!(detail.contains("read with your own access"), "{detail}");
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    assert_eq!(active(cx, &view), SessionKey::Entry("core-fra".into()));
-    cx.read(|cx| {
-        assert!(view.read(cx).switch.pending_link.is_none());
-        assert!(!crate::resources::shell::running_anywhere(cx).is_empty());
-    });
-    // Agreeing ends the shell, switches and opens the view there.
-    open_text(cx, handle, &view, &made_in("dev-fra"));
-    cx.simulate_prompt_answer("Switch and end the shell");
-    cx.run_until_parked();
+    assert!(cx.pending_prompt().is_none());
     assert_eq!(active(cx, &view), SessionKey::Entry("dev-fra".into()));
     assert_eq!(page(cx, &view), Page::Etcd);
+    cx.read(|cx| assert!(!crate::resources::shell::running_anywhere(cx).is_empty()));
 }
 
 #[gpui_kit::test]

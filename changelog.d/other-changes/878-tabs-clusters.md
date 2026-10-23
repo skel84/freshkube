@@ -1,0 +1,1 @@
+- **Tabs on several clusters:** each tab belongs to a cluster, the context switcher moves the tab you are on, and a shell or log in the dock keeps its own connection when you switch; a shell is held to its own cluster's protection level and says when it is not the cluster shown.

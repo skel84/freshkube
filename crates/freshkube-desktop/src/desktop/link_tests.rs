@@ -107,7 +107,7 @@ fn a_link_from_a_cluster_the_window_never_held_is_refused(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn cancelling_the_shell_question_holds_no_link_and_changes_nothing(cx: &mut TestAppContext) {
+fn a_link_to_another_cluster_asks_nothing_of_a_running_shell(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     switch(cx, handle, &view, "dev-fra");
     switch(cx, handle, &view, "core-fra");
@@ -121,17 +121,12 @@ fn cancelling_the_shell_question_holds_no_link_and_changes_nothing(cx: &mut Test
         .clone();
     start_shell(handle, &view, &pod, cx);
     open(cx, handle, &view, pod_link("dev-fra"));
-    assert!(cx.pending_prompt().is_some());
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    assert_eq!(active(cx, &view), key("core-fra"));
-    cx.read(|cx| assert!(view.read(cx).switch.pending_link.is_none()));
-    // Agreeing ends the shell, switches, and opens the object.
-    open(cx, handle, &view, pod_link("dev-fra"));
-    cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
+    // The shell keeps its own connection (#878): nothing asks, the window
+    // switches and opens the object, and the shell runs on.
+    assert!(cx.pending_prompt().is_none());
     assert_eq!(active(cx, &view), key("dev-fra"));
     assert!(opened(cx, &view).is_some());
+    cx.read(|cx| assert!(!crate::resources::shell::running_anywhere(cx).is_empty()));
 }
 
 fn route(cx: &mut TestAppContext, view: &Entity<Pilot>, link: &ObjectRef) -> LinkRoute {
@@ -719,10 +714,10 @@ fn a_part_of_the_active_entry_waits_for_its_connection(cx: &mut TestAppContext) 
     cx.read(|cx| assert!(view.read(cx).switch.pending_link.is_none()));
 }
 
-/// A running shell is folded into the one question, never asked about
-/// twice.
+/// A running shell is no part of the question: it keeps its own
+/// connection (#878).
 #[gpui_kit::test]
-fn a_running_shell_is_asked_about_in_the_same_question(cx: &mut TestAppContext) {
+fn a_running_shell_is_not_part_of_the_question(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = on_checkout_part(cx, DEV_API);
     let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
     let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
@@ -744,13 +739,10 @@ fn a_running_shell_is_asked_about_in_the_same_question(cx: &mut TestAppContext) 
     let (question, detail) = cx.pending_prompt().expect("asked once");
     assert_eq!(
         question,
-        format!(
-            "Switch to dev-fra to open Deployment checkout-api and end the shell in {}?",
-            pod.name
-        )
+        "Switch to dev-fra to open Deployment checkout-api?"
     );
     assert!(detail.contains("Port forwards keep running"), "{detail}");
-    cx.simulate_prompt_answer("Switch and end the shell");
+    cx.simulate_prompt_answer("Switch");
     cx.run_until_parked();
     assert!(cx.pending_prompt().is_none(), "no second question");
     assert_eq!(active(cx, &view), key("dev-fra"));

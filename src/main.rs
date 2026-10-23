@@ -10,6 +10,7 @@ use color_eyre::Result;
 use freshkube_desktop::{DebugOptions, GpuiOptions};
 use std::{fs::File, path::PathBuf};
 use tracing::Level;
+use tracing_subscriber::filter::{FilterExt, filter_fn};
 use tracing_subscriber::{EnvFilter, prelude::*};
 
 /// Freshkube: manage and monitor Talos Linux and Kubernetes clusters.
@@ -167,27 +168,14 @@ fn main() -> Result<()> {
     let log_path = resolve_log_path(log_file);
     let log_file = File::create(&log_path)?;
 
-    // Set the base level, but quiet down noisy HTTP/gRPC libraries.
-    let filter = if debug {
-        EnvFilter::from_default_env()
-            .add_directive(Level::DEBUG.into())
-            .add_directive("h2=info".parse().unwrap())
-            .add_directive("hyper=info".parse().unwrap())
-            .add_directive("tower=info".parse().unwrap())
-            .add_directive("tonic=info".parse().unwrap())
-            .add_directive("rustls=info".parse().unwrap())
-    } else {
-        EnvFilter::from_default_env().add_directive(Level::INFO.into())
-    };
-
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(log_file)
                 .with_ansi(true)
-                .with_target(false),
+                .with_target(false)
+                .with_filter(log_filter(debug).and(agent_libraries_at_info())),
         )
-        .with(filter)
         .init();
 
     tracing::info!("Starting freshkube");
@@ -309,6 +297,47 @@ fn options(
     }
 }
 
+/// Whether a log target belongs to the agent libraries: the ACP client and
+/// the MCP client. This must match `freshkube_agent::is_agent_library_target`
+/// (this crate does not depend on the agent crate; each has a test of the
+/// clamp built on it).
+fn is_agent_library(target: &str) -> bool {
+    let crate_name = target.split("::").next().unwrap_or(target);
+    crate_name == "rmcp" || crate_name.starts_with("agent_client_protocol")
+}
+
+/// Drops the agent libraries' debug and trace events, whatever the filter
+/// says. A more specific `RUST_LOG` target such as
+/// `agent_client_protocol::jsonrpc=debug` beats a directive, and at debug these
+/// libraries log every message they send, `session/new` and its token
+/// included; so this is the guarantee and the directives below only save work.
+fn agent_libraries_at_info() -> impl tracing_subscriber::layer::Filter<tracing_subscriber::Registry>
+{
+    filter_fn(|meta| !(is_agent_library(meta.target()) && *meta.level() > Level::INFO))
+}
+
+/// The log filter: the base level, with noisy HTTP/gRPC libraries quieted. The
+/// agent libraries stay at info whatever the level: at debug they log every
+/// message they send, and an agent session's first message carries its token.
+/// (`freshkube-agent`'s `QUIET_LOG_TARGETS` is the same pair, and its log test
+/// proves that they hide the token.)
+fn log_filter(debug: bool) -> EnvFilter {
+    let filter = if debug {
+        EnvFilter::from_default_env()
+            .add_directive(Level::DEBUG.into())
+            .add_directive("h2=info".parse().unwrap())
+            .add_directive("hyper=info".parse().unwrap())
+            .add_directive("tower=info".parse().unwrap())
+            .add_directive("tonic=info".parse().unwrap())
+            .add_directive("rustls=info".parse().unwrap())
+    } else {
+        EnvFilter::from_default_env().add_directive(Level::INFO.into())
+    };
+    filter
+        .add_directive("agent_client_protocol=info".parse().unwrap())
+        .add_directive("rmcp=info".parse().unwrap())
+}
+
 /// Resolve the log file path, falling back to the platform temp directory.
 fn resolve_log_path(log_file: Option<String>) -> PathBuf {
     match log_file {
@@ -320,6 +349,67 @@ fn resolve_log_path(log_file: Option<String>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_agent_library_event_below_info_is_dropped_whatever_the_filter_says() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Sink {
+            type Writer = Sink;
+            fn make_writer(&'a self) -> Sink {
+                self.clone()
+            }
+        }
+
+        let sink = Sink::default();
+        // A user's own, more specific, targets at debug and trace.
+        let user = EnvFilter::new(
+            "trace,agent_client_protocol::jsonrpc=trace,rmcp::transport=debug,agent_client_protocol=trace",
+        );
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(sink.clone())
+                .with_filter(user.and(agent_libraries_at_info())),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "agent_client_protocol::jsonrpc::outgoing_actor", "SECRET-A");
+            tracing::trace!(target: "agent_client_protocol", "SECRET-B");
+            tracing::debug!(target: "rmcp::transport::streamable", "SECRET-C");
+            tracing::debug!(target: "agent_client_protocol_schema::v1", "SECRET-D");
+            tracing::info!(target: "agent_client_protocol::jsonrpc", "info-kept");
+            tracing::debug!(target: "freshkube_core::x", "debug-elsewhere-kept");
+            tracing::debug!(target: "rmcp_like_but_not", "other-crate-kept");
+        });
+        let logged = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+        for dropped in ["SECRET-A", "SECRET-B", "SECRET-C", "SECRET-D"] {
+            assert!(!logged.contains(dropped), "{dropped} was logged:\n{logged}");
+        }
+        for kept in ["info-kept", "debug-elsewhere-kept", "other-crate-kept"] {
+            assert!(logged.contains(kept), "{kept} was dropped:\n{logged}");
+        }
+    }
+
+    #[test]
+    fn the_agent_libraries_stay_at_info_at_every_level() {
+        for debug in [false, true] {
+            let shown = log_filter(debug).to_string();
+            for directive in ["agent_client_protocol=info", "rmcp=info"] {
+                assert!(shown.contains(directive), "debug {debug}: {shown}");
+            }
+        }
+    }
 
     fn env(path: &str) -> Option<String> {
         Some(path.to_string())

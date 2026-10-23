@@ -25,6 +25,11 @@ pub(super) struct Entry {
     pub title: SharedString,
     /// The whole description, for the tooltip.
     pub full: SharedString,
+    /// The level of the tab's own cluster (#878), which its glyph and cap
+    /// show; none for a cluster entry the file no longer lists.
+    pub mark: Option<freshkube_ui::level::Mark>,
+    /// The tab's entry is gone: it wears a dashed ring instead of a level.
+    pub missing: bool,
 }
 
 /// What of the Resources page is part of a view: the namespace, the object
@@ -49,6 +54,9 @@ pub(crate) struct ViewTabs {
     strip: TabStrip,
     entries: Vec<Entry>,
     active: usize,
+    /// The tab whose context menu is open: its tooltip waits, so it does not
+    /// draw over the menu's first entry.
+    menu_tab: Option<TabId>,
     /// Whether a `follow` is waiting for its turn.
     queued: Rc<Cell<bool>>,
     _subscriptions: Vec<Subscription>,
@@ -97,6 +105,7 @@ impl ViewTabs {
             strip: TabStrip::default(),
             entries: Vec::new(),
             active: 0,
+            menu_tab: None,
             queued: Rc::default(),
             _subscriptions: subscriptions,
         }
@@ -113,6 +122,12 @@ impl ViewTabs {
             queued.set(false);
             _ = pilot.update(cx, |pilot, cx| pilot.sync_tabs(cx));
         });
+    }
+
+    /// What the strip draws, for tests.
+    #[cfg(test)]
+    pub(super) fn entries(&self) -> &[Entry] {
+        &self.entries
     }
 
     /// Sets what the strip draws; draws it again only when that differs.
@@ -139,13 +154,40 @@ impl ViewTabs {
         });
     }
 
+    /// Notes that `id`'s menu is open, and that it closed.
+    fn watch_menu(
+        strip: &WeakEntity<Self>,
+        id: TabId,
+        window: &mut Window,
+        cx: &mut Context<PopupMenu>,
+    ) {
+        _ = strip.update(cx, |strip, cx| {
+            strip.menu_tab = Some(id);
+            cx.notify();
+        });
+        let strip = strip.clone();
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            move |_, _, _: &DismissEvent, _, cx| {
+                _ = strip.update(cx, |strip, cx| {
+                    strip.menu_tab = None;
+                    cx.notify();
+                });
+            },
+        )
+        .detach();
+    }
+
     fn tab_menu(
         pilot: &WeakEntity<Pilot>,
+        strip: &WeakEntity<Self>,
         menu: PopupMenu,
         id: TabId,
         window: &mut Window,
         cx: &mut Context<PopupMenu>,
     ) -> PopupMenu {
+        Self::watch_menu(strip, id, window, cx);
         let Ok(focus) = pilot.read_with(cx, |pilot, _| pilot.focus.clone()) else {
             return menu;
         };
@@ -165,9 +207,18 @@ impl ViewTabs {
                     _ = pilot.update(cx, |pilot, cx| close(pilot, id, window, cx));
                 })
             };
-        let close = MenuAction::new("Close", CloseViewTab);
-        menu::actions(menu, vec![close], &focus, live, window, cx)
-            .item(item("Close others", Pilot::close_other_tabs))
+        // The key closes the shown tab, so only that tab's entry carries it;
+        // another tab's closes itself.
+        let shown = pilot
+            .read_with(cx, |pilot, _| pilot.tabs.set.current().id == id)
+            .unwrap_or(false);
+        let menu = if shown {
+            let close = MenuAction::new("Close", CloseViewTab);
+            menu::actions(menu, vec![close], &focus, live, window, cx)
+        } else {
+            menu.item(item("Close", Pilot::close_tab))
+        };
+        menu.item(item("Close others", Pilot::close_other_tabs))
             .item(item("Close to the right", Pilot::close_tabs_to_right))
             .separator()
             .item(item("Close all", |pilot, _, window, cx| {
@@ -181,16 +232,22 @@ impl Render for ViewTabs {
         probe::hit("tabs.strip");
         let items = self.entries.iter().enumerate().map(|(at, entry)| {
             let full = entry.full.clone();
+            let menu_open = self.menu_tab == Some(entry.id);
             Item {
                 id: entry.id,
                 title: entry.title.clone(),
                 active: at == self.active,
-                tip: Some(Rc::new(move |window: &mut Window, cx: &mut App| {
-                    Tooltip::new(full.clone()).build(window, cx)
-                })),
+                mark: entry.mark,
+                missing: entry.missing,
+                tip: (!menu_open).then(|| {
+                    Rc::new(move |window: &mut Window, cx: &mut App| {
+                        Tooltip::new(full.clone()).build(window, cx)
+                    }) as tab_strip::Tip
+                }),
             }
         });
         let pilot = self.pilot.clone();
+        let strip = cx.entity().downgrade();
         let actions = Actions::<Self> {
             select: |this, id, window, cx| {
                 this.act(window, cx, move |pilot, window, cx| {
@@ -202,12 +259,12 @@ impl Render for ViewTabs {
                     pilot.close_tab(id, window, cx)
                 })
             },
-            press_for_menu: |this, id, window, cx| {
-                this.act(window, cx, move |pilot, window, cx| {
-                    pilot.select_tab(id, window, cx)
-                })
-            },
-            menu: Rc::new(move |menu, id, window, cx| Self::tab_menu(&pilot, menu, id, window, cx)),
+            // A right-click opens the tab's menu and shows nothing else: the
+            // tab that is shown stays shown.
+            press_for_menu: |_, _, _, _| {},
+            menu: Rc::new(move |menu, id, window, cx| {
+                Self::tab_menu(&pilot, &strip, menu, id, window, cx)
+            }),
         };
         let row = tab_strip::row("view-tab", &self.strip, items, self.active, &actions, cx);
         tab_strip::bar("view-tabs", &self.strip, row, cx)
