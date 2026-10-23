@@ -295,6 +295,15 @@ impl ResourcesScreen {
             .on_action(cx.listener(|view, _: &SelectGroup, _, cx| view.select_group(cx)))
             .on_action(cx.listener(|view, _: &OpenNode, _, cx| view.open_selected_node(cx)))
             .on_action(cx.listener(|view, _: &ToggleHealthy, _, cx| view.toggle_healthy(cx)))
+            .on_action(
+                cx.listener(|view, _: &ScaleSelected, _, cx| view.run_act(Everyday::Scale, cx)),
+            )
+            .on_action(
+                cx.listener(|view, _: &RestartSelected, _, cx| view.run_act(Everyday::Restart, cx)),
+            )
+            .on_action(
+                cx.listener(|view, _: &SuspendSelected, _, cx| view.run_act(Everyday::Suspend, cx)),
+            )
             .on_action(cx.listener(|view, _: &NextTab, _, cx| view.step_tab(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousTab, _, cx| view.step_tab(-1, cx)))
             .flex_1()

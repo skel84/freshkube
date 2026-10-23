@@ -69,6 +69,8 @@ gpui_kit::assets::icon_assets!(
         ListChecks,
         ShieldX,
         CircleDashed,
+        // Settings › Team setup.
+        Users,
     ]
 );
 
@@ -132,7 +134,12 @@ mod tests {
     #[test]
     fn the_deep_link_icons_are_embedded() {
         use gpui_kit::assets::IconName;
-        for icon in [IconName::Link, IconName::ShieldX, IconName::SearchX] {
+        for icon in [
+            IconName::Link,
+            IconName::ShieldX,
+            IconName::SearchX,
+            IconName::Users,
+        ] {
             let path = icon.path();
             assert!(
                 AppAssets.load(&path).unwrap().is_some(),

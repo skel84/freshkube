@@ -10,6 +10,7 @@ mod action;
 mod audit;
 mod dialog;
 mod diff;
+pub mod everyday;
 mod history;
 mod outcome;
 mod preflight;

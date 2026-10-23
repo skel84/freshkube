@@ -1,0 +1,1 @@
+- **Team setup:** Settings › Team setup shows a shared team `freshkube.yaml` ([#849](https://github.com/skel84/freshkube/issues/849)): its source, the version applied, the keys it may not set, a new version waiting for a two-step review with trust changes first, and both ways of leaving. This first slice runs on example data and fetches nothing yet.

@@ -2,6 +2,7 @@ mod chrome;
 mod column;
 mod custom;
 mod debug_options;
+mod everyday;
 mod header;
 mod keys;
 mod kubernetes_only;

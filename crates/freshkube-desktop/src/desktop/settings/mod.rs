@@ -34,6 +34,9 @@ mod sections;
 mod small_window_tests;
 mod source;
 pub(super) mod sources;
+mod team;
+#[cfg(test)]
+mod team_tests;
 #[cfg(test)]
 pub(super) mod tests;
 mod unsaved;
@@ -217,6 +220,8 @@ pub(crate) struct SettingsPage {
     follow_rows: Vec<notifications::FollowRow>,
     /// Settings › Audit log: what was read from both logs, and the filter.
     audit: audit::AuditView,
+    /// Settings › Team setup (#849).
+    team: team::TeamState,
 }
 
 impl SettingsPage {
@@ -432,6 +437,7 @@ impl SettingsPage {
             ignored: HashSet::new(),
             follow_rows: Vec::new(),
             audit: audit::AuditView::new(),
+            team: Default::default(),
         };
         page.derive_follows(cx);
         page
@@ -952,6 +958,7 @@ impl Render for SettingsPage {
                 .list_frame(window)
                 .child(self.destinations.clone())
                 .into_any_element(),
+            SettingsSection::Team => self.render_team(window, cx),
             SettingsSection::Sources => self
                 .list_frame(window)
                 .child(self.sources.clone())

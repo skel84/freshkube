@@ -28,6 +28,8 @@ pub(crate) enum SettingsSection {
     Clusters,
     Destinations,
     Sources,
+    /// The shared team setup file (#849).
+    Team,
 }
 
 /// What a section that points elsewhere asks of the shell.
@@ -61,7 +63,12 @@ impl SettingsSection {
         ),
         (
             "Workspace",
-            &[Self::Clusters, Self::Destinations, Self::Sources],
+            &[
+                Self::Clusters,
+                Self::Destinations,
+                Self::Sources,
+                Self::Team,
+            ],
         ),
     ];
 
@@ -76,6 +83,7 @@ impl SettingsSection {
             Self::Clusters => "clusters",
             Self::Destinations => "destinations",
             Self::Sources => "sources",
+            Self::Team => "team",
         }
     }
 
@@ -90,6 +98,7 @@ impl SettingsSection {
             Self::Clusters => "Clusters",
             Self::Destinations => "Argo CD destinations",
             Self::Sources => "Delivery sources",
+            Self::Team => "Team setup",
         }
     }
 
@@ -104,6 +113,7 @@ impl SettingsSection {
             Self::Clusters => IconName::Server,
             Self::Destinations => IconName::Waypoints,
             Self::Sources => IconName::Database,
+            Self::Team => IconName::Users,
         }
     }
 

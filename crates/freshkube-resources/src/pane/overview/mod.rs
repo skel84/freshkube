@@ -108,6 +108,9 @@ pub(super) struct Summary {
     deleting: Option<SharedString>,
     generation: Option<SharedString>,
     owners: Vec<super::cross_links::OwnerLink>,
+    /// The kind of the controller that owns the object, which `Owned by`
+    /// shows: a ReplicaSet a Deployment owns is scaled through it.
+    controller: Option<String>,
     conditions: Vec<ConditionLine>,
     labels: Vec<SharedString>,
     label_count: usize,
@@ -119,6 +122,10 @@ pub(super) struct Summary {
 }
 
 impl Summary {
+    pub(in crate::pane) fn controller(&self) -> Option<&str> {
+        self.controller.as_deref()
+    }
+
     pub(super) fn new(view: &DocumentView, connection: Option<&str>) -> Self {
         let document = &view.document;
         let overview = &document.overview;
@@ -136,6 +143,11 @@ impl Summary {
                 }
                 .into()
             }),
+            controller: overview
+                .owners
+                .iter()
+                .find(|owner| owner.controller)
+                .map(|owner| owner.kind.clone()),
             owners: overview
                 .owners
                 .iter()

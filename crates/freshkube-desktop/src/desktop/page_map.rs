@@ -171,6 +171,17 @@ impl Pages {
         settings_page.update(cx, |page, _| {
             page.set_example_labels_capped(options.debug.metrics_labels_capped)
         });
+        if options.starts_with_examples() {
+            settings_page.update(cx, |page, cx| {
+                page.set_team_example(
+                    options
+                        .debug
+                        .team
+                        .unwrap_or(freshkube_core::team::example::Shape::NoTeam),
+                    cx,
+                )
+            });
+        }
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(
