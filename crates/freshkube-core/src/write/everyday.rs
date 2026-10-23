@@ -111,8 +111,7 @@ pub struct Subject {
     workload: Workload,
     target: Target,
     object: Value,
-    /// The HorizontalPodAutoscaler that targets it, when one was found.
-    autoscaler: Option<String>,
+    autoscaler: Autoscaler,
 }
 
 impl Subject {
@@ -139,7 +138,7 @@ impl Subject {
                 subresource: None,
             },
             object: object.clone(),
-            autoscaler: None,
+            autoscaler: Autoscaler::None,
         })
     }
 
@@ -192,14 +191,14 @@ impl Subject {
         }
     }
 
-    /// The autoscaler that targets the object, if the read found one.
-    pub fn autoscaler(&self) -> Option<&str> {
-        self.autoscaler.as_deref()
+    /// What the read found of autoscalers that target the object.
+    pub fn autoscaler(&self) -> &Autoscaler {
+        &self.autoscaler
     }
 
-    /// Notes the autoscaler that targets the object.
-    pub fn with_autoscaler(mut self, name: Option<String>) -> Self {
-        self.autoscaler = name;
+    /// Notes what was found of autoscalers.
+    pub fn with_autoscaler(mut self, found: Autoscaler) -> Self {
+        self.autoscaler = found;
         self
     }
 
@@ -264,8 +263,9 @@ impl Subject {
     fn scale_sentence(&self, what: String) -> String {
         let sentence = self.sentence(what);
         match &self.autoscaler {
-            Some(_) => format!("{sentence} {AUTOSCALER_NOTE}"),
-            None => sentence,
+            Autoscaler::Found(_) => format!("{sentence} {AUTOSCALER_NOTE}"),
+            Autoscaler::Unknown => format!("{sentence} {AUTOSCALER_UNKNOWN}"),
+            Autoscaler::None => sentence,
         }
     }
 }
@@ -321,18 +321,21 @@ impl Subject {
         let autoscaler = if subject.offered().contains(&Everyday::Scale) {
             find_autoscaler(client, &subject).await
         } else {
-            None
+            Autoscaler::None
         };
         Ok(subject.with_autoscaler(autoscaler))
     }
 }
 
-/// The HorizontalPodAutoscaler whose target is the subject, if there is one
-/// and the list could be read. A list that is refused or fails says nothing:
-/// the notice is a courtesy, never a gate.
-async fn find_autoscaler(client: &kube::Client, subject: &Subject) -> Option<String> {
+/// What the autoscalers of the subject's namespace say about it. A list that
+/// is refused or fails says nothing (the notice is a courtesy, never a gate);
+/// one with more than [`PAGE`] × [`MOST_PAGES`] autoscalers is not read to its
+/// end and is reported as unknown, which is not the same as none.
+async fn find_autoscaler(client: &kube::Client, subject: &Subject) -> Autoscaler {
     use kube::api::{Api, ApiResource, DynamicObject, ListParams};
-    let namespace = subject.target.namespace.as_deref()?;
+    let Some(namespace) = subject.target.namespace.as_deref() else {
+        return Autoscaler::None;
+    };
     let resource = ApiResource {
         group: "autoscaling".into(),
         version: "v2".into(),
@@ -343,32 +346,49 @@ async fn find_autoscaler(client: &kube::Client, subject: &Subject) -> Option<Str
     let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &resource);
     let mut params = ListParams::default().limit(PAGE);
     for _ in 0..MOST_PAGES {
-        let list = api.list(&params).await.ok()?;
+        let Ok(list) = api.list(&params).await else {
+            return Autoscaler::None;
+        };
         let found = list.items.into_iter().find_map(|hpa| {
             let target = hpa.data.pointer("/spec/scaleTargetRef")?;
             let same = target["kind"].as_str() == Some(subject.target.kind.as_str())
                 && target["name"].as_str() == Some(subject.target.name.as_str());
             same.then(|| hpa.metadata.name.unwrap_or_default())
         });
-        if found.is_some() {
-            return found;
+        if let Some(name) = found {
+            return Autoscaler::Found(name);
         }
-        // Past the last page, or past the cap: no autoscaler is said.
-        params = params.continue_token(
-            list.metadata
-                .continue_
-                .as_deref()
-                .filter(|t| !t.is_empty())?,
-        );
+        match list
+            .metadata
+            .continue_
+            .as_deref()
+            .filter(|token| !token.is_empty())
+        {
+            Some(token) => params = params.continue_token(token),
+            None => return Autoscaler::None,
+        }
     }
-    None
+    Autoscaler::Unknown
+}
+
+/// What the read found of autoscalers that target an object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Autoscaler {
+    None,
+    /// The named HorizontalPodAutoscaler targets it.
+    Found(String),
+    /// More autoscalers in the namespace than the lookup reads: not all were
+    /// looked at.
+    Unknown,
 }
 
 /// How many autoscalers one request reads, and how many requests the lookup
-/// makes at most (so 2,000 autoscalers in one namespace; past that it says
-/// nothing rather than reading on).
+/// makes at most (2,000 in one namespace).
 const PAGE: u32 = 500;
 const MOST_PAGES: usize = 4;
+
+/// Said in Scale's dialog when there were too many autoscalers to check.
+pub const AUTOSCALER_UNKNOWN: &str = "Autoscalers: unknown, more than 2,000 to check.";
 
 /// Said in Scale's dialog when an autoscaler targets the object.
 pub const AUTOSCALER_NOTE: &str = "An autoscaler manages replicas; it may change this back.";
@@ -895,7 +915,20 @@ mod tests {
         let web = subject(&cluster, fake::DEPLOYMENT);
         assert!(restart(&web, "t").unwrap().sentence.contains(RESTART_NOTE));
         assert!(!scale(&web, 3).unwrap().sentence.contains(AUTOSCALER_NOTE));
-        let scaled = web.with_autoscaler(Some("web".into()));
+        let unknown = web.clone().with_autoscaler(Autoscaler::Unknown);
+        assert!(
+            scale(&unknown, 3)
+                .unwrap()
+                .sentence
+                .contains(AUTOSCALER_UNKNOWN)
+        );
+        assert!(
+            !scale(&unknown, 3)
+                .unwrap()
+                .sentence
+                .contains(AUTOSCALER_NOTE)
+        );
+        let scaled = web.with_autoscaler(Autoscaler::Found("web".into()));
         assert!(
             scale(&scaled, 3)
                 .unwrap()

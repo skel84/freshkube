@@ -13,6 +13,7 @@
 //! (docs/STATE_LIFETIMES.md, "Kubernetes writes").
 
 mod dialog;
+pub(crate) mod dismiss;
 #[cfg(test)]
 mod everyday_tests;
 mod report;
@@ -114,6 +115,9 @@ pub(crate) struct WriteFlow {
     typed: Option<Entity<InputState>>,
     typed_matches: bool,
     dialog_open: bool,
+    /// Which opening of the dialog is the current one, so a dismissal of an
+    /// earlier one that arrives late is not taken for this one's.
+    dialog_epoch: std::rc::Rc<std::cell::Cell<u64>>,
     check: Option<(OwnedJob, Task<()>)>,
     _subscriptions: Vec<Subscription>,
 }
@@ -132,11 +136,13 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
         typed: None,
         typed_matches: false,
         dialog_open: false,
+        dialog_epoch: Default::default(),
         check: None,
         _subscriptions: vec![],
     });
     if asks.confirm || asks.blocked.is_some() {
-        dialog::open(&flow, window, cx);
+        let epoch = flow.read(cx).dialog_epoch.clone();
+        dialog::open(&flow, epoch, window, cx);
         flow.update(cx, |flow, _| flow.dialog_open = true);
     }
     flow.update(cx, |flow, cx| flow.check(window, cx));
@@ -159,6 +165,7 @@ pub(crate) fn start_prepared(
         typed: None,
         typed_matches: false,
         dialog_open: false,
+        dialog_epoch: Default::default(),
         check: None,
         _subscriptions: vec![],
     });
@@ -257,7 +264,7 @@ impl WriteFlow {
         if !self.dialog_open {
             // Nothing was asked, but there is something to say: a refusal.
             self.dialog_open = true;
-            dialog::open(&cx.entity(), window, cx);
+            dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
         }
         cx.notify();
     }
@@ -381,7 +388,7 @@ impl WriteFlow {
                 self.stage = Stage::Shown(Dialog::Refused { text });
                 if !self.dialog_open {
                     self.dialog_open = true;
-                    dialog::open(&cx.entity(), window, cx);
+                    dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
                 }
                 cx.notify();
                 return;
@@ -468,7 +475,7 @@ impl WriteFlow {
             self.check(window, cx);
             if !self.dialog_open {
                 self.dialog_open = true;
-                dialog::open(&cx.entity(), window, cx);
+                dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
             }
             return;
         }
@@ -476,6 +483,23 @@ impl WriteFlow {
             self.close(window, cx);
             report.update(cx, |report, cx| report.show(window, cx));
         }
+    }
+
+    /// The dialog went without this flow closing it: Cancel, Close or Escape.
+    /// Nothing was sent, so the flow is over; whoever waits on it is told by
+    /// the change.
+    fn dismissed(&mut self, cx: &mut Context<Self>) {
+        // A countdown ends only by its own Cancel or the send.
+        if self.stage == Stage::Closed
+            || matches!(self.stage, Stage::Countdown { .. })
+            || !self.dialog_open
+        {
+            return;
+        }
+        self.dialog_open = false;
+        self.stage = Stage::Closed;
+        self.check = None;
+        cx.notify();
     }
 
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {

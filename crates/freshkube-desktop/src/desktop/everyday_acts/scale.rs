@@ -1,6 +1,8 @@
 //! Scale asks one thing first, the count; everything after it is the write
 //! flow's (`write_flow`), so the level decides whether anything more is asked.
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::resources::model::ResourceIdentity;
@@ -18,6 +20,7 @@ use tokio::runtime::Handle;
 
 use crate::palette::palette;
 use crate::ui::dp;
+use crate::write_flow::dismiss::OnDismiss;
 
 /// The most a count may ask for here; a larger one is almost always a typo.
 pub(super) const MOST: u64 = 10_000;
@@ -44,6 +47,8 @@ pub(super) struct ScaleDialog {
     identity: ResourceIdentity,
     count: Entity<InputState>,
     error: Option<String>,
+    /// The count was handed on to the write flow, which holds the object now.
+    handed_on: Rc<Cell<bool>>,
 }
 
 pub(super) fn open(
@@ -57,6 +62,17 @@ pub(super) fn open(
     let current = subject.replicas().to_string();
     let count = cx.new(|cx| InputState::new(window, cx).placeholder("Replicas"));
     count.update(cx, |input, cx| input.set_value(current, window, cx));
+    let handed_on = Rc::new(Cell::new(false));
+    // Cancel, Escape and a click away all end the dialog without a word: the
+    // object is let go of whichever way it goes, unless Review took it on.
+    let dismissed = OnDismiss::new(cx, {
+        let (identity, handed_on) = (identity.clone(), handed_on.clone());
+        move |cx| {
+            if !handed_on.get() {
+                super::release(&identity, cx);
+            }
+        }
+    });
     let dialog = cx.new(|_| ScaleDialog {
         runner,
         runtime,
@@ -64,8 +80,10 @@ pub(super) fn open(
         identity,
         count,
         error: None,
+        handed_on,
     });
     window.open_dialog(cx, move |view, window, cx| {
+        let _kept = &dismissed;
         let title = format!("Scale {}", dialog.read(cx).subject.target().label());
         let weak = dialog.downgrade();
         let actions = form::actions(
@@ -88,6 +106,8 @@ impl ScaleDialog {
         });
         match action {
             Ok(action) => {
+                self.handed_on.set(true);
+                super::release(&self.identity, cx);
                 window.close_dialog(cx);
                 super::start(
                     self.runner.clone(),

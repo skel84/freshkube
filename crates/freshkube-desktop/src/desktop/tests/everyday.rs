@@ -161,6 +161,26 @@ impl World {
         .unwrap()
     }
 
+    /// How many times the object itself was read.
+    fn gets(&self) -> usize {
+        self.cluster
+            .recorder
+            .requests()
+            .iter()
+            .filter(|request| request.method == "GET" && request.path == fake::DEPLOYMENT)
+            .count()
+    }
+
+    fn escape(&self, cx: &mut TestAppContext) {
+        cx.update_window(self.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("escape", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
     fn replicas(&self) -> i64 {
         self.cluster.object(fake::DEPLOYMENT)["spec"]["replicas"]
             .as_i64()
@@ -217,9 +237,13 @@ fn restart_asks_even_on_an_open_cluster_and_a_double_press_sends_once(cx: &mut T
     w.drive(cx, Duration::from_millis(500));
     assert!(w.present(cx, "write-confirm"), "an open cluster still asks");
     assert!(w.cluster.writes().is_empty());
+    // One read of the object and one look at it in the check: the repeated
+    // presses started nothing (without the guard each would read and check).
+    assert_eq!(w.gets(), 2, "{:?}", w.cluster.recorder.lines());
     // And while the dialog is up, another press does nothing more.
     w.press_web(cx, Everyday::Restart);
     w.drive(cx, Duration::from_millis(500));
+    assert_eq!(w.gets(), 2);
     w.click(cx, "write-confirm");
     w.drive(cx, Duration::from_secs(3));
     assert_eq!(w.cluster.writes().len(), 1);
@@ -277,4 +301,104 @@ fn example_data_shows_the_dialog_and_sends_nothing(cx: &mut TestAppContext) {
             .to_lowercase()
             .contains("example data")
     );
+}
+
+/// Presses Restart, sees the dialog, ends it with `dismiss`, and presses
+/// again: the object must not stay locked, and the dialog must come back.
+fn dismissed_then_pressed_again(
+    cx: &mut TestAppContext,
+    w: &World,
+    shown: &'static str,
+    dismiss: impl Fn(&World, &mut TestAppContext),
+) {
+    w.press_web(cx, Everyday::Restart);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, shown), "the dialog");
+    dismiss(w, cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, shown), "the dialog is gone");
+    w.press_web(cx, Everyday::Restart);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, shown), "a second press asks again");
+    assert!(w.cluster.writes().is_empty());
+}
+
+#[gpui_kit::test]
+fn cancel_lets_go_of_the_object(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    dismissed_then_pressed_again(cx, &w, "write-confirm", |w, cx| w.click(cx, "write-cancel"));
+}
+
+#[gpui_kit::test]
+fn escape_lets_go_of_the_object(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    dismissed_then_pressed_again(cx, &w, "write-confirm", |w, cx| w.escape(cx));
+}
+
+#[gpui_kit::test]
+fn a_refused_dialogs_close_lets_go_of_the_object(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    w.cluster.deny_access();
+    dismissed_then_pressed_again(cx, &w, "write-refused", |w, cx| w.click(cx, "write-close"));
+}
+
+#[gpui_kit::test]
+fn the_count_dialog_keeps_the_object_and_cancel_or_escape_lets_go(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    for dismiss in [0, 1] {
+        w.press_web(cx, Everyday::Scale);
+        w.drive(cx, Duration::from_millis(500));
+        assert!(w.present(cx, "scale-dialog"));
+        // While the count is asked, another press starts nothing more.
+        let reads = w.gets();
+        w.press_web(cx, Everyday::Scale);
+        w.drive(cx, Duration::from_millis(500));
+        assert_eq!(w.gets(), reads);
+        if dismiss == 0 {
+            w.click(cx, "scale-cancel");
+        } else {
+            w.escape(cx);
+        }
+        w.drive(cx, Duration::from_millis(500));
+        assert!(!w.present(cx, "scale-dialog"));
+    }
+    // And the last time it came back: nothing stayed locked.
+    w.press_web(cx, Everyday::Scale);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "scale-dialog"));
+    assert!(
+        w.cluster
+            .recorder
+            .requests()
+            .iter()
+            .all(|r| r.method == "GET" || r.path.ends_with("selfsubjectaccessreviews"))
+    );
+}
+
+#[gpui_kit::test]
+fn a_switch_while_the_dialog_is_open_keeps_the_level_the_press_was_under(cx: &mut TestAppContext) {
+    let w = world(cx, "prod-ams");
+    w.press_web(cx, Everyday::Restart);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(
+        w.present(cx, "write-type-prompt"),
+        "protected asks for the name"
+    );
+    // The window moves to an open cluster with the dialog still up.
+    w.switch(cx, "dev-fra");
+    w.drive(cx, Duration::from_millis(500));
+    if w.present(cx, "write-type-prompt") {
+        cx.update_window(w.handle, |_, window, cx| {
+            window.click("write-type-name", cx);
+            window.input("web", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        w.click(cx, "write-confirm");
+        w.drive(cx, Duration::from_secs(3));
+        let audit = w.audit();
+        assert!(audit.contains("\"entry\":\"prod-ams\""), "{audit}");
+        assert!(audit.contains("\"protection\":\"protected\""), "{audit}");
+        assert!(!audit.contains("dev-fra"), "{audit}");
+    }
 }

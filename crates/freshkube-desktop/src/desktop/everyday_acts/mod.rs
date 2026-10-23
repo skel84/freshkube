@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::backend::spawn_job;
-use crate::mutation::{level_cell, write_audit_store};
+use crate::mutation::{Operations, entry_level_cell, write_audit_store};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{ClusterAccess, WorkloadAct};
 use crate::write_flow::{self, WriteRequest};
@@ -41,7 +41,7 @@ fn claim(identity: &ResourceIdentity, cx: &mut App) -> bool {
     cx.default_global::<InFlight>().0.insert(identity.clone())
 }
 
-fn release(identity: &ResourceIdentity, cx: &mut App) {
+pub(super) fn release(identity: &ResourceIdentity, cx: &mut App) {
     cx.default_global::<InFlight>().0.remove(identity);
 }
 
@@ -126,7 +126,11 @@ impl Pilot {
         if !claim(&act.identity, cx) {
             return;
         }
-        let (runtime, cell) = (self.runtime.clone(), level_cell(cx));
+        // The cell of the entry the press fixed, not the window's: a switch to
+        // another cluster while the dialog is open must not change the level
+        // the write is held to or audited under.
+        let runtime = self.runtime.clone();
+        let cell = entry_level_cell(&at.entry, who.protection, cx);
         if matches!(act.source.access, ClusterAccess::Example(_)) {
             // Example data: a runner that sends nothing.
             release(&act.identity, cx);
@@ -203,9 +207,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The press is over; `start` takes the object again for the flow.
-        release(identity, cx);
         let described = match act {
+            // The count dialog keeps the object claimed until it is gone.
             Everyday::Scale => {
                 scale::open(
                     runner,
@@ -221,8 +224,15 @@ impl Pilot {
             Everyday::Suspend => everyday::suspend(&subject),
         };
         match described {
-            Ok(action) => start(runner, self.runtime.clone(), action, identity, window, cx),
-            Err(everyday::NotOffered(why)) => window.push_notification(why, cx),
+            Ok(action) => {
+                // The press is over; `start` takes the object for the flow.
+                release(identity, cx);
+                start(runner, self.runtime.clone(), action, identity, window, cx);
+            }
+            Err(everyday::NotOffered(why)) => {
+                release(identity, cx);
+                window.push_notification(why, cx);
+            }
         }
     }
 }
