@@ -21,9 +21,23 @@ pub(super) const EGRESS: &str = "Everything the agent reads (names, specs, logs 
 /// The warning when opencode runs on the person's own data (`data: shared`).
 pub(super) const SHARED: &str = "opencode runs on your own data (data: shared in agent.json). Investigations are saved in your own opencode history, and configs saved there load.";
 /// The plain statement of #945.
-pub(super) const LOADS_YOUR_CONFIG: &str = "opencode 2.1.3 still loads your own ~/.config/opencode. A source loaded after Freshkube's inline profile can widen what the agent may do (agents.*.permissions). Freshkube can't prevent this yet.";
+pub(super) const LOADS_YOUR_CONFIG: &str = "opencode 2.1.3, the version Freshkube checked, still loads your own ~/.config/opencode. A source loaded after Freshkube's inline profile can widen what the agent may do (agents.*.permissions). Freshkube can't prevent this yet.";
 /// The read-only identity suggestion.
 pub(super) const READ_ONLY: &str = "The agent reads with your own access. Prefer a read-only identity: an entry whose context is bound to the built-in view ClusterRole, with agent access on for that entry alone. Nothing detects or requires it.";
+
+/// Whether a step's tool is one of Freshkube's four reads, under the names
+/// the agents use for an MCP tool.
+fn is_ours(tool: &str) -> bool {
+    freshkube_agent::tools::TOOLS.iter().any(|name| {
+        [
+            format!("{}_{name}", freshkube_agent::tools::SERVER),
+            format!("mcp__{}__{name}", freshkube_agent::tools::SERVER),
+            format!("mcp.{}.{name}", freshkube_agent::tools::SERVER),
+        ]
+        .iter()
+        .any(|ours| ours == tool)
+    })
+}
 
 impl AgentView {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -303,12 +317,19 @@ impl AgentView {
             .label("Save again")
             .on_click(cx.listener(|this, _, _, cx| this.retry_save(cx)))
             .into_any_element();
-        let (tone, lead, body, action): (Tone, &str, String, Option<AnyElement>) = match notice {
-            Notice::Failed(reason) => (Tone::Crit, "The agent stopped", reason.clone(), None),
+        let (tone, lead, body, detail, action): (
+            Tone,
+            &str,
+            String,
+            Option<String>,
+            Option<AnyElement>,
+        ) = match notice {
+            Notice::Failed(reason) => (Tone::Crit, "The agent stopped", reason.clone(), None, None),
             Notice::AccessNotSaved(error) => (
                 Tone::Warn,
                 "Access stays off",
-                format!("Turning it on couldn't be saved: {error}"),
+                "Turning it on couldn't be saved.".to_owned(),
+                Some(error.clone()),
                 None,
             ),
             Notice::SaveFailed {
@@ -317,9 +338,8 @@ impl AgentView {
             } => (
                 Tone::Warn,
                 "Access is off, but it could not be saved",
-                format!(
-                    "Reads on this cluster are refused now. agent.json may still say on, so a note beside it keeps this cluster off at the next start, and the save is tried again when the app quits: {error}"
-                ),
+                "Reads on this cluster are refused now. agent.json may still say on, so a note beside it keeps this cluster off at the next start, and the save is tried again when the app quits.".to_owned(),
+                Some(error.clone()),
                 Some(retry),
             ),
             Notice::SaveFailed {
@@ -328,9 +348,8 @@ impl AgentView {
             } => (
                 Tone::Crit,
                 "Access is off, but neither the file nor a note beside it could be written",
-                format!(
-                    "Reads on this cluster are refused now, but access will come back at the next start unless Save again succeeds first: {error}"
-                ),
+                "Reads on this cluster are refused now, but access will come back at the next start unless Save again succeeds first.".to_owned(),
+                Some(error.clone()),
                 Some(retry),
             ),
             Notice::HeldOff => (
@@ -338,13 +357,19 @@ impl AgentView {
                 "Access to this cluster started off",
                 "Turning it off was never saved, so the file's on is not trusted. Turn it on again from the first question when you want it.".to_owned(),
                 None,
+                None,
             ),
         };
+        let p = palette(cx);
+        let label = format!("{lead}. {body} {}", detail.clone().unwrap_or_default());
+        let content = v_flex().child(body).when_some(detail, |this, detail| {
+            this.child(div().mt(dp(2.)).text_color(p.muted).child(detail))
+        });
         Some(
-            ui::banner(tone, Some(lead.into()), body.clone(), action, cx)
+            ui::banner(tone, Some(lead.into()), content, action, cx)
                 .id("agent-notice")
                 .test_support()
-                .aria_label(SharedString::from(format!("{lead}. {body}")))
+                .aria_label(SharedString::from(label))
                 .into_any_element(),
         )
     }
@@ -407,9 +432,22 @@ impl AgentView {
 
     fn render_step(&self, step: &Step, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
+        let over = self.investigation.outcome() != Outcome::Running;
         let (tone, state) = match step.state {
+            // A turn that ended leaves no step running.
+            StepState::Running if over => (
+                Tone::Unknown,
+                if self.investigation.outcome() == Outcome::Cancelled {
+                    "Stopped"
+                } else {
+                    "Unfinished"
+                },
+            ),
             StepState::Running => (Tone::Accent, "Running"),
             StepState::Done => (Tone::Good, "Done"),
+            // A tool that isn't one of Freshkube's four is refused by the
+            // app; that is not the app failing.
+            StepState::Failed if !is_ours(&step.tool) => (Tone::Unknown, "Refused"),
             StepState::Failed => (Tone::Crit, "Failed"),
         };
         h_flex()
@@ -529,7 +567,11 @@ impl AgentView {
                     .gap(dp(8.))
                     .items_center()
                     .child(div().text_color(p.muted).child(ui::mono(row.id.clone())))
-                    .child(div().font_weight(FontWeight::MEDIUM).child(row.tool))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(row.tool.clone()),
+                    )
                     .child(div().flex_1())
                     .child(ui::tag(tone, None, row.mark.label(), cx)),
             )
@@ -613,7 +655,6 @@ impl Render for AgentView {
             .size_full()
             .min_h_0()
             .gap(dp(8.))
-            .pt(dp(8.))
             .text_size(dp(12.5))
             .text_color(p.ink)
             .child(self.render_toolbar(cx))

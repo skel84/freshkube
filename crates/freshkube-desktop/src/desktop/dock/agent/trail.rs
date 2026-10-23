@@ -2,6 +2,7 @@
 //! Rows are not clickable yet (the page following the agent's reads is D1d).
 
 use freshkube_agent::{Outcome, ReadEvent};
+use freshkube_core::agent_reads::Code;
 use freshkube_nav::ViewTab;
 
 /// At most this many reads show; a session has 500 at most, so this is
@@ -37,7 +38,7 @@ pub(crate) struct Row {
     pub(crate) number: u32,
     /// `r7`.
     pub(crate) id: String,
-    pub(crate) tool: &'static str,
+    pub(crate) tool: String,
     /// The kind, namespace, object and tab as text; for a refused read the
     /// refusal's code.
     pub(crate) place: String,
@@ -69,7 +70,7 @@ impl Trail {
         }
         let number = event.read.number();
         let (place, mark) = match &event.outcome {
-            Outcome::Refused(code) => (format!("refused: {code}"), Mark::Refused),
+            Outcome::Refused(code) => (refusal(*code).to_owned(), Mark::Refused),
             Outcome::Answered { .. } => (
                 event.view.as_ref().map(place).unwrap_or_default(),
                 if self.cited.contains(&number) {
@@ -82,7 +83,7 @@ impl Trail {
         self.rows.push(Row {
             number,
             id: event.read.to_string(),
-            tool: event.tool,
+            tool: event.tool.to_owned(),
             place,
             mark,
             elsewhere: (event.cluster != own).then(|| event.cluster.clone()),
@@ -100,8 +101,8 @@ impl Trail {
         self.rows.push(Row {
             number: 0,
             id: format!("x{n}"),
-            tool: "tool",
-            place: format!("refused: {what}"),
+            tool: what.to_owned(),
+            place: "Not one of Freshkube's four reads".to_owned(),
             mark: Mark::Refused,
             elsewhere: None,
         });
@@ -146,6 +147,23 @@ pub(crate) fn citations(text: &str) -> Vec<u32> {
         }
     }
     found
+}
+
+/// A refusal in words, for the trail.
+fn refusal(code: Code) -> &'static str {
+    match code {
+        Code::Invalid => "The request wasn't valid",
+        Code::UnknownCluster => "That cluster isn't one this session may read",
+        Code::NotEnabled => "Agent access is off for this cluster",
+        Code::Refused => "The cluster refused your access",
+        Code::NotFound => "It wasn't found",
+        Code::NotServed => "This kind isn't served on this cluster",
+        Code::TooLarge => "The object is too large to read",
+        Code::Unreachable => "The cluster couldn't be reached",
+        Code::TimedOut => "The cluster took too long",
+        Code::Failed => "The read failed",
+        Code::LimitReached => "This session used all its reads",
+    }
 }
 
 /// A view as words: `pods · shop/api-0 · Logs`.

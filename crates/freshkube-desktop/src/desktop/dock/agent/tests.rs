@@ -287,7 +287,8 @@ fn turning_access_off_ends_a_read_in_flight(cx: &mut TestAppContext) {
     assert!(!rows.is_empty());
     assert!(
         rows.iter()
-            .all(|row| row.mark == Mark::Refused && row.place == "refused: not_enabled"),
+            .all(|row| row.mark == Mark::Refused
+                && row.place == "Agent access is off for this cluster"),
         "{rows:?}"
     );
     let view = tab.view.clone();
@@ -502,6 +503,11 @@ fn steps_update_in_place_and_stop_ends_the_prompt(cx: &mut TestAppContext) {
     assert!(took < Duration::from_millis(500), "{took:?}");
     assert!(!cx.update(|cx| tab.view.read(cx).is_working()));
     assert_eq!(tab.label("agent-outcome", cx).as_deref(), Some("Stopped"));
+    // The step that was running reads Stopped, not Running.
+    assert_eq!(
+        tab.label("agent-step-t1", cx).as_deref(),
+        Some("freshkube_list_objects Stopped")
+    );
     assert!(
         cx.update(|cx| tab.view.read(cx).has_session()),
         "the session stays"
@@ -541,7 +547,11 @@ fn a_shell_request_shows_refused_on_the_trail(cx: &mut TestAppContext) {
         .iter()
         .find(|row| row.mark == Mark::Refused)
         .expect("the shell is on the trail");
-    assert!(shell.place.contains("kubectl get pods -A"), "{shell:?}");
+    assert!(shell.tool.contains("kubectl get pods -A"), "{shell:?}");
+    assert_eq!(shell.place, "Not one of Freshkube's four reads");
+    // The shell step reads Refused, not Failed: the app didn't fail.
+    let step = tab.label("agent-step-shell", cx).unwrap();
+    assert!(step.ends_with("Refused"), "{step}");
     let label = tab.label("agent-trail-x1", cx).unwrap();
     assert!(label.contains("refused"), "{label}");
     // The four reads were evidence, and the answer cites them.
@@ -604,7 +614,7 @@ fn another_clusters_read_warns_and_needs_its_own_access(cx: &mut TestAppContext)
         .find(|row| row.elsewhere.as_deref() == Some("stage-fra"))
         .expect("a read on another cluster");
     assert_eq!(other.mark, Mark::Refused);
-    assert_eq!(other.place, "refused: not_enabled");
+    assert_eq!(other.place, "Agent access is off for this cluster");
     let warning = tab
         .label(
             Box::leak(format!("agent-elsewhere-{}", other.id).into_boxed_str()),
@@ -618,7 +628,8 @@ fn another_clusters_read_warns_and_needs_its_own_access(cx: &mut TestAppContext)
     // The unserved kind is refused on the session's own cluster, without the warning.
     assert!(
         rows.iter()
-            .any(|row| row.elsewhere.is_none() && row.place == "refused: not_served"),
+            .any(|row| row.elsewhere.is_none()
+                && row.place == "This kind isn't served on this cluster"),
         "{rows:?}"
     );
 
