@@ -9,13 +9,16 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     h_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 
 /// The page width from which the browser sits beside the rows, in dp.
 const BESIDE_WIDTH: f32 = 900.;
 const BROWSER_WIDTH: f32 = 400.;
 /// Stacked, the browser's height and the rows' least.
 const BROWSER_HEIGHT: f32 = 200.;
-const DATA_LEAST: f32 = 280.;
+const DATA_HEIGHT: f32 = 480.;
+/// Side by side, the least height of the tab.
+const BESIDE_LEAST: f32 = 320.;
 
 impl ExploreView {
     /// The connect step while it isn't connected: where it is, or why it stopped.
@@ -108,9 +111,10 @@ impl ExploreView {
                     Encryption::Verified => ui::Tone::Good,
                     Encryption::Unverified | Encryption::Plain => ui::Tone::Warn,
                 };
-                ui::tag(tone, None, encryption.label(), cx)
+                let label = capitalised(encryption.label());
+                ui::tag(tone, None, label.clone(), cx)
                     .id("explore-encryption")
-                    .aria_label(encryption.label())
+                    .aria_label(label)
                     .test_support()
             }))
             .children(self.who().map(|who| {
@@ -201,11 +205,12 @@ impl Render for ExploreView {
                     .child(browser.w(dp(BROWSER_WIDTH)).h_full().border_r_1())
                     .child(data.h_full())
             } else {
+                // Definite heights: the tab is as tall as its parts, and a
+                // window too short for them scrolls the page.
                 v_flex()
-                    .flex_1()
-                    .min_h_0()
+                    .flex_none()
                     .child(browser.w_full().h(dp(BROWSER_HEIGHT)).border_b_1())
-                    .child(data.min_h(dp(DATA_LEAST)))
+                    .child(data.flex_none().h(dp(DATA_HEIGHT)))
             };
             v_flex()
                 .size_full()
@@ -215,21 +220,27 @@ impl Render for ExploreView {
         } else {
             self.step(cx)
         };
-        // A short window scrolls the page; the stacked panes keep their room.
-        let least = if connected && !beside {
-            34. + BROWSER_HEIGHT + DATA_LEAST
-        } else {
-            0.
-        };
         div()
-            .id("explore")
-            .test_support()
-            .size_full()
+            .w_full()
             .flex()
             .flex_col()
-            .min_h(dp(least))
+            // Side by side the tab fills its parent, but never gets shorter
+            // than this; stacked it is as tall as its parts.
+            .when(beside || !connected, |this| {
+                this.h_full().min_h(dp(BESIDE_LEAST))
+            })
             .child(body)
+            .id("explore")
+            .test_support()
     }
 }
 
 use gpui_kit::component::v_flex;
+
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}

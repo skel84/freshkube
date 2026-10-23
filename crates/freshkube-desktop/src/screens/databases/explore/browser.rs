@@ -9,11 +9,6 @@ use freshkube_reads::Loader;
 use freshkube_ui::table::{
     self as kit, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
 };
-use gpui_kit::assets::IconName;
-use gpui_kit::component::{
-    Sizable,
-    button::{Button, ButtonVariants},
-};
 use gpui_kit::*;
 use std::collections::{BTreeSet, HashMap};
 use tokio::runtime::Handle;
@@ -69,7 +64,6 @@ enum Entry {
 struct Group {
     schema: String,
     slug: String,
-    open: bool,
     /// "5 tables", or why there are none to show yet.
     detail: String,
 }
@@ -318,7 +312,6 @@ impl Browser {
             self.groups.push(Group {
                 slug: schema.to_lowercase(),
                 schema: schema.clone(),
-                open,
                 detail,
             });
             if !open {
@@ -470,32 +463,7 @@ impl TableSource for Browser {
     }
     fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let line = self.groups.get(group)?;
-        let (open, toggled) = (line.schema.clone(), line.schema.clone());
-        let chevron = Button::new(SharedString::from(format!(
-            "explore-schema-{}-toggle",
-            line.slug
-        )))
-        .ghost()
-        .xsmall()
-        .icon(if line.open {
-            IconName::ChevronDown
-        } else {
-            IconName::ChevronRight
-        })
-        .tooltip(if line.open {
-            "Close schema"
-        } else {
-            "Open schema"
-        })
-        .accessibility_label(format!(
-            "{} schema {}",
-            if line.open { "Close" } else { "Open" },
-            line.schema
-        ))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            cx.stop_propagation();
-            this.toggle(&toggled, cx)
-        }));
+        let open = line.schema.clone();
         Some(
             div()
                 .id(SharedString::from(format!("explore-schema-{}", line.slug)))
@@ -511,7 +479,6 @@ impl TableSource for Browser {
                         kit::ROW_HEIGHT,
                     )
                     .detail(vec![line.detail.clone()])
-                    .chevron(chevron)
                     .render(cx),
                 )
                 .into_any_element(),

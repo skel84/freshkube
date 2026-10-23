@@ -349,11 +349,14 @@ impl Render for DatabasesScreen {
                 .cloned()
         });
         let body = if let Some(explorer) = active {
+            // No `min_h_0`: the tab's own least height keeps it from being
+            // squeezed, so a short window scrolls the page to reach it.
             div()
                 .id("databases-explorer")
-                .size_full()
+                .w_full()
                 .flex_1()
-                .min_h_0()
+                .flex()
+                .flex_col()
                 .child(explorer)
                 .into_any_element()
         } else if let Some(words) = state {
@@ -387,14 +390,15 @@ impl Render for DatabasesScreen {
             super::super::page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
+        let exploring = self.active.is_some();
         let body = div()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .flex()
             .flex_col()
             .flex_1()
-            .min_h_0()
-            .when(short, |this| {
+            .when(!exploring, |this| this.min_h_0())
+            .when(short && !exploring, |this| {
                 this.min_h(dp(least)).when(empty, |this| this.flex_none())
             })
             .child(body);

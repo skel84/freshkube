@@ -383,9 +383,9 @@ async fn arrow_keys_step_the_browser_and_open_the_table_under_them(cx: &mut Test
 #[gpui_kit::test]
 async fn the_strip_says_what_protects_the_connection(cx: &mut TestAppContext) {
     for (shape, words) in [
-        (Example::Connected, "encrypted, certificate verified"),
-        (Example::Unverified, "encrypted, certificate not verified"),
-        (Example::Plain, "not encrypted"),
+        (Example::Connected, "Encrypted, certificate verified"),
+        (Example::Unverified, "Encrypted, certificate not verified"),
+        (Example::Plain, "Not encrypted"),
     ] {
         let (_runtime, page, window) = open(cx, shape).await;
         connected(cx, &page, &window).await;
@@ -530,7 +530,7 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let (_runtime, page, window) = super::super::tests::mount(cx, 760.);
+    let (_runtime, page, window) = super::super::tests::mount_sized(cx, 760., 560.);
     cx.update(|cx| crate::text_size::set(20., cx));
     cx.update_window(window.into(), |_, window, cx| {
         page.update(cx, |page, _| {
@@ -569,6 +569,8 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
     .await;
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
+        window.click("explore-row-1", cx);
+        window.render_frame(cx);
         let browser = window.find("explore-browser").bounds();
         let rows = window.find("explore-data-table").bounds();
         assert!(
@@ -576,9 +578,27 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
             "stacked: {browser:?} above {rows:?}"
         );
         assert!(rows.size.width > gpui_kit::px(500.), "{rows:?}");
+        // The record starts out below the window, and the page scrolls to it.
+        let before = window.find("explore-record").bounds();
+        assert!(
+            before.bottom() > window.viewport_size().height,
+            "nothing needed scrolling: {before:?}"
+        );
+        window.scroll(
+            "databases-page",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-4000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let record = window.find("explore-record").bounds();
+        let viewport = window.viewport_size();
+        assert!(
+            record.top() >= gpui_kit::px(0.) && record.bottom() <= viewport.height,
+            "the record is out of reach: {record:?} in {viewport:?}"
+        );
         // The strip wraps instead of cutting its actions off.
         let gate = window.find("explore-writes-gate").bounds();
-        assert!(gate.right() <= window.viewport_size().width, "{gate:?}");
+        assert!(gate.right() <= viewport.width, "{gate:?}");
     })
     .unwrap();
 }
