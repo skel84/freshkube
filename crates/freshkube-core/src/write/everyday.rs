@@ -1,7 +1,9 @@
 //! The everyday actions on workloads (#857): Scale, Restart and a CronJob's
 //! Suspend or Resume. Each is described here, with its tier, and sent by the
 //! framework; a page only asks what is offered and hands the description over.
-//! Every one is reversible tier. Restart has no Undo, since a rollout cannot be
+//! Every one is a merge patch of the one field it changes: a field manager that
+//! applies a single field owns just that field, so a later action that does not
+//! list it would remove it again. Every one is reversible tier. Restart has no Undo, since a rollout cannot be
 //! taken back.
 
 use serde_json::{Value, json};
@@ -109,7 +111,7 @@ pub struct Subject {
     workload: Workload,
     target: Target,
     object: Value,
-    /// The HorizontalPodAutoscaler that manages the replica count, by name.
+    /// The HorizontalPodAutoscaler that targets it, when one was found.
     autoscaler: Option<String>,
 }
 
@@ -141,24 +143,28 @@ impl Subject {
         })
     }
 
-    /// The same subject, managed by the named autoscaler.
-    pub fn with_autoscaler(mut self, name: impl Into<String>) -> Self {
-        self.autoscaler = Some(name.into());
-        self
-    }
-
-    /// The autoscaler that manages the replica count, when one was found.
-    pub fn autoscaler(&self) -> Option<&str> {
-        self.autoscaler.as_deref()
-    }
-
     pub fn target(&self) -> &Target {
         &self.target
     }
 
-    /// The everyday actions this kind has.
+    /// The everyday actions this kind has. A ReplicaSet a Deployment owns is
+    /// scaled through its Deployment, so it has none.
     pub fn offered(&self) -> Vec<Everyday> {
-        self.workload.offered().to_vec()
+        self.workload
+            .offered()
+            .iter()
+            .copied()
+            .filter(|act| !(*act == Everyday::Scale && self.owner_kind() == Some("Deployment")))
+            .collect()
+    }
+
+    /// The kind of the controller that owns the object, if one does.
+    fn owner_kind(&self) -> Option<&str> {
+        self.object["metadata"]["ownerReferences"]
+            .as_array()?
+            .iter()
+            .find(|owner| owner["controller"] == true)
+            .and_then(|owner| owner["kind"].as_str())
     }
 
     /// The replica count it has now (a missing one is the API's default, 1).
@@ -186,6 +192,17 @@ impl Subject {
         }
     }
 
+    /// The autoscaler that targets the object, if the read found one.
+    pub fn autoscaler(&self) -> Option<&str> {
+        self.autoscaler.as_deref()
+    }
+
+    /// Notes the autoscaler that targets the object.
+    pub fn with_autoscaler(mut self, name: Option<String>) -> Self {
+        self.autoscaler = name;
+        self
+    }
+
     /// The tool that manages the object, when it says so.
     pub fn gitops(&self) -> Option<GitOps> {
         let meta = self.object.get("metadata")?;
@@ -194,9 +211,23 @@ impl Subject {
                 .and_then(Value::as_object)
                 .is_some_and(|map| map.keys().any(|key| key.starts_with(prefix)))
         };
-        if has("annotations", "argocd.argoproj.io/") {
+        let managed_by = |manager: &str| {
+            meta.get("managedFields")
+                .and_then(Value::as_array)
+                .is_some_and(|fields| {
+                    fields
+                        .iter()
+                        .any(|entry| entry["manager"].as_str() == Some(manager))
+                })
+        };
+        // Argo CD stamps an annotation when it tracks by annotation, and a
+        // label when it tracks by label; its controller shows as a field
+        // manager either way.
+        if has("annotations", "argocd.argoproj.io/") || managed_by("argocd-controller") {
             Some(GitOps::ArgoCd)
-        } else if has("labels", "kustomize.toolkit.fluxcd.io/")
+        } else if managed_by("kustomize-controller")
+            || managed_by("helm-controller")
+            || has("labels", "kustomize.toolkit.fluxcd.io/")
             || has("labels", "helm.toolkit.fluxcd.io/")
         {
             Some(GitOps::Flux)
@@ -226,6 +257,15 @@ impl Subject {
         match self.gitops() {
             Some(tool) => format!("{what}.{}", tool.warning()),
             None => format!("{what}."),
+        }
+    }
+
+    /// [`Self::sentence`] with the autoscaler's note, for Scale.
+    fn scale_sentence(&self, what: String) -> String {
+        let sentence = self.sentence(what);
+        match &self.autoscaler {
+            Some(_) => format!("{sentence} {AUTOSCALER_NOTE}"),
+            None => sentence,
         }
     }
 }
@@ -278,40 +318,63 @@ impl Subject {
         }
         let subject = Self::from_object(&object)
             .ok_or_else(|| format!("{} has no action here.", target.label()))?;
-        Ok(match autoscaler_of(client, &subject).await {
-            Some(name) => subject.with_autoscaler(name),
-            None => subject,
-        })
+        let autoscaler = if subject.offered().contains(&Everyday::Scale) {
+            find_autoscaler(client, &subject).await
+        } else {
+            None
+        };
+        Ok(subject.with_autoscaler(autoscaler))
     }
 }
 
-/// The name of the HorizontalPodAutoscaler that targets the subject, if the
-/// list can be read and one does. A failed read says nothing: the warning is
-/// an extra, never a reason to refuse.
-async fn autoscaler_of(client: &kube::Client, subject: &Subject) -> Option<String> {
-    use kube::api::{Api, DynamicObject, ListParams};
-    use kube::core::{ApiResource, GroupVersionKind};
-    if !subject.offered().contains(&Everyday::Scale) {
-        return None;
-    }
+/// The HorizontalPodAutoscaler whose target is the subject, if there is one
+/// and the list could be read. A list that is refused or fails says nothing:
+/// the notice is a courtesy, never a gate.
+async fn find_autoscaler(client: &kube::Client, subject: &Subject) -> Option<String> {
+    use kube::api::{Api, ApiResource, DynamicObject, ListParams};
     let namespace = subject.target.namespace.as_deref()?;
-    let gvk = GroupVersionKind::gvk("autoscaling", "v2", "HorizontalPodAutoscaler");
-    let resource = ApiResource::from_gvk_with_plural(&gvk, "horizontalpodautoscalers");
+    let resource = ApiResource {
+        group: "autoscaling".into(),
+        version: "v2".into(),
+        api_version: "autoscaling/v2".into(),
+        kind: "HorizontalPodAutoscaler".into(),
+        plural: "horizontalpodautoscalers".into(),
+    };
     let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &resource);
-    let list = api.list(&ListParams::default().limit(500)).await.ok()?;
-    let items = serde_json::to_value(list.items).ok()?;
-    autoscaler_in(items.as_array()?, &subject.target)
+    let mut params = ListParams::default().limit(PAGE);
+    for _ in 0..MOST_PAGES {
+        let list = api.list(&params).await.ok()?;
+        let found = list.items.into_iter().find_map(|hpa| {
+            let target = hpa.data.pointer("/spec/scaleTargetRef")?;
+            let same = target["kind"].as_str() == Some(subject.target.kind.as_str())
+                && target["name"].as_str() == Some(subject.target.name.as_str());
+            same.then(|| hpa.metadata.name.unwrap_or_default())
+        });
+        if found.is_some() {
+            return found;
+        }
+        // Past the last page, or past the cap: no autoscaler is said.
+        params = params.continue_token(
+            list.metadata
+                .continue_
+                .as_deref()
+                .filter(|t| !t.is_empty())?,
+        );
+    }
+    None
 }
 
-/// The first of `autoscalers` whose scale target is `target`.
-fn autoscaler_in(autoscalers: &[Value], target: &Target) -> Option<String> {
-    autoscalers.iter().find_map(|hpa| {
-        let reference = hpa.pointer("/spec/scaleTargetRef")?;
-        let same = reference.get("kind").and_then(Value::as_str) == Some(target.kind.as_str())
-            && reference.get("name").and_then(Value::as_str) == Some(target.name.as_str());
-        same.then(|| hpa.pointer("/metadata/name")?.as_str().map(str::to_owned))?
-    })
-}
+/// How many autoscalers one request reads, and how many requests the lookup
+/// makes at most (so 2,000 autoscalers in one namespace; past that it says
+/// nothing rather than reading on).
+const PAGE: u32 = 500;
+const MOST_PAGES: usize = 4;
+
+/// Said in Scale's dialog when an autoscaler targets the object.
+pub const AUTOSCALER_NOTE: &str = "An autoscaler manages replicas; it may change this back.";
+
+/// Said in Restart's dialog, which has no Undo.
+pub const RESTART_NOTE: &str = "This can't be undone; the rollout restarts every pod.";
 
 /// Why an action is not offered on an object.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,16 +387,21 @@ fn count_observation(count: u64) -> Observation {
     }
 }
 
-/// Scale to `count`: server-side apply of `spec.replicas`, so an HPA that owns
-/// the field is a conflict shown, never forced. Undo puts back the count the
-/// object has when it is read for preflight.
-pub fn scale(subject: &Subject, count: i64) -> Result<ActionDescription, NotOffered> {
+/// Scale to `count`: a merge patch of `spec.replicas`, as kubectl does. Server-side
+/// apply would make `freshkube` own the field, and the next action that does not
+/// list it would take it away again. Undo puts back the count the object has when
+/// it is read for preflight.
+pub fn scale(subject: &Subject, count: u64) -> Result<ActionDescription, NotOffered> {
     if !subject.offered().contains(&Everyday::Scale) {
-        return Err(NotOffered("This kind cannot be scaled."));
+        return Err(NotOffered(if subject.owner_kind() == Some("Deployment") {
+            "A Deployment owns this ReplicaSet: scale its Deployment."
+        } else {
+            "This kind cannot be scaled."
+        }));
     }
-    let Ok(count) = u64::try_from(count) else {
-        return Err(NotOffered("Replicas can't be negative."));
-    };
+    if count == subject.replicas() {
+        return Err(NotOffered("It already has that many replicas."));
+    }
     let template = subject.clone();
     let inverse = InverseFrom::new(move |before| {
         let was = before
@@ -341,7 +409,7 @@ pub fn scale(subject: &Subject, count: i64) -> Result<ActionDescription, NotOffe
             .and_then(Value::as_u64)
             .unwrap_or(1);
         Some(Inverse {
-            change: Change::Apply(template.body(json!({"replicas": was}))),
+            change: Change::MergePatch(template.body(json!({"replicas": was}))),
             observe: count_observation(was),
             guard: Observation::FieldEquals {
                 pointer: "/spec/replicas".into(),
@@ -353,15 +421,10 @@ pub fn scale(subject: &Subject, count: i64) -> Result<ActionDescription, NotOffe
         kind: "scale".into(),
         tier: Tier::Reversible,
         verb: "Scale".into(),
-        sentence: subject.sentence(format!(
-            "Scale {} from {} to {count}{}",
+        sentence: subject.scale_sentence(format!(
+            "Scale {} from {} to {count}",
             subject.target.label(),
-            subject.replicas(),
-            if subject.autoscaler.is_some() {
-                ". An autoscaler manages replicas; it may change this back"
-            } else {
-                ""
-            }
+            subject.replicas()
         )),
         destinations: vec![],
         no_confirmation: false,
@@ -370,7 +433,7 @@ pub fn scale(subject: &Subject, count: i64) -> Result<ActionDescription, NotOffe
         preview: vec![],
         changes: vec![ObjectChange {
             target: subject.target.clone(),
-            change: Change::Apply(subject.body(json!({"replicas": count}))),
+            change: Change::MergePatch(subject.body(json!({"replicas": count}))),
             observe: count_observation(count),
             inverse: Some(inverse),
             depends: vec![],
@@ -391,10 +454,13 @@ pub fn restart(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffe
         kind: "restart".into(),
         tier: Tier::Reversible,
         verb: "Restart".into(),
-        sentence: subject.sentence(format!(
-            "Restart {}. This can't be undone; the rollout restarts every pod",
-            subject.target.label()
-        )),
+        sentence: format!(
+            "{} {RESTART_NOTE}",
+            subject.sentence(format!(
+                "Restart {} by stamping its pod template",
+                subject.target.label()
+            ))
+        ),
         destinations: vec![],
         no_confirmation: false,
         title: None,
@@ -402,7 +468,7 @@ pub fn restart(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffe
         preview: vec![],
         changes: vec![ObjectChange {
             target: subject.target.clone(),
-            change: Change::Apply(subject.body(spec)),
+            change: Change::MergePatch(subject.body(spec)),
             observe: Observation::FieldEquals {
                 pointer: RESTARTED_AT_POINTER.into(),
                 value: json!(at),
@@ -426,7 +492,7 @@ pub fn suspend(subject: &Subject) -> Result<ActionDescription, NotOffered> {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         Some(Inverse {
-            change: Change::Apply(template.body(json!({"suspend": was}))),
+            change: Change::MergePatch(template.body(json!({"suspend": was}))),
             observe: Observation::FieldEquals {
                 pointer: "/spec/suspend".into(),
                 value: json!(was),
@@ -458,7 +524,7 @@ pub fn suspend(subject: &Subject) -> Result<ActionDescription, NotOffered> {
         preview: vec![],
         changes: vec![ObjectChange {
             target: subject.target.clone(),
-            change: Change::Apply(subject.body(json!({"suspend": now}))),
+            change: Change::MergePatch(subject.body(json!({"suspend": now}))),
             observe: Observation::FieldEquals {
                 pointer: "/spec/suspend".into(),
                 value: json!(now),
@@ -510,7 +576,6 @@ mod tests {
             assert_eq!(action.tier, Tier::Reversible, "{}", action.kind);
         }
         assert!(scale(&nightly, 2).is_err());
-        assert!(scale(&web, -1).is_err());
         assert!(restart(&nightly, "t").is_err());
         assert!(suspend(&web).is_err());
         // A Secret or a Pod has none.
@@ -662,6 +727,189 @@ mod tests {
         cluster.assert_nothing_written();
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn scale_then_restart_leaves_the_replicas_alone_and_restart_then_scale_the_stamp() {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let scale_action = scale(&subject(&cluster, fake::DEPLOYMENT), 5).unwrap();
+        send(
+            &cluster,
+            dir.path(),
+            Protection::Open,
+            scale_action,
+            Confirmation::NotAsked,
+        )
+        .await;
+        let restart_action =
+            restart(&subject(&cluster, fake::DEPLOYMENT), "2026-10-23T10:00:00Z").unwrap();
+        send(
+            &cluster,
+            dir.path(),
+            Protection::Open,
+            restart_action,
+            Confirmation::Confirmed,
+        )
+        .await;
+        let deployment = cluster.object(fake::DEPLOYMENT);
+        assert_eq!(deployment["spec"]["replicas"], 5);
+        // And back: another scale does not take the stamp away.
+        let again = scale(&subject(&cluster, fake::DEPLOYMENT), 6).unwrap();
+        send(
+            &cluster,
+            dir.path(),
+            Protection::Open,
+            again,
+            Confirmation::NotAsked,
+        )
+        .await;
+        let deployment = cluster.object(fake::DEPLOYMENT);
+        assert_eq!(deployment["spec"]["replicas"], 6);
+        assert_eq!(
+            deployment["spec"]["template"]["metadata"]["annotations"][RESTARTED_AT],
+            "2026-10-23T10:00:00Z"
+        );
+        for write in cluster.writes() {
+            assert!(
+                write.content_type.contains("merge-patch"),
+                "{}",
+                write.content_type
+            );
+        }
+    }
+
+    /// The fake models what server-side apply does with a field a manager
+    /// stops listing, so the test above would fail on the old code.
+    #[tokio::test(start_paused = true)]
+    async fn the_fake_drops_a_field_that_a_later_apply_by_the_same_manager_leaves_out() {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let as_apply = |mut action: ActionDescription| {
+            for change in &mut action.changes {
+                if let Change::MergePatch(body) = change.change.clone() {
+                    change.change = Change::Apply(body);
+                }
+            }
+            action
+        };
+        let first = as_apply(scale(&subject(&cluster, fake::DEPLOYMENT), 5).unwrap());
+        send(
+            &cluster,
+            dir.path(),
+            Protection::Open,
+            first,
+            Confirmation::NotAsked,
+        )
+        .await;
+        let second = as_apply(restart(&subject(&cluster, fake::DEPLOYMENT), "t").unwrap());
+        send(
+            &cluster,
+            dir.path(),
+            Protection::Open,
+            second,
+            Confirmation::Confirmed,
+        )
+        .await;
+        assert!(
+            cluster.object(fake::DEPLOYMENT)["spec"]
+                .get("replicas")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_action_with_no_way_back_asks_even_at_open_and_one_with_undo_does_not() {
+        use super::super::requirement::requirement_for;
+        let cluster = Cluster::new();
+        let web = subject(&cluster, fake::DEPLOYMENT);
+        let restart = restart(&web, "t").unwrap();
+        for level in [Protection::Open, Protection::Guarded] {
+            let asks = requirement_for(&restart, level);
+            assert!(asks.confirm && !asks.undo, "{level:?}");
+        }
+        assert!(requirement_for(&restart, Protection::Protected).type_name);
+        assert!(
+            requirement_for(&restart, Protection::ReadOnly)
+                .blocked
+                .is_some()
+        );
+        assert!(!requirement_for(&scale(&web, 3).unwrap(), Protection::Open).confirm);
+        assert!(
+            !requirement_for(
+                &suspend(&subject(&cluster, fake::CRONJOB)).unwrap(),
+                Protection::Open
+            )
+            .confirm
+        );
+    }
+
+    #[tokio::test]
+    async fn a_replicaset_a_deployment_owns_is_scaled_through_the_deployment() {
+        let cluster = Cluster::new();
+        let mut owned = cluster.object(fake::DEPLOYMENT);
+        owned["kind"] = json!("ReplicaSet");
+        owned["metadata"]["ownerReferences"] =
+            json!([{"kind": "Deployment", "name": "web", "controller": true}]);
+        let owned = Subject::from_object(&owned).unwrap();
+        assert!(owned.offered().is_empty());
+        let NotOffered(why) = scale(&owned, 3).unwrap_err();
+        assert!(why.contains("scale its Deployment"), "{why}");
+        // One a person made alone is scaled as any.
+        let mut alone = cluster.object(fake::DEPLOYMENT);
+        alone["kind"] = json!("ReplicaSet");
+        assert_eq!(
+            Subject::from_object(&alone).unwrap().offered(),
+            [Everyday::Scale]
+        );
+    }
+
+    #[tokio::test]
+    async fn scaling_to_the_count_it_has_sends_nothing() {
+        let cluster = Cluster::new();
+        let web = subject(&cluster, fake::DEPLOYMENT);
+        let NotOffered(why) = scale(&web, web.replicas()).unwrap_err();
+        assert_eq!(why, "It already has that many replicas.");
+    }
+
+    #[tokio::test]
+    async fn argo_cd_is_known_by_its_field_manager_when_it_tracks_by_label() {
+        let cluster = Cluster::new();
+        let mut web = cluster.object(fake::DEPLOYMENT);
+        web["metadata"]["managedFields"] = json!([
+            {"manager": "kubectl", "time": "2026-10-22T09:00:00Z"},
+            {"manager": "argocd-controller", "time": "2026-10-22T10:00:00Z"}
+        ]);
+        web["metadata"]["labels"] = json!({"app.kubernetes.io/instance": "shop"});
+        let web = Subject::from_object(&web).unwrap();
+        assert_eq!(web.gitops(), Some(GitOps::ArgoCd));
+        assert!(scale(&web, 9).unwrap().sentence.contains("Argo CD manages"));
+        // Flux's controllers show the same way.
+        let mut flux = cluster.object(fake::DEPLOYMENT);
+        flux["metadata"]["managedFields"] = json!([{"manager": "kustomize-controller"}]);
+        assert_eq!(
+            Subject::from_object(&flux).unwrap().gitops(),
+            Some(GitOps::Flux)
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_says_it_cannot_be_undone_and_scale_names_an_autoscaler() {
+        let cluster = Cluster::new();
+        let web = subject(&cluster, fake::DEPLOYMENT);
+        assert!(restart(&web, "t").unwrap().sentence.contains(RESTART_NOTE));
+        assert!(!scale(&web, 3).unwrap().sentence.contains(AUTOSCALER_NOTE));
+        let scaled = web.with_autoscaler(Some("web".into()));
+        assert!(
+            scale(&scaled, 3)
+                .unwrap()
+                .sentence
+                .contains(AUTOSCALER_NOTE)
+        );
+        assert!(
+            !restart(&scaled, "t")
+                .unwrap()
+                .sentence
+                .contains(AUTOSCALER_NOTE)
+        );
+    }
+
     #[tokio::test]
     async fn a_gitops_managed_object_adds_the_warning_to_every_action() {
         let cluster = Cluster::new();
@@ -682,48 +930,5 @@ mod tests {
         assert!(suspend(&flux).unwrap().sentence.contains("Flux manages"));
         let plain = subject(&cluster, fake::DEPLOYMENT);
         assert!(!scale(&plain, 3).unwrap().sentence.contains("manages"));
-    }
-
-    #[tokio::test]
-    async fn scale_refuses_a_negative_count_and_warns_of_an_autoscaler() {
-        let cluster = Cluster::new();
-        let web = subject(&cluster, fake::DEPLOYMENT);
-        assert_eq!(
-            scale(&web, -1).unwrap_err(),
-            NotOffered("Replicas can't be negative.")
-        );
-        assert!(scale(&web, 0).is_ok());
-        assert!(!scale(&web, 3).unwrap().sentence.contains("autoscaler"));
-        let managed = web.clone().with_autoscaler("web");
-        assert_eq!(managed.autoscaler(), Some("web"));
-        let sentence = scale(&managed, 3).unwrap().sentence;
-        assert!(
-            sentence.contains("An autoscaler manages replicas; it may change this back"),
-            "{sentence}"
-        );
-        // Restart says plainly that it cannot be taken back.
-        assert!(
-            restart(&web, "t")
-                .unwrap()
-                .sentence
-                .contains("This can't be undone; the rollout restarts every pod")
-        );
-    }
-
-    #[tokio::test]
-    async fn an_autoscaler_is_found_by_its_scale_target() {
-        let cluster = Cluster::new();
-        let web = subject(&cluster, fake::DEPLOYMENT);
-        let hpa = |name: &str, kind: &str, target: &str| {
-            json!({"metadata": {"name": name},
-                   "spec": {"scaleTargetRef": {"kind": kind, "name": target}}})
-        };
-        let list = [
-            hpa("other", "Deployment", "api"),
-            hpa("sts", "StatefulSet", "web"),
-            hpa("web-hpa", "Deployment", "web"),
-        ];
-        assert_eq!(autoscaler_in(&list, web.target()), Some("web-hpa".into()));
-        assert_eq!(autoscaler_in(&list[..2], web.target()), None);
     }
 }

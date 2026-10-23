@@ -169,6 +169,11 @@ pub(crate) fn start_prepared(
 }
 
 impl WriteFlow {
+    /// The dialog is done: sent, cancelled or refused.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.stage == Stage::Closed
+    }
+
     /// Runs preflight (access review, UID and resourceVersion, dry run) and
     /// shows what core answers. Replacing a check drops the one before.
     pub(crate) fn check(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -22,6 +22,8 @@ pub struct Recorded {
     pub path: String,
     pub query: String,
     pub accept: String,
+    /// The request's `Content-Type`: which kind of patch it is.
+    pub content_type: String,
     /// The request body as text; empty where the fake never read it (see
     /// [`client`], which does).
     pub body: String,
@@ -52,6 +54,12 @@ impl Recorder {
             accept: request
                 .headers()
                 .get(header::ACCEPT)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .to_owned(),
+            content_type: request
+                .headers()
+                .get(header::CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("")
                 .to_owned(),

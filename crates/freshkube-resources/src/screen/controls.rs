@@ -100,7 +100,7 @@ impl ResourcesScreen {
                 page::action_item("Refresh", page::Refresh, &self.focus),
             )
         };
-        self.act_buttons(header.foldable(button, fold), cx)
+        self.act_buttons(header.foldable(button, fold))
             .render(window, cx)
     }
 

@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use crate::resources::model::ResourceIdentity;
 use freshkube_core::write::Runner;
 use freshkube_core::write::everyday::{self, Subject};
 use freshkube_ui::form::{self, Action};
@@ -19,17 +20,17 @@ use crate::palette::palette;
 use crate::ui::dp;
 
 /// The most a count may ask for here; a larger one is almost always a typo.
-pub(super) const MOST: i64 = 10_000;
+pub(super) const MOST: u64 = 10_000;
 
 /// Reads the typed count: a whole number from 0 to [`MOST`].
-pub(super) fn parse(text: &str) -> Result<i64, String> {
-    let count: i64 = text
+pub(super) fn parse(text: &str) -> Result<u64, String> {
+    if text.trim().starts_with('-') {
+        return Err("A replica count can't be negative.".to_owned());
+    }
+    let count: u64 = text
         .trim()
         .parse()
         .map_err(|_| "Enter a whole number of replicas, such as 3.".to_owned())?;
-    if count < 0 {
-        return Err("Replicas can't be negative.".to_owned());
-    }
     if count > MOST {
         return Err(format!("Scale to at most {MOST} replicas."));
     }
@@ -40,6 +41,7 @@ pub(super) struct ScaleDialog {
     runner: Arc<Runner>,
     runtime: Handle,
     subject: Subject,
+    identity: ResourceIdentity,
     count: Entity<InputState>,
     error: Option<String>,
 }
@@ -48,6 +50,7 @@ pub(super) fn open(
     runner: Arc<Runner>,
     runtime: Handle,
     subject: Subject,
+    identity: ResourceIdentity,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -58,6 +61,7 @@ pub(super) fn open(
         runner,
         runtime,
         subject,
+        identity,
         count,
         error: None,
     });
@@ -89,6 +93,7 @@ impl ScaleDialog {
                     self.runner.clone(),
                     self.runtime.clone(),
                     action,
+                    &self.identity,
                     window,
                     cx,
                 );
@@ -139,6 +144,9 @@ mod tests {
         for bad in ["", "-1", "2.5", "three", "10001"] {
             assert!(parse(bad).is_err(), "{bad}");
         }
-        assert_eq!(parse("-1"), Err("Replicas can't be negative.".to_owned()));
+        assert_eq!(
+            parse("-2"),
+            Err("A replica count can't be negative.".to_owned())
+        );
     }
 }

@@ -19,7 +19,7 @@ fn subject(h: &Harness, path: &str) -> Subject {
     Subject::from_object(&h.cluster.object(path)).unwrap()
 }
 
-fn scale_to(h: &Harness, count: i64) -> ActionDescription {
+fn scale_to(h: &Harness, count: u64) -> ActionDescription {
     everyday::scale(&subject(h, fake::DEPLOYMENT), count).unwrap()
 }
 
@@ -61,10 +61,17 @@ fn protected_scale_sends_only_after_the_name_is_typed(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn open_restarts_without_asking_and_has_no_undo(cx: &mut TestAppContext) {
+fn open_still_asks_before_a_restart_and_it_has_no_undo(cx: &mut TestAppContext) {
     let h = harness(cx, Protection::Open);
     h.begin(cx, restart(&h));
-    assert!(!h.present(cx, "write-dialog"));
+    // No way back, so no skipped confirmation, even on an open cluster.
+    assert!(h.present(cx, "write-dialog") && h.present(cx, "write-confirm"));
+    assert!(
+        h.label(cx, "write-sentence")
+            .contains("This can't be undone")
+    );
+    h.cluster.assert_nothing_written();
+    h.click(cx, "write-confirm");
     h.drive(cx, Duration::from_secs(3));
     assert_eq!(h.cluster.writes().len(), 1);
     let annotations =
@@ -73,12 +80,21 @@ fn open_restarts_without_asking_and_has_no_undo(cx: &mut TestAppContext) {
         annotations["kubectl.kubernetes.io/restartedAt"],
         "2026-10-23T10:00:00Z"
     );
+    assert!(!h.present(cx, "write-undo"));
+}
+
+#[gpui_kit::test]
+fn open_sends_a_scale_without_asking_and_says_so(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Open);
+    h.begin(cx, scale_to(&h, 4));
+    assert!(!h.present(cx, "write-dialog"));
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.replicas(), 4);
     assert_eq!(
         h.label(cx, "write-toast-notice"),
         "Sent without asking because this cluster is open."
     );
-    // A rollout cannot be taken back.
-    assert!(!h.present(cx, "write-undo"));
+    assert!(h.present(cx, "write-undo"));
 }
 
 #[gpui_kit::test]
@@ -151,6 +167,10 @@ fn example_data_shows_the_dialog_and_sends_nothing(cx: &mut TestAppContext) {
     h.drive(cx, Duration::from_secs(3));
     assert!(h.cluster.recorder.requests().is_empty());
     assert_eq!(h.replicas(), 2);
-    assert!(h.label(cx, "write-toast-status").contains("Example data"));
+    assert!(
+        h.label(cx, "write-toast-status")
+            .to_lowercase()
+            .contains("example data")
+    );
     assert!(h.cluster.writes().is_empty());
 }

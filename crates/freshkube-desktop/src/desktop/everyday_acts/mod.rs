@@ -7,20 +7,52 @@
 
 mod scale;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
 use crate::backend::spawn_job;
 use crate::mutation::{level_cell, write_audit_store};
+use crate::resources::model::ResourceIdentity;
 use crate::resources::{ClusterAccess, WorkloadAct};
 use crate::write_flow::{self, WriteRequest};
 use freshkube_core::write::everyday::{self, Everyday, Row, Subject};
-use freshkube_core::write::{ActionDescription, AuditStore, Runner, Who};
+use freshkube_core::write::{ActionDescription, Runner, Who};
 use gpui_kit::component::WindowExt;
 
 /// How long reading the object may take before nothing is sent.
 const READ: Duration = Duration::from_secs(30);
+
+/// The objects an action is in flight for, from the press until its dialog
+/// closes: a repeated press on one is ignored, so a stray key cannot start a
+/// second read, dialog or send for it.
+#[derive(Default)]
+struct InFlight(BTreeSet<ResourceIdentity>);
+
+impl gpui_kit::Global for InFlight {}
+
+/// Takes the object for an action. False when it already has one in flight,
+/// or another write holds the app's one write slot.
+fn claim(identity: &ResourceIdentity, cx: &mut App) -> bool {
+    if Operations::current(cx).is_some() {
+        return false;
+    }
+    cx.default_global::<InFlight>().0.insert(identity.clone())
+}
+
+fn release(identity: &ResourceIdentity, cx: &mut App) {
+    cx.default_global::<InFlight>().0.remove(identity);
+}
+
+/// Where the press happened: the entry the window works under and the context
+/// it shows. A read that returns after either changed is for another cluster
+/// and is dropped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Where {
+    entry: String,
+    context: String,
+}
 
 /// The object an example row stands for: example data has no cluster to read.
 fn example_object(act: &WorkloadAct) -> serde_json::Value {
@@ -58,20 +90,24 @@ fn row_of(act: &WorkloadAct) -> Row {
 }
 
 impl Pilot {
-    /// Who is writing, and under what level: the active entry, else the
-    /// context the list was read from.
-    fn everyday_who(&self, act: &WorkloadAct, cx: &App) -> Who {
-        Who {
+    /// The entry and context the window is on now.
+    fn everyday_where(&self, act: &WorkloadAct, cx: &App) -> Where {
+        Where {
             entry: self
                 .switch
                 .active_cluster()
                 .map_or_else(|| act.source.context.clone(), str::to_owned),
+            context: self.display_context(cx),
+        }
+    }
+
+    /// Who is writing, and under what level, as of the press.
+    fn everyday_who(&self, act: &WorkloadAct, at: &Where, cx: &App) -> Who {
+        Who {
+            entry: at.entry.clone(),
             context: act.source.context.clone(),
             protection: self.current_level(cx),
-            actor: freshkube_core::ambient::get()
-                .user
-                .clone()
-                .unwrap_or_else(|| "unknown".into()),
+            actor: super::write_runner::actor(),
         }
     }
 
@@ -81,27 +117,28 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let who = self.everyday_who(act, cx);
+        let at = self.everyday_where(act, cx);
+        let who = self.everyday_who(act, &at, cx);
         if let Some(reason) = who.protection.refusal() {
             window.push_notification(format!("{reason} Nothing was sent."), cx);
             return;
         }
+        if !claim(&act.identity, cx) {
+            return;
+        }
         let (runtime, cell) = (self.runtime.clone(), level_cell(cx));
         if matches!(act.source.access, ClusterAccess::Example(_)) {
-            // Example data: a runner that sends nothing, so a capture shows
-            // each dialog at each level. Its audit goes to a scratch place.
+            // Example data: a runner that sends nothing.
+            release(&act.identity, cx);
             let Some(subject) = Subject::from_object(&example_object(act)) else {
                 return;
             };
-            let scratch = std::env::temp_dir().join("freshkube-example-audit");
-            let runner = {
-                let _guard = runtime.enter();
-                Runner::example_offline(AuditStore::new(scratch), who).following(cell)
-            };
-            self.begin_everyday(Arc::new(runner), subject, act.act, window, cx);
+            let runner = super::write_runner::example_runner(&runtime, who, cell);
+            self.begin_everyday(runner, subject, act.act, &act.identity, window, cx);
             return;
         }
         let Some(audit) = write_audit_store() else {
+            release(&act.identity, cx);
             window.push_notification("The audit log can't be located, so nothing was sent.", cx);
             return;
         };
@@ -116,21 +153,40 @@ impl Pilot {
                 Ok::<_, String>((client, subject))
             },
         );
-        let (what, kind) = (act.identity.name.clone(), act.act);
+        let (identity, kind, pressed) = (act.identity.clone(), act.act, act.clone());
         cx.spawn_in(window, async move |this, cx| {
             let _job = job;
             let read = receiver
                 .await
                 .unwrap_or_else(|_| Err("Reading stopped unexpectedly.".to_owned()));
-            _ = this.update_in(cx, |this, window, cx| match read {
-                Ok((client, subject)) => {
-                    let runner = Runner::new(client, audit, who).following(cell);
-                    this.begin_everyday(Arc::new(runner), subject, kind, window, cx);
+            _ = this.update_in(cx, |this, window, cx| {
+                let what = identity.name.clone();
+                // The window may have moved to another cluster while the
+                // object was read: the level it works under is that
+                // cluster's now, so what was asked for is not sent.
+                if this.everyday_where(&pressed, cx) != at {
+                    release(&identity, cx);
+                    window.push_notification(
+                        format!(
+                            "The cluster changed while {what} was read. Nothing was sent; ask again."
+                        ),
+                        cx,
+                    );
+                    return;
                 }
-                Err(why) => window.push_notification(
-                    format!("Couldn't start the action on {what}: {why} Nothing was sent."),
-                    cx,
-                ),
+                match read {
+                    Ok((client, subject)) => {
+                        let runner = Runner::new(client, audit, who).following(cell);
+                        this.begin_everyday(Arc::new(runner), subject, kind, &identity, window, cx);
+                    }
+                    Err(why) => {
+                        release(&identity, cx);
+                        window.push_notification(
+                            format!("Couldn't start the action on {what}: {why} Nothing was sent."),
+                            cx,
+                        );
+                    }
+                }
             });
         })
         .detach();
@@ -143,19 +199,29 @@ impl Pilot {
         runner: Arc<Runner>,
         subject: Subject,
         act: Everyday,
+        identity: &ResourceIdentity,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The press is over; `start` takes the object again for the flow.
+        release(identity, cx);
         let described = match act {
             Everyday::Scale => {
-                scale::open(runner, self.runtime.clone(), subject, window, cx);
+                scale::open(
+                    runner,
+                    self.runtime.clone(),
+                    subject,
+                    identity.clone(),
+                    window,
+                    cx,
+                );
                 return;
             }
             Everyday::Restart => everyday::restart(&subject, &chrono::Utc::now().to_rfc3339()),
             Everyday::Suspend => everyday::suspend(&subject),
         };
         match described {
-            Ok(action) => start(runner, self.runtime.clone(), action, window, cx),
+            Ok(action) => start(runner, self.runtime.clone(), action, identity, window, cx),
             Err(everyday::NotOffered(why)) => window.push_notification(why, cx),
         }
     }
@@ -166,9 +232,13 @@ pub(super) fn start(
     runner: Arc<Runner>,
     runtime: tokio::runtime::Handle,
     action: ActionDescription,
+    identity: &ResourceIdentity,
     window: &mut Window,
     cx: &mut App,
 ) {
+    if !claim(identity, cx) {
+        return;
+    }
     let request = WriteRequest {
         runner,
         runtime,
@@ -176,5 +246,13 @@ pub(super) fn start(
         undo: None,
     };
     let flow = write_flow::start(request, window, cx);
+    // Held until its dialog closes, however it ends.
+    let identity = identity.clone();
+    cx.observe(&flow, move |flow, cx| {
+        if flow.read(cx).is_closed() {
+            release(&identity, cx);
+        }
+    })
+    .detach();
     write_flow::retain(flow, cx);
 }
