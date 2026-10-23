@@ -823,7 +823,9 @@ fn described(kind: Kind, destination: Option<Destination>) -> Option<ActionDescr
 
 #[test]
 fn describe_holds_every_kind_that_reaches_the_destination_and_says_which_do_not() {
-    let protected = dest("prod-ams", Protection::Protected);
+    // The destination is named unlike the Stage, so the test can tell which
+    // of the two became the typed subject.
+    let protected = dest("ams-1", Protection::Protected);
     for (kind, reaches) in [
         (Kind::RefreshStage, true),
         (Kind::RefreshWarehouse, false),
@@ -834,7 +836,7 @@ fn describe_holds_every_kind_that_reaches_the_destination_and_says_which_do_not(
         let action = described(kind, Some(protected.clone())).expect("on offer");
         if reaches {
             assert_eq!(action.destinations.len(), 1, "{kind:?}");
-            assert_eq!(action.destinations[0].entry, "prod-ams", "{kind:?}");
+            assert_eq!(action.destinations[0].entry, "ams-1", "{kind:?}");
             assert_eq!(action.destinations[0].covers, ["prod-ams"], "{kind:?}");
             // The Stage is the typed subject, not the generated object.
             assert_eq!(action.subjects, ["prod-ams"], "{kind:?}");
@@ -843,7 +845,8 @@ fn describe_holds_every_kind_that_reaches_the_destination_and_says_which_do_not(
             assert!(action.destinations.is_empty(), "{kind:?}");
         }
     }
-    // An unknown destination counts as guarded, and every dialog says so.
+    // An unknown destination counts as guarded, and the preview of each says
+    // so (only Promote's and Abort's are shown in a dialog).
     for kind in [
         Kind::RefreshStage,
         Kind::Reverify,

@@ -1741,10 +1741,9 @@ async fn a_cancel_leaves_no_doubt_so_its_report_goes_away_like_done() {
         .await;
     assert_eq!(finished.headline(), Headline::Cancelled);
     assert!(!finished.sticky());
-    // A cancel whose audit line failed still stays.
-    let mut unlogged = finished.clone();
-    unlogged.audit_error = Some("full".into());
-    assert!(unlogged.sticky());
+    // A cancel records no audit result in `Finished` (`run.rs` drops it), so
+    // there is no failed-audit cancel to keep.
+    assert_eq!(finished.audit_error, None);
 }
 
 #[tokio::test(start_paused = true)]
