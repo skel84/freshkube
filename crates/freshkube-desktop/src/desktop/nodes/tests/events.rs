@@ -106,21 +106,59 @@ fn a_pane_attention_row_opens_its_destination(cx: &mut TestAppContext) {
     });
 }
 
-/// Command-Shift-] and Command-Shift-[ step through the pane's tabs.
+/// Option-Command-] and Option-Command-[ step through the pane's tabs.
 #[gpui_kit::test]
-fn command_shift_brackets_step_the_pane_tabs(cx: &mut TestAppContext) {
+fn option_command_brackets_step_the_pane_tabs(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
     step(cx, handle, |window, cx| {
         open_first_node(window, cx);
         pilot.update(cx, |pilot, cx| {
             window.focus(&pilot.pages.node_workspace.read(cx).focus.clone(), cx)
         });
-        window.press("secondary-}", cx);
+        window.press("secondary-alt-]", cx);
     });
     let next = pilot.read_with(cx, |pilot, cx| pilot.pages.node_workspace.read(cx).tab);
     assert_ne!(next, NodeTab::Overview);
-    step(cx, handle, |window, cx| window.press("secondary-{", cx));
+    step(cx, handle, |window, cx| window.press("secondary-alt-[", cx));
     pilot.read_with(cx, |pilot, cx| {
         assert_eq!(pilot.pages.node_workspace.read(cx).tab, NodeTab::Overview);
+    });
+}
+
+/// Inside Nodes, Command-Shift-] moves the view tab and Option-Command-]
+/// the node's pane tab.
+#[gpui_kit::test]
+fn view_tabs_and_node_tabs_have_their_own_brackets(cx: &mut TestAppContext) {
+    use freshkube_nav::{LinkPage, ViewState};
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
+    step(cx, handle, |window, cx| {
+        open_first_node(window, cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_view_tab(
+                ViewState::page(LinkPage::Health),
+                crate::desktop::tabs::OpenIn::Background,
+                window,
+                cx,
+            );
+            window.focus(&pilot.pages.node_workspace.read(cx).focus.clone(), cx)
+        });
+    });
+    let tabs = |cx: &mut TestAppContext| {
+        pilot.read_with(cx, |pilot, cx| {
+            (
+                pilot.tabs.set.selected(),
+                pilot.pages.node_workspace.read(cx).tab,
+            )
+        })
+    };
+    assert_eq!(tabs(cx), (0, NodeTab::Overview));
+    step(cx, handle, |window, cx| window.press("secondary-alt-]", cx));
+    let (view_tab, node_tab) = tabs(cx);
+    assert_eq!(view_tab, 0, "the view tab stayed");
+    assert_ne!(node_tab, NodeTab::Overview, "the node's tab moved");
+    step(cx, handle, |window, cx| window.press("secondary-}", cx));
+    assert_eq!(tabs(cx).0, 1, "the view tab moved");
+    pilot.read_with(cx, |pilot, _| {
+        assert_eq!(pilot.navigation.page, Page::Health)
     });
 }

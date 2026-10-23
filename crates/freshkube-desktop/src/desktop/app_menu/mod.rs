@@ -24,7 +24,7 @@ use gpui_kit::{
 use super::{
     Appearance, CopyLink, GoToKind, NextContext, NextScreen, Pilot, PreviousContext,
     PreviousScreen, Quit, Refresh, ShowEtcd, ShowEvents, ShowHealth, ShowLifecycle, ShowNamespaces,
-    ShowNodes, ShowOverview, ShowSecurity, ShowSystemServices, ToggleColumn, dock,
+    ShowNodes, ShowOverview, ShowSecurity, ShowSystemServices, ToggleColumn, dock, tabs,
 };
 use crate::ui::{self, dp};
 
@@ -90,6 +90,9 @@ pub(crate) fn menus(platform: Platform, state: &MenuState) -> Vec<Menu> {
                 MenuItem::action("Search everything…", GoToKind),
                 MenuItem::action("Copy link", CopyLink),
                 MenuItem::separator(),
+                MenuItem::action("Back", tabs::TabBack),
+                MenuItem::action("Forward", tabs::TabForward),
+                MenuItem::separator(),
                 MenuItem::action("Overview", ShowOverview),
                 MenuItem::action("Nodes", ShowNodes),
                 MenuItem::action("Namespaces", ShowNamespaces),
@@ -113,6 +116,12 @@ pub(crate) fn menus(platform: Platform, state: &MenuState) -> Vec<Menu> {
                 .system_items(SystemMenu::Window)
                 .into_iter()
                 .chain([
+                    MenuItem::separator(),
+                    MenuItem::action("Duplicate tab", tabs::DuplicateTab),
+                    MenuItem::action("Reopen closed tab", tabs::ReopenViewTab),
+                    MenuItem::action("Next view tab", tabs::NextViewTab),
+                    MenuItem::action("Previous view tab", tabs::PreviousViewTab),
+                    MenuItem::action("Close view tab", tabs::CloseViewTab),
                     MenuItem::separator(),
                     MenuItem::action("Next tab", dock::NextDockTab),
                     MenuItem::action("Previous tab", dock::PreviousDockTab),
