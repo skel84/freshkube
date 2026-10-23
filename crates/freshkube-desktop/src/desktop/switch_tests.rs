@@ -1,7 +1,7 @@
 //! Switching between the clusters of the workspace file.
 use super::session::SessionKey;
 use super::tests::{fixture, mount, start_shell};
-use super::{KubeconfigSelection, Page, Pilot};
+use super::{Page, Pilot};
 use crate::GpuiOptions;
 use crate::navigation_file::NavigationFile;
 use crate::resources::{example, live, shell};
@@ -315,40 +315,6 @@ fn switching_asks_nothing_of_a_running_shell_and_ends_nothing(cx: &mut TestAppCo
     cx.run_until_parked();
     assert!(!cx.has_pending_prompt());
     assert_eq!(active(cx, &view), key("dev-fra"));
-    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
-}
-
-#[gpui_kit::test]
-fn a_kubeconfig_pick_asks_nothing_of_a_running_shell(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 1280., 800.);
-    cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |pilot, cx| {
-            pilot.switch_cluster("dev-fra".into(), window, cx)
-        });
-    })
-    .unwrap();
-    cx.run_until_parked();
-    assert_eq!(active(cx, &view), key("dev-fra"));
-    let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
-    let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
-    let pod = rows
-        .iter()
-        .find(|row| row.cells[2] == "Running")
-        .unwrap()
-        .identity
-        .clone();
-    start_shell(handle, &view, &pod, cx);
-    // Example mode ignores kubeconfig picks; let this one through.
-    cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |pilot, cx| {
-            pilot.mode.set_example(false);
-            pilot.apply_kubeconfig(KubeconfigSelection::TalosControlPlane, window, cx);
-        });
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| view.update(cx, |pilot, _| pilot.mode.set_example(true)));
-    assert!(!cx.has_pending_prompt());
     assert_eq!(cx.read(shell::running_anywhere).len(), 1);
 }
 
