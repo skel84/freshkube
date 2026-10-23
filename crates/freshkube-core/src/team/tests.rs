@@ -1142,3 +1142,104 @@ fn only_a_different_waiting_version_counts_as_new() {
     assert!(!m.fetched(Ok(version("2", "version: 1\n")), at(6)));
     assert!(m.pending().is_none());
 }
+
+/// Applies the waiting version after confirming every step.
+fn apply_waiting(m: &mut Membership, day: u32) {
+    let mut review = m.review().unwrap();
+    example::confirm_all(&mut review);
+    m.apply(review, at(day)).unwrap();
+}
+
+fn level_of(m: &Membership, id: &str, yours: &Overrides) -> Option<Value> {
+    resolve(
+        &merge::protection_key(id),
+        &m.team_values(),
+        yours,
+        &Values::new(),
+    )
+    .value
+}
+
+#[test]
+fn an_applied_version_never_loosens_a_level() {
+    let strict =
+        "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: protected\n";
+    let loose = "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: open\n";
+    let dropped = "version: 1\ncoroot:\n  project: shop\n";
+    let tighter =
+        "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: read-only\n";
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(Ok(version("1", strict)), at(1));
+    apply_waiting(&mut m, 1);
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("protected"))
+    );
+
+    // A version with a looser level applies, and the stricter one stays.
+    m.fetched(Ok(version("2", loose)), at(2));
+    apply_waiting(&mut m, 2);
+    assert_eq!(m.applied().unwrap().id(), "2");
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("protected"))
+    );
+    assert_eq!(
+        m.held_floors().get("cluster-a"),
+        Some(&Protection::Protected)
+    );
+    let floor = merge::floor("cluster-a", &m.team_values());
+    assert_eq!(floor, Some(Protection::Protected));
+    assert_eq!(
+        merge::allowed_levels(floor).last(),
+        Some(&Protection::Protected)
+    );
+
+    // A version that stops naming the cluster does not release it either.
+    m.fetched(Ok(version("3", dropped)), at(3));
+    apply_waiting(&mut m, 3);
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("protected"))
+    );
+
+    // Your own stricter level is untouched by any of it.
+    let mut yours = Overrides::new();
+    yours.insert("clusters[cluster-a].protection".into(), json!("read-only"));
+    assert_eq!(level_of(&m, "cluster-a", &yours), Some(json!("read-only")));
+
+    // A version that tightens past the held floor ends the hold.
+    m.fetched(Ok(version("4", tighter)), at(4));
+    apply_waiting(&mut m, 4);
+    assert!(m.held_floors().is_empty());
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("read-only"))
+    );
+
+    // And a version that loosens from there is held at read-only.
+    m.fetched(Ok(version("5", loose)), at(5));
+    apply_waiting(&mut m, 5);
+    assert_eq!(
+        level_of(&m, "cluster-a", m.overrides()),
+        Some(json!("read-only"))
+    );
+}
+
+#[test]
+fn a_held_floor_goes_with_a_copy_when_leaving_and_not_back_to_before() {
+    let strict =
+        "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: protected\n";
+    let loose = "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    protection: open\n";
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(Ok(version("1", strict)), at(1));
+    apply_waiting(&mut m, 1);
+    m.fetched(Ok(version("2", loose)), at(2));
+    apply_waiting(&mut m, 2);
+    let kept = m.clone().leave(Leave::KeepCopy);
+    assert_eq!(
+        kept.get("clusters[cluster-a].protection"),
+        Some(&json!("protected"))
+    );
+    assert!(m.leave(Leave::GoBack).is_empty());
+}
