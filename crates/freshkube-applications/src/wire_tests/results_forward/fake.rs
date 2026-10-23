@@ -60,6 +60,10 @@ pub(super) struct Server {
 
 impl Server {
     pub fn new(runtime: &tokio::runtime::Handle) -> Self {
+        Self::with_port(runtime, 8443)
+    }
+
+    pub fn with_port(runtime: &tokio::runtime::Handle, port: u16) -> Self {
         let _entered = runtime.enter();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -184,7 +188,7 @@ impl Server {
                                 } else if query.split('&').any(|part| part == "watch=true") {
                                     Response::new(BodyExt::boxed(StreamBody::new(futures::stream::pending::<Result<Frame<Bytes>, Infallible>>())))
                                 } else {
-                                    reply(api_answer(&path, *pod_ready.borrow()))
+                                    reply(api_answer(&path, *pod_ready.borrow(), port))
                                 }
                             };
                             async move { if wait_start { start_released.notified().await; } Ok::<_, Infallible>(response) }
@@ -229,9 +233,9 @@ fn reply(value: Value) -> Response<Body> {
         .body(Full::new(Bytes::from(value.to_string())).boxed())
         .unwrap()
 }
-fn api_answer(path: &str, ready: bool) -> Value {
+fn api_answer(path: &str, ready: bool, port: u16) -> Value {
     let service = json!({"apiVersion":"v1", "kind":"Service", "metadata":{"name":"results","namespace":"acme","uid":"service-a","resourceVersion":"1"},
-        "spec":{"selector":{"app":"results"}, "ports":[{"port":8443, "targetPort":8080}]}});
+        "spec":{"selector":{"app":"results"}, "ports":[{"port":port, "targetPort":8080}]}});
     let pod = pod(ready);
     if path.contains("/services/") {
         return service;

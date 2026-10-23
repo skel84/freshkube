@@ -13,7 +13,6 @@ fn owner(cx: &mut TestAppContext) -> Entity<forwards::ForwardView> {
 #[gpui_kit::test]
 async fn forwarding_keeps_the_builds_selection_inspector_and_list_rows(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -119,7 +118,6 @@ async fn forwarding_keeps_the_builds_selection_inspector_and_list_rows(cx: &mut 
 #[gpui_kit::test]
 async fn list_forwarding_keeps_rows_and_uses_an_action_label(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -171,7 +169,6 @@ async fn two_pages_share_the_removed_owner_and_a_second_press_starts_nothing(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
-    let _case = PORT_CASE.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let setup = configured(dir.path());
     let runtime = tokio::runtime::Runtime::new().unwrap();
