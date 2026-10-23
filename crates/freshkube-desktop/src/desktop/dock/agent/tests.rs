@@ -625,6 +625,23 @@ fn another_clusters_read_warns_and_needs_its_own_access(cx: &mut TestAppContext)
         warning.contains("needs agent access of its own"),
         "{warning}"
     );
+    // A read the endpoint refused reads Refused in the transcript too, as
+    // on the trail, never a red Failed.
+    let failed: Vec<String> = cx.update(|cx| {
+        tab.view
+            .read(cx)
+            .steps()
+            .into_iter()
+            .filter(|(_, state)| *state == StepState::Failed)
+            .map(|(id, _)| id)
+            .collect()
+    });
+    assert!(failed.len() >= 3, "{failed:?}");
+    for id in failed {
+        let id: &'static str = Box::leak(format!("agent-step-{id}").into_boxed_str());
+        let label = tab.label(id, cx).unwrap();
+        assert!(label.ends_with("Refused"), "{label}");
+    }
     // The unserved kind is refused on the session's own cluster, without the warning.
     assert!(
         rows.iter()
