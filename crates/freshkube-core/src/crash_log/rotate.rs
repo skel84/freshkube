@@ -68,9 +68,16 @@ fn trim(path: &Path, max: u64) -> io::Result<()> {
     file.seek(SeekFrom::Start(len - max))?;
     let mut tail = Vec::with_capacity(max as usize);
     file.read_to_end(&mut tail)?;
-    // Start at a line, not in the middle of one.
-    let from = tail.iter().position(|b| *b == b'\n').map_or(0, |i| i + 1);
-    File::create(path)?.write_all(&tail[from..])
+    // Start at a line, not in the middle of one; a tail with no newline
+    // starts at the next character.
+    let from = tail.iter().position(|b| *b == b'\n').map_or_else(
+        || tail.iter().take_while(|b| (**b & 0xC0) == 0x80).count(),
+        |i| i + 1,
+    );
+    // Through a temporary file, so a crash while trimming keeps the whole log.
+    let temporary = path.with_extension("trim.tmp");
+    File::create(&temporary)?.write_all(&tail[from..])?;
+    fs::rename(&temporary, path)
 }
 
 /// Rotates, then creates the current log.
@@ -157,6 +164,18 @@ mod tests {
         write(&path, "aaaa\n");
         trim(&path, 8).unwrap();
         assert_eq!(read(&path), "aaaa\n");
+    }
+
+    #[test]
+    fn a_tail_with_no_newline_starts_on_a_character() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long.log");
+        write(&path, &"é".repeat(10));
+        // 9 bytes land in the middle of a two-byte character.
+        trim(&path, 9).unwrap();
+        let text = read(&path);
+        assert_eq!(text, "é".repeat(4));
+        assert!(!dir.path().join("long.trim.tmp").exists());
     }
 
     #[test]

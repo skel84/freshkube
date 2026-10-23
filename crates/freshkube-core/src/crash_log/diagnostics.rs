@@ -52,9 +52,52 @@ pub fn tail(path: &Path, lines: usize) -> Vec<String> {
         .collect()
 }
 
+/// What names a person's cluster in the log: the context a launch connected
+/// with. Copied diagnostics get a placeholder; the file on disk keeps it.
+const CONTEXT_LINES: [&str; 3] = ["Using context: ", "Using kubeconfig context: ", "Context: "];
+
+/// The copied text with the context names and the home folder taken out:
+/// people paste diagnostics into public issues.
+fn scrub(text: &str, home: Option<&str>) -> String {
+    text.split_inclusive('\n')
+        .map(|line| {
+            let line = match CONTEXT_LINES
+                .iter()
+                .find_map(|label| line.find(label).map(|at| at + label.len()))
+            {
+                Some(at) => {
+                    let end = if line.ends_with('\n') {
+                        line.len() - 1
+                    } else {
+                        line.len()
+                    };
+                    format!("{}<context>{}", &line[..at], &line[end..])
+                }
+                None => line.to_owned(),
+            };
+            match home.filter(|home| home.len() > 1) {
+                Some(home) => line.replace(home, "~"),
+                None => line,
+            }
+        })
+        .collect()
+}
+
 /// The diagnostics: version, system, the last crash if there was one, and the
-/// end of `log`. Everything in it has been through [`redact`].
+/// end of `log`. Everything in it has been through [`redact`], the context
+/// names are `<context>` and the home folder is `~`.
 pub fn text(version: &str, log: &Path, crash: Option<&CrashReport>) -> String {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    text_at(version, log, crash, home.as_deref())
+}
+
+fn text_at(version: &str, log: &Path, crash: Option<&CrashReport>, home: Option<&str>) -> String {
+    scrub(&build(version, log, crash), home)
+}
+
+fn build(version: &str, log: &Path, crash: Option<&CrashReport>) -> String {
     let mut out = String::new();
     out.push_str("Freshkube diagnostics\n");
     out.push_str(&format!("Version: {version}\n"));
@@ -105,12 +148,39 @@ mod tests {
         let log = dir.path().join("freshkube.previous.log");
         std::fs::write(&log, "INFO started\nERROR panic: boom\n").unwrap();
         let crash = CrashReport::started("0.19.0", &log).with_panic("boom", None, "main");
-        let out = text("0.20.0", &log, Some(&crash));
+        let out = text_at("0.20.0", &log, Some(&crash), None);
         assert!(out.contains("Version: 0.20.0") && out.contains("Version: 0.19.0"));
         assert!(out.contains(std::env::consts::OS) && out.contains(std::env::consts::ARCH));
         assert!(out.contains("Panic: boom") && out.contains("ERROR panic: boom"));
         assert!(
             out.contains("freshkube.previous.log") && !out.contains(dir.path().to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn the_context_and_the_home_folder_are_not_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("freshkube.log");
+        std::fs::write(
+            &log,
+            "INFO Using context: acme-prod-ams\nINFO Using kubeconfig context: acme-prod\n\
+             INFO Using config: /home/jo/.talos/config\nINFO kept line\n",
+        )
+        .unwrap();
+        let out = text_at("1", &log, None, Some("/home/jo"));
+        assert!(!out.contains("acme"), "{out}");
+        assert!(out.contains("Using context: <context>\n"), "{out}");
+        assert!(
+            out.contains("Using kubeconfig context: <context>\n"),
+            "{out}"
+        );
+        assert!(out.contains("Using config: ~/.talos/config"), "{out}");
+        assert!(out.contains("INFO kept line"));
+        // The file on disk is untouched.
+        assert!(
+            std::fs::read_to_string(&log)
+                .unwrap()
+                .contains("acme-prod-ams")
         );
     }
 

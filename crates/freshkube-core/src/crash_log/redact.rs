@@ -121,7 +121,11 @@ fn redact_pem(text: &str) -> String {
 }
 
 fn is_value_end(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '}' | ']' | ')' | '&' | ';' | '>')
+    c.is_whitespace()
+        || matches!(
+            c,
+            '"' | '\'' | '\\' | ',' | '}' | ']' | ')' | '&' | ';' | '>'
+        )
 }
 
 /// `Bearer x` and `Basic x` lose x.
@@ -145,13 +149,28 @@ fn redact_bearer(line: &str) -> String {
         let value_end = line[value_start..]
             .find(is_value_end)
             .map_or(line.len(), |i| value_start + i);
-        if value_end > value_start {
+        let credential = &line[value_start..value_end];
+        // "basic" is also a word; only a credential-shaped value follows it.
+        let plain_word = len == "basic ".len() && !looks_like_basic(credential);
+        if value_end > value_start && !plain_word {
             out.push_str(REDACTED);
             at = value_end;
         }
     }
     out.push_str(&line[at..]);
     out
+}
+
+/// The base64 of `user:password`: a run with a digit or base64 punctuation,
+/// which an English word after "basic" does not have.
+fn looks_like_basic(value: &str) -> bool {
+    value.len() >= 12
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_'))
+        && value
+            .bytes()
+            .any(|b| b.is_ascii_digit() || matches!(b, b'+' | b'/' | b'='))
 }
 
 /// `scheme://user:password@host` loses the user and the password.
@@ -175,10 +194,6 @@ fn redact_url_password(line: &str) -> String {
     out
 }
 
-fn is_name_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
-}
-
 /// Whether `name` is, or ends in, one of the secret names.
 fn is_secret_name(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
@@ -190,58 +205,89 @@ fn is_secret_name(name: &str) -> bool {
     })
 }
 
-/// `name=value`, `name: value`, `"name":"value"` and `name = "value"` for a
-/// secret name lose the value.
+/// Names whose value runs to the end of the line (or the closing quote):
+/// a cookie header holds several `a=b` pairs and a space-separated scheme.
+fn is_whole_line_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.ends_with("cookie") || name == "authorization"
+}
+
+/// `name=value`, `name: value`, `"name":"value"`, escaped JSON
+/// (`\"name\":\"value\"`), `name: Some("value")` and `name = "two words"`
+/// for a secret name lose the value. A value that opens with a quote is read
+/// to the matching close quote; any other ends at a delimiter.
 fn redact_named(line: &str) -> String {
-    let chars: Vec<(usize, char)> = line.char_indices().collect();
-    let mut out = String::with_capacity(line.len());
+    let b = line.as_bytes();
+    let n = b.len();
+    let mut out = String::with_capacity(n);
     let mut copied = 0;
     let mut i = 0;
-    while i < chars.len() {
-        if !is_name_char(chars[i].1) {
+    while i < n {
+        if !is_name_byte(b[i]) {
             i += 1;
             continue;
         }
         let start = i;
-        while i < chars.len() && is_name_char(chars[i].1) {
+        while i < n && is_name_byte(b[i]) {
             i += 1;
         }
-        let name = &line[chars[start].0..chars.get(i).map_or(line.len(), |c| c.0)];
+        let name = &line[start..i];
         if !is_secret_name(name) {
             continue;
         }
-        // The separator: an optional closing quote, spaces, `=` or `:`.
+        // The separator: closing quotes and escapes, spaces, `=` or `:`.
         let mut j = i;
-        while j < chars.len() && matches!(chars[j].1, '"' | '\'') {
+        while j < n && matches!(b[j], b'"' | b'\'' | b'\\') {
             j += 1;
         }
-        while j < chars.len() && chars[j].1 == ' ' {
+        while j < n && b[j] == b' ' {
             j += 1;
         }
-        if j >= chars.len() || !matches!(chars[j].1, '=' | ':') {
+        if j >= n || !matches!(b[j], b'=' | b':') {
             continue;
         }
         j += 1;
-        while j < chars.len() && (chars[j].1 == ' ' || matches!(chars[j].1, '"' | '\'')) {
+        while j < n && b[j] == b' ' {
             j += 1;
         }
-        let value_start = chars.get(j).map_or(line.len(), |c| c.0);
-        let mut k = j;
-        while k < chars.len() && !is_value_end(chars[k].1) {
-            k += 1;
+        if line[j..].starts_with("Some(") {
+            j += 5;
         }
-        let value_end = chars.get(k).map_or(line.len(), |c| c.0);
-        if value_end == value_start || line[value_start..value_end] == *REDACTED {
-            i = k.max(i);
+        while j < n && b[j] == b'\\' {
+            j += 1;
+        }
+        let quote = (j < n && matches!(b[j], b'"' | b'\'')).then(|| b[j]);
+        if quote.is_some() {
+            j += 1;
+        }
+        let value_start = j;
+        let mut end = match quote {
+            Some(q) => b[j..].iter().position(|c| *c == q).map_or(n, |at| j + at),
+            None if is_whole_line_name(name) => b[j..]
+                .iter()
+                .position(|c| matches!(c, b'"' | b'\n' | b'\r'))
+                .map_or(n, |at| j + at),
+            None => line[j..].find(is_value_end).map_or(n, |at| j + at),
+        };
+        // An escaped closing quote leaves its backslash on the value.
+        while end > value_start && b[end - 1] == b'\\' {
+            end -= 1;
+        }
+        if end == value_start || line[value_start..end] == *REDACTED {
+            i = end.max(i);
             continue;
         }
         out.push_str(&line[copied..value_start]);
         out.push_str(REDACTED);
-        copied = value_end;
-        i = k;
+        copied = end;
+        i = end;
     }
     out.push_str(&line[copied..]);
     out
+}
+
+fn is_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')
 }
 
 /// A JWT, a token with a known prefix and a long base64 run lose themselves,
@@ -373,6 +419,33 @@ mod tests {
         // An unterminated block takes the rest.
         let cut = redact(&format!("x\n-----BEGIN RSA PRIVATE KEY-----\n{SEED}"));
         assert!(!cut.contains(SEED));
+    }
+
+    #[test]
+    fn escaped_json_and_rust_debug_shapes_lose_their_value() {
+        for text in [
+            format!(r#"body: "{{\"token\":\"{SEED}\"}}""#),
+            format!(r#"{{\"password\": \"{SEED}\", \"user\": \"x\"}}"#),
+            format!(r#"auth {{ token: Some("{SEED}") }}"#),
+            format!(r#"password="{SEED} and more words""#),
+            format!("Cookie: a=1; b={SEED}"),
+            format!("Set-Cookie: sid={SEED}; Path=/"),
+        ] {
+            gone(&text);
+        }
+        assert_eq!(
+            redact(r#"password="two words" after"#),
+            format!(r#"password="{REDACTED}" after"#)
+        );
+        assert!(redact(r#"auth { token: Some("abc") } x"#).ends_with(") } x"));
+        assert!(redact(r#"{\"token\":\"abc\",\"name\":\"keep\"}"#).contains("keep"));
+    }
+
+    #[test]
+    fn the_word_basic_is_not_a_credential() {
+        let text = "uses basic configuration for the basic setup";
+        assert_eq!(redact(text), text);
+        assert!(!redact(&format!("Authorization: Basic {SEED}==")).contains(SEED));
     }
 
     #[test]

@@ -118,7 +118,18 @@ impl Session {
 
     /// The clean quit: the marker goes.
     pub fn finish(self) {
-        if let Some(path) = &self.marker {
+        drop(self);
+    }
+}
+
+/// Any way out of `main` that is not a panic is a clean end, an early error
+/// return included; a panic keeps the marker. A process that is killed (Ctrl-C
+/// or SIGTERM from a terminal) never runs this and leaves it.
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(path) = &self.marker
+            && !std::thread::panicking()
+        {
             marker::clear(path);
         }
     }
@@ -165,6 +176,31 @@ mod tests {
         writeln!(sink, "INFO sign-in token=s3cr3tTokenValue9f8e7d6c5b4a ok").unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("s3cr3t") && text.contains("INFO sign-in"));
+    }
+
+    #[test]
+    fn dropping_a_session_clears_the_marker_unless_it_is_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("freshkube.log");
+        // Not `start`: it installs the process-wide hook.
+        let session = |marker: PathBuf| Session {
+            info: SessionInfo::default(),
+            sink: LogSink::new(File::create(&log).unwrap()),
+            marker: Some(marker),
+        };
+        let path = marker::path_in(dir.path());
+        marker::write(&path, &CrashReport::default()).unwrap();
+        drop(session(path.clone()));
+        assert!(marker::read(&path).is_none(), "an early return is clean");
+
+        marker::write(&path, &CrashReport::default()).unwrap();
+        let held = session(path.clone());
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _held = held;
+            panic!("unwinding with the session alive");
+        }));
+        assert!(unwound.is_err());
+        assert!(marker::read(&path).is_some(), "a panic keeps the marker");
     }
 
     #[test]

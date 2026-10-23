@@ -122,6 +122,9 @@ impl Pilot {
     ) {
         #[cfg(not(any(debug_assertions, feature = "stress")))]
         let _ = (debug, runtime);
+        // A stress build compiles the trigger in, but
+        // `DebugOptions::debug_only` clears the knob there: only a debug
+        // build ever panics on request.
         #[cfg(any(debug_assertions, feature = "stress"))]
         match debug.crash {
             Some(CrashShape::Panic) => {
