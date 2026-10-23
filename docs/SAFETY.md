@@ -42,6 +42,8 @@ CI runs it as its own step, "Safety suite", after the tests on the macOS check j
 - `safety_g03_the_teams_protection_is_a_floor` (`crates/freshkube-core/team/tests.rs`)
 - `safety_g03_the_floor_holds_in_both_directions_and_an_unknown_level_is_guarded` (`crates/freshkube-core/team/tests.rs`)
 - `safety_g03_a_team_file_cannot_widen_what_a_persons_setup_restricts` (`crates/freshkube-core/team/tests.rs`)
+- `safety_g03_the_teams_level_is_a_floor_the_inspector_will_not_go_under` (`crates/freshkube-desktop/src/desktop/settings/entry/protection_tests.rs`)
+- `safety_g03_an_own_or_default_level_looser_than_the_floor_shows_the_floor` (same file)
 
 ### 4. Per-tab levels: a tab's level is its own and never carries across
 
@@ -98,4 +100,4 @@ CI runs it as its own step, "Safety suite", after the tests on the macOS check j
 
 ## Known gaps
 
-- Guarantee 3 is proved where the team floor is resolved (`freshkube-core`'s `team`). The setup file's effective level does not take the floor yet, so no test can show the window enforcing it; the test for that joins the suite with the product change.
+- Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
