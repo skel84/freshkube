@@ -21,7 +21,8 @@ use tokio::runtime::Handle;
 mod model;
 mod reads;
 mod view;
-use model::{Destination, Entry, KINDS};
+pub(in crate::desktop) use model::Destination;
+use model::{Entry, KINDS};
 
 #[derive(Clone)]
 struct Part {
@@ -144,12 +145,22 @@ impl Pilot {
         let command = self.pages.search.read(cx).command.clone();
         command.update(cx, |state, cx| state.focus(window, cx));
     }
-    fn search_destination(
+    pub(in crate::desktop) fn search_destination(
         &mut self,
         destination: Destination,
+        open_in: super::tabs::OpenIn,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A new tab holds what a link can name: a page, a kind or a node.
+        // An object goes through `open_object_in` below, so the cluster
+        // guard sees it before any tab does. Anything else opens here.
+        if open_in != super::tabs::OpenIn::Here
+            && let Some(view) = super::tabs::destination_view(&destination)
+        {
+            self.open_view_tab(view, open_in, window, cx);
+            return;
+        }
         match destination {
             Destination::Page(page) => self.navigate(page, window, cx),
             Destination::Kind(kind) => self.open_kind(kind, window, cx),
@@ -160,7 +171,7 @@ impl Pilot {
                 self.open_node_by_name(&name, super::nodes::NodeTab::Overview, window, cx)
             }
             Destination::Object(kind, object) => {
-                self.open_object(kind, object, resources::Tab::Overview, window, cx)
+                self.open_object_in(open_in, kind, object, resources::Tab::Overview, window, cx)
             }
             Destination::Link(text) => self.open_link_text(&text, window, cx),
         }

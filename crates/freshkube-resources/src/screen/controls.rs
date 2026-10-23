@@ -181,6 +181,7 @@ impl ResourcesScreen {
             .as_ref()
             .is_some_and(|source| matches!(source.access, ClusterAccess::Example(_)));
         match self.store.read_state() {
+            ReadState::Loading if self.frozen.is_some() => ("showing last known", Some(Tone::Warn)),
             ReadState::Loading => ("loading", None),
             ReadState::Loaded if example => ("example data", None),
             ReadState::Loaded => ("watching", None),
@@ -223,7 +224,7 @@ impl ResourcesScreen {
             };
             return Segment::new(context, std::iter::once(lead).chain(state).chain(time));
         }
-        let count = self.store.read_state().shows_rows().then(|| {
+        let count = (self.store.read_state().shows_rows() || self.frozen.is_some()).then(|| {
             Part::new(if shown == total {
                 total.to_string()
             } else {

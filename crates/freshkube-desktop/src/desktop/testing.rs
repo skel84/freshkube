@@ -221,7 +221,7 @@ pub(crate) fn open_node_tab(
         view.update(cx, |view, cx| view.open_node(key, window, cx));
         window.render_frame(cx);
     }
-    // A tab's click and Command-Shift-] reach the shell as events once the
+    // A tab's click and Option-Command-] reach the shell as events once the
     // update ends; hand the shell the tab's event at once, as they would.
     // The strip draws the tab, or More holds it.
     use super::nodes::{NodeTab, NodeTabs};
