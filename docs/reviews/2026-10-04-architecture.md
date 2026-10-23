@@ -121,10 +121,10 @@ Watch makes C worse:
 | desktop `screens/operations.rs` | Yes, within B | One commit with no logic change, after the loop moves to core |
 | core `operations.rs` | Delete first | Removing the rolling runner takes out about 520 lines; reconsider after |
 | core `diagnostic_runner.rs` | Only with D | Without making evaluation pure, a split only moves lines |
-| `talos-rs/client.rs` | Partly | Split out packet capture and BPF only (about 540 lines plus 225 of tests). Reject a methods/models split: private `from_proto` and `to_proto` would have to widen |
+| `talos-rs/src/client/mod.rs` | Partly | Split out packet capture and BPF only (about 540 lines plus 225 of tests). Reject a methods/models split: private `from_proto` and `to_proto` would have to widen |
 | `security_lifecycle.rs` | When touched | Two collectors in one file |
 | core `inspection.rs` | When touched | Clean along its existing headers, but low value |
-| core and desktop `maintenance.rs` | Defer | The reducer/runner boundary exists; moving tests to `tests.rs` is the main gain |
+| core `maintenance/mod.rs` and desktop `maintenance/` | Defer | The reducer/runner boundary exists; moving tests to `tests.rs` is the main gain |
 
 ## Order of work
 
@@ -194,7 +194,7 @@ START NOW (no active branch touches these)      AFTER THE BRANCHES LAND
 
 | Recommendation | Decision | Reason |
 | --- | --- | --- |
-| Methods/models split of `talos-rs/client.rs` | Reject | Widens private conversion functions; only packet capture is a separate concern |
+| Methods/models split of `talos-rs/src/client/mod.rs` | Reject | Widens private conversion functions; only packet capture is a separate concern |
 | A separate Nodes entity | Reject | Choosing a node is choosing the Talos target, which the shell owns |
 | Sweeping splits of maintenance and inspection | Reject | Boundaries already exist; split when touched, as AGENTS.md says |
 | Overview entity | Defer | Wait for watch and design2, then measure redraws first |
