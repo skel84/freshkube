@@ -1,0 +1,1 @@
+- **Code organization:** move table data, Talos client, maintenance and cluster overview tests into dedicated test modules without changing behavior.
