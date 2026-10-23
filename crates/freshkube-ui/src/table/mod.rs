@@ -21,6 +21,7 @@ mod fix_bar;
 mod flash;
 mod loading;
 mod pinned;
+mod stepper;
 mod words;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 pub use data::{
@@ -33,6 +34,7 @@ pub use fix_bar::{
 pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look, TableLoading};
 pub use pinned::widest_pinned_run;
+pub use stepper::{RAIL, RailAt, STEP_ROW, Step, Track, rail, stepper_cell};
 #[cfg(any(test, feature = "testing"))]
 pub use words::{Shown as WordCutShown, shown as word_cut_shown, shown_style as word_cut_style};
 pub use words::{WordCut, word_cut};

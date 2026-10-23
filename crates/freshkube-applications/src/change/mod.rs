@@ -401,6 +401,10 @@ pub struct ChangePage {
     folded: BTreeSet<usize>,
     filter: Option<Tone>,
     columns: Vec<table::Column>,
+    /// The columns of a page too narrow for them, and whether the table
+    /// draws those now: set from the width it has, as it draws.
+    compact_columns: Vec<table::Column>,
+    compact: std::cell::Cell<bool>,
     table: TableState,
     focus: FocusHandle,
     split: InspectorSplit,
@@ -476,6 +480,8 @@ impl ChangePage {
             folded: BTreeSet::new(),
             filter: None,
             columns: table::columns(),
+            compact_columns: table::compact_columns(),
+            compact: std::cell::Cell::new(false),
             table: TableState::new(PREFIX),
             focus: cx.focus_handle(),
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
