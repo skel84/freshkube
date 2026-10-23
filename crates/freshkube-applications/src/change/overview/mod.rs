@@ -45,13 +45,17 @@ impl ChangePage {
             .overview
             .iter()
             .filter(|row| {
-                self.filter
-                    .is_none_or(|tone| self.groups.get(row.group).is_some_and(|g| g.counts_as == tone))
+                self.filter.is_none_or(|tone| {
+                    self.groups
+                        .get(row.group)
+                        .is_some_and(|g| g.counts_as == tone)
+                })
             })
             .collect();
         let freight = self.change.freight.as_str();
-        self.matrix
-            .update(cx, |matrix, _| matrix.set(freight, &rows, selected, loading));
+        self.matrix.update(cx, |matrix, _| {
+            matrix.set(freight, &rows, selected, loading)
+        });
     }
 
     pub(super) fn render_overview(
@@ -126,7 +130,12 @@ impl ChangePage {
     /// Where the selection is: on a card of the strip, or in the matrix.
     fn overview_at(&self) -> Option<At> {
         let key = self.selected.as_ref()?;
-        if let Some(ix) = self.strip.cards.iter().position(|card| card.hops.contains(key)) {
+        if let Some(ix) = self
+            .strip
+            .cards
+            .iter()
+            .position(|card| card.hops.contains(key))
+        {
             return Some(At::Card(ix));
         }
         let (row, column) = cells::locate(&self.overview, key)?;

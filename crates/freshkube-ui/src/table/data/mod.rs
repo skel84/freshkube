@@ -512,13 +512,9 @@ impl DataTable {
                 None => this.flex_1().min_h_0(),
             })
             .map(|this| match (loading, empty) {
-                (Some(rows), _) => this.child(rows.render(
-                    source.columns(),
-                    fill,
-                    source.row_height(),
-                    window,
-                    cx,
-                )),
+                (Some(rows), _) => {
+                    this.child(rows.render(source.columns(), fill, source.row_height(), window, cx))
+                }
                 (None, Some(empty)) => this.child(
                     div()
                         .id(ids.empty.clone())

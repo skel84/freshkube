@@ -14,8 +14,8 @@ use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Div, ElementId, Hsla, PathBuilder, Role, SharedString, Stateful,
-    TestSupportExt, canvas, div, point, px,
+    App, Div, ElementId, Hsla, PathBuilder, Role, SharedString, Stateful, TestSupportExt, canvas,
+    div, point, px,
 };
 
 use super::{CELL_PAD, TableColumn, cell};
@@ -103,39 +103,34 @@ fn stroke(
     to: f32,
     vertical: bool,
 ) -> Observed<Stateful<Div>> {
-    div()
-        .id(id)
-        .test_support()
-        .h_full()
-        .min_w_0()
-        .child(
-            canvas(
-                |_, _, _| (),
-                move |bounds, _, window, _| {
-                    if track == Track::None {
-                        return;
-                    }
-                    let unit = ui::dp_px(1., window);
-                    let mut path = PathBuilder::stroke(unit * track.width());
-                    if let Some([on, off]) = track.dashes() {
-                        path = path.dash_array(&[unit * on, unit * off]);
-                    }
-                    if vertical {
-                        let x = bounds.center().x;
-                        path.move_to(point(x, bounds.top() + unit * from));
-                        path.line_to(point(x, bounds.bottom() - unit * to));
-                    } else {
-                        let y = bounds.center().y;
-                        path.move_to(point(bounds.left() + unit * from, y));
-                        path.line_to(point(bounds.right() - unit * to, y));
-                    }
-                    if let Ok(path) = path.build() {
-                        window.paint_path(path, color);
-                    }
-                },
-            )
-            .size_full(),
+    div().id(id).test_support().h_full().min_w_0().child(
+        canvas(
+            |_, _, _| (),
+            move |bounds, _, window, _| {
+                if track == Track::None {
+                    return;
+                }
+                let unit = ui::dp_px(1., window);
+                let mut path = PathBuilder::stroke(unit * track.width());
+                if let Some([on, off]) = track.dashes() {
+                    path = path.dash_array(&[unit * on, unit * off]);
+                }
+                if vertical {
+                    let x = bounds.center().x;
+                    path.move_to(point(x, bounds.top() + unit * from));
+                    path.line_to(point(x, bounds.bottom() - unit * to));
+                } else {
+                    let y = bounds.center().y;
+                    path.move_to(point(bounds.left() + unit * from, y));
+                    path.line_to(point(bounds.right() - unit * to, y));
+                }
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, color);
+                }
+            },
         )
+        .size_full(),
+    )
 }
 
 /// One stepper cell: what it is and how its track runs.
@@ -238,7 +233,11 @@ pub fn connector(
     cx: &App,
 ) -> Observed<Stateful<Div>> {
     let flow = stroke(id, track, track_color(tone, track, cx), 0., 0., vertical);
-    if vertical { flow.w_full() } else { flow.w_full().h(dp(LINE)) }
+    if vertical {
+        flow.w_full()
+    } else {
+        flow.w_full().h(dp(LINE))
+    }
 }
 
 /// Where a row sits in the rail.

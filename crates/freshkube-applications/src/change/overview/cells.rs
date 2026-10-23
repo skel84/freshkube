@@ -134,7 +134,10 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Vec<StageRow> {
         })
         .collect();
     for (ix, row) in stages.iter_mut().enumerate() {
-        row.rail = [into[ix], into.get(ix + 1).copied().unwrap_or(kit::Track::None)];
+        row.rail = [
+            into[ix],
+            into.get(ix + 1).copied().unwrap_or(kit::Track::None),
+        ];
     }
     stages
 }
@@ -155,22 +158,26 @@ fn stage_row(change: &Change, rows: &[HopRow], ix: usize, stage: &Stage) -> Stag
                 hop.group == group && matches!(&hop.shows, Shows::Hop(d) if d.kind == kind)
             })
             .map(|(_, row)| row);
-        if last { found.next_back() } else { found.next() }
+        if last {
+            found.next_back()
+        } else {
+            found.next()
+        }
     };
     let reached = !matches!(stage.reach, Reach::NotReached) || stage.running.is_none();
     let gate = |column: Column, suffix: &str| {
-        cell(
-            column,
-            of(format!("{}-{suffix}", stage.name)),
-            true,
-            stage,
-        )
+        cell(column, of(format!("{}-{suffix}", stage.name)), true, stage)
     };
     let cells = [
         gate(Column::Eligible, "eligible"),
         gate(Column::Promoted, "promotion"),
         gate(Column::Verified, "verification"),
-        cell(Column::Synced, kind("Argo CD Application", false), reached, stage),
+        cell(
+            Column::Synced,
+            kind("Argo CD Application", false),
+            reached,
+            stage,
+        ),
         cell(Column::Running, kind("Pods", true), reached, stage),
         cell(
             Column::AfterDeploy,
@@ -187,7 +194,12 @@ fn stage_row(change: &Change, rows: &[HopRow], ix: usize, stage: &Stage) -> Stag
         .unwrap_or(Tone::Outline);
     StageRow {
         name: stage.name.clone().into(),
-        cluster: stage.cluster.cluster().unwrap_or("cluster unknown").to_owned().into(),
+        cluster: stage
+            .cluster
+            .cluster()
+            .unwrap_or("cluster unknown")
+            .to_owned()
+            .into(),
         line2: line2(stage).into(),
         cells,
         group,
@@ -211,9 +223,7 @@ fn line2(stage: &Stage) -> String {
         return format!("still runs {running}");
     }
     let at = match &stage.promotion {
-        Promotion::Automatic { at } | Promotion::ByHand { at } | Promotion::Other { at, .. } => {
-            *at
-        }
+        Promotion::Automatic { at } | Promotion::ByHand { at } | Promotion::Other { at, .. } => *at,
         _ => None,
     };
     match at {

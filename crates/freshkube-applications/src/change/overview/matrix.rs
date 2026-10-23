@@ -171,7 +171,10 @@ impl Matrix {
                     .child(row.cluster.clone()),
             );
         let second = div()
-            .id(SharedString::from(format!("change-stage-{}-since", row.name)))
+            .id(SharedString::from(format!(
+                "change-stage-{}-since",
+                row.name
+            )))
             .test_support()
             .h(dp(kit::LINE))
             .flex()
@@ -211,7 +214,10 @@ impl Render for Matrix {
             window.on_next_frame(|window, _| window.refresh());
         }
         if let Some(column) = self.reveal {
-            let at = Column::ALL.iter().position(|c| *c == column).unwrap_or_default();
+            let at = Column::ALL
+                .iter()
+                .position(|c| *c == column)
+                .unwrap_or_default();
             let left = STAGE_WIDTH + at as f32 * STEP_WIDTH;
             if self
                 .table
@@ -296,7 +302,10 @@ impl TableSource for Matrix {
         let Some(kind) = column.kind else {
             return self.stage_cell(row, column, style, cx);
         };
-        let at = Column::ALL.iter().position(|c| *c == kind).unwrap_or_default();
+        let at = Column::ALL
+            .iter()
+            .position(|c| *c == kind)
+            .unwrap_or_default();
         let cell = &row.cells[at];
         let next = row.cells.get(at + 1);
         let hop = cell.hop.clone();
@@ -329,7 +338,10 @@ impl TableSource for Matrix {
 
     fn selected_key(&self) -> Option<&SharedString> {
         let (stage, _) = self.selected.as_ref()?;
-        self.rows.iter().map(|row| &row.name).find(|name| *name == stage)
+        self.rows
+            .iter()
+            .map(|row| &row.name)
+            .find(|name| *name == stage)
     }
 
     fn line_of(&self, key: &SharedString) -> Option<usize> {

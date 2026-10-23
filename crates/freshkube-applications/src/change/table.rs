@@ -133,9 +133,7 @@ impl ChangePage {
             return row.name.clone();
         }
         let mut parts = vec![row.name.to_string()];
-        parts.extend(
-            (!row.time.is_empty()).then(|| format!("at {}", row.time)),
-        );
+        parts.extend((!row.time.is_empty()).then(|| format!("at {}", row.time)));
         parts.extend((!row.from.is_empty()).then(|| format!("read from {}", row.from)));
         parts.join(" · ").into()
     }

@@ -98,17 +98,19 @@ fn the_start_strip_cards_select_the_pull_request_the_build_and_the_freight(
         // A hop of the Build selects the Build card.
         page.update(cx, |page, cx| page.select("signature", window, cx));
         assert!(
-            page.read(cx).strip.cards.iter().any(|card| card.id == "build"
-                && card.hops.iter().any(|hop| hop.as_ref() == "signature"))
+            page.read(cx)
+                .strip
+                .cards
+                .iter()
+                .any(|card| card.id == "build"
+                    && card.hops.iter().any(|hop| hop.as_ref() == "signature"))
         );
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-fn the_overview_keys_walk_cells_and_the_strip_open_clear_back_and_switch(
-    cx: &mut TestAppContext,
-) {
+fn the_overview_keys_walk_cells_and_the_strip_open_clear_back_and_switch(cx: &mut TestAppContext) {
     let (handle, page) = overview_fixture(cx);
     let events = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
     let recorded = events.clone();
@@ -124,9 +126,8 @@ fn the_overview_keys_walk_cells_and_the_strip_open_clear_back_and_switch(
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         page.update(cx, |page, cx| page.focus(window, cx));
-        let selected = |page: &Entity<ChangePage>, cx: &App| {
-            page.read(cx).selected().map(|s| s.to_string())
-        };
+        let selected =
+            |page: &Entity<ChangePage>, cx: &App| page.read(cx).selected().map(|s| s.to_string());
         window.press("down", cx);
         assert_eq!(selected(&page, cx).as_deref(), Some("dev-eligible"));
         window.press("right", cx);

@@ -12,8 +12,8 @@ use crate::change_view::ChangeView;
 use chrono::{DateTime, Utc};
 use freshkube_delivery::change::example::Shape;
 use freshkube_delivery::join::Confidence;
-use freshkube_ui::ui::Tone;
 use freshkube_ui::layout_check;
+use freshkube_ui::ui::Tone;
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
@@ -64,7 +64,16 @@ fn open_stage(
     text: f32,
     stage: Option<&str>,
 ) -> (AnyWindowHandle, Entity<ChangePage>) {
-    open_view(cx, width, height, shape, delay, text, stage, ChangeView::Hops)
+    open_view(
+        cx,
+        width,
+        height,
+        shape,
+        delay,
+        text,
+        stage,
+        ChangeView::Hops,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -122,11 +131,6 @@ fn overview_fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ChangeP
 
 fn hops(page: &Entity<ChangePage>, window: &mut Window, cx: &mut App) {
     page.update(cx, |page, cx| page.set_view(ChangeView::Hops, window, cx));
-    window.render_frame(cx);
-}
-
-fn overview(page: &Entity<ChangePage>, window: &mut Window, cx: &mut App) {
-    page.update(cx, |page, cx| page.set_view(ChangeView::Overview, window, cx));
     window.render_frame(cx);
 }
 

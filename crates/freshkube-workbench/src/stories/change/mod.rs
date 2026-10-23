@@ -7,8 +7,6 @@
 mod detail;
 pub mod trail;
 
-pub mod chain;
-
 use std::collections::BTreeSet;
 
 use freshkube_ui::inspector::{self, InspectorSplit, Pane, Stacked};

@@ -120,7 +120,10 @@ mod tests {
         assert_eq!(read("\"hops\""), ChangeView::Hops);
         assert_eq!(read("\"overview\""), ChangeView::Overview);
         assert_eq!(ChangeView::default(), ChangeView::Overview);
-        assert_eq!(serde_json::to_string(&ChangeView::Hops).unwrap(), "\"hops\"");
+        assert_eq!(
+            serde_json::to_string(&ChangeView::Hops).unwrap(),
+            "\"hops\""
+        );
     }
 
     #[gpui_kit::test]

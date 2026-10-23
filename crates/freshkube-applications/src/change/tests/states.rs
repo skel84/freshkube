@@ -79,7 +79,10 @@ fn missing_policy_and_an_anchored_unserved_source_are_unknown_in_both_views(
         let policy = p.rows.iter().find(|row| row.key == "policy").unwrap();
         assert!(policy.ghost);
         page.update(cx, |page, cx| page.select("policy", window, cx));
-        assert_eq!(page.read(cx).selected().map(|key| key.as_ref()), Some("policy"));
+        assert_eq!(
+            page.read(cx).selected().map(|key| key.as_ref()),
+            Some("policy")
+        );
         page.update(cx, |page, cx| page.set_view(ChangeView::Hops, window, cx));
         window.render_frame(cx);
         assert!(window.find("change-hop-policy").visible());
@@ -240,7 +243,11 @@ fn unread_applications_and_pods_say_why_in_their_overview_cells(cx: &mut TestApp
             // Unknown with its cause, never drawn as a failure.
             assert_eq!(dev.cells[at].word.as_ref(), "Can't read", "{key}");
             assert_ne!(dev.cells[at].tone, Tone::Crit);
-            assert!(window.try_find(format!("change-cell-dev-{}", column.id())).is_some());
+            assert!(
+                window
+                    .try_find(format!("change-cell-dev-{}", column.id()))
+                    .is_some()
+            );
             // The hop it stands for is still reachable from All hops.
             page.update(cx, |page, cx| page.select(key, window, cx));
             assert_eq!(page.read(cx).selected().map(|key| key.as_ref()), Some(key));

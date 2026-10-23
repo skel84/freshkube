@@ -60,9 +60,7 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Strip {
         .find(|(hop, _)| kind_of(hop) == Some("Pull request"));
     let build: Vec<_> = hops
         .iter()
-        .filter(|(hop, _)| {
-            Some(hop.group) == build_group && kind_of(hop) != Some("Pull request")
-        })
+        .filter(|(hop, _)| Some(hop.group) == build_group && kind_of(hop) != Some("Pull request"))
         .collect();
     let freight = hops.iter().find(|(hop, _)| hop.key == "freight");
     let mut cards = Vec::new();
@@ -110,11 +108,7 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Strip {
         });
         ends.push(Some(freight));
     }
-    let joins = ends
-        .iter()
-        .skip(1)
-        .map(|end| join(end.copied()))
-        .collect();
+    let joins = ends.iter().skip(1).map(|end| join(end.copied())).collect();
     Strip { cards, joins }
 }
 
@@ -215,10 +209,7 @@ impl ChangePage {
             }
             strip = strip.child(self.render_card(card, stacked, cx));
         }
-        strip
-            .border_b_1()
-            .border_color(p.line)
-            .into_any_element()
+        strip.border_b_1().border_color(p.line).into_any_element()
     }
 
     fn render_card(&self, card: &Card, stacked: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -239,17 +230,15 @@ impl ChangePage {
             .py(dp(6.))
             .gap(dp(2.))
             .cursor_pointer()
-            .when(selected, |this| this.border_color(p.accent).bg(p.accent_soft))
+            .when(selected, |this| {
+                this.border_color(p.accent).bg(p.accent_soft)
+            })
             .when(stacked, |this| this.w_full())
             .child(
                 h_flex()
                     .gap(dp(6.))
                     .items_center()
-                    .child(
-                        div()
-                            .flex_none()
-                            .children(ui::status_glyph(card.tone, cx)),
-                    )
+                    .child(div().flex_none().children(ui::status_glyph(card.tone, cx)))
                     .child(
                         div()
                             .min_w_0()

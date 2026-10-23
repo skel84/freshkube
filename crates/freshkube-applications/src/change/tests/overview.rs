@@ -29,12 +29,19 @@ fn the_overview_draws_the_strip_and_a_row_of_cells_per_stage(cx: &mut TestAppCon
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         for card in ["pr", "build", "freight"] {
-            assert!(window.find(format!("change-strip-{card}")).visible(), "{card}");
+            assert!(
+                window.find(format!("change-strip-{card}")).visible(),
+                "{card}"
+            );
         }
         // Each join: its key in a pill, and its word under it.
         for into in ["build", "freight"] {
             assert!(window.find(format!("change-join-{into}-key")).visible());
-            assert!(window.try_find(format!("change-join-{into}-word")).is_some());
+            assert!(
+                window
+                    .try_find(format!("change-join-{into}-word"))
+                    .is_some()
+            );
         }
         let stages: Vec<String> = page
             .read(cx)
@@ -64,7 +71,14 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
     let (handle, page) = overview_fixture(cx);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let healthy = ["Eligible", "Promoted", "Verified", "Synced", "Running", "Not looked"];
+        let healthy = [
+            "Eligible",
+            "Promoted",
+            "Verified",
+            "Synced",
+            "Running",
+            "Not looked",
+        ];
         assert_eq!(words(&page, cx, "dev"), healthy);
         // Waiting is the clock, not a problem; the pods nobody may list say
         // so; what the Stage still runs says nothing of this change.
@@ -81,7 +95,14 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
         );
         assert_eq!(
             words(&page, cx, "prod-lon"),
-            ["Approved", "Promoted", "Failed", "Synced", "Running", "Not looked"]
+            [
+                "Approved",
+                "Promoted",
+                "Failed",
+                "Synced",
+                "Running",
+                "Not looked"
+            ]
         );
         for row in &page.read(cx).overview {
             for cell in &row.cells {
@@ -113,12 +134,21 @@ fn the_causes_shape_shows_all_four_causes_and_the_clock(cx: &mut TestAppContext)
             assert!(all.iter().any(|word| word == cause), "{cause} in {all:?}");
         }
         let fixes: Vec<_> = page.read(cx).fixes.iter().map(|fix| fix.words()).collect();
-        assert!(fixes.iter().any(|fix| fix.starts_with("Not found")), "{fixes:?}");
+        assert!(
+            fixes.iter().any(|fix| fix.starts_with("Not found")),
+            "{fixes:?}"
+        );
         // None is drawn as a failure.
         for row in &page.read(cx).overview {
             for cell in &row.cells {
-                if ["Waiting", "Can't read", "Not found", "Not set up"].contains(&cell.word.as_ref()) {
-                    assert!(!matches!(cell.tone, Tone::Crit | Tone::Died), "{}", cell.word);
+                if ["Waiting", "Can't read", "Not found", "Not set up"]
+                    .contains(&cell.word.as_ref())
+                {
+                    assert!(
+                        !matches!(cell.tone, Tone::Crit | Tone::Died),
+                        "{}",
+                        cell.word
+                    );
                 }
             }
         }
@@ -137,7 +167,11 @@ fn a_stage_that_waits_is_a_dotted_track_and_one_that_never_got_there_a_hairline(
     assert_eq!(ams.cells[1].track(), Track::Dotted, "waiting promotion");
     assert_eq!(ams.cells[3].track(), Track::Hairline, "not reached");
     let dev = &page[0];
-    assert!(dev.cells[..5].iter().all(|cell| cell.track() == Track::Solid));
+    assert!(
+        dev.cells[..5]
+            .iter()
+            .all(|cell| cell.track() == Track::Solid)
+    );
     // The rail into a waiting Stage is dotted; into the others it is solid.
     assert_eq!(ams.rail[0], Track::Dotted);
     assert_eq!(dev.rail[0], Track::Solid);
@@ -194,11 +228,23 @@ fn assert_matrix_rows(cx: &mut TestAppContext, width: f32, height: f32, text: f3
             let track_out = bounds(window, format!("change-cell-dev-{}-track-out", column.id()));
             let glyph = bounds(window, format!("change-cell-dev-{}-glyph", column.id()));
             if let Some(edge) = edge {
-                assert_eq!(cell.left(), edge, "{column:?} starts where the one before ended");
+                assert_eq!(
+                    cell.left(),
+                    edge,
+                    "{column:?} starts where the one before ended"
+                );
             }
             assert_eq!(track_in.left(), cell.left(), "{column:?} track in");
-            assert_eq!(track_in.right(), glyph.left(), "{column:?} glyph on the track");
-            assert_eq!(glyph.right(), track_out.left(), "{column:?} glyph on the track");
+            assert_eq!(
+                track_in.right(),
+                glyph.left(),
+                "{column:?} glyph on the track"
+            );
+            assert_eq!(
+                glyph.right(),
+                track_out.left(),
+                "{column:?} glyph on the track"
+            );
             assert_eq!(track_out.right(), cell.right(), "{column:?} track out");
             let centre = track_in.center().y;
             assert!((centre - *y.get_or_insert(centre)).abs() < px(0.5));
@@ -286,12 +332,17 @@ fn a_selected_cell_beyond_the_edge_scrolls_into_view_beside_the_pinned_stage(
     let (handle, page) = open_overview(cx, 760., 560., Shape::Whole, Duration::ZERO, 20.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        page.update(cx, |page, cx| page.select("prod-lon-deployment", window, cx));
+        page.update(cx, |page, cx| {
+            page.select("prod-lon-deployment", window, cx)
+        });
         scroll_to_matrix(&page, window, cx);
         let view = bounds(window, "change-matrix-table-scroll".into());
         let cell = bounds(window, "change-cell-prod-lon-after-deploy".into());
         // The row's own 1 px borders either side are not part of a cell.
-        assert!(cell.right() <= view.right() + px(3.), "{cell:?} in {view:?}");
+        assert!(
+            cell.right() <= view.right() + px(3.),
+            "{cell:?} in {view:?}"
+        );
         assert!(cell.left() >= view.left() - px(1.), "{cell:?} in {view:?}");
     })
     .unwrap();
@@ -335,7 +386,10 @@ fn a_fix_chip_selects_its_cell_in_the_overview(cx: &mut TestAppContext) {
             .find(|key| window.try_find(format!("change-fixbar-{key}")).is_some())
             .expect("a chip shows");
         window.click(format!("change-fixbar-{key}"), cx);
-        assert_eq!(page.read(cx).selected().map(|s| s.to_string()), Some(key.clone()));
+        assert_eq!(
+            page.read(cx).selected().map(|s| s.to_string()),
+            Some(key.clone())
+        );
         window.render_frame(cx);
         assert!(window.try_find("change-detail").is_some());
         // The hop is a cell of the matrix, or a card of the strip.

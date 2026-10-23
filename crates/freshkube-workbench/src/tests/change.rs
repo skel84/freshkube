@@ -96,37 +96,55 @@ fn the_change_story_folds_stages_and_filters_by_status(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-fn the_change_chain_controls_and_keys_show_each_case(cx: &mut TestAppContext) {
-    use super::stories::change::chain::ChainStory;
-    use freshkube_ui::graph::{Cursor, GraphSource};
-    let (handle, workbench) = open(cx, super::stories::find("change-chain").unwrap());
+fn the_stepper_cases_draw_a_continuous_track_in_rows_of_40_dp(cx: &mut TestAppContext) {
+    use super::stories::stepper::{Case, StepperStory};
+    let (handle, workbench) = open(cx, super::stories::find("stepper").unwrap());
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let story = workbench
             .read(cx)
             .view()
             .clone()
-            .downcast::<ChainStory>()
+            .downcast::<StepperStory>()
             .unwrap();
-        for case in [
-            "confirmed",
-            "claimed",
-            "unknown",
-            "refused",
-            "missing",
-            "stages",
+        for (case, id) in [
+            (Case::Confirmed, "confirmed"),
+            (Case::Waiting, "waiting"),
+            (Case::Causes, "causes"),
+            (Case::Unreached, "unreached"),
         ] {
-            window.click(format!("change-chain-case-{case}"), cx);
+            window.click(format!("stepper-case-{id}"), cx);
             window.render_frame(cx);
-            let focus = story.read(cx).graph().focus_handle().unwrap().clone();
-            window.focus(&focus, cx);
-            window.press("down", cx);
-            assert_eq!(story.read(cx).cursor(), Some(Cursor::Node(0)));
-            window.press("right", cx);
-            assert_eq!(story.read(cx).cursor(), Some(Cursor::Link(0, 1)));
-            window.render_frame(cx);
-            assert!(window.try_find("change-chain-detail").is_some());
+            assert_eq!(story.read(cx).case(), case);
+            let rows = freshkube_ui::layout_check::assert_table_rows(
+                window,
+                cx,
+                &freshkube_ui::layout_check::Table {
+                    table: Some("stepper-table-scroll"),
+                    list: "stepper-list",
+                },
+                freshkube_ui::table::STEP_ROW,
+            );
+            assert!(rows.header.is_some());
+            // The track runs on from one cell to the next.
+            let one = window.find("stepper-dev-0").bounds();
+            let two = window.find("stepper-dev-1").bounds();
+            assert_eq!(one.right(), two.left());
+            assert_eq!(
+                window.find("stepper-dev-0-track-out").bounds().right(),
+                one.right()
+            );
+            assert_eq!(
+                window.find("stepper-dev-1-track-in").bounds().left(),
+                two.left()
+            );
         }
+        window.click("stepper-dev-2", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            story.read(cx).picked().map(|id| id.as_ref()),
+            Some("stepper-dev-2")
+        );
     })
     .unwrap();
 }
