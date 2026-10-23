@@ -28,8 +28,22 @@ fn open_at(
     AnyWindowHandle,
     Entity<crate::desktop::Pilot>,
 ) {
+    open_on(cx, "settings-team", shape, size, text)
+}
+
+fn open_on(
+    cx: &mut TestAppContext,
+    page: &str,
+    shape: Option<Shape>,
+    size: (f32, f32),
+    text: Option<f32>,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<crate::desktop::Pilot>,
+) {
     let options = GpuiOptions::fixture().with_debug(DebugOptions {
-        page: Some("settings-team".into()),
+        page: Some(page.into()),
         team: shape,
         text_size: text,
         ..DebugOptions::default()
@@ -367,4 +381,246 @@ fn the_labels_fit_the_label_column() {
             assert!(label.chars().count() <= 20, "{label}");
         }
     }
+}
+
+fn clusters(
+    cx: &mut TestAppContext,
+    shape: Shape,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<crate::desktop::Pilot>,
+) {
+    open_on(cx, "settings-clusters", Some(shape), (1280., 880.), None)
+}
+
+fn page(
+    cx: &mut TestAppContext,
+    view: &Entity<crate::desktop::Pilot>,
+) -> Entity<super::SettingsPage> {
+    cx.update(|cx| view.read(cx).settings_page.clone())
+}
+
+fn newer(id: &str) -> freshkube_core::team::Version {
+    freshkube_core::team::Version::parse(id, b"version: 1\n", Default::default()).unwrap()
+}
+
+#[gpui_kit::test]
+fn the_rows_carry_team_and_yours_chips(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = clusters(cx, Shape::Joined);
+    // core-fra: the team names it and you set its level over the team's.
+    assert_eq!(
+        label(cx, handle, "settings-cluster-core-fra-origin"),
+        "Yours · over the team’s"
+    );
+    assert_eq!(
+        cx.update_window(handle, |_, window, _| window
+            .find("settings-cluster-core-fra-origin")
+            .visible())
+            .unwrap(),
+        true
+    );
+    // cicd-fra: only the team names it.
+    assert_eq!(
+        label(cx, handle, "settings-cluster-cicd-fra-origin"),
+        "Team"
+    );
+    // A cluster neither names has no chip, and keeps its name.
+    assert!(visible(cx, handle, "settings-cluster-dev-fra"));
+    assert!(!visible(cx, handle, "settings-cluster-dev-fra-origin"));
+    assert_eq!(
+        label(cx, handle, "settings-cluster-core-fra-name"),
+        "core-fra"
+    );
+}
+
+#[gpui_kit::test]
+fn no_team_means_no_chips_and_no_floor(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open_on(cx, "settings-clusters", None, (1280., 880.), None);
+    assert!(!visible(cx, handle, "settings-cluster-core-fra-origin"));
+    assert!(!visible(cx, handle, "settings-cluster-cicd-fra-origin"));
+    click(cx, handle, "settings-cluster-core-fra");
+    assert!(!visible(cx, handle, "settings-protection-floor"));
+    assert!(!visible(cx, handle, "settings-protection-origin"));
+}
+
+#[gpui_kit::test]
+fn the_inspector_says_why_looser_levels_are_off(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = clusters(cx, Shape::Joined);
+    click(cx, handle, "settings-cluster-core-fra");
+    let words = label(cx, handle, "settings-protection-floor");
+    assert!(
+        words.contains("Protected") && words.contains("stricter, not looser"),
+        "{words}"
+    );
+    assert!(visible(cx, handle, "settings-protection-origin"));
+    // The team names cicd-fra with no level: the guarded floor.
+    click(cx, handle, "settings-cluster-cicd-fra");
+    assert!(label(cx, handle, "settings-protection-floor").contains("Guarded"));
+    // A cluster the team leaves out has no floor to explain.
+    click(cx, handle, "settings-cluster-dev-fra");
+    assert!(!visible(cx, handle, "settings-protection-floor"));
+}
+
+#[gpui_kit::test]
+fn a_waiting_version_shows_a_banner_and_a_status_item_until_it_is_applied(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = clusters(cx, Shape::Update);
+    assert!(visible(cx, handle, "team-banner"));
+    assert!(label(cx, handle, "team-update-status").contains("e4f5a6b"));
+    // The banner sits above the table and inside the window.
+    cx.update_window(handle, |_, window, _| {
+        let banner = window.find("team-banner").bounds();
+        let row = window.find("settings-cluster-core-fra").bounds();
+        assert!(banner.bottom() <= row.top());
+        assert!(banner.right() <= window.viewport_size().width);
+    })
+    .unwrap();
+    click(cx, handle, "team-banner-review");
+    // Review opens Team setup, where the banner is the review's own.
+    assert!(visible(cx, handle, "team-update"));
+    assert!(!visible(cx, handle, "team-banner"));
+    click(cx, handle, "team-apply");
+    assert!(!visible(cx, handle, "team-update-status"));
+    assert!(!visible(cx, handle, "team-banner"));
+}
+
+#[gpui_kit::test]
+fn nothing_waiting_shows_neither_banner_nor_status_item(cx: &mut TestAppContext) {
+    for shape in [Shape::Joined, Shape::Failed] {
+        let (_runtime, handle, _view) = clusters(cx, shape);
+        assert!(!visible(cx, handle, "team-banner"), "{shape:?}");
+        assert!(!visible(cx, handle, "team-update-status"), "{shape:?}");
+    }
+    let (_runtime, handle, _view) = open_on(cx, "settings-clusters", None, (1280., 880.), None);
+    assert!(!visible(cx, handle, "team-banner"));
+    assert!(!visible(cx, handle, "team-update-status"));
+}
+
+#[gpui_kit::test]
+fn the_status_item_opens_the_review_even_after_later(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = clusters(cx, Shape::Trust);
+    click(cx, handle, "team-banner-review");
+    click(cx, handle, "team-review-later");
+    // Back on Clusters the banner stays off, the status item stays.
+    let settings = page(cx, &view);
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.show(super::SettingsSection::Clusters, cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(!visible(cx, handle, "team-banner"));
+    assert!(visible(cx, handle, "team-update-status"));
+    click(cx, handle, "team-update-status");
+    assert!(visible(cx, handle, "team-update"));
+    assert!(visible(cx, handle, "team-confirm-coroot.server"));
+}
+
+#[gpui_kit::test]
+fn a_newer_version_ends_a_choice_to_review_later(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Some(Shape::Update), (1280., 880.));
+    click(cx, handle, "team-review-later");
+    assert!(!visible(cx, handle, "team-update"));
+    assert!(visible(cx, handle, "team-waiting"));
+    let settings = page(cx, &view);
+    // The same version again keeps the choice.
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.team_fetched(Ok(newer("e4f5a6b")), chrono::Utc::now(), cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(!visible(cx, handle, "team-update"));
+    // A failure keeps it too.
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.team_fetched(
+                Err(freshkube_core::team::FetchFailed("down".into())),
+                chrono::Utc::now(),
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(!visible(cx, handle, "team-update"));
+    // A different version waits for review again, and is the one reviewed.
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.team_fetched(Ok(newer("9f8e7d6")), chrono::Utc::now(), cx)
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(visible(cx, handle, "team-update"));
+    assert!(label(cx, handle, "team-update-status").contains("9f8e7d6"));
+    for at in cx.update(|cx| settings.read(cx).team_trust_pending()) {
+        click(cx, handle, leak(format!("team-confirm-{at}")));
+    }
+    click(cx, handle, "team-apply");
+    assert!(label(cx, handle, "team-version-value").contains("9f8e7d6"));
+}
+
+#[gpui_kit::test]
+fn applying_a_reviewed_version_moves_the_setup_revision_once(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Some(Shape::Trust), (1280., 880.));
+    let revision = |cx: &mut TestAppContext| {
+        cx.update(|cx| view.read(cx).setup_file.read(cx).setup_revision())
+    };
+    let before = revision(cx);
+    // Confirming is not applying.
+    for at in TRUST {
+        click(cx, handle, leak(format!("team-confirm-{at}")));
+        assert_eq!(revision(cx), before, "{at}");
+    }
+    click(cx, handle, "team-apply");
+    assert_eq!(revision(cx), before + 1);
+    // Leaving or looking again changes nothing more.
+    cx.run_until_parked();
+    assert_eq!(revision(cx), before + 1);
+}
+
+#[gpui_kit::test]
+fn a_refused_apply_leaves_the_setup_revision_alone(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Some(Shape::Update), (1280., 880.));
+    let revision = |cx: &mut TestAppContext| {
+        cx.update(|cx| view.read(cx).setup_file.read(cx).setup_revision())
+    };
+    let before = revision(cx);
+    cx.update(|cx| {
+        view.read(cx).settings_page.clone().update(cx, |page, cx| {
+            page.make_team_review_stale();
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    click(cx, handle, "team-apply");
+    assert!(visible(cx, handle, "team-refusal"));
+    assert_eq!(revision(cx), before);
+}
+
+#[gpui_kit::test]
+fn the_banner_fits_the_smallest_window_at_the_largest_text(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open_on(
+        cx,
+        "settings-clusters",
+        Some(Shape::Trust),
+        (760., 560.),
+        Some(20.),
+    );
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        let viewport = window.viewport_size();
+        let banner = window.find("team-banner").bounds();
+        assert!(banner.left() >= gpui_kit::px(0.) && banner.right() <= viewport.width);
+        assert!(banner.top() >= gpui_kit::px(0.));
+    })
+    .unwrap();
 }

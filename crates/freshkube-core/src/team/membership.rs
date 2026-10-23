@@ -97,8 +97,10 @@ impl Membership {
     }
 
     /// Takes the outcome of a fetch. A failure keeps what is applied and says
-    /// since when; a version equal to the applied one is no update.
-    pub fn fetched(&mut self, result: Result<Version, FetchFailed>, now: DateTime<Utc>) {
+    /// since when; a version equal to the applied one is no update. True when
+    /// a different version now waits than the one that waited before, so a
+    /// choice to review later no longer holds.
+    pub fn fetched(&mut self, result: Result<Version, FetchFailed>, now: DateTime<Utc>) -> bool {
         match result {
             Ok(version) => {
                 self.failure = None;
@@ -108,8 +110,11 @@ impl Membership {
                     .is_some_and(|a| a.id() == version.id())
                 {
                     self.pending = None;
+                    false
                 } else {
+                    let new = self.pending.as_ref().map(|p| p.id()) != Some(version.id());
                     self.pending = Some(version);
+                    new
                 }
             }
             Err(error) => {
@@ -119,14 +124,15 @@ impl Membership {
                     last_try: now,
                     reason: error.0,
                 });
+                false
             }
         }
     }
 
-    /// Fetches again and takes the outcome.
-    pub fn refresh(&mut self, fetch: &dyn Fetch, now: DateTime<Utc>) {
+    /// Fetches again and takes the outcome; true as for [`Self::fetched`].
+    pub fn refresh(&mut self, fetch: &dyn Fetch, now: DateTime<Utc>) -> bool {
         let result = fetch.fetch(&self.source);
-        self.fetched(result, now);
+        self.fetched(result, now)
     }
 
     /// The review of the waiting version, if any.

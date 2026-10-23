@@ -530,6 +530,23 @@ impl Pilot {
         self.navigate_from_keyboard(Page::Settings, window, cx);
     }
 
+    /// What the team setup page asks of the shell (#849): the banner's
+    /// Review opens the section, and an applied version moves the setup's
+    /// revision, so reads restart and the pages stay where they are.
+    pub(super) fn follow_team(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .settings_page
+            .update(cx, |page, _| page.take_team_open_request())
+        {
+            self.show_settings(SettingsSection::Team, window, cx);
+        }
+        let applied = self.settings_page.read(cx).team_applied_count();
+        if applied != self.team_applied_seen {
+            self.team_applied_seen = applied;
+            self.setup_file.update(cx, |file, _| file.team_applied());
+        }
+    }
+
     /// A System services row's Logs or Open node.
     fn service_event(&mut self, event: &ServiceEvent, window: &mut Window, cx: &mut Context<Self>) {
         let (node, service, tab) = match event {

@@ -360,7 +360,7 @@ impl SettingsPage {
         metrics_secrets: Option<freshkube_core::secrets::Secrets>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (columns, width) = source::columns(&[]);
+        let (columns, width) = source::columns(&[], false);
         // Followed items and the notice settings draw from the app's owner.
         if let Some(followed) = freshkube_followed::owner::followed(cx) {
             cx.observe(&followed, |this, _, cx| {
@@ -505,7 +505,7 @@ impl SettingsPage {
             ),
             _ => None,
         };
-        (self.columns, self.width) = source::columns(&self.rows);
+        self.refit_columns();
         let example = origin == Origin::Example;
         self.sources.update(cx, |list, cx| {
             list.set_recovered_workspace(&workspace, &self.source_recovery, example, cx)
@@ -637,6 +637,12 @@ impl SettingsPage {
 
     pub(in crate::desktop) fn section(&self) -> SettingsSection {
         self.section
+    }
+
+    /// Sizes the table's columns, with room for the team's chips when the
+    /// person is in a team.
+    pub(super) fn refit_columns(&mut self) {
+        (self.columns, self.width) = source::columns(&self.rows, self.in_team());
     }
 
     /// Shows `section`; Delivery sources checks only while it shows.
@@ -946,7 +952,7 @@ impl SettingsPage {
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
-        match self.section {
+        let section = match self.section {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
             SettingsSection::Coroot => self.render_coroot(window, cx),
@@ -963,6 +969,15 @@ impl Render for SettingsPage {
                 .list_frame(window)
                 .child(self.sources.clone())
                 .into_any_element(),
+        };
+        // A team version waiting for review shows above every other section.
+        match self.team_update_banner(cx) {
+            Some(banner) => v_flex()
+                .size_full()
+                .child(banner)
+                .child(v_flex().flex_1().min_h_0().child(section))
+                .into_any_element(),
+            None => section,
         }
     }
 }

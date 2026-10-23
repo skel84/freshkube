@@ -308,3 +308,65 @@ async fn the_table_shows_each_level_and_says_when_guarded_is_the_default(cx: &mu
     })
     .unwrap();
 }
+
+/// A team file that names `prod` with a level and `mgmt` with none.
+const TEAM: &str = "version: 1\nclusters:\n  - id: prod\n    role: environment\n    protection: protected\n  - id: mgmt\n    role: core\n";
+
+#[gpui_kit::test]
+async fn the_teams_level_is_a_floor_the_inspector_will_not_go_under(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), THREE);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update(|cx| {
+        view.read(cx)
+            .settings_page
+            .clone()
+            .update(cx, |page, cx| page.set_team_for_test(TEAM, cx))
+    });
+    // prod: the team's Protected. Looser levels do nothing; stricter choose.
+    select(cx, handle, "prod");
+    for level in [Protection::Open, Protection::Guarded] {
+        choose(cx, handle, level);
+        assert_eq!(
+            draft(cx, &view),
+            (Some(Protection::Protected), Some(Protection::Protected)),
+            "{level:?}"
+        );
+    }
+    choose(cx, handle, Protection::ReadOnly);
+    assert_eq!(draft(cx, &view).0, Some(Protection::ReadOnly));
+}
+
+#[gpui_kit::test]
+async fn a_team_cluster_with_no_level_has_the_guarded_floor(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), THREE);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update(|cx| {
+        view.read(cx)
+            .settings_page
+            .clone()
+            .update(cx, |page, cx| page.set_team_for_test(TEAM, cx))
+    });
+    select(cx, handle, "mgmt");
+    choose(cx, handle, Protection::Open);
+    assert_eq!(draft(cx, &view), (None, None));
+    choose(cx, handle, Protection::Protected);
+    assert_eq!(draft(cx, &view).0, Some(Protection::Protected));
+}
+
+#[gpui_kit::test]
+async fn without_a_team_every_level_still_chooses(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), THREE);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    select(cx, handle, "prod");
+    choose(cx, handle, Protection::Open);
+    assert_eq!(draft(cx, &view).0, Some(Protection::Open));
+}

@@ -136,3 +136,52 @@ pub fn floor_words(team_level: Protection) -> String {
         team_level.label()
     )
 }
+
+/// How one cluster stands against the team, for its row and its Inspector.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClusterView {
+    /// The chip on the row: the team names the cluster, or you set one of its
+    /// keys. None when neither does.
+    pub row: Option<Origin>,
+    /// The loosest level the team allows; none when the team sets no floor.
+    pub floor: Option<Protection>,
+    /// Where the protection level comes from.
+    pub level: Origin,
+    /// Your level was looser than the floor, so the floor applies.
+    pub floor_held: bool,
+}
+
+impl ClusterView {
+    /// The levels the Inspector offers.
+    pub fn allowed(&self) -> Vec<Protection> {
+        allowed_levels(self.floor)
+    }
+
+    /// Why the looser levels are off; none without a floor.
+    pub fn floor_words(&self) -> Option<String> {
+        self.floor.map(floor_words)
+    }
+}
+
+/// The cluster `id` against the team's values and yours. None when neither
+/// the team nor you set anything for it.
+pub fn cluster_view(id: &str, team: &Values, yours: &Overrides) -> Option<ClusterView> {
+    let mark = format!("clusters[{id}]");
+    let mine = |key: &String| {
+        key.starts_with(&mark) && matches!(key[mark.len()..].chars().next(), None | Some('.'))
+    };
+    let yours_set = yours.keys().any(mine);
+    let team_set = team.keys().any(mine);
+    let row = match (yours_set, team_set) {
+        (false, false) => return None,
+        (true, over_team) => Origin::Yours { over_team },
+        (false, true) => Origin::Team,
+    };
+    let level = resolve(&protection_key(id), team, yours, &Values::new());
+    Some(ClusterView {
+        row: Some(row),
+        floor: floor(id, team),
+        level: level.origin,
+        floor_held: level.floor_held,
+    })
+}

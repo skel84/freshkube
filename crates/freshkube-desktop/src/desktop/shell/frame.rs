@@ -78,6 +78,7 @@ impl Pilot {
                             .child(div().flex_none().w(px(1.)).h(dp(14.)).bg(p.line))
                             .child(page)
                     }))
+                    .children(self.render_team_status(cx))
                     .children(receipt.map(|(receipt, label)| {
                         div()
                             .id("setup-reload-status")
@@ -519,6 +520,30 @@ impl Pilot {
                         .dock
                         .update(cx, |dock, cx| dock.toggle(window, cx))
                 }))
+                .into_any_element(),
+        )
+    }
+}
+
+impl Pilot {
+    /// The status-bar item for a team version waiting for review (#849). It
+    /// stays while the person has put the review off; it opens Team setup.
+    fn render_team_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let words = self.settings_page.read(cx).team_waiting_words()?.to_owned();
+        Some(
+            div()
+                .id("team-update-status")
+                .test_support()
+                .role(Role::Button)
+                .aria_label(words.clone())
+                .flex_none()
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.settings_page
+                        .update(cx, |page, cx| page.team_review_open(cx));
+                    this.show_settings(SettingsSection::Team, window, cx);
+                }))
+                .child(words)
                 .into_any_element(),
         )
     }

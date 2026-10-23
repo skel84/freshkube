@@ -6,14 +6,15 @@
 
 use chrono::{DateTime, Utc};
 use freshkube_core::team::{
-    Change, ChangeKind, Leave, Membership, NotReviewed, Origin, Review, Step, example::Shape,
-    resolve,
+    Change, ChangeKind, ClusterView, FetchFailed, Leave, Membership, NotReviewed, Origin, Review,
+    Step, Version, cluster_view, example::Shape, resolve,
 };
 use freshkube_ui::{form, page};
 use gpui_kit::component::{Sizable, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 
 use freshkube_ui::tooltip::FollowTooltip as _;
 
@@ -32,6 +33,11 @@ pub(super) struct TeamState {
     refusal: Option<NotReviewed>,
     /// The person chose to review later: the review waits until asked for.
     later: bool,
+    /// How many reviewed versions the page has applied; the shell restarts
+    /// the setup's reads when it grows.
+    applied_count: u64,
+    /// The banner's Review was pressed; the shell opens the section.
+    open_requested: bool,
     pub(super) shown: Shown,
 }
 
@@ -68,6 +74,10 @@ pub(super) struct Shown {
     failure: Option<FailureWords>,
     refusal: Option<String>,
     yours: Vec<YoursRow>,
+    /// Each cluster the team or you set something for, against the team.
+    clusters: BTreeMap<String, ClusterView>,
+    /// The status-bar item's words while a version waits.
+    waiting: Option<String>,
     /// The review: its lead, its count line and the rows of the current step.
     lead: &'static str,
     pub(super) counts: String,
@@ -122,6 +132,7 @@ impl TeamState {
                 _ => "Nothing".to_string(),
             };
             shown.yours = yours_rows(team);
+            shown.clusters = cluster_views(team);
             shown.failure = team.failure().map(|failure| FailureWords {
                 lead: format!("Couldn’t fetch since {}", when(failure.since)),
                 body: format!(
@@ -158,6 +169,10 @@ impl TeamState {
                 })
                 .collect();
         }
+        shown.waiting = self
+            .review
+            .as_ref()
+            .map(|review| format!("Team update {} waits", review.target_id()));
         shown.refusal = self.refusal.map(|why| why.to_string());
         self.shown = shown;
     }
@@ -189,6 +204,40 @@ pub(super) fn counts(review: &Review) -> String {
             plural(trust, "trust change", "trust changes"),
         )
     }
+}
+
+/// The Team or Yours chip for an origin; none for a default.
+pub(super) fn origin_chip(id: String, origin: Origin, cx: &App) -> Option<AnyElement> {
+    let chip = origin.chip()?;
+    let tone = match origin {
+        Origin::Yours { .. } => Tone::Accent,
+        _ => Tone::Outline,
+    };
+    Some(
+        ui::tag(tone, None, chip, cx)
+            .id(SharedString::from(id))
+            .test_support()
+            .aria_label(origin.words())
+            .into_any_element(),
+    )
+}
+
+/// Every cluster the team names or you set a key of, against the team.
+fn cluster_views(team: &Membership) -> BTreeMap<String, ClusterView> {
+    let theirs = team.team_values();
+    let ids: BTreeSet<&str> = theirs
+        .keys()
+        .chain(team.overrides().keys())
+        .filter_map(|key| {
+            let rest = key.strip_prefix("clusters[")?;
+            rest.split_once(']').map(|(id, _)| id)
+        })
+        .collect();
+    ids.into_iter()
+        .filter_map(|id| {
+            cluster_view(id, &theirs, team.overrides()).map(|view| (id.to_string(), view))
+        })
+        .collect()
 }
 
 /// A reason as a sentence: a capital first, a full stop last.
@@ -299,6 +348,7 @@ impl SettingsPage {
     /// Plays an example team (`--fixture`).
     pub(in crate::desktop) fn set_team_example(&mut self, shape: Shape, cx: &mut Context<Self>) {
         self.team = TeamState::example(shape, Utc::now());
+        self.refit_columns();
         cx.notify();
     }
 
@@ -508,6 +558,39 @@ impl SettingsPage {
             .into_any_element()
     }
 
+    /// The banner above the other sections while a version waits for review
+    /// and the person has not put it off. Review opens the section.
+    pub(super) fn team_update_banner(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.section == super::SettingsSection::Team
+            || self.team.later
+            || self.team.review.is_none()
+        {
+            return None;
+        }
+        let this = cx.entity();
+        let review = Button::new("team-banner-review")
+            .small()
+            .outline()
+            .label("Review")
+            .on_click(move |_, _, cx| this.update(cx, |page, cx| page.team_banner_open(cx)))
+            .into_any_element();
+        Some(
+            div()
+                .id("team-banner")
+                .test_support()
+                .px(dp(page::PAGE_PADDING))
+                .pt(dp(page::PAGE_GAP))
+                .child(contained(ui::banner(
+                    Tone::Info,
+                    Some("A new team version waits".into()),
+                    "It applies only after you review it, trust changes first.",
+                    Some(review),
+                    cx,
+                )))
+                .into_any_element(),
+        )
+    }
+
     /// What stands where a review was put off.
     fn team_waiting(&self, cx: &mut Context<Self>) -> AnyElement {
         let this = cx.entity();
@@ -572,6 +655,26 @@ impl SettingsPage {
         // The page keeps showing its review of the version it had.
     }
 
+    /// Joins a team with a version applied, for tests on real workspaces.
+    #[cfg(test)]
+    pub(super) fn set_team_for_test(&mut self, team_file: &str, cx: &mut Context<Self>) {
+        use freshkube_core::team::{Overrides, example};
+        let mut m = Membership::join(example::source(), Overrides::new());
+        let version = Version::parse("t1", team_file.as_bytes(), Default::default())
+            .expect("a valid team file");
+        m.fetched(Ok(version), Utc::now());
+        let mut review = m.review().expect("a version waits");
+        example::confirm_all(&mut review);
+        m.apply(review, Utc::now()).expect("reviewed");
+        self.team = TeamState {
+            membership: Some(m),
+            ..TeamState::default()
+        };
+        self.team.derive();
+        self.refit_columns();
+        cx.notify();
+    }
+
     /// The trust changes still to confirm, for the tests.
     #[cfg(test)]
     pub(super) fn team_trust_pending(&self) -> Vec<String> {
@@ -587,8 +690,62 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn team_review_open(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::desktop) fn team_review_open(&mut self, cx: &mut Context<Self>) {
         self.team.later = false;
+        cx.notify();
+    }
+
+    /// The banner's Review: the shell opens the section, which its guard of
+    /// unsaved edits may hold back.
+    fn team_banner_open(&mut self, cx: &mut Context<Self>) {
+        self.team.later = false;
+        self.team.open_requested = true;
+        cx.notify();
+    }
+
+    /// Whether the banner asked for the Team setup section, once.
+    /// Whether the person is in a team, so rows have room for chips.
+    pub(super) fn in_team(&self) -> bool {
+        self.team.membership.is_some()
+    }
+
+    pub(in crate::desktop) fn take_team_open_request(&mut self) -> bool {
+        std::mem::take(&mut self.team.open_requested)
+    }
+
+    /// The status-bar item's words while a version waits for review.
+    pub(in crate::desktop) fn team_waiting_words(&self) -> Option<&str> {
+        self.team.shown.waiting.as_deref()
+    }
+
+    /// How many reviewed versions this page has applied.
+    pub(in crate::desktop) fn team_applied_count(&self) -> u64 {
+        self.team.applied_count
+    }
+
+    /// How a cluster stands against the team, for its row and Inspector.
+    pub(super) fn team_cluster(&self, id: &str) -> Option<&ClusterView> {
+        self.team.shown.clusters.get(id)
+    }
+
+    /// Takes the outcome of a fetch of the team file. A different waiting
+    /// version makes a new review and ends a choice to review later; the same
+    /// one, or a failure, leaves the review as it is.
+    pub(in crate::desktop) fn team_fetched(
+        &mut self,
+        result: Result<Version, FetchFailed>,
+        now: DateTime<Utc>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(team) = self.team.membership.as_mut() else {
+            return;
+        };
+        if team.fetched(result, now) {
+            self.team.review = team.review();
+            self.team.later = false;
+            self.team.refusal = None;
+        }
+        self.team.derive();
         cx.notify();
     }
 
@@ -611,7 +768,10 @@ impl SettingsPage {
             let review = self.team.review.take().expect("checked");
             if let Some(team) = self.team.membership.as_mut() {
                 match team.apply(review, Utc::now()) {
-                    Ok(()) => self.team.refusal = None,
+                    Ok(()) => {
+                        self.team.refusal = None;
+                        self.team.applied_count += 1;
+                    }
                     Err(why) => {
                         self.team.refusal = Some(why);
                         self.team.review = team.review();
@@ -631,6 +791,7 @@ impl SettingsPage {
             self.team.left = Some(how);
             self.team.later = false;
             self.team.derive();
+            self.refit_columns();
             cx.notify();
         }
     }
