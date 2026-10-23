@@ -1,1 +1,0 @@
-- **Agent tab:** the dock has an Agent tab (View › Open Agent) where your own opencode investigates the cluster through Freshkube's four read tools, with a setup card, a per-cluster access switch that is off until you turn it on from the egress card, a model picker, a transcript with steps, a trail of the reads it made, and Stop. With `--fixture` it answers from example data.
