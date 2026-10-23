@@ -361,7 +361,7 @@ The page shows the places the agent reads (issue [#909](https://github.com/skel8
 
 ### What feeds the follower
 
-Only `ReadEvent`s: the `view`, the outcome and the cluster the endpoint built from a read that actually ran. Nothing the agent writes (its words, a citation, a `ViewState` it supplies) becomes a place; a citation (`[r7]`) only keeps a read's hold ([`Follower::keep`](../crates/freshkube-agent/src/follow.rs)).
+Only `ReadEvent`s: the `view`, the outcome and the cluster the endpoint built from a read that actually ran. Nothing the agent writes (its words, a citation, a `ViewState` it supplies) becomes a place; a citation (`[r7]`) only keeps a read's hold ([`Follower::keep`](../../crates/freshkube-agent/src/follow.rs)).
 
 - A **refused** read, and one with **no view**, never moves the page.
 - A read on **another cluster** never moves it, never switches the context and shows no place: the strip says "The agent read ⟨other⟩; this page stays on ⟨own⟩." and the trail row says the same. A tab whose cluster is not the one the window shows moves nothing either (the dock checks `Origin::is_shown`).
