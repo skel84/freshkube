@@ -1,0 +1,1 @@
+- Split cluster-entry settings and workbench tests by scenario, keeping their existing coverage.
