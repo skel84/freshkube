@@ -870,6 +870,7 @@ fn leaving_an_open_entry_for_a_stricter_context_re_derives_level_and_write_refus
             // are the Talos context's (read-only), not the entry's that was
             // left.
             assert_eq!(pilot.switch.active_cluster(), None);
+            assert_eq!(pilot.pages.dock.read(cx).shown_entry(), None);
             assert_eq!(pilot.current_level(cx), Protection::ReadOnly);
             assert_eq!(pilot.context_display.level, Protection::ReadOnly);
             assert!(
