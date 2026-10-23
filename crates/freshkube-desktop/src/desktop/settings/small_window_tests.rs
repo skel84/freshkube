@@ -321,3 +321,176 @@ async fn a_saved_banner_keeps_the_stacked_panes_and_added_row_visible(cx: &mut T
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn a_long_destination_save_caps_the_banner_and_reveals_the_new_row(cx: &mut TestAppContext) {
+    use super::edit_tests::{saved, write};
+    use crate::debug_options::Theme;
+    cx.executor().allow_parking();
+    for (width, height, text, theme) in [
+        (760., 560., 20., Theme::Light),
+        (760., 560., 20., Theme::Dark),
+        (1280., 880., 13., Theme::Light),
+        (1280., 880., 13., Theme::Dark),
+        (1280., 880., 20., Theme::Light),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let destinations: Vec<_> = (0..12)
+            .map(|i| serde_json::json!({"name": format!("destination-{i}"), "entry": "prod"}))
+            .collect();
+        write(
+            directory.path(),
+            &serde_json::json!({
+                "version": 1,
+                "clusters": [{"id": "prod", "role": "environment", "context": "example-prod"}],
+                "destinations": destinations,
+            })
+            .to_string(),
+        );
+        let options = GpuiOptions::new(Some(directory.path().join("missing")), None, 100)
+            .with_preferences(Some(directory.path().join("preferences.json")))
+            .with_debug(
+                DebugOptions::default()
+                    .with_page("settings-destinations")
+                    .with_theme(theme),
+            );
+        let (_runtime, handle, pilot) = mount(cx, options, width, height);
+        let url = format!(
+            "https://{}.example.test:6443/a-long-path",
+            "long-cluster-name.region-one.zone-two.".repeat(5)
+        );
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            window.render_frame(cx);
+            window.click("settings-destination-0", cx);
+            window.press("a", cx);
+            window.render_frame(cx);
+            window.click("settings-destination-value", cx);
+            window.input(&url, cx);
+            window.click("settings-destination-save", cx);
+        })
+        .unwrap();
+        saved(cx, handle, &pilot).await;
+        cx.run_until_parked();
+        for _ in 0..8 {
+            cx.update_window(handle, |_, window, cx| {
+                window.simulate_next_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        }
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let page = pilot.read(cx).settings_page.clone();
+            let banners = window.find("settings-banners").bounds();
+            let banner = window.find("settings-saved").bounds();
+            let cap = crate::ui::dp_px(48., window);
+            let scroll = page.read(cx).banners_scroll.clone();
+            if freshkube_ui::page::is_short(window) {
+                assert!(
+                    banners.size.height <= cap + px(1.),
+                    "{banners:?} exceeds {cap:?}"
+                );
+                assert!(
+                    banner.size.height > scroll.bounds().size.height,
+                    "the save must overflow"
+                );
+                assert!(scroll.max_offset().y > px(0.));
+                let green = crate::palette::palette(cx).good;
+                let border = |window: &Window| {
+                    let bounds = window
+                        .find("settings-banners")
+                        .bounds()
+                        .scale(window.scale_factor());
+                    let frames: Vec<_> = window
+                        .painted_quads()
+                        .into_iter()
+                        .filter(|quad| {
+                            quad.border_color == green
+                                && quad.border_widths.top > px(0.).scale(window.scale_factor())
+                                && quad.bounds.intersects(&bounds)
+                        })
+                        .collect();
+                    assert!(!frames.is_empty(), "the green frame must be painted");
+                    // GPUI may paint a border as four strips with separate
+                    // masks. They must all describe the same fixed frame,
+                    // and together expose its full top, bottom and sides.
+                    let painted = frames[0].bounds;
+                    let tolerance = window.scale_factor();
+                    assert!((painted.top() - bounds.top()).0.abs() <= tolerance);
+                    assert!((painted.bottom() - bounds.bottom()).0.abs() <= tolerance);
+                    assert!((painted.left() - bounds.left()).0.abs() <= tolerance);
+                    assert!((painted.right() - bounds.right()).0.abs() <= tolerance);
+                    for frame in &frames {
+                        assert_eq!(frame.bounds, painted, "one frame inside the cap");
+                    }
+                    let mask = frames
+                        .iter()
+                        .map(|frame| frame.content_mask.bounds)
+                        .reduce(|a, b| a.union(&b))
+                        .unwrap();
+                    assert_eq!(
+                        painted.intersect(&mask),
+                        painted,
+                        "the border's top, bottom and corners must not be clipped"
+                    );
+                    painted
+                };
+                let before = border(window);
+                assert_eq!(scroll.offset().y, px(0.));
+                for delta in [-4000., 4000.] {
+                    window.scroll(
+                        "settings-banners",
+                        ScrollDelta::Pixels(point(px(0.), px(delta))),
+                        cx,
+                    );
+                    window.render_frame(cx);
+                    assert_eq!(
+                        scroll.offset().y,
+                        if delta < 0. {
+                            -scroll.max_offset().y
+                        } else {
+                            px(0.)
+                        }
+                    );
+                    assert_eq!(window.find("settings-banners").bounds(), banners);
+                    assert_eq!(border(window), before);
+                    let content = window.find("settings-saved").bounds();
+                    if delta < 0. {
+                        assert!(content.top() < banner.top(), "only the contents move");
+                    } else {
+                        assert_eq!(content, banner);
+                    }
+                }
+            } else {
+                assert!(
+                    banners.size.height > cap,
+                    "a tall window must show the full banner"
+                );
+                assert!(
+                    banner.top() >= banners.top() - px(1.)
+                        && banner.bottom() <= banners.bottom() + px(1.),
+                    "{banner:?} outside {banners:?}"
+                );
+                assert_eq!(scroll.max_offset().y, px(0.));
+            }
+            let row = window.find("settings-destination-12").bounds();
+            let list = window.find("settings-destinations-list").bounds();
+            let page_bounds = window.find("settings-page").bounds();
+            assert!(
+                row.top() >= list.top() - px(1.) && row.bottom() <= list.bottom() + px(1.),
+                "{row:?} outside {list:?}"
+            );
+            assert!(
+                row.top() >= page_bounds.top() && row.bottom() <= page_bounds.bottom() + px(1.),
+                "{row:?} outside page {page_bounds:?}"
+            );
+            let list = page.read(cx).destinations.read(cx);
+            assert_eq!(
+                list.selected(),
+                Some(&freshkube_core::workspace::Key::Server(url.clone()))
+            );
+        })
+        .unwrap();
+    }
+}
