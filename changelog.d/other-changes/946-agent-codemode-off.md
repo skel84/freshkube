@@ -1,0 +1,1 @@
+- **Agent:** the opencode profile turns Code Mode off for Freshkube's MCP server, so its four read tools are offered to the model directly; `execute` stays denied.
