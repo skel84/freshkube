@@ -10,7 +10,7 @@
 //! so the remote side starts at the size the terminal already has.
 
 use freshkube_core::pluralize;
-use freshkube_core::write::{Protection, may_start_shell};
+use freshkube_core::write::{OwnLevel, may_start_shell};
 use std::time::Duration;
 
 use freshkube_core::resources::{
@@ -171,7 +171,9 @@ impl ShellView {
             containers: PodContainers::default(),
             known: false,
             gone: false,
-            blocked: None,
+            // Closed until its cluster's level is told: a shell never starts
+            // before `set_own_level` has said it may.
+            blocked: may_start_shell(OwnLevel::Unknown).err(),
             cluster: None,
             container: None,
             state: ShellState::Idle,
@@ -329,7 +331,7 @@ impl ShellView {
     /// is gone or has no level cell (#878). The gate is core's
     /// `may_start_shell`, which takes no other level, so the cluster shown
     /// never decides. A refusal disables Start, whatever else is ready.
-    pub fn set_own_level(&mut self, level: Option<Protection>, cx: &mut Context<Self>) {
+    pub fn set_own_level(&mut self, level: OwnLevel, cx: &mut Context<Self>) {
         let blocked = may_start_shell(level).err();
         if self.blocked != blocked {
             self.blocked = blocked;

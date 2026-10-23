@@ -9,18 +9,35 @@ use serde::{Deserialize, Serialize};
 pub const READ_ONLY_REASON: &str = "This cluster is read-only.";
 
 /// The reason a dock shell gives when its own cluster's entry is no longer
-/// listed, or has no level cell.
+/// listed.
 pub const ENTRY_GONE_REASON: &str = "Its cluster entry is no longer in freshkube.yaml.";
 
-/// Whether a dock shell may start a session, from its own cluster entry's
-/// level and nothing else. The shown cluster's level is not a parameter, so
-/// a call site cannot pass it. `None` is an entry that is gone or has no
-/// level cell: it blocks, as a skipped entry stays read-only. `Err` is the
-/// reason the Start control gives.
-pub fn may_start_shell(own_level: Option<Protection>) -> Result<(), &'static str> {
-    match own_level {
-        None => Err(ENTRY_GONE_REASON),
-        Some(level) => level.refusal().map_or(Ok(()), Err),
+/// The reason a dock shell gives while its cluster's level is not known: the
+/// setup has not been read yet, so nothing says what the level is.
+pub const LEVEL_UNKNOWN_REASON: &str = "The setup hasn't been read yet.";
+
+/// What a dock tab knows of the level of its own cluster. It is the tab's
+/// own cluster's, never the shown one's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnLevel {
+    /// The level of the tab's entry, or of its context for a window with no
+    /// entry, under the setup as it is now.
+    Known(Protection),
+    /// The entry the tab started under is no longer in the setup.
+    EntryGone,
+    /// The setup has not been read, so there is no level to apply.
+    Unknown,
+}
+
+/// Whether a dock shell may start a session, from its own cluster's level
+/// and nothing else. The shown cluster's level is not a parameter, so a call
+/// site cannot pass it. A level that is gone or unknown blocks, as a skipped
+/// entry stays read-only. `Err` is the reason the Start control gives.
+pub fn may_start_shell(own: OwnLevel) -> Result<(), &'static str> {
+    match own {
+        OwnLevel::EntryGone => Err(ENTRY_GONE_REASON),
+        OwnLevel::Unknown => Err(LEVEL_UNKNOWN_REASON),
+        OwnLevel::Known(level) => level.refusal().map_or(Ok(()), Err),
     }
 }
 
@@ -145,15 +162,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_shell_starts_from_its_own_level_at_each_level_and_never_with_none() {
+    fn a_shell_starts_from_its_own_level_at_each_level_and_never_without_one() {
         assert_eq!(
-            may_start_shell(Some(Protection::ReadOnly)),
+            may_start_shell(OwnLevel::Known(Protection::ReadOnly)),
             Err(READ_ONLY_REASON)
         );
         for level in [Protection::Protected, Protection::Guarded, Protection::Open] {
-            assert_eq!(may_start_shell(Some(level)), Ok(()));
+            assert_eq!(may_start_shell(OwnLevel::Known(level)), Ok(()));
         }
-        assert_eq!(may_start_shell(None), Err(ENTRY_GONE_REASON));
+        assert_eq!(may_start_shell(OwnLevel::EntryGone), Err(ENTRY_GONE_REASON));
+        assert_eq!(
+            may_start_shell(OwnLevel::Unknown),
+            Err(LEVEL_UNKNOWN_REASON)
+        );
+        assert_ne!(ENTRY_GONE_REASON, LEVEL_UNKNOWN_REASON);
     }
 
     #[test]

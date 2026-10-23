@@ -594,7 +594,10 @@ fn a_running_shell_names_its_own_cluster_after_a_switch(cx: &mut TestAppContext)
     // The shell kept its own cluster's level: dev-fra is open, so it was
     // never held to the read-only cluster shown now.
     let own = cx.read(|cx| dock.read(cx).tabs[0].origin.level(cx));
-    assert_eq!(own, Some(freshkube_core::write::Protection::Open));
+    assert_eq!(
+        own,
+        freshkube_core::write::OwnLevel::Known(freshkube_core::write::Protection::Open)
+    );
     // Its dock tab wears that level.
     show_cluster(handle, &pilot, "dev-fra", cx);
     cx.update_window(handle, |_, window, cx| {

@@ -145,9 +145,9 @@ impl Pilot {
             .dock
             .update(cx, |dock, cx| dock.set_shown(entry, cx));
         // The tabs wear their own cluster's level.
-        self.derive_strip(cx);
+        let tabs_changed = self.derive_strip(cx);
         if level == self.context_display.level && !self.context_display.level_words.is_empty() {
-            return false;
+            return tabs_changed;
         }
         self.context_display.level = level;
         self.context_display.level_words = level_words(level).into();

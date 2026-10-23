@@ -342,7 +342,8 @@ forwarding the page's hide to `Watch::set_visible`.
   Its dock tab captures its cluster (`Origin`: source, entry, context; its level is read live)
   when it starts (#878), as a forward does: switching tab or context ends
   nothing, the tab's source is refreshed only by the same connection's, and
-  its Start gate reads the tab's own entry level, never the shown one. See
+  its Start gate reads the entry's level, or its context's when the window has
+  no entry, never the shown one. See
   [pod exec](POD_EXEC.md).
 - **Forwards:** [`ForwardList` and `ForwardView`](../crates/freshkube-resources/src/forwards/mod.rs)
   capture the selected connection and specification on Forward. The app owns

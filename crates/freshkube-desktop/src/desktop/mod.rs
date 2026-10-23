@@ -765,12 +765,8 @@ impl Pilot {
                 }
                 this.sync_setup_connection(window, cx);
                 // A tab whose entry the file no longer lists shows the page
-                // that says so; the shell draws again when that changes.
-                let missing = this.tab_entry_missing(cx);
-                if this.tabs.missing_shown != missing {
-                    this.tabs.missing_shown = missing;
-                    cx.notify();
-                }
+                // that says so; `prepare_protection` above derived that and
+                // asked for the draw.
                 // The shell and its cached column draw again only when the
                 // section shown changes or a section's dot appears or clears.
                 if flipped {
@@ -1023,7 +1019,7 @@ impl Pilot {
 
         self.leave_entry(cx);
         if !self.mode().has_talos() {
-            // The default talosconfig is what's missing in self mode.
+            // The default talosconfig is what's missing in this mode.
             if value.path.is_none() {
                 return;
             }

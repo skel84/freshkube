@@ -166,16 +166,24 @@ impl Pilot {
 
     /// What the window shows, for a tab to be bound to: its workspace entry,
     /// or with none the context it works in.
-    fn window_binding(&self) -> (Option<String>, Option<String>) {
+    fn window_binding(&self) -> (Option<String>, Option<ContextBinding>) {
         match self.switch.active_cluster() {
             Some(entry) => (Some(entry.to_owned()), None),
-            None => (None, self.applied.context.clone()),
+            None => (
+                None,
+                self.applied.context.clone().map(|name| ContextBinding {
+                    name,
+                    talos: self.mode().has_talos(),
+                }),
+            ),
         }
     }
 
     /// Derives the strip from the set and saves the set.
     pub(super) fn tabs_changed(&mut self, cx: &mut Context<Self>) {
-        self.derive_strip(cx);
+        if self.derive_strip(cx) {
+            cx.notify();
+        }
         self.schedule_tabs_save(cx);
         // The shell draws again only when what it lays out or answers
         // changes: the strip appearing, or a key gaining or losing its
@@ -191,7 +199,7 @@ impl Pilot {
     /// level, and the "cluster ·" prefix once the tabs span clusters. Also
     /// called when a level changes; the strip draws again only when what it
     /// shows differs.
-    pub(in crate::desktop) fn derive_strip(&mut self, cx: &mut App) {
+    pub(in crate::desktop) fn derive_strip(&mut self, cx: &mut App) -> bool {
         let spans = self.tabs.set.spans_clusters();
         let shown = self.context_display.level;
         let entries = self
@@ -202,16 +210,20 @@ impl Pilot {
             .map(|tab| {
                 // A tab bound to an entry reads that entry's level, never
                 // the shown one; an unbound tab is the window's own.
+                let missing = self.tab_unreachable(tab, cx);
                 let level = match (&tab.entry, &tab.context) {
+                    _ if missing => None,
                     (Some(entry), _) => crate::mutation::entry_level(entry, cx),
-                    (None, Some(context)) => crate::mutation::context_level(context, cx),
+                    (None, Some(binding)) => crate::mutation::context_level(&binding.name, cx),
                     (None, None) => Some(shown),
                 };
-                let missing = tab.entry.is_some() && level.is_none();
                 let described = describe_tab(&tab.view);
-                let name = tab.entry.as_ref().or(tab.context.as_ref());
+                let name = tab
+                    .entry
+                    .as_deref()
+                    .or(tab.context.as_ref().map(|binding| binding.name.as_str()));
                 let full = match (name, missing) {
-                    (Some(entry), true) => format!("Choose a cluster ({entry} is not listed)"),
+                    (Some(name), true) => format!("Choose a cluster ({name} is not available)"),
                     (Some(name), false) if spans => format!("{name} · {described}"),
                     _ => described,
                 };
@@ -232,38 +244,61 @@ impl Pilot {
         self.tabs
             .strip
             .update(cx, |strip, cx| strip.set(entries, active, cx));
+        // The page that says a tab has no cluster is drawn from this, not
+        // worked out while drawing.
+        let missing = self.tab_entry_missing(cx);
+        std::mem::replace(&mut self.tabs.missing_shown, missing) != missing
     }
 
     /// Shows `view` in the window, as a deep link would, and waits for its
     /// page before following the page again.
     fn show_tab_view(&mut self, view: ViewState, window: &mut Window, cx: &mut Context<Self>) {
+        // A context made in the other kind of window than this one is not
+        // reached by name: the name of a talosconfig context and of a
+        // kubeconfig context are not the same.
+        let tab = self.tabs.set.current();
+        let strand = tab.entry.is_none()
+            && tab
+                .context
+                .as_ref()
+                .is_some_and(|binding| binding.talos != self.mode().has_talos());
+        if strand {
+            self.tabs.set.strand_current(true);
+        }
+        // A tab with no cluster to reach opens nothing: the page says so,
+        // and the tab never falls back to the shown one. That is an entry
+        // the file no longer lists, or a context made in the other kind of
+        // window (a Talos context and a kubeconfig context are not the same
+        // name).
+        if self.tab_entry_missing(cx) {
+            self.tabs.activating = None;
+            self.tabs_changed(cx);
+            cx.notify();
+            return;
+        }
         // A tab on another cluster goes through the entry's own activation
         // (the session registry parks the cluster left and shows the one
         // reached as last known first), holding the view until the entry has
-        // its connection. An entry the file no longer lists opens nothing:
-        // the page says so, and the tab never falls back to the shown one.
+        // its connection.
         if let Some(entry) = self.tabs.set.current().entry.clone()
             && self.switch.active_cluster() != Some(entry.as_str())
         {
-            if self.tab_entry_missing(cx) {
-                self.tabs.activating = None;
-                self.tabs_changed(cx);
-                cx.notify();
-                return;
-            }
             self.tabs.activating = Some(entry.clone());
             self.switch_cluster_to_view(entry, view, window, cx);
             return;
         }
         // A tab made in a window with no entry goes back to its context by
-        // name, leaving whatever entry is open.
+        // name. An open entry is left explicitly first: choosing a context
+        // the entry also names would otherwise change nothing, and the tab
+        // would rebind to the entry.
         let tab = self.tabs.set.current();
         if tab.entry.is_none()
-            && let Some(context) = tab.context.clone()
-            && (self.switch.active_cluster().is_some()
-                || self.applied.context.as_ref() != Some(&context))
+            && let Some(binding) = tab.context.clone()
         {
-            self.select_context(context, window, cx);
+            self.leave_entry(cx);
+            if self.applied.context.as_ref() != Some(&binding.name) {
+                self.select_context(binding.name, window, cx);
+            }
         }
         self.tabs.applying = Some((view.clone(), cx.background_executor().now()));
         // Coming back to a Resources tab shows the rows it kept, muted,
@@ -329,15 +364,15 @@ impl Pilot {
         use crate::debug_options::TabsShape;
         let here = self.current_view(cx).unwrap_or_else(overview);
         let shown = self.switch.active_cluster().map(str::to_owned);
-        let bound = |page, entry: &str| (ViewState::page(page), Some(entry.to_owned()));
+        let bound = |page, entry: &str| (ViewState::page(page), Some(entry.to_owned()), None);
         let views = match shape {
             TabsShape::Clusters => vec![
-                (here, shown),
+                (here, shown, None),
                 bound(freshkube_nav::LinkPage::Nodes, "prod-ams"),
                 bound(freshkube_nav::LinkPage::Etcd, "stage-fra"),
             ],
             TabsShape::Missing => vec![
-                (here, shown),
+                (here, shown, None),
                 bound(freshkube_nav::LinkPage::Nodes, "retired-fra"),
             ],
         };
@@ -391,14 +426,20 @@ impl Pilot {
         cx.notify();
     }
 
-    /// Whether the shown tab belongs to an entry the setup no longer lists.
+    /// Whether the shown tab has no cluster to reach: its entry is not in
+    /// the setup any more, or it was made in a window of the other kind
+    /// (Talos or Kubernetes only) than the one open, where its context's
+    /// name means something else.
     pub(in crate::desktop) fn tab_entry_missing(&self, cx: &App) -> bool {
-        self.tabs
-            .set
-            .current()
-            .entry
-            .as_deref()
-            .is_some_and(|entry| crate::mutation::entry_level(entry, cx).is_none())
+        self.tab_unreachable(self.tabs.set.current(), cx)
+    }
+
+    fn tab_unreachable(&self, tab: &set::Tab, cx: &App) -> bool {
+        match (&tab.entry, &tab.context) {
+            (Some(entry), _) => crate::mutation::entry_level(entry, cx).is_none(),
+            (None, Some(_)) => tab.stranded,
+            (None, None) => false,
+        }
     }
 
     /// Keeps the rows of the Resources tab that is about to stop showing.

@@ -32,6 +32,7 @@ mod tests;
 
 pub(super) use commands::bind_keys;
 pub(super) use commands::{destination_view, node_view, object_view};
+pub(super) use set::ContextBinding;
 pub(crate) use set::OpenIn;
 pub(super) use set::TabSet;
 pub(super) use strip::ViewTabs;

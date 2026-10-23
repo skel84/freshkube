@@ -26,6 +26,11 @@ pub(super) struct Saved {
     /// binds every tab to the cluster that opens.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) entries: Vec<Option<String>>,
+    /// The context each view is bound to when it was made in a window with
+    /// no entry, with the kind of window (#878); `null` for a tab bound to an
+    /// entry or to none. A file without it binds no context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) contexts: Vec<Option<ContextBinding>>,
 }
 
 impl Saved {
@@ -58,11 +63,20 @@ impl Saved {
             } else {
                 Vec::new()
             },
+            contexts: if set.contexts().iter().any(Option::is_some) {
+                set.contexts()
+                    .into_iter()
+                    .skip(first)
+                    .take(SAVED_TABS)
+                    .collect()
+            } else {
+                Vec::new()
+            },
         }
     }
 
     /// The views that parse, and the selection moved to follow them.
-    pub(super) fn views(&self) -> (Vec<(ViewState, Option<String>)>, usize) {
+    pub(super) fn views(&self) -> (Vec<super::set::BoundView>, usize) {
         let mut selected = 0;
         let mut views = Vec::new();
         for (at, value) in self.views.iter().take(SAVED_TABS).enumerate() {
@@ -71,7 +85,8 @@ impl Saved {
                     selected = views.len();
                 }
                 let entry = self.entries.get(at).cloned().flatten();
-                views.push((view, entry));
+                let context = self.contexts.get(at).cloned().flatten();
+                views.push((view, entry, context));
             }
         }
         (views, selected)

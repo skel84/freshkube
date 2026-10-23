@@ -21,7 +21,7 @@ mod view;
 use std::time::Duration;
 
 use freshkube_core::resources::{ResourceKind, builtin, runs_pods};
-use freshkube_core::write::Protection;
+use freshkube_core::write::OwnLevel;
 use freshkube_ui::dock::{BAR_HEIGHT, DEFAULT_HEIGHT, MIN_HEIGHT};
 use freshkube_ui::inspector::TabStrip;
 use freshkube_ui::split_size::SplitSize;
@@ -161,13 +161,16 @@ pub(crate) struct Origin {
 
 impl Origin {
     /// This tab's own cluster's level as it is now: its entry's, or for a
-    /// window with none its context's. Never the shown cluster's. `None` is
-    /// an entry the file no longer lists, or a setup not yet read, which
-    /// blocks (`may_start_shell`).
-    pub(crate) fn level(&self, cx: &App) -> Option<Protection> {
+    /// window with none its context's. Never the shown cluster's. An entry the
+    /// file no longer lists, and a setup not yet read, each block with their
+    /// own reason (`may_start_shell`).
+    pub(crate) fn level(&self, cx: &App) -> OwnLevel {
         match &self.entry {
-            Some(entry) => crate::mutation::entry_level(entry, cx),
-            None => crate::mutation::context_level(&self.source.context, cx),
+            Some(entry) => {
+                crate::mutation::entry_level(entry, cx).map_or(OwnLevel::EntryGone, OwnLevel::Known)
+            }
+            None => crate::mutation::context_level(&self.source.context, cx)
+                .map_or(OwnLevel::Unknown, OwnLevel::Known),
         }
     }
 }
@@ -1134,8 +1137,12 @@ impl Dock {
                 None
             };
             let badge = Badge {
-                // An entry that is gone is held to Read-only, as its gate is.
-                mark: crate::desktop::shell::context::mark(level.unwrap_or(Protection::ReadOnly)),
+                mark: match level {
+                    OwnLevel::Known(level) => crate::desktop::shell::context::mark(level),
+                    // A level that is gone or unknown is held to Read-only,
+                    // as its gate is.
+                    OwnLevel::EntryGone | OwnLevel::Unknown => freshkube_ui::level::Mark::ReadOnly,
+                },
                 foreign,
                 blocked,
                 who: format!(

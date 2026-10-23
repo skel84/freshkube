@@ -18,7 +18,7 @@ impl Render for Pilot {
         let column = self
             .navigation
             .lay_out(window)
-            .filter(|_| !self.tab_entry_missing(cx));
+            .filter(|_| !self.tabs.missing_shown);
         let page = self.render_page(cx);
         let root = v_flex()
             .size_full()
@@ -98,7 +98,7 @@ impl Pilot {
         match self.navigation.page {
             // A tab whose cluster entry is gone shows no page at all, never
             // the cluster that happens to be open (#878).
-            _ if self.tab_entry_missing(cx) => self.render_choose_cluster(cx),
+            _ if self.tabs.missing_shown => self.render_choose_cluster(cx),
             // Not cached: a cached view that draws again makes every cached
             // view inside it draw again, so a cursor moving over one chart
             // would redraw all the panels. Drawn with the shell, the page

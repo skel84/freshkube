@@ -18,6 +18,7 @@ use crate::detail::DetailTarget;
 use crate::screen::ClusterAccess;
 use crate::{example, live};
 use freshkube_core::job::OwnedJob;
+use freshkube_core::write::{LEVEL_UNKNOWN_REASON, OwnLevel, Protection};
 use freshkube_terminal::TerminalSize;
 
 type Emitted = Rc<RefCell<Vec<ShellEvent>>>;
@@ -89,6 +90,11 @@ impl Mounted {
 }
 
 fn mount(cx: &mut TestAppContext) -> Mounted {
+    mount_with(cx, Some(OwnLevel::Known(Protection::Open)))
+}
+
+/// A shell view as the dock makes one, told its cluster's level or not.
+fn mount_with(cx: &mut TestAppContext, level: Option<OwnLevel>) -> Mounted {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -102,6 +108,9 @@ fn mount(cx: &mut TestAppContext) -> Mounted {
         Root::new(view, window, cx)
     });
     let shell = shell.unwrap();
+    if let Some(level) = level {
+        cx.update(|cx| shell.update(cx, |view, cx| view.set_own_level(level, cx)));
+    }
     let emitted = Emitted::default();
     let sink = emitted.clone();
     cx.update(|cx| {
@@ -599,7 +608,7 @@ fn a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
     shell.open(cx, &running_pod());
     cx.update(|cx| {
         shell.shell.update(cx, |view, cx| {
-            view.set_own_level(Some(freshkube_core::write::Protection::ReadOnly), cx)
+            view.set_own_level(OwnLevel::Known(Protection::ReadOnly), cx)
         })
     });
     assert!(!cx.read(|cx| shell.shell.read(cx).can_start()));
@@ -616,7 +625,7 @@ fn a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
     cx.update(|cx| {
         shell
             .shell
-            .update(cx, |view, cx| view.set_own_level(None, cx))
+            .update(cx, |view, cx| view.set_own_level(OwnLevel::EntryGone, cx))
     });
     assert!(!cx.read(|cx| shell.shell.read(cx).can_start()));
     assert_eq!(
@@ -626,7 +635,7 @@ fn a_read_only_cluster_starts_no_shell(cx: &mut TestAppContext) {
     // Writes allowed again: the same press starts the shell.
     cx.update(|cx| {
         shell.shell.update(cx, |view, cx| {
-            view.set_own_level(Some(freshkube_core::write::Protection::Open), cx)
+            view.set_own_level(OwnLevel::Known(Protection::Open), cx)
         })
     });
     shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
@@ -648,4 +657,28 @@ fn a_running_shell_is_named_with_its_cluster(cx: &mut TestAppContext) {
     let named = cx.read(running_anywhere);
     assert_eq!(named.len(), 1);
     assert!(named[0].ends_with(" on prod-ams"), "{named:?}");
+}
+
+/// A new shell view is closed until its cluster's level is told: it never
+/// starts in the moment before the dock has said it may.
+#[gpui_kit::test]
+fn a_new_shell_is_blocked_until_its_clusters_level_is_told(cx: &mut TestAppContext) {
+    let shell = mount_with(cx, None);
+    shell.open(cx, &running_pod());
+    assert!(!cx.read(|cx| shell.shell.read(cx).can_start()));
+    assert_eq!(
+        cx.read(|cx| shell.shell.read(cx).blocked()),
+        Some(LEVEL_UNKNOWN_REASON)
+    );
+    shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
+    assert_eq!(shell.state(cx), ShellState::Idle);
+    assert!(cx.read(running_anywhere).is_empty());
+    // Told it may, the same press starts it.
+    cx.update(|cx| {
+        shell.shell.update(cx, |view, cx| {
+            view.set_own_level(OwnLevel::Known(Protection::Guarded), cx)
+        })
+    });
+    shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
+    assert_eq!(shell.state(cx), ShellState::Running);
 }

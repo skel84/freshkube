@@ -27,7 +27,16 @@ fn entries(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> Vec<Option<String>
 }
 
 fn contexts(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> Vec<Option<String>> {
-    cx.read(|cx| pilot.read(cx).tabs.set.contexts())
+    cx.read(|cx| {
+        pilot
+            .read(cx)
+            .tabs
+            .set
+            .contexts()
+            .into_iter()
+            .map(|binding| binding.map(|binding| binding.name))
+            .collect()
+    })
 }
 
 fn active(cx: &mut TestAppContext, pilot: &Entity<Pilot>) -> SessionKey {
@@ -313,10 +322,7 @@ fn the_first_tab_keeps_the_cluster_the_window_opened_on(cx: &mut TestAppContext)
         cx.read(|cx| pilot.read(cx).applied.context.clone()),
         Some(opened.clone())
     );
-    assert_eq!(
-        cx.read(|cx| pilot.read(cx).tabs.set.contexts()[0].clone()),
-        Some(opened)
-    );
+    assert_eq!(contexts(cx, &pilot)[0], Some(opened));
     assert_eq!(
         entries(cx, &pilot),
         [
@@ -421,7 +427,7 @@ fn each_tab_saves_its_entry_and_an_old_file_binds_none() {
     let json = serde_json::to_string(&saved).unwrap();
     let read: Saved = serde_json::from_str(&json).unwrap();
     let (views, _) = read.views();
-    let entries: Vec<_> = views.into_iter().map(|(_, entry)| entry).collect();
+    let entries: Vec<_> = views.into_iter().map(|(_, entry, _)| entry).collect();
     assert_eq!(
         entries,
         [Some("dev-fra".to_owned()), Some("prod-ams".to_owned())]
@@ -444,7 +450,11 @@ fn an_old_file_loads_its_views_with_no_entry() {
     assert!(saved.entries.is_empty());
     let (views, selected) = saved.views();
     assert_eq!(views.len(), 2);
-    assert!(views.iter().all(|(_, entry)| entry.is_none()));
+    assert!(
+        views
+            .iter()
+            .all(|(_, entry, context)| entry.is_none() && context.is_none())
+    );
     let set = TabSet::restored_bound(views, selected, ViewState::page(LinkPage::Overview));
     assert_eq!(set.entries(), [None, None]);
     assert_eq!(set.selected(), 1);
@@ -620,4 +630,123 @@ fn the_cluster_buttons_wrap_inside_the_page_at_760_and_text_20(cx: &mut TestAppC
         assert!(tops.len() >= 2, "the buttons wrap onto another line");
     })
     .unwrap();
+}
+
+/// An open entry that names the tab's own context must not take the tab:
+/// selecting a context-bound tab leaves the entry first, so the tab goes to
+/// its context and does not quietly rebind to the entry.
+#[gpui_kit::test]
+fn a_context_tab_leaves_an_entry_that_names_the_same_context(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let opened = cx.read(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let entry = cx.read(|cx| {
+        pilot
+            .read(cx)
+            .settings_page
+            .read(cx)
+            .workspace()
+            .clusters
+            .iter()
+            .find(|entry| entry.context == opened)
+            .map(|entry| entry.id.clone())
+            .expect("an entry names the window's context")
+    });
+    // The first tab binds to the window's context; a second tab opens the
+    // entry that names that same context.
+    cx.update(|cx| pilot.update(cx, |pilot, cx| pilot.sync_tabs(cx)));
+    open_in_new_tab(cx, handle, &pilot, &entry);
+    assert_eq!(active(cx, &pilot), SessionKey::Entry(entry.clone()));
+    let first = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[0].id);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.select_tab(first, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(active(cx, &pilot), SessionKey::Implicit);
+    assert_eq!(entries(cx, &pilot), [None, Some(entry)]);
+    assert_eq!(contexts(cx, &pilot)[0], Some(opened));
+}
+
+/// A context named in one kind of window is not reachable by name in the
+/// other (a talosconfig context and a kubeconfig context share a name
+/// space): the tab says it has no cluster and nothing rebinds it.
+#[gpui_kit::test]
+fn a_context_tab_made_in_the_other_kind_of_window_is_not_reached_by_name(cx: &mut TestAppContext) {
+    use super::set::ContextBinding;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let talos = cx.read(|cx| pilot.read(cx).mode().has_talos());
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_view_tab(
+                ViewState::page(LinkPage::Etcd),
+                OpenIn::Background,
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let second = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[1].id);
+    cx.update(|cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.tabs.set.tabs_mut()[1].context = Some(ContextBinding {
+                name: "prod-fra".into(),
+                talos: !talos,
+            });
+            pilot.tabs_changed(cx);
+        })
+    });
+    let before = (active(cx, &pilot), entries(cx, &pilot));
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.select_tab(second, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(cx, handle);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("choose-cluster").is_some());
+    })
+    .unwrap();
+    assert_eq!(strip(cx, &pilot)[1].0, "Choose a cluster");
+    // Nothing moved the window or rebound the tab.
+    assert_eq!((active(cx, &pilot), entries(cx, &pilot)), before);
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).tabs.set.tabs()[1].context.clone()),
+        Some(ContextBinding {
+            name: "prod-fra".into(),
+            talos: !talos
+        })
+    );
+}
+
+/// A context-bound tab is saved beside the entries and comes back bound;
+/// a file without contexts still loads.
+#[test]
+fn a_context_bound_tab_is_saved_and_comes_back_bound() {
+    use super::set::ContextBinding;
+    let binding = ContextBinding {
+        name: "admin@acme".into(),
+        talos: true,
+    };
+    let mut set = TabSet::new(ViewState::page(LinkPage::Overview));
+    set.retarget(
+        Some("dev-fra".into()),
+        None,
+        ViewState::page(LinkPage::Overview),
+    );
+    set.open_for(ViewState::page(LinkPage::Nodes), None, false)
+        .unwrap();
+    // The second tab (opened behind the first) is bound to a context.
+    set.tabs_mut()[1].context = Some(binding.clone());
+    let saved = Saved::of(&set, Some("entry:dev-fra".into()));
+    let json = serde_json::to_string(&saved).unwrap();
+    let read: Saved = serde_json::from_str(&json).unwrap();
+    let (views, selected) = read.views();
+    let restored = TabSet::restored_bound(views, selected, ViewState::page(LinkPage::Overview));
+    assert_eq!(restored.entries(), [Some("dev-fra".to_owned()), None]);
+    assert_eq!(restored.contexts(), [None, Some(binding)]);
+    // A file written without `contexts` binds none.
+    let without: Saved = serde_json::from_str(r#"{"selected":0,"views":[]}"#).unwrap();
+    assert!(without.contexts.is_empty());
 }
