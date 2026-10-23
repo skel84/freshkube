@@ -81,11 +81,6 @@ impl Dock {
 
     /// The dock as it saves: its state and tabs by name.
     pub(super) fn saved(&self, cx: &App) -> SavedDock {
-        let context = self
-            .source
-            .as_ref()
-            .map(|source| source.context.clone())
-            .unwrap_or_default();
         SavedDock {
             open: self.open,
             maximized: self.maximized,
@@ -114,7 +109,7 @@ impl Dock {
                     let shell = !tab.is_log();
                     SavedTab {
                         kind: tab.target.kind.key(),
-                        context: context.clone(),
+                        context: tab.origin.source.context.clone(),
                         namespace: tab.target.identity.namespace.clone(),
                         name: tab.target.identity.name.clone(),
                         container,
@@ -136,9 +131,10 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(source) = self.source.clone() else {
+        let Some(origin) = self.current_origin() else {
             return;
         };
+        let source = origin.source.clone();
         let mut ids = Vec::new();
         let (mut logs, mut shells) = (0, 0);
         // The selected tab, if it is one that comes back; the saved
@@ -184,7 +180,7 @@ impl Dock {
                     continue;
                 };
                 shells += 1;
-                self.add_shell(target, container, window, cx)
+                self.add_shell(origin.clone(), target, container, window, cx)
             } else {
                 logs += 1;
                 let at = saved.container.map(|container| LogsAt {
@@ -192,7 +188,7 @@ impl Dock {
                     previous: saved.previous,
                     all: saved.all_containers,
                 });
-                self.add_tab(target, at, window, cx)
+                self.add_tab(origin.clone(), target, at, window, cx)
             };
             if restore.selected == Some(ix) {
                 selected = Some(id);

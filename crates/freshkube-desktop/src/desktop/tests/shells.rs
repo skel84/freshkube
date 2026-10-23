@@ -53,7 +53,7 @@ fn quit_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
     step(cx, &|window, cx| window.press("ctrl-q", cx));
     assert_eq!(cx.pending_prompt(), None, "the terminal keeps Ctrl-Q");
     assert!(!QUIT.get());
-    let asked = format!("End the shell in {}?", pod.name);
+    let asked = format!("End the shell in {} on prod-fra?", pod.name);
     for (how, send) in [
         (
             "a menu",
@@ -92,7 +92,9 @@ fn quit_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
+fn closing_the_window_asks_to_end_a_running_shell_and_another_connection_does_not(
+    cx: &mut TestAppContext,
+) {
     use crate::resources::{example, live, shell};
     let (_runtime, handle, view) = fixture(cx, 1280., 800.);
     let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
@@ -123,7 +125,10 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
     step(cx, &|window, cx| window.click(row.clone(), cx));
     start_shell(handle, &view, &pod, cx);
     let running = |cx: &mut TestAppContext| cx.read(shell::running_anywhere);
-    assert_eq!(running(cx), [SharedString::from(pod.name.clone())]);
+    assert_eq!(
+        running(cx),
+        [SharedString::from(format!("{} on prod-fra", pod.name))]
+    );
     // The terminal hands the keyboard back with Command-Escape on macOS and
     // Ctrl-Shift-Q elsewhere.
     let leave = if cfg!(target_os = "macos") {
@@ -133,20 +138,14 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
     };
 
     // Option-Down in the terminal is the shell's; from the list, another
-    // connection asks, and Cancel keeps this one and the shell.
+    // connection asks nothing and ends nothing (#878): the shell keeps the
+    // connection it started on.
     step(cx, &|window, cx| window.press("alt-down", cx));
     assert!(!cx.has_pending_prompt());
     step(cx, &|window, cx| window.press(leave, cx));
     step(cx, &|window, cx| window.press("alt-down", cx));
-    let (message, detail) = cx.pending_prompt().unwrap();
-    assert_eq!(message, format!("End the shell in {}?", pod.name));
-    // Closing the connection alone would leave the shell running in the
-    // pod, so ending it sends keys first, and says what they can't stop.
-    assert!(detail.contains("Control-C, then Control-D"), "{detail}");
-    assert!(detail.contains("keeps running in the pod"), "{detail}");
-    cx.simulate_prompt_answer("Cancel");
-    cx.run_until_parked();
-    assert_eq!(
+    assert!(!cx.has_pending_prompt());
+    assert_ne!(
         cx.read(|cx| view.read(cx).applied.context.clone()),
         Some(context.clone())
     );
@@ -162,6 +161,13 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
             })
             .unwrap();
         assert!(!close);
+        // The question names the shell's cluster, whatever is shown now.
+        let (message, detail) = cx.pending_prompt().unwrap();
+        assert_eq!(
+            message,
+            format!("End the shell in {} on prod-fra?", pod.name)
+        );
+        assert!(detail.contains("Control-C, then Control-D"), "{detail}");
         cx.simulate_prompt_answer(answer);
         cx.run_until_parked();
         assert_eq!(closed.get(), closes);
@@ -169,18 +175,6 @@ fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut
     // Agreeing ended the shell before the window went.
     assert!(running(cx).is_empty());
 
-    // Agreeing to another connection ends the shell and moves on.
-    step(cx, &|window, cx| window.click("pod-shell-start", cx));
-    assert_eq!(running(cx).len(), 1);
-    step(cx, &|window, cx| window.press(leave, cx));
-    step(cx, &|window, cx| window.press("alt-down", cx));
-    cx.simulate_prompt_answer("End the shell");
-    cx.run_until_parked();
-    assert_ne!(
-        cx.read(|cx| view.read(cx).applied.context.clone()),
-        Some(context)
-    );
-    assert!(running(cx).is_empty());
     // With no shell running, nothing asks.
     let close = cx
         .update_window(handle, |_, window, cx| {

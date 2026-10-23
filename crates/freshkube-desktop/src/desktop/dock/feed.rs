@@ -225,7 +225,12 @@ impl Dock {
 
     /// Retry on a tab whose object couldn't be read.
     pub(super) fn retry_feed(&mut self, id: u64, cx: &mut Context<Self>) {
-        let Some(access) = self.source.as_ref().map(|source| source.access.clone()) else {
+        let Some(access) = self
+            .tabs
+            .iter()
+            .find(|tab| tab.id == id)
+            .map(|tab| tab.origin.source.access.clone())
+        else {
             return;
         };
         self.start_feed(id, access, cx);

@@ -156,6 +156,8 @@ impl DockStory {
                         format!("{PREFIX}-tab-{ix}"),
                         title.clone(),
                         ix == self.selected,
+                        None,
+                        false,
                         close,
                         cx,
                     )

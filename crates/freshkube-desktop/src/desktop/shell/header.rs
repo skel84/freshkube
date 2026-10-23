@@ -250,8 +250,19 @@ impl Pilot {
         let pilot = cx.entity().downgrade();
         let full = self.context_display.full.clone();
         let open_pilot = pilot.clone();
-        let label = self.context_display.name.clone();
-        let detail = self.context_display.detail.clone();
+        // A tab with no cluster shows no cluster's name or level here.
+        let none = self.tabs.missing_shown;
+        let label = if none {
+            SharedString::from("No cluster")
+        } else {
+            self.context_display.name.clone()
+        };
+        let full = if none { label.clone() } else { full };
+        let detail = if none {
+            SharedString::from("This tab has no cluster to show")
+        } else {
+            self.context_display.detail.clone()
+        };
         let tone = match self.context_display.state {
             Connection::Connected => Tone::Good,
             Connection::Failed => Tone::Crit,
@@ -277,7 +288,11 @@ impl Pilot {
                     .bg(p.surface_2)
                     .accessibility_label(full.clone())
                     // The connection's detail doesn't fit the one line.
-                    .tooltip(format!("{full}\n{detail}\n{level_words}"))
+                    .tooltip(if none {
+                        format!("{full}\n{detail}")
+                    } else {
+                        format!("{full}\n{detail}\n{level_words}")
+                    })
                     .dropdown_caret(true)
                     .child(
                         h_flex()
@@ -300,7 +315,7 @@ impl Pilot {
                                 h_flex()
                                     .min_w_0()
                                     .gap(dp(6.))
-                                    .children(ui::status_glyph(tone, cx))
+                                    .children((!none).then(|| ui::status_glyph(tone, cx)).flatten())
                                     .child(
                                         div()
                                             .id("context-short-name")
@@ -314,7 +329,7 @@ impl Pilot {
                                             .child(label),
                                     ),
                             )
-                            .child(
+                            .children((!none).then(|| {
                                 freshkube_ui::level::tag(
                                     mark(level),
                                     if glyph_only_level {
@@ -326,8 +341,8 @@ impl Pilot {
                                 )
                                 .id("header-protection")
                                 .test_support()
-                                .aria_label(level_words.clone()),
-                            ),
+                                .aria_label(level_words.clone())
+                            })),
                     ),
             )
             .content(move |_, _, cx| {

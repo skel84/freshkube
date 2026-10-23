@@ -30,24 +30,9 @@ impl Pilot {
                             .access
                             .is_some_and(|old| old != new)
                     });
-                if changed && !resources::shell::running_anywhere(cx).is_empty() {
-                    // Cancel leaves the original explicit session in place. Mark
-                    // ordinary data stale, and ask once per replacement; manual
-                    // Refresh allows another confirmation after a cancellation.
-                    self.overview.apply(&request, Err("Access changed; refresh to reconnect after confirming the running shell can end".into()));
-                    self.rebuild_joined_nodes(cx);
-                    let replacement = (collected.configuration, collected.access);
-                    if self.switch.registry.active().prompted_access != Some(replacement) {
-                        self.switch.registry.active_mut().prompted_access = Some(replacement);
-                        self.unless_shell(window, cx, move |view, window, cx| {
-                            if view.epoch == epoch && view.overview.is_current(&request) {
-                                view.install_overview(request, collected, true, window, cx);
-                            }
-                        });
-                    }
-                } else {
-                    self.install_overview(request, collected, changed, window, cx);
-                }
+                // A running shell keeps the connection it started on (#878),
+                // so new access asks nothing of it.
+                self.install_overview(request, collected, changed, window, cx);
             }
             Err(error) => {
                 if self.overview.apply(&request, Err(error)) {

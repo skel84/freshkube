@@ -5,6 +5,7 @@ Several places of the open cluster at once, under the header, each with a histor
 Code:
 
 - `crates/freshkube-desktop/src/desktop/tabs/set.rs`: `TabSet`, `OpenIn` and the rules (open, close, reopen, step, history), with no GPUI types.
+- `tabs/cluster_tests.rs`: tabs on several clusters (#878). `tabs/choose.rs`: the "Choose a cluster" page.
 - `tabs/strip.rs`: `ViewTabs`, the strip as a cached view of its own; `tabs/commands.rs`: what `Pilot` does with the set, the keys and the click's gesture; `tabs/restore.rs`: the file.
 - `crates/freshkube-ui/src/tab_strip.rs`: the row of closable tabs the dock and the strip share, and the bar the strip sits in.
 - `crates/freshkube-resources/src/frozen/`: `FrozenRows` and `FrozenSet`, the bounds of frozen rows; `screen/frozen.rs`: the page's side of them.
@@ -14,7 +15,7 @@ Tests that prove it: `tabs/set_tests.rs` (the rules), `tabs/tests.rs` (the windo
 
 ## The set
 
-A `TabSet` is on `Pilot` and belongs to the cluster that is open: a tab is one cluster's, and a context or workspace switch leaves one tab at the view shown. At most 16 tabs; a tab remembers 64 steps back and 64 forward. A background tab opens right after the shown one and changes nothing on screen; a front tab is shown at once. The last tab does not close. Closing the shown tab shows its right neighbour, else the left; the last ten closed tabs can be reopened.
+A `TabSet` is on `Pilot`. Since #878 a tab is bound to a cluster entry (see [Tabs on several clusters](#tabs-on-several-clusters-878)), and a context or workspace switch no longer resets the set: it retargets the shown tab. At most 16 tabs; a tab remembers 64 steps back and 64 forward. A background tab opens right after the shown one and changes nothing on screen; a front tab is shown at once. The last tab does not close. Closing the shown tab shows its right neighbour, else the left; the last ten closed tabs can be reopened.
 
 A view has one namespace, the open object's, so a tab keeps its list's own beside it (`Tab::list_ns`) and comes back listing where it was. Titles use the names Resources shows ("Deployments", "Deployment payments/api").
 
@@ -62,3 +63,17 @@ A Resources tab that stops showing keeps its last list, so coming back shows it 
 Coming back, the page shows them muted with "200 of 1,204 kept · last known 4 min ago", while it lists again, and the status bar says it. When the list lands the rows are replaced and the ones whose version changed flash. If the read fails the rows stay, marked stale with the page's banner and Retry, never an empty list; Retry keeps them until a list answers.
 
 `ResourcesScreen::rows_are_frozen` says when the rows shown are frozen ones. The Resources page offers no Restart or Delete today (no page offers an action through the write framework yet, [the write model](../WRITE_MODEL.md)); when one does, it must stay disabled while rows are frozen, with a tooltip saying why, and Delete goes through the changed-since check of #853 once the rows are live.
+
+## Tabs on several clusters (#878)
+
+A tab is bound to a cluster entry (`Tab::entry`, the workspace entry's id) and never to the current context. A context switch no longer resets the set.
+
+- **Activating** a tab on another entry goes through the registry's `activate` and its parked summaries (`show_tab_view` → `switch_cluster_to_view`), which show as last known first; the tab's view is held until the entry has its connection. Until the window reaches the entry the tab keeps it (`Tabs::activating`).
+- **The context switcher retargets the focused tab** (`sync_tabs` → `TabSet::retarget`): the page, kind and namespace stay, the object only if it resolves by name, and the tab's kept rows are dropped. ⌘-click on a cluster row opens a new tab bound to that cluster instead (`open_cluster_in_new_tab`).
+- **The first tab is bound too.** A tab is bound to what the window shows the first time it shows it: the entry, or for a window with no entry (a context picked by hand, a kubeconfig or talosconfig given at launch) the context it works in (`Tab::context`). Selecting a context-bound tab leaves an open entry first, then goes back to that context by name; the window's own first tab keeps the cluster the window opened on.
+- **A missing entry** (not in `freshkube.yaml`) shows a dashed ring on its tab and a "Choose a cluster" page (`tabs/choose.rs`) with no cluster column behind it, and nothing else. The shown cluster never stands in; a person's pick binds the tab and opens the tab's own page there, with its kind and namespace (`choose_cluster_for_tab`). The cluster buttons wrap inside the page.
+- **The level** (#852): every tab wears its own cluster's level glyph, and a 2 px cap when it is read-only, protected or open; the "cluster ·" prefix shows only when the tabs span clusters.
+- **Saved:** `navigation.json`'s `tabs.entries` holds each view's entry id and `tabs.contexts` each context-bound view's context with the kind of window (`talos`); a file without them binds nothing. A context-bound tab made in the other kind of window (a Talos context against a Kubernetes-only one, where the name means something else) is not reached by name: it shows "Choose a cluster", like a missing entry.
+- **Right-click** opens a tab's menu and does not make the tab the shown one; its Close closes that tab. The tab's tooltip waits while its menu is open.
+
+Dock shells and logs keep their own connection: see [resources](resources.md) and [pod exec](../POD_EXEC.md#a-shell-on-its-own-connection-878).

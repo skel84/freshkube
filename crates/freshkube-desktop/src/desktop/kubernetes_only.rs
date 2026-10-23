@@ -490,35 +490,24 @@ impl Pilot {
             }
             return;
         }
-        let replacement = (report.revision, None);
-        if !crate::resources::shell::running_anywhere(cx).is_empty()
-            && self.switch.registry.active().prompted_access == Some(replacement)
-        {
+
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
+            return;
+        };
+        if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
             return;
         }
-        self.switch.registry.active_mut().prompted_access = Some(replacement);
-        self.unless_shell(window, cx, move |view, window, cx| {
-            if view.switch.registry.active().prompted_access != Some(replacement) {
-                return;
-            }
-            let Some(kube) = view.mode.kubernetes_only_mut() else {
-                return;
-            };
-            if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
-                return;
-            }
-            kube.sources = report.sources;
-            kube.revision = report.revision;
-            view.contexts = report
-                .contexts
-                .into_iter()
-                .map(|context| context.name)
-                .collect();
-            // Retain the explicitly selected context even if the new file's
-            // current context differs or the selected context disappeared.
-            view.use_kube_context(Some(access.context().to_owned()), window, cx);
-            view.ensure_summary(window, cx);
-        });
+        kube.sources = report.sources;
+        kube.revision = report.revision;
+        self.contexts = report
+            .contexts
+            .into_iter()
+            .map(|context| context.name)
+            .collect();
+        // Retain the explicitly selected context even if the new file's
+        // current context differs or the selected context disappeared.
+        self.use_kube_context(Some(access.context().to_owned()), window, cx);
+        self.ensure_summary(window, cx);
     }
 
     /// Lists the contexts of a kubeconfig file chosen in Settings.
@@ -531,17 +520,16 @@ impl Pilot {
         if self.mode().is_example() || self.mode().has_talos() {
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
-            let Some(kube) = this.mode.kubernetes_only_mut() else {
-                return;
-            };
-            kube.explicit = Some(path);
-            kube.requested = None;
-            // Having chosen the file is not having chosen a context, and
-            // the choice is remembered only once a context is picked.
-            kube.choosing = true;
-            this.load_kube_contexts(window, cx);
-        });
+
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
+            return;
+        };
+        kube.explicit = Some(path);
+        kube.requested = None;
+        // Having chosen the file is not having chosen a context, and
+        // the choice is remembered only once a context is picked.
+        kube.choosing = true;
+        self.load_kube_contexts(window, cx);
     }
 
     /// Opens the kubeconfig chooser from Talos mode. Choosing a file reads its
@@ -583,9 +571,8 @@ impl Pilot {
         if !self.mode().has_talos() {
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
-            this.enter_kubernetes_only(path, window, cx)
-        });
+
+        self.enter_kubernetes_only(path, window, cx)
     }
 
     /// Drops the Talos session and its jobs, as a context change does, and
