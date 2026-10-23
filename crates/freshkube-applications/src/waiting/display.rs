@@ -8,6 +8,7 @@ use freshkube_delivery::changes::Gap;
 use freshkube_delivery::waiting::{
     App, Fold, Item, PullRead, Query, Shipped, Standing, State, Waiting,
 };
+use freshkube_ui::read_state::ReadState;
 use freshkube_ui::ui::Tone;
 use gpui_kit::SharedString;
 
@@ -397,12 +398,14 @@ fn body(waiting: &Waiting, cluster: &str, text: &str, query: Option<&Query>) -> 
         };
     }
     if uninstalled(waiting) {
+        let state = ReadState::NotInstalled {
+            tool: "Kargo".into(),
+            adds: "what is ready to ship, compared across environments".into(),
+            cluster: cluster.to_string(),
+        };
         return Body::Empty {
-            title: "Kargo isn't installed".into(),
-            description: format!(
-                "Kargo's projects aren't served on {cluster}, so there's nothing to compare."
-            )
-            .into(),
+            title: state.title().into(),
+            description: format!("{} Without Kargo, see Applications.", state.description()).into(),
         };
     }
     Body::Empty {

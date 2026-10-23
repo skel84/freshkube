@@ -166,14 +166,30 @@ impl ApplicationsPage {
                 title,
                 description,
                 reason,
+                access,
             } => (
                 "applications-refused",
+                // A refusal gets no Retry: asking again gets the same answer.
                 ui::empty_state(
                     IconName::Lock,
                     title.clone(),
                     description.clone(),
                     Some(reason.to_string()),
-                    Vec::new(),
+                    vec![
+                        Button::new("applications-copy-access")
+                            .primary()
+                            .label("Copy access request")
+                            .tooltip("Copies a read-only Role: get, list and watch")
+                            .on_click({
+                                let access = access.to_string();
+                                move |_, _, cx| {
+                                    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(
+                                        access.clone(),
+                                    ));
+                                }
+                            })
+                            .into_any_element(),
+                    ],
                     cx,
                 ),
             ),

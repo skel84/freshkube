@@ -239,8 +239,8 @@ impl Pilot {
                 glyph(Tone::Unknown),
                 self.overview
                     .error()
-                    .map(|error| format!("Unavailable: {error}"))
-                    .unwrap_or_else(|| "Unavailable".into()),
+                    .map(|error| format!("Couldn't read the cluster: {error}"))
+                    .unwrap_or_else(|| "Couldn't read the cluster".into()),
             )
         };
         (

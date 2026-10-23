@@ -399,7 +399,7 @@ fn refused_kargo_is_a_note_never_an_empty_list() {
     assert_eq!(missing.notes[0].gap, Gap::NotServed);
     assert_eq!(
         missing.notes[0].text,
-        "Kargo projects aren't served on core-fra"
+        "Kargo projects aren't installed on core-fra"
     );
 }
 

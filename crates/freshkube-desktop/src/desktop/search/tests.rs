@@ -103,6 +103,18 @@ fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
     }
 }
 
+#[test]
+fn search_names_kinds_in_plain_words() {
+    use super::model::{KINDS, kind_display};
+    for key in KINDS {
+        let name = kind_display(key);
+        assert!(!name.contains('.'), "{key}: {name}");
+        assert_ne!(name, "objects", "{key} has a name");
+    }
+    assert_eq!(kind_display("deployments.apps"), "deployments");
+    assert_eq!(kind_display("ingresses.networking.k8s.io"), "ingresses");
+}
+
 #[gpui_kit::test]
 fn refusal_is_visible_and_other_groups_still_open(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);

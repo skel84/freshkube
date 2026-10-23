@@ -25,6 +25,7 @@ use crate::panel::marker_glyph;
 use crate::store::Choice;
 use crate::ui::{self, dp, dp_px};
 use freshkube_ui::page::{self, Fold, MenuItems, PageHeader};
+use freshkube_ui::read_state::{ReadActions, ReadState, read_state};
 use std::rc::Rc;
 
 impl Render for MonitoringPage {
@@ -421,18 +422,27 @@ impl MonitoringPage {
             )
             .into_any_element(),
             Connection::Missing(missing) => self.render_missing(missing, retry, cx),
-            Connection::Refused(message) => ui::empty_state(
-                IconName::ShieldX,
-                message.clone(),
-                match self.chosen_source() {
-                    Some(Choice::Url { .. }) => "The URL chosen in Settings refused the request. Enter or replace its token in Settings.",
-                    _ => "Dashboards read Prometheus through the Kubernetes service proxy, which needs get on services/proxy in its namespace.",
-                },
-                None,
-                vec![retry("monitoring-retry", "Try again")],
-                cx,
-            )
-            .into_any_element(),
+            Connection::Refused(message) => {
+                // A refusal gets no Retry: asking again gets the same answer.
+                let url = matches!(self.chosen_source(), Some(Choice::Url { .. }));
+                ui::empty_state(
+                    IconName::ShieldX,
+                    message.clone(),
+                    if url {
+                        "The URL chosen in Settings refused the request. Enter or replace its token in Settings."
+                    } else {
+                        "Dashboards read Prometheus through the Kubernetes service proxy, which needs get on services/proxy in its namespace. Ask an administrator for that access."
+                    },
+                    None,
+                    if url {
+                        vec![open_settings_button("monitoring-open-settings")]
+                    } else {
+                        Vec::new()
+                    },
+                    cx,
+                )
+                .into_any_element()
+            }
             Connection::Failed(message) => ui::empty_state(
                 IconName::CircleAlert,
                 "Couldn't reach Prometheus",
@@ -446,21 +456,28 @@ impl MonitoringPage {
                 cx,
             )
             .into_any_element(),
-            Connection::Unknown(why) => div()
-                .id("monitoring-unknown")
-                .size_full()
-                .child(ui::empty_state(
-                    IconName::Unplug,
-                    "No metrics source",
-                    format!(
-                        "{why}. Nothing was asked. Name a store for this entry under metrics in freshkube.yaml."
-                    ),
-                    None,
-                    Vec::new(),
-                    cx,
-                ))
-                .test_support()
-                .into_any_element(),
+            Connection::Unknown(why) => {
+                let state = ReadState::NotSetUp {
+                    what: "A metrics source".into(),
+                    gap: "Freshkube doesn't know which metrics store to read for this cluster, so it asked nothing. Prometheus is optional; the rest of Freshkube works without it.".into(),
+                    setting: Some("Monitoring".into()),
+                };
+                div()
+                    .id("monitoring-unknown")
+                    .size_full()
+                    .child(read_state(
+                        "monitoring-not-set-up",
+                        &state,
+                        ReadActions {
+                            open_settings: Some(open_settings_button("monitoring-open-settings")),
+                            details: Some(why.to_string()),
+                            ..ReadActions::default()
+                        },
+                        cx,
+                    ))
+                    .test_support()
+                    .into_any_element()
+            }
             _ => self.render_grid(narrow, short, window, cx),
         }
     }
@@ -492,20 +509,33 @@ impl MonitoringPage {
                     .into_any_element()
             })
             .collect();
-        actions.push(retry("monitoring-retry", "Look again"));
-        let context = self
-            .source
-            .as_ref()
-            .map_or_else(String::new, |source| format!(" in {}", source.context));
-        ui::empty_state(
-            IconName::SearchX,
-            format!("No Prometheus found{context}"),
-            format!("Freshkube looked for {LOOKED_FOR}."),
-            missing.tried.as_ref().map(ToString::to_string),
-            actions,
+        let cluster = self.source.as_ref().map_or_else(
+            || "this cluster".to_owned(),
+            |source| source.context.to_string(),
+        );
+        let state = ReadState::NotInstalled {
+            tool: "Prometheus".into(),
+            adds: "charts of CPU, memory and your own queries".into(),
+            cluster,
+        };
+        let mut details = format!("Looked for {LOOKED_FOR}.");
+        if let Some(tried) = &missing.tried {
+            details = format!("{details}\n{tried}");
+        }
+        read_state(
+            "monitoring-not-installed",
+            &state,
+            ReadActions {
+                open_settings: Some(open_settings_button("monitoring-open-settings")),
+                details: Some(details),
+                extra: {
+                    actions.push(retry("monitoring-retry", "Look again"));
+                    actions
+                },
+                ..ReadActions::default()
+            },
             cx,
         )
-        .into_any_element()
     }
 
     /// The dashboard's rows and panels, scrolled as one: by the grid, or by
@@ -678,4 +708,16 @@ impl MonitoringPage {
 /// offset past the end until the next layout clamps it, so clamp it here.
 fn scrolled(scroll: &ScrollHandle, unit: Pixels) -> f32 {
     (-scroll.offset().y).clamp(px(0.), scroll.max_offset().y) / unit
+}
+
+/// An Open Settings button: the app's own Settings action.
+fn open_settings_button(id: &'static str) -> AnyElement {
+    Button::new(id)
+        .outline()
+        .small()
+        .label("Open Settings")
+        .on_click(|_, window, cx| {
+            window.dispatch_action(Box::new(freshkube_ui::platform::OpenSettings), cx);
+        })
+        .into_any_element()
 }

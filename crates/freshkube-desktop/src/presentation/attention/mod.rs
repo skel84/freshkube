@@ -117,6 +117,8 @@ pub(crate) struct AttentionRow {
 #[derive(Default)]
 pub(crate) struct Attention {
     pub(crate) complete: bool,
+    /// What couldn't be read now, in plain words, when `complete` is false.
+    pub(crate) unread: Vec<&'static str>,
     pub(crate) rows: Vec<AttentionRow>,
     pub(crate) details: GroupDetails,
     pub(crate) by_node: BTreeMap<String, Vec<AttentionRow>>,
@@ -241,13 +243,20 @@ pub(crate) fn build_with_alerts(
     }
     name_cluster(&mut rows, connection);
     let mut result = finish(rows);
-    result.complete = kubernetes.is_some_and(|summary| {
-        summary.nodes.is_current()
-            && summary.pods.is_current()
-            && summary.claims.is_current()
-            && summary.events.is_current()
-            && summary.workloads.unavailable().is_empty()
-    });
+    if let Some(summary) = kubernetes {
+        let current = [
+            ("nodes", summary.nodes.is_current()),
+            ("pods", summary.pods.is_current()),
+            ("volume claims", summary.claims.is_current()),
+            ("events", summary.events.is_current()),
+            ("workloads", summary.workloads.unavailable().is_empty()),
+        ];
+        result.unread = current
+            .into_iter()
+            .filter_map(|(name, current)| (!current).then_some(name))
+            .collect();
+    }
+    result.complete = kubernetes.is_some() && result.unread.is_empty();
     result
 }
 
@@ -604,6 +613,7 @@ fn finish(mut rows: Vec<AttentionRow>) -> Attention {
     rows.truncate(50);
     Attention {
         complete: false,
+        unread: Vec::new(),
         rows,
         details: details(counts),
         by_node,

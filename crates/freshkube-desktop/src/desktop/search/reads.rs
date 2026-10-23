@@ -89,7 +89,7 @@ impl Search {
                 let task = cx.spawn(async move |this, cx| {
                     let result = receiver
                         .await
-                        .unwrap_or_else(|_| Err("The metadata worker stopped".into()));
+                        .unwrap_or_else(|_| Err("Freshkube stopped reading before this finished. Search again to retry.".into()));
                     _ = this.update(cx, |search, cx| search.answer(sequence, key, result, cx));
                 });
                 self.jobs.push((job, task));

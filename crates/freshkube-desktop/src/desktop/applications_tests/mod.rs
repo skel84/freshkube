@@ -117,7 +117,7 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
             .label()
             .unwrap()
             .to_owned();
-        assert!(!legend.contains("isn't served"), "{legend}");
+        assert!(!legend.contains("isn't installed"), "{legend}");
         assert!(
             legend.contains(
                 "Argo CD on core-fra was read in argocd only, where Argo CD's workloads run"

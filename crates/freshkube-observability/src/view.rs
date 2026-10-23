@@ -110,8 +110,8 @@ impl ObservabilityPage {
         } else {
             (
                 "Coroot connection required",
-                "Connect Coroot",
-                "Application health, service dependencies and report evidence, read from your Coroot server.",
+                "Connect Coroot to see application health",
+                "Coroot is an optional observability server. Connecting one adds application health, service maps, incidents and traces; the rest of Freshkube works without it. Learn more at docs.coroot.com.",
             )
         };
         v_flex()

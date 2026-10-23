@@ -86,7 +86,7 @@ impl ObservabilityPage {
             ui::empty_state(
                 if refused { IconName::Shield } else { IconName::TriangleAlert },
                 title,
-                "No successful observation is available. A failed read does not establish that this project is empty.",
+                "Coroot did not answer, so nothing is shown. That does not mean the project is empty.",
                 error.cloned(),
                 vec![action("obs-retry", "Retry")
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))

@@ -26,9 +26,9 @@ pub(crate) fn wasnt_found_on(entry: &str) -> String {
     format!("it wasn't found on {entry}")
 }
 
-/// `⟨what⟩ isn't served on ⟨entry⟩`: a kind the entry doesn't serve (404).
+/// `⟨what⟩ isn't installed on ⟨entry⟩`: a kind the entry doesn't serve (404).
 fn not_served(what: &str, entry: &str) -> String {
-    format!("{what} isn't served on {entry}")
+    format!("{what} isn't installed on {entry}")
 }
 
 /// `⟨what⟩ were refused on ⟨entry⟩: ⟨why⟩`, for a plural `what` that was
@@ -37,9 +37,9 @@ pub(crate) fn were_refused(what: &str, entry: &str, why: &str) -> String {
     format!("{what} were refused on {entry}: {why}")
 }
 
-/// `⟨what⟩ aren't served on ⟨entry⟩`, for a plural `what`.
+/// `⟨what⟩ aren't installed on ⟨entry⟩`, for a plural `what`.
 pub(crate) fn arent_served(what: &str, entry: &str) -> String {
-    format!("{what} aren't served on {entry}")
+    format!("{what} aren't installed on {entry}")
 }
 
 /// `⟨what⟩ couldn't be read on ⟨entry⟩: ⟨why⟩`, for a plural `what` that
@@ -89,7 +89,7 @@ mod tests {
         }
         assert_eq!(
             say(FailureKind::NotFound),
-            "Kargo isn't served on cluster-a"
+            "Kargo isn't installed on cluster-a"
         );
     }
 
@@ -106,7 +106,7 @@ mod tests {
         );
         assert_eq!(
             not_served("Kargo", "cluster-a"),
-            "Kargo isn't served on cluster-a"
+            "Kargo isn't installed on cluster-a"
         );
     }
 
@@ -118,7 +118,7 @@ mod tests {
         );
         assert_eq!(
             arent_served("Kargo Projects", "cluster-a"),
-            "Kargo Projects aren't served on cluster-a"
+            "Kargo Projects aren't installed on cluster-a"
         );
         assert_eq!(
             unreadable("Kargo Projects", "cluster-a", "slow"),

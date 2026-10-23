@@ -688,7 +688,7 @@ fn no_rows_beside_an_unread_project_never_says_none(cx: &mut TestAppContext) {
         notes: vec![Note {
             gap: Gap::NotServed,
             project: Some("loyalty".into()),
-            text: "loyalty's Freight aren't served on core-fra".into(),
+            text: "loyalty's Freight aren't installed on core-fra".into(),
         }],
         ..Changes::default()
     };
