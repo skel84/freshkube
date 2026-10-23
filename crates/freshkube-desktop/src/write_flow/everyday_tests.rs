@@ -174,3 +174,18 @@ fn example_data_shows_the_dialog_and_sends_nothing(cx: &mut TestAppContext) {
     );
     assert!(h.cluster.writes().is_empty());
 }
+
+#[gpui_kit::test]
+fn the_x_is_hidden_while_a_destructive_write_counts_down(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Guarded);
+    h.begin(cx, fake::delete_web());
+    // Before confirming, the ✕ closes the dialog like Cancel does.
+    assert!(h.present(cx, "close"));
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_millis(1500));
+    assert!(h.present(cx, "write-cancel-countdown"));
+    // In the cancel window only its own Cancel (or the send) ends the
+    // dialog: a ✕ would close it and leave the write running.
+    assert!(!h.present(cx, "close"));
+    h.cluster.assert_nothing_written();
+}

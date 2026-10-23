@@ -132,8 +132,8 @@ impl Pilot {
         let runtime = self.runtime.clone();
         let cell = entry_level_cell(&at.entry, who.protection, cx);
         if matches!(act.source.access, ClusterAccess::Example(_)) {
-            // Example data: a runner that sends nothing.
-            release(&act.identity, cx);
+            // Example data: a runner that sends nothing. The press keeps the
+            // object until `begin_everyday` is done with it, on every path.
             // The example cluster's own object when it has one, so what the
             // dialog says (an owner, an autoscaler, Argo CD) is what the
             // page shows; an identity it doesn't know gets a plain one.
@@ -141,6 +141,7 @@ impl Pilot {
             let object = crate::resources::example::object_json(&act.identity, now)
                 .unwrap_or_else(|| example_object(act));
             let Some(subject) = Subject::from_object(&object) else {
+                release(&act.identity, cx);
                 return;
             };
             let subject = subject.with_autoscaler(

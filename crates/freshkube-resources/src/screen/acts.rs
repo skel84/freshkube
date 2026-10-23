@@ -86,7 +86,10 @@ impl ResourcesScreen {
     /// kind that lacks the action, a blocked cluster or no selection: the
     /// controls are disabled then, and a key must not do what they cannot.
     pub(super) fn run_act(&mut self, act: Everyday, cx: &mut Context<Self>) {
-        if self.write_block.is_some() || !self.acts(cx).contains(&act) {
+        // The kind's actions, not the menu's: Scale is left out of the menu
+        // for an owned ReplicaSet, but its key still asks, so the shell can say
+        // why it does nothing ("scale its Deployment") instead of staying mute.
+        if self.write_block.is_some() || !self.kind_acts().contains(&act) {
             return;
         }
         let (Some(identity), Some(source)) =

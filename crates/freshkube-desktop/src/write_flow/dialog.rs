@@ -50,6 +50,9 @@ pub(super) fn open(
         // and leave it running: only its Cancel ends that.
         freshkube_ui::dialog::frame(dialog, 520., title, flow.clone(), actions, window)
             .keyboard(!countdown)
+            // The cancel window ends only by its own Cancel or the send: the
+            // ✕ would close the dialog and leave the write running.
+            .close_button(!countdown)
     });
     // The typed name is the first thing a protected dialog wants.
 }

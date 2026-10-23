@@ -511,3 +511,17 @@ fn an_owned_replicaset_is_refused_before_any_dialog(cx: &mut TestAppContext) {
     w.drive(cx, Duration::from_millis(500));
     assert!(!w.present(cx, "scale-dialog"));
 }
+
+#[gpui_kit::test]
+fn pressing_s_twice_in_example_mode_shows_one_count_dialog(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    w.press_example(cx, Everyday::Scale, "deployments.apps", "api");
+    w.press_example(cx, Everyday::Scale, "deployments.apps", "api");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "scale-dialog"));
+    // One Cancel closes it: a second dialog stacked under it would remain.
+    w.click(cx, "scale-cancel");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "scale-dialog"), "a second dialog was stacked");
+    assert!(w.cluster.recorder.requests().is_empty());
+}

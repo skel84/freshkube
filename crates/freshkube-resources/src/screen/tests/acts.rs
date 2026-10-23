@@ -198,6 +198,23 @@ fn a_replicaset_the_pane_shows_owned_by_a_deployment_does_not_offer_scale(cx: &m
     assert!(labels.is_empty(), "a ReplicaSet has only Scale: {labels:?}");
     let offered = cx.read(|cx| screen.read(cx).acts(cx));
     assert!(offered.is_empty(), "{offered:?}");
+    // Its key still asks, so the shell can say why Scale is not done.
+    let heard: Heard = Rc::default();
+    cx.update(|cx| {
+        let heard = heard.clone();
+        cx.subscribe(&screen, move |_, act: &WorkloadAct, _| {
+            heard.borrow_mut().push((act.act, act.identity.name.clone()));
+        })
+        .detach();
+    });
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.focus(window, cx));
+        window.render_frame(cx);
+        window.press("s", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(*heard.borrow(), [(Everyday::Scale, owned.name.clone())]);
 }
 
 #[gpui_kit::test]
