@@ -95,6 +95,9 @@ pub struct Stage {
     pub current_digests_at: Vec<&'static str>,
     /// The pointer each of `current_freight` was read from.
     pub current_freight_at: Vec<&'static str>,
+    /// The pointer of each name in `current_freight` itself, so a write can
+    /// check the Stage still names it.
+    pub current_freight_paths: Vec<String>,
     pub last_promotion: Option<String>,
     pub health: Option<String>,
     /// Why the Stage is not healthy, as Kargo's health checks say.
@@ -131,6 +134,9 @@ pub struct Promotion {
     pub pushed_commits: Vec<String>,
     /// Commits its steps checked out (a step's `commits` map), the source.
     pub source_commits: Vec<String>,
+    /// The steps that have run, from `status.stepExecutionMetadata`: the
+    /// step's alias and Kargo's word for how it stands.
+    pub ran_steps: Vec<(String, String)>,
 }
 
 /// Who created a Promotion, by its create-actor annotation. The words are
@@ -216,6 +222,8 @@ pub struct DiscoveredImage {
 /// running).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verification {
+    /// `id`: what a request to verify again names.
+    pub id: Option<String>,
     pub freight: Vec<String>,
     /// Which `freightHistory` entry (0 is the newest) it was recorded in.
     pub collection: usize,
@@ -302,6 +310,7 @@ const NEWEST_HISTORY: &str = "/status/freightHistory/0/items";
 pub fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
     let mut current_at: Vec<&'static str> = Vec::new();
+    let mut current_paths: Vec<String> = Vec::new();
     let mut digests: Vec<(Digest, &'static str)> = Vec::new();
     // Newer Kargo: the newest entry of `freightHistory` holds a map of
     // origin -> freight.
@@ -310,9 +319,15 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
         .and_then(Value::as_object)
     {
         let at = NEWEST_HISTORY;
-        for name in items.values().filter_map(|item| text(item, "/name")) {
+        for (origin, item) in items {
+            let Some(name) = text(item, "/name") else {
+                continue;
+            };
             current.push(name);
             current_at.push(at);
+            // A key such as `Warehouse/images` holds a slash.
+            let origin = origin.replace('~', "~0").replace('/', "~1");
+            current_paths.push(format!("{NEWEST_HISTORY}/{origin}/name"));
         }
         digests.extend(items.values().flat_map(image_digests).map(|d| (d, at)));
     }
@@ -321,12 +336,14 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
         if let Some(name) = text(value, "/status/currentFreight/name") {
             current.push(name);
             current_at.push("/status/currentFreight/name");
+            current_paths.push("/status/currentFreight/name".into());
         }
         if let Some(name) = text(value, "/status/lastPromotion/freight/name")
             && !current.contains(&name)
         {
             current.push(name);
             current_at.push("/status/lastPromotion/freight/name");
+            current_paths.push("/status/lastPromotion/freight/name".into());
         }
         for (freight, at) in [
             ("/status/currentFreight", "/status/currentFreight/images"),
@@ -368,6 +385,7 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
         current_digests: digests,
         current_digests_at: digests_at,
         current_freight_at: current_at,
+        current_freight_paths: current_paths,
         last_promotion: text(value, "/status/lastPromotion/name"),
         health: text(value, "/status/health/status"),
         health_issues: array(value, "/status/health/issues")
@@ -403,6 +421,7 @@ fn verifications(stage: &Value) -> Vec<Verification> {
     for (index, entry) in array(stage, "/status/freightHistory").enumerate() {
         for (at, run) in array(entry, "/verificationHistory").enumerate() {
             found.push(Verification {
+                id: text(run, "/id"),
                 freight: held[index].clone(),
                 collection: index,
                 phase: text(run, "/phase"),
@@ -476,6 +495,9 @@ pub(crate) fn parse_promotion(value: &Value) -> Option<Promotion> {
     let (freight_digests, freight_digests_at): (Vec<Digest>, Vec<&'static str>) =
         freight_digests.into_iter().unzip();
     Some(Promotion {
+        ran_steps: array(value, "/status/stepExecutionMetadata")
+            .filter_map(|step| Some((text(step, "/alias")?, text(step, "/status")?)))
+            .collect(),
         pushed_commits,
         source_commits,
         freight_digests,

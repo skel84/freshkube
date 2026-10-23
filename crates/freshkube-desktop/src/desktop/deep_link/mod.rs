@@ -69,7 +69,7 @@ pub(super) fn page_of(page: LinkPage) -> Page {
 
 /// The link page a shell page is, if it is a plain place: not Settings or
 /// Operations.
-fn link_page(page: Page) -> Option<LinkPage> {
+pub(super) fn link_page(page: Page) -> Option<LinkPage> {
     LinkPage::ALL
         .into_iter()
         .find(|candidate| page_of(*candidate) == page)
@@ -425,8 +425,12 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         self.open_kind(kind.clone(), window, cx);
+        // A tab that comes back lists where it was, not in its object's
+        // namespace.
+        let list_ns = self.tabs.list_override.take();
         if kind.namespaced {
-            let namespace = view.ns.as_ref().map(|ns| ns.as_str().to_owned());
+            let namespace =
+                list_ns.unwrap_or_else(|| view.ns.as_ref().map(|ns| ns.as_str().to_owned()));
             self.pages.resources.update(cx, |resources, cx| {
                 resources.set_namespace(namespace, window, cx)
             });

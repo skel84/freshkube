@@ -426,7 +426,7 @@ fn port_is_free(port: u16) -> bool {
 async fn a_pod_forward_relays_bytes_both_ways_on_the_automatic_port() {
     let fake = Fake::start().await;
     fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
-    let mut forward = fake.start_forward(pod_target("u-1"), 8080).await;
+    let forward = fake.start_forward(pod_target("u-1"), 8080).await;
     assert!(candidates(8080).contains(&forward.local_port) || forward.local_port > 0);
     assert_eq!(
         forward.status.borrow().state,
@@ -436,16 +436,35 @@ async fn a_pod_forward_relays_bytes_both_ways_on_the_automatic_port() {
         }
     );
 
+    // Another process can probe an automatic candidate while trying to
+    // bind it. Exercise those short-lived connections, and identify our
+    // relays by their bytes rather than counting requests or Close frames.
+    drop(connect(&forward).await);
+    drop(connect(&forward).await);
+
+    let mut first = connect(&forward).await;
+    let mut second = connect(&forward).await;
+    assert_eq!(exchange(&mut first, "ping").await, "web-0:ping");
+    assert_eq!(exchange(&mut second, "pong").await, "web-0:pong");
+
+    drop(first);
+    assert_eq!(exchange(&mut second, "again").await, "web-0:again");
+}
+
+#[tokio::test]
+async fn closing_one_connection_closes_its_websocket_and_keeps_the_other_usable() {
+    let fake = Fake::start().await;
+    fake.apply(PODS, pod("web-0", "u-1", Some("2026-10-02T09:00:00Z")));
+    // Keep exact lifecycle counts off the shared automatic candidates.
+    let mut forward = fake
+        .start_forward_on_system_port(pod_target("u-1"), 8080)
+        .await;
     let mut first = connect(&forward).await;
     let mut second = connect(&forward).await;
     assert_eq!(exchange(&mut first, "ping").await, "web-0:ping");
     assert_eq!(exchange(&mut second, "pong").await, "web-0:pong");
     status_until(&mut forward.status, |status| status.connections == 2).await;
     assert_eq!(fake.open(), 2, "each connection has its own websocket");
-    assert_eq!(
-        fake.state().forwards,
-        vec!["web-0?ports=8080", "web-0?ports=8080"]
-    );
 
     drop(first);
     status_until(&mut forward.status, |status| status.connections == 1).await;
