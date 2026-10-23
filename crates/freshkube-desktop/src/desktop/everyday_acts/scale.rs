@@ -23,6 +23,9 @@ pub(super) const MOST: u64 = 10_000;
 
 /// Reads the typed count: a whole number from 0 to [`MOST`].
 pub(super) fn parse(text: &str) -> Result<u64, String> {
+    if text.trim().starts_with('-') {
+        return Err("A replica count can't be negative.".to_owned());
+    }
     let count: u64 = text
         .trim()
         .parse()
@@ -136,5 +139,9 @@ mod tests {
         for bad in ["", "-1", "2.5", "three", "10001"] {
             assert!(parse(bad).is_err(), "{bad}");
         }
+        assert_eq!(
+            parse("-2"),
+            Err("A replica count can't be negative.".to_owned())
+        );
     }
 }

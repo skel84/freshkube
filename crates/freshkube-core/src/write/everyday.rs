@@ -109,6 +109,8 @@ pub struct Subject {
     workload: Workload,
     target: Target,
     object: Value,
+    /// The HorizontalPodAutoscaler that targets it, when one was found.
+    autoscaler: Option<String>,
 }
 
 impl Subject {
@@ -135,6 +137,7 @@ impl Subject {
                 subresource: None,
             },
             object: object.clone(),
+            autoscaler: None,
         })
     }
 
@@ -170,6 +173,17 @@ impl Subject {
         } else {
             "Suspend"
         }
+    }
+
+    /// The autoscaler that targets the object, if the read found one.
+    pub fn autoscaler(&self) -> Option<&str> {
+        self.autoscaler.as_deref()
+    }
+
+    /// Notes the autoscaler that targets the object.
+    pub fn with_autoscaler(mut self, name: Option<String>) -> Self {
+        self.autoscaler = name;
+        self
     }
 
     /// The tool that manages the object, when it says so.
@@ -212,6 +226,15 @@ impl Subject {
         match self.gitops() {
             Some(tool) => format!("{what}.{}", tool.warning()),
             None => format!("{what}."),
+        }
+    }
+
+    /// [`Self::sentence`] with the autoscaler's note, for Scale.
+    fn scale_sentence(&self, what: String) -> String {
+        let sentence = self.sentence(what);
+        match &self.autoscaler {
+            Some(_) => format!("{sentence} {AUTOSCALER_NOTE}"),
+            None => sentence,
         }
     }
 }
@@ -262,9 +285,45 @@ impl Subject {
                 target.label()
             ));
         }
-        Self::from_object(&object).ok_or_else(|| format!("{} has no action here.", target.label()))
+        let subject = Self::from_object(&object)
+            .ok_or_else(|| format!("{} has no action here.", target.label()))?;
+        let autoscaler = if subject.offered().contains(&Everyday::Scale) {
+            find_autoscaler(client, &subject).await
+        } else {
+            None
+        };
+        Ok(subject.with_autoscaler(autoscaler))
     }
 }
+
+/// The HorizontalPodAutoscaler whose target is the subject, if there is one
+/// and the list could be read. A list that is refused or fails says nothing:
+/// the notice is a courtesy, never a gate.
+async fn find_autoscaler(client: &kube::Client, subject: &Subject) -> Option<String> {
+    use kube::api::{Api, ApiResource, DynamicObject, ListParams};
+    let namespace = subject.target.namespace.as_deref()?;
+    let resource = ApiResource {
+        group: "autoscaling".into(),
+        version: "v2".into(),
+        api_version: "autoscaling/v2".into(),
+        kind: "HorizontalPodAutoscaler".into(),
+        plural: "horizontalpodautoscalers".into(),
+    };
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &resource);
+    let list = api.list(&ListParams::default().limit(500)).await.ok()?;
+    list.items.into_iter().find_map(|hpa| {
+        let target = hpa.data.pointer("/spec/scaleTargetRef")?;
+        let same = target["kind"].as_str() == Some(subject.target.kind.as_str())
+            && target["name"].as_str() == Some(subject.target.name.as_str());
+        same.then(|| hpa.metadata.name.unwrap_or_default())
+    })
+}
+
+/// Said in Scale's dialog when an autoscaler targets the object.
+pub const AUTOSCALER_NOTE: &str = "An autoscaler manages replicas; it may change this back.";
+
+/// Said in Restart's dialog, which has no Undo.
+pub const RESTART_NOTE: &str = "This can't be undone; the rollout restarts every pod.";
 
 /// Why an action is not offered on an object.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -303,7 +362,7 @@ pub fn scale(subject: &Subject, count: u64) -> Result<ActionDescription, NotOffe
         kind: "scale".into(),
         tier: Tier::Reversible,
         verb: "Scale".into(),
-        sentence: subject.sentence(format!(
+        sentence: subject.scale_sentence(format!(
             "Scale {} from {} to {count}",
             subject.target.label(),
             subject.replicas()
@@ -331,10 +390,13 @@ pub fn restart(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffe
         kind: "restart".into(),
         tier: Tier::Reversible,
         verb: "Restart".into(),
-        sentence: subject.sentence(format!(
-            "Restart {} by stamping its pod template, so its pods are replaced",
-            subject.target.label()
-        )),
+        sentence: format!(
+            "{} {RESTART_NOTE}",
+            subject.sentence(format!(
+                "Restart {} by stamping its pod template",
+                subject.target.label()
+            ))
+        ),
         destination: None,
         changes: vec![ObjectChange {
             target: subject.target.clone(),
@@ -589,6 +651,27 @@ mod tests {
             Verdict::Blocked(Block::AccessDenied { .. })
         ));
         cluster.assert_nothing_written();
+    }
+
+    #[tokio::test]
+    async fn restart_says_it_cannot_be_undone_and_scale_names_an_autoscaler() {
+        let cluster = Cluster::new();
+        let web = subject(&cluster, fake::DEPLOYMENT);
+        assert!(restart(&web, "t").unwrap().sentence.contains(RESTART_NOTE));
+        assert!(!scale(&web, 3).unwrap().sentence.contains(AUTOSCALER_NOTE));
+        let scaled = web.with_autoscaler(Some("web".into()));
+        assert!(
+            scale(&scaled, 3)
+                .unwrap()
+                .sentence
+                .contains(AUTOSCALER_NOTE)
+        );
+        assert!(
+            !restart(&scaled, "t")
+                .unwrap()
+                .sentence
+                .contains(AUTOSCALER_NOTE)
+        );
     }
 
     #[tokio::test]
