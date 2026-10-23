@@ -1,1 +1,0 @@
-- **Agent live check:** record the opencode 2.1.3 repeat after #958: Freshkube tools remain unavailable, permission refusals remain unproven, and process cleanup passes.

@@ -1,1 +1,0 @@
-- **Safety suite:** the read-only and protection guarantees (read-only on every write path, the typed name, the team floor, per-tab levels, dock shells, exec and forward, deep links, agents, Secrets, Operations) are now one named set of tests that CI runs as its own step.
