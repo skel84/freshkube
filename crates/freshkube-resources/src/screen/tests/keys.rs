@@ -270,10 +270,10 @@ fn l_asks_for_the_selected_pods_logs(cx: &mut TestAppContext) {
             window.render_frame(cx);
             window.press("l", cx);
             window.render_frame(cx);
-            // The drawer steps aside for the dock and the row stays
-            // selected, so Enter opens it again.
-            assert_eq!(shown(&screen, cx), None);
-            assert!(window.try_find("resource-drawer").is_none());
+            // The dock opens under the page; the drawer stays open above
+            // it, on the selected row (#922).
+            assert_eq!(shown(&screen, cx), Some(first.clone()));
+            assert!(window.try_find("resource-drawer").is_some());
             assert_eq!(screen.read(cx).selected_row(), Some(&first));
             first
         })
