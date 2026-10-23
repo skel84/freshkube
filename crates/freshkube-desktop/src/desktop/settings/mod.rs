@@ -7,6 +7,7 @@
 //! which entry each part of the delivery chain is read from, and check them
 //! (`sources/`). Example data and a window without a preferences folder
 //! show the lists and change nothing.
+mod about;
 mod audit;
 #[cfg(test)]
 mod audit_tests;
@@ -1027,6 +1028,7 @@ impl Render for SettingsPage {
             SettingsSection::Coroot => self.render_coroot(window, cx),
             SettingsSection::Notifications => self.render_notifications(window, cx),
             SettingsSection::AuditLog => self.render_audit_log(window, cx),
+            SettingsSection::About => self.render_about(window, cx),
             SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self

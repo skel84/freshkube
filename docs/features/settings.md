@@ -1,6 +1,6 @@
 # Settings
 
-The behaviour of the Settings rail area: its ten sections, the shared form rules they follow and how they save to `freshkube.yaml`. The design is DESIGN.md's [The Settings page](../DESIGN.md#the-settings-page); the setup file's format, reload and migration are in [SETUP_FILE.md](../SETUP_FILE.md). Where this document and the code differ, the code wins. Written at main `2af002d`, after [#697](https://github.com/skel84/freshkube/issues/697)'s slices 1 to 10.
+The behaviour of the Settings rail area: its eleven sections, the shared form rules they follow and how they save to `freshkube.yaml`. The design is DESIGN.md's [The Settings page](../DESIGN.md#the-settings-page); the setup file's format, reload and migration are in [SETUP_FILE.md](../SETUP_FILE.md). Where this document and the code differ, the code wins. Written at main `2af002d`, after [#697](https://github.com/skel84/freshkube/issues/697)'s slices 1 to 10.
 
 Code:
 
@@ -22,7 +22,7 @@ Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit
 
 ## The page and its sections
 
-Settings is one `Page::Settings` with one `SettingsPage`, which shows one `SettingsSection` at a time. The rail has a Settings button, and its column (`shell/source.rs`, `settings_lines`) lists the sections in two groups: *App* (General, Connection, Monitoring, Coroot, Notifications, Audit log) and *Workspace* (Clusters, Argo CD destinations, Delivery sources). Each row is `nav-settings-<slug>` and is current while its section shows. Each section is also a page slug, `settings-<slug>`, for `FRESHKUBE_PAGE`; a bare `settings` opens Clusters, the default. `OpenSettings` (⌘, on macOS; Windows and Linux bind no key, since Control-, is the dock's) and the gear's "All settings…" open the section shown last, which the page holds for the session and doesn't save.
+Settings is one `Page::Settings` with one `SettingsPage`, which shows one `SettingsSection` at a time. The rail has a Settings button, and its column (`shell/source.rs`, `settings_lines`) lists the sections in two groups: *App* (General, Connection, Monitoring, Coroot, Notifications, Audit log, About) and *Workspace* (Clusters, Argo CD destinations, Delivery sources). Each row is `nav-settings-<slug>` and is current while its section shows. Each section is also a page slug, `settings-<slug>`, for `FRESHKUBE_PAGE`; a bare `settings` opens Clusters, the default. `OpenSettings` (⌘, on macOS; Windows and Linux bind no key, since Control-, is the dock's) and the gear's "All settings…" open the section shown last, which the page holds for the session and doesn't save.
 
 The header's gear keeps only "Quick controls": Talos auto-refresh, Appearance and Text size, the same preferences as General. Below them, "All settings…" closes the popover and opens the area.
 
@@ -105,6 +105,21 @@ Observability no longer holds the connection: with none, its card is one line, "
 ## Notifications
 
 `desktop/settings/notifications.rs`. An immediate-save form over the app's `Followed` owner ([followed.md](followed.md)), saved in `follows.json` beside the preferences as each control changes: **Group updates** (on by default), **Quiet hours** (off by default; a start and an end in half hours, and failures still come through), **Hide details** (Default is on for protected and read-only clusters, On, Off), and **Followed**, every followed item with what it reads, when it ends and its state, and Stop. A follow that can't be read says "Not watching" and why. The macOS permission row arrives with banners.
+
+## About and the crash log
+
+Settings › About (`settings/about.rs`, `settings-about`) shows the version, the system and the log's file name, and two actions: **Reveal log** shows the log in the file manager, and **Copy diagnostics** puts the diagnostics on the clipboard. Both are off in a window that keeps no log (example data without a launch session). The same two actions are in the notice below (`desktop/crash.rs`).
+
+The logic is `freshkube-core`'s `crash_log/`, with no UI types; `src/main.rs` starts it.
+
+- **The log is kept.** `freshkube.log` (or `--log-file`) is rotated at launch instead of wiped: `freshkube.previous.log`, then `freshkube.previous-2.log`, and the oldest is dropped, so three files at most. A file is kept whole up to 8 MiB; a longer one keeps its last 8 MiB, from a whole line, when it rotates. An empty log (a launch that wrote nothing) moves nothing. The session's own log is not capped while it runs. The file no longer carries ANSI colour codes, which hid a field's name from the redaction.
+- **Panics are written into it.** One panic hook (`crash_log/panic.rs`), installed after `color_eyre`'s, writes the message, location, thread and a backtrace through tracing, notes the panic in the marker, flushes, then runs the hook that was there, so stderr and what the panic does are as before. A panic in a Tokio task reaches the same hook before the runtime catches it. The log is also a `LogSink` that redacts what it writes.
+- **The marker.** `crash-marker.json` in the preferences folder is written at start with the version, the start time and the log path, gets the panic's redacted message, location and thread when one happens, and is removed by a clean quit (the window closing or Quit; also an error return from the app). A marker found at the next launch is read, kept for that session and overwritten by the new one. A broken marker counts as none. A killed process or a power loss leaves a marker with no panic, and the notice says it stopped without leaving a reason. A second copy of the app started while the first runs overwrites its marker, and the first's later quit clears it.
+- **The notice.** When a marker was found, a toast that does not hide itself says "The last session ended unexpectedly" with the panic line and two buttons, `crash-notice-reveal` and `crash-notice-copy`. Reveal log opens the crashed session's log (now `previous`); Copy diagnostics copies the version, the system, the crash and the last 200 lines of that log.
+- **Redaction** (`crash_log/redact.rs`) works on a line's shape: a value after a secret name (`token`, `password`, `secret`, `authorization`, `cookie`, `api_key`, `key`, `*-key-data`, `*-certificate-data` and the like, as `name=value`, `name: value` or JSON), a `Bearer`/`Basic` credential, a URL's user and password, a JWT, a token with a known prefix, a long base64 run and a PEM block are replaced by `[redacted]`. It runs on every write to the log, on the panic message in the marker, and again on every line copied. It cannot know a secret with no name and no shape of its own; the code that logs one is the bug, and the rule stays that Secret values, kubeconfig and talosconfig contents are never logged.
+- **Debug knob.** `FRESHKUBE_CRASH` (`notice`, `panic`, `task`) in AGENTS.md's table.
+
+Tests: core's `crash_log/` (rotation, the marker, redaction, diagnostics) and `tests/panic_hook.rs` (a thread and a Tokio task panic reach the log and the marker, and a seeded token reaches neither); `desktop/crash_tests.rs` (the notice and About, Copy diagnostics holding the panic and no secret).
 
 ## Audit log
 
