@@ -306,6 +306,37 @@ const MAX_STAGE_IN_NAME: usize = 218;
 /// How a destination that isn't known is named in the dialog.
 pub const UNKNOWN_DESTINATION: &str = "an unknown cluster";
 
+/// The destination a Stage's action is held to: the one given, else an
+/// unknown cluster at `guarded` (the level an entry without one gets), never
+/// nothing.
+fn destination_or_unknown(destination: Option<&Destination>) -> Destination {
+    destination.cloned().unwrap_or_else(|| Destination {
+        entry: UNKNOWN_DESTINATION.into(),
+        protection: Protection::Guarded,
+        cell: None,
+        covers: vec![],
+    })
+}
+
+/// Holds an action on a Stage to the cluster that Stage deploys to as well
+/// as Kargo's: the stricter of the two levels applies, and the typed name on
+/// `protected` is the Stage's. Every action that reaches the Stage's
+/// destination (Refresh and Reverify of the Stage, Abort) goes through this;
+/// Promote does it for each Stage it is for, and a Warehouse's Refresh reaches
+/// no destination.
+pub fn held_to(
+    mut action: ActionDescription,
+    stage: &str,
+    destination: Option<&Destination>,
+) -> ActionDescription {
+    action.destinations = vec![Destination {
+        covers: vec![stage.to_owned()],
+        ..destination_or_unknown(destination)
+    }];
+    action.subjects = vec![stage.to_owned()];
+    action
+}
+
 /// One Stage a Promote is for, and the destination level that holds it.
 pub struct Pick<'a> {
     pub acts: &'a StageActs,
@@ -351,15 +382,8 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
     let names: Vec<String> = picks.iter().map(|p| p.acts.stage.name.clone()).collect();
     let mut destinations: Vec<Destination> = vec![];
     for pick in picks {
-        // A destination that isn't known is held to `guarded` at least, the
-        // level a cluster entry without one gets, never to nothing.
-        let unknown = Destination {
-            entry: UNKNOWN_DESTINATION.into(),
-            protection: Protection::Guarded,
-            cell: None,
-            covers: vec![],
-        };
-        let destination = pick.destination.as_ref().unwrap_or(&unknown);
+        let destination = destination_or_unknown(pick.destination.as_ref());
+        let destination = &destination;
         match destinations
             .iter_mut()
             .find(|known| known.entry == destination.entry)

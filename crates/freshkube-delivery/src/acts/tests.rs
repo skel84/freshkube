@@ -650,3 +650,119 @@ fn abort_acts_on_the_running_promotion_not_a_newer_one_still_pending() {
     stage.promoting = vec![pending.clone()];
     assert!(matches!(stage.slot(), Slot::Abort(t) if t.phase == "Pending"));
 }
+
+fn abort_held_to(level: Protection) -> ActionDescription {
+    held_to(
+        abort(&acts(), &running()),
+        "prod-ams",
+        Some(&dest("prod-ams", level)),
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn abort_on_a_protected_destination_asks_for_the_stage_name_though_kargo_is_guarded() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner.preflight(abort_held_to(Protection::Protected)).await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
+        panic!("asks");
+    };
+    assert_eq!(ask.type_name.as_deref(), Some("prod-ams"));
+    assert_eq!(
+        ask.destinations,
+        [("prod-ams".into(), Protection::Protected)]
+    );
+    let Verdict::Ready(prepared) = verdict else {
+        panic!()
+    };
+    // A wrong name, or none, sends nothing, even past the countdown.
+    for wrong in [
+        Confirmation::Confirmed,
+        Confirmation::Typed("cicd-fra".into()),
+    ] {
+        let again = match runner.preflight(abort_held_to(Protection::Protected)).await {
+            Verdict::Ready(p) => p,
+            other => panic!("{other:?}"),
+        };
+        let finished = runner.execute(*again, wrong, || false, |_| {}).await;
+        assert_eq!(finished.status, Status::NotSent(NotSent::Unconfirmed));
+    }
+    assert!(writes(&cluster).is_empty());
+    let finished = runner
+        .execute(
+            *prepared,
+            Confirmation::Typed("prod-ams".into()),
+            || false,
+            |_| {},
+        )
+        .await;
+    assert!(matches!(finished.status, Status::Sent));
+    assert_eq!(writes(&cluster).len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn abort_on_a_read_only_destination_is_blocked_with_no_request() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Open);
+    assert!(matches!(
+        runner.preflight(abort_held_to(Protection::ReadOnly)).await,
+        Verdict::Blocked(Block::ReadOnly(_))
+    ));
+    assert!(cluster.recorder.requests().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_stage_actions_that_reach_a_destination_are_all_held_to_it() {
+    // Refresh and Reverify of the Stage and Abort reach the destination; a
+    // Warehouse's Refresh doesn't. A read-only destination blocks the first
+    // three and not the last; a protected one still asks the no-confirmation
+    // actions for nothing.
+    let mut stage = acts();
+    stage.holds = true;
+    stage.verification = Some("ver-1".into());
+    let held = |a: ActionDescription| {
+        held_to(a, "prod-ams", Some(&dest("prod-ams", Protection::ReadOnly)))
+    };
+    let reaching = [
+        held(refresh_stage(&stage, "t")),
+        held(reverify(&stage).unwrap()),
+        held(abort(&stage, &running())),
+    ];
+    for action in reaching {
+        let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+        let runner = kargo_runner(&cluster, dir.path(), Protection::Open);
+        let kind = action.kind.clone();
+        assert!(
+            matches!(
+                runner.preflight(action).await,
+                Verdict::Blocked(Block::ReadOnly(_))
+            ),
+            "{kind}"
+        );
+        assert!(cluster.recorder.requests().is_empty(), "{kind}");
+    }
+    let warehouse = refresh_warehouse(&stage, "t").unwrap();
+    assert!(warehouse.destinations.is_empty());
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Open);
+    assert!(matches!(
+        runner.preflight(warehouse).await,
+        Verdict::Ready(_)
+    ));
+    // Protected destination: the annotation actions still ask for nothing.
+    let protected = held_to(
+        refresh_stage(&stage, "t"),
+        "prod-ams",
+        Some(&dest("prod-ams", Protection::Protected)),
+    );
+    let verdict = runner.preflight(protected).await;
+    assert_eq!(
+        Dialog::for_verdict(&verdict, "cicd-fra"),
+        Dialog::SendWithoutAsking {
+            notice: ANNOTATION_NOTICE
+        }
+    );
+    // An unknown destination holds them to guarded, never to nothing.
+    let unknown = held_to(abort(&stage, &running()), "prod-ams", None);
+    assert_eq!(unknown.destinations[0].protection, Protection::Guarded);
+}

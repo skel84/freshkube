@@ -106,35 +106,37 @@ impl Pilot {
     ) -> Option<ActionDescription> {
         let now = chrono::Utc::now();
         let token = unique_token(now);
+        let stage = act.change.stages.iter().find(|s| s.name == act.stage)?;
+        // The cluster the Stage deploys to: every action that reaches it is
+        // held to its level too, and follows it live as Kargo's cluster is.
+        let destination = match &stage.cluster {
+            StageDestination::Cluster(name) | StageDestination::Entry { entry: name, .. } => {
+                self.entry_named(name, cx).map(|entry| {
+                    let level = self.level_of_entry(&entry, cx);
+                    Destination {
+                        entry: entry.id.clone(),
+                        protection: level,
+                        cell: Some(entry_level_cell(&entry.id, level, cx)),
+                        covers: vec![],
+                    }
+                })
+            }
+            StageDestination::Unknown(_) => None,
+        };
+        let held = |action| acts::held_to(action, &act.stage, destination.as_ref());
         Some(match act.kind {
-            ActKind::RefreshStage => acts::refresh_stage(stage_acts, &token),
+            ActKind::RefreshStage => held(acts::refresh_stage(stage_acts, &token)),
+            // A Warehouse reaches no destination.
             ActKind::RefreshWarehouse => acts::refresh_warehouse(stage_acts, &token)?,
-            ActKind::Reverify => acts::reverify(stage_acts)?,
+            ActKind::Reverify => held(acts::reverify(stage_acts)?),
             ActKind::Abort => match stage_acts.slot() {
-                Slot::Abort(running) => acts::abort(stage_acts, running),
+                Slot::Abort(running) => held(acts::abort(stage_acts, running)),
                 _ => return None,
             },
             ActKind::Promote => {
                 if stage_acts.slot() != Slot::Promote {
                     return None;
                 }
-                let stage = act.change.stages.iter().find(|s| s.name == act.stage)?;
-                let destination = match &stage.cluster {
-                    StageDestination::Cluster(name)
-                    | StageDestination::Entry { entry: name, .. } => {
-                        self.entry_named(name, cx).map(|entry| {
-                            let level = self.level_of_entry(&entry, cx);
-                            Destination {
-                                entry: entry.id.clone(),
-                                protection: level,
-                                // Followed live, as Kargo's cluster is.
-                                cell: Some(entry_level_cell(&entry.id, level, cx)),
-                                covers: vec![],
-                            }
-                        })
-                    }
-                    StageDestination::Unknown(_) => None,
-                };
                 let ulid = acts::new_ulid(now);
                 acts::promote(
                     &act.change,
