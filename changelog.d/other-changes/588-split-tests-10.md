@@ -1,0 +1,1 @@
+- Split change-page and resource-pane tests by scenario, keeping their existing coverage.
