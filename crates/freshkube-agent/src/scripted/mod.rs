@@ -10,6 +10,7 @@
 //! | `grandchild` | starts a process of its own and says both pids (the binary) |
 //! | `tools` | asks to run each of the calls a locked-down agent must be refused |
 //! | `model` | says which model it uses |
+//! | anything else, with `offers_tools` off | answers without any read |
 //! | anything else | reads a Deployment through MCP, then asks to run a shell command |
 //!
 //! It runs in process over a pipe ([`in_process`]), which the dock's UI tests
@@ -62,6 +63,9 @@ pub struct Script {
     pub tour_shell: bool,
     /// Wait this long before each tour read, so a step shows as running.
     pub tour_pause: std::time::Duration,
+    /// False: an ordinary prompt is answered without asking the endpoint for
+    /// anything, as an agent does that was not given Freshkube's tools.
+    pub offers_tools: bool,
 }
 
 impl Default for Script {
@@ -80,6 +84,7 @@ impl Default for Script {
             tour: Vec::new(),
             tour_shell: false,
             tour_pause: std::time::Duration::ZERO,
+            offers_tools: true,
         }
     }
 }

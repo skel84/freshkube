@@ -55,6 +55,9 @@ pub(super) async fn run(turn: &Turn<'_>, prompt: &str) -> agent_client_protocol:
     } else if prompt.contains("model") {
         say(turn, &format!("model={}", turn.model))?;
         StopReason::EndTurn
+    } else if !turn.script.offers_tools {
+        say(turn, "I have no tool to read the cluster with.")?;
+        StopReason::EndTurn
     } else if !turn.script.tour.is_empty() {
         tour(turn).await?
     } else {

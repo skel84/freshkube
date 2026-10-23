@@ -11,6 +11,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use freshkube_core::agent_reads::{
@@ -102,6 +103,8 @@ struct Shared {
     targets: Arc<dyn Targets>,
     events: UnboundedSender<ReadEvent>,
     ids: ReadIds,
+    /// Whether the agent has asked for the tool list.
+    listed: AtomicBool,
 }
 
 /// A running endpoint; dropping it stops the server and ends its token.
@@ -110,6 +113,7 @@ pub struct Endpoint {
     token: Token,
     session: SessionId,
     stop: CancellationToken,
+    shared: Arc<Shared>,
 }
 
 impl Endpoint {
@@ -139,16 +143,18 @@ impl Endpoint {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let stop = CancellationToken::new();
+        let shared = Arc::new(Shared {
+            stop: stop.clone(),
+            session,
+            entry: entry.to_owned(),
+            access: access.for_session(),
+            targets,
+            events,
+            ids: ReadIds::default(),
+            listed: AtomicBool::new(false),
+        });
         let handler = Handler {
-            shared: Arc::new(Shared {
-                stop: stop.clone(),
-                session,
-                entry: entry.to_owned(),
-                access: access.for_session(),
-                targets,
-                events,
-                ids: ReadIds::default(),
-            }),
+            shared: Arc::clone(&shared),
             tools: Arc::new(tools::all()),
         };
         let service: StreamableHttpService<Handler, LocalSessionManager> =
@@ -172,6 +178,7 @@ impl Endpoint {
             token,
             session,
             stop,
+            shared,
         })
     }
 
@@ -186,6 +193,17 @@ impl Endpoint {
 
     pub fn session(&self) -> SessionId {
         self.session
+    }
+
+    /// Whether the agent has asked this endpoint for its tools. An agent
+    /// that never did cannot have offered them to its model.
+    pub fn listed(&self) -> bool {
+        self.shared.listed.load(Ordering::SeqCst)
+    }
+
+    /// How many calls have reached the endpoint, refused ones included.
+    pub fn calls(&self) -> u32 {
+        self.shared.ids.count()
     }
 
     /// The session's token, to hand to the agent once.
@@ -352,6 +370,7 @@ impl ServerHandler for Handler {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        self.shared.listed.store(true, Ordering::SeqCst);
         // An MCP 2026-07-28 client may reject a list without a lifetime and
         // cache scope, which rmcp leaves out unless set.
         Ok(ListToolsResult::with_all_items(self.tools.to_vec())

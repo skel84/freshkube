@@ -33,6 +33,9 @@ pub enum AgentShape {
     /// Access was turned off and the save failed: the tab says access comes
     /// back after a restart.
     SaveFailed,
+    /// Access is on and the agent answers without asking for Freshkube's
+    /// tools, so the tab says they weren't offered.
+    NoTools,
     /// `data: shared` is set: the dock says investigations land in the
     /// person's own opencode history.
     Shared,
@@ -41,7 +44,7 @@ pub enum AgentShape {
 impl AgentShape {
     /// The names `FRESHKUBE_AGENT` takes.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const NAMES: [&'static str; 12] = [
+    pub const NAMES: [&'static str; 13] = [
         "ready",
         "not-installed",
         "unsupported",
@@ -53,6 +56,7 @@ impl AgentShape {
         "stopped",
         "refused",
         "save-failed",
+        "no-tools",
         "shared",
     ];
 
@@ -69,6 +73,7 @@ impl AgentShape {
             "stopped" => Self::Stopped,
             "refused" => Self::Refused,
             "save-failed" => Self::SaveFailed,
+            "no-tools" => Self::NoTools,
             "shared" => Self::Shared,
             _ => return None,
         })
@@ -78,7 +83,12 @@ impl AgentShape {
     pub fn grants(self) -> bool {
         matches!(
             self,
-            Self::Running | Self::Answered | Self::Stopped | Self::Refused | Self::SaveFailed
+            Self::Running
+                | Self::Answered
+                | Self::Stopped
+                | Self::Refused
+                | Self::SaveFailed
+                | Self::NoTools
         )
     }
 
@@ -86,7 +96,12 @@ impl AgentShape {
     pub fn asks(self) -> bool {
         matches!(
             self,
-            Self::AccessOff | Self::Running | Self::Answered | Self::Stopped | Self::Refused
+            Self::AccessOff
+                | Self::Running
+                | Self::Answered
+                | Self::Stopped
+                | Self::Refused
+                | Self::NoTools
         )
     }
 }

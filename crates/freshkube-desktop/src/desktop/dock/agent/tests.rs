@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use freshkube_agent::investigation::{Outcome, StepState};
 use freshkube_agent::scripted::{Script, TourRead};
+use freshkube_agent::tools::NotOffered;
 use freshkube_ui::real_io::until_io;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
@@ -802,7 +803,10 @@ fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
         if shape == AgentShape::AccessOff {
             assert!(tab.present("agent-egress", cx), "{name}");
         }
-        if matches!(shape, AgentShape::Answered | AgentShape::Refused) {
+        if matches!(
+            shape,
+            AgentShape::Answered | AgentShape::Refused | AgentShape::NoTools
+        ) {
             tab.answered(cx);
         }
         if shape == AgentShape::Stopped {
@@ -813,6 +817,29 @@ fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
                 view.steps().iter().any(|(_, s)| *s == StepState::Running)
             });
         }
+    }
+}
+
+#[gpui_kit::test]
+fn the_tab_says_when_the_tools_were_not_offered_and_only_then(cx: &mut TestAppContext) {
+    // An agent that answers without ever asking for the tools.
+    let tab = open(cx, "no-tools", 1280., 880.);
+    tab.answered(cx);
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.contains("tools weren't offered"), "{notice}");
+    assert!(matches!(
+        cx.update(|cx| tab.view.read(cx).notice()),
+        Some(Notice::ToolsNotOffered(NotOffered::NeverListed))
+    ));
+
+    // Nothing is said before a question, or when reads were made.
+    for shape in ["ready", "answered", "refused"] {
+        let tab = open(cx, shape, 1280., 880.);
+        if shape != "ready" {
+            tab.answered(cx);
+        }
+        assert!(!tab.present("agent-notice", cx), "{shape}");
+        assert_eq!(cx.update(|cx| tab.view.read(cx).notice()), None, "{shape}");
     }
 }
 

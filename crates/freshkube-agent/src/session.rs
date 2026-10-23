@@ -66,6 +66,10 @@ impl ReadIds {
     pub(crate) fn next(&self) -> ReadId {
         ReadId(self.0.fetch_add(1, Ordering::SeqCst) + 1)
     }
+
+    pub(crate) fn count(&self) -> u32 {
+        self.0.load(Ordering::SeqCst)
+    }
 }
 
 /// The session's bearer token.
