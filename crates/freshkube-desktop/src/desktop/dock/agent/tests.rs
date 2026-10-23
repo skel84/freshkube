@@ -716,8 +716,8 @@ fn closing_the_tab_ends_the_session(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_session_reads_while_another_page_shows(cx: &mut TestAppContext) {
     let tab = open(cx, "ready", 1280., 880.);
-    // Not following: the page the person chose stays.
-    tab.click("agent-following", cx);
+    // A tab that doesn't follow: the page the person chose stays.
+    tab.view.update(cx, |view, _| view.follow = None);
     tab.script(tour(Duration::from_millis(300)), cx);
     tab.ask("why is api restarting?", cx);
     tab.click("agent-turn-on", cx);
@@ -735,11 +735,11 @@ fn the_session_reads_while_another_page_shows(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_page_never_moves_on_a_read_while_following_is_off(cx: &mut TestAppContext) {
+fn the_page_never_moves_on_a_read_of_a_tab_that_does_not_follow(cx: &mut TestAppContext) {
     let tab = open(cx, "ready", 1280., 880.);
     tab.script(tour(Duration::ZERO), cx);
-    // The toolbar's Following toggle: off, the tab only draws the trail.
-    tab.click("agent-following", cx);
+    // A tab that doesn't follow only draws the trail.
+    tab.view.update(cx, |view, _| view.follow = None);
     cx.update_window(tab.handle, |_, window, cx| {
         tab.pilot
             .update(cx, |pilot, cx| pilot.navigate(Page::Resources, window, cx))
