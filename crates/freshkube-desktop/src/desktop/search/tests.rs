@@ -231,6 +231,58 @@ fn safety_g09_searching_secret_names_never_reads_a_secret_document(cx: &mut Test
     );
 }
 
+/// Opening an object a write acts on (a pod can be deleted, a restart's
+/// target) from ⌘K only navigates: no
+/// dialog, shell, forward, operation or write follows from the search.
+#[gpui_kit::test]
+fn safety_g06_opening_a_write_target_from_search_starts_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);
+    let target = example::read("prod-fra", "pods", None, chrono::Utc::now().timestamp())
+        .unwrap()
+        .1[0]
+        .identity
+        .clone();
+    let scratch = std::env::temp_dir().join("freshkube-example-audit");
+    let audited = || {
+        freshkube_core::write::AuditStore::new(scratch.clone())
+            .read()
+            .map_or(0, |read| read.records.len())
+    };
+    let writes = audited();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("search-everything", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.input(&format!("{}/{}", target.namespace, target.name), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The search opened the object, and nothing more.
+        assert_eq!(
+            pilot.read(cx).pages.resources.read(cx).detail_identity(cx),
+            Some(&target)
+        );
+        assert!(!window.has_active_dialog(cx));
+        assert_eq!(freshkube_resources::forwards::running(cx), 0);
+        assert!(crate::resources::shell::running_anywhere(cx).is_empty());
+        assert!(crate::mutation::Operations::current(cx).is_none());
+    })
+    .unwrap();
+    assert_eq!(audited(), writes, "a write reached the runner");
+}
+
 #[gpui_kit::test]
 fn each_answer_appears_without_waiting_for_other_kinds(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);
