@@ -57,14 +57,12 @@ impl Pilot {
         {
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
-            // After the shell question, so Cancel keeps the entry.
-            this.leave_entry(cx);
-            this.kubeconfig = selection;
-            this.invalidate_target(window, cx);
-            this.refresh(window, cx);
-            cx.notify();
-        });
+
+        self.leave_entry(cx);
+        self.kubeconfig = selection;
+        self.invalidate_target(window, cx);
+        self.refresh(window, cx);
+        cx.notify();
     }
 
     /// The entry's own kubeconfig can't be read or lacks its context: the
@@ -85,7 +83,7 @@ impl Pilot {
     }
 
     /// The entry's own kubeconfig, applied as the entry opens: it stays the
-    /// active entry, and no shell question is asked (the switch asked).
+    /// active entry.
     fn apply_entry_kubeconfig(
         &mut self,
         selection: KubeconfigSelection,

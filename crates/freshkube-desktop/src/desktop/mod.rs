@@ -9,6 +9,7 @@ mod connection;
 mod deep_link;
 pub(crate) mod dock;
 mod entity_pages;
+mod everyday_acts;
 mod followed;
 #[cfg(test)]
 mod followed_tests;
@@ -55,6 +56,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 mod use_kubernetes_tests;
 mod view;
+mod write_runner;
 
 use crate::{
     GpuiOptions,
@@ -700,6 +702,7 @@ impl Pilot {
     fn start(&mut self, mut options: GpuiOptions, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(any(debug_assertions, feature = "stress"))]
         let debug = options.debug.clone();
+        let examples = options.starts_with_examples();
         let names_source = options.starts_with_examples()
             || options.named_source
             || options.maintenance_endpoint.is_some();
@@ -766,6 +769,9 @@ impl Pilot {
                     cx.notify();
                 }
                 this.sync_setup_connection(window, cx);
+                // A tab whose entry the file no longer lists shows the page
+                // that says so; `prepare_protection` above derived that and
+                // asked for the draw.
                 // The shell and its cached column draw again only when the
                 // section shown changes or a section's dot appears or clears.
                 if flipped {
@@ -782,6 +788,10 @@ impl Pilot {
         // Without Talos, the one page that reads is the first one shown.
         if !self.mode().has_talos() {
             self.navigate_from_keyboard(Page::Overview, window, cx);
+        }
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        if examples && let Some(shape) = debug.tabs {
+            self.seed_tabs(shape, cx);
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
         self.open_startup_page(&debug, window, cx);
@@ -1012,18 +1022,17 @@ impl Pilot {
             self.select_context(context, window, cx);
             return;
         }
-        self.unless_shell(window, cx, move |this, window, cx| {
-            this.leave_entry(cx);
-            if !this.mode().has_talos() {
-                // The default talosconfig is what's missing in this mode.
-                if value.path.is_none() {
-                    return;
-                }
-                this.leave_kubernetes_only(window, cx);
+
+        self.leave_entry(cx);
+        if !self.mode().has_talos() {
+            // The default talosconfig is what's missing in this mode.
+            if value.path.is_none() {
+                return;
             }
-            this.applied = value;
-            this.load_configuration(window, cx);
-        });
+            self.leave_kubernetes_only(window, cx);
+        }
+        self.applied = value;
+        self.load_configuration(window, cx);
     }
 
     /// Opens the native file picker and applies its chosen file at once.
@@ -1159,7 +1168,6 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.switch.registry.active_mut().prompted_access = None;
         if !self.mode().has_talos() && !self.mode().is_example() {
             // Local inspection must finish before any page retries through
             // its access. A replacement publishes the new source itself.

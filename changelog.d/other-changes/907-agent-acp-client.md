@@ -1,0 +1,1 @@
+- **Agent client (not in the app yet):** a new `freshkube-agent` crate holds the ACP client for the agent in the dock, the opencode profile with its lock-down and version check, the bounded transcript and a scripted agent for tests. It allows only Freshkube's four read tools; nothing starts an agent until the dock tab lands ([docs/features/agent.md](docs/features/agent.md)).

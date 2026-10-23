@@ -339,7 +339,12 @@ forwarding the page's hide to `Watch::set_visible`.
   starts only from the user's container choice or Start. Running owns the
   `ExecSession` and output delivery across navigation and minimization.
   Explicit End or confirmed close/replacement ends it; restored tabs are idle.
-  See [pod exec](POD_EXEC.md).
+  Its dock tab captures its cluster (`Origin`: source, entry, context; its level is read live)
+  when it starts (#878), as a forward does: switching tab or context ends
+  nothing, the tab's source is refreshed only by the same connection's, and
+  its Start gate reads the entry's level, or its context's when the window has
+  no entry, never the shown one. See
+  [pod exec](POD_EXEC.md).
 - **Forwards:** [`ForwardList` and `ForwardView`](../crates/freshkube-resources/src/forwards/mod.rs)
   capture the selected connection and specification on Forward. The app owns
   the session independently of pages or context changes; replacement must

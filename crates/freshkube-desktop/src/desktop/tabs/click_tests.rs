@@ -110,14 +110,15 @@ fn each_menu_entry_acts_on_the_tab_it_was_opened_on(cx: &mut TestAppContext) {
     // The tab right-clicked is the second, Etcd.
     for (ix, remaining) in [(0, 3), (1, 1), (2, 2), (4, 1)] {
         let (_runtime, handle, pilot, ids) = four(cx);
+        let shown = selected(cx, &pilot);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.right_click(format!("view-tab-{}", ids[1]), cx);
         })
         .unwrap();
         cx.run_until_parked();
-        // Opening the menu shows the tab it is for.
-        assert_eq!(selected(cx, &pilot), 1, "entry {ix}");
+        // Opening the menu makes no other tab the shown one (#878).
+        assert_eq!(selected(cx, &pilot), shown, "entry {ix}");
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.within("popup-menu").click(ix, cx);

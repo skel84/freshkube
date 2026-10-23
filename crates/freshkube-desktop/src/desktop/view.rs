@@ -13,7 +13,12 @@ impl Render for Pilot {
         if WINDOW.pending() {
             window.on_next_frame(|_, _| WINDOW.mark());
         }
-        let column = self.navigation.lay_out(window);
+        // A tab whose cluster entry is gone shows no cluster, so no column of
+        // the cluster that happens to be open stands behind its page.
+        let column = self
+            .navigation
+            .lay_out(window)
+            .filter(|_| !self.tabs.missing_shown);
         let page = self.render_page(cx);
         let root = v_flex()
             .size_full()
@@ -91,6 +96,9 @@ impl Pilot {
     /// The page shown, drawn beside the cached chrome.
     fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
         match self.navigation.page {
+            // A tab whose cluster entry is gone shows no page at all, never
+            // the cluster that happens to be open (#878).
+            _ if self.tabs.missing_shown => self.render_choose_cluster(cx),
             // Not cached: a cached view that draws again makes every cached
             // view inside it draw again, so a cursor moving over one chart
             // would redraw all the panels. Drawn with the shell, the page

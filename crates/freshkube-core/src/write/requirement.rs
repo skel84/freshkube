@@ -110,13 +110,26 @@ pub fn requirement(tier: Tier, level: Protection) -> Requirement {
 
 /// What an action must do before it is sent at `level`: the table's row for
 /// its tier, except that an action which declares `no_confirmation` (it only
-/// adds an annotation) asks nothing at any level `read-only` doesn't block.
+/// adds an annotation) asks nothing at any level `read-only` doesn't block,
+/// and a reversible action with no way back asks even at `open`.
 pub fn requirement_for(action: &ActionDescription, level: Protection) -> Requirement {
     let given = requirement(action.tier, level);
     if action.no_confirmation && given.blocked.is_none() {
         return Requirement {
             confirm: false,
             type_name: false,
+            undo: false,
+            ..given
+        };
+    }
+    // A reversible action that has no way back (Restart) is not undoable, so
+    // `open` does not skip its confirmation: a stray key must not roll out.
+    if action.tier == Tier::Reversible
+        && given.blocked.is_none()
+        && action.changes.iter().all(|change| change.inverse.is_none())
+    {
+        return Requirement {
+            confirm: true,
             undo: false,
             ..given
         };

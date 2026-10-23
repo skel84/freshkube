@@ -14,8 +14,11 @@ use super::*;
 use freshkube_nav::ViewState;
 use std::time::Duration;
 
+mod choose;
 #[cfg(test)]
 mod click_tests;
+#[cfg(test)]
+mod cluster_tests;
 mod commands;
 #[cfg(test)]
 mod guard_tests;
@@ -29,6 +32,7 @@ mod tests;
 
 pub(super) use commands::bind_keys;
 pub(super) use commands::{destination_view, node_view, object_view};
+pub(super) use set::ContextBinding;
 pub(crate) use set::OpenIn;
 pub(super) use set::TabSet;
 pub(super) use strip::ViewTabs;
@@ -71,6 +75,11 @@ pub(super) struct Tabs {
     gesture: Option<(OpenIn, std::time::Instant)>,
     /// The view a tab was just shown at, until the page reaches it.
     applying: Option<(ViewState, std::time::Instant)>,
+    /// The entry a tab just shown is being opened on, until the window shows
+    /// it: the tab's own, never a fallback (#878).
+    activating: Option<String>,
+    /// Whether the shell last drew the "Choose a cluster" page.
+    pub(super) missing_shown: bool,
     /// The cluster the set belongs to: its identity once one has opened.
     cluster: Option<String>,
     /// The tabs of the last run, waiting for a cluster to open them in.
@@ -100,6 +109,8 @@ impl Tabs {
             strip,
             gesture: None,
             applying: None,
+            activating: None,
+            missing_shown: false,
             cluster: None,
             restore,
             save: None,

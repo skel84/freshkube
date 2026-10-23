@@ -78,11 +78,22 @@ impl Global for GlobalOperations {}
 /// operation slot: one level at a time, like the one slot. It is a shared
 /// cell, so a write's runner follows it and reads it again just before it
 /// sends (#853).
-pub(crate) struct GlobalProtection(LevelCell, std::collections::HashMap<String, LevelCell>);
+pub(crate) struct GlobalProtection(
+    LevelCell,
+    std::collections::HashMap<String, LevelCell>,
+    Option<(
+        freshkube_core::workspace::Workspace,
+        freshkube_core::workspace::SourceRecovery,
+    )>,
+);
 
 impl Default for GlobalProtection {
     fn default() -> Self {
-        Self(LevelCell::new(Protection::default()), Default::default())
+        Self(
+            LevelCell::new(Protection::default()),
+            Default::default(),
+            None,
+        )
     }
 }
 
@@ -101,13 +112,53 @@ pub(crate) fn set_entry_levels(
     cx: &mut App,
 ) {
     let global = cx.default_global::<GlobalProtection>();
+    let mut listed = std::collections::HashSet::new();
     for (entry, level) in levels {
+        listed.insert(entry.clone());
         global
             .1
             .entry(entry)
             .and_modify(|cell| cell.set(level))
             .or_insert_with(|| LevelCell::new(level));
     }
+    // An entry the file no longer lists has no level for a lookup to find
+    // (`entry_level`); a runner already holding its cell keeps it.
+    global.1.retain(|entry, _| listed.contains(entry));
+}
+
+/// Publishes the setup the levels come from, so a context no entry names
+/// is read under it live (`context_level`), as the window's own is.
+pub(crate) fn set_workspace_levels(
+    workspace: &freshkube_core::workspace::Workspace,
+    recovery: &freshkube_core::workspace::SourceRecovery,
+    cx: &mut App,
+) {
+    cx.default_global::<GlobalProtection>().2 = Some((workspace.clone(), recovery.clone()));
+}
+
+/// Whether any setup has been published: until one has, no level is known
+/// and no entry can be called gone.
+pub(crate) fn setup_read(cx: &App) -> bool {
+    cx.try_global::<GlobalProtection>()
+        .is_some_and(|global| global.2.is_some())
+}
+
+/// The level of the kubeconfig context `context` under the setup as it is
+/// now: the stricter of the entries naming it, guarded for one no entry
+/// names, or what a skipped row locked it to. `None` before any setup was
+/// published, which blocks a shell (#878).
+pub(crate) fn context_level(context: &str, cx: &App) -> Option<Protection> {
+    let (workspace, recovery) = cx.try_global::<GlobalProtection>()?.2.as_ref()?;
+    Some(workspace.level_of(context, recovery))
+}
+
+/// The level of the workspace entry `entry` as it is now, or `None` when no
+/// entry of that id is listed. A dock shell's gate reads this and nothing
+/// else (#878); it never creates a cell, so a gone entry stays gone.
+pub(crate) fn entry_level(entry: &str, cx: &App) -> Option<Protection> {
+    cx.try_global::<GlobalProtection>()
+        .and_then(|global| global.1.get(entry))
+        .map(LevelCell::get)
 }
 
 /// The cell holding `entry`'s level, for a runner to follow. An entry not
@@ -244,9 +295,26 @@ impl Operations {
 /// The writes audit log (`<preferences>/audit/writes.jsonl`, #853): one for the
 /// app, across contexts.
 pub(crate) fn write_audit_store() -> Option<freshkube_core::write::AuditStore> {
+    #[cfg(test)]
+    if let Some(dir) = TEST_AUDIT.with(|dir| dir.borrow().clone()) {
+        return Some(freshkube_core::write::AuditStore::new(dir));
+    }
     crate::preferences_path()
         .and_then(|path| path.parent().map(|dir| dir.join("audit")))
         .map(freshkube_core::write::AuditStore::new)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Where a test's writes are audited: never the user's own folder.
+    static TEST_AUDIT: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Audits this test's writes under `dir`.
+#[cfg(test)]
+pub(crate) fn audit_under(dir: std::path::PathBuf) {
+    TEST_AUDIT.with(|slot| *slot.borrow_mut() = Some(dir));
 }
 
 /// The audit store for `context`, shared with the other frontends.

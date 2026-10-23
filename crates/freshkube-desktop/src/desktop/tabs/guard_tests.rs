@@ -63,15 +63,15 @@ fn pinned_by_a_shell(
     (runtime, handle, pilot, pod.name)
 }
 
-/// A link made in another cluster is sent there or refused first, whatever
-/// the click says: the question about the running shell is the plain Open's,
-/// and no tab opens.
+/// A link made in another cluster is sent there first, whatever the click
+/// says, and no tab opens on the cluster it was not made in. The running
+/// shell keeps its own connection, so nothing asks about it (#878).
 #[gpui_kit::test]
-fn a_tab_link_from_another_cluster_asks_what_a_plain_open_asks(cx: &mut TestAppContext) {
-    let (_runtime, handle, pilot, shell) = pinned_by_a_shell(cx);
-    let before = active(cx, &pilot);
+fn a_tab_link_from_another_cluster_goes_there_and_ends_no_shell(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot, _shell) = pinned_by_a_shell(cx);
     let other = other_clusters_pod();
-    let ask = |cx: &mut TestAppContext, open_in: OpenIn| {
+    for open_in in [OpenIn::Here, OpenIn::Background, OpenIn::Front] {
+        switch(cx, handle, &pilot, "core-fra");
         let object = other.clone();
         cx.update_window(handle, |_, window, cx| {
             pilot.update(cx, |pilot, cx| {
@@ -87,49 +87,38 @@ fn a_tab_link_from_another_cluster_asks_what_a_plain_open_asks(cx: &mut TestAppC
         })
         .unwrap();
         cx.run_until_parked();
-        let asked = cx.pending_prompt().expect("asked");
-        cx.simulate_prompt_answer("Cancel");
-        cx.run_until_parked();
-        asked
-    };
-    // Leaving for another cluster ends the shell, so it asks first.
-    let plain = ask(cx, OpenIn::Here);
-    assert_eq!(plain.0, format!("End the shell in {shell}?"));
-    for open_in in [OpenIn::Background, OpenIn::Front] {
-        assert_eq!(ask(cx, open_in), plain, "{open_in:?}");
+        assert!(!cx.has_pending_prompt(), "{open_in:?}");
+        assert_eq!(
+            active(cx, &pilot),
+            SessionKey::Entry("dev-fra".into()),
+            "{open_in:?}"
+        );
         assert_eq!(tab_count(cx, &pilot), 1, "{open_in:?}");
-        assert_eq!(active(cx, &pilot), before, "{open_in:?}");
+        assert_eq!(cx.read(crate::resources::shell::running_anywhere).len(), 1);
     }
 }
 
 /// Command-Return in the palette takes an object through the same guard.
 #[gpui_kit::test]
-fn command_return_on_an_object_of_another_cluster_asks_what_a_plain_open_asks(
+fn command_return_on_an_object_of_another_cluster_goes_there_and_opens_no_tab(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, handle, pilot, _shell) = pinned_by_a_shell(cx);
-    let other = other_clusters_pod();
-    let ask = |cx: &mut TestAppContext, open_in: OpenIn| {
-        let object = other.clone();
-        cx.update_window(handle, |_, window, cx| {
-            pilot.update(cx, |pilot, cx| {
-                pilot.search_destination(
-                    Destination::Object(builtin("pods").unwrap(), object),
-                    open_in,
-                    window,
-                    cx,
-                )
-            })
+    let object = other_clusters_pod();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.search_destination(
+                Destination::Object(builtin("pods").unwrap(), object),
+                OpenIn::Front,
+                window,
+                cx,
+            )
         })
-        .unwrap();
-        cx.run_until_parked();
-        let asked = cx.pending_prompt().expect("asked");
-        cx.simulate_prompt_answer("Cancel");
-        cx.run_until_parked();
-        asked
-    };
-    let plain = ask(cx, OpenIn::Here);
-    assert_eq!(ask(cx, OpenIn::Front), plain);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!cx.has_pending_prompt());
+    assert_eq!(active(cx, &pilot), SessionKey::Entry("dev-fra".into()));
     assert_eq!(tab_count(cx, &pilot), 1, "no tab opened on this cluster");
 }
 

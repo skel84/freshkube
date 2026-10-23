@@ -59,6 +59,13 @@ impl Mark {
         }
     }
 
+    /// The 2 px cap a surface of this level wears (#878): Read-only,
+    /// Protected and Open, in their glyph's colour. Guarded, the default,
+    /// has none, so a cap always means a level that differs from it.
+    pub fn cap(self, p: &Palette) -> Option<Hsla> {
+        (self != Mark::Guarded).then(|| self.inks(p).glyph)
+    }
+
     /// The 1 px hairline a tag has: Guarded only, whose `surface_2` is the
     /// switcher's own.
     pub fn border(self, p: &Palette) -> Option<Hsla> {
@@ -78,6 +85,11 @@ impl Inks {
     fn new(fill: Hsla, word: Hsla, glyph: Hsla) -> Self {
         Self { fill, word, glyph }
     }
+}
+
+/// A level's glyph alone, in `ink`, at a tab's size.
+pub fn glyph(mark: Mark, ink: Hsla) -> Icon {
+    Icon::new(mark.icon()).size(dp(12.)).text_color(ink)
 }
 
 /// How a tag is drawn.

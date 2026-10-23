@@ -40,6 +40,12 @@ pub(super) struct State {
 const WAITING_LIMIT: usize = 4;
 
 impl State {
+    /// Forces one outcome on every example link, as `FRESHKUBE_LINKS` does.
+    #[cfg(test)]
+    pub(in crate::desktop) fn force(&mut self, shape: Option<LinkShape>) {
+        self.shape = shape;
+    }
+
     pub(super) fn new(shape: Option<LinkShape>, preferences: Option<&std::path::Path>) -> Self {
         Self {
             shape,

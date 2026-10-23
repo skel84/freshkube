@@ -10,7 +10,9 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let segment = self.page_segment(cx);
+        // A tab with no cluster shows no cluster's state, page line or level.
+        let none = self.tabs.missing_shown;
+        let segment = if none { None } else { self.page_segment(cx) };
         let p = palette(cx);
         let compact = window.viewport_size().width < ui::dp_px(1080., window);
         // Narrow, the shell's status gives a page's segment its room.
@@ -19,7 +21,15 @@ impl Pilot {
         // The context the shell's status names, which a page's segment then
         // leaves out.
         let mut named = None;
-        let left = if let Some(running) = Operations::current(cx) {
+        let left = if none {
+            div()
+                .id("status-no-cluster")
+                .test_support()
+                .role(Role::Status)
+                .text_color(p.muted)
+                .child("No cluster")
+                .into_any_element()
+        } else if let Some(running) = Operations::current(cx) {
             self.render_operation_status(running, cx)
         } else if !self.mode().has_talos() {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
@@ -69,7 +79,7 @@ impl Pilot {
                             .when(compact && page.is_none(), |this| this.max_w(dp(160.)))
                             .child(left),
                     )
-                    .child(self.render_level_status(cx))
+                    .children((!none).then(|| self.render_level_status(cx)))
                     .children(page.map(|page| {
                         h_flex()
                             .flex_auto()
