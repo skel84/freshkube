@@ -15,7 +15,8 @@ use crate::fixture::Hold;
 use std::time::Duration;
 
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Entity, TestAppContext, Window, px, test::TestWindowExt,
+    AnyWindowHandle, App, AppContext, Entity, Pixels, TestAppContext, Window, px,
+    test::TestWindowExt,
 };
 
 const APPLICATIONS: layout_check::TablePage = layout_check::TablePage {
@@ -442,38 +443,89 @@ fn a_refusal_offers_a_read_only_access_request_and_no_retry(cx: &mut TestAppCont
     assert!(!copied.to_lowercase().contains("secrets"), "{copied}");
 }
 
+/// Scrolls the empty state until `target` is drawn inside its viewport,
+/// and the viewport inside the window; whether it got there. With a line
+/// height only the target's last line has to be, otherwise all of it.
+fn scroll_into_reach(
+    window: &mut Window,
+    cx: &mut App,
+    target: &'static str,
+    line: Option<Pixels>,
+) -> bool {
+    let inside = |window: &mut Window| {
+        let viewport = window.find("empty-state-scroll").bounds();
+        let target = window.find(target).bounds();
+        let top = match line {
+            Some(line) => target.top().max(target.bottom() - line),
+            None => target.top(),
+        };
+        top >= viewport.top()
+            && target.bottom() <= viewport.bottom()
+            && viewport.bottom() <= window.viewport_size().height
+    };
+    for _ in 0..60 {
+        if inside(window) {
+            return true;
+        }
+        window.scroll(
+            "empty-state-scroll",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-20.))),
+            cx,
+        );
+        window.render_frame(cx);
+    }
+    inside(window)
+}
+
+/// Opens Applications in `variant` in the smallest window at the largest
+/// text size and scrolls its state until `target` is in reach.
+fn reach_in_small_window(
+    cx: &mut TestAppContext,
+    variant: Variant,
+    target: &'static str,
+    line: Option<Pixels>,
+) {
+    let (_runtime, handle, _view) = open(cx, 760., 560., |page| page.set_variant(variant));
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        let reached = scroll_into_reach(window, cx, target, line);
+        let viewport = window.find("empty-state-scroll").bounds();
+        let bounds = window.find(target).bounds();
+        assert!(
+            reached,
+            "{target} at {bounds:?} is out of reach in {viewport:?}, window {:?}",
+            window.viewport_size()
+        );
+    })
+    .unwrap();
+}
+
 /// In the smallest window at the largest text size the refused state
 /// scrolls, and its one action can be brought into view.
 #[gpui_kit::test]
 fn the_refused_state_keeps_its_action_reachable_when_small(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = open(cx, 760., 560., |page| page.set_variant(Variant::Refused));
-    cx.update_window(handle, |_, window, cx| {
-        crate::text_size::set(20., cx);
-        window.render_frame(cx);
-        let viewport = window.find("empty-state-scroll").bounds();
-        let inside = |window: &mut gpui_kit::Window| {
-            let action = window.find("applications-copy-access").bounds();
-            action.top() >= viewport.top() && action.bottom() <= viewport.bottom()
-        };
-        let mut reached = inside(window);
-        for _ in 0..60 {
-            if reached {
-                break;
-            }
-            window.scroll(
-                "empty-state-scroll",
-                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-20.))),
-                cx,
-            );
-            window.render_frame(cx);
-            reached = inside(window);
-        }
-        assert!(
-            reached,
-            "Copy access request is out of reach in {viewport:?}"
-        );
-    })
-    .unwrap();
+    reach_in_small_window(cx, Variant::Refused, "applications-copy-access", None);
+}
+
+/// With nothing served, the empty state's description scrolls into the
+/// window to its last line.
+#[gpui_kit::test]
+fn the_unserved_state_scrolls_to_its_last_line_when_small(cx: &mut TestAppContext) {
+    // A line of the description at text size 20, with its leading.
+    reach_in_small_window(
+        cx,
+        Variant::Unserved,
+        "empty-state-description",
+        Some(px(32.)),
+    );
+}
+
+/// With no cluster answering, the failed state's Retry can be brought
+/// into view.
+#[gpui_kit::test]
+fn the_failed_state_keeps_retry_reachable_when_small(cx: &mut TestAppContext) {
+    reach_in_small_window(cx, Variant::Failed, "applications-retry", None);
 }
 
 #[gpui_kit::test]

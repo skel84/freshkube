@@ -205,13 +205,20 @@ impl ApplicationsPage {
                 .into_any_element(),
             ),
         };
+        // The inset takes the body's height and no more, so the state's own
+        // scroll holds what doesn't fit instead of running past the window.
         Some(
             page::inset()
+                .flex()
+                .flex_col()
                 .flex_1()
+                .min_h_0()
                 .child(
                     div()
                         .id(id)
-                        .size_full()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
                         .test_support()
                         .role(Role::Status)
                         .child(state),

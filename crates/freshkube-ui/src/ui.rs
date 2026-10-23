@@ -515,7 +515,14 @@ pub fn empty_state(
                                         .text_color(p.ink)
                                         .child(title.into()),
                                 )
-                                .description(EmptyDescription::new().child(description.into())),
+                                .description(
+                                    EmptyDescription::new().child(
+                                        div()
+                                            .id("empty-state-description")
+                                            .test_support()
+                                            .child(description.into()),
+                                    ),
+                                ),
                         )
                         .when_some(error, |this, error| {
                             this.child(
