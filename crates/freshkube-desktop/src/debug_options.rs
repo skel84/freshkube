@@ -49,6 +49,18 @@ pub(crate) enum TabsShape {
     Missing,
 }
 
+/// `FRESHKUBE_CRASH`: the crash notice and the panics that lead to it (#953).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CrashShape {
+    /// The "last session ended unexpectedly" notice with an invented crash
+    /// when none was found; the marker file is not touched.
+    Notice,
+    /// The app panics on its main thread a moment after the window opens.
+    Panic,
+    /// A Tokio task panics a moment after the window opens.
+    Task,
+}
+
 /// `FRESHKUBE_LINKS`: the outcome every example link is forced to, or how
 /// the example clusters identify themselves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +148,14 @@ pub struct DebugOptions {
     /// setup (`freshkube_core::team::example::Shape`); anything else is no
     /// team. Needs `--fixture`.
     pub(crate) team: Option<freshkube_core::team::example::Shape>,
+    /// `FRESHKUBE_CRASH`: `notice` shows the crash notice (with `--fixture`,
+    /// an invented crash), `panic` and `task` force a panic on the main
+    /// thread or in a Tokio task; anything else is ignored. Debug builds only.
+    pub(crate) crash: Option<CrashShape>,
+    /// `FRESHKUBE_CRASH_SEED`: a value the startup log line and the forced
+    /// panic carry as a token and a password, to check that the log and the
+    /// copied diagnostics hold neither. Debug builds only.
+    pub(crate) crash_seed: Option<String>,
 }
 
 impl DebugOptions {
@@ -160,6 +180,8 @@ impl DebugOptions {
             self.etcd = None;
             self.app_menu_button = false;
             self.text_size = None;
+            self.crash = None;
+            self.crash_seed = None;
         }
         self
     }
@@ -230,6 +252,13 @@ impl DebugOptions {
             team: text("FRESHKUBE_TEAM")
                 .as_deref()
                 .and_then(freshkube_core::team::example::Shape::parse),
+            crash: match text("FRESHKUBE_CRASH").as_deref() {
+                Some("notice") => Some(CrashShape::Notice),
+                Some("panic") => Some(CrashShape::Panic),
+                Some("task") => Some(CrashShape::Task),
+                _ => None,
+            },
+            crash_seed: text("FRESHKUBE_CRASH_SEED"),
         }
     }
 
@@ -327,6 +356,18 @@ mod tests {
             assert_eq!(parse(&[("FRESHKUBE_TEAM", value)]).team, Some(shape));
         }
         assert_eq!(parse(&[("FRESHKUBE_TEAM", "Joined")]).team, None);
+    }
+
+    #[test]
+    fn crash_names_the_notice_or_a_forced_panic_and_ignores_anything_else() {
+        for (value, shape) in [
+            ("notice", CrashShape::Notice),
+            ("panic", CrashShape::Panic),
+            ("task", CrashShape::Task),
+        ] {
+            assert_eq!(parse(&[("FRESHKUBE_CRASH", value)]).crash, Some(shape));
+        }
+        assert_eq!(parse(&[("FRESHKUBE_CRASH", "Panic")]).crash, None);
     }
 
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
