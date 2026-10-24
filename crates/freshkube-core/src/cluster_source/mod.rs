@@ -32,6 +32,13 @@ pub trait KubeClientSource: Send + Sync {
     /// Drops a reused client after a failure, so the next ask builds it
     /// again. A source that keeps nothing has nothing to drop.
     fn forget(&self) {}
+
+    /// The namespace the cluster's own configuration names for this
+    /// connection, when it names one. It does not say `default` for a
+    /// configuration that names none.
+    fn namespace(&self) -> BoxFuture<'_, Option<String>> {
+        Box::pin(async { None })
+    }
 }
 
 /// How a cluster is reached.
@@ -68,6 +75,21 @@ impl ClusterAccess {
                 direct.connect().await.map(|connection| connection.client)
             }
             ClusterAccess::Live(source) => source.client().await,
+        }
+    }
+
+    /// The namespace the kubeconfig context names, when it names one: not
+    /// `default` for a context that names none, and none for a connection
+    /// that has no kubeconfig context (Talos's, example data).
+    pub async fn namespace(&self) -> Option<String> {
+        match self {
+            ClusterAccess::Example(_) | ClusterAccess::Talos(_) => None,
+            ClusterAccess::Direct(direct) => direct
+                .connect()
+                .await
+                .ok()
+                .and_then(|connection| connection.context.namespace),
+            ClusterAccess::Live(source) => source.namespace().await,
         }
     }
 

@@ -106,6 +106,10 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g10_confirmation_runs_only_against_the_preview_shown` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
 - `safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
 
+### 11. Your access only lists namespaces and creates reviews, for the rows in view, and only while shown
+
+- `safety_g11_the_page_only_lists_namespaces_and_creates_reviews_for_rows_in_view` (`crates/freshkube-desktop/src/screens/access/tests.rs`)
+
 ### 12. A Run now always confirms, with no countdown or Undo, and Run now and Roll back send only the template that was shown
 
 - `safety_g12_a_template_that_changed_since_the_page_read_it_blocks` (`crates/freshkube-core/src/write/tests/run_now.rs`)

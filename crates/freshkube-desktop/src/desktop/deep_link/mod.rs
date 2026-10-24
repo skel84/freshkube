@@ -67,6 +67,7 @@ pub(super) fn page_of(page: LinkPage) -> Page {
         LinkPage::Nodes => Page::Nodes,
         LinkPage::Health => Page::Health,
         LinkPage::Databases => Page::Databases,
+        LinkPage::Access => Page::Access,
         LinkPage::Resources => Page::Resources,
         LinkPage::Etcd => Page::Etcd,
         LinkPage::SystemServices => Page::SystemServices,

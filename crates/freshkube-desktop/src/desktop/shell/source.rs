@@ -146,6 +146,9 @@ impl Pilot {
         if slug == "storage" {
             lines.push(self.page_line(Page::Databases, None).into());
         }
+        if slug == "access-control" {
+            lines.push(self.page_line(Page::Access, None).into());
+        }
         let first_kind = lines.len();
         lines.extend(group.items.iter().map(|(label, key)| {
             let row = Row::new(ColumnKey::Kind(key), format!("nav-k8s-{key}"), *label)
