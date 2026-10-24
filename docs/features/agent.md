@@ -334,7 +334,7 @@ User-started, like a dock log tab (`docs/STATE_LIFETIMES.md`). The session start
 
 ### With `--fixture`
 
-`Targets` answers from Resources' example objects (`ExampleObjects`, through the same bounds, Secret rule and places as a live answer) and the tab runs the scripted agent in process instead of opencode. Asking anything runs a tour: it reads the pods of the `api` Deployment's namespace, the Deployment, one pod's log and the namespace's events, each as a step through the four read tools, asks to run a shell command (refused), and answers citing the reads. `FRESHKUBE_AGENT` (AGENTS.md) opens the tab in a setup state or in the middle of a session; `no-tools` has the scripted agent answer without asking for the tools, so the notice shows.
+`Targets` answers from Resources' example objects (`ExampleObjects`, through the same bounds, Secret rule and places as a live answer) and the tab runs the scripted agent in process instead of opencode. Asking anything runs a tour: it reads the pods of the `api` Deployment's namespace, the Deployment, one pod's log and the namespace's events, each as a step through the four read tools, asks to run a shell command (refused), and answers citing the reads. `FRESHKUBE_AGENT` (AGENTS.md) opens the tab in a setup state or in the middle of a session; `no-tools` has the scripted agent answer without asking for the tools, so the notice shows; `turn-failed` has the prompt answered with the provider's error, so the failed-turn notice shows.
 
 ### A read-only identity
 
@@ -388,3 +388,11 @@ The next question follows again, and the toolbar's **Following** toggle does the
 ### With `--fixture`
 
 `FRESHKUBE_AGENT=following` asks the example question with a read every two seconds, so the page shows the pods, the `api` Deployment, a pod's log in the follow-owned tab and the namespace's events in turn. `refused` shows the other-cluster warning on the strip.
+
+## The chosen model and a failed turn (988)
+
+The person's model is saved as `model` in `agent.json` (`freshkube_agent::saved::Access::set_model`), never in `freshkube.yaml`. `AcpSession::start_with` applies it with `session/set_config_option` right after `session/new` and before the first prompt of every session; prompts wait in the queue until it is done. A saved model the agent doesn't offer is not sent: `Models::missing` names it and the tab says the agent's default is in use. A failed save keeps the choice for the session and shows nothing.
+
+`opencode/*` models work only inside OpenCode's own app, so the picker leaves them out and they are never applied. When the agent's own default is one of them (`Models::must_pick`), a question fails at once with "Pick a model first", and the picker reads "Pick a model".
+
+A turn fails, with the error's text (the session's token and any `Authorization` value removed), when the prompt response is an error or carries a failed stop reason. An `EndTurn` with no text and no tool call also fails: "The agent ended the turn without an answer. Check that the chosen model is signed in."
