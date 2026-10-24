@@ -23,7 +23,7 @@ mod review;
 pub use board::{Answer, Board, Changed, PARALLEL, RowKey, RowView, Ticket};
 pub use columns::{COLUMNS, Cell, Cells, Column, Need, Rule, RulesAnswer};
 pub use request::request_text;
-pub use review::{Who, list_namespaces, nodes, rules, who};
+pub use review::{Namespaces, Who, list_namespaces, nodes, rules, who};
 
 #[cfg(test)]
 mod tests;

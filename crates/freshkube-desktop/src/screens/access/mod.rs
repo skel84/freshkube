@@ -17,7 +17,7 @@ use crate::{
 };
 use display::Display;
 use freshkube_core::{
-    access::{self, Board, RowKey, Ticket, Who, example::Shape},
+    access::{self, Board, Namespaces, RowKey, Ticket, Who, example::Shape},
     job::{OwnedJob, spawn_job},
 };
 use freshkube_reads::{Loader, OnShow};
@@ -46,13 +46,6 @@ actions!(
     access,
     [Next, Previous, First, Last, Close, CopyRequest, Recheck]
 );
-
-/// The namespaces to list, and whether the cluster has more.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Namespaces {
-    pub names: Vec<String>,
-    pub more: bool,
-}
 
 pub(crate) struct AccessScreen {
     runtime: Handle,
@@ -146,13 +139,8 @@ impl AccessScreen {
         };
         let id = source.id.clone();
         if source.access.is_example() {
-            self.namespaces.resolve(
-                id.clone(),
-                Ok(Namespaces {
-                    names: access::example::NAMESPACES.map(str::to_owned).to_vec(),
-                    more: false,
-                }),
-            );
+            self.namespaces
+                .resolve(id.clone(), Ok(access::example::namespaces(self.shape)));
             self.who
                 .resolve(id, Ok(access::example::who(self.shape, self.epoch)));
             self.taken_who(cx);
@@ -176,8 +164,7 @@ impl AccessScreen {
             "Listing namespaces timed out".to_owned(),
             async move {
                 let client = connect(&source).await?;
-                let (names, more) = access::list_namespaces(&client).await?;
-                Ok(Namespaces { names, more })
+                access::list_namespaces(&client).await
             },
         );
         let task = cx.spawn(async move |this, cx| {
@@ -367,6 +354,19 @@ impl AccessScreen {
         }
     }
 
+    /// Selects the first or the last row, whatever is selected now.
+    fn jump(&mut self, last: bool, cx: &mut Context<Self>) {
+        self.sync();
+        let mut rows = self.display.lines.iter().filter_map(|entry| match entry {
+            display::Entry::Row(ix) => Some(self.display.rows[*ix].key.clone()),
+            display::Entry::Group(_) => None,
+        });
+        let key = if last { rows.next_back() } else { rows.next() };
+        if let Some(key) = key {
+            self.choose(key, cx);
+        }
+    }
+
     /// The access request for the selected row, when it lacks anything.
     fn requestable(&self) -> Option<String> {
         let row = self.selected_row()?;
@@ -500,8 +500,13 @@ impl ScreenPanel for AccessScreen {
         if self.board.changed().is_some() {
             parts.push(Part::new("Identity changed").tone(ui::Tone::Warn));
         }
-        if self.namespaces.error().is_some() {
-            parts.push(Part::new("Couldn't list namespaces").tone(ui::Tone::Warn));
+        if self.namespaces.error().is_some()
+            || self
+                .namespaces
+                .data()
+                .is_some_and(|namespaces| namespaces.refused.is_some())
+        {
+            parts.push(Part::new("Can't list namespaces").tone(ui::Tone::Warn));
         }
         if self.is_example() {
             parts.push(Part::new("example data").minor());

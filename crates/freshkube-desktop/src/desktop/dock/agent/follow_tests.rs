@@ -875,6 +875,7 @@ fn a_view_can_name_only_plain_places() {
             | LinkPage::Nodes
             | LinkPage::Health
             | LinkPage::Databases
+            | LinkPage::Access
             | LinkPage::Resources
             | LinkPage::Etcd
             | LinkPage::SystemServices

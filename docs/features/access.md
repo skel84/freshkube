@@ -6,7 +6,7 @@ Code, under `crates/`: `freshkube-core/src/access/` has no UI types: `columns.rs
 
 ## Where it is and what it shows
 
-The page is **Your access**, in the Access control column (`FRESHKUBE_PAGE=access`). It is a table page: one row per namespace, a **Cluster-wide** group with a **Nodes** row above them, and the columns Read, Logs, Shell, Forward, Scale·restart, Edit, Delete pods and Secrets. Each cell is a word, `yes`, `no`, `ask`, `?` (couldn't check), `…` (checking) or `–` (does not apply), and the row's glyph says the whole row: allowed, some not allowed, some not confirmed, checking, or couldn't check.
+The page is **Your access**, in the Access control column (`FRESHKUBE_PAGE=access`, or `freshkube://open?page=access`, which only navigates). It is a table page: one row per namespace, a **Cluster-wide** group with a **Nodes** row above them, and the columns Read, Logs, Shell, Forward, Scale·restart, Edit, Delete pods and Secrets. Each cell is a word, `yes`, `no`, `ask`, `?` (couldn't check), `…` (checking) or `–` (does not apply), and the row's glyph says the whole row: allowed, some not allowed, some not confirmed, checking, or couldn't check.
 
 | Column | A yes needs |
 |--------|-------------|
@@ -34,7 +34,8 @@ The selected row's Inspector says why: each no, in the short form **"needs ⟨ve
 
 - **Only while the page shows.** Hiding the page drops every review in flight and keeps what was known; showing it again reads the names and who you are again if the last read is over 30 s old and asks the rows in view again.
 - **Only the rows a frame draws.** A row asks nothing until the table draws it; scrolling to a row asks it. At most four reviews run at once. There is no sweep of every namespace.
-- **Namespace names** are one capped list of metadata (500; a cluster with more says so in a banner).
+- **Namespace names** are one capped list of metadata (500; a cluster with more says "Showing the first 500 namespaces; the cluster has more." in a banner).
+- **A refused list** (403) is its own state, "Can't list namespaces", with the cluster's reason. The page then reviews the one namespace the context itself uses (the client's default namespace: the kubeconfig context's namespace, else `default`) beside the Nodes row, and never guesses at others or sweeps.
 
 ## The states
 
@@ -43,7 +44,8 @@ The selected row's Inspector says why: each no, in the short form **"needs ⟨ve
 | **Checking** | `…` in every cell and a waiting glyph; a recheck keeps the earlier cells on show until the new answer lands |
 | **Rules incomplete** | the server's rules review could not list every rule (a webhook authorizer, say). Cells not shown granted read `ask`, not `no`, a banner says so, and the status bar says "Rules incomplete". The check before each action still decides |
 | **Identity changed** | another access, or the same access answering as another person: every answer is dropped at once and read again, with a banner naming who it was and who it is now (Dismiss). An answer that was still on its way from before is ignored |
-| **Review failed** | a row whose review didn't answer reads `?` and "Couldn't check" with the reason (credentials scrubbed), with Recheck. It is never shown as a no, and is asked again only by Recheck. If the namespaces can't be listed the page says so with Retry |
+| **Review failed** | a row whose review didn't answer reads `?` and "Couldn't check" with the reason (credentials scrubbed), with Recheck. It is never shown as a no, and is asked again only by Recheck. If the namespaces can't be listed for another reason (the cluster didn't answer) the page says so with Retry |
+| **Can't list namespaces** | the cluster refused the namespace list: a banner with the reason and Retry, and only the context's own namespace is reviewed ([When it reads](#when-it-reads)) |
 
 ## Owners
 
@@ -51,8 +53,8 @@ The answers belong to core's `Board`, keyed by the access identity (`ClusterSour
 
 ## Example data
 
-`--fixture` answers from invented namespaces. `FRESHKUBE_ACCESS` shapes it: `limited` (the default: writes in `shop` and `payments`, reads elsewhere, nothing in `kube-system`), `full`, `incomplete` (every review incomplete), `failed` (`shop`, `payments` and Nodes can't be checked), `identity-changed` (the first answers are for one person, then the cluster says another).
+`--fixture` answers from invented namespaces. `FRESHKUBE_ACCESS` shapes it: `limited` (the default: writes in `shop` and `payments`, reads elsewhere, nothing in `kube-system`), `full`, `incomplete` (every review incomplete), `failed` (`shop`, `payments` and Nodes can't be checked), `identity-changed` (the first answers are for one person, then the cluster says another), `ns-refused` (the namespace list is refused, so only `shop` is reviewed).
 
 ## Not in this slice
 
-"See your access" from a disabled action, and the everyday actions' disabled reasons in the short form ([#853](https://github.com/skel84/freshkube/issues/853), [#857](https://github.com/skel84/freshkube/issues/857)), need a cache of answers wired into Resources' controls and the change page; they come with slice 2. A deep link to the page does too.
+"See your access" from a disabled action, and the everyday actions' disabled reasons in the short form ([#853](https://github.com/skel84/freshkube/issues/853), [#857](https://github.com/skel84/freshkube/issues/857)), need a cache of answers wired into Resources' controls and the change page; they come with slice 2.

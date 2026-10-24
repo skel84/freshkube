@@ -402,9 +402,9 @@ async fn namespaces_are_one_metadata_list_with_a_cap() {
             )
         })
     });
-    let (names, more) = list_namespaces(&client).await.unwrap();
-    assert_eq!(names, ["default", "shop"]);
-    assert!(!more);
+    let listed = list_namespaces(&client).await.unwrap();
+    assert_eq!(listed.names, ["default", "shop"]);
+    assert!(!listed.more && listed.refused.is_none());
     assert_eq!(recorder.requests().len(), 1);
     recorder.assert_all("a read", |request| request.method == http::Method::GET);
     assert!(recorder.requests()[0].query.contains("limit=501"));
@@ -434,5 +434,42 @@ fn the_example_shapes_answer_through_the_same_matching() {
     assert_eq!(
         example::who(Shape::Limited, 0),
         example::who(Shape::Limited, 3)
+    );
+}
+
+#[tokio::test]
+async fn a_refused_namespace_list_reviews_the_contexts_own_namespace_alone() {
+    let (client, recorder) = fake_api::client(|request: &Recorded| {
+        (request.path == "/api/v1/namespaces").then(|| {
+            status(
+                403,
+                "namespaces is forbidden: User \"alice\" cannot list resource",
+            )
+        })
+    });
+    let listed = list_namespaces(&client).await.unwrap();
+    // The client's own default namespace, never a guess or a sweep.
+    assert_eq!(listed.names, [client.default_namespace()]);
+    assert!(listed.refused.as_deref().unwrap().contains("forbidden"));
+    assert_eq!(recorder.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn a_namespace_list_that_fails_otherwise_is_an_error_not_a_refusal() {
+    let (client, _) = fake_api::client(|request: &Recorded| {
+        (request.path == "/api/v1/namespaces").then(|| status(500, "internal error"))
+    });
+    assert!(list_namespaces(&client).await.is_err());
+}
+
+#[test]
+fn the_ns_refused_example_lists_one_namespace_and_why() {
+    let listed = example::namespaces(example::Shape::NsRefused);
+    assert_eq!(listed.names, ["shop"]);
+    assert!(listed.refused.is_some());
+    assert!(
+        example::namespaces(example::Shape::Limited)
+            .refused
+            .is_none()
     );
 }

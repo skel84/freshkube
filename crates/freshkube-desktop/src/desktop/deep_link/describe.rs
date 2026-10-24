@@ -41,6 +41,7 @@ fn title(page: LinkPage) -> &'static str {
         LinkPage::Nodes => "Nodes",
         LinkPage::Health => "Health",
         LinkPage::Databases => "Databases",
+        LinkPage::Access => "Your access",
         LinkPage::Resources => "Resources",
         LinkPage::Etcd => "etcd",
         LinkPage::SystemServices => "System services",

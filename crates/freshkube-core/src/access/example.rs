@@ -1,7 +1,7 @@
 //! Invented answers for `--fixture` and `FRESHKUBE_ACCESS`: namespaces,
 //! people and rules that name no real cluster.
 
-use super::{Cells, RowKey, Rule, RulesAnswer, Who, columns::Column};
+use super::{Cells, Namespaces, RowKey, Rule, RulesAnswer, Who, columns::Column};
 
 /// How the example answers (`FRESHKUBE_ACCESS`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -19,6 +19,8 @@ pub enum Shape {
     Failed,
     /// The first read is one person, the next another.
     IdentityChanged,
+    /// The namespaces can't be listed: only the context's own is reviewed.
+    NsRefused,
 }
 
 impl Shape {
@@ -29,6 +31,7 @@ impl Shape {
             "incomplete" => Self::Incomplete,
             "failed" => Self::Failed,
             "identity-changed" => Self::IdentityChanged,
+            "ns-refused" => Self::NsRefused,
             _ => Self::Limited,
         }
     }
@@ -44,6 +47,25 @@ pub const NAMESPACES: [&str; 8] = [
     "staging",
     "team-a",
 ];
+
+/// The namespaces the example lists.
+pub fn namespaces(shape: Shape) -> Namespaces {
+    if shape == Shape::NsRefused {
+        return Namespaces {
+            names: vec!["shop".into()],
+            more: false,
+            refused: Some(
+                "namespaces is forbidden: User \"alice@example.test\" cannot list resource \"namespaces\" at the cluster scope"
+                    .into(),
+            ),
+        };
+    }
+    Namespaces {
+        names: NAMESPACES.map(str::to_owned).to_vec(),
+        more: false,
+        refused: None,
+    }
+}
 
 /// Whether the shape flips who is asking after the first read.
 pub fn flips(shape: Shape) -> bool {

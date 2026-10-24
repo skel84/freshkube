@@ -133,14 +133,36 @@ async fn allowed(client: &kube::Client, need: &Need) -> Result<bool, String> {
         .ok_or_else(|| "the review came back empty".to_owned())
 }
 
-/// The namespace names, one list of metadata, at most [`NAMESPACE_CAP`].
-/// Returns whether the cluster has more.
-pub async fn list_namespaces(client: &kube::Client) -> Result<(Vec<String>, bool), String> {
+/// The namespaces to list.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Namespaces {
+    pub names: Vec<String>,
+    /// The cluster has more than [`NAMESPACE_CAP`].
+    pub more: bool,
+    /// Why the list was refused. `names` is then the one namespace the
+    /// context itself uses, reviewed alone: a refused list is never
+    /// answered by asking about namespaces that were guessed.
+    pub refused: Option<String>,
+}
+
+/// The namespace names, one list of metadata, at most [`NAMESPACE_CAP`]. A
+/// list the cluster refuses (403) is its own answer, not a failure.
+pub async fn list_namespaces(client: &kube::Client) -> Result<Namespaces, String> {
     let api: Api<Namespace> = Api::all(client.clone());
-    let list = api
+    let list = match api
         .list_metadata(&ListParams::default().limit(NAMESPACE_CAP as u32 + 1))
         .await
-        .map_err(failed)?;
+    {
+        Ok(list) => list,
+        Err(kube::Error::Api(status)) if status.code == 403 => {
+            return Ok(Namespaces {
+                names: vec![client.default_namespace().to_owned()],
+                more: false,
+                refused: Some(scrub(&status.message)),
+            });
+        }
+        Err(error) => return Err(failed(error)),
+    };
     let mut names: Vec<String> = list
         .items
         .into_iter()
@@ -149,5 +171,9 @@ pub async fn list_namespaces(client: &kube::Client) -> Result<(Vec<String>, bool
     let more = names.len() > NAMESPACE_CAP;
     names.sort();
     names.truncate(NAMESPACE_CAP);
-    Ok((names, more))
+    Ok(Namespaces {
+        names,
+        more,
+        refused: None,
+    })
 }

@@ -219,6 +219,32 @@ impl AccessScreen {
                 .into_any_element(),
             );
         }
+        if let Some(reason) = self
+            .namespaces
+            .data()
+            .and_then(|namespaces| namespaces.refused.as_ref())
+        {
+            banners.push(
+                ui::warning_banner(
+                    Some("Can't list namespaces".into()),
+                    format!(
+                        "{reason}. Only the namespace this context uses is checked; the others are not guessed at."
+                    ),
+                    Some(
+                        Button::new("access-refused-retry")
+                            .small()
+                            .outline()
+                            .label("Retry")
+                            .on_click(cx.listener(|this, _, _, cx| this.refresh_all(cx)))
+                            .into_any_element(),
+                    ),
+                    cx,
+                )
+                .id("access-refused")
+                .test_support()
+                .into_any_element(),
+            );
+        }
         if let Some(namespaces) = self.namespaces.data().filter(|n| n.more) {
             banners.push(
                 ui::banner(
@@ -341,8 +367,8 @@ impl Render for AccessScreen {
             .min_h_0()
             .on_action(cx.listener(|this, _: &Next, _, cx| this.step(1, cx)))
             .on_action(cx.listener(|this, _: &Previous, _, cx| this.step(-1, cx)))
-            .on_action(cx.listener(|this, _: &First, _, cx| this.step(isize::MIN, cx)))
-            .on_action(cx.listener(|this, _: &Last, _, cx| this.step(isize::MAX, cx)))
+            .on_action(cx.listener(|this, _: &First, _, cx| this.jump(false, cx)))
+            .on_action(cx.listener(|this, _: &Last, _, cx| this.jump(true, cx)))
             .on_action(cx.listener(|this, _: &Close, _, cx| {
                 if this.selected.take().is_some() {
                     cx.notify()
