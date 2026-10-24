@@ -309,7 +309,13 @@ impl ChangePage {
         // the Inspector (900 dp or more) the table scrolls sideways instead,
         // with the glyph and the hop pinned.
         let room = freshkube_ui::page::page_width(window);
-        self.compact.set(room < table::full_width());
+        self.compact.set(if room >= table::full_width() {
+            table::Width::Full
+        } else if room >= table::compact_width() {
+            table::Width::Compact
+        } else {
+            table::Width::Tiny
+        });
         let table = div()
             .id("change-table")
             .test_support()
@@ -363,11 +369,15 @@ impl Render for ChangePage {
             .on_action(cx.listener(|this, _: &NextCell, window, cx| {
                 if this.view == ChangeView::Overview {
                     this.step_overview(0, 1, window, cx);
+                } else {
+                    cx.propagate();
                 }
             }))
             .on_action(cx.listener(|this, _: &PreviousCell, window, cx| {
                 if this.view == ChangeView::Overview {
                     this.step_overview(0, -1, window, cx);
+                } else {
+                    cx.propagate();
                 }
             }))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))

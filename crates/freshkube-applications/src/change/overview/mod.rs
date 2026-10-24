@@ -30,10 +30,22 @@ impl ChangePage {
     pub(super) fn derive_overview(&mut self) {
         self.overview = cells::derive(&self.change, &self.rows);
         self.strip = strip::derive(&self.change, &self.rows);
+        self.matrix_stale.set(true);
     }
 
     /// Hands the matrix its rows and the selection, which it draws.
+    ///
+    /// Only when something it shows moved: the change, its marks, the
+    /// selection, the filter or the loading state. A frame that moved none
+    /// of them does nothing here.
     fn sync_matrix(&self, cx: &mut Context<Self>) {
+        let loading_now = self.loading_rows().is_some();
+        if !self.matrix_stale.replace(false)
+            && self.matrix_loading.replace(loading_now) == loading_now
+        {
+            return;
+        }
+        self.matrix_loading.set(loading_now);
         let selected = self
             .selected
             .as_ref()

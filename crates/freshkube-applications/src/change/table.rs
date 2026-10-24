@@ -69,6 +69,18 @@ pub fn columns() -> Vec<Column> {
     ]
 }
 
+/// How much of the trail a page has room for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Width {
+    /// Every column.
+    Full,
+    /// Without Time and Read from, which would be cut at the page's edge.
+    Compact,
+    /// Also without Link, in a page narrower still (a text size of 20 in
+    /// a small window, beside the shell's narrow column).
+    Tiny,
+}
+
 /// The columns of a page too narrow for [`columns`], which would cut Time
 /// and Read from at its edge: the same four that matter, with Detail down
 /// to its least. A row's tooltip carries the time and where it was read
@@ -80,9 +92,23 @@ pub fn compact_columns() -> Vec<Column> {
     columns
 }
 
+/// The columns of a page narrower than [`compact_columns`]: the glyph, the
+/// hop and Detail. The link's word is in the row's tooltip and in the
+/// Inspector.
+pub fn tiny_columns() -> Vec<Column> {
+    let mut columns = compact_columns();
+    columns.remove(2);
+    columns
+}
+
 /// The width the full columns need, in dp: below it the table is compact.
 pub fn full_width() -> f32 {
     columns().iter().map(TableColumn::width).sum()
+}
+
+/// The width the compact columns need, in dp: below it the table is tiny.
+pub fn compact_width() -> f32 {
+    compact_columns().iter().map(TableColumn::width).sum()
 }
 
 /// A link's glyph, if any, and its word: Confirmed muted, the other two
@@ -125,20 +151,6 @@ fn coroot_mark(key: &str, mark: &Mark, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-impl ChangePage {
-    /// The hop's name, and in a compact table, which has no Time and Read
-    /// from columns, when it happened and where it was read from.
-    fn row_tooltip(&self, row: &HopRow) -> SharedString {
-        if !self.compact.get() {
-            return row.name.clone();
-        }
-        let mut parts = vec![row.name.to_string()];
-        parts.extend((!row.time.is_empty()).then(|| format!("at {}", row.time)));
-        parts.extend((!row.from.is_empty()).then(|| format!("read from {}", row.from)));
-        parts.join(" · ").into()
-    }
-}
-
 impl TableSource for ChangePage {
     type Key = SharedString;
     type Sort = ();
@@ -150,10 +162,10 @@ impl TableSource for ChangePage {
     }
 
     fn columns(&self) -> &[Column] {
-        if self.compact.get() {
-            &self.compact_columns
-        } else {
-            &self.columns
+        match self.compact.get() {
+            Width::Full => &self.columns,
+            Width::Compact => &self.compact_columns,
+            Width::Tiny => &self.tiny_columns,
         }
     }
 
@@ -197,7 +209,11 @@ impl TableSource for ChangePage {
             key: row.key.clone(),
             id: SharedString::from(format!("{PREFIX}-hop-{}", row.key)).into(),
             label: row.label.clone(),
-            tooltip: Some(self.row_tooltip(row)),
+            tooltip: Some(if self.compact.get() == Width::Full {
+                row.name.clone()
+            } else {
+                row.tip.clone()
+            }),
             marked: false,
             muted: false,
             data: row,

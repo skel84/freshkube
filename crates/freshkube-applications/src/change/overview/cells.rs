@@ -73,16 +73,26 @@ pub struct Cell {
     /// Whether the change got as far as this cell: an unreached one is a
     /// hairline track, not a problem.
     pub reached: bool,
+    /// How sure the link into the hop is, when the hop has one (a gate and
+    /// Coroot's verdict have none).
+    pub link: Option<Confidence>,
     pub tooltip: SharedString,
 }
 
 impl Cell {
-    /// The style of the track into the cell.
+    /// The style of the track into the cell: the confidence of the link into
+    /// it (solid Confirmed, dashed Claimed, dotted Unknown), else, for a cell
+    /// with no link of its own, its status; a hairline for a step the change
+    /// has not reached. Status is the glyph's, confidence the track's.
     pub fn track(&self) -> kit::Track {
-        if self.reached {
-            kit::Track::into_tone(self.tone)
-        } else {
-            kit::Track::Hairline
+        if !self.reached {
+            return kit::Track::Hairline;
+        }
+        match self.link {
+            Some(Confidence::Confirmed) => kit::Track::Solid,
+            Some(Confidence::Claimed) => kit::Track::Dashed,
+            Some(Confidence::Unknown) => kit::Track::Dotted,
+            None => kit::Track::into_tone(self.tone),
         }
     }
 }
@@ -243,6 +253,7 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
             word: "Not reached".into(),
             hop: None,
             reached: false,
+            link: None,
             tooltip: format!("{}: the change hasn't got this far", column.label()).into(),
         };
     };
@@ -255,6 +266,7 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
             word: "Not reached".into(),
             hop: Some(row.key.clone()),
             reached: false,
+            link: None,
             tooltip: format!(
                 "{}: {} still runs other Freight",
                 column.label(),
@@ -264,9 +276,12 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
         };
     }
     let (tone, word) = if column == Column::AfterDeploy {
-        match &row.coroot {
-            Some(mark) => (mark.tone, mark_word(mark.tone)),
-            None => (Tone::Outline, "Not looked"),
+        match (&row.coroot, row.coroot_why) {
+            (Some(mark), _) => (mark.tone, mark_word(mark.tone)),
+            // Coroot answered with a cause: it is not set up, or the piece
+            // isn't there, or it couldn't be read. Never a failure.
+            (None, Some(why)) => (Tone::Unknown, why),
+            (None, None) => (Tone::Outline, "Not looked"),
         }
     } else {
         (row.tone, word(column, row))
@@ -279,7 +294,12 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
         tone,
         word: word.into(),
         hop: Some(row.key.clone()),
-        reached: column != Column::AfterDeploy || row.coroot.is_some(),
+        reached: column != Column::AfterDeploy || row.coroot.is_some() || row.coroot_why.is_some(),
+        link: if column == Column::AfterDeploy {
+            None
+        } else {
+            row.link
+        },
         tooltip,
     }
 }

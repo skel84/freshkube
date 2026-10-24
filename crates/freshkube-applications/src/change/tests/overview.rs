@@ -404,3 +404,95 @@ fn a_fix_chip_selects_its_cell_in_the_overview(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_claimed_link_is_a_dashed_track_under_a_healthy_glyph(cx: &mut TestAppContext) {
+    use freshkube_ui::table::Track;
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        let mut change = page.read(cx).change.clone();
+        let pods = change
+            .hops
+            .iter_mut()
+            .find(|hop| hop.key == "dev-pods")
+            .unwrap();
+        pods.link = Some(Confidence::Claimed);
+        if let Shows::Hop(detail) = &mut pods.shows
+            && let Some(link) = detail.link.as_mut()
+        {
+            link.confidence = Confidence::Claimed;
+        }
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        let dev = page.read(cx).overview[0].clone();
+        let running = &dev.cells[4];
+        // Status is the glyph's, confidence the track's.
+        assert_eq!(running.tone, Tone::Good);
+        assert_eq!(running.word.as_ref(), "Running");
+        assert_eq!(running.track(), Track::Dashed);
+        // A Confirmed link stays solid.
+        assert_eq!(dev.cells[3].track(), Track::Solid);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn after_deploy_says_why_coroot_has_no_verdict(cx: &mut TestAppContext) {
+    use freshkube_ui::table::Track;
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, _, cx| {
+        for (why, word) in [
+            (Some("Not set up"), "Not set up"),
+            (Some("Not found"), "Not found"),
+            (Some("Can't read"), "Can't read"),
+            (None, "Not looked"),
+        ] {
+            page.update(cx, |page, _| {
+                for row in page
+                    .rows
+                    .iter_mut()
+                    .filter(|row| row.key == "dev-deployment")
+                {
+                    row.coroot_why = why;
+                }
+                page.derive_overview();
+            });
+            let cell = page.read(cx).overview[0].cells[5].clone();
+            assert_eq!(cell.word.as_ref(), word);
+            // A cause is not a failure.
+            assert_ne!(cell.tone, Tone::Crit);
+            assert_eq!(
+                cell.track(),
+                if why.is_some() {
+                    Track::Dotted
+                } else {
+                    Track::Hairline
+                }
+            );
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn not_found_is_drawn_on_the_builds_card_under_the_causes_shape(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let build = page
+            .read(cx)
+            .strip
+            .cards
+            .iter()
+            .find(|card| card.id == "build")
+            .unwrap()
+            .clone();
+        assert!(build.detail.contains("Not found"), "{}", build.detail);
+        let label = window
+            .find("change-strip-build")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(label.contains("Not found"), "{label}");
+    })
+    .unwrap();
+}

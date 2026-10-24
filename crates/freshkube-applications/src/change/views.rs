@@ -25,6 +25,7 @@ impl ChangePage {
             return;
         }
         self.view = view;
+        self.matrix_stale.set(true);
         self.view_store.save(view, cx);
         if view == ChangeView::Hops {
             if self.link_selected {

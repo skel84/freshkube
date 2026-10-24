@@ -87,12 +87,19 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Strip {
             .map(|(_, row)| status(row.tone))
             .max_by_key(|tone| rank(*tone))
             .unwrap_or(Tone::Good);
+        // What the Build can't confirm is said on its card, with its cause.
+        let unconfirmed = build
+            .iter()
+            .find_map(|(_, row)| row.cause.as_ref().filter(|cause| cause.is_problem()));
         cards.push(Card {
             id: "build",
             select: last.1.key.clone(),
             hops: build.iter().map(|(_, row)| row.key.clone()).collect(),
             title: "Build".into(),
-            detail: last.1.name.clone(),
+            detail: match unconfirmed {
+                Some(cause) => format!("{} · {}", last.1.name, cause.word()).into(),
+                None => last.1.name.clone(),
+            },
             tone,
         });
         ends.push(build.first().copied());

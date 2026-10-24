@@ -2487,3 +2487,132 @@ fn a_toast_covers_neither_the_header_nor_the_inspector_actions(cx: &mut TestAppC
         .unwrap();
     }
 }
+
+/// [`on_stage_stepped`] on `stage`, with the change page left to open on
+/// the Overview, which a window with no saved choice opens on.
+fn overview_on(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    stage: &str,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = fixture_stepped(cx, width, height);
+    cx.update(|cx| {
+        freshkube_applications::change_view::use_session(
+            freshkube_applications::change_view::ChangeView::Overview,
+            cx,
+        )
+    });
+    let mark = format!("application-part-cicd-fra/0/checkout/{stage}");
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, _| page.set_variant(Variant::Acme));
+        window.render_frame(cx);
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        window.click(CHECKOUT, cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+        window.click(SharedString::from(mark), cx);
+        window.render_frame(cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (runtime, handle, view)
+}
+
+/// In the real shell at 760 by 560 and text size 20 the page is about 380
+/// dp, narrower than the window, and a change followed from its Stage opens
+/// on the Overview with that Stage selected and its cell in view.
+#[gpui_kit::test]
+fn the_overview_opens_on_its_stage_in_the_shell_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = overview_on(cx, 760., 560., "prod-lon");
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        for _ in 0..8 {
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+        }
+        let page = change(&view, cx).expect("the change page");
+        assert_eq!(
+            page.read(cx).selected().map(|key| key.as_ref()),
+            Some("prod-lon-eligible")
+        );
+        assert!(window.try_find("change-overview").is_some());
+        // The selected Stage's cell is in view, on both axes.
+        let scroll = window.find("change-matrix-table-scroll").bounds();
+        let cell = window.find("change-cell-prod-lon-eligible").bounds();
+        assert!(
+            cell.left() >= scroll.left() - gpui_kit::px(1.),
+            "{cell:?} in {scroll:?}"
+        );
+        assert!(
+            cell.right() <= scroll.right() + gpui_kit::px(3.),
+            "{cell:?} in {scroll:?}"
+        );
+        assert!(
+            cell.top() >= scroll.top() - gpui_kit::px(1.),
+            "{cell:?} in {scroll:?}"
+        );
+        assert!(
+            cell.bottom() <= scroll.bottom() + gpui_kit::px(1.),
+            "{cell:?} in {scroll:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// The same shell and size on All hops: nothing is cut at the right edge,
+/// whatever columns the page has room for.
+#[gpui_kit::test]
+fn all_hops_fits_the_real_page_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open(cx, 760., 560.);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        for _ in 0..8 {
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+        }
+        let view = window.find("change-table-scroll").bounds();
+        let list = window.find("change-list").bounds();
+        assert!(
+            list.size.width <= view.size.width + gpui_kit::px(0.5),
+            "the table is {:?} wide in {:?}: its last columns are cut",
+            list.size.width,
+            view.size.width
+        );
+        // The page is narrower than the window: at text 20 the window is
+        // about 494 dp, less the shell's rail and column.
+        assert!(view.size.width < crate::ui::dp_px(494., window));
+    })
+    .unwrap();
+}
+
+/// A Stage's actions work from the Overview as from All hops: Promote on
+/// a protected Stage asks for its name, and sends nothing on example data.
+#[gpui_kit::test]
+fn the_stage_actions_work_from_the_overview(cx: &mut TestAppContext) {
+    let (runtime, handle, view) = overview_on(cx, 1280., 1200., "prod-ams");
+    cx.update_window(handle, |_, window, cx| {
+        // A Stage cell selects its first gate; the Promotion gate's cell
+        // shows the Stage's actions in the Inspector.
+        window.click("change-cell-prod-ams-promoted", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    stage_action(
+        cx,
+        &runtime,
+        handle,
+        &view,
+        "prod-ams-promotion",
+        "change-action-4",
+    );
+    assert_eq!(
+        found(cx, handle, "write-type-prompt").as_deref(),
+        Some("Type prod-ams to confirm")
+    );
+}

@@ -336,6 +336,13 @@ pub struct HopRow {
     pub coroot: Option<Mark>,
     /// The row's accessibility label.
     pub label: SharedString,
+    /// The row's tooltip when the table has no Time, Read from or Link
+    /// column to say them: the name, when, where it was read from, and
+    /// the link's word.
+    pub tip: SharedString,
+    /// Why Coroot's outcome for the hop isn't a verdict, once it was read:
+    /// the cause's word.
+    pub coroot_why: Option<&'static str>,
 }
 
 /// A group row's words, derived with the change.
@@ -420,7 +427,12 @@ pub struct ChangePage {
     /// The columns of a page too narrow for them, and whether the table
     /// draws those now: set from the width it has, as it draws.
     compact_columns: Vec<table::Column>,
-    compact: std::cell::Cell<bool>,
+    tiny_columns: Vec<table::Column>,
+    compact: std::cell::Cell<table::Width>,
+    /// The matrix needs its rows again: the change, the selection, the
+    /// filter or the loading state moved.
+    matrix_stale: std::cell::Cell<bool>,
+    matrix_loading: std::cell::Cell<bool>,
     table: TableState,
     focus: FocusHandle,
     split: InspectorSplit,
@@ -503,7 +515,10 @@ impl ChangePage {
             filter: None,
             columns: table::columns(),
             compact_columns: table::compact_columns(),
-            compact: std::cell::Cell::new(false),
+            tiny_columns: table::tiny_columns(),
+            compact: std::cell::Cell::new(table::Width::Full),
+            matrix_stale: std::cell::Cell::new(true),
+            matrix_loading: std::cell::Cell::new(false),
             table: TableState::new(PREFIX),
             focus: cx.focus_handle(),
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
@@ -587,6 +602,19 @@ impl ChangePage {
                     detail: hop.detail.clone().into(),
                     from: hop.from.clone().into(),
                     label: format!("{}: {}{link}", hop.name, hop.detail).into(),
+                    tip: [
+                        Some(hop.name.clone()),
+                        hop.at.map(|at| format!("at {}", clock(at))),
+                        (!hop.from.is_empty()).then(|| format!("read from {}", hop.from)),
+                        hop.link
+                            .map(|link| format!("link {}", cause_word(link, hop.cause.as_ref()))),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into(),
+                    coroot_why: None,
                     time: time.into(),
                     link: hop.link,
                     cause: hop.cause.clone(),
@@ -756,6 +784,7 @@ impl ChangePage {
             self.detail_scroll.set_offset(point(px(0.), px(0.)));
         }
         self.selected = Some(row.key.clone());
+        self.matrix_stale.set(true);
         self.link_selected = false;
         self.detail = self.derive_detail();
         self.offer_follows(cx);
@@ -825,6 +854,7 @@ impl ChangePage {
 
     fn toggle_filter(&mut self, tone: Tone, cx: &mut Context<Self>) {
         self.filter = (self.filter != Some(tone)).then_some(tone);
+        self.matrix_stale.set(true);
         self.derive();
         cx.notify();
     }
@@ -832,6 +862,7 @@ impl ChangePage {
     /// Escape: the selection first, then back.
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.selected.take().is_some() {
+            self.matrix_stale.set(true);
             self.link_selected = false;
             self.detail = None;
             self.hide_outcomes();
