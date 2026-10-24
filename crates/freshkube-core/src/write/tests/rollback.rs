@@ -125,6 +125,15 @@ async fn the_dry_run_shows_changed_paths_and_never_a_value() {
         "spec.template.spec.containers[0].env[0].name",
         ChangeKind::Added
     )));
+    // The patch names the whole containers list, but the diff compares the
+    // object before and after: a container field that stays the same is
+    // not listed.
+    assert!(
+        !paths
+            .iter()
+            .any(|(path, _)| path.ends_with("containers[0].name")),
+        "{paths:?}"
+    );
     let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "prod-fra") else {
         panic!("a spec change asks");
     };
