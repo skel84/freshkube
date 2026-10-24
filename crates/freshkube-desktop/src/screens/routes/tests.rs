@@ -686,6 +686,10 @@ fn the_status_bar_carries_the_read_time_of_example_data(cx: &mut TestAppContext)
         let at = text.find("Example data · ").expect(&text);
         assert!(text.find("not serving").unwrap() > at, "{text}");
         assert!(text[at..].contains(':'), "{text}");
+        // The narrowest line still says what it is and when it was read.
+        let narrowest = segment.lines(None).pop().unwrap();
+        assert!(narrowest.contains("Example data · "), "{narrowest}");
+        assert!(narrowest.contains(':'), "{narrowest}");
     })
     .unwrap();
 }

@@ -313,18 +313,18 @@ impl ScreenPanel for RoutesScreen {
             .is_some_and(|source| source.access.is_example());
         let mut parts = Vec::new();
         if example {
-            parts.push(Part::new("Example data"));
+            parts.push(Part::new("Example data").keep());
         }
         let time = self.loader.last_successful().or(self.example_read);
         match (example, time) {
             (true, Some(at)) => {
-                parts.push(Part::new(ui::clock(at)));
+                parts.push(Part::new(ui::clock(at)).keep());
                 parts.push(Part::new("All namespaces"));
             }
             (true, None) => parts.push(Part::new("All namespaces")),
             (false, Some(at)) => {
                 parts.push(Part::new("All namespaces"));
-                parts.push(Part::new(format!("updated {}", ui::clock(at))));
+                parts.push(Part::new(format!("updated {}", ui::clock(at))).keep());
             }
             (false, None) => parts.push(Part::new("All namespaces")),
         }
