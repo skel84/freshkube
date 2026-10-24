@@ -126,7 +126,6 @@ pub(crate) fn menus(platform: Platform, state: &MenuState) -> Vec<Menu> {
                     MenuItem::action("Next tab", dock::NextDockTab),
                     MenuItem::action("Previous tab", dock::PreviousDockTab),
                     MenuItem::action("Close tab", dock::CloseDockTab),
-                    MenuItem::action("Open Agent", dock::OpenAgent),
                     MenuItem::action(
                         if state.dock {
                             "Minimize dock"
@@ -211,6 +210,8 @@ fn view(state: &MenuState) -> Menu {
             MenuItem::action("Default text size", DefaultText),
             MenuItem::separator(),
             MenuItem::action("Refresh", Refresh),
+            MenuItem::separator(),
+            MenuItem::action("Open Agent", dock::OpenAgent),
         ],
     )
 }
