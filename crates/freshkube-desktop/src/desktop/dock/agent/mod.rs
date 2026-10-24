@@ -185,7 +185,8 @@ pub(crate) struct AgentView {
     stop_at_first_step: bool,
     shared_shape: bool,
     /// The sign-in command the Signed out card shows, made once the data
-    /// directories are ready, or why they could not be made.
+    /// directories are ready, or the error line saying why they could not be
+    /// made.
     sign_in: Option<Result<String, String>>,
     /// The endpoint's port while the session runs.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -421,15 +422,17 @@ impl AgentView {
 
     /// Makes the data directories private, then the sign-in command for the
     /// data mode the session runs in, built from the same directories its
-    /// environment gets. A failure to prepare is kept instead, and no
-    /// command is shown.
+    /// environment gets. A failure to prepare is kept instead, as the
+    /// card's error line, and no command is shown.
     fn prepare_sign_in(&mut self) {
         let data = self.data();
         let host = freshkube_agent::profile::Host::current();
         self.sign_in = Some(
             data.prepare(&host)
                 .map(|()| data.sign_in_command(&host))
-                .map_err(|error| error.to_string()),
+                .map_err(|error| {
+                    format!("Freshkube couldn't make its opencode data directory private: {error}")
+                }),
         );
     }
 

@@ -368,10 +368,11 @@ impl Data {
     /// [`Data::Own`] it names the three directories the session's environment
     /// gets (the same [`Data::dirs`]), quoted for a POSIX shell; in
     /// [`Data::Shared`] opencode's own directories are the right ones, so the
-    /// plain command stands. `--standalone` keeps the login on a private
-    /// server in [`Data::Own`]: without it `auth login` attaches the
-    /// background service and fails when one is already running. It carries
-    /// paths only.
+    /// plain command stands. `--standalone` is what keeps the login in the
+    /// directories named: without it `auth login` attaches the background
+    /// service that is running, which uses the person's real ones, so the
+    /// login would land there and the session would stay signed out. It also
+    /// avoids the port collision with that service. It carries paths only.
     pub fn sign_in_command(&self, host: &Host) -> String {
         let mut words = Vec::new();
         if let Self::Own(_) = self {

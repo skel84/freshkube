@@ -273,18 +273,13 @@ impl AgentView {
                                 .child(REAL_TERMINAL),
                         )
                         .into_any_element(),
-                    Some(Err(error)) => {
-                        let text = format!(
-                            "Freshkube couldn't make its opencode data directory private: {error}"
-                        );
-                        div()
-                            .id("agent-sign-in-error")
-                            .test_support()
-                            .aria_label(SharedString::from(text.clone()))
-                            .text_color(p.ink)
-                            .child(text)
-                            .into_any_element()
-                    }
+                    Some(Err(text)) => div()
+                        .id("agent-sign-in-error")
+                        .test_support()
+                        .aria_label(SharedString::from(text.clone()))
+                        .text_color(p.ink)
+                        .child(text.clone())
+                        .into_any_element(),
                     None => div().into_any_element(),
                 })
             })
