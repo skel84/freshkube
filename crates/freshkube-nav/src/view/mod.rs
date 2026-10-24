@@ -146,6 +146,7 @@ pub enum LinkPage {
     Health,
     Databases,
     Routes,
+    Access,
     Resources,
     Etcd,
     SystemServices,
@@ -157,12 +158,13 @@ pub enum LinkPage {
 }
 
 impl LinkPage {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
         Self::Databases,
         Self::Routes,
+        Self::Access,
         Self::Resources,
         Self::Etcd,
         Self::SystemServices,
@@ -181,6 +183,7 @@ impl LinkPage {
             Self::Health => "health",
             Self::Databases => "databases",
             Self::Routes => "routes",
+            Self::Access => "access",
             Self::Resources => "resources",
             Self::Etcd => "etcd",
             Self::SystemServices => "system-services",

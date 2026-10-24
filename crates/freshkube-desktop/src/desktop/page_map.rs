@@ -20,9 +20,9 @@ use crate::{
     monitoring::page::MonitoringPage,
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
-        DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen,
-        OperationsScreen, ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel, SecurityScreen,
-        StorageScreen, WorkloadsScreen,
+        AccessScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen,
+        NetworkScreen, OperationsScreen, ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel,
+        SecurityScreen, StorageScreen, WorkloadsScreen,
     },
 };
 
@@ -84,6 +84,10 @@ impl Pages {
             let shape = options.debug.routes;
             cx.new(|cx| RoutesScreen::new(runtime.clone(), window, cx).with_example(shape))
         };
+        let access = {
+            let shape = options.debug.access.clone();
+            cx.new(|cx| AccessScreen::new(runtime.clone(), window, cx).with_example(&shape))
+        };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
             .map(|page| {
@@ -91,6 +95,7 @@ impl Pages {
                 let handle = match page {
                     PageId::Databases => ScreenHandle::new(databases.clone()),
                     PageId::Routes => ScreenHandle::new(routes.clone()),
+                    PageId::Access => ScreenHandle::new(access.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
                     PageId::Network => screen(NetworkScreen::new, runtime, window, cx),

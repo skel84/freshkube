@@ -37,6 +37,7 @@ impl Pilot {
                     "workloads" => Some((Page::Health, "Health · ⌘5")),
                     "storage" => Some((Page::Databases, "Databases")),
                     "networking" => Some((Page::Routes, "Routes")),
+                    "access-control" => Some((Page::Access, "Your access")),
                     _ => None,
                 };
                 if let Some((page, tooltip)) = extra {

@@ -604,6 +604,16 @@ fn a_link_without_a_fingerprint_still_opens_in_the_open_cluster(cx: &mut TestApp
     assert!(notices.borrow().is_empty());
 }
 
+#[gpui_kit::test]
+fn a_link_to_your_access_opens_the_page_and_reads_nothing_by_itself(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let notices = record_notices(cx, &view);
+    open_text(cx, handle, &view, "freshkube://open?page=access");
+    assert!(!asking(cx, &view));
+    assert_eq!(page(cx, &view), Page::Access);
+    assert!(notices.borrow().is_empty());
+}
+
 #[test]
 fn the_note_says_one_cluster_matches_on_the_ca_alone_when_only_one_does() {
     use super::picker::{Row, Why};

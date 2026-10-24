@@ -195,7 +195,7 @@ Each is its own state with why, on the Changes list's footer, the change page's 
 
 ## The screens
 
-DESIGN.md's [change page](DESIGN.md#the-change-page) keeps its table of hops (the List view; the Chain toggle is [#698](https://github.com/skel84/freshkube/issues/698)'s and uses these same states). The text below replaces the rule `an attestation only claims` with: **an unverified attestation claims; a verified one confirms.**
+DESIGN.md's [change page](DESIGN.md#the-change-page) keeps its table of hops (the All hops view; the Overview beside it uses these same states). The text below replaces the rule `an attestation only claims` with: **an unverified attestation claims; a verified one confirms.**
 
 ### The states of the Supply chain row
 

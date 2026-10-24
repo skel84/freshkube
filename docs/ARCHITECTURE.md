@@ -185,6 +185,7 @@ Behaviour that does not belong in the rules lives in one doc per feature, each s
 - [docs/features/shell.md](features/shell.md): the app frame, the Overview and Attention, and the Kubernetes summary session.
 - [docs/features/agent.md](features/agent.md): the agent in the dock: the agent's reads in core, the per-cluster access gate, the loopback endpoint and `agent.json` (D1a); the ACP client, the opencode profile and its lock-down, the version check and the scripted agent (D1b).
 - [docs/features/database-explorer.md](features/database-explorer.md): Explore on a Databases row: the read-only PostgreSQL session through a port forward, the login Secret read once, the schema browser and a capped table.
+- [docs/features/access.md](features/access.md): Your access: the rules review per namespace in view, who you are, the no's in the short form, Copy and Recheck, and its states.
 - [docs/features/followed.md](features/followed.md): what the user follows, the owner, the toasts and the bell.
 - [docs/features/monitoring.md](features/monitoring.md): the Monitoring page, its markers and the CPU and memory history charts.
 - [docs/features/settings.md](features/settings.md): the Settings area, its eight sections, the shared form rules and the setup file's saves.

@@ -15,6 +15,7 @@ pub mod graph;
 pub mod motion;
 pub mod source_list;
 pub mod squares;
+pub mod stepper;
 
 /// A story the list offers.
 pub struct Story {
@@ -97,10 +98,10 @@ pub const STORIES: &[Story] = &[
         build: form::build,
     },
     Story {
-        slug: "change-chain",
-        title: "Change chain",
+        slug: "stepper",
+        title: "Stepper cell and rail",
         icon: || IconName::Waypoints,
-        build: change::chain::build,
+        build: stepper::build,
     },
 ];
 
