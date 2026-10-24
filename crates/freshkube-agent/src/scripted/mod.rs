@@ -11,7 +11,7 @@
 //! | `tools` | asks to run each of the calls a locked-down agent must be refused |
 //! | `model` | says which model it uses |
 //! | `nothing` | ends the turn with no text and no tool call |
-//! | `provider-error` | answers the prompt with an error carrying a message |
+//! | `provider-error` | answers the prompt with an error carrying a message, and the endpoint token in it |
 //! | anything else, with `offers_tools` off | answers without any read |
 //! | anything else | reads a Deployment through MCP, then asks to run a shell command |
 //!

@@ -98,7 +98,7 @@ async fn several_prompts_run_in_one_session_one_after_another() {
     let prompts = inv
         .entries()
         .iter()
-        .filter(|e| matches!(e, Entry::Asked(_)))
+        .filter(|e| matches!(e, Entry::Asked { .. }))
         .count();
     assert_eq!(prompts, 2);
     assert_eq!(said(&inv), "model=hosted/largemodel=hosted/large");
@@ -155,7 +155,7 @@ async fn a_cancel_drops_the_prompts_waiting_and_a_new_one_still_runs() {
         .entries()
         .iter()
         .filter_map(|e| match e {
-            Entry::Asked(text) => Some(text.as_str()),
+            Entry::Asked { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -317,7 +317,7 @@ async fn a_saved_model_that_is_not_offered_falls_back_and_says_so() {
 }
 
 #[tokio::test]
-async fn opencode_models_are_never_offered_and_a_default_among_them_must_be_replaced() {
+async fn opencode_models_are_offered_marked_and_never_the_default() {
     let script = Script {
         models: vec![
             model("opencode/big-pickle"),
@@ -326,18 +326,64 @@ async fn opencode_models_are_never_offered_and_a_default_among_them_must_be_repl
         ],
         ..Script::default()
     };
-    let (session, _rx) = AcpSession::start(scripted::in_process(script), offline());
+    let (session, mut rx) = AcpSession::start(scripted::in_process(script), offline());
     let mut models = session.models();
     let models = models
         .wait_for(|m| !m.choices.is_empty())
         .await
         .unwrap()
         .clone();
-    let ids: Vec<_> = models.choices.iter().map(|m| m.id.as_str()).collect();
-    assert_eq!(ids, ["hosted/large"]);
+    let marked: Vec<_> = models
+        .choices
+        .iter()
+        .map(|m| (m.id.as_str(), m.app_only))
+        .collect();
+    assert_eq!(
+        marked,
+        [
+            ("opencode/big-pickle", true),
+            ("hosted/large", false),
+            ("OpenCode/other", true)
+        ]
+    );
     // The agent's own default is one of them: the tab must ask for a pick.
     assert!(models.must_pick);
-    assert!(session.set_model("opencode/big-pickle").is_err());
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert!(matches!(inv.outcome(), Outcome::Failed(why) if why.starts_with("Pick a model first")));
+    // A person who chooses one of OpenCode's, say one they pay for, may ask.
+    session.set_model("opencode/big-pickle").unwrap();
+    let mut watch = session.models();
+    watch
+        .wait_for(|m| !m.must_pick && m.current.as_deref() == Some("opencode/big-pickle"))
+        .await
+        .unwrap();
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert_eq!(said(&inv), "model=opencode/big-pickle");
+}
+
+#[tokio::test]
+async fn a_free_tier_refusal_names_opencode_and_the_picker() {
+    let script = Script {
+        models: vec![model("opencode/big-pickle"), model("hosted/large")],
+        ..Script::default()
+    };
+    let (session, mut rx) = AcpSession::start(scripted::in_process(script), offline());
+    session.models().wait_for(|m| m.must_pick).await.unwrap();
+    session.set_model("opencode/big-pickle").unwrap();
+    session
+        .models()
+        .wait_for(|m| !m.must_pick && m.current.as_deref() == Some("opencode/big-pickle"))
+        .await
+        .unwrap();
+    let inv = run_one(&session, &mut rx, "provider-error").await;
+    let Outcome::Failed(reason) = inv.outcome() else {
+        panic!("{:?}", inv.outcome());
+    };
+    assert!(
+        reason.contains("OpenCode's free models only work inside OpenCode"),
+        "{reason}"
+    );
+    assert!(reason.contains("model picker"), "{reason}");
 }
 
 #[tokio::test]
@@ -378,5 +424,6 @@ async fn an_empty_turn_and_an_error_turn_each_end_as_failed() {
         panic!("{:?}", inv.outcome());
     };
     assert!(reason.contains("free tier"), "{reason}");
-    assert!(!reason.contains("secret-token"));
+    assert!(!reason.contains("secret-token"), "{reason}");
+    assert!(!reason.contains("Bearer secret"), "{reason}");
 }

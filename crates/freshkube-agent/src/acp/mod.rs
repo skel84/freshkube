@@ -101,17 +101,29 @@ pub struct Models {
     pub current: Option<String>,
     /// The saved model the agent didn't offer; the agent's default is in use.
     pub missing: Option<String>,
-    /// The agent's model is one that works only inside OpenCode's own app, so
-    /// the person has to pick another before the first question.
+    /// The agent's own default model is one OpenCode may refuse outside its
+    /// own app, and the person hasn't chosen it, so they pick one before the
+    /// first question.
     pub must_pick: bool,
 }
 
-/// Models that work only inside OpenCode itself: never offered, never the
-/// default.
+/// Models of OpenCode's own provider. The free ones work only inside
+/// OpenCode's app, and opencode's ACP agent sends no cost or tier with a
+/// model (`packages/cli/src/acp/config-option.ts`: `value` and `name` only),
+/// so the paid ones can't be told apart. They are offered, marked, and never
+/// the default.
 pub fn is_app_only(id: &str) -> bool {
     id.split('/')
         .next()
         .is_some_and(|provider| provider.eq_ignore_ascii_case("opencode"))
+}
+
+/// Whether an error is OpenCode refusing a free model outside its own app
+/// ("the free tier can only be used from within the app"). The one place that
+/// reads the text; a message that doesn't match is shown as it is.
+fn is_free_tier_refusal(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("free tier") && text.contains("within the app")
 }
 
 /// An error's text without the session's token or an `Authorization` value.
@@ -133,9 +145,20 @@ fn redacted(text: &str, token: &str) -> String {
     clip(&out, MAX_REASON_BYTES).to_string()
 }
 
-/// The agent's own model works only inside OpenCode's app, and none is chosen.
-const PICK_A_MODEL: &str =
-    "Pick a model first. The agent's default model works only inside OpenCode's own app.";
+/// The connection to the agent failed after it started.
+fn connection_failure(text: &str, token: &str) -> Failure {
+    Failure {
+        starting: false,
+        why: redacted(text, token),
+    }
+}
+
+/// The agent's own default is an OpenCode model, and none is chosen.
+const PICK_A_MODEL: &str = "Pick a model first. The agent's default model is one of OpenCode's, and its free models work only inside OpenCode.";
+
+/// Added to a failed turn whose error is OpenCode's refusal of a free model
+/// outside its own app.
+const APP_ONLY_HINT: &str = "OpenCode's free models only work inside OpenCode. Pick another model in the model picker, or one of OpenCode's you pay for.";
 
 /// What a turn says when the agent gave neither an answer nor a message.
 const EMPTY_TURN: &str =
@@ -148,6 +171,9 @@ pub struct ModelChoice {
     pub name: String,
     /// Runs on the person's machine, so nothing leaves it.
     pub local: bool,
+    /// One of OpenCode's own models: a free one is refused outside OpenCode's
+    /// app. See [`is_app_only`].
+    pub app_only: bool,
 }
 
 /// The agent's model option, as session setup reports it.
@@ -173,7 +199,6 @@ impl ModelOption {
         };
         let choices = flat
             .into_iter()
-            .filter(|choice| !is_app_only(&choice.value.to_string()))
             .take(MAX_MODELS)
             .map(|choice| {
                 let id = clip(&choice.value.to_string(), MAX_MODEL_ID_BYTES).to_string();
@@ -185,6 +210,7 @@ impl ModelOption {
                 ModelChoice {
                     name: clip(&choice.name, MAX_MODEL_ID_BYTES).to_string(),
                     local: LOCAL_PROVIDERS.contains(&provider.as_str()),
+                    app_only: is_app_only(&id),
                     id,
                 }
             })
@@ -358,6 +384,7 @@ impl Run {
             workspace,
             ..
         } = link;
+        let token = self.endpoint.token.0.clone();
         let calls = Arc::new(Calls::default());
         let seen = Arc::clone(&calls);
         let updates = self.events.clone();
@@ -407,10 +434,7 @@ impl Run {
         match result {
             Ok(Ok(Exit::Closed)) => None,
             Ok(Err(failure)) => Some(failure),
-            Err(error) => Some(Failure {
-                starting: false,
-                why: clip(&error.to_string(), MAX_REASON_BYTES).to_string(),
-            }),
+            Err(error) => Some(connection_failure(&error.to_string(), &token)),
         }
     }
 
@@ -491,7 +515,9 @@ impl Run {
         wanted: String,
     ) {
         let Some(current) = option else { return };
-        if current.models.current.as_deref() == Some(wanted.as_str()) && !is_app_only(&wanted) {
+        if current.models.current.as_deref() == Some(wanted.as_str()) {
+            current.models.must_pick = false;
+            self.models.send_replace(current.models.clone());
             return;
         }
         if !current.models.choices.iter().any(|m| m.id == wanted) {
@@ -525,7 +551,9 @@ impl Run {
         );
         match tokio::time::timeout(MODEL_TIMEOUT, cx.send_request(request).block_task()).await {
             Ok(Ok(response)) => {
-                if let Some(updated) = ModelOption::find(&response.config_options) {
+                if let Some(mut updated) = ModelOption::find(&response.config_options) {
+                    // The person chose this one, even if it is OpenCode's.
+                    updated.models.must_pick = false;
                     self.models.send_replace(updated.models.clone());
                     *current = updated;
                 }
@@ -593,8 +621,16 @@ impl Run {
             }
             Err(error) => {
                 let why = redacted(&error.to_string(), &self.endpoint.token.0);
-                self.finish(Outcome::failed(format!("{} stopped: {why}", self.name)))
-                    .await;
+                let hint = if is_free_tier_refusal(&why) {
+                    format!(" {APP_ONLY_HINT}")
+                } else {
+                    String::new()
+                };
+                self.finish(Outcome::failed(format!(
+                    "{} stopped: {why}{hint}",
+                    self.name
+                )))
+                .await;
                 false
             }
         }
@@ -605,5 +641,41 @@ impl Run {
         if self.turn.swap(false, Ordering::SeqCst) {
             let _ = self.events.send(Event::Ended(outcome)).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_connection_failure_carries_neither_the_token_nor_an_authorization_value() {
+        let failure = connection_failure(
+            "transport closed: Authorization: Bearer secret-token, retry with secret-token",
+            "secret-token",
+        );
+        assert!(!failure.starting);
+        assert!(!failure.why.contains("secret-token"), "{}", failure.why);
+        assert!(!failure.why.contains("Bearer secret"), "{}", failure.why);
+    }
+
+    #[test]
+    fn the_free_tier_refusal_is_told_by_its_text_and_nothing_else_is() {
+        assert!(is_free_tier_refusal(
+            "Failed to drain session: the free tier can only be used from within the app"
+        ));
+        assert!(is_free_tier_refusal(
+            "The Free Tier can only be used from within the App."
+        ));
+        assert!(!is_free_tier_refusal("rate limit reached on the free tier"));
+        assert!(!is_free_tier_refusal("model not found"));
+    }
+
+    #[test]
+    fn only_opencodes_own_provider_is_app_only() {
+        assert!(is_app_only("opencode/big-pickle"));
+        assert!(is_app_only("OpenCode/x"));
+        assert!(!is_app_only("opencode-zen/x"));
+        assert!(!is_app_only("hosted/large"));
     }
 }

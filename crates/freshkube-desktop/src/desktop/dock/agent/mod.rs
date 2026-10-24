@@ -175,6 +175,9 @@ pub(crate) struct AgentView {
     investigation: Investigation,
     trail: Trail,
     models: Models,
+    /// What the picker shows, derived when the models arrive, not drawn.
+    picker_tooltip: &'static str,
+    picker_current: Option<String>,
     /// The model the person chose: saved in `agent.json`, and kept here for
     /// the session when the save fails.
     model: Option<String>,
@@ -279,6 +282,8 @@ impl AgentView {
             investigation: Investigation::default(),
             trail: Trail::default(),
             models: Models::default(),
+            picker_tooltip: view::picker_tooltip(&Models::default()),
+            picker_current: None,
             model: None,
             input,
             elapsed: cx.new(|_| Elapsed::new()),
@@ -707,6 +712,15 @@ impl AgentView {
                     }
                     _ => {}
                 }
+                // Only OpenCode's own models: show how to sign in elsewhere.
+                if !models.choices.is_empty()
+                    && models.choices.iter().all(|choice| choice.app_only)
+                    && self.sign_in.is_none()
+                {
+                    self.prepare_sign_in();
+                }
+                self.picker_tooltip = view::picker_tooltip(&models);
+                self.picker_current = view::picker_current(&models);
                 self.models = models;
             }
             run::Message::Listening(addr) => self.listening = Some(addr),
@@ -751,7 +765,7 @@ impl AgentView {
         let entries = self.investigation.entries();
         let Some(start) = entries
             .iter()
-            .rposition(|entry| matches!(entry, Entry::Asked(_)))
+            .rposition(|entry| matches!(entry, Entry::Asked { .. }))
         else {
             return;
         };
@@ -843,7 +857,7 @@ impl AgentView {
         let entries = self.investigation.entries();
         let shown = |entry: &Entry| -> SharedString {
             match entry {
-                Entry::Asked(text) | Entry::Note(text) => text.clone().into(),
+                Entry::Asked { text, .. } | Entry::Note(text) => text.clone().into(),
                 Entry::Thought(text) | Entry::Said(text) => text.text.clone().into(),
                 Entry::Step(_) => SharedString::default(),
             }
@@ -889,6 +903,24 @@ impl AgentView {
             .iter()
             .filter_map(|entry| match entry {
                 Entry::Step(step) => Some((step.id.clone(), step.state)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn picker_tooltip(&self) -> &'static str {
+        self.picker_tooltip
+    }
+
+    /// Each question asked, and whether its turn failed.
+    #[cfg(test)]
+    pub(crate) fn questions(&self) -> Vec<(String, bool)> {
+        self.investigation
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Asked { text, failed } => Some((text.clone(), *failed)),
                 _ => None,
             })
             .collect()

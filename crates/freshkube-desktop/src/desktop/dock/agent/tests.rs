@@ -1150,6 +1150,64 @@ fn a_read_that_broke_reads_couldnt_read_and_not_refused(cx: &mut TestAppContext)
     }
 }
 
+#[gpui_kit::test]
+fn only_opencode_models_are_marked_and_the_tab_says_no_other_provider_is_signed_in(
+    cx: &mut TestAppContext,
+) {
+    let tab = open(cx, "only-opencode", 1280., 880.);
+    tab.wait("the models are listed", cx, |view| {
+        !view.models().choices.is_empty()
+    });
+    let models = cx.update(|cx| tab.view.read(cx).models());
+    assert!(models.choices.iter().all(|choice| choice.app_only));
+    assert!(models.must_pick);
+    let notice = tab
+        .label("agent-only-opencode", cx)
+        .expect("the notice shows");
+    assert!(
+        notice.contains("Only OpenCode's own models are offered"),
+        "{notice}"
+    );
+    assert!(!notice.contains("once the session starts"), "{notice}");
+    assert!(tab.present("agent-sign-in-command", cx));
+
+    // The example question was asked at once: it fails, naming the picker's
+    // need, and the question itself is marked.
+    tab.wait("the question fails", cx, |view| {
+        matches!(view.outcome(), Outcome::Failed(_))
+    });
+    let Outcome::Failed(reason) = cx.update(|cx| tab.view.read(cx).outcome()) else {
+        unreachable!()
+    };
+    assert!(reason.starts_with("Pick a model first"), "{reason}");
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).questions()),
+        [(super::example::QUESTION.to_owned(), true)]
+    );
+    assert!(
+        tab.label("agent-notice", cx)
+            .unwrap()
+            .contains("The question failed")
+    );
+}
+
+#[gpui_kit::test]
+fn a_second_failed_turn_marks_its_own_question(cx: &mut TestAppContext) {
+    let tab = open(cx, "turn-failed", 1280., 880.);
+    tab.wait("the first question fails", cx, |view| {
+        view.questions().iter().all(|(_, failed)| *failed) && !view.questions().is_empty()
+    });
+    tab.ask("and again?", cx);
+    tab.wait("the second question fails", cx, |view| {
+        let questions = view.questions();
+        questions.len() == 2 && questions.iter().all(|(_, failed)| *failed)
+    });
+    let questions = cx.update(|cx| tab.view.read(cx).questions());
+    assert_eq!(questions[1].0, "and again?");
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.starts_with("The question failed"), "{notice}");
+}
+
 #[cfg(unix)]
 #[gpui_kit::test]
 fn the_command_is_shown_only_after_the_directories_are_private(cx: &mut TestAppContext) {
@@ -1199,4 +1257,53 @@ fn a_directory_that_cannot_be_made_private_shows_an_error_and_no_command(cx: &mu
     assert!(!tab.present("agent-sign-in-terminal", cx));
     let error = tab.label("agent-sign-in-error", cx).unwrap();
     assert!(error.contains("couldn't make its opencode data directory private"));
+}
+
+#[gpui_kit::test]
+fn the_picker_asks_for_a_pick_and_checks_nothing_while_one_is_needed(cx: &mut TestAppContext) {
+    let tab = open(cx, "only-opencode", 1280., 880.);
+    tab.wait("the models are listed", cx, |view| {
+        !view.models().choices.is_empty()
+    });
+    assert!(cx.update(|cx| tab.view.read(cx).models().must_pick));
+    assert_eq!(
+        tab.label("agent-model", cx).as_deref(),
+        Some("Pick a model")
+    );
+    assert!(cx.update(|cx| tab.view.read(cx).picker_current.is_none()));
+
+    // A pick is checked and named, even one of OpenCode's.
+    tab.view
+        .update(cx, |view, cx| view.choose_model("opencode/nano".into(), cx));
+    tab.wait("the choice lands", cx, |view| !view.models().must_pick);
+    assert_eq!(
+        tab.label("agent-model", cx).as_deref(),
+        Some("opencode/nano · OpenCode")
+    );
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).picker_current.clone())
+            .as_deref(),
+        Some("opencode/nano")
+    );
+}
+
+#[gpui_kit::test]
+fn the_picker_tooltip_is_the_current_text_as_soon_as_models_are_offered(cx: &mut TestAppContext) {
+    // Nothing is asked yet, so no session has listed its models.
+    let tab = open(cx, "ready", 1280., 880.);
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).picker_tooltip()),
+        "The agent offers its models once the session starts"
+    );
+    tab.ask("model", cx);
+    tab.click("agent-turn-on", cx);
+    tab.wait("the models are listed", cx, |view| {
+        !view.models().choices.is_empty()
+    });
+    let tooltip = cx.update(|cx| tab.view.read(cx).picker_tooltip());
+    assert!(!tooltip.contains("once the session starts"), "{tooltip}");
+    assert!(
+        tooltip.contains("OpenCode's free models only work inside the OpenCode app"),
+        "{tooltip}"
+    );
 }

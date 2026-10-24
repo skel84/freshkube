@@ -103,9 +103,19 @@ pub(crate) fn copy_at(file: &Path, bytes: &[u8], now: SystemTime) -> std::io::Re
     let kept_as = match copies.last() {
         Some(newest) if std::fs::read(newest).is_ok_and(|old| old == bytes) => newest.clone(),
         _ => {
-            let stamp = chrono::DateTime::<chrono::Utc>::from(now).format("%Y%m%dT%H%M%SZ");
-            let mut made = None;
-            for n in 0.. {
+            let stamp = chrono::DateTime::<chrono::Utc>::from(now)
+                .format("%Y%m%dT%H%M%SZ")
+                .to_string();
+            // A name sorts after every copy there is, even when the one that
+            // would be next in this second was rotated away, so the newest
+            // never reads as the oldest.
+            let (mut stamp, mut n) = (stamp, 0u32);
+            if let Some((newest_stamp, newest_n)) = copies.last().and_then(|p| order_of(p, &prefix))
+                && (newest_stamp.as_str(), newest_n) >= (stamp.as_str(), 0)
+            {
+                (stamp, n) = (newest_stamp, newest_n.saturating_add(1));
+            }
+            let made = loop {
                 let suffix = if n == 0 {
                     String::new()
                 } else {
@@ -113,17 +123,13 @@ pub(crate) fn copy_at(file: &Path, bytes: &[u8], now: SystemTime) -> std::io::Re
                 };
                 let path = file.with_file_name(format!("{prefix}{stamp}{suffix}.json"));
                 match create(&path, bytes) {
-                    Ok(()) => {
-                        made = Some(path);
-                        break;
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Ok(()) => break path,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
                     Err(error) => return Err(error),
                 }
-            }
-            let made = made.expect("the loop returns or breaks");
+            };
             copies.push(made.clone());
-            // Names sort by time, so the oldest come first.
+            // Copies are in time order, so the oldest come first.
             for old in copies.drain(..copies.len().saturating_sub(KEEP)) {
                 let _ = std::fs::remove_file(old);
             }
@@ -139,18 +145,29 @@ pub(crate) fn copy_at(file: &Path, bytes: &[u8], now: SystemTime) -> std::io::Re
     Ok(kept_as)
 }
 
-/// The copies of `file` beside it, oldest first. A name without its
-/// `.json` sorts by time: `…Z` before `…Z.1` before the next second.
-fn copies_of(file: &Path, prefix: &str) -> Vec<PathBuf> {
+/// A copy's place in time, from its name alone: the UTC stamp, then the
+/// number that told two apart within a second (none is 0). Not the file's
+/// modification time, which is coarse on some file systems.
+fn order_of(path: &Path, prefix: &str) -> Option<(String, u32)> {
+    let name = path.file_name()?.to_string_lossy();
+    let key = name.strip_prefix(prefix)?.strip_suffix(".json")?;
+    Some(match key.split_once('.') {
+        Some((stamp, n)) => (stamp.to_owned(), n.parse().ok()?),
+        None => (key.to_owned(), 0),
+    })
+}
+
+/// The copies of `file` beside it, oldest first: by the time in the name,
+/// `…Z` before `…Z.1` before `…Z.10` before the next second.
+pub(crate) fn copies_of(file: &Path, prefix: &str) -> Vec<PathBuf> {
     let directory = file.parent().filter(|p| !p.as_os_str().is_empty());
     let Ok(entries) = std::fs::read_dir(directory.unwrap_or(Path::new("."))) else {
         return Vec::new();
     };
-    let mut found: Vec<(String, PathBuf)> = entries
+    let mut found: Vec<((String, u32), PathBuf)> = entries
         .filter_map(|entry| {
-            let name = entry.ok()?.file_name().to_string_lossy().into_owned();
-            let key = name.strip_prefix(prefix)?.strip_suffix(".json")?.to_owned();
-            Some((key, file.with_file_name(name)))
+            let path = file.with_file_name(entry.ok()?.file_name());
+            Some((order_of(&path, prefix)?, path))
         })
         .collect();
     found.sort();

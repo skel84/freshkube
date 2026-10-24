@@ -502,14 +502,14 @@ fn a_save_that_fails_before_writing_keeps_the_old_file_and_leaves_nothing() {
     assert_eq!(names, ["sample.json"]);
 }
 
+/// The copies of `sample.json`, oldest first, ordered as the rotation orders
+/// them (by the time in the name, not the full file name or the file's date).
 fn copies(directory: &tempfile::TempDir) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(directory.path())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with("sample.corrupt-"))
-        .collect();
-    names.sort();
-    names
+    let file = directory.path().join("sample.json");
+    keep::copies_of(&file, "sample.corrupt-")
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect()
 }
 
 #[test]
@@ -592,6 +592,35 @@ fn only_the_newest_three_copies_are_kept_and_none_is_overwritten() {
         .map(|name| std::fs::read_to_string(directory.path().join(name)).unwrap())
         .collect();
     assert_eq!(contents, ["broken 2", "broken 3", "broken 4"]);
+}
+
+#[test]
+fn copies_made_at_a_fixed_second_then_the_next_are_kept_in_the_order_made() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("sample.json");
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    let next = at + std::time::Duration::from_secs(1);
+    // Three in one second, then twelve in the next: past `.9`, where a
+    // name's text and its number disagree, and with the oldest rotated away
+    // each time, so a freed name must not be taken again.
+    let times = [at; 3].into_iter().chain([next; 12]);
+    for (n, when) in times.enumerate() {
+        keep::copy_at(&file, format!("broken {n}").as_bytes(), when).unwrap();
+    }
+    let kept = copies(&directory);
+    assert_eq!(
+        kept,
+        [
+            "sample.corrupt-20231114T221321Z.9.json",
+            "sample.corrupt-20231114T221321Z.10.json",
+            "sample.corrupt-20231114T221321Z.11.json",
+        ]
+    );
+    let contents: Vec<String> = kept
+        .iter()
+        .map(|name| std::fs::read_to_string(directory.path().join(name)).unwrap())
+        .collect();
+    assert_eq!(contents, ["broken 12", "broken 13", "broken 14"]);
 }
 
 #[test]

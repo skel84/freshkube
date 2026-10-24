@@ -42,6 +42,11 @@ pub enum AgentShape {
     NoTools,
     /// Access is on and the question's turn failed with the provider's message.
     TurnFailed,
+    /// Access is on and the agent offers only OpenCode's own models, so the
+    /// picker marks them, the tab says no other provider is signed in with
+    /// the sign-in command, and the first question fails as "Pick a model
+    /// first".
+    OnlyOpencode,
     /// `data: shared` is set: the dock says investigations land in the
     /// person's own opencode history.
     Shared,
@@ -50,7 +55,7 @@ pub enum AgentShape {
 impl AgentShape {
     /// The names `FRESHKUBE_AGENT` takes.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const NAMES: [&'static str; 15] = [
+    pub const NAMES: [&'static str; 16] = [
         "ready",
         "not-installed",
         "unsupported",
@@ -65,6 +70,7 @@ impl AgentShape {
         "save-failed",
         "no-tools",
         "turn-failed",
+        "only-opencode",
         "shared",
     ];
 
@@ -84,6 +90,7 @@ impl AgentShape {
             "save-failed" => Self::SaveFailed,
             "no-tools" => Self::NoTools,
             "turn-failed" => Self::TurnFailed,
+            "only-opencode" => Self::OnlyOpencode,
             "shared" => Self::Shared,
             _ => return None,
         })
@@ -101,6 +108,7 @@ impl AgentShape {
                 | Self::SaveFailed
                 | Self::NoTools
                 | Self::TurnFailed
+                | Self::OnlyOpencode
         )
     }
 
@@ -116,6 +124,7 @@ impl AgentShape {
                 | Self::Refused
                 | Self::NoTools
                 | Self::TurnFailed
+                | Self::OnlyOpencode
         )
     }
 }
