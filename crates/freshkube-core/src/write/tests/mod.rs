@@ -19,6 +19,8 @@ mod example;
 mod identity;
 mod levels;
 mod outcome;
+mod rollback;
+mod run_now;
 mod undo;
 
 fn tmp() -> tempfile::TempDir {

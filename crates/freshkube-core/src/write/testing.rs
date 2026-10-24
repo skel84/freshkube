@@ -97,7 +97,12 @@ fn merge(into: &mut Value, from: &Value) {
     match (into, from) {
         (Value::Object(into), Value::Object(from)) => {
             for (key, value) in from {
-                merge(into.entry(key.clone()).or_insert(Value::Null), value);
+                // A null removes the key, as a JSON merge patch says.
+                if value.is_null() {
+                    into.remove(key);
+                } else {
+                    merge(into.entry(key.clone()).or_insert(Value::Null), value);
+                }
             }
         }
         (into, from) => *into = from.clone(),
@@ -117,9 +122,39 @@ fn deployment() -> Value {
 fn cronjob() -> Value {
     json!({
         "apiVersion": "batch/v1", "kind": "CronJob",
-        "metadata": {"name": "nightly", "namespace": "shop", "uid": "uid-nightly", "resourceVersion": "300"},
-        "spec": {"schedule": "0 3 * * *", "suspend": false}
+        "metadata": {"name": "nightly", "namespace": "shop", "uid": "uid-nightly", "resourceVersion": "300",
+            "managedFields": [{"manager": "kubectl", "time": "2026-10-22T09:00:00Z"}]},
+        "spec": {"schedule": "0 3 * * *", "suspend": false,
+            "jobTemplate": {
+                "metadata": {"labels": {"app": "nightly"}},
+                "spec": {"backoffLimit": 2, "template": {"spec": {
+                    "restartPolicy": "Never", "serviceAccountName": "reports",
+                    "containers": [{"name": "report", "image": "registry.example/report:3",
+                        "env": [{"name": "TOKEN", "value": "s3cr3t-token"}]}]
+                }}}
+            }}
     })
+}
+
+/// The ReplicaSet `web-<hash>` of revision `number`, owned by the `web`
+/// Deployment unless `owner` says otherwise, running `image`. Like the
+/// controller's, its template carries the `pod-template-hash` label.
+pub fn replicaset(hash: &str, number: u64, image: &str, owner: &str) -> (String, Value) {
+    let name = format!("web-{hash}");
+    (
+        format!("/apis/apps/v1/namespaces/shop/replicasets/{name}"),
+        json!({
+            "apiVersion": "apps/v1", "kind": "ReplicaSet",
+            "metadata": {"name": name, "namespace": "shop", "uid": format!("uid-{name}"),
+                "resourceVersion": "50", "creationTimestamp": format!("2026-10-2{number}T09:00:00Z"),
+                "annotations": {"deployment.kubernetes.io/revision": number.to_string()},
+                "ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment", "name": "web",
+                    "uid": owner, "controller": true}]},
+            "spec": {"replicas": 0, "template": {
+                "metadata": {"labels": {"app": "web", "pod-template-hash": hash}},
+                "spec": {"containers": [{"name": "web", "image": image}]}}}
+        }),
+    )
 }
 
 fn secret() -> Value {
@@ -136,6 +171,34 @@ impl Cluster {
             (DEPLOYMENT.to_owned(), deployment()),
             (SECRET.to_owned(), secret()),
             (CRONJOB.to_owned(), cronjob()),
+        ])
+    }
+
+    /// `web` with three revisions behind it, as a Deployment keeps them: the
+    /// current one is 3, running `web:3`. Beside its ReplicaSets are one
+    /// another Deployment owns (revision 9) and one with no revision.
+    pub fn with_history() -> Self {
+        let mut web = deployment();
+        web["metadata"]["annotations"] = json!({"deployment.kubernetes.io/revision": "3"});
+        web["spec"]["selector"] = json!({"matchLabels": {"app": "web"}});
+        web["spec"]["template"] = json!({
+            "metadata": {"labels": {"app": "web"}},
+            "spec": {"containers": [{"name": "web", "image": "registry.example/web:3"}]}
+        });
+        let (_, mut first) = replicaset("a1", 1, "registry.example/web:1", "uid-web");
+        first["spec"]["template"]["spec"]["containers"][0]["env"] =
+            json!([{"name": "TOKEN", "value": "s3cr3t-old"}]);
+        let mut stray = replicaset("e5", 4, "registry.example/other:1", "uid-web");
+        stray.1["metadata"]["annotations"] = json!({});
+        Self::with(vec![
+            (DEPLOYMENT.to_owned(), web),
+            (SECRET.to_owned(), secret()),
+            (CRONJOB.to_owned(), cronjob()),
+            (replicaset("a1", 1, "", "").0, first),
+            replicaset("b2", 2, "registry.example/web:2", "uid-web"),
+            replicaset("c3", 3, "registry.example/web:3", "uid-web"),
+            replicaset("d9", 9, "registry.example/evil:9", "uid-other"),
+            stray,
         ])
     }
 
@@ -319,6 +382,28 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
     let path = request.path.as_str();
     if request.method == "POST" {
         return (create(state, request, dry), false);
+    }
+    // A read of a collection lists what lives directly under it.
+    if request.method == "GET" && !state.objects.contains_key(path) {
+        let items: Vec<&Value> = state
+            .objects
+            .iter()
+            .filter(|(key, _)| {
+                key.rsplit_once('/')
+                    .is_some_and(|(parent, _)| parent == path)
+            })
+            .map(|(_, object)| object)
+            .collect();
+        if !items.is_empty() {
+            return (
+                fake_api::json(
+                    200,
+                    json!({"apiVersion": "v1", "kind": "List", "metadata": {"resourceVersion": "1"},
+                           "items": items}),
+                ),
+                false,
+            );
+        }
     }
     if !state.objects.contains_key(path) {
         return (

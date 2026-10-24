@@ -35,12 +35,17 @@ struct World {
 /// The shell on the example workspace's entry `entry`, over a fake cluster
 /// its writes are audited beside, on a runtime the test steps.
 fn world(cx: &mut TestAppContext, entry: &str) -> World {
+    world_on(cx, entry, Cluster::new)
+}
+
+/// [`world`] over the cluster `make` builds, inside the runtime.
+fn world_on(cx: &mut TestAppContext, entry: &str, make: impl FnOnce() -> Cluster) -> World {
     let (runtime, handle, view) = fixture_stepped(cx, 1280., 880.);
     let dir = tempfile::tempdir().unwrap();
     crate::mutation::audit_under(dir.path().join("audit"));
     let cluster = {
         let _guard = runtime.enter();
-        Cluster::new()
+        make()
     };
     let world = World {
         runtime,
@@ -527,4 +532,175 @@ fn pressing_s_twice_in_example_mode_shows_one_count_dialog(cx: &mut TestAppConte
         "a second dialog was stacked"
     );
     assert!(w.cluster.recorder.requests().is_empty());
+}
+
+#[gpui_kit::test]
+fn b_asks_for_the_revision_then_shows_the_diff_and_sends_one_merge_patch(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_history);
+    w.press_web(cx, Everyday::Rollback);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "rollback-dialog"));
+    assert!(w.label(cx, "rollback-revision-3").contains("running now"));
+    // Where it is already is not a choice, and nothing is chosen yet.
+    w.click(cx, "rollback-revision-3");
+    w.click(cx, "rollback-review");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "rollback-dialog") && !w.present(cx, "write-confirm"));
+    w.click(cx, "rollback-revision-1");
+    w.click(cx, "rollback-review");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "rollback-dialog"));
+    // Guarded: the level asks, and the dry run's diff is shown.
+    assert!(w.present(cx, "write-confirm") && w.present(cx, "write-diff"));
+    assert!(w.cluster.writes().is_empty());
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    let writes = w.cluster.writes();
+    assert_eq!(writes.len(), 1);
+    assert!(writes[0].content_type.contains("merge-patch"));
+    let image =
+        &w.cluster.object(fake::DEPLOYMENT)["spec"]["template"]["spec"]["containers"][0]["image"];
+    assert_eq!(image, "registry.example/web:1");
+    assert!(
+        w.audit().contains("\"entry\":\"core-fra\""),
+        "{}",
+        w.audit()
+    );
+}
+
+#[gpui_kit::test]
+fn the_revision_picker_lets_go_of_the_object_however_it_ends(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_history);
+    for end in 0..3 {
+        w.press_web(cx, Everyday::Rollback);
+        w.drive(cx, Duration::from_millis(500));
+        assert!(w.present(cx, "rollback-dialog"), "press {end}");
+        match end {
+            0 => w.click(cx, "rollback-cancel"),
+            1 => w.escape(cx),
+            _ => w.click(cx, "close"),
+        }
+        w.drive(cx, Duration::from_millis(500));
+        assert!(!w.present(cx, "rollback-dialog"), "press {end}");
+    }
+    assert!(w.cluster.writes().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_paused_deployment_is_refused_before_the_picker(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_history);
+    w.cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &serde_json::json!({"spec": {"paused": true}}),
+    );
+    w.press_web(cx, Everyday::Rollback);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "rollback-dialog") && !w.present(cx, "write-dialog"));
+    assert!(w.cluster.writes().is_empty());
+    // And the object is not left locked: unpaused, the picker opens.
+    w.cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &serde_json::json!({"spec": {"paused": false}}),
+    );
+    w.press_web(cx, Everyday::Rollback);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "rollback-dialog"));
+}
+
+#[gpui_kit::test]
+fn a_read_only_cluster_makes_no_request_for_roll_back_or_run_now(cx: &mut TestAppContext) {
+    let w = world_on(cx, "stage-fra", Cluster::with_history);
+    w.press_web(cx, Everyday::Rollback);
+    w.press(
+        cx,
+        Everyday::RunNow,
+        "cronjobs.batch",
+        "nightly",
+        "uid-nightly",
+    );
+    w.drive(cx, Duration::from_secs(1));
+    assert!(w.cluster.recorder.requests().is_empty());
+    assert!(!w.present(cx, "write-dialog") && !w.present(cx, "rollback-dialog"));
+    assert_eq!(w.audit(), "");
+}
+
+#[gpui_kit::test]
+fn each_run_now_makes_its_own_job(cx: &mut TestAppContext) {
+    let w = world(cx, "dev-fra");
+    for _ in 0..2 {
+        w.press(
+            cx,
+            Everyday::RunNow,
+            "cronjobs.batch",
+            "nightly",
+            "uid-nightly",
+        );
+        w.drive(cx, Duration::from_millis(500));
+        // Open still asks: a Job can't be unsent.
+        assert!(w.present(cx, "write-confirm"));
+        w.click(cx, "write-confirm");
+        w.drive(cx, Duration::from_secs(3));
+        w.escape(cx);
+        w.drive(cx, Duration::from_millis(500));
+    }
+    let created: std::collections::BTreeSet<_> = w
+        .cluster
+        .writes()
+        .iter()
+        .map(|write| write.path.clone())
+        .collect();
+    assert_eq!(w.cluster.writes().len(), 2);
+    assert_eq!(created.len(), 1, "both go to the jobs collection");
+    let jobs = "/apis/batch/v1/namespaces/shop/jobs";
+    assert!(created.contains(jobs), "{created:?}");
+    let sent: Vec<String> = w
+        .cluster
+        .writes()
+        .iter()
+        .map(|write| write.body.clone())
+        .collect();
+    let name = |body: &str| {
+        serde_json::from_str::<serde_json::Value>(body).unwrap()["metadata"]["name"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (first, second) = (name(&sent[0]), name(&sent[1]));
+    assert!(first.starts_with("nightly-manual-") && second.starts_with("nightly-manual-"));
+    assert_ne!(first, second);
+}
+
+#[gpui_kit::test]
+fn the_example_shows_roll_back_and_run_now_and_sends_nothing(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    w.press_example(cx, Everyday::Rollback, "deployments.apps", "ledger");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "rollback-dialog"));
+    w.click(cx, "rollback-revision-1");
+    w.click(cx, "rollback-review");
+    w.drive(cx, Duration::from_millis(500));
+    let sentence = w.label(cx, "write-sentence");
+    assert!(sentence.contains("to revision 1"), "{sentence}");
+    // payments/ledger is tracked by Argo CD.
+    assert!(
+        sentence.contains("Argo CD manages this object"),
+        "{sentence}"
+    );
+    assert!(w.present(cx, "write-diff"));
+    w.click(cx, "write-cancel");
+    w.drive(cx, Duration::from_millis(500));
+    w.press_example(cx, Everyday::RunNow, "cronjobs.batch", "nightly-report");
+    w.drive(cx, Duration::from_millis(500));
+    let sentence = w.label(cx, "write-sentence");
+    assert!(
+        sentence.contains("Create Job/nightly-report-manual-"),
+        "{sentence}"
+    );
+    assert!(w.label(cx, "write-preview-0").contains("batch/report"));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(2));
+    assert!(w.cluster.recorder.requests().is_empty());
+    assert_eq!(w.audit(), "");
 }
