@@ -175,7 +175,7 @@ pub fn title(kind: &ResourceKind) -> SharedString {
 #[derive(Clone, Debug)]
 pub struct NotServed(pub ResourceKind);
 
-pub use acts::WorkloadAct;
+pub use acts::{EditYamlAct, WorkloadAct};
 use freshkube_core::write::everyday::Everyday;
 
 pub struct ResourcesScreen {
@@ -383,6 +383,16 @@ impl ResourcesScreen {
                     // Logs and shells open in the dock, under the page: the
                     // drawer stays open above it (#922).
                     DetailEvent::Link(intent) => cx.emit(intent.clone()),
+                    DetailEvent::EditYaml(action) => {
+                        let identity = this.detail.read(cx).target_identity().cloned();
+                        if let (Some(source), Some(identity)) = (this.source.clone(), identity) {
+                            cx.emit(EditYamlAct {
+                                source,
+                                identity,
+                                action: (**action).clone(),
+                            });
+                        }
+                    }
                     DetailEvent::Open(identity) => {
                         this.select_identity(identity, window, cx);
                         this.open_now(identity.clone(), window, |_, _, _| {}, cx);

@@ -4,12 +4,13 @@
 //! cluster records. Example data and a read-only cluster send nothing.
 use super::*;
 use crate::desktop::testing::fixture_stepped;
-use crate::resources::WorkloadAct;
 use crate::resources::model::ResourceIdentity;
+use crate::resources::{EditYamlAct, WorkloadAct};
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, KubeClientSource};
 use freshkube_core::failure::Failure;
 use freshkube_core::resources::builtin;
-use freshkube_core::write::everyday::Everyday;
+use freshkube_core::write::edit_yaml::EditSession;
+use freshkube_core::write::everyday::{Everyday, Row};
 use freshkube_core::write::testing::{self as fake, Cluster};
 use std::sync::Arc;
 use std::time::Duration;
@@ -817,6 +818,92 @@ fn a_read_only_cluster_makes_no_request_for_roll_back_or_run_now(cx: &mut TestAp
     assert!(!w.present(cx, "write-dialog") && !w.present(cx, "rollback-dialog"));
     assert_eq!(w.audit(), "");
 }
+fn web_row() -> Row {
+    Row {
+        group: "apps".into(),
+        version: "v1".into(),
+        kind: "Deployment".into(),
+        resource: "deployments".into(),
+        namespace: Some("shop".into()),
+        name: "web".into(),
+        uid: "uid-web".into(),
+    }
+}
+
+impl World {
+    /// The page asks to review an edit of `web` that sets `replicas: 5`,
+    /// from a session read off the fake cluster. Returns how many requests
+    /// the fake had seen when the page asked, the session's own read included.
+    fn press_edit(&self, cx: &mut TestAppContext, access: ClusterAccess) -> usize {
+        let client = self.cluster.client.clone();
+        let session = self
+            .runtime
+            .block_on(EditSession::read(&client, &web_row()))
+            .unwrap();
+        let text = session.text().replacen("replicas: 2", "replicas: 5", 1);
+        let action = session.describe(&text).unwrap();
+        let source = ClusterSource {
+            id: "live-test".into(),
+            context: "ctx-a".into(),
+            access,
+        };
+        let seen = self.cluster.recorder.requests().len();
+        let identity = ResourceIdentity {
+            connection: "live-test".into(),
+            resource: "deployments.apps".into(),
+            namespace: "shop".into(),
+            name: "web".into(),
+            uid: "uid-web".into(),
+        };
+        cx.update(|cx| {
+            let resources = self.view.read(cx).pages.resources.clone();
+            resources.update(cx, |_, cx| {
+                cx.emit(EditYamlAct {
+                    source,
+                    identity,
+                    action,
+                })
+            });
+        });
+        cx.run_until_parked();
+        seen
+    }
+
+    fn live(&self) -> ClusterAccess {
+        ClusterAccess::Live(Arc::new(Fake(self.cluster.client.clone())))
+    }
+}
+
+#[gpui_kit::test]
+fn an_edit_asks_through_the_write_flow_and_sends_one_apply(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    w.press_edit(cx, w.live());
+    w.drive(cx, Duration::from_millis(500));
+    // Guarded: the dry run's diff and the level's confirmation come first.
+    assert!(w.present(cx, "write-confirm"));
+    assert!(w.label(cx, "write-sentence").contains("server-side apply"));
+    assert!(w.cluster.writes().is_empty());
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert_eq!(w.replicas(), 5);
+    let writes = w.cluster.writes();
+    assert_eq!(writes.len(), 1);
+    assert!(writes[0].content_type.contains("apply-patch"));
+    assert!(writes[0].query.contains("fieldManager=freshkube"));
+    assert!(!writes[0].query.contains("force=true"));
+}
+
+#[gpui_kit::test]
+fn an_edit_on_a_read_only_cluster_makes_no_request(cx: &mut TestAppContext) {
+    let w = world(cx, "stage-fra");
+    let seen = w.press_edit(cx, w.live());
+    w.drive(cx, Duration::from_secs(1));
+    // Nothing after the session's own read: no access review, GET or dry run.
+    assert_eq!(w.cluster.recorder.requests().len(), seen);
+    assert!(w.cluster.writes().is_empty());
+    assert!(!w.present(cx, "write-dialog") && !w.present(cx, "write-confirm"));
+    assert_eq!(w.audit(), "");
+}
 
 #[gpui_kit::test]
 fn each_run_now_makes_its_own_job(cx: &mut TestAppContext) {
@@ -894,5 +981,17 @@ fn the_example_shows_roll_back_and_run_now_and_sends_nothing(cx: &mut TestAppCon
     w.click(cx, "write-confirm");
     w.drive(cx, Duration::from_secs(2));
     assert!(w.cluster.recorder.requests().is_empty());
+    assert_eq!(w.audit(), "");
+}
+
+#[gpui_kit::test]
+fn an_edit_of_example_data_shows_the_dialog_and_sends_nothing(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    w.press_edit(cx, ClusterAccess::EXAMPLE);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(2));
+    assert!(w.cluster.writes().is_empty());
     assert_eq!(w.audit(), "");
 }

@@ -118,6 +118,17 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g12_run_now_always_confirms_at_every_level_and_sends_nothing_unasked` (`crates/freshkube-core/src/write/tests/run_now.rs`)
 - `safety_g12_run_now_asks_at_every_level_with_a_preview_and_no_typing_or_countdown` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
 
+### 13. An edit of the YAML is a spec change that sends only what Freshkube owns plus its changes, and never reads or sends a Secret's values
+
+- `safety_g13_a_secret_is_read_as_metadata_and_no_value_is_asked_sent_or_kept` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_a_secrets_diff_holds_its_metadata_and_the_key_names_it_writes_and_nothing_of_its_values` (`crates/freshkube-core/src/write/diff.rs`)
+- `safety_g13_a_new_version_is_never_reviewed_with_the_old_body` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_a_secret_whose_values_freshkube_owns_is_not_edited` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_an_edit_after_an_edit_keeps_what_the_first_one_set` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_an_edit_never_sends_status_managed_fields_or_the_servers_own_fields` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_read_only_sends_an_edit_nothing_not_even_the_dry_run` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoever_asked` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+
 ### 14. Argo CD Refresh sends one annotation, and nothing under `read-only` or when the Application moved
 
 - `safety_g14_argo_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)

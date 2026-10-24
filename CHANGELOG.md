@@ -4,6 +4,20 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.21.0 (2026-10-24)
+
+### Other changes
+
+- **Writes, checked how:** Edit YAML, Roll back and Run now have been checked on example data and against a fake cluster in tests, not yet with a write to a live cluster. Each asks before it sends, at every level that allows writes, and a read-only cluster sends nothing.
+- **Edit YAML:** the detail pane's YAML tab has an Edit button. It marks changed lines and, on ⌘S, shows the server's dry-run diff (field paths and kinds, never values) before anything is sent as a server-side apply with field manager `freshkube`, guarded by the object's UID and resourceVersion and never forced. A Secret's values are never read. See [Edit YAML](docs/WRITE_MODEL.md#edit-yaml-858).
+- **Roll back and Run now:** a Deployment can be rolled back to an earlier revision (B), with the dry run's diff of its pod template shown at every writable level, and a CronJob can be run now (J), which creates a Job from its template after a preview and a confirmation at every writable level. A read-only cluster sends neither, and a note says when Argo CD or Flux manages the object.
+- **Your access:** a read-only page lists, for each namespace, whether you may read, see logs, open a shell, forward, scale or restart, edit, delete pods and read Secrets, with a cluster-wide Nodes row and who you are in the status bar. It asks the cluster one rules review per namespace in view, says what each no needs ("needs patch on deployments in shop"), and offers Copy as access request and Recheck. The review before each action is unchanged and still decides.
+- **Routes:** the Networking column has a Traffic section with a Routes page that lists every HTTPRoute grouped by verdict, not serving first, and each row says where its trace stops and whose problem it is. An HTTPRoute opened in Resources shows the same trace in its Overview and in a Trace tab, step by step from the class down to the endpoints, with a ReferenceGrant to copy for a refused cross-namespace reference. Read-only; nothing applies the grant.
+- **Change page:** the Overview is the new default view, in place of the Chain: a strip of the pull request, the Build and the Freight with the key of each join, and a matrix of Stages by Eligible, Promoted, Verified, Synced, Running and After deploy, one glyph and word per cell, an unknown one saying its cause. All hops keeps the table, and at a narrow window or a large text size it no longer cuts its first row or its last columns ([#823](https://github.com/skel84/freshkube/issues/823)).
+- **Agent follow:** the page can follow the places the agent reads (the list, the object, a pod's log in one dock tab it owns, the events), each held for 1.5 s with a frame and a strip around it. Any input of yours takes the page back, with a toast that offers Jump; the next question or the Following toggle follows again, and a trail row opens its place. A read on another cluster never moves the page. A missing object now reads Not found, not Refused. See [the agent in the dock](docs/features/agent.md#follow-slice-d1d).
+- **Agent tab:** says when Freshkube's tools were not offered to the agent, and what to check.
+- **Settings files:** a settings file that can't be read is kept beside the original as `<name>.corrupt-<time>.json` (the newest three) before it is replaced, and says so in a notice at launch; the JSON files now carry a version, and a file from a newer Freshkube is never overwritten by an older one. See [Settings](docs/features/settings.md#the-json-files-beside-the-preferences).
+
 ## 0.20.0 (2026-10-23)
 
 ### Other changes

@@ -3,7 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use super::action::{Change, Target};
 
 /// How one field differs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,10 +95,66 @@ pub fn diff(before: &Value, after: &Value) -> Vec<FieldChange> {
     changes
 }
 
+/// The diff of one object's write. A Secret is read as metadata only, so its
+/// diff is its metadata's and, for the keys the write names under `data` and
+/// `stringData`, those key names as changed: what each held before is not
+/// known and is never read.
+pub fn diff_for(
+    target: &Target,
+    change: &Change,
+    before: &Value,
+    after: &Value,
+) -> Vec<FieldChange> {
+    if !target.is_secret() {
+        return diff(before, after);
+    }
+    let metadata = |object: &Value| json!({"metadata": object["metadata"]});
+    let mut changes = diff(&metadata(before), &metadata(after));
+    changes.extend(
+        change
+            .field_paths()
+            .into_iter()
+            .filter(|path| path.starts_with("data.") || path.starts_with("stringData."))
+            .map(|path| FieldChange {
+                path,
+                kind: ChangeKind::Changed,
+            }),
+    );
+    changes.sort_by(|a, b| a.path.cmp(&b.path));
+    changes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn safety_g13_a_secrets_diff_holds_its_metadata_and_the_key_names_it_writes_and_nothing_of_its_values()
+     {
+        let target = Target {
+            group: String::new(),
+            version: "v1".into(),
+            kind: "Secret".into(),
+            resource: "secrets".into(),
+            namespace: Some("shop".into()),
+            name: "db".into(),
+            uid: "u".into(),
+            resource_version: "1".into(),
+            subresource: None,
+        };
+        let before = json!({"metadata": {"labels": {"a": "1"}}});
+        // Even a reply that still carries values is not compared.
+        let after = json!({"metadata": {"labels": {"a": "2"}}, "data": {"other": "c2VjcmV0"}});
+        let change = Change::Apply(
+            json!({"metadata": {"labels": {"a": "2"}}, "data": {"password": "bmV3"}}),
+        );
+        let lines: Vec<_> = diff_for(&target, &change, &before, &after)
+            .into_iter()
+            .map(|c| c.path)
+            .collect();
+        assert_eq!(lines, ["data.password", "metadata.labels.a"]);
+    }
 
     #[test]
     fn it_lists_added_changed_and_removed_fields_in_path_order() {
