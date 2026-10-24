@@ -527,7 +527,7 @@ mod tests {
 
         custom.update(cx, |custom, cx| custom.toggle(cx));
         custom.read_with(cx, |custom, _| {
-            assert_eq!(group_names(custom).len(), 11);
+            assert_eq!(group_names(custom).len(), 12);
             assert_eq!(kinds(custom, "external-secrets.io"), None);
             assert_eq!(kinds(custom, "cert-manager.io"), None);
         });

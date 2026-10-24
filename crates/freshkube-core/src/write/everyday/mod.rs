@@ -59,7 +59,7 @@ impl Workload {
             Self::ReplicaSet => &[Everyday::Scale],
             Self::DaemonSet => &[Everyday::Restart],
             Self::CronJob => &[Everyday::Suspend],
-            Self::Application => &[Everyday::ArgoRefresh],
+            Self::Application => &[Everyday::ArgoRefresh, Everyday::ArgoHardRefresh],
             Self::Kustomization
             | Self::HelmRelease
             | Self::GitRepository
@@ -102,6 +102,8 @@ pub enum Everyday {
     Suspend,
     /// Argo CD: refresh an Application (`write/everyday/nudges.rs`).
     ArgoRefresh,
+    /// Argo CD: refresh an Application and drop its cached manifests.
+    ArgoHardRefresh,
     /// Flux: reconcile a Kustomization, HelmRelease or source now.
     FluxReconcile,
     /// cert-manager: renew a Certificate.
@@ -115,6 +117,7 @@ impl Everyday {
             Self::Restart => "restart",
             Self::Suspend => "suspend",
             Self::ArgoRefresh => "argo-refresh",
+            Self::ArgoHardRefresh => "argo-hard-refresh",
             Self::FluxReconcile => "flux-reconcile",
             Self::Renew => "renew",
         }

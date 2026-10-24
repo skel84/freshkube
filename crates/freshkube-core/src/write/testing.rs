@@ -475,7 +475,7 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
                 next["status"]["replicas"] = next["spec"]["replicas"].clone();
             }
             if !dry && !state.stuck {
-                controllers(state, path, &mut next);
+                controllers(state, &mut next);
             }
             if !dry {
                 state.objects.insert(path.to_owned(), next.clone());
@@ -490,7 +490,7 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
 /// Argo CD's takes the refresh annotation off and records when it reconciled,
 /// Flux's records the request it handled, and cert-manager's, seeing
 /// `Issuing`, makes the CertificateRequest for the next revision.
-fn controllers(state: &mut State, path: &str, next: &mut Value) {
+fn controllers(state: &mut State, next: &mut Value) {
     if next
         .pointer("/metadata/annotations/argocd.argoproj.io~1refresh")
         .is_some()

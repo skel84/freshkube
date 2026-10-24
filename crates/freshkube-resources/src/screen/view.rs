@@ -304,6 +304,18 @@ impl ResourcesScreen {
             .on_action(
                 cx.listener(|view, _: &SuspendSelected, _, cx| view.run_act(Everyday::Suspend, cx)),
             )
+            .on_action(cx.listener(|view, _: &RefreshSelected, _, cx| {
+                view.run_act(Everyday::ArgoRefresh, cx)
+            }))
+            .on_action(cx.listener(|view, _: &HardRefreshSelected, _, cx| {
+                view.run_act(Everyday::ArgoHardRefresh, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ReconcileSelected, _, cx| {
+                view.run_act(Everyday::FluxReconcile, cx)
+            }))
+            .on_action(
+                cx.listener(|view, _: &RenewSelected, _, cx| view.run_act(Everyday::Renew, cx)),
+            )
             .on_action(cx.listener(|view, _: &NextTab, _, cx| view.step_tab(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousTab, _, cx| view.step_tab(-1, cx)))
             .flex_1()

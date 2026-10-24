@@ -528,3 +528,195 @@ fn pressing_s_twice_in_example_mode_shows_one_count_dialog(cx: &mut TestAppConte
     );
     assert!(w.cluster.recorder.requests().is_empty());
 }
+
+/// The GitOps and certificate nudges (#857, slice 3), through the real shell.
+mod nudges {
+    use super::*;
+    use freshkube_core::resources::ResourceKind;
+
+    /// (act, kind, namespace, name, uid, path of the object in the fake).
+    type Nudge = (
+        Everyday,
+        ResourceKind,
+        &'static str,
+        &'static str,
+        &'static str,
+    );
+
+    fn argo() -> Nudge {
+        (
+            Everyday::ArgoRefresh,
+            ResourceKind::new(
+                "argoproj.io",
+                "v1alpha1",
+                "Application",
+                "applications",
+                true,
+            ),
+            "argocd",
+            "shop",
+            "uid-shop-app",
+        )
+    }
+
+    fn flux() -> Nudge {
+        (
+            Everyday::FluxReconcile,
+            ResourceKind::new(
+                "kustomize.toolkit.fluxcd.io",
+                "v1",
+                "Kustomization",
+                "kustomizations",
+                true,
+            ),
+            "flux-system",
+            "apps",
+            "uid-apps",
+        )
+    }
+
+    fn cert() -> Nudge {
+        (
+            Everyday::Renew,
+            ResourceKind::new("cert-manager.io", "v1", "Certificate", "certificates", true),
+            "shop",
+            "web-tls",
+            "uid-web-tls",
+        )
+    }
+
+    impl World {
+        fn press_nudge(&self, cx: &mut TestAppContext, (act, kind, namespace, name, uid): Nudge) {
+            let source = ClusterSource {
+                id: "live-test".into(),
+                context: "ctx-a".into(),
+                access: ClusterAccess::Live(Arc::new(Fake(self.cluster.client.clone()))),
+            };
+            let identity = ResourceIdentity {
+                connection: "live-test".into(),
+                resource: format!("{}.{}", kind.plural, kind.group),
+                namespace: namespace.into(),
+                name: name.into(),
+                uid: uid.into(),
+            };
+            cx.update(|cx| {
+                let resources = self.view.read(cx).pages.resources.clone();
+                resources.update(cx, |_, cx| {
+                    cx.emit(WorkloadAct {
+                        source,
+                        identity,
+                        kind,
+                        act,
+                    })
+                });
+            });
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui_kit::test]
+    fn each_nudge_asks_at_a_guarded_cluster_and_then_sends_one_merge_patch(
+        cx: &mut TestAppContext,
+    ) {
+        for (nudge, word, path) in [
+            (argo(), "refresh Application/shop", fake::APPLICATION),
+            (flux(), "reconcile Kustomization/apps", fake::KUSTOMIZATION),
+            (cert(), "Renew Certificate/web-tls", fake::CERTIFICATE),
+        ] {
+            let w = world(cx, "core-fra");
+            w.press_nudge(cx, nudge);
+            w.drive(cx, Duration::from_millis(500));
+            assert!(w.present(cx, "write-confirm"), "{word}");
+            let sentence = w.label(cx, "write-sentence");
+            assert!(sentence.contains(word), "{sentence}");
+            assert!(w.cluster.writes().is_empty());
+            w.click(cx, "write-confirm");
+            w.drive(cx, Duration::from_secs(3));
+            let writes = w.cluster.writes();
+            assert_eq!(writes.len(), 1, "{word}");
+            assert!(writes[0].content_type.contains("merge-patch"));
+            assert!(writes[0].path.starts_with(path));
+            assert!(w.audit().contains("\"entry\":\"core-fra\""));
+            // No Undo: a controller consumes the request.
+            assert!(!w.present(cx, "write-undo"));
+        }
+    }
+
+    #[gpui_kit::test]
+    fn an_open_cluster_still_asks_for_a_nudge_because_none_can_be_undone(cx: &mut TestAppContext) {
+        for nudge in [argo(), flux(), cert()] {
+            let w = world(cx, "dev-fra");
+            w.press_nudge(cx, nudge);
+            w.drive(cx, Duration::from_millis(500));
+            assert!(w.present(cx, "write-confirm"));
+            assert!(w.cluster.writes().is_empty());
+        }
+    }
+
+    #[gpui_kit::test]
+    fn a_read_only_cluster_sends_no_request_for_any_nudge(cx: &mut TestAppContext) {
+        let w = world(cx, "stage-fra");
+        for nudge in [argo(), flux(), cert()] {
+            w.press_nudge(cx, nudge);
+        }
+        w.drive(cx, Duration::from_secs(1));
+        assert!(w.cluster.recorder.requests().is_empty());
+        assert!(!w.present(cx, "write-dialog") && !w.present(cx, "write-confirm"));
+        assert_eq!(w.audit(), "");
+    }
+
+    #[gpui_kit::test]
+    fn the_example_cluster_shows_each_dialog_and_sends_nothing(cx: &mut TestAppContext) {
+        let w = world(cx, "core-fra");
+        let now = chrono::Utc::now().timestamp();
+        for (act, kind, key, name) in [
+            (
+                Everyday::ArgoRefresh,
+                argo().1,
+                "applications.argoproj.io",
+                "checkout",
+            ),
+            (
+                Everyday::FluxReconcile,
+                flux().1,
+                "kustomizations.kustomize.toolkit.fluxcd.io",
+                "apps",
+            ),
+            (
+                Everyday::Renew,
+                cert().1,
+                "certificates.cert-manager.io",
+                "ledger-tls",
+            ),
+        ] {
+            let (_, rows) = crate::resources::example::read("core-fra", key, None, now).unwrap();
+            let row = rows
+                .into_iter()
+                .find(|row| row.identity.name.starts_with(name))
+                .unwrap_or_else(|| panic!("no example {key} {name}"));
+            let source = ClusterSource {
+                id: crate::resources::example::connection("core-fra"),
+                context: "core-fra".into(),
+                access: ClusterAccess::EXAMPLE,
+            };
+            cx.update(|cx| {
+                let resources = w.view.read(cx).pages.resources.clone();
+                resources.update(cx, |_, cx| {
+                    cx.emit(WorkloadAct {
+                        source,
+                        identity: row.identity,
+                        kind,
+                        act,
+                    })
+                });
+            });
+            cx.run_until_parked();
+            w.drive(cx, Duration::from_millis(500));
+            assert!(w.present(cx, "write-confirm"), "{key}");
+            w.click(cx, "write-confirm");
+            w.drive(cx, Duration::from_secs(2));
+            assert!(w.cluster.recorder.requests().is_empty(), "{key}");
+        }
+        assert_eq!(w.audit(), "");
+    }
+}

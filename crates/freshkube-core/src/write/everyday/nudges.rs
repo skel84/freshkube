@@ -330,7 +330,10 @@ mod tests {
         let app = subject(&cluster, fake::APPLICATION);
         let flux = subject(&cluster, fake::KUSTOMIZATION);
         let cert = subject(&cluster, fake::CERTIFICATE);
-        assert_eq!(app.offered(), [Everyday::ArgoRefresh]);
+        assert_eq!(
+            app.offered(),
+            [Everyday::ArgoRefresh, Everyday::ArgoHardRefresh]
+        );
         assert_eq!(flux.offered(), [Everyday::FluxReconcile]);
         assert_eq!(cert.offered(), [Everyday::Renew]);
         for (group, kind) in [

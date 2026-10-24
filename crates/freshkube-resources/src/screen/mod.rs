@@ -92,7 +92,11 @@ actions!(
         FollowCrashLoop,
         ScaleSelected,
         RestartSelected,
-        SuspendSelected
+        SuspendSelected,
+        RefreshSelected,
+        HardRefreshSelected,
+        ReconcileSelected,
+        RenewSelected
     ]
 );
 
@@ -282,6 +286,10 @@ impl ResourcesScreen {
             KeyBinding::new("s", ScaleSelected, Some(CONTEXT)),
             KeyBinding::new("r", RestartSelected, Some(CONTEXT)),
             KeyBinding::new("p", SuspendSelected, Some(CONTEXT)),
+            KeyBinding::new("g", RefreshSelected, Some(CONTEXT)),
+            KeyBinding::new("shift-g", HardRefreshSelected, Some(CONTEXT)),
+            KeyBinding::new("c", ReconcileSelected, Some(CONTEXT)),
+            KeyBinding::new("w", RenewSelected, Some(CONTEXT)),
             // Option-Command-] and [; Command-Shift-] and [ step the shell's
             // view tabs.
             KeyBinding::new("secondary-alt-]", NextTab, Some(CONTEXT)),

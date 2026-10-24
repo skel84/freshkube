@@ -241,6 +241,12 @@ impl Pilot {
             }
             Everyday::Restart => everyday::restart(&subject, &chrono::Utc::now().to_rfc3339()),
             Everyday::Suspend => everyday::suspend(&subject),
+            Everyday::ArgoRefresh => everyday::argo_refresh(&subject, everyday::Refresh::Normal),
+            Everyday::ArgoHardRefresh => everyday::argo_refresh(&subject, everyday::Refresh::Hard),
+            Everyday::FluxReconcile => {
+                everyday::flux_reconcile(&subject, &chrono::Utc::now().to_rfc3339())
+            }
+            Everyday::Renew => everyday::renew(&subject, &chrono::Utc::now().to_rfc3339()),
         };
         match described {
             Ok(action) => {

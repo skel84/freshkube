@@ -27,6 +27,10 @@ fn label(act: Everyday) -> &'static str {
         Everyday::Scale => "Scale…",
         Everyday::Restart => "Restart",
         Everyday::Suspend => "Suspend or resume",
+        Everyday::ArgoRefresh => "Refresh",
+        Everyday::ArgoHardRefresh => "Hard refresh",
+        Everyday::FluxReconcile => "Reconcile",
+        Everyday::Renew => "Renew…",
     }
 }
 
@@ -76,6 +80,10 @@ impl ResourcesScreen {
                 Everyday::Scale => MenuAction::new(label(act), ScaleSelected),
                 Everyday::Restart => MenuAction::new(label(act), RestartSelected),
                 Everyday::Suspend => MenuAction::new(label(act), SuspendSelected),
+                Everyday::ArgoRefresh => MenuAction::new(label(act), RefreshSelected),
+                Everyday::ArgoHardRefresh => MenuAction::new(label(act), HardRefreshSelected),
+                Everyday::FluxReconcile => MenuAction::new(label(act), ReconcileSelected),
+                Everyday::Renew => MenuAction::new(label(act), RenewSelected),
             };
             lines.push(line.enabled(self.write_block.is_none()));
         }
@@ -113,11 +121,7 @@ impl ResourcesScreen {
         }
         let mut header = header;
         for act in self.acts(cx) {
-            let id = header.id(match act {
-                Everyday::Scale => "scale",
-                Everyday::Restart => "restart",
-                Everyday::Suspend => "suspend",
-            });
+            let id = header.id(act.key());
             let button = Button::new(id)
                 .ghost()
                 .small()
@@ -134,6 +138,16 @@ impl ResourcesScreen {
                         Everyday::Scale => page::action_item(label(act), ScaleSelected, focus),
                         Everyday::Restart => page::action_item(label(act), RestartSelected, focus),
                         Everyday::Suspend => page::action_item(label(act), SuspendSelected, focus),
+                        Everyday::ArgoRefresh => {
+                            page::action_item(label(act), RefreshSelected, focus)
+                        }
+                        Everyday::ArgoHardRefresh => {
+                            page::action_item(label(act), HardRefreshSelected, focus)
+                        }
+                        Everyday::FluxReconcile => {
+                            page::action_item(label(act), ReconcileSelected, focus)
+                        }
+                        Everyday::Renew => page::action_item(label(act), RenewSelected, focus),
                     };
                     let button = match act {
                         Everyday::Scale => button.on_click(page::dispatch(ScaleSelected, focus)),
@@ -143,6 +157,16 @@ impl ResourcesScreen {
                         Everyday::Suspend => {
                             button.on_click(page::dispatch(SuspendSelected, focus))
                         }
+                        Everyday::ArgoRefresh => {
+                            button.on_click(page::dispatch(RefreshSelected, focus))
+                        }
+                        Everyday::ArgoHardRefresh => {
+                            button.on_click(page::dispatch(HardRefreshSelected, focus))
+                        }
+                        Everyday::FluxReconcile => {
+                            button.on_click(page::dispatch(ReconcileSelected, focus))
+                        }
+                        Everyday::Renew => button.on_click(page::dispatch(RenewSelected, focus)),
                     };
                     (button, fold)
                 }
