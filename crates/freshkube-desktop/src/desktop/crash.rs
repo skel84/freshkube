@@ -175,6 +175,69 @@ impl Pilot {
     }
 }
 
+impl Pilot {
+    /// Tells each settings file that was kept aside or left alone as a newer
+    /// build's (`freshkube_prefs::take_notices`): those queued before the
+    /// window opened at once, and any queued later (a file first read when
+    /// its page opens, a save that is refused) as it happens.
+    pub(super) fn tell_settings_files(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (wake, woken) = futures::channel::mpsc::unbounded();
+        let _ = wake.unbounded_send(());
+        // A test shares the process-wide queue with every other test.
+        #[cfg(not(test))]
+        {
+            freshkube_prefs::watch(move || drop(wake.unbounded_send(())));
+            self.watch_settings_files(woken, freshkube_prefs::take_notices, window, cx);
+        }
+        #[cfg(test)]
+        let _ = (wake, woken, window, cx);
+    }
+
+    /// Takes the queue each time `woken` fires and tells what it holds.
+    pub(super) fn watch_settings_files(
+        &mut self,
+        mut woken: futures::channel::mpsc::UnboundedReceiver<()>,
+        take: impl Fn() -> Vec<freshkube_prefs::Notice> + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use futures::StreamExt as _;
+        cx.spawn_in(window, async move |this, cx| {
+            while woken.next().await.is_some() {
+                let notices = take();
+                if this
+                    .update_in(cx, |_, window, cx| tell_notices(notices, window, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+}
+
+/// One warning per notice, kept until dismissed: it names a file and where
+/// its copy went.
+pub(super) fn tell_notices(
+    notices: Vec<freshkube_prefs::Notice>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for notice in notices {
+        let key = notice.file.to_string_lossy().into_owned();
+        window.push_notification(
+            Notification::warning(notice.to_string())
+                .id1::<SettingsFileNotice>(key)
+                .autohide(false),
+            cx,
+        );
+    }
+}
+
+/// The notice's identity, so a file is told once.
+struct SettingsFileNotice;
+
 /// The notice: what happened in a line, and the two actions.
 fn crash_notice(crash: &CrashReport, cx: &App) -> Notification {
     let what = match &crash.panic {

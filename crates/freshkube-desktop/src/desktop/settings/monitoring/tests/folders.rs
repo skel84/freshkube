@@ -7,7 +7,7 @@ async fn monitoring_folder_changes_save_at_once_and_keep_other_preferences(
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("freshkube.yaml"), SETUP).unwrap();
     let file = directory.path().join("monitoring.json");
-    let mut expected = serde_json::json!({"dashboards": null, "prometheus": {}, "sources": {}, "future": {"keep": [true, null, 7]}});
+    let mut expected = serde_json::json!({"dashboards": null, "prometheus": {}, "sources": {}, "future": {"keep": [true, null, 7]}, "version": 1});
     std::fs::write(&file, serde_json::to_vec(&expected).unwrap()).unwrap();
     let folder = directory.path().join("dashboards");
     std::fs::create_dir(&folder).unwrap();
