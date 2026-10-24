@@ -183,6 +183,7 @@ pub fn custom_groups() -> Vec<ApiGroup> {
     let mut groups: Vec<ApiGroup> = CUSTOM_GROUPS
         .iter()
         .chain(&acme::GROUPS)
+        .chain(&gateway::GROUPS)
         .map(|(name, versions)| ApiGroup {
             name: (*name).into(),
             versions: versions.iter().map(|version| (*version).into()).collect(),
@@ -195,7 +196,10 @@ pub fn custom_groups() -> Vec<ApiGroup> {
 /// Every custom kind discovery finds: the example's own, then acme's.
 fn custom_kinds()
 -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str, &'static str, bool)> {
-    CUSTOM_KINDS.iter().chain(&acme::KINDS)
+    CUSTOM_KINDS
+        .iter()
+        .chain(&acme::KINDS)
+        .chain(&gateway::KINDS)
 }
 
 /// What discovering one example group finds, failures included.
@@ -221,6 +225,7 @@ pub fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
         _ if !CUSTOM_GROUPS
             .iter()
             .chain(&acme::GROUPS)
+            .chain(&gateway::GROUPS)
             .any(|(name, _)| *name == group) =>
         {
             Err(missing())
@@ -323,7 +328,10 @@ pub fn read(
         "kustomizations.kustomize.toolkit.fluxcd.io" => {
             (gitops::columns(), gitops::rows(&connection, now))
         }
-        key => acme::read(context, &connection, key, now)?,
+        key => match gateway::read(&connection, key, now) {
+            Some(read) => read,
+            None => acme::read(context, &connection, key, now)?,
+        },
     };
     // Like the server, a namespace narrows only namespaced kinds.
     let namespaced = kind(key).is_some_and(|kind| kind.namespaced);
@@ -980,6 +988,7 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 mod acme;
 mod agent;
 mod everyday;
+mod gateway;
 mod gitops;
 pub use everyday::{autoscaler_of, object_json, replicasets_of};
 mod objects;

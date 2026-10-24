@@ -87,6 +87,7 @@ pub fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument>
     let created = row.created.unwrap_or_default();
     let yaml = match identity.resource.as_str() {
         _ if acme::holds(&identity.resource, ix) => acme::document(&row, ix)?,
+        _ if super::gateway::holds(&identity.resource, ix) => super::gateway::document(&row, ix)?,
         "replicasets.apps" | "events" | "persistentvolumeclaims" | "persistentvolumes" => {
             let context = identity.connection.strip_prefix("example:")?;
             let object = super::summary::extra_objects(context, &identity.resource, now)
