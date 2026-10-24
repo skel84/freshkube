@@ -331,24 +331,64 @@ fn the_table_and_inspector_follow_the_shared_layout(cx: &mut TestAppContext) {
     }
 }
 
-/// A client that hands out one fake cluster.
-struct Fake(kube::Client);
+/// A client that hands out one fake cluster, whose kubeconfig context names
+/// a namespace or not.
+struct Fake(kube::Client, Option<&'static str>);
 
 impl KubeClientSource for Fake {
     fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, Failure>> {
         let client = self.0.clone();
         Box::pin(async move { Ok(client) })
     }
+
+    fn namespace(&self) -> futures::future::BoxFuture<'_, Option<String>> {
+        let own = self.1.map(str::to_owned);
+        Box::pin(async move { own })
+    }
+}
+
+/// The namespaces among `count` fake ones whose row the window draws now,
+/// sorted as the page sorts them.
+fn drawn_namespaces(
+    cx: &mut TestAppContext,
+    window: WindowHandle<Root>,
+    count: usize,
+) -> Vec<String> {
+    let mut names: Vec<String> = (0..count).map(|n| format!("ns-{n:02}")).collect();
+    names.sort();
+    names
+        .into_iter()
+        .filter(|name| {
+            cx.update_window(window.into(), |_, window, _| {
+                window.try_find(format!("access-row-ns-{name}")).is_some()
+            })
+            .unwrap()
+        })
+        .collect()
 }
 
 /// A fake cluster with `count` namespaces named `ns-00`, `ns-01`, ….
 fn cluster(count: usize) -> (kube::Client, freshkube_core::fake_api::Recorder) {
+    cluster_listing(count, true)
+}
+
+/// As [`cluster`], and the namespace list is refused when `lists` is false.
+fn cluster_listing(
+    count: usize,
+    lists: bool,
+) -> (kube::Client, freshkube_core::fake_api::Recorder) {
     let names: Vec<String> = (0..count).map(|n| format!("ns-{n:02}")).collect();
     use freshkube_core::fake_api::{self, Recorded};
     use serde_json::json;
     fake_api::client(move |request: &Recorded| {
         let path = request.path.as_str();
         Some(match path {
+            "/api/v1/namespaces" if !lists => fake_api::json(
+                403,
+                json!({"kind":"Status","apiVersion":"v1","status":"Failure","code":403,
+                    "reason":"Forbidden",
+                    "message":"namespaces is forbidden: User \"alice\" cannot list resource \"namespaces\""}),
+            ),
             "/api/v1/namespaces" => fake_api::json(
                 200,
                 json!({"apiVersion":"v1","kind":"NamespaceList","metadata":{},
@@ -376,7 +416,7 @@ fn cluster(count: usize) -> (kube::Client, freshkube_core::fake_api::Recorder) {
 }
 
 #[gpui_kit::test]
-async fn the_live_page_asks_only_for_the_rows_in_view_and_nothing_when_hidden(
+async fn safety_g11_the_page_only_lists_namespaces_and_creates_reviews_for_rows_in_view(
     cx: &mut TestAppContext,
 ) {
     cx.executor().allow_parking();
@@ -386,7 +426,7 @@ async fn the_live_page_asks_only_for_the_rows_in_view_and_nothing_when_hidden(
         let _entered = runtime.enter();
         let (client, seen) = cluster(120);
         recorder = Some(seen);
-        ClusterAccess::Live(Arc::new(Fake(client)))
+        ClusterAccess::Live(Arc::new(Fake(client, None)))
     });
     let recorder = recorder.unwrap();
     cx.wait_for_io(window.into(), |_, cx| page.read(cx).board.answered() > 0)
@@ -437,6 +477,10 @@ async fn the_live_page_asks_only_for_the_rows_in_view_and_nothing_when_hidden(
     asked.sort();
     asked.dedup();
     assert_eq!(asked.len(), rules, "each namespace is asked once");
+    // And they are exactly the rows the frame drew.
+    let drawn = drawn_namespaces(cx, window, 120);
+    assert!(!drawn.is_empty() && drawn.len() < 120, "{}", drawn.len());
+    assert_eq!(asked, drawn, "reviewed namespaces are the rows in view");
 
     // Scrolling to the end draws other rows, which are then asked, and still
     // not every row.
@@ -463,13 +507,42 @@ async fn the_live_page_asks_only_for_the_rows_in_view_and_nothing_when_hidden(
     })
     .unwrap();
     let before = recorder.lines().len();
-    settle(cx, window);
+    // Rows never asked come into view while it is hidden: ns-50 is far from
+    // the first and the last pages.
+    let unasked = freshkube_core::access::RowKey::Namespace("ns-50".into());
     cx.update_window(window.into(), |_, _, cx| {
-        page.update(cx, |page, cx| page.jump(true, cx))
+        assert!(matches!(
+            page.read(cx).board.view(&unasked),
+            freshkube_core::access::RowView::Checking { earlier: None }
+        ));
+        page.update(cx, |page, cx| page.choose("access-row-ns-ns-50".into(), cx))
     })
     .unwrap();
     settle(cx, window);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    settle(cx, window);
     assert_eq!(recorder.lines().len(), before, "{:?}", recorder.lines());
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(window.try_find("access-row-ns-ns-50").is_some(), "in view");
+        assert!(matches!(
+            page.read(cx).board.view(&unasked),
+            freshkube_core::access::RowView::Checking { earlier: None }
+        ));
+    })
+    .unwrap();
+
+    // Shown again, the rows in view are asked, and ns-50 is among them.
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| page.set_visible(true, window, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, cx| {
+        matches!(
+            page.read(cx).board.view(&unasked),
+            freshkube_core::access::RowView::Known(_)
+        )
+    })
+    .await;
 }
 
 #[gpui_kit::test]
@@ -480,7 +553,7 @@ async fn recheck_asks_the_selected_row_again_and_only_that_row(cx: &mut TestAppC
         let _entered = runtime.enter();
         let (client, seen) = cluster(8);
         recorder = Some(seen);
-        ClusterAccess::Live(Arc::new(Fake(client)))
+        ClusterAccess::Live(Arc::new(Fake(client, None)))
     });
     let recorder = recorder.unwrap();
     let total = 9;
@@ -527,7 +600,7 @@ async fn a_new_access_drops_every_answer_before_asking_again(cx: &mut TestAppCon
         let _entered = runtime.enter();
         let (client, seen) = cluster(8);
         recorder = Some(seen);
-        ClusterAccess::Live(Arc::new(Fake(client)))
+        ClusterAccess::Live(Arc::new(Fake(client, None)))
     });
     let total = 9;
     cx.wait_for_io(window.into(), |_, cx| {
@@ -544,4 +617,150 @@ async fn a_new_access_drops_every_answer_before_asking_again(cx: &mut TestAppCon
     })
     .unwrap();
     drop(recorder);
+}
+
+#[gpui_kit::test]
+async fn a_refused_list_with_a_namespace_named_reviews_that_one_and_nothing_else(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let mut recorder = None;
+    let (_runtime, page, window) = mount_with(cx, 1280., 880., "", |runtime| {
+        let _entered = runtime.enter();
+        let (client, seen) = cluster_listing(8, false);
+        recorder = Some(seen);
+        ClusterAccess::Live(Arc::new(Fake(client, Some("shop"))))
+    });
+    let recorder = recorder.unwrap();
+    cx.wait_for_io(window.into(), |_, cx| page.read(cx).board.answered() == 2)
+        .await;
+    settle(cx, window);
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(window.find("access-refused").visible());
+        let labels: Vec<String> = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .map(|row| row.label.to_string())
+            .collect();
+        assert_eq!(labels, ["Nodes", "shop"]);
+    })
+    .unwrap();
+    let rules: Vec<String> = recorder
+        .requests()
+        .iter()
+        .filter(|request| request.path.ends_with("selfsubjectrulesreviews"))
+        .map(|request| request.body.clone())
+        .collect();
+    assert_eq!(rules.len(), 1, "{:?}", recorder.lines());
+    assert!(rules[0].contains("\"namespace\":\"shop\""), "{}", rules[0]);
+}
+
+#[gpui_kit::test]
+async fn a_refused_list_with_no_namespace_named_reviews_no_namespace(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let mut recorder = None;
+    let (_runtime, page, window) = mount_with(cx, 1280., 880., "", |runtime| {
+        let _entered = runtime.enter();
+        let (client, seen) = cluster_listing(8, false);
+        recorder = Some(seen);
+        ClusterAccess::Live(Arc::new(Fake(client, None)))
+    });
+    let recorder = recorder.unwrap();
+    // The Nodes row is the only row.
+    cx.wait_for_io(window.into(), |_, cx| page.read(cx).board.answered() == 1)
+        .await;
+    settle(cx, window);
+    cx.update_window(window.into(), |_, window, cx| {
+        assert!(window.find("access-refused").visible());
+        assert!(status_text(&page, cx).contains("Can't list namespaces"));
+        assert_eq!(page.read(cx).display.rows.len(), 1);
+    })
+    .unwrap();
+    let lines = recorder.lines();
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.ends_with("selfsubjectrulesreviews")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_rule_naming_objects_says_only_named_objects_in_the_cell_and_the_detail() {
+    use freshkube_core::access::{Board, RowKey, Rule, RulesAnswer};
+    let mut rule = Rule::new(&["delete"], &[""], &["pods"]);
+    rule.names = vec!["only-this-one".into()];
+    let mut board = Board::default();
+    board.reset("a");
+    let key = RowKey::Namespace("shop".into());
+    let ticket = board.wants(std::slice::from_ref(&key)).remove(0);
+    board.land(
+        &ticket,
+        Ok(RulesAnswer {
+            rules: vec![rule],
+            ..Default::default()
+        }
+        .cells()),
+    );
+    let display = display::Display::new(&["shop".to_owned()], &board);
+    let shop = display.rows.iter().find(|row| row.label == "shop").unwrap();
+    let delete = &shop.cells[6];
+    assert_eq!(delete.word, "no");
+    assert!(
+        delete.tip.contains("only named objects are allowed now"),
+        "{}",
+        delete.tip
+    );
+    assert!(shop.detail.lacking.iter().any(
+        |(label, _, lines)| *label == "Delete pods" && lines[0].contains("only named objects")
+    ));
+}
+
+#[test]
+fn an_answer_builds_its_own_row_and_no_other() {
+    use freshkube_core::access::{Board, RowKey, Rule, RulesAnswer};
+    let names: Vec<String> = ["a", "b"].map(str::to_owned).to_vec();
+    let mut board = Board::default();
+    board.reset("x");
+    let (a, b) = (RowKey::Namespace("a".into()), RowKey::Namespace("b".into()));
+    let mut display = display::Display::new(&names, &board);
+    let tickets = board.wants(&[a.clone(), b.clone()]);
+    let cells = RulesAnswer {
+        rules: vec![Rule::new(&["*"], &["*"], &["*"])],
+        ..Default::default()
+    }
+    .cells();
+    for ticket in &tickets {
+        board.land(ticket, Ok(cells.clone()));
+    }
+    // Only a's row is built again; b's still shows what was built before.
+    display.update(&a, &board);
+    let word = |name: &str| {
+        display
+            .rows
+            .iter()
+            .find(|row| row.label == name)
+            .unwrap()
+            .cells[0]
+            .word
+    };
+    assert_eq!(word("a"), "yes");
+    assert_eq!(word("b"), "…");
+    assert_eq!(display.checked(), 1);
+}
+
+#[gpui_kit::test]
+fn the_list_landing_keeps_only_its_rows_in_the_board(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280., 880., "limited");
+    settle(cx, window);
+    cx.update_window(window.into(), |_, _, cx| {
+        page.update(cx, |page, _| {
+            // A namespace that is gone from the list has no answer left.
+            page.board.prune(&["shop".to_owned()]);
+            assert_eq!(page.board.answered(), 2, "Nodes and shop");
+        });
+    })
+    .unwrap();
 }

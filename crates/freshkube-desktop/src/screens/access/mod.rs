@@ -59,9 +59,11 @@ pub(crate) struct AccessScreen {
     /// Rows the last frames drew and the review has not looked at yet.
     shown: RefCell<BTreeSet<RowKey>>,
     queued: Cell<bool>,
-    /// Rises whenever the board changes what the table draws.
-    revision: u64,
-    prepared: (u64, u64, u64),
+    /// The revision of the namespace list the display was built from, and
+    /// whether the board dropped answers since: either builds every row
+    /// again. An answer landing builds its own row alone.
+    names_revision: u64,
+    dirty: bool,
     display: Display,
     selected: Option<SharedString>,
     focus: FocusHandle,
@@ -97,8 +99,8 @@ impl AccessScreen {
             jobs: BTreeMap::new(),
             shown: RefCell::default(),
             queued: Cell::new(false),
-            revision: 0,
-            prepared: (u64::MAX, u64::MAX, u64::MAX),
+            names_revision: u64::MAX,
+            dirty: true,
             display: Display::default(),
             selected: None,
             focus: cx.focus_handle(),
@@ -123,9 +125,19 @@ impl AccessScreen {
             .is_some_and(|source| source.access.is_example())
     }
 
-    fn changed(&mut self, cx: &mut Context<Self>) {
-        self.revision += 1;
-        cx.notify();
+    /// One row is built again: its answer landed, or it is being asked.
+    fn row_changed(&mut self, key: &RowKey) {
+        if !self.dirty {
+            self.display.update(key, &self.board);
+        }
+    }
+
+    /// The namespace list landed: the board keeps only its rows.
+    fn listed(&mut self) {
+        if let Some(namespaces) = self.namespaces.data() {
+            self.board.prune(&namespaces.names);
+        }
+        self.dirty = true;
     }
 
     /// Reads the namespace names and who you are; the reviews follow from
@@ -143,8 +155,9 @@ impl AccessScreen {
                 .resolve(id.clone(), Ok(access::example::namespaces(self.shape)));
             self.who
                 .resolve(id, Ok(access::example::who(self.shape, self.epoch)));
+            self.listed();
             self.taken_who(cx);
-            self.changed(cx);
+            cx.notify();
             return;
         }
         if !self.namespaces.is_loading() {
@@ -164,7 +177,10 @@ impl AccessScreen {
             "Listing namespaces timed out".to_owned(),
             async move {
                 let client = connect(&source).await?;
-                access::list_namespaces(&client).await
+                // The namespace the configuration names, for a list that is
+                // refused.
+                let own = source.access.namespace().await;
+                access::list_namespaces(&client, own.as_deref()).await
             },
         );
         let task = cx.spawn(async move |this, cx| {
@@ -172,8 +188,10 @@ impl AccessScreen {
                 .await
                 .unwrap_or_else(|_| Err("Listing namespaces stopped unexpectedly".into()));
             _ = this.update(cx, |view, cx| {
-                view.namespaces.land(&request, result, cx);
-                view.changed(cx);
+                if view.namespaces.land(&request, result, cx) {
+                    view.listed();
+                }
+                cx.notify();
             });
         });
         self.namespaces.run(Some(job), task);
@@ -198,7 +216,7 @@ impl AccessScreen {
                 if view.who.land(&request, result, cx) {
                     view.taken_who(cx);
                 }
-                view.changed(cx);
+                cx.notify();
             });
         });
         self.who.run(Some(job), task);
@@ -212,6 +230,7 @@ impl AccessScreen {
         };
         if self.board.set_who(who) {
             self.jobs.clear();
+            self.dirty = true;
         }
     }
 
@@ -245,12 +264,14 @@ impl AccessScreen {
             for ticket in tickets {
                 let answer = access::example::answer(self.shape, self.epoch, &ticket.key);
                 self.board.land(&ticket, answer);
+                self.row_changed(&ticket.key);
             }
             self.example_flip(cx);
-            self.changed(cx);
+            cx.notify();
             return;
         }
         for ticket in tickets {
+            self.row_changed(&ticket.key);
             self.ask(ticket, cx);
         }
         cx.notify();
@@ -295,7 +316,8 @@ impl AccessScreen {
                 .unwrap_or_else(|_| Err("The review stopped unexpectedly".into()));
             _ = this.update(cx, |view, cx| {
                 if view.board.land(&ticket, result) {
-                    view.changed(cx);
+                    view.row_changed(&ticket.key);
+                    cx.notify();
                 }
             });
         });
@@ -308,23 +330,21 @@ impl AccessScreen {
             Some(key) => self.board.recheck(&key),
             None => self.board.recheck_all(),
         }
-        self.changed(cx);
+        cx.notify();
     }
 
     /// Reads everything again: the names, who you are, and every row in view.
     fn refresh_all(&mut self, cx: &mut Context<Self>) {
         self.board.recheck_all();
         self.read(cx);
-        self.changed(cx);
+        cx.notify();
     }
 
+    /// Builds every row when the list of namespaces changed or the board
+    /// dropped answers; otherwise nothing is built.
     fn sync(&mut self) {
-        let now = (
-            self.namespaces.revision(),
-            self.who.revision(),
-            self.revision,
-        );
-        if self.prepared == now {
+        let revision = self.namespaces.revision();
+        if !self.dirty && self.names_revision == revision {
             return;
         }
         let names = self
@@ -333,7 +353,8 @@ impl AccessScreen {
             .map(|namespaces| namespaces.names.as_slice())
             .unwrap_or_default();
         self.display = Display::new(names, &self.board);
-        self.prepared = now;
+        self.names_revision = revision;
+        self.dirty = false;
     }
 
     fn selected_row(&self) -> Option<&display::Row> {
@@ -419,7 +440,7 @@ impl ScreenPanel for AccessScreen {
                     self.board.reset("");
                 }
             }
-            self.revision += 1;
+            self.dirty = true;
         }
         cx.notify();
     }
@@ -437,7 +458,8 @@ impl ScreenPanel for AccessScreen {
             self.board.recheck_all();
             self.read(cx);
         }
-        self.revision += 1;
+        // Rows that were being asked are no longer.
+        self.dirty = true;
         cx.notify();
     }
 
@@ -486,15 +508,15 @@ impl ScreenPanel for AccessScreen {
             parts.push(Part::new(format!(
                 "{}{more} namespaces · {} checked",
                 namespaces.names.len(),
-                self.display.checked
+                self.display.checked()
             )));
         }
-        if self.display.failed > 0 {
+        if self.display.failed() > 0 {
             parts.push(
-                Part::new(format!("{} couldn't check", self.display.failed)).tone(ui::Tone::Warn),
+                Part::new(format!("{} couldn't check", self.display.failed())).tone(ui::Tone::Warn),
             );
         }
-        if self.display.incomplete {
+        if self.display.incomplete() {
             parts.push(Part::new("Rules incomplete").tone(ui::Tone::Warn));
         }
         if self.board.changed().is_some() {

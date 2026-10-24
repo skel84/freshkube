@@ -51,12 +51,37 @@ fn subresources_follow_rbac_matching() {
             .clone()
     };
     assert_eq!(logs("pods/log"), Cell::Yes);
-    assert_eq!(logs("pods/*"), Cell::Yes);
     assert_eq!(logs("*/log"), Cell::Yes);
     assert_eq!(logs("*"), Cell::Yes);
-    // The resource alone is not its subresource.
-    assert!(matches!(logs("pods"), Cell::No(_)));
-    assert!(matches!(logs("pods/exec"), Cell::No(_)));
+    // The resource alone is not its subresource, and `pods/*` is no
+    // wildcard in RBAC: it names a subresource literally called `*`.
+    for rule in ["pods", "pods/exec", "pods/*", "*/exec", "log"] {
+        assert!(matches!(logs(rule), Cell::No(_)), "{rule}");
+    }
+}
+
+#[test]
+fn a_role_on_pods_star_grants_nothing_the_server_would_allow() {
+    // get, list, create and delete on `pods/*`: the server refuses reading
+    // pods, logs, exec, port-forward and deleting pods, so none reads yes.
+    let cells = answer(
+        vec![Rule::new(
+            &["get", "list", "create", "delete"],
+            &[""],
+            &["pods/*"],
+        )],
+        false,
+    )
+    .cells();
+    for column in [
+        Column::Read,
+        Column::Logs,
+        Column::Shell,
+        Column::Forward,
+        Column::DeletePods,
+    ] {
+        assert!(matches!(cells.cell(column), Cell::No(_)), "{column:?}");
+    }
 }
 
 #[test]
@@ -402,7 +427,7 @@ async fn namespaces_are_one_metadata_list_with_a_cap() {
             )
         })
     });
-    let listed = list_namespaces(&client).await.unwrap();
+    let listed = list_namespaces(&client, None).await.unwrap();
     assert_eq!(listed.names, ["default", "shop"]);
     assert!(!listed.more && listed.refused.is_none());
     assert_eq!(recorder.requests().len(), 1);
@@ -438,7 +463,7 @@ fn the_example_shapes_answer_through_the_same_matching() {
 }
 
 #[tokio::test]
-async fn a_refused_namespace_list_reviews_the_contexts_own_namespace_alone() {
+async fn a_refused_namespace_list_reviews_the_namespace_the_config_names_alone() {
     let (client, recorder) = fake_api::client(|request: &Recorded| {
         (request.path == "/api/v1/namespaces").then(|| {
             status(
@@ -447,10 +472,23 @@ async fn a_refused_namespace_list_reviews_the_contexts_own_namespace_alone() {
             )
         })
     });
-    let listed = list_namespaces(&client).await.unwrap();
-    // The client's own default namespace, never a guess or a sweep.
-    assert_eq!(listed.names, [client.default_namespace()]);
+    let listed = list_namespaces(&client, Some("shop")).await.unwrap();
+    assert_eq!(listed.names, ["shop"]);
     assert!(listed.refused.as_deref().unwrap().contains("forbidden"));
+    // One request, the refused list: no review, no guess, no sweep.
+    assert_eq!(recorder.lines(), ["GET /api/v1/namespaces?&limit=501"]);
+}
+
+#[tokio::test]
+async fn a_refused_list_with_no_namespace_named_reviews_none() {
+    let (client, recorder) = fake_api::client(|request: &Recorded| {
+        (request.path == "/api/v1/namespaces").then(|| status(403, "forbidden"))
+    });
+    // The client's default namespace is `default` when the configuration
+    // names none; it is not used.
+    let listed = list_namespaces(&client, None).await.unwrap();
+    assert!(listed.names.is_empty());
+    assert!(listed.refused.is_some());
     assert_eq!(recorder.requests().len(), 1);
 }
 
@@ -459,7 +497,7 @@ async fn a_namespace_list_that_fails_otherwise_is_an_error_not_a_refusal() {
     let (client, _) = fake_api::client(|request: &Recorded| {
         (request.path == "/api/v1/namespaces").then(|| status(500, "internal error"))
     });
-    assert!(list_namespaces(&client).await.is_err());
+    assert!(list_namespaces(&client, Some("shop")).await.is_err());
 }
 
 #[test]
@@ -472,4 +510,48 @@ fn the_ns_refused_example_lists_one_namespace_and_why() {
             .refused
             .is_none()
     );
+}
+
+#[test]
+fn a_rule_naming_objects_reads_as_only_named_objects() {
+    let mut rule = Rule::new(&["delete"], &[""], &["pods"]);
+    rule.names = vec!["only-this-one".into()];
+    let cells = answer(vec![rule], false).cells();
+    let need = Column::DeletePods.needs()[0];
+    assert_eq!(
+        cells.phrase(&need, Some("shop")),
+        "needs delete on pods in shop (only named objects are allowed now)"
+    );
+    // A need no rule touches keeps the plain words.
+    let other = Column::Logs.needs()[0];
+    assert_eq!(
+        cells.phrase(&other, Some("shop")),
+        "needs get on pods/log in shop"
+    );
+}
+
+#[test]
+fn pruning_keeps_only_the_listed_rows_and_refuses_the_rest() {
+    let mut board = Board::default();
+    board.reset("a");
+    let tickets = board.wants(&[ns("keep"), ns("gone"), RowKey::Nodes]);
+    let late = tickets
+        .iter()
+        .find(|t| t.key == ns("gone"))
+        .unwrap()
+        .clone();
+    for ticket in &tickets {
+        if ticket.key != ns("gone") {
+            board.land(ticket, Ok(answer(vec![], false).cells()));
+        }
+    }
+    board.prune(&["keep".to_owned()]);
+    // The nodes row and the listed one stay; the answer on its way for a
+    // namespace that is gone is not kept; it is never asked again.
+    assert_eq!(board.answered(), 2);
+    assert!(!board.land(&late, Ok(answer(vec![], false).cells())));
+    assert_eq!(board.answered(), 2);
+    assert!(board.wants(&[ns("gone")]).is_empty());
+    board.recheck_all();
+    assert_eq!(board.wants(&[ns("keep"), ns("gone")]).len(), 1);
 }

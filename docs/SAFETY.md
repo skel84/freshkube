@@ -101,6 +101,10 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g10_confirmation_runs_only_against_the_preview_shown` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
 - `safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
 
+### 11. Your access only lists namespaces and creates reviews, for the rows in view, and only while shown
+
+- `safety_g11_the_page_only_lists_namespaces_and_creates_reviews_for_rows_in_view` (`crates/freshkube-desktop/src/screens/access/tests.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

@@ -181,5 +181,6 @@ fn nodes(shape: Shape, _epoch: usize) -> Result<Cells, String> {
             .collect(),
         incomplete: false,
         note: None,
+        named: Vec::new(),
     })
 }

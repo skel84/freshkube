@@ -1,7 +1,9 @@
-//! What the table draws, derived from the board whenever it changes.
+//! What the table draws, derived from the board: all of it when the list of
+//! namespaces changes, and one row when its answer lands.
 
 use freshkube_core::access::{Board, COLUMNS, Cell, Cells, Need, RowKey, RowView};
 use gpui_kit::SharedString;
+use std::collections::HashMap;
 
 use super::table::{self, Column};
 use crate::ui::Tone;
@@ -30,6 +32,7 @@ pub(crate) struct Detail {
 
 #[derive(Clone, Debug)]
 pub(crate) struct Row {
+    pub standing: Standing,
     pub key: SharedString,
     pub id: String,
     pub row_key: RowKey,
@@ -54,16 +57,20 @@ pub(crate) struct GroupLine {
     pub count: usize,
 }
 
+/// How a row stands, for the counts the status bar and banners give.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Standing {
+    Checking,
+    Known { incomplete: bool },
+    Failed,
+}
+
 pub(crate) struct Display {
     pub rows: Vec<Row>,
     pub lines: Vec<Entry>,
     pub groups: Vec<GroupLine>,
     pub columns: (Vec<Column>, f32),
-    /// Rows with an answer, and rows that could not be checked.
-    pub checked: usize,
-    pub failed: usize,
-    /// Some answer came from an incomplete rules review.
-    pub incomplete: bool,
+    index: HashMap<RowKey, usize>,
 }
 
 impl Default for Display {
@@ -72,7 +79,14 @@ impl Default for Display {
     }
 }
 
-fn cell_view(cell: &Cell, namespace: Option<&str>) -> CellView {
+fn cell_view(cells: &Cells, cell: &Cell, namespace: Option<&str>) -> CellView {
+    let words = |needs: &[Need]| {
+        needs
+            .iter()
+            .map(|need| cells.phrase(need, namespace))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
     match cell {
         Cell::Yes => CellView {
             word: "yes",
@@ -80,22 +94,13 @@ fn cell_view(cell: &Cell, namespace: Option<&str>) -> CellView {
         },
         Cell::No(needs) => CellView {
             word: "no",
-            tip: needs
-                .iter()
-                .map(|need| need.phrase(namespace))
-                .collect::<Vec<_>>()
-                .join("; ")
-                .into(),
+            tip: words(needs).into(),
         },
         Cell::Ask(needs) => CellView {
             word: "ask",
             tip: format!(
                 "Not confirmed: the rules review was incomplete ({}). The check before the action decides.",
-                needs
-                    .iter()
-                    .map(|need| need.phrase(namespace))
-                    .collect::<Vec<_>>()
-                    .join("; ")
+                words(needs)
             )
             .into(),
         },
@@ -104,6 +109,14 @@ fn cell_view(cell: &Cell, namespace: Option<&str>) -> CellView {
             tip: "Does not apply to nodes".into(),
         },
     }
+}
+
+fn cell_views(cells: &Cells, namespace: Option<&str>) -> Vec<CellView> {
+    cells
+        .cells
+        .iter()
+        .map(|cell| cell_view(cells, cell, namespace))
+        .collect()
 }
 
 fn placeholder(word: &'static str, tip: &str) -> Vec<CellView> {
@@ -127,7 +140,7 @@ fn detail_of(cells: &Cells, namespace: Option<&str>) -> Detail {
                 ask,
                 needs
                     .iter()
-                    .map(|need| need.phrase(namespace).into())
+                    .map(|need| cells.phrase(need, namespace).into())
                     .collect(),
             )
         })
@@ -177,8 +190,9 @@ fn row_of(key: RowKey, board: &Board) -> Row {
         ),
     };
     let namespace_ref = namespace.as_deref();
-    let (tone, state, cells, detail) = match board.view(&key) {
+    let (standing, tone, state, cells, detail) = match board.view(&key) {
         RowView::Checking { earlier: None } => (
+            Standing::Checking,
             Tone::Waiting,
             "Checking".to_owned(),
             placeholder("…", "Checking"),
@@ -194,30 +208,27 @@ fn row_of(key: RowKey, board: &Board) -> Row {
             let mut detail = detail_of(cells, namespace_ref);
             detail.checking = true;
             (
+                Standing::Checking,
                 Tone::Waiting,
                 "Checking again".to_owned(),
-                cells
-                    .cells
-                    .iter()
-                    .map(|cell| cell_view(cell, namespace_ref))
-                    .collect(),
+                cell_views(cells, namespace_ref),
                 detail,
             )
         }
         RowView::Known(cells) => {
             let (tone, state) = tone_of(cells);
             (
+                Standing::Known {
+                    incomplete: cells.incomplete,
+                },
                 tone,
                 state.to_owned(),
-                cells
-                    .cells
-                    .iter()
-                    .map(|cell| cell_view(cell, namespace_ref))
-                    .collect(),
+                cell_views(cells, namespace_ref),
                 detail_of(cells, namespace_ref),
             )
         }
         RowView::Failed(message) => (
+            Standing::Failed,
             Tone::Warn,
             "Couldn't check".to_owned(),
             placeholder("?", &format!("Couldn't check: {message}")),
@@ -229,6 +240,7 @@ fn row_of(key: RowKey, board: &Board) -> Row {
         ),
     };
     Row {
+        standing,
         key: id.clone().into(),
         id,
         row_key: key,
@@ -242,6 +254,8 @@ fn row_of(key: RowKey, board: &Board) -> Row {
 }
 
 impl Display {
+    /// Every row, from the board: when the list of namespaces changes, or
+    /// the board dropped its answers.
     pub(super) fn new(names: &[String], board: &Board) -> Self {
         let mut rows = vec![row_of(RowKey::Nodes, board)];
         rows.extend(
@@ -264,26 +278,49 @@ impl Display {
             lines.push(Entry::Group(1));
             lines.extend((1..rows.len()).map(Entry::Row));
         }
-        let checked = rows
-            .iter()
-            .filter(|row| matches!(board.view(&row.row_key), RowView::Known(_)))
-            .count();
-        let failed = rows
-            .iter()
-            .filter(|row| matches!(board.view(&row.row_key), RowView::Failed(_)))
-            .count();
-        let incomplete = rows.iter().any(
-            |row| matches!(board.view(&row.row_key), RowView::Known(cells) if cells.incomplete),
-        );
         let columns = table::columns(&rows);
+        let index = rows
+            .iter()
+            .enumerate()
+            .map(|(ix, row)| (row.row_key.clone(), ix))
+            .collect();
         Self {
             rows,
             lines,
             groups,
             columns,
-            checked,
-            failed,
-            incomplete,
+            index,
         }
+    }
+
+    /// One row again, when its answer landed or it is being asked: nothing
+    /// else is built.
+    pub(super) fn update(&mut self, key: &RowKey, board: &Board) {
+        if let Some(ix) = self.index.get(key).copied() {
+            self.rows[ix] = row_of(key.clone(), board);
+        }
+    }
+
+    /// Rows with an answer.
+    pub(super) fn checked(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| matches!(row.standing, Standing::Known { .. }))
+            .count()
+    }
+
+    /// Rows that could not be checked.
+    pub(super) fn failed(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.standing == Standing::Failed)
+            .count()
+    }
+
+    /// Some answer came from an incomplete rules review.
+    pub(super) fn incomplete(&self) -> bool {
+        self.rows
+            .iter()
+            .any(|row| row.standing == Standing::Known { incomplete: true })
     }
 }

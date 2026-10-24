@@ -194,7 +194,7 @@ impl AccessScreen {
                             .label("Dismiss")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.board.dismiss_changed();
-                                this.changed(cx);
+                                cx.notify();
                             }))
                             .into_any_element(),
                     ),
@@ -205,7 +205,7 @@ impl AccessScreen {
                 .into_any_element(),
             );
         }
-        if self.display.incomplete {
+        if self.display.incomplete() {
             banners.push(
                 ui::banner(
                     ui::Tone::Info,
@@ -219,17 +219,23 @@ impl AccessScreen {
                 .into_any_element(),
             );
         }
-        if let Some(reason) = self
+        if let Some((reason, names)) = self
             .namespaces
             .data()
-            .and_then(|namespaces| namespaces.refused.as_ref())
+            .and_then(|namespaces| Some((namespaces.refused.as_ref()?, &namespaces.names)))
         {
+            let scope = match names.first() {
+                Some(own) => format!(
+                    "Only {own}, the namespace this context's kubeconfig names, is checked."
+                ),
+                None => {
+                    "This context's kubeconfig names no namespace, so none is checked.".to_owned()
+                }
+            };
             banners.push(
                 ui::warning_banner(
                     Some("Can't list namespaces".into()),
-                    format!(
-                        "{reason}. Only the namespace this context uses is checked; the others are not guessed at."
-                    ),
+                    format!("{reason}. {scope} Others are not guessed at."),
                     Some(
                         Button::new("access-refused-retry")
                             .small()

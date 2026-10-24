@@ -219,27 +219,32 @@ impl Rule {
         }
     }
 
-    fn grants(&self, need: &Need) -> bool {
-        self.names.is_empty()
-            && self.verbs.iter().any(|v| v == "*" || v == need.verb)
+    /// Whether the rule's verbs, groups and resources cover the need,
+    /// leaving aside the objects it names.
+    fn covers(&self, need: &Need) -> bool {
+        self.verbs.iter().any(|v| v == "*" || v == need.verb)
             && self.groups.iter().any(|g| g == "*" || g == need.group)
             && self
                 .resources
                 .iter()
                 .any(|rule| resource_matches(rule, need))
     }
+
+    fn grants(&self, need: &Need) -> bool {
+        self.names.is_empty() && self.covers(need)
+    }
 }
 
-/// How RBAC matches a rule's resource: `*`, the resource (or
-/// `resource/subresource`), `*/subresource`, and `resource/*`.
+/// How RBAC matches a rule's resource (`ResourceMatches` in Kubernetes'
+/// RBAC), and nothing more: `*`, the resource or `resource/subresource`
+/// exactly, and `*/subresource`. `pods/*` is not a wildcard there and never
+/// matches `pods`, so it is none here.
 fn resource_matches(rule: &str, need: &Need) -> bool {
-    let combined = need.resource_words();
     rule == "*"
-        || rule == combined
+        || rule == need.resource_words()
         || need
             .subresource
             .is_some_and(|sub| rule.strip_prefix("*/") == Some(sub))
-        || rule.strip_suffix("/*") == Some(need.resource)
 }
 
 /// What one rules review answered, reduced to what the table matches on.
@@ -256,6 +261,15 @@ pub struct RulesAnswer {
 impl RulesAnswer {
     pub fn grants(&self, need: &Need) -> bool {
         self.rules.iter().any(|rule| rule.grants(need))
+    }
+
+    /// Whether the need is granted for named objects only.
+    fn grants_named_only(&self, need: &Need) -> bool {
+        !self.grants(need)
+            && self
+                .rules
+                .iter()
+                .any(|rule| !rule.names.is_empty() && rule.covers(need))
     }
 
     /// The cell of every column, in [`COLUMNS`] order.
@@ -278,10 +292,19 @@ impl RulesAnswer {
                 }
             })
             .collect();
+        let mut named: Vec<Need> = COLUMNS
+            .iter()
+            .flat_map(|column| column.needs())
+            .filter(|need| self.grants_named_only(need))
+            .copied()
+            .collect();
+        named.sort();
+        named.dedup();
         Cells {
             cells,
             incomplete: self.incomplete,
             note: self.evaluation_error.clone(),
+            named,
         }
     }
 }
@@ -294,9 +317,23 @@ pub struct Cells {
     pub incomplete: bool,
     /// The server's note on an incomplete review.
     pub note: Option<String>,
+    /// Needs the rules grant for named objects only, which is not a grant on
+    /// the resource: "only named objects" reads better than a bare no.
+    pub named: Vec<Need>,
 }
 
 impl Cells {
+    /// The words for one missing need: the short form, and when some objects
+    /// are allowed by name, that.
+    pub fn phrase(&self, need: &Need, namespace: Option<&str>) -> String {
+        let words = need.phrase(namespace);
+        if self.named.contains(need) {
+            format!("{words} (only named objects are allowed now)")
+        } else {
+            words
+        }
+    }
+
     pub fn cell(&self, column: Column) -> &Cell {
         let ix = COLUMNS.iter().position(|c| *c == column).unwrap_or(0);
         &self.cells[ix]

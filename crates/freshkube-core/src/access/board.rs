@@ -59,9 +59,19 @@ pub struct Board {
     stale: BTreeSet<RowKey>,
     inflight: BTreeSet<RowKey>,
     changed: Option<Changed>,
+    /// The namespaces the current list names; a row outside it is never
+    /// asked and its answer is never kept. None until a list lands.
+    listed: Option<BTreeSet<String>>,
 }
 
 impl Board {
+    fn is_listed(&self, key: &RowKey) -> bool {
+        match (key, &self.listed) {
+            (RowKey::Namespace(name), Some(listed)) => listed.contains(name),
+            _ => true,
+        }
+    }
+
     pub fn who(&self) -> Option<&Who> {
         self.who.as_ref()
     }
@@ -101,6 +111,7 @@ impl Board {
         self.drop_answers();
         self.identity = Some(identity.to_owned());
         self.who = None;
+        self.listed = None;
         self.changed = had.then_some(Changed { from, to: None });
         true
     }
@@ -122,6 +133,20 @@ impl Board {
         };
         self.who = Some(who);
         dropped
+    }
+
+    /// Forgets the answers of rows that are no longer listed, so the board
+    /// holds at most the rows of the current list.
+    pub fn prune(&mut self, listed: &[String]) {
+        self.listed = Some(listed.iter().cloned().collect());
+        let listed = self.listed.clone().unwrap_or_default();
+        let keep = |key: &RowKey| match key {
+            RowKey::Nodes => true,
+            RowKey::Namespace(name) => listed.contains(name),
+        };
+        self.answers.retain(|key, _| keep(key));
+        self.stale.retain(keep);
+        self.inflight.retain(keep);
     }
 
     /// Marks every answer to be asked again; the old ones stay on show until
@@ -147,7 +172,7 @@ impl Board {
             if self.inflight.len() >= PARALLEL {
                 break;
             }
-            if self.inflight.contains(key) {
+            if self.inflight.contains(key) || !self.is_listed(key) {
                 continue;
             }
             if self.answers.contains_key(key) && !self.stale.contains(key) {
@@ -170,6 +195,9 @@ impl Board {
             return false;
         }
         self.inflight.remove(&ticket.key);
+        if !self.is_listed(&ticket.key) {
+            return false;
+        }
         self.answers.insert(ticket.key.clone(), answer);
         true
     }

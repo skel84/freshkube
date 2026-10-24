@@ -105,6 +105,7 @@ pub async fn nodes(client: &kube::Client) -> Result<Cells, String> {
         cells,
         incomplete: false,
         note: None,
+        named: Vec::new(),
     })
 }
 
@@ -140,14 +141,19 @@ pub struct Namespaces {
     /// The cluster has more than [`NAMESPACE_CAP`].
     pub more: bool,
     /// Why the list was refused. `names` is then the one namespace the
-    /// context itself uses, reviewed alone: a refused list is never
-    /// answered by asking about namespaces that were guessed.
+    /// context's configuration names, reviewed alone, or none: a refused
+    /// list is never answered by asking about namespaces that were guessed.
     pub refused: Option<String>,
 }
 
 /// The namespace names, one list of metadata, at most [`NAMESPACE_CAP`]. A
-/// list the cluster refuses (403) is its own answer, not a failure.
-pub async fn list_namespaces(client: &kube::Client) -> Result<Namespaces, String> {
+/// list the cluster refuses (403) is its own answer, not a failure: then
+/// `own`, the namespace the configuration names for this context, is the one
+/// to review, and with none named there is nothing to review.
+pub async fn list_namespaces(
+    client: &kube::Client,
+    own: Option<&str>,
+) -> Result<Namespaces, String> {
     let api: Api<Namespace> = Api::all(client.clone());
     let list = match api
         .list_metadata(&ListParams::default().limit(NAMESPACE_CAP as u32 + 1))
@@ -156,7 +162,7 @@ pub async fn list_namespaces(client: &kube::Client) -> Result<Namespaces, String
         Ok(list) => list,
         Err(kube::Error::Api(status)) if status.code == 403 => {
             return Ok(Namespaces {
-                names: vec![client.default_namespace().to_owned()],
+                names: own.map(str::to_owned).into_iter().collect(),
                 more: false,
                 refused: Some(scrub(&status.message)),
             });
