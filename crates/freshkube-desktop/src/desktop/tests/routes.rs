@@ -95,3 +95,64 @@ fn open_route_shows_the_overview_with_the_compact_trace(cx: &mut TestAppContext)
         .unwrap();
     }
 }
+
+/// A press and a release at the middle of `id`, with `modifiers` held.
+fn click_with(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    id: &'static str,
+    modifiers: gpui_kit::Modifiers,
+) {
+    use gpui_kit::{MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
+    cx.update_window(handle, |_, window, cx| {
+        let position = window.find(id).bounds().center();
+        for input in [
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers,
+                click_count: 1,
+                first_mouse: false,
+            }),
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers,
+                click_count: 1,
+            }),
+        ] {
+            window.dispatch_event(input, cx);
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+/// The toolbar's Open trace follows the click's modifiers as every link
+/// does: a plain click changes the shown tab, the platform modifier opens a
+/// background one.
+#[gpui_kit::test]
+fn the_toolbar_button_opens_here_on_a_plain_click_and_in_the_background_with_the_modifier(
+    cx: &mut TestAppContext,
+) {
+    let command = if cfg!(target_os = "macos") {
+        gpui_kit::Modifiers::command()
+    } else {
+        gpui_kit::Modifiers::control()
+    };
+    let (handle, pilot) = routes_page(cx, 1280.);
+    let before = tab_count(cx, &pilot);
+    click_with(
+        cx,
+        handle,
+        "routes-open-trace",
+        gpui_kit::Modifiers::default(),
+    );
+    assert_eq!(tab_count(cx, &pilot), before, "a plain click opened a tab");
+    cx.read(|cx| assert_eq!(pilot.read(cx).navigation.page, Page::Resources));
+
+    let (handle, pilot) = routes_page(cx, 1280.);
+    click_with(cx, handle, "routes-open-trace", command);
+    assert_eq!(tab_count(cx, &pilot), before + 1);
+    cx.read(|cx| assert_eq!(pilot.read(cx).navigation.page, Page::Routes));
+}
