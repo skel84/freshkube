@@ -439,18 +439,6 @@ async fn safety_g11_the_page_only_lists_namespaces_and_creates_reviews_for_rows_
         .update_window(window.into(), |_, _, cx| page.read(cx).board.answered())
         .unwrap();
     assert!(answered < total / 2, "{answered} of {total}");
-    // Nothing but the namespace list, who you are, and reviews.
-    recorder.assert_all(
-        "the page only lists namespaces and creates reviews",
-        |request| {
-            let review = request
-                .path
-                .starts_with("/apis/authorization.k8s.io/v1/selfsubject")
-                || request.path == "/apis/authentication.k8s.io/v1/selfsubjectreviews";
-            (request.method == http::Method::POST && review)
-                || (request.method == http::Method::GET && request.path == "/api/v1/namespaces")
-        },
-    );
     let lines = recorder.lines();
     let rules = lines
         .iter()
@@ -543,6 +531,19 @@ async fn safety_g11_the_page_only_lists_namespaces_and_creates_reviews_for_rows_
         )
     })
     .await;
+    // And through the scroll, the hide and the show again, nothing but the
+    // namespace list, who you are, and reviews.
+    recorder.assert_all(
+        "the page only lists namespaces and creates reviews",
+        |request| {
+            let review = request
+                .path
+                .starts_with("/apis/authorization.k8s.io/v1/selfsubject")
+                || request.path == "/apis/authentication.k8s.io/v1/selfsubjectreviews";
+            (request.method == http::Method::POST && review)
+                || (request.method == http::Method::GET && request.path == "/api/v1/namespaces")
+        },
+    );
 }
 
 #[gpui_kit::test]

@@ -312,7 +312,6 @@ impl AccessScreen {
 
 impl Render for AccessScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync();
         let loading = self.namespaces.is_loading() && self.namespaces.data().is_none();
         self.loading.show(loading);
         let header = self.header(window, cx);

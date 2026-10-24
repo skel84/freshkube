@@ -59,11 +59,9 @@ pub(crate) struct AccessScreen {
     /// Rows the last frames drew and the review has not looked at yet.
     shown: RefCell<BTreeSet<RowKey>>,
     queued: Cell<bool>,
-    /// The revision of the namespace list the display was built from, and
-    /// whether the board dropped answers since: either builds every row
-    /// again. An answer landing builds its own row alone.
-    names_revision: u64,
-    dirty: bool,
+    /// Every row, built where the list of namespaces lands or the board drops
+    /// its answers (`rebuild`), never in a frame; an answer landing builds
+    /// its own row alone (`row_changed`).
     display: Display,
     selected: Option<SharedString>,
     focus: FocusHandle,
@@ -99,8 +97,6 @@ impl AccessScreen {
             jobs: BTreeMap::new(),
             shown: RefCell::default(),
             queued: Cell::new(false),
-            names_revision: u64::MAX,
-            dirty: true,
             display: Display::default(),
             selected: None,
             focus: cx.focus_handle(),
@@ -127,9 +123,7 @@ impl AccessScreen {
 
     /// One row is built again: its answer landed, or it is being asked.
     fn row_changed(&mut self, key: &RowKey) {
-        if !self.dirty {
-            self.display.update(key, &self.board);
-        }
+        self.display.update(key, &self.board);
     }
 
     /// The namespace list landed: the board keeps only its rows.
@@ -137,7 +131,18 @@ impl AccessScreen {
         if let Some(namespaces) = self.namespaces.data() {
             self.board.prune(&namespaces.names);
         }
-        self.dirty = true;
+        self.rebuild();
+    }
+
+    /// Builds every row from the list and the board. It runs where one of
+    /// them changed as a whole, never while a frame is drawn.
+    fn rebuild(&mut self) {
+        let names = self
+            .namespaces
+            .data()
+            .map(|namespaces| namespaces.names.as_slice())
+            .unwrap_or_default();
+        self.display = Display::new(names, &self.board);
     }
 
     /// Reads the namespace names and who you are; the reviews follow from
@@ -230,7 +235,7 @@ impl AccessScreen {
         };
         if self.board.set_who(who) {
             self.jobs.clear();
-            self.dirty = true;
+            self.rebuild();
         }
     }
 
@@ -340,23 +345,6 @@ impl AccessScreen {
         cx.notify();
     }
 
-    /// Builds every row when the list of namespaces changed or the board
-    /// dropped answers; otherwise nothing is built.
-    fn sync(&mut self) {
-        let revision = self.namespaces.revision();
-        if !self.dirty && self.names_revision == revision {
-            return;
-        }
-        let names = self
-            .namespaces
-            .data()
-            .map(|namespaces| namespaces.names.as_slice())
-            .unwrap_or_default();
-        self.display = Display::new(names, &self.board);
-        self.names_revision = revision;
-        self.dirty = false;
-    }
-
     fn selected_row(&self) -> Option<&display::Row> {
         let key = self.selected.as_ref()?;
         self.display.rows.iter().find(|row| &row.key == key)
@@ -369,7 +357,6 @@ impl AccessScreen {
     }
 
     fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        self.sync();
         if let Some(key) = freshkube_ui::table::step(self, delta, cx) {
             self.choose(key, cx)
         }
@@ -377,7 +364,6 @@ impl AccessScreen {
 
     /// Selects the first or the last row, whatever is selected now.
     fn jump(&mut self, last: bool, cx: &mut Context<Self>) {
-        self.sync();
         let mut rows = self.display.lines.iter().filter_map(|entry| match entry {
             display::Entry::Row(ix) => Some(self.display.rows[*ix].key.clone()),
             display::Entry::Group(_) => None,
@@ -440,7 +426,7 @@ impl ScreenPanel for AccessScreen {
                     self.board.reset("");
                 }
             }
-            self.dirty = true;
+            self.rebuild();
         }
         cx.notify();
     }
@@ -459,7 +445,7 @@ impl ScreenPanel for AccessScreen {
             self.read(cx);
         }
         // Rows that were being asked are no longer.
-        self.dirty = true;
+        self.rebuild();
         cx.notify();
     }
 
@@ -483,7 +469,6 @@ impl ScreenPanel for AccessScreen {
     }
 
     fn status(&mut self, _: &App) -> Option<Segment> {
-        self.sync();
         let mut parts = Vec::new();
         parts.push(match (self.board.who(), self.who.error()) {
             (Some(who), _) => Part::new(format!(

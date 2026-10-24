@@ -53,7 +53,7 @@ The answers belong to core's `Board`, which keeps only the rows of the current n
 
 ## Cost
 
-The table is built from the board once when the list of namespaces lands (or the board drops its answers), and an answer landing builds its own row alone, so a landing costs one row's cells and tooltips, not 500 rows'. The status bar counts rows without building anything.
+Every row is built from the board where the list of namespaces lands, who you are changes, the page hides or the source changes, never while a frame is drawn. An answer landing builds its own row alone, so a landing costs one row's cells and tooltips, not 500 rows'. A frame and the status bar only read what was built; the status bar counts rows without building anything.
 
 ## Safety
 
