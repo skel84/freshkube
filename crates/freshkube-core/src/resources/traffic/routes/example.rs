@@ -106,11 +106,12 @@ impl Shape {
                 "ghost",
                 "stale",
                 "mesh-cart",
+                "multi-listener",
             ],
             Self::Serving | Self::Cut => &["web", "https-redirect", "pay-status"],
             Self::Partly => &["cart-split", "web"],
             Self::CrossNamespace => &["checkout", "pay-status"],
-            Self::Listener => &["status", "docs", "web"],
+            Self::Listener => &["status", "docs", "multi-listener", "web"],
             Self::NoAddress => &["promo", "web"],
             Self::Class => &["beta", "old-api", "web"],
             Self::NoBackend => &["empty", "ghost", "web"],
@@ -272,6 +273,15 @@ fn route(name: &str) -> Value {
             spec.generation = (5, 3);
             spec
         }
+        // A Gateway with two listeners, the first of which allows only its
+        // own namespace; the route names none.
+        "multi-listener" => Spec::new(
+            "shop",
+            "multi-listener",
+            &["multi.example.com"],
+            json!([{"matches": path("/"), "backendRefs": [{"name": "cart", "port": 8080}]}]),
+        )
+        .parent(json!({"name": "shared", "namespace": "infra"})),
         "mesh-cart" => Spec::new("shop", "mesh-cart", &[],
             json!([{"matches": path("/"), "backendRefs": [{"name": "cart", "port": 8080}]}]))
             .parent(json!({"group": "", "kind": "Service", "name": "cart"})),
@@ -325,7 +335,16 @@ pub fn world(shape: Shape) -> World {
     let mut unaccepted = programmed(true, listener_ok("web"));
     unaccepted["listeners"] = json!([{"name": "web", "attachedRoutes": 0,
         "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]}]);
+    let mut shared_status = programmed(true, listener_ok("http"));
+    shared_status["listeners"] = json!([listener_ok("http"), listener_ok("https")]);
+    let shared = json!([
+        {"name": "http", "port": 80, "protocol": "HTTP",
+            "allowedRoutes": {"namespaces": {"from": "Same"}}},
+        {"name": "https", "port": 443, "protocol": "HTTPS", "hostname": "*.example.com",
+            "allowedRoutes": {"namespaces": {"from": "All"}}},
+    ]);
     let gateways = vec![
+        gateway("infra", "shared", "example", shared, shared_status),
         gateway(
             "infra",
             "edge",

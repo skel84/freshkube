@@ -30,6 +30,8 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 
 const CONTEXT: &str = "Routes";
+/// The page width, in dp, under which the toolbar's buttons are icons.
+const NARROW_TOOLBAR: f32 = 720.;
 const PREFIX: &str = "routes";
 /// A read this old is read again when the page shows.
 const ON_SHOW: OnShow = OnShow::ReadIfOlder(Duration::from_secs(30));
@@ -62,6 +64,8 @@ pub(crate) struct RoutesScreen {
     loading: TableLoading,
     /// `FRESHKUBE_ROUTES`: the example's shape.
     shape: routes::example::Shape,
+    /// When the example data was read, which a loader does not keep.
+    example_read: Option<std::time::SystemTime>,
 }
 
 impl EventEmitter<ScreenEvent> for RoutesScreen {}
@@ -80,7 +84,7 @@ impl RoutesScreen {
             KeyBinding::new("o", OpenRoute, Some(CONTEXT)),
             KeyBinding::new("/", Find, Some(CONTEXT)),
         ]);
-        let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter"));
+        let filter_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));
         let filter = cx.subscribe_in(&filter_input, window, |this, _, event, _, cx| {
             if matches!(event, InputEvent::Change) {
                 let text = this.filter_input.read(cx).value().to_string();
@@ -106,6 +110,7 @@ impl RoutesScreen {
             notes_scroll: ScrollHandle::new(),
             loading: TableLoading::new(PREFIX, cx),
             shape: routes::example::Shape::default(),
+            example_read: None,
         }
     }
 
@@ -136,6 +141,7 @@ impl RoutesScreen {
             }
             let read = routes::example::read(self.shape)
                 .map_err(|failure| format!("{}: {}", failure.kind.label(), failure.message));
+            self.example_read = Some(std::time::SystemTime::now());
             self.loader.resolve(id, read);
             cx.notify();
             return;
@@ -224,10 +230,22 @@ impl RoutesScreen {
                     true,
                 )
             });
+        // Example routes are invented here and listed again by Resources'
+        // example cluster under identities of its own, so a link to one names
+        // it and lets Resources find the object; a cluster's carries its UID,
+        // which keeps the link from opening a route that replaced this one.
+        let example = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.access.is_example());
         let object = crate::resources::model::ObjectRef {
             namespace: row.namespace.clone(),
             name: row.name.clone(),
-            uid: row.uid.clone(),
+            uid: if example {
+                String::new()
+            } else {
+                row.uid.clone()
+            },
             connection: self.source.as_ref().map(|source| source.id.clone()),
         };
         cx.emit(ResourceLink::Object(kind, object, tab));
@@ -290,8 +308,8 @@ impl ScreenPanel for RoutesScreen {
         if !self.display.summary.is_empty() {
             parts.push(Part::new(self.display.summary.clone()));
         }
-        if let Some(attention) = self.display.attention.clone() {
-            parts.push(Part::new(attention).tone(ui::Tone::Crit));
+        for (count, words, tone) in &self.display.attention {
+            parts.push(Part::new(format!("{count} {words}")).tone(*tone));
         }
         if self.loader.is_loading() {
             parts.push(Part::new("Reading…"))
@@ -304,7 +322,7 @@ impl ScreenPanel for RoutesScreen {
             };
             parts.push(Part::new(words).tone(ui::Tone::Warn))
         }
-        if let Some(at) = self.loader.last_successful() {
+        if let Some(at) = self.loader.last_successful().or(self.example_read) {
             parts.push(Part::new(format!("updated {}", ui::clock(at))).minor())
         }
         if self

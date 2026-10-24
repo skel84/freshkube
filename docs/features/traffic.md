@@ -30,7 +30,7 @@ Each step carries what the route **asks for** and what the gateway **serves**, a
 
 **Unknown is never green and never "not serving".** A refused, unserved or cut read makes only the steps that need it Unknown, with its reason. A Gateway or class with no status is *blind*, a Gateway not programmed yet is *pending*, a Programmed Gateway with no address is *blind* too, and a failed one is *broken*: three different words. A verdict older than the object's generation (`observedGeneration`) is a stale warning, not a failure.
 
-A route's verdict: **Not serving** (every part broken), **Partly serving** (some backends or parents serve and some are broken), **Unknown**, **Serving**, or **Mesh** (the parent is a Service; mesh routes are not judged). A redirect-only rule and an ExtensionRef rule are not missing backends: the first is answered by the gateway and serves; the second, and a backend that is not a Service, read Unknown ("not judged"). A rule with no backend and no filter is broken. A backend of weight 0 takes no traffic and is not judged. Zero ready endpoints in a list that was cut read Unknown, not broken. A missing GatewayClass and a Gateway with no HTTP or HTTPS listener are the Platform's.
+A route's verdict: **Not serving** (every part broken), **Partly serving** (some backends or parents serve and some are broken), **Unknown**, **Serving**, or **Mesh** (the parent is a Service; mesh routes are not judged, so they carry the glyph for "needs an integration before it can say more"). A redirect-only rule and an ExtensionRef rule are not missing backends: the first is answered by the gateway and serves; the second, and a backend that is not a Service, read Unknown ("not judged"). A rule with no backend and no filter is broken. A backend of weight 0 takes no traffic and is not judged. Zero ready endpoints in a list that was cut read Unknown, not broken. A missing GatewayClass and a Gateway with no HTTP or HTTPS listener are the Platform's.
 
 ## Reads
 
@@ -38,7 +38,7 @@ Discovery of `gateway.networking.k8s.io` (`list_custom_groups`, `list_group_kind
 
 ## The Routes page
 
-`Page::Routes` is in the Networking column, in a **Traffic** section above the kinds, and in the closed set of pages a link can name (`routes`). It is a table page grouped by verdict, Not serving first; a cluster where every route serves gets a flat list. Each row reads *stops at ⟨step⟩ — ⟨reason⟩*, in the trace's words. The status bar carries the context, the route count, the verdict counts and the refresh time. It reads only while shown (30 s before a shown page reads again), and a read in flight is dropped when it hides.
+`Page::Routes` is in the Networking column, in a **Traffic** section above the kinds, and in the closed set of pages a link can name (`routes`). It is a table page grouped by verdict, Not serving first; a cluster where every route serves gets a flat list. Each row reads *stops at ⟨step⟩ — ⟨reason⟩*, in the trace's words, and a stale verdict adds *· stale verdict*. The route and these words come first among the columns, so a narrow window shows them; the Gateway and the name follow. The filter has Pods' look (search icon, `/` hint), and under 720 dp the toolbar's Open trace and Open route are icons with tooltips. The status bar carries the context, the route count, the verdict counts (one part each: not serving, partly, unknown) and the refresh time. It reads only while shown (30 s before a shown page reads again), and a read in flight is dropped when it hides.
 
 The Inspector shows the compact trace (the verdict, whose problem it is, and where each parent stops), the backends with their shares, the proposed ReferenceGrant, and the route's fields. **Open trace** (Enter or T), **Open route** (O) and the row menu open the route in Resources; they act on the selection and are never buttons on a row.
 
@@ -52,7 +52,7 @@ A backend refused across namespaces proposes a ReferenceGrant for that exact pai
 
 ## Example data
 
-`FRESHKUBE_FIXTURE_HOLD=routes` keeps the page on its loading rows. `FRESHKUBE_ROUTES` (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)) shapes the page and an example route's trace: `all` (the default) shows every verdict at once. With `FRESHKUBE_KIND=httproutes.gateway.networking.k8s.io` Resources lists the example routes; their panes always read the full set, so every route finds its own trace, except under the shapes about the API itself (`not-installed`, `incomplete`, `mixed-bundle`, `refused`).
+`FRESHKUBE_FIXTURE_HOLD=routes` keeps the page on its loading rows. `FRESHKUBE_ROUTES` (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)) shapes the page and an example route's trace: `all` (the default) shows every verdict at once. With `FRESHKUBE_KIND=httproutes.gateway.networking.k8s.io` Resources lists the example routes; a link from the page to one names it without a UID, since the example objects are listed again there under identities of their own (a cluster's link carries the route's UID). Their panes always read the full set, so every route finds its own trace, except under the shapes about the API itself (`not-installed`, `incomplete`, `mixed-bundle`, `refused`).
 
 ## Left for later
 

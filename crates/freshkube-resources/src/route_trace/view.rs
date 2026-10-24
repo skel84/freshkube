@@ -289,7 +289,7 @@ pub fn full(model: &TraceModel, on_link: Option<OnLink>, cx: &App) -> AnyElement
                         .text_size(dp(12.))
                         .text_color(palette(cx).muted)
                         .child(
-                            "Freshkube changes nothing. Someone who owns the Service's namespace applies this.",
+                            "Freshkube changes nothing. This is the Platform's step: whoever owns the Service's namespace applies this.",
                         ),
                 )
                 .children(model.proposals.iter().map(|row| proposal(row, cx)))
@@ -344,7 +344,7 @@ pub fn proposals(model: &TraceModel, cx: &App) -> Option<AnyElement> {
                     .text_size(dp(12.))
                     .text_color(palette(cx).muted)
                     .child(
-                        "Freshkube changes nothing. Someone who owns the Service's namespace applies this.",
+                        "Freshkube changes nothing. This is the Platform's step: whoever owns the Service's namespace applies this.",
                     ),
             )
             .children(model.proposals.iter().map(|row| proposal(row, cx)))

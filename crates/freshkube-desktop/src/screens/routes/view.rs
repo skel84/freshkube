@@ -8,7 +8,7 @@ use freshkube_ui::{
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Disableable, Sizable,
+    Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     input::Input,
@@ -22,22 +22,39 @@ impl RoutesScreen {
                 .id("routes-filter")
                 .aria_label("Filter by host, name, gateway, backend or where the trace stops")
                 .small()
-                .h(dp(ui::CONTROL_HEIGHT)),
+                .h(dp(ui::CONTROL_HEIGHT))
+                .cleanable(true)
+                .prefix(Icon::new(IconName::Search).size(dp(14.))),
         );
-        let trace = Button::new("routes-open-trace")
-            .ghost()
-            .small()
-            .h(dp(ui::CONTROL_HEIGHT))
-            .label("Open trace")
-            .disabled(self.selected.is_none())
-            .on_click(cx.listener(|this, _, _, cx| this.open(crate::resources::Tab::Trace, cx)));
-        let route = Button::new("routes-open-route")
-            .ghost()
-            .small()
-            .h(dp(ui::CONTROL_HEIGHT))
-            .label("Open route")
-            .disabled(self.selected.is_none())
-            .on_click(cx.listener(|this, _, _, cx| this.open(crate::resources::Tab::Overview, cx)));
+        // Under the width where the toolbar has room for words, icons alone,
+        // each with its tooltip and label.
+        let narrow = super::super::page_width(window) < NARROW_TOOLBAR;
+        let action = |id: &'static str, icon: IconName, label: &'static str, tip: &'static str| {
+            let button = Button::new(id)
+                .ghost()
+                .small()
+                .h(dp(ui::CONTROL_HEIGHT))
+                .disabled(self.selected.is_none());
+            if narrow {
+                button.icon(icon).accessibility_label(label).tooltip(tip)
+            } else {
+                button.label(label)
+            }
+        };
+        let trace = action(
+            "routes-open-trace",
+            IconName::Waypoints,
+            "Open trace",
+            "Open the selected route on its Trace tab",
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.open(crate::resources::Tab::Trace, cx)));
+        let route = action(
+            "routes-open-route",
+            IconName::ExternalLink,
+            "Open route",
+            "Open the selected route in Resources",
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.open(crate::resources::Tab::Overview, cx)));
         let refresh = Button::new("routes-refresh")
             .ghost()
             .small()

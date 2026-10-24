@@ -15,6 +15,7 @@ mod operations;
 mod overview;
 mod protection;
 mod rail;
+mod routes;
 mod screens;
 mod services;
 mod settings;

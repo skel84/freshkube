@@ -29,6 +29,10 @@ impl TableColumn for Column {
 }
 
 const LABELS: [&str; 4] = ["Route", "Name", "Gateway", "Status"];
+/// The logical cell that is the trace's words.
+const STATUS: usize = 3;
+/// The columns as they are drawn, by logical cell.
+const ORDER: [usize; 4] = [0, STATUS, 2, 1];
 
 pub(super) fn columns(rows: &[Row]) -> (Vec<Column>, f32) {
     let mut columns = vec![Column {
@@ -38,8 +42,10 @@ pub(super) fn columns(rows: &[Row]) -> (Vec<Column>, f32) {
         flexible: false,
         pinned: true,
     }];
-    for (cell, label) in LABELS.iter().enumerate() {
-        let flexible = cell == LABELS.len() - 1;
+    // The route and why it stops come first, so a narrow window shows them.
+    for cell in ORDER {
+        let label = &LABELS[cell];
+        let flexible = cell == STATUS;
         columns.push(Column {
             cell: Some(cell),
             label: (*label).into(),

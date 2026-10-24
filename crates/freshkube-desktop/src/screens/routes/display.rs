@@ -47,8 +47,9 @@ pub(super) struct Display {
     pub lines: Vec<Entry>,
     /// "14 routes".
     pub summary: SharedString,
-    /// "5 not serving · 1 partly serving", when some are.
-    pub attention: Option<SharedString>,
+    /// How many are not serving, partly serving and unknown, when some are:
+    /// `(count, words, tone)`, one part of the status bar each.
+    pub attention: Vec<(usize, &'static str, ui::Tone)>,
     /// Reads that were refused or cut, and a bundle installed in pieces.
     pub notices: Vec<SharedString>,
     /// Why there is no table: no API, no routes.
@@ -104,7 +105,10 @@ fn search_text(entry: &RouteEntry, summary: &str) -> String {
 fn row(ix: usize, entry: &RouteEntry) -> Row {
     let facts = &entry.facts;
     let trace = &entry.trace;
-    let summary = trace.summary.line();
+    let mut summary = trace.summary.line();
+    if trace.stale {
+        summary.push_str(" · stale verdict");
+    }
     let parents = if facts.parents.is_empty() {
         "no parent".to_owned()
     } else {
@@ -172,11 +176,12 @@ impl Display {
             groups: Vec::new(),
             lines: Vec::new(),
             summary: "".into(),
-            attention: None,
+            attention: Vec::new(),
             notices: Vec::new(),
             empty: "".into(),
             api_problem: false,
-            columns: (Vec::new(), 0.),
+            // The header and the loading rows are there before any answer.
+            columns: table::columns(&[]),
             filter: String::new(),
             flat: true,
         };
@@ -221,16 +226,15 @@ impl Display {
             })
             .collect();
         display.flat = rows.iter().all(|r| r.verdict == RouteVerdict::Serving);
-        let attention = [
+        display.attention = [
             (RouteVerdict::NotServing, "not serving"),
-            (RouteVerdict::Partly, "partly serving"),
+            (RouteVerdict::Partly, "partly"),
             (RouteVerdict::Unknown, "unknown"),
         ]
         .into_iter()
         .filter(|(verdict, _)| count(*verdict) > 0)
-        .map(|(verdict, words)| format!("{} {words}", count(verdict)))
-        .collect::<Vec<_>>();
-        display.attention = (!attention.is_empty()).then(|| attention.join(" · ").into());
+        .map(|(verdict, words)| (count(verdict), words, verdict_tone(verdict)))
+        .collect();
         display.summary = plural(rows.len(), "route", "routes").into();
         display.empty = "There are no HTTPRoutes in this cluster.".into();
         display.rows = rows;

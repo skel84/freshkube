@@ -31,7 +31,8 @@ pub fn verdict_tone(verdict: RouteVerdict) -> Tone {
         RouteVerdict::Partly => Tone::Warn,
         RouteVerdict::Unknown => Tone::Unknown,
         RouteVerdict::Serving => Tone::Good,
-        RouteVerdict::Mesh => Tone::Outline,
+        // Not judged until a mesh controller is supported.
+        RouteVerdict::Mesh => Tone::Integration,
     }
 }
 

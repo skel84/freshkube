@@ -104,8 +104,13 @@ fn rows_are_grouped_by_verdict_with_not_serving_first() {
         let group = display.groups.iter().find(|g| g.label == label).unwrap();
         assert_eq!(group.count, count, "{label}");
     }
-    assert_eq!(display.summary, "14 routes");
-    assert!(display.attention.as_ref().unwrap().contains("not serving"));
+    assert_eq!(display.summary, "15 routes");
+    assert!(
+        display
+            .attention
+            .iter()
+            .any(|(_, words, _)| *words == "not serving")
+    );
 }
 
 #[test]
@@ -119,7 +124,7 @@ fn a_healthy_cluster_gets_a_flat_list() {
     );
     assert!(display.lines.iter().all(|e| matches!(e, Entry::Row(_))));
     assert_eq!(display.lines.len(), 3);
-    assert!(display.attention.is_none());
+    assert!(display.attention.is_empty());
 }
 
 #[test]
@@ -569,7 +574,10 @@ fn a_held_read_keeps_the_loading_rows_until_it_answers(cx: &mut TestAppContext) 
         assert!(page.read(cx).loader.data().is_none());
         // The table is there with its loading rows, not an empty state or an error.
         window.find("routes-list");
-        window.find("routes-loading");
+        // The header's columns are there to draw the skeleton rows under.
+        assert_eq!(page.read(cx).display.columns.0.len(), 5);
+        let loading = window.find("routes-loading").bounds();
+        assert!(loading.size.height > px(20.), "{loading:?}");
         assert!(window.try_find("routes-empty-state").is_none());
         assert!(window.try_find("routes-retry").is_none());
         assert!(page.update(cx, |page, cx| page.status(cx)).is_some());
@@ -607,4 +615,97 @@ fn a_failed_refresh_keeps_the_last_read_under_a_banner(cx: &mut TestAppContext) 
         assert!(window.try_find("routes-stale").is_none());
     })
     .unwrap();
+}
+
+#[test]
+fn a_stale_verdict_is_marked_in_the_list_and_a_mesh_route_is_drawn_as_not_judged() {
+    let display = display_of(Shape::All);
+    let row = |name: &str| display.rows.iter().find(|r| r.name == name).unwrap();
+    assert!(
+        row("stale").cells[3].ends_with(" · stale verdict"),
+        "{}",
+        row("stale").cells[3]
+    );
+    assert!(!row("web").cells[3].contains("stale"));
+    // Mesh routes need an integration before they can be judged: that glyph.
+    assert_eq!(row("mesh-cart").tone, crate::ui::Tone::Integration);
+    assert_eq!(
+        display
+            .groups
+            .iter()
+            .find(|g| g.slug == "mesh")
+            .unwrap()
+            .tone,
+        crate::ui::Tone::Integration
+    );
+}
+
+#[test]
+fn a_gateway_with_several_listeners_serves_the_route_that_names_none() {
+    let display = display_of(Shape::All);
+    let row = display
+        .rows
+        .iter()
+        .find(|r| r.name == "multi-listener")
+        .unwrap();
+    assert_eq!(row.verdict, RouteVerdict::Serving, "{}", row.cells[3]);
+    let read = freshkube_core::resources::traffic::routes::example::read(Shape::All).unwrap();
+    let entry = read
+        .routes
+        .iter()
+        .find(|e| e.facts.name == "multi-listener")
+        .unwrap();
+    let steps = &entry.trace.parents[0].steps;
+    // One listener is named from the listener step to the namespace step.
+    assert!(steps[2].serves.contains("listener https"), "{:?}", steps[2]);
+    assert!(steps[3].serves.contains("listener https"), "{:?}", steps[3]);
+}
+
+#[test]
+fn the_status_line_splits_the_counts_into_toned_parts_and_says_when_it_was_read() {
+    let display = display_of(Shape::All);
+    let words = display
+        .attention
+        .iter()
+        .map(|(count, words, tone)| format!("{count} {words} {tone:?}"))
+        .collect::<Vec<_>>();
+    assert_eq!(words.len(), 3, "{words:?}");
+    assert!(words[0].ends_with("not serving Crit"), "{words:?}");
+    assert!(words[1].ends_with("partly Warn"));
+    assert!(words[2].ends_with("unknown Unknown"));
+}
+
+#[gpui_kit::test]
+fn the_status_bar_carries_the_read_time_of_example_data(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let segment = page.update(cx, |page, cx| page.status(cx)).unwrap();
+        let text = format!("{segment:?}");
+        assert!(text.contains("updated "), "{text}");
+        assert!(text.contains("example data"), "{text}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_toolbar_buttons_are_icons_in_a_narrow_page_and_words_in_a_wide_one(cx: &mut TestAppContext) {
+    let width_of = |cx: &mut TestAppContext, width: f32| {
+        let (_runtime, _page, window) = mount(cx, Shape::All, width, 880.);
+        let mut button = None;
+        cx.update_window(window.into(), |_, window, cx| {
+            layout_check::settle_header(window, cx);
+            window.render_frame(cx);
+            let trace = window.find("routes-open-trace");
+            button = Some((trace.bounds().size.width, trace.label().map(str::to_owned)));
+        })
+        .unwrap();
+        button.unwrap()
+    };
+    let (narrow, label) = width_of(cx, 760.);
+    assert!(narrow < px(48.), "{narrow:?}");
+    // Still named for assistive technology.
+    assert_eq!(label.as_deref(), Some("Open trace"));
+    let (wide, _) = width_of(cx, 1280.);
+    assert!(wide > px(64.), "{wide:?}");
 }
