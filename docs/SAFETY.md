@@ -107,6 +107,18 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 - `safety_g11_the_page_only_lists_namespaces_and_creates_reviews_for_rows_in_view` (`crates/freshkube-desktop/src/screens/access/tests.rs`)
 
+### 14. Argo CD Refresh sends one annotation, and nothing under `read-only` or when the Application moved
+
+- `safety_g14_argo_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+
+### 15. Flux Reconcile sends one annotation, and nothing under `read-only` or when the object moved
+
+- `safety_g15_flux_reconcile_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+
+### 16. cert-manager Renew writes only the status conditions, and nothing under `read-only` or when the Certificate moved
+
+- `safety_g16_renew_writes_only_the_status_conditions_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

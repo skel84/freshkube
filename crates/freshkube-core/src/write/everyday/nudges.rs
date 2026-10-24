@@ -133,7 +133,7 @@ pub fn argo_refresh(subject: &Subject, how: Refresh) -> Result<ActionDescription
             "Ask Argo CD to refresh {label}: it compares the source it has with the cluster again. Nothing is synced."
         ),
         Refresh::Hard => format!(
-            "Ask Argo CD for a hard refresh of {label}: it drops its cached manifests and reads the source again. Nothing is synced."
+            "Ask Argo CD for a hard refresh of {label}: a refresh that also reloads the manifest cache, so the source is read again. Nothing is synced."
         ),
     };
     let was = subject
@@ -230,7 +230,7 @@ pub fn renew(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffere
         .iter()
         .any(|condition| issuing(condition) && condition["status"] == "True")
     {
-        return Err(NotOffered("It is already being issued."));
+        return Err(NotOffered("It is already renewing: Issuing is True."));
     }
     let condition = json!({
         "type": ISSUING,
@@ -262,11 +262,21 @@ pub fn renew(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffere
             "Renew {}: cert-manager issues a new certificate into {secret}. {RENEW_NOTE}",
             subject.target.label()
         ),
-        preview(
-            subject,
-            &format!("status.conditions[type={ISSUING}] (status subresource)"),
-            &format!("True, reason {MANUAL_REASON}"),
-        ),
+        {
+            let mut shown = preview(
+                subject,
+                &format!("status.conditions[type={ISSUING}] (status subresource)"),
+                &format!("True, reason {MANUAL_REASON}"),
+            );
+            shown.push(Preview {
+                title: "What follows".into(),
+                lines: vec![
+                    format!("A new key and certificate replace those in {secret} when the issuance succeeds; until then the current ones keep serving."),
+                    "The issuer is asked again, which may count against an outside CA's rate limit.".into(),
+                ],
+            });
+            shown
+        },
         ObjectChange {
             target,
             change: Change::MergePatch(subject.status_body(json!({"conditions": conditions}))),
@@ -398,6 +408,12 @@ mod tests {
         );
         let renewal = renew(&subject(&cluster, fake::CERTIFICATE), AT).unwrap();
         assert!(renewal.preview[0].lines[1].contains("status.conditions[type=Issuing]"));
+        let follows = renewal.preview[1].lines.join(" ");
+        assert!(
+            follows.contains("replace those in Secret/web-tls"),
+            "{follows}"
+        );
+        assert!(follows.contains("rate limit"), "{follows}");
         assert!(renewal.sentence.contains("can't be undone"));
         assert!(renewal.sentence.contains("Secret/web-tls"));
     }
@@ -575,7 +591,7 @@ mod tests {
             ]}}),
         );
         let why = renew(&subject(&cluster, fake::CERTIFICATE), AT).unwrap_err();
-        assert!(why.0.contains("already being issued"));
+        assert!(why.0.contains("already renewing"));
     }
 
     #[tokio::test(start_paused = true)]
@@ -756,5 +772,58 @@ mod tests {
             Some("status"),
         )
         .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_controller_write_between_the_check_and_the_send_is_refused_and_not_retried() {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let action = renew(&subject(&cluster, fake::CERTIFICATE), AT).unwrap();
+        let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+        let Verdict::Ready(prepared) = runner.preflight(action).await else {
+            panic!("blocked");
+        };
+        // cert-manager updates the status after the check, before the send.
+        cluster.foreign_write(
+            fake::CERTIFICATE,
+            "cert-manager-trigger",
+            &json!({"status": {"conditions": [
+                {"type": "Ready", "status": "True"},
+                {"type": "Issuing", "status": "False", "reason": "Idle"}
+            ]}}),
+        );
+        let finished = runner
+            .execute(*prepared, Confirmation::Confirmed, || false, |_| {})
+            .await;
+        assert_ne!(finished.headline(), Headline::Done);
+        // The patch was offered once, was refused, and nothing was stored or retried.
+        let patches: Vec<_> = cluster
+            .recorder
+            .requests()
+            .into_iter()
+            .filter(|r| r.method == http::Method::PATCH && !r.query.contains("dryRun"))
+            .collect();
+        assert_eq!(patches.len(), 1);
+        let conditions = &cluster.object(fake::CERTIFICATE)["status"]["conditions"];
+        assert_eq!(conditions[1]["reason"], "Idle");
+        assert!(!cluster.exists(&format!("{}/web-tls-3", fake::CERTIFICATE_REQUESTS)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn renew_sends_only_to_status_and_nothing_reaches_spec() {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let before = cluster.object(fake::CERTIFICATE)["spec"].clone();
+        let action = renew(&subject(&cluster, fake::CERTIFICATE), AT).unwrap();
+        send(&cluster, dir.path(), Protection::Guarded, action).await;
+        for request in cluster.recorder.requests() {
+            if request.method == http::Method::PATCH {
+                assert!(
+                    request.path.ends_with("/certificates/web-tls/status"),
+                    "{request:?}"
+                );
+                let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+                assert!(body.get("spec").is_none());
+            }
+        }
+        assert_eq!(cluster.object(fake::CERTIFICATE)["spec"], before);
     }
 }
