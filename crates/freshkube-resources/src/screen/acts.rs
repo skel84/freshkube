@@ -42,7 +42,7 @@ fn label(act: Everyday) -> &'static str {
         Everyday::ArgoRefresh => "Refresh",
         Everyday::ArgoHardRefresh => "Hard refresh",
         Everyday::FluxReconcile => "Reconcile",
-        Everyday::Renew => "Renew…",
+        Everyday::Renew => "Renew",
         Everyday::Rollback => "Roll back…",
         Everyday::RunNow => "Run now",
     }

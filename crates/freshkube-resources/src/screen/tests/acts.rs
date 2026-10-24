@@ -274,7 +274,7 @@ fn nudges() -> [(
         ),
         (
             "certificates.cert-manager.io",
-            &["Renew…"],
+            &["Renew"],
             &["w"],
             &["resource-renew"],
             &[Everyday::Renew],

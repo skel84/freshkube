@@ -32,7 +32,7 @@ pub const MANUAL_MESSAGE: &str = "Certificate re-issuance manually triggered";
 const REQUEST_REVISION: &str = "cert-manager.io/certificate-revision";
 
 /// Said in a renewal's dialog.
-pub const RENEW_NOTE: &str = "This can't be undone; the issuer may count each issuance toward its rate limits. The current certificate stays in its Secret until the new one is issued.";
+pub const RENEW_NOTE: &str = "This can't be undone. The current certificate stays in its Secret until the new one is issued.";
 
 /// How hard Argo CD is asked to look.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,7 +151,10 @@ pub fn argo_refresh(subject: &Subject, how: Refresh) -> Result<ActionDescription
     Ok(description(
         subject,
         "argo-refresh",
-        "Refresh",
+        match how {
+            Refresh::Normal => "Refresh",
+            Refresh::Hard => "Hard refresh",
+        },
         sentence,
         {
             let mut shown = preview(
@@ -461,6 +464,12 @@ mod tests {
         );
         assert!(follows.contains("rate limit"), "{follows}");
         assert!(renewal.sentence.contains("can't be undone"));
+        // The rate limit is said once, under "What follows".
+        assert!(
+            !renewal.sentence.contains("rate limit"),
+            "{}",
+            renewal.sentence
+        );
         assert!(renewal.sentence.contains("Secret/web-tls"));
     }
 
@@ -996,6 +1005,8 @@ mod tests {
             assert_eq!(action.preview[1].lines, [said]);
         }
         let hard = argo_refresh(&subject(&cluster, fake::APPLICATION), Refresh::Hard).unwrap();
+        assert_eq!(hard.verb, "Hard refresh");
+        assert_eq!(hard.title.as_deref(), Some("Hard refresh Application/shop"));
         assert!(
             hard.sentence
                 .contains("throws away the manifests Argo CD generated")
