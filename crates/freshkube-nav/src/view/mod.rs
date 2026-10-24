@@ -145,6 +145,7 @@ pub enum LinkPage {
     Nodes,
     Health,
     Databases,
+    Routes,
     Access,
     Resources,
     Etcd,
@@ -157,11 +158,12 @@ pub enum LinkPage {
 }
 
 impl LinkPage {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
         Self::Databases,
+        Self::Routes,
         Self::Access,
         Self::Resources,
         Self::Etcd,
@@ -180,6 +182,7 @@ impl LinkPage {
             Self::Nodes => "nodes",
             Self::Health => "health",
             Self::Databases => "databases",
+            Self::Routes => "routes",
             Self::Access => "access",
             Self::Resources => "resources",
             Self::Etcd => "etcd",
@@ -207,6 +210,7 @@ pub enum ViewTab {
     Events,
     Ports,
     Logs,
+    Trace,
 }
 
 impl ViewTab {
@@ -217,6 +221,7 @@ impl ViewTab {
             Self::Events => "events",
             Self::Ports => "ports",
             Self::Logs => "logs",
+            Self::Trace => "trace",
         }
     }
 
@@ -227,6 +232,7 @@ impl ViewTab {
             Self::Events,
             Self::Ports,
             Self::Logs,
+            Self::Trace,
         ]
         .into_iter()
         .find(|tab| tab.slug() == slug)
@@ -240,6 +246,7 @@ impl ViewTab {
             Self::Events => Tab::Events,
             Self::Ports => Tab::Ports,
             Self::Logs => Tab::Logs,
+            Self::Trace => Tab::Trace,
         }
     }
 
@@ -250,6 +257,7 @@ impl ViewTab {
             Tab::Events => Self::Events,
             Tab::Ports => Self::Ports,
             Tab::Logs => Self::Logs,
+            Tab::Trace => Self::Trace,
         }
     }
 }

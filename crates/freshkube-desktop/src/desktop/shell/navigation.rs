@@ -173,7 +173,7 @@ impl Navigation {
             // Between Events and Health, which has no row of its own.
             Page::Monitoring | Page::Observability | Page::Applications | Page::Settings => 3,
             Page::Health => 4,
-            Page::Databases | Page::Access => 5,
+            Page::Databases | Page::Routes | Page::Access => 5,
             Page::Resources => 5,
             Page::Etcd => 6,
             Page::SystemServices => 7,

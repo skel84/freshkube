@@ -3,7 +3,9 @@
 //! only while the pane is active and dropped with it; the logic is core's
 //! `resources::traffic`, this derives the rows once per answer and draws them.
 use super::*;
+use crate::route_trace::{self, TraceLink, TraceModel};
 use crate::ui::Tone;
+use freshkube_core::resources::traffic::routes::{self, RoutesRead};
 use freshkube_core::resources::traffic::{
     self, EndpointState, Evidence, ServiceReading, StepKind, TrafficChain, Verdict,
 };
@@ -21,6 +23,20 @@ const GROUP_SHOWN: usize = 50;
 enum Scope {
     Service,
     Workload,
+    /// An HTTPRoute: its trace, in Overview and on its own tab.
+    Route,
+}
+
+/// What an HTTPRoute's pane shows of its trace.
+enum RouteView {
+    Trace {
+        model: Box<TraceModel>,
+        /// Reads that were refused or cut, in words.
+        notes: Vec<SharedString>,
+    },
+    /// No trace can be drawn: the API is not installed, the read was refused
+    /// or the route is not in the answer.
+    Message { tone: Tone, text: SharedString },
 }
 
 struct StepLine {
@@ -54,6 +70,7 @@ struct PodLine {
 enum Loaded {
     Service(Box<Result<ServiceReading, Failure>>),
     Workload(Result<traffic::WorkloadServices, Failure>),
+    Route(Box<Result<RoutesRead, Failure>>),
 }
 
 #[derive(Default)]
@@ -71,6 +88,8 @@ pub(super) struct TrafficView {
     job: Option<Job>,
     seq: u64,
     shape: crate::example::traffic::Shape,
+    route: Option<RouteView>,
+    routes_shape: routes::example::Shape,
 }
 
 fn tone(verdict: Verdict) -> Tone {
@@ -88,13 +107,26 @@ impl TrafficView {
         self.shape = shape;
     }
 
+    pub(super) fn set_routes_shape(&mut self, shape: routes::example::Shape) {
+        self.routes_shape = shape;
+    }
+
     pub(super) fn reset(&mut self) {
         self.stop();
         *self = Self {
             seq: self.seq,
             shape: self.shape,
+            routes_shape: self.routes_shape,
             ..Default::default()
         };
+    }
+
+    /// The Trace tab's title, once the route's trace is read.
+    pub(super) fn route_tab_title(&self) -> SharedString {
+        match &self.route {
+            Some(RouteView::Trace { model, .. }) => model.tab_title.clone(),
+            _ => "Trace".into(),
+        }
     }
 
     pub(super) fn stop(&mut self) {
@@ -103,7 +135,69 @@ impl TrafficView {
     }
 
     fn has_unknown(&self) -> bool {
-        self.steps.iter().any(|step| step.tone == Tone::Unknown) || self.pods_note.is_some()
+        let route = match &self.route {
+            Some(RouteView::Trace { model, .. }) => model.verdict == routes::RouteVerdict::Unknown,
+            Some(RouteView::Message { tone, .. }) => *tone == Tone::Unknown,
+            None => false,
+        };
+        route
+            || self.steps.iter().any(|step| step.tone == Tone::Unknown)
+            || self.pods_note.is_some()
+    }
+
+    fn apply_route(&mut self, namespace: &str, name: &str, read: Result<RoutesRead, Failure>) {
+        self.steps.clear();
+        self.groups.clear();
+        self.pods.clear();
+        self.pods_note = None;
+        self.pods_more = None;
+        self.source = None;
+        self.route = Some(match read {
+            Err(failure) => RouteView::Message {
+                tone: Tone::Unknown,
+                text: format!(
+                    "Trace unknown: the route could not be read ({}: {})",
+                    failure.kind.label(),
+                    failure.message
+                )
+                .into(),
+            },
+            Ok(read) => match (read.api.problem(), read.api.mixed().map(str::to_owned)) {
+                (Some(problem), _) => RouteView::Message {
+                    tone: Tone::Outline,
+                    text: problem.into(),
+                },
+                (None, mixed) => {
+                    match read
+                        .routes
+                        .iter()
+                        .find(|e| e.facts.namespace == namespace && e.facts.name == name)
+                    {
+                        None => RouteView::Message {
+                            tone: Tone::Unknown,
+                            text: "Trace unknown: the route was not in the answer".into(),
+                        },
+                        Some(entry) => {
+                            let mut notes = read
+                                .notes
+                                .iter()
+                                .cloned()
+                                .map(SharedString::from)
+                                .collect::<Vec<_>>();
+                            notes.extend(mixed.map(|mixed| {
+                                SharedString::from(format!(
+                                    "Mixed Gateway API bundle: {mixed}. Each kind is read at its own version."
+                                ))
+                            }));
+                            RouteView::Trace {
+                                model: Box::new(TraceModel::new(entry, "route-trace")),
+                                notes,
+                            }
+                        }
+                    }
+                }
+            },
+        });
     }
 
     fn lines(chain: &TrafficChain) -> Vec<StepLine> {
@@ -264,8 +358,20 @@ impl TrafficView {
 }
 
 impl DetailPane {
+    /// An HTTPRoute is open, so it has a Trace tab.
+    pub(super) fn shows_trace(&self) -> bool {
+        self.detail.as_ref().is_some_and(|detail| {
+            detail.target.kind.kind == "HTTPRoute"
+                && detail.target.kind.group == routes::GATEWAY_GROUP
+        })
+    }
+
     pub(crate) fn set_services_shape(&mut self, shape: crate::example::traffic::Shape) {
         self.traffic.set_shape(shape);
+    }
+
+    pub(crate) fn set_routes_shape(&mut self, shape: routes::example::Shape) {
+        self.traffic.set_routes_shape(shape);
     }
 
     /// Reads what the open Service publishes, or the Services a workload's
@@ -279,6 +385,8 @@ impl DetailPane {
         let document = &view.document;
         let scope = if document.kind == "Service" && document.api_version == "v1" {
             Scope::Service
+        } else if self.shows_trace() {
+            Scope::Route
         } else if document.overview.template_labels.is_some() {
             Scope::Workload
         } else {
@@ -327,6 +435,9 @@ impl DetailPane {
                     Scope::Workload => Loaded::Workload(
                         traffic::read_workload_services(&client, &namespace, &labels).await,
                     ),
+                    Scope::Route => Loaded::Route(Box::new(
+                        routes::read_routes(&client, Some((&namespace, &name))).await,
+                    )),
                 })
             },
         );
@@ -340,6 +451,7 @@ impl DetailPane {
                     match scope {
                         Scope::Service => Loaded::Service(Box::new(Err(failure))),
                         Scope::Workload => Loaded::Workload(Err(failure)),
+                        Scope::Route => Loaded::Route(Box::new(Err(failure))),
                     }
                 });
                 pane.finish_traffic(&identity, seq, loaded, meta, cx);
@@ -362,6 +474,20 @@ impl DetailPane {
             .strip_prefix("example:")
             .unwrap_or("prod-fra");
         match scope {
+            // The example cluster lists every route, so a pane finds its own
+            // in the full answer; only a shape about the API itself differs.
+            Scope::Route => {
+                use routes::example::Shape as Routes;
+                Loaded::Route(Box::new(routes::example::read(
+                    match self.traffic.routes_shape {
+                        shape @ (Routes::NotInstalled
+                        | Routes::Incomplete
+                        | Routes::Refused
+                        | Routes::MixedBundle) => shape,
+                        _ => Routes::All,
+                    },
+                )))
+            }
             Scope::Service => Loaded::Service(Box::new(
                 facts(yaml, shape)
                     .map(|facts| reading(facts, shape, true))
@@ -424,6 +550,10 @@ impl DetailPane {
                 &meta.1,
                 services,
             ),
+            Loaded::Route(read) => {
+                self.traffic
+                    .apply_route(&identity.namespace, &identity.name, *read)
+            }
         }
         cx.notify();
     }

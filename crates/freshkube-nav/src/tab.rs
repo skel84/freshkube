@@ -1,7 +1,7 @@
 //! The tabs a link opens on.
 
 /// Where the pane opens: a section of Details, YAML, or the dock's logs.
-/// The strip has two tabs, Details and YAML; Overview, Ports and Events are
+/// The strip has two tabs, Details and YAML (an HTTPRoute also has Trace); Overview, Ports and Events are
 /// sections of Details, one scrolling page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
@@ -16,6 +16,9 @@ pub enum Tab {
     /// Details, scrolled to its ports: pods, Services and the workloads
     /// that run pods.
     Ports,
+    /// An HTTPRoute's trace, on its own tab: the strip of any other object
+    /// has no such tab, and asking for it opens Details.
+    Trace,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

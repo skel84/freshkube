@@ -197,6 +197,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
                 Page::Overview
                     | Page::Resources
                     | Page::Databases
+                    | Page::Routes
                     | Page::Access
                     | Page::Health
                     | Page::Nodes
@@ -215,6 +216,10 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.find("databases-page").visible());
         assert!(window.try_find("needs-talosconfig").is_none());
+        // Routes reads the Gateway API, which needs no Talos either.
+        view.update(cx, |view, cx| view.navigate(Page::Routes, window, cx));
+        window.render_frame(cx);
+        assert!(window.find("routes-page").visible());
         // Your access reads the cluster's reviews, which need no Talos.
         view.update(cx, |view, cx| view.navigate(Page::Access, window, cx));
         window.render_frame(cx);

@@ -94,6 +94,7 @@ fn view_tabs_map_to_pane_tabs_both_ways() {
         ViewTab::Events,
         ViewTab::Ports,
         ViewTab::Logs,
+        ViewTab::Trace,
     ] {
         assert_eq!(ViewTab::from_tab(tab.tab()), tab);
     }

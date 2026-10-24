@@ -232,6 +232,7 @@ pub(crate) fn place(view: &ViewState) -> String {
                 ViewTab::Events => "Events",
                 ViewTab::Ports => "Ports",
                 ViewTab::Logs => "Logs",
+                ViewTab::Trace => "Trace",
             }
             .to_owned(),
         );

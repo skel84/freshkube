@@ -687,6 +687,16 @@ impl ResourcesScreen {
             .update(cx, |detail, _| detail.set_services_shape(shape));
     }
 
+    /// What an example HTTPRoute's trace answers.
+    pub fn set_routes_shape(
+        &mut self,
+        shape: freshkube_core::resources::traffic::routes::example::Shape,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |detail, _| detail.set_routes_shape(shape));
+    }
+
     pub fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.visible == visible {
             return;

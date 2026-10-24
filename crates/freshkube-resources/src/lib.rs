@@ -14,6 +14,7 @@ pub mod navigation;
 mod node_facts;
 mod pane;
 pub(crate) mod projection;
+pub mod route_trace;
 pub mod rows;
 mod screen;
 pub mod shell;
