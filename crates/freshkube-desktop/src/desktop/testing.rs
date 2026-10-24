@@ -74,6 +74,14 @@ fn mount_on(
         view = Some(pilot.clone());
         Root::new(pilot, window, cx)
     });
+    // The shell installed its navigation file; the shell's change-page tests
+    // are about the hop table's rows, so a window opens on All hops.
+    cx.update(|cx| {
+        freshkube_applications::change_view::use_session(
+            freshkube_applications::change_view::ChangeView::Hops,
+            cx,
+        )
+    });
     cx.run_until_parked();
     (runtime, window.into(), view.unwrap())
 }

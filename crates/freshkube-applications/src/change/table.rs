@@ -176,6 +176,13 @@ impl TableSource for ChangePage {
 
     fn sort(&mut self, _: (), _: &mut Context<Self>) {}
 
+    /// A short window scrolls the trail as a whole, with a few rows in
+    /// view: a revealed row ends as the last whole one, never half under
+    /// the column header.
+    fn whole_rows(&self) -> bool {
+        true
+    }
+
     fn line_count(&self) -> usize {
         self.lines.len()
     }

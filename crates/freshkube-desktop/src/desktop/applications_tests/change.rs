@@ -1430,15 +1430,19 @@ fn detail_keeps_its_room_beside_the_inspector(cx: &mut TestAppContext) {
             let scroll = window.find("change-table-scroll").bounds();
             let headers = headers(window);
             let labels: Vec<&str> = headers.iter().map(|(label, _)| label.as_str()).collect();
-            assert_eq!(
-                labels,
-                ["Hop", "Link", "Detail", "Time", "Read from"],
-                "{width}"
-            );
+            // The page at 760 is 488 dp: a table that can't give the full
+            // columns their width drops Time and Read from, not cuts them.
+            let expected: &[&str] = if width < 900. {
+                &["Hop", "Link", "Detail"]
+            } else {
+                &["Hop", "Link", "Detail", "Time", "Read from"]
+            };
+            assert_eq!(labels, expected, "{width}");
             let detail = headers[2].1;
             let shown = detail.right().min(scroll.right()) - detail.left().max(scroll.left());
+            let least = if width < 900. { 119.5 } else { 239.5 };
             assert!(
-                shown >= gpui_kit::px(239.5),
+                shown >= crate::ui::dp_px(least, window),
                 "{width}: {shown:?} of Detail shows in {scroll:?}"
             );
         })
@@ -1958,9 +1962,9 @@ fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppC
     let (_runtime, handle, _view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("change-view-chain", cx);
+        window.click("change-view-hops", cx);
         window.render_frame(cx);
-        assert!(window.try_find("change-chain").is_some());
+        assert!(window.try_find("change-table").is_some());
         // Escape with no selection returns to the owning application page.
         window.press("escape", cx);
         window.press("escape", cx);
@@ -1976,7 +1980,7 @@ fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppC
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("change-chain").is_some());
+        assert!(window.try_find("change-table").is_some());
     })
     .unwrap();
 }

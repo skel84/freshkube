@@ -135,18 +135,40 @@ impl TableState {
         *drawn = now.cloned();
     }
 
-    /// Scrolls a line into view. `Nearest` keeps the rows whole under the
-    /// header: a line below the window ends as its last whole row, and a
-    /// line above it, or a window left on a part of a row, starts at a row,
-    /// so no row is cut in half where it meets the header.
+    /// Scrolls a line into view.
     pub fn reveal(&self, line: usize, strategy: ScrollStrategy) {
-        match strategy {
-            ScrollStrategy::Nearest => match self.whole_top(line) {
-                Some(top) => self.scroll.scroll_to_item_strict(top, ScrollStrategy::Top),
-                None => self.scroll.scroll_to_item(line, strategy),
-            },
-            _ => self.scroll.scroll_to_item(line, strategy),
+        self.scroll.scroll_to_item(line, strategy);
+    }
+
+    /// Scrolls a line into view, and a line below the window ends as the
+    /// last whole row, so the first row under the header is whole too (see
+    /// [`TableSource::whole_rows`]).
+    pub fn reveal_whole(&self, line: usize, lines: usize) {
+        match self.last_whole_row(line, lines) {
+            Some(top) => self.scroll.scroll_to_item_strict(top, ScrollStrategy::Top),
+            None => self.scroll.scroll_to_item(line, ScrollStrategy::Nearest),
         }
+    }
+
+    /// The line the window starts at when `line` is its last whole row, if
+    /// `line` is below the window as the list's last frame drew it; `None`
+    /// before it has drawn, when the window holds less than a row, or when
+    /// `line` shows already or is above.
+    fn last_whole_row(&self, line: usize, lines: usize) -> Option<usize> {
+        let state = self.scroll.0.borrow();
+        // The list's last frame: `item` is its window, `contents` all its
+        // lines, which are one height.
+        let row = f32::from(state.last_item_size?.contents.height) / lines.max(1) as f32;
+        let view = f32::from(state.base_handle.bounds().size.height);
+        if row < 1. || view < row {
+            return None;
+        }
+        // A fraction of a pixel over a whole row count is the hairlines'
+        // rounding, not room for another row.
+        let whole = ((view + 1.5) / row).floor() as usize;
+        let scrolled = (-f32::from(state.base_handle.offset().y)).max(0.);
+        let first = (scrolled / row - 0.01).ceil().max(0.) as usize;
+        (line >= first + whole).then(|| line + 1 - whole)
     }
 
     /// Scrolls the table sideways so the column spanning `left..left +
@@ -171,30 +193,6 @@ impl TableState {
         self.sideways
             .set_offset(point(-target.max(Pixels::ZERO), self.sideways.offset().y));
         true
-    }
-
-    /// The line the window should start at to show `line` with whole rows
-    /// from the top, from the list's last frame; `None` before it has
-    /// drawn, or when the window holds less than a row.
-    fn whole_top(&self, line: usize) -> Option<usize> {
-        let state = self.scroll.0.borrow();
-        let row = f32::from(state.last_item_size?.item.height);
-        let view = f32::from(state.base_handle.bounds().size.height);
-        if row < 1. || view < row {
-            return None;
-        }
-        // A fraction of a pixel over a whole row count is the hairlines'
-        // rounding, not room for another row.
-        let whole = ((view + 1.5) / row).floor() as usize;
-        let scrolled = (-f32::from(state.base_handle.offset().y)).max(0.);
-        let first = (scrolled / row - 0.01).ceil().max(0.) as usize;
-        Some(if line < first {
-            line
-        } else if line < first + whole {
-            first
-        } else {
-            line + 1 - whole
-        })
     }
 
     /// Whether the table is scrolled sideways. Until it is, nothing pins
@@ -250,6 +248,14 @@ pub trait TableSource: Sized + 'static {
     /// [`ROW_HEIGHT`], so a table with groups keeps the default.
     fn row_height(&self) -> f32 {
         ROW_HEIGHT
+    }
+    /// Whether a reveal keeps the rows whole under the header: a row below
+    /// the window ends as its last whole row. Off by default, since it
+    /// goes by the list's last frame and a page whose rows change size
+    /// between reveals scrolls from stale numbers; a trail page that scrolls
+    /// as a whole in a short window turns it on.
+    fn whole_rows(&self) -> bool {
+        false
     }
     fn line(&self, line: usize, cx: &App) -> Option<Line<Self::Key, Self::Row<'_>>>;
     fn cell(
@@ -342,7 +348,11 @@ pub fn step<S: TableSource>(source: &S, delta: isize, cx: &App) -> Option<S::Key
 /// Scrolls the selected row into view.
 pub fn reveal<S: TableSource>(source: &S, strategy: ScrollStrategy) {
     if let Some(line) = source.selected_key().and_then(|key| source.line_of(key)) {
-        source.table_state().reveal(line, strategy);
+        if strategy == ScrollStrategy::Nearest && source.whole_rows() {
+            source.table_state().reveal_whole(line, source.line_count());
+        } else {
+            source.table_state().reveal(line, strategy);
+        }
     }
 }
 

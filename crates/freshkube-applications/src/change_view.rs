@@ -50,8 +50,8 @@ pub fn set_store(backend: Rc<dyn ViewStore>, cx: &mut App) {
 }
 
 /// Tests: a store that starts every window on `view`.
-#[cfg(test)]
-pub(crate) fn use_session(view: ChangeView, cx: &mut App) {
+#[cfg(any(test, feature = "testing"))]
+pub fn use_session(view: ChangeView, cx: &mut App) {
     set_store(Rc::new(Session(std::cell::Cell::new(view))), cx);
 }
 

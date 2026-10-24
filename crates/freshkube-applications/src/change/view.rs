@@ -304,15 +304,11 @@ impl ChangePage {
 
     fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
-        // The room the table has, in dp: the full columns need their sum,
-        // and a table that can't give it drops Time and Read from rather
-        // than cut them at its edge.
-        let room = freshkube_ui::page::page_width(window)
-            - if beside && self.selected.is_some() {
-                self.split.live_width(cx)
-            } else {
-                0.
-            };
+        // The full columns need their sum, and a page that can't give it
+        // drops Time and Read from rather than cut them at its edge. Beside
+        // the Inspector (900 dp or more) the table scrolls sideways instead,
+        // with the glyph and the hop pinned.
+        let room = freshkube_ui::page::page_width(window);
         self.compact.set(room < table::full_width());
         let table = div()
             .id("change-table")
