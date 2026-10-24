@@ -543,3 +543,15 @@ async fn the_marker_is_written_before_the_file_is_saved() {
     let _again = Access::open(&preferences, &gate);
     assert!(!can_read(&gate).await);
 }
+
+#[test]
+fn the_chosen_model_is_saved_beside_the_grants_and_read_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let preferences = dir.path().join("freshkube.yaml");
+    let access = Access::open(&preferences, &AgentAccess::default());
+    assert_eq!(access.model(), None);
+    access.set_model(Some("hosted/large".into())).unwrap();
+    let reopened = Access::open(&preferences, &AgentAccess::default());
+    assert_eq!(reopened.model().as_deref(), Some("hosted/large"));
+    assert!(!preferences.exists());
+}

@@ -247,3 +247,132 @@ async fn the_endpoint_never_shows_its_token_in_debug() {
     let shown = format!("{endpoint:?}");
     assert!(!shown.contains("very-secret-token"), "{shown}");
 }
+
+fn model(id: &str) -> scripted::ScriptModel {
+    scripted::ScriptModel {
+        id: id.into(),
+        name: id.into(),
+    }
+}
+
+async fn run_one(
+    session: &AcpSession,
+    rx: &mut tokio::sync::mpsc::Receiver<Event>,
+    text: &str,
+) -> Investigation {
+    session.prompt(text).unwrap();
+    let mut inv = Investigation::default();
+    until_ended(rx, &mut inv).await;
+    inv
+}
+
+#[tokio::test]
+async fn a_saved_model_is_applied_after_session_new_and_before_the_first_prompt() {
+    let mut script = Script::default();
+    let log = script.recording();
+    let (session, mut rx) = AcpSession::start_with(
+        scripted::in_process(script),
+        offline(),
+        Some("ollama/small".into()),
+    );
+    // Asked at once, before the model could have been applied.
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert_eq!(said(&inv), "model=ollama/small");
+    assert_eq!(
+        *log.lock().unwrap(),
+        [
+            "initialize",
+            "session/new",
+            "set_config_option ollama/small",
+            "prompt"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_saved_model_that_is_not_offered_falls_back_and_says_so() {
+    let mut script = Script::default();
+    let log = script.recording();
+    let (session, mut rx) = AcpSession::start_with(
+        scripted::in_process(script),
+        offline(),
+        Some("hosted/gone".into()),
+    );
+    let mut models = session.models();
+    let models = models
+        .wait_for(|m| m.missing.is_some())
+        .await
+        .unwrap()
+        .clone();
+    assert_eq!(models.missing.as_deref(), Some("hosted/gone"));
+    assert_eq!(models.current.as_deref(), Some("hosted/large"));
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert_eq!(said(&inv), "model=hosted/large");
+    assert!(
+        !log.lock()
+            .unwrap()
+            .iter()
+            .any(|r| r.starts_with("set_config"))
+    );
+}
+
+#[tokio::test]
+async fn opencode_models_are_never_offered_and_a_default_among_them_must_be_replaced() {
+    let mut script = Script::default();
+    script.models = vec![
+        model("opencode/big-pickle"),
+        model("hosted/large"),
+        model("OpenCode/other"),
+    ];
+    let (session, _rx) = AcpSession::start(scripted::in_process(script), offline());
+    let mut models = session.models();
+    let models = models
+        .wait_for(|m| !m.choices.is_empty())
+        .await
+        .unwrap()
+        .clone();
+    let ids: Vec<_> = models.choices.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, ["hosted/large"]);
+    // The agent's own default is one of them: the tab must ask for a pick.
+    assert!(models.must_pick);
+    assert!(session.set_model("opencode/big-pickle").is_err());
+}
+
+#[tokio::test]
+async fn a_saved_app_only_default_is_replaced_by_the_saved_model() {
+    let mut script = Script::default();
+    script.models = vec![model("opencode/big-pickle"), model("hosted/large")];
+    let (session, mut rx) = AcpSession::start_with(
+        scripted::in_process(script),
+        offline(),
+        Some("hosted/large".into()),
+    );
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert_eq!(said(&inv), "model=hosted/large");
+    assert!(!session.models().borrow().must_pick);
+}
+
+#[tokio::test]
+async fn an_empty_turn_and_an_error_turn_each_end_as_failed() {
+    let (session, mut rx) = start_in_process(offline());
+    let inv = run_one(&session, &mut rx, "nothing at all").await;
+    assert_eq!(
+        inv.outcome(),
+        Outcome::Failed(
+            "The agent ended the turn without an answer. Check that the chosen model is signed in."
+                .into()
+        )
+    );
+    // The same session can still answer.
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert_eq!(inv.outcome(), Outcome::Answered);
+
+    let (session, mut rx) =
+        start_in_process(Endpoint::new("http://127.0.0.1:1/mcp", "secret-token"));
+    let inv = run_one(&session, &mut rx, "provider-error").await;
+    let Outcome::Failed(reason) = inv.outcome() else {
+        panic!("{:?}", inv.outcome());
+    };
+    assert!(reason.contains("free tier"), "{reason}");
+    assert!(!reason.contains("secret-token"));
+}

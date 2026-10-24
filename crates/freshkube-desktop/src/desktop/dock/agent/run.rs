@@ -31,6 +31,8 @@ pub(crate) struct Launch {
     pub(crate) gate: AgentAccess,
     pub(crate) targets: Arc<dyn Targets>,
     pub(crate) agent: Agent,
+    /// The model the person chose, applied before the first prompt.
+    pub(crate) model: Option<String>,
 }
 
 #[derive(Debug)]
@@ -108,9 +110,10 @@ async fn run(
             }
         },
     };
-    let (session, mut events) = AcpSession::start(
+    let (session, mut events) = AcpSession::start_with(
         link,
         AcpEndpoint::new(endpoint.url(), endpoint.token().reveal()),
+        launch.model,
     );
     let mut models = session.models();
     let mut execute_refused = 0u32;

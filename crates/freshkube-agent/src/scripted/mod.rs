@@ -10,6 +10,8 @@
 //! | `grandchild` | starts a process of its own and says both pids (the binary) |
 //! | `tools` | asks to run each of the calls a locked-down agent must be refused |
 //! | `model` | says which model it uses |
+//! | `nothing` | ends the turn with no text and no tool call |
+//! | `provider-error` | answers the prompt with an error carrying a message |
 //! | anything else, with `offers_tools` off | answers without any read |
 //! | anything else | reads a Deployment through MCP, then asks to run a shell command |
 //!
@@ -71,6 +73,10 @@ pub struct Script {
     /// With `offers_tools` off: ask to run each of these tools (by name),
     /// which the client refuses.
     pub asks_for: Vec<String>,
+    /// An ordinary prompt is answered with the provider's error.
+    pub fail_turn: bool,
+    /// Each request the agent receives, by method, in order.
+    pub requests: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 impl Default for Script {
@@ -92,11 +98,26 @@ impl Default for Script {
             offers_tools: true,
             lists_tools: false,
             asks_for: Vec::new(),
+            fail_turn: false,
+            requests: None,
         }
     }
 }
 
 impl Script {
+    /// Records each request's method into the returned list.
+    pub fn recording(&mut self) -> Arc<Mutex<Vec<String>>> {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        self.requests = Some(Arc::clone(&log));
+        log
+    }
+
+    fn note(&self, what: &str) {
+        if let Some(log) = &self.requests {
+            log.lock().unwrap().push(what.to_string());
+        }
+    }
+
     /// The scripted binary's flags: `--never-initialize`.
     pub fn from_args(args: impl IntoIterator<Item = String>) -> Self {
         let mut script = Self::default();
@@ -176,7 +197,7 @@ pub async fn serve(
                 if never {
                     std::future::pending::<()>().await;
                 }
-                let _ = &initial;
+                initial.lock().unwrap().script.note("initialize");
                 responder.respond(
                     InitializeResponse::new(init.protocol_version).agent_capabilities(
                         AgentCapabilities::new()
@@ -205,6 +226,7 @@ pub async fn serve(
                     _ => None,
                 });
                 let mut state = sessions.lock().unwrap();
+                state.script.note("session/new");
                 state.mcp = mcp;
                 let options = model_options(&state);
                 drop(state);
@@ -219,6 +241,7 @@ pub async fn serve(
                         .respond_with_error(agent_client_protocol::Error::invalid_params());
                 };
                 let mut state = models.lock().unwrap();
+                state.script.note(&format!("set_config_option {value}"));
                 state.model = value.to_string();
                 let options = model_options(&state);
                 drop(state);
@@ -230,6 +253,7 @@ pub async fn serve(
             async move |request: PromptRequest, responder, cx: ConnectionTo<Client>| {
                 let (mcp, model, cancel, script) = {
                     let mut state = prompts.lock().unwrap();
+                    state.script.note("prompt");
                     state.cancel = CancellationToken::new();
                     (
                         state.mcp.clone(),
@@ -260,6 +284,9 @@ pub async fn serve(
                     };
                     let stop = match prompts::run(&turn, &text).await? {
                         prompts::Ending::Stop(stop) => stop,
+                        prompts::Ending::Error(message) => {
+                            return responder.respond_with_error(fail(message));
+                        }
                         prompts::Ending::Crash => {
                             crash.notify_one();
                             return Ok(());
