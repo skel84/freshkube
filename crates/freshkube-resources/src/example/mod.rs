@@ -33,10 +33,11 @@ pub(crate) const KINDS: [&str; 13] = [
 
 /// The example cluster's custom API groups and their served versions,
 /// preferred first. Some fail or offer nothing listable, as real ones can.
-const CUSTOM_GROUPS: [(&str, &[&str]); 8] = [
+const CUSTOM_GROUPS: [(&str, &[&str]); 9] = [
     ("cert-manager.io", &["v1"]),
     ("external-secrets.io", &["v1", "v1beta1"]),
     ("cilium.io", &["v2", "v2alpha1"]),
+    ("kustomize.toolkit.fluxcd.io", &["v1"]),
     ("external.metrics.k8s.io", &["v1beta1"]),
     ("metrics.k8s.io", &["v1beta1"]),
     ("monitoring.coreos.com", &["v1", "v1alpha1", "v1beta1"]),
@@ -47,7 +48,7 @@ const CUSTOM_GROUPS: [(&str, &[&str]); 8] = [
 
 /// (group, version, kind, plural, namespaced) of the custom kinds that
 /// discovery finds, each at the version that serves it.
-const CUSTOM_KINDS: [(&str, &str, &str, &str, bool); 12] = [
+const CUSTOM_KINDS: [(&str, &str, &str, &str, bool); 13] = [
     ("cert-manager.io", "v1", "Certificate", "certificates", true),
     (
         "external-secrets.io",
@@ -85,6 +86,13 @@ const CUSTOM_KINDS: [(&str, &str, &str, &str, bool); 12] = [
         false,
     ),
     ("cert-manager.io", "v1", "Issuer", "issuers", true),
+    (
+        "kustomize.toolkit.fluxcd.io",
+        "v1",
+        "Kustomization",
+        "kustomizations",
+        true,
+    ),
     (
         "cilium.io",
         "v2alpha1",
@@ -128,12 +136,13 @@ const CERTIFICATES: [(&str, &str, &str, bool); 5] = [
 /// Every example object has this version; none changes by itself.
 const EXAMPLE_VERSION: &str = "1";
 
-const NAMESPACES: [&str; 11] = [
+const NAMESPACES: [&str; 12] = [
     "argocd",
     "batch",
     "cart",
     "checkout",
     "default",
+    "flux-system",
     "kube-system",
     "monitoring",
     "payments",
@@ -316,6 +325,9 @@ pub fn read(
                 })
                 .collect(),
         ),
+        "kustomizations.kustomize.toolkit.fluxcd.io" => {
+            (gitops::columns(), gitops::rows(&connection, now))
+        }
         key => match gateway::read(&connection, key, now) {
             Some(read) => read,
             None => acme::read(context, &connection, key, now)?,
@@ -977,6 +989,7 @@ mod acme;
 mod agent;
 mod everyday;
 mod gateway;
+mod gitops;
 pub use everyday::{autoscaler_of, object_json, replicasets_of};
 mod objects;
 mod summary;

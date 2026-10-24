@@ -4,7 +4,7 @@ How Freshkube decides what a person may change in a cluster, and what it asks fi
 
 ## What is enforced today
 
-The framework that sends changes to Kubernetes objects exists ([How a write goes](#how-a-write-goes-853)). The first actions through it are the Stage actions of the change page ([Stage actions](#stage-actions-855)) and the Resources page's Scale, Restart and Suspend or resume (reversible tier), Roll back (spec change) and a CronJob's Run now (run tier) ([#857](https://github.com/skel84/freshkube/issues/857), `write/everyday/`), and the detail pane's Edit YAML ([Edit YAML](#edit-yaml-858), spec-change tier); every other page still sends nothing through it. What the level does today:
+The framework that sends changes to Kubernetes objects exists ([How a write goes](#how-a-write-goes-853)). The first actions through it are the Stage actions of the change page ([Stage actions](#stage-actions-855)) and the Resources page's Scale, Restart and Suspend or resume (reversible tier), Roll back (spec change), a CronJob's Run now (run tier) and the three nudges, Argo CD's Refresh, Flux's Reconcile and cert-manager's Renew (reversible tier, no Undo) ([#857](https://github.com/skel84/freshkube/issues/857), `write/everyday/`), and the detail pane's Edit YAML ([Edit YAML](#edit-yaml-858), spec-change tier); every other page still sends nothing through it. What the level does today:
 
 | Writer | `read-only` | `protected`, `guarded`, `open` |
 |--------|-------------|--------------------------------|
@@ -52,7 +52,7 @@ A tier belongs to the action and is declared in core, never by a page. The acces
 | Tier (examples) | `read-only` | `protected` | `guarded` | `open` |
 |-----------------|-------------|-------------|-----------|--------|
 | **Session** (pod exec, port forward) | exec blocked; port forwarding allowed | the explicit Start, as today | the explicit Start, as today | the explicit Start, as today |
-| **Reversible** (scale, restart a workload, suspend a CronJob, cordon) | blocked | type the object's name, send, Undo for 30 s | confirm, send, Undo for 30 s | send with no confirmation, Undo for 30 s |
+| **Reversible** (scale, restart a workload, suspend a CronJob, cordon; refresh, reconcile and renew, which have no Undo) | blocked | type the object's name, send, Undo for 30 s | confirm, send, Undo for 30 s | send with no confirmation, Undo for 30 s |
 | **Spec change** (edit and apply YAML, change an image or env) | blocked | type the name; dry-run diff; UID and resourceVersion check | confirm in the diff dialog; dry-run diff; UID and resourceVersion check | as `guarded`: the diff dialog is the confirmation |
 | **Destructive** (delete, evict, force-delete) | blocked | type the name; impact preview; confirm; 5 s to cancel | confirm; impact preview; 5 s to cancel | as `guarded` |
 | **Run** (a CronJob's Run now) | blocked | confirm with a preview of what it creates; no typed name, no countdown, no Undo | confirm with a preview of what it creates; no typed name, no countdown, no Undo | as `guarded`: it always asks |
@@ -139,6 +139,21 @@ The change page's Stage Inspector offers four actions on today's Kargo, through 
 - **Promotion names sort by time, as Kargo's do** and stay within a name's 253 characters: the Stage's part is cut to 218, as Kargo cuts it. Kargo orders Promotions by name; ours carry a lowercase ULID (`acts::new_ulid`), so a Promotion made later never reads as older than one Kargo made before it.
 - **What aborting stops** is the running Promotion's own steps and pushed commits (`status.stepExecutionMetadata`), not the change's.
 - **Handles:** a Stage action is offered only when the Stage's UID and resourceVersion were read, so the version check can hold; otherwise its button is greyed out with why.
+
+### GitOps and certificate nudges (#857)
+
+Three actions ask a controller to look again now, through core's `write` module (`write/everyday/nudges.rs`). None changes what an object is meant to be, and none can be taken back, so each is reversible tier with no inverse: `requirement_for` makes it ask at every writable level, `open` included (the same rule as Restart), and `read-only` blocks it with no request. The dialog's preview names the object, the field and the value sent.
+
+| Action | Writes | Observed when |
+|--------|--------|---------------|
+| Argo CD Refresh, or Hard refresh (an Application) | merge patch: annotation `argocd.argoproj.io/refresh` = `normal` or `hard` | the controller has removed the annotation **and** `status.reconciledAt` has moved from what the Application had |
+| Flux Reconcile (a Kustomization, HelmRelease, GitRepository, HelmRepository or OCIRepository) | merge patch: annotation `reconcile.fluxcd.io/requestedAt` = the time of the press | `status.lastHandledReconcileAt` equals that value |
+| cert-manager Renew (a Certificate) | merge patch to the **`status` subresource**: the `Issuing` condition, status `True`, reason `ManuallyTriggered` | a CertificateRequest the Certificate controls exists for the next revision (`cert-manager.io/certificate-revision`), or `status.revision` has moved |
+
+- **Renew does what `cmctl renew` does** (cmctl's `pkg/renew`: `SetCertificateCondition(crt, crt.Generation, Issuing, True, "ManuallyTriggered", "Certificate re-issuance manually triggered")`, then `UpdateStatus`). The `Issuing` condition is the only trigger the issuing controller acts on; an annotation would do nothing. cmctl updates the whole status object; a merge patch replaces the whole `conditions` list, so the patch carries the conditions the object has now with `Issuing` set or replaced, and the resourceVersion the person saw: if anything moved, the server refuses it and no condition is lost. It is refused when `Issuing` is already `True`; each nudge also holds the field it checked (`Depends`), so "Review the new version" cannot send the old conditions, a suspended object or a waiting refresh again.
+- **Why reversible, not destructive.** cert-manager keeps the Certificate's current Secret until the new certificate is issued, so a failed renewal leaves the old one serving, and nothing is deleted. There is no way back, and an issuer with rate limits counts each issuance; the dialog says so ("This can't be undone"). Spec change does not fit either: it shows a dry-run diff, which for a condition tells the person nothing.
+- Refresh is refused while a refresh is still waiting for the controller; Reconcile is refused on a suspended object, since Flux ignores the request.
+- No GitOps warning is added: these objects are the managers, not managed by self-heal, and Renew writes status only.
 
 ### Your access (#854)
 
