@@ -17,14 +17,19 @@ pub enum Tier {
     SpecChange,
     /// Delete, evict, force-delete.
     Destructive,
+    /// Creates an object that runs code and can't be unsent (a CronJob's Run
+    /// now): always confirms, with a preview of what it creates, and never
+    /// asks for a typed name, counts down or offers Undo.
+    Run,
 }
 
 impl Tier {
-    pub const ALL: [Tier; 4] = [
+    pub const ALL: [Tier; 5] = [
         Tier::Session,
         Tier::Reversible,
         Tier::SpecChange,
         Tier::Destructive,
+        Tier::Run,
     ];
 
     /// The word the audit log spells it with.
@@ -34,6 +39,7 @@ impl Tier {
             Tier::Reversible => "reversible",
             Tier::SpecChange => "spec-change",
             Tier::Destructive => "destructive",
+            Tier::Run => "run",
         }
     }
 }
@@ -103,6 +109,12 @@ pub fn requirement(tier: Tier, level: Protection) -> Requirement {
             type_name: typed,
             impact: true,
             cancel_window: Some(CANCEL_WINDOW),
+            ..none
+        },
+        // It creates rather than destroys, so there is no impact list or
+        // countdown; the action's own preview is what the person confirms.
+        Tier::Run => Requirement {
+            confirm: true,
             ..none
         },
     }
@@ -223,6 +235,7 @@ mod tests {
             ("Reversible", Tier::Reversible),
             ("Spec change", Tier::SpecChange),
             ("Destructive", Tier::Destructive),
+            ("Run", Tier::Run),
         ] {
             let cells = row(name);
             for (cell, level) in cells.iter().zip(Protection::ALL) {
@@ -318,6 +331,25 @@ mod tests {
         assert!(!protected.satisfied_by(&Confirmation::Confirmed, &["web"], "prod"));
         assert!(protected.satisfied_by(&Confirmation::Typed("prod".into()), &["a", "b"], "prod"));
         assert!(!protected.satisfied_by(&Confirmation::Typed("a".into()), &["a", "b"], "prod"));
+    }
+
+    #[test]
+    fn run_always_confirms_and_never_types_counts_down_or_undoes() {
+        for level in [Protection::Protected, Protection::Guarded, Protection::Open] {
+            assert_eq!(
+                requirement(Tier::Run, level),
+                Requirement {
+                    blocked: None,
+                    confirm: true,
+                    type_name: false,
+                    diff: false,
+                    impact: false,
+                    cancel_window: None,
+                    undo: false,
+                },
+                "{level:?}"
+            );
+        }
     }
 
     #[test]

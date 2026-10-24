@@ -19,6 +19,8 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g01_a_prepared_action_is_still_refused_by_a_read_only_runner` (`crates/freshkube-core/src/write/tests/levels.rs`)
 - `safety_g01_a_read_only_destination_blocks_a_promotion_and_asks_the_cluster_nothing` (`crates/freshkube-desktop/src/write_flow/stage_tests.rs`)
 - `safety_g01_abort_on_a_read_only_destination_is_blocked_with_no_request` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g01_roll_back_on_a_read_only_cluster_sends_no_request_and_a_denied_review_sends_nothing` (`crates/freshkube-core/src/write/tests/rollback.rs`)
+- `safety_g01_run_now_on_a_read_only_cluster_sends_no_request_at_all` (`crates/freshkube-core/src/write/tests/run_now.rs`)
 - `safety_g01_read_only_blocks_every_everyday_action_and_makes_no_request` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
 - `safety_g01_read_only_blocks_every_stage_action_and_asks_the_cluster_nothing` (`crates/freshkube-delivery/src/acts/tests.rs`)
 - `safety_g01_read_only_blocks_every_tier_and_makes_no_request_at_all` (`crates/freshkube-core/src/write/tests/levels.rs`)
@@ -31,6 +33,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g02_guarded_scale_asks_then_sends_one_apply_and_is_observed` (`crates/freshkube-core/src/write/tests/apply.rs`)
 - `safety_g02_nothing_is_sent_without_the_confirmation_the_level_asks_for` (`crates/freshkube-core/src/write/tests/levels.rs`)
 - `safety_g02_open_sends_a_reversible_action_without_a_dialog_but_not_a_spec_change` (`crates/freshkube-core/src/write/tests/levels.rs`)
+- `safety_g02_roll_back_asks_the_typed_name_when_protected_and_shows_the_diff_even_when_open` (`crates/freshkube-core/src/write/tests/rollback.rs`)
 - `safety_g02_protected_asks_for_the_name_and_a_wrong_or_empty_one_sends_nothing` (`crates/freshkube-desktop/src/write_flow/tests.rs`)
 - `safety_g02_protected_scale_sends_only_after_the_name_is_typed` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
 - `safety_g02_protected_sends_once_the_exact_name_is_typed` (`crates/freshkube-desktop/src/write_flow/tests.rs`)
@@ -100,6 +103,12 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g10_apply_needs_an_explicit_confirmation_of_the_reviewed_yaml` (`crates/freshkube-desktop/src/maintenance/tests.rs`)
 - `safety_g10_confirmation_runs_only_against_the_preview_shown` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
 - `safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+
+### 11. A Run now always confirms, with no countdown or Undo, and runs only the template that was shown
+
+- `safety_g11_a_template_that_changed_since_the_page_read_it_blocks` (`crates/freshkube-core/src/write/tests/run_now.rs`)
+- `safety_g11_a_template_that_changes_after_the_dialog_sends_nothing` (`crates/freshkube-core/src/write/tests/run_now.rs`)
+- `safety_g11_run_now_always_confirms_at_every_level_and_sends_nothing_unasked` (`crates/freshkube-core/src/write/tests/run_now.rs`)
 
 ## Known gaps
 

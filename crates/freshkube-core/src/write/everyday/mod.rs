@@ -1,12 +1,21 @@
-//! The everyday actions on workloads (#857): Scale, Restart and a CronJob's
-//! Suspend or Resume. Each is described here, with its tier, and sent by the
-//! framework; a page only asks what is offered and hands the description over.
-//! Every one is a merge patch of the one field it changes: a field manager that
-//! applies a single field owns just that field, so a later action that does not
-//! list it would remove it again. Every one is reversible tier. Restart has no Undo, since a rollout cannot be
-//! taken back.
+//! The everyday actions on workloads (#857): Scale, Restart, a CronJob's
+//! Suspend or Resume, a Deployment's Roll back and a CronJob's Run now. Each is
+//! described here, with its tier, and sent by the framework; a page only asks
+//! what is offered and hands the description over.
+//! Every change to an object is a merge patch of the field it changes: a field
+//! manager that applies a single field owns just that field, so a later action
+//! that does not list it would remove it again. Scale, Restart and Suspend are
+//! reversible tier; Restart has no Undo, since a rollout cannot be taken back.
+//! Roll back is a spec change (its dialog shows the dry run's diff) and Run
+//! now is the run tier: it creates a Job.
+
+mod rollback;
+mod run_now;
 
 use serde_json::{Value, json};
+
+pub use rollback::{Revision, Revisions, rollback};
+pub use run_now::run_now;
 
 use super::{
     ActionDescription, Change, Inverse, InverseFrom, ObjectChange, Observation, Target, Tier,
@@ -41,10 +50,11 @@ impl Workload {
 
     fn offered(self) -> &'static [Everyday] {
         match self {
-            Self::Deployment | Self::StatefulSet => &[Everyday::Scale, Everyday::Restart],
+            Self::Deployment => &[Everyday::Scale, Everyday::Restart, Everyday::Rollback],
+            Self::StatefulSet => &[Everyday::Scale, Everyday::Restart],
             Self::ReplicaSet => &[Everyday::Scale],
             Self::DaemonSet => &[Everyday::Restart],
-            Self::CronJob => &[Everyday::Suspend],
+            Self::CronJob => &[Everyday::Suspend, Everyday::RunNow],
         }
     }
 
@@ -72,6 +82,8 @@ pub enum Everyday {
     Scale,
     Restart,
     Suspend,
+    Rollback,
+    RunNow,
 }
 
 impl Everyday {
@@ -80,6 +92,8 @@ impl Everyday {
             Self::Scale => "scale",
             Self::Restart => "restart",
             Self::Suspend => "suspend",
+            Self::Rollback => "rollback",
+            Self::RunNow => "run-now",
         }
     }
 }
@@ -105,6 +119,18 @@ impl GitOps {
     }
 }
 
+impl GitOps {
+    /// The note on an action that creates something beside the object and
+    /// leaves the object as it is.
+    pub fn beside_note(self, kind: &str) -> String {
+        let tool = match self {
+            Self::ArgoCd => "Argo CD",
+            Self::Flux => "Flux",
+        };
+        format!(" {tool} manages this {kind}. The {kind} itself is not changed; the Job is created beside it.")
+    }
+}
+
 /// The object an action is about, as the person saw it: what the list read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Subject {
@@ -112,6 +138,7 @@ pub struct Subject {
     target: Target,
     object: Value,
     autoscaler: Autoscaler,
+    revisions: Revisions,
 }
 
 impl Subject {
@@ -139,6 +166,7 @@ impl Subject {
             },
             object: object.clone(),
             autoscaler: Autoscaler::None,
+            revisions: Revisions::NotRead,
         })
     }
 
@@ -213,6 +241,17 @@ impl Subject {
         self
     }
 
+    /// What the read found of a Deployment's revisions.
+    pub fn revisions(&self) -> &Revisions {
+        &self.revisions
+    }
+
+    /// Notes what was found of the revisions.
+    pub fn with_revisions(mut self, found: Revisions) -> Self {
+        self.revisions = found;
+        self
+    }
+
     /// The tool that manages the object, when it says so.
     pub fn gitops(&self) -> Option<GitOps> {
         let meta = self.object.get("metadata")?;
@@ -266,6 +305,16 @@ impl Subject {
     fn sentence(&self, what: String) -> String {
         match self.gitops() {
             Some(tool) => format!("{what}.{}", tool.warning()),
+            None => format!("{what}."),
+        }
+    }
+
+    /// [`Self::sentence`] for an action that changes nothing on the object
+    /// (Run now creates a Job beside it): the GitOps note says so instead of
+    /// saying self-heal would put a change back.
+    fn beside_sentence(&self, what: String) -> String {
+        match self.gitops() {
+            Some(tool) => format!("{what}.{}", tool.beside_note(&self.target.kind)),
             None => format!("{what}."),
         }
     }
@@ -334,7 +383,12 @@ impl Subject {
         } else {
             Autoscaler::None
         };
-        Ok(subject.with_autoscaler(autoscaler))
+        let revisions = if subject.offered().contains(&Everyday::Rollback) {
+            rollback::find_revisions(client, &subject).await
+        } else {
+            Revisions::NotRead
+        };
+        Ok(subject.with_autoscaler(autoscaler).with_revisions(revisions))
     }
 }
 
@@ -593,8 +647,11 @@ mod tests {
         let cluster = Cluster::new();
         let web = subject(&cluster, fake::DEPLOYMENT);
         let nightly = subject(&cluster, fake::CRONJOB);
-        assert_eq!(web.offered(), [Everyday::Scale, Everyday::Restart]);
-        assert_eq!(nightly.offered(), [Everyday::Suspend]);
+        assert_eq!(
+            web.offered(),
+            [Everyday::Scale, Everyday::Restart, Everyday::Rollback]
+        );
+        assert_eq!(nightly.offered(), [Everyday::Suspend, Everyday::RunNow]);
         for action in [
             scale(&web, 3).unwrap(),
             restart(&web, "2026-10-23T10:00:00Z").unwrap(),
