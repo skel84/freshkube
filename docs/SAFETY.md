@@ -106,12 +106,13 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g10_confirmation_runs_only_against_the_preview_shown` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
 - `safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
 
-### 11. A Run now always confirms, with no countdown or Undo, and runs only the template that was shown
+### 12. A Run now always confirms, with no countdown or Undo, and Run now and Roll back send only the template that was shown
 
-- `safety_g11_a_template_that_changed_since_the_page_read_it_blocks` (`crates/freshkube-core/src/write/tests/run_now.rs`)
-- `safety_g11_a_template_that_changes_after_the_dialog_sends_nothing` (`crates/freshkube-core/src/write/tests/run_now.rs`)
-- `safety_g11_run_now_always_confirms_at_every_level_and_sends_nothing_unasked` (`crates/freshkube-core/src/write/tests/run_now.rs`)
-- `safety_g11_run_now_asks_at_every_level_with_a_preview_and_no_typing_or_countdown` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
+- `safety_g12_a_template_that_changed_since_the_page_read_it_blocks` (`crates/freshkube-core/src/write/tests/run_now.rs`)
+- `safety_g12_a_template_that_changes_after_the_dialog_sends_nothing` (`crates/freshkube-core/src/write/tests/run_now.rs`)
+- `safety_g12_roll_back_to_a_template_that_changed_since_it_was_read_sends_nothing` (`crates/freshkube-core/src/write/tests/rollback.rs`)
+- `safety_g12_run_now_always_confirms_at_every_level_and_sends_nothing_unasked` (`crates/freshkube-core/src/write/tests/run_now.rs`)
+- `safety_g12_run_now_asks_at_every_level_with_a_preview_and_no_typing_or_countdown` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
 
 ## Known gaps
 

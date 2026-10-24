@@ -28,6 +28,8 @@ pub(super) struct RollbackDialog {
     runtime: Handle,
     subject: Subject,
     identity: ResourceIdentity,
+    /// The revisions' lines, worked out once: (number, running now, text).
+    lines: Vec<(u64, bool, String)>,
     chosen: Option<u64>,
     error: Option<String>,
     /// The revision was handed on to the write flow, which holds the object now.
@@ -71,11 +73,19 @@ pub(super) fn open(
             }
         }
     });
+    let lines = match subject.revisions() {
+        Revisions::Read(revisions) => revisions
+            .iter()
+            .map(|revision| (revision.number, revision.current, line(revision)))
+            .collect(),
+        _ => Vec::new(),
+    };
     let dialog = cx.new(|_| RollbackDialog {
         runner,
         runtime,
         subject,
         identity,
+        lines,
         chosen: None,
         error: None,
         handed_on,
@@ -131,27 +141,23 @@ impl RollbackDialog {
 impl Render for RollbackDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let revisions = match self.subject.revisions() {
-            Revisions::Read(revisions) => revisions.clone(),
-            _ => Vec::new(),
-        };
         let weak = cx.entity().downgrade();
         v_flex()
             .id("rollback-dialog")
             .test_support()
             .gap(dp(8.))
             .child("Roll back to the pod template of:")
-            .children(revisions.iter().map(|revision| {
-                let number = revision.number;
+            .children(self.lines.iter().map(|(number, current, text)| {
+                let number = *number;
                 let weak = weak.clone();
                 let button = Button::new(SharedString::from(format!("rollback-revision-{number}")))
                     .ghost()
                     .small()
                     .w_full()
                     .justify_start()
-                    .label(line(revision))
+                    .label(text.clone())
                     .selected(self.chosen == Some(number));
-                if revision.current {
+                if *current {
                     // Where it is already: not a choice.
                     button.disabled(true)
                 } else {

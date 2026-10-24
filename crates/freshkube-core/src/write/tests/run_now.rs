@@ -60,7 +60,7 @@ async fn run_now_creates_a_job_from_the_template_owned_by_the_cronjob() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_run_now_always_confirms_at_every_level_and_sends_nothing_unasked() {
+async fn safety_g12_run_now_always_confirms_at_every_level_and_sends_nothing_unasked() {
     let cluster = Cluster::new();
     let action = everyday::run_now(&cronjob(&cluster), "k7x2q").unwrap();
     for level in [Protection::Protected, Protection::Guarded, Protection::Open] {
@@ -133,7 +133,7 @@ async fn safety_g01_run_now_on_a_read_only_cluster_sends_no_request_at_all() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_a_template_that_changed_since_the_page_read_it_blocks() {
+async fn safety_g12_a_template_that_changed_since_the_page_read_it_blocks() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     let action = everyday::run_now(&cronjob(&cluster), "k7x2q").unwrap();
@@ -153,7 +153,7 @@ async fn safety_g11_a_template_that_changed_since_the_page_read_it_blocks() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_a_template_that_changes_after_the_dialog_sends_nothing() {
+async fn safety_g12_a_template_that_changes_after_the_dialog_sends_nothing() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     let action = everyday::run_now(&cronjob(&cluster), "k7x2q").unwrap();

@@ -385,14 +385,15 @@ impl Subject {
         } else {
             Autoscaler::None
         };
-        let revisions = if subject.offered().contains(&Everyday::Rollback) {
-            rollback::find_revisions(client, &subject).await
-        } else {
-            Revisions::NotRead
-        };
-        Ok(subject
-            .with_autoscaler(autoscaler)
-            .with_revisions(revisions))
+        Ok(subject.with_autoscaler(autoscaler))
+    }
+
+    /// Reads the Deployment's revisions (its ReplicaSets). Only Roll back
+    /// needs them, so `read` leaves them out: Scale and Restart would pay for
+    /// up to four pages of ReplicaSets.
+    pub async fn read_revisions(self, client: &kube::Client) -> Self {
+        let found = rollback::find_revisions(client, &self).await;
+        self.with_revisions(found)
     }
 }
 

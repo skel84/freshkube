@@ -9,6 +9,7 @@ use super::{
     ActionDescription, Change, Everyday, MOST_PAGES, NotOffered, ObjectChange, Observation, PAGE,
     Subject, Tier,
 };
+use crate::write::Depends;
 
 /// The label the Deployment controller adds to a ReplicaSet's pod template.
 /// A Deployment's own template never has it.
@@ -290,7 +291,16 @@ pub fn rollback(subject: &Subject, revision: u64) -> Result<ActionDescription, N
                 value: chosen.template.clone(),
             },
             inverse: None,
-            depends: vec![],
+            // The patch is worked out from this template. If it changed since
+            // (a Restart adds an annotation), the patch would leave that key
+            // behind and the result would match no revision, so nothing is
+            // sent, and "Review the new version" can't rebase it: the person
+            // picks the revision again.
+            depends: vec![Depends {
+                target: subject.target.clone(),
+                verb: None,
+                holds: vec![("/spec/template".into(), now)],
+            }],
         }],
     })
 }

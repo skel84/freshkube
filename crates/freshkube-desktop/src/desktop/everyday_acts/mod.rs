@@ -165,14 +165,21 @@ impl Pilot {
             window.push_notification("The audit log can't be located, so nothing was sent.", cx);
             return;
         };
-        let (access, row) = (act.source.access.clone(), row_of(act));
+        let (access, row, wants_revisions) = (
+            act.source.access.clone(),
+            row_of(act),
+            act.act == Everyday::Rollback,
+        );
         let (job, receiver) = spawn_job(
             &runtime,
             READ,
             "The cluster did not answer in time. Nothing was sent.".to_owned(),
             async move {
                 let client = access.client().await.map_err(|failure| failure.message)?;
-                let subject = Subject::read(&client, &row).await?;
+                let mut subject = Subject::read(&client, &row).await?;
+                if wants_revisions {
+                    subject = subject.read_revisions(&client).await;
+                }
                 Ok::<_, String>((client, subject))
             },
         );

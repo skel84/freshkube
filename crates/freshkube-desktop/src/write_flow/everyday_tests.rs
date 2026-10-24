@@ -42,10 +42,10 @@ fn rollback_to(h: &Harness, revision: u64) -> ActionDescription {
         name: "web".into(),
         uid: "uid-web".into(),
     };
-    let subject = h
-        .runtime
-        .block_on(Subject::read(&h.cluster.client, &row))
-        .unwrap();
+    let subject = h.runtime.block_on(async {
+        let subject = Subject::read(&h.cluster.client, &row).await.unwrap();
+        subject.read_revisions(&h.cluster.client).await
+    });
     everyday::rollback(&subject, revision).unwrap()
 }
 
@@ -260,7 +260,7 @@ fn protected_roll_back_types_the_name_and_open_still_asks(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
-fn safety_g11_run_now_asks_at_every_level_with_a_preview_and_no_typing_or_countdown(
+fn safety_g12_run_now_asks_at_every_level_with_a_preview_and_no_typing_or_countdown(
     cx: &mut TestAppContext,
 ) {
     for level in [Protection::Protected, Protection::Guarded, Protection::Open] {

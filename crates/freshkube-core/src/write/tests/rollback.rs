@@ -16,7 +16,8 @@ fn web_row() -> Row {
 }
 
 async fn read(cluster: &Cluster) -> Subject {
-    Subject::read(&cluster.client, &web_row()).await.unwrap()
+    let subject = Subject::read(&cluster.client, &web_row()).await.unwrap();
+    subject.read_revisions(&cluster.client).await
 }
 
 fn template(cluster: &Cluster) -> serde_json::Value {
@@ -267,4 +268,65 @@ async fn a_gitops_managed_deployment_adds_the_warning() {
         action.sentence
     );
     assert!(action.sentence.contains("OutOfSync"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g12_roll_back_to_a_template_that_changed_since_it_was_read_sends_nothing() {
+    let (cluster, dir) = (Cluster::with_history(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let action = everyday::rollback(&read(&cluster).await, 2).unwrap();
+    // A Restart adds an annotation to the template after the page read it:
+    // the patch worked out from the old copy would not remove it.
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &json!({"spec": {"template": {"metadata": {"annotations": {"restartedAt": "2026-10-24"}}}}}),
+    );
+    let blocked = runner.preflight(action.clone()).await;
+    assert!(
+        matches!(
+            blocked,
+            Verdict::Blocked(Block::Changed {
+                what: ChangedWhat::Moved,
+                ..
+            })
+        ),
+        "{blocked:?}"
+    );
+    // Review the new version takes the new resourceVersion and no more: the
+    // template still differs, so the patch is still refused.
+    let rebased = runner.review_new_version(action).await.unwrap();
+    assert!(matches!(
+        runner.preflight(rebased).await,
+        Verdict::Blocked(Block::Changed {
+            what: ChangedWhat::Moved,
+            ..
+        })
+    ));
+    cluster.assert_nothing_written();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_roll_back_makes_these_requests_in_this_order() {
+    let (cluster, dir) = (Cluster::with_history(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let action = everyday::rollback(&read(&cluster).await, 1).unwrap();
+    let before = cluster.recorder.lines().len();
+    let prepared = ready(&runner, action).await;
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert_eq!(finished.headline(), Headline::Done);
+    let deployment = "/apis/apps/v1/namespaces/shop/deployments/web";
+    let lines = cluster.recorder.lines();
+    assert_eq!(
+        lines[before..],
+        [
+            "POST /apis/authorization.k8s.io/v1/selfsubjectaccessreviews".to_owned(),
+            format!("GET {deployment}"),
+            format!("GET {deployment}"),
+            format!("PATCH {deployment}?&dryRun=All&fieldManager=freshkube"),
+            format!("GET {deployment}"),
+            format!("PATCH {deployment}?&fieldManager=freshkube"),
+            format!("GET {deployment}"),
+        ]
+    );
 }
