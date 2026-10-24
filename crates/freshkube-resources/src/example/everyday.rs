@@ -81,3 +81,47 @@ pub fn object_json(identity: &ResourceIdentity, now: i64) -> Option<serde_json::
     let document = super::document(identity, now)?;
     serde_yaml::from_str(&document.yaml).ok()
 }
+
+/// The ReplicaSets behind an example Deployment, as the cluster would list
+/// them: three revisions, the newest running the Deployment's own template
+/// and the two before it an earlier image of the same app. Empty for any
+/// other object.
+pub fn replicasets_of(identity: &ResourceIdentity, now: i64) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let Some(deployment) =
+        object_json(identity, now).filter(|_| identity.resource == "deployments.apps")
+    else {
+        return Vec::new();
+    };
+    let current = deployment
+        .pointer("/spec/template")
+        .cloned()
+        .unwrap_or_default();
+    (1..=3u64)
+        .map(|number| {
+            let mut template = current.clone();
+            if let Some(image) = template.pointer_mut("/spec/containers/0/image") {
+                let now = image.as_str().unwrap_or_default().to_owned();
+                let base = now.rsplit_once(':').map_or(now.as_str(), |(base, _)| base);
+                if number < 3 {
+                    *image = json!(format!("{base}:rev-{number}"));
+                }
+            }
+            template["metadata"]["labels"]["pod-template-hash"] = json!(format!("{number:x}f"));
+            json!({
+                "apiVersion": "apps/v1", "kind": "ReplicaSet",
+                "metadata": {
+                    "name": format!("{}-{number:x}f", identity.name),
+                    "namespace": identity.namespace,
+                    "creationTimestamp": timestamp(now - (4 - number as i64) * 86_400),
+                    "annotations": {"deployment.kubernetes.io/revision": number.to_string()},
+                    "ownerReferences": [{
+                        "apiVersion": "apps/v1", "kind": "Deployment", "name": identity.name,
+                        "uid": identity.uid, "controller": true, "blockOwnerDeletion": true,
+                    }],
+                },
+                "spec": {"template": template},
+            })
+        })
+        .collect()
+}

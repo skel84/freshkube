@@ -1,10 +1,11 @@
-//! The everyday actions of the Resources page (#857): Scale, Restart and a
-//! CronJob's Suspend or Resume. The list asked; this reads the object as it
+//! The everyday actions of the Resources page (#857): Scale, Restart, a
+//! Deployment's Roll back and a CronJob's Suspend or Resume and Run now. The list asked; this reads the object as it
 //! is, describes the action through `freshkube_core::write::everyday`, takes
 //! the window's level and hands the write to `write_flow`, where core's
 //! `write` module checks and sends it. Nothing here builds a request or
 //! decides a level's requirement.
 
+mod rollback;
 mod scale;
 
 use std::collections::BTreeSet;
@@ -17,7 +18,7 @@ use crate::mutation::{Operations, entry_level_cell, write_audit_store};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{ClusterAccess, WorkloadAct};
 use crate::write_flow::{self, WriteRequest};
-use freshkube_core::write::everyday::{self, Autoscaler, Everyday, Row, Subject};
+use freshkube_core::write::everyday::{self, Autoscaler, Everyday, Revisions, Row, Subject};
 use freshkube_core::write::{ActionDescription, Runner, Who};
 use gpui_kit::component::WindowExt;
 
@@ -148,6 +149,13 @@ impl Pilot {
                 crate::resources::example::autoscaler_of(&act.identity)
                     .map_or(Autoscaler::None, |name| Autoscaler::Found(name.into())),
             );
+            let revisions = crate::resources::example::replicasets_of(&act.identity, now);
+            let subject = if act.act == Everyday::Rollback {
+                let found = Revisions::from_replicasets(&object, &act.identity.uid, &revisions);
+                subject.with_revisions(found)
+            } else {
+                subject
+            };
             let runner = super::write_runner::example_runner(&runtime, who, cell);
             self.begin_everyday(runner, subject, act.act, &act.identity, window, cx);
             return;
@@ -157,14 +165,21 @@ impl Pilot {
             window.push_notification("The audit log can't be located, so nothing was sent.", cx);
             return;
         };
-        let (access, row) = (act.source.access.clone(), row_of(act));
+        let (access, row, wants_revisions) = (
+            act.source.access.clone(),
+            row_of(act),
+            act.act == Everyday::Rollback,
+        );
         let (job, receiver) = spawn_job(
             &runtime,
             READ,
             "The cluster did not answer in time. Nothing was sent.".to_owned(),
             async move {
                 let client = access.client().await.map_err(|failure| failure.message)?;
-                let subject = Subject::read(&client, &row).await?;
+                let mut subject = Subject::read(&client, &row).await?;
+                if wants_revisions {
+                    subject = subject.read_revisions(&client).await;
+                }
                 Ok::<_, String>((client, subject))
             },
         );
@@ -226,6 +241,23 @@ impl Pilot {
             window.push_notification(why, cx);
             return;
         }
+        if act == Everyday::Rollback {
+            // The picker keeps the object claimed until it is gone.
+            if let Some(why) = subject.rollback_refusal() {
+                release(identity, cx);
+                window.push_notification(why, cx);
+                return;
+            }
+            rollback::open(
+                runner,
+                self.runtime.clone(),
+                subject,
+                identity.clone(),
+                window,
+                cx,
+            );
+            return;
+        }
         let described = match act {
             // The count dialog keeps the object claimed until it is gone.
             Everyday::Scale => {
@@ -247,6 +279,8 @@ impl Pilot {
                 everyday::flux_reconcile(&subject, &chrono::Utc::now().to_rfc3339())
             }
             Everyday::Renew => everyday::renew(&subject, &chrono::Utc::now().to_rfc3339()),
+            Everyday::RunNow => everyday::run_now(&subject, &job_suffix()),
+            Everyday::Rollback => unreachable!("handled above"),
         };
         match described {
             Ok(action) => {
@@ -260,6 +294,15 @@ impl Pilot {
             }
         }
     }
+}
+
+/// Five lowercase letters and digits, new for every press, so a second Run
+/// now makes a second Job; a name that is taken anyway is refused by the dry
+/// run.
+fn job_suffix() -> String {
+    (0..5)
+        .map(|_| char::from_digit(fastrand::u32(0..36), 36).unwrap_or('x'))
+        .collect()
 }
 
 /// Starts the write flow for a described action.

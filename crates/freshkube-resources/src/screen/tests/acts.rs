@@ -74,10 +74,10 @@ fn a_deployment_offers_scale_and_restart_and_a_pod_offers_neither(cx: &mut TestA
     let items = row_menu(cx, handle, &screen);
     assert!(items.contains(&Some("Scale…".into())), "{items:?}");
     assert!(items.contains(&Some("Restart".into())), "{items:?}");
-    assert!(
-        !items.contains(&Some("Suspend or resume".into())),
-        "{items:?}"
-    );
+    assert!(items.contains(&Some("Roll back…".into())), "{items:?}");
+    for other in ["Suspend or resume", "Run now"] {
+        assert!(!items.contains(&Some(other.into())), "{items:?}");
+    }
 }
 
 #[gpui_kit::test]
@@ -372,4 +372,84 @@ fn a_blocked_cluster_disables_every_nudge_and_its_key_does_nothing(cx: &mut Test
         cx.run_until_parked();
         assert!(heard.borrow().is_empty(), "{key}");
     }
+}
+
+#[gpui_kit::test]
+fn the_example_cronjob_offers_run_now_and_a_deployment_does_not(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("cronjobs.batch"), window, cx);
+            screen.focus(window, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let items = row_menu(cx, handle, &screen);
+    assert!(items.contains(&Some("Run now".into())), "{items:?}");
+    assert!(!items.contains(&Some("Roll back…".into())), "{items:?}");
+}
+
+#[gpui_kit::test]
+fn b_and_j_ask_only_for_the_kinds_that_have_the_action(cx: &mut TestAppContext) {
+    let (_runtime, _screen, handle, heard) = deployments(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("j", cx);
+        window.press("b", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let name = cx.read(|cx| identity_at(&_screen, 0, cx).name);
+    // A Deployment has no Run now; its `j` does nothing.
+    assert_eq!(*heard.borrow(), [(Everyday::Rollback, name)]);
+
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let heard: Heard = Rc::default();
+    cx.update(|cx| {
+        let heard = heard.clone();
+        cx.subscribe(&screen, move |_, act: &WorkloadAct, _| {
+            heard
+                .borrow_mut()
+                .push((act.act, act.identity.name.clone()));
+        })
+        .detach();
+    });
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("cronjobs.batch"), window, cx);
+            screen.focus(window, cx);
+        });
+        window.render_frame(cx);
+        screen.update(cx, |screen, cx| {
+            screen.projection.select(&screen.store, Some(0));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.press("b", cx);
+        window.press("j", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let name = cx.read(|cx| identity_at(&screen, 0, cx).name);
+    assert_eq!(*heard.borrow(), [(Everyday::RunNow, name)]);
+}
+
+#[gpui_kit::test]
+fn a_blocked_cluster_asks_for_neither_roll_back_nor_run_now(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, heard) = deployments(cx);
+    cx.update(|cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_write_block(Some("This cluster is read-only."), cx)
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("b", cx);
+        window.press("j", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(heard.borrow().is_empty());
 }

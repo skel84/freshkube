@@ -96,7 +96,9 @@ actions!(
         RefreshSelected,
         HardRefreshSelected,
         ReconcileSelected,
-        RenewSelected
+        RenewSelected,
+        RollbackSelected,
+        RunNowSelected
     ]
 );
 
@@ -290,6 +292,8 @@ impl ResourcesScreen {
             KeyBinding::new("shift-g", HardRefreshSelected, Some(CONTEXT)),
             KeyBinding::new("c", ReconcileSelected, Some(CONTEXT)),
             KeyBinding::new("w", RenewSelected, Some(CONTEXT)),
+            KeyBinding::new("b", RollbackSelected, Some(CONTEXT)),
+            KeyBinding::new("j", RunNowSelected, Some(CONTEXT)),
             // Option-Command-] and [; Command-Shift-] and [ step the shell's
             // view tabs.
             KeyBinding::new("secondary-alt-]", NextTab, Some(CONTEXT)),

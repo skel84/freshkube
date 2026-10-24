@@ -1,5 +1,5 @@
-//! The everyday actions on the selected workload (#857): Scale, Restart and a
-//! CronJob's Suspend or Resume. The list only offers them, from the row menu,
+//! The everyday actions on the selected workload (#857): Scale, Restart, a
+//! Deployment's Roll back and a CronJob's Suspend or Resume and Run now. The list only offers them, from the row menu,
 //! its keys and the toolbar, and says which one on which object; the shell
 //! describes and sends the write (`freshkube_core::write::everyday`). A row
 //! never gets a button.
@@ -31,6 +31,8 @@ fn label(act: Everyday) -> &'static str {
         Everyday::ArgoHardRefresh => "Hard refresh",
         Everyday::FluxReconcile => "Reconcile",
         Everyday::Renew => "Renew…",
+        Everyday::Rollback => "Roll back…",
+        Everyday::RunNow => "Run now",
     }
 }
 
@@ -84,6 +86,8 @@ impl ResourcesScreen {
                 Everyday::ArgoHardRefresh => MenuAction::new(label(act), HardRefreshSelected),
                 Everyday::FluxReconcile => MenuAction::new(label(act), ReconcileSelected),
                 Everyday::Renew => MenuAction::new(label(act), RenewSelected),
+                Everyday::Rollback => MenuAction::new(label(act), RollbackSelected),
+                Everyday::RunNow => MenuAction::new(label(act), RunNowSelected),
             };
             lines.push(line.enabled(self.write_block.is_none()));
         }
@@ -148,6 +152,10 @@ impl ResourcesScreen {
                             page::action_item(label(act), ReconcileSelected, focus)
                         }
                         Everyday::Renew => page::action_item(label(act), RenewSelected, focus),
+                        Everyday::Rollback => {
+                            page::action_item(label(act), RollbackSelected, focus)
+                        }
+                        Everyday::RunNow => page::action_item(label(act), RunNowSelected, focus),
                     };
                     let button = match act {
                         Everyday::Scale => button.on_click(page::dispatch(ScaleSelected, focus)),
@@ -167,6 +175,10 @@ impl ResourcesScreen {
                             button.on_click(page::dispatch(ReconcileSelected, focus))
                         }
                         Everyday::Renew => button.on_click(page::dispatch(RenewSelected, focus)),
+                        Everyday::Rollback => {
+                            button.on_click(page::dispatch(RollbackSelected, focus))
+                        }
+                        Everyday::RunNow => button.on_click(page::dispatch(RunNowSelected, focus)),
                     };
                     (button, fold)
                 }
