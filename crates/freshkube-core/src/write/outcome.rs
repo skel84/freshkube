@@ -78,7 +78,12 @@ enum Look {
     Diverged(&'static str),
 }
 
-fn look(observation: &Observation, target: &Target, now: Result<Value, Refusal>) -> Look {
+async fn look(
+    client: &kube::Client,
+    observation: &Observation,
+    target: &Target,
+    now: Result<Value, Refusal>,
+) -> Look {
     let object = match now {
         Ok(object) => object,
         Err(Refusal::Changed(super::send::ChangedWhat::Gone)) => {
@@ -97,24 +102,104 @@ fn look(observation: &Observation, target: &Target, now: Result<Value, Refusal>)
             _ => Look::Diverged("The object was deleted and created again."),
         };
     }
-    match observation {
-        Observation::FieldEquals { pointer, value } => {
-            if object.pointer(pointer) == Some(value) {
-                Look::Reached
-            } else {
-                Look::Waiting
-            }
-        }
-        Observation::FieldEqualsOrAbsent { pointer, value } => {
-            if object.pointer(pointer) == Some(value) || absent_is_zero(&object, pointer, value) {
-                Look::Reached
-            } else {
-                Look::Waiting
-            }
-        }
-        Observation::Exists => Look::Reached,
-        Observation::Gone | Observation::Unobservable => Look::Waiting,
+    if reached(client, observation, target, &object).await {
+        Look::Reached
+    } else {
+        Look::Waiting
     }
+}
+
+/// Whether the observation holds on the object as read now.
+fn reached<'a>(
+    client: &'a kube::Client,
+    observation: &'a Observation,
+    target: &'a Target,
+    object: &'a Value,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+    Box::pin(async move {
+        match observation {
+            Observation::FieldEquals { pointer, value } => object.pointer(pointer) == Some(value),
+            Observation::FieldEqualsOrAbsent { pointer, value } => {
+                object.pointer(pointer) == Some(value) || absent_is_zero(object, pointer, value)
+            }
+            Observation::FieldAbsent { pointer } => {
+                matches!(object.pointer(pointer), None | Some(Value::Null))
+            }
+            Observation::FieldMoved { pointer, from } => object
+                .pointer(pointer)
+                .is_some_and(|now| !now.is_null() && now != from),
+            Observation::All(all) => {
+                for one in all {
+                    if !reached(client, one, target, object).await {
+                        return false;
+                    }
+                }
+                true
+            }
+            Observation::Any(any) => {
+                for one in any {
+                    if reached(client, one, target, object).await {
+                        return true;
+                    }
+                }
+                false
+            }
+            Observation::Child {
+                group,
+                version,
+                kind,
+                resource,
+                annotation,
+            } => {
+                controlled_with(client, target, (group, version, kind, resource), annotation).await
+            }
+            Observation::Exists => true,
+            Observation::Gone | Observation::Unobservable => false,
+        }
+    })
+}
+
+/// Whether the namespace holds an object of this kind that `target` controls
+/// and that carries the annotation. A list that fails says no.
+async fn controlled_with(
+    client: &kube::Client,
+    target: &Target,
+    (group, version, kind, resource): (&str, &str, &str, &str),
+    (key, value): &(String, String),
+) -> bool {
+    use kube::api::{Api, ApiResource, DynamicObject, ListParams};
+    let Some(namespace) = target.namespace.as_deref() else {
+        return false;
+    };
+    let resource = ApiResource {
+        group: group.into(),
+        version: version.into(),
+        api_version: format!("{group}/{version}"),
+        kind: kind.into(),
+        plural: resource.into(),
+    };
+    let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &resource);
+    let Ok(list) = api.list(&ListParams::default().limit(500)).await else {
+        return false;
+    };
+    list.items.iter().any(|item| {
+        let annotated = item
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get(key))
+            == Some(value);
+        let controlled = item
+            .metadata
+            .owner_references
+            .as_ref()
+            .is_some_and(|owners| {
+                owners
+                    .iter()
+                    .any(|owner| owner.uid == target.uid && owner.controller == Some(true))
+            });
+        annotated && controlled
+    })
 }
 
 /// An absent count reads as 0, as the API omits a count at zero.
@@ -140,7 +225,7 @@ pub async fn observe(
     }
     let started = Instant::now();
     loop {
-        match look(observation, target, get(client, target).await) {
+        match look(client, observation, target, get(client, target).await).await {
             Look::Reached => return Observed::Reached,
             Look::Diverged(why) => return Observed::Diverged { why },
             Look::Waiting => {}
