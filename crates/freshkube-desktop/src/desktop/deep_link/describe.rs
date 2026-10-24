@@ -17,6 +17,7 @@ pub(in crate::desktop) fn describe(view: &ViewState) -> String {
                     ViewTab::Events => " (Events)",
                     ViewTab::Ports => " (Ports)",
                     ViewTab::Logs => " (Logs)",
+                    ViewTab::Trace => " (Trace)",
                 };
                 format!("{} {place}{tab}", kind.as_str())
             }
@@ -41,6 +42,7 @@ fn title(page: LinkPage) -> &'static str {
         LinkPage::Nodes => "Nodes",
         LinkPage::Health => "Health",
         LinkPage::Databases => "Databases",
+        LinkPage::Routes => "Routes",
         LinkPage::Access => "Your access",
         LinkPage::Resources => "Resources",
         LinkPage::Etcd => "etcd",

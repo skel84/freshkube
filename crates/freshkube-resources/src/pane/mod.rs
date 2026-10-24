@@ -82,8 +82,10 @@ pub enum DetailEvent {
 
 pub use freshkube_nav::Tab;
 
-/// The strip's tabs, in order.
+/// The strip's tabs, in order, and an HTTPRoute's, which has its Trace
+/// between Details and YAML.
 const STRIP: [Tab; 2] = [Tab::Overview, Tab::Yaml];
+const ROUTE_STRIP: [Tab; 3] = [Tab::Overview, Tab::Trace, Tab::Yaml];
 
 /// Where a [`Tab`] sits on the pane's strip.
 trait Strip {
@@ -96,12 +98,14 @@ impl Strip for Tab {
     fn page(self) -> Tab {
         match self {
             Tab::Yaml => Tab::Yaml,
+            Tab::Trace => Tab::Trace,
             _ => Tab::Overview,
         }
     }
 
+    /// The tab's own focus handle, whatever the strip it is on.
     fn index(self) -> usize {
-        STRIP
+        ROUTE_STRIP
             .iter()
             .position(|tab| *tab == self.page())
             .unwrap_or(0)
@@ -188,7 +192,7 @@ pub struct DetailPane {
     tab: Tab,
     /// One per tab, in `STRIP`'s order, so the arrows can move between
     /// them.
-    tab_focus: [FocusHandle; 2],
+    tab_focus: [FocusHandle; 3],
     /// Details' scroll, and the section at its top as last drawn.
     details_scroll: ScrollHandle,
     shown_section: Rc<Cell<Section>>,
@@ -417,6 +421,10 @@ impl DetailPane {
         self.shell_choices = Rc::default();
         self.title = target.identity.address().into();
         self.detail = Some(Detail::new(target));
+        // Only an HTTPRoute has the Trace tab the last object may have shown.
+        if self.tab == Tab::Trace && !self.shows_trace() {
+            self.tab = Tab::Overview;
+        }
         // The strip starts unscrolled for each object.
         self.tab_strip = Default::default();
         self.follow = Follow::new(version);
@@ -914,7 +922,22 @@ impl DetailPane {
         }
     }
 
+    /// The tabs the open object's strip has: an HTTPRoute's also has Trace.
+    fn strip(&self) -> &'static [Tab] {
+        if self.shows_trace() {
+            &ROUTE_STRIP
+        } else {
+            &STRIP
+        }
+    }
+
     pub(crate) fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        // Only an HTTPRoute has a Trace tab; any other object opens Details.
+        let tab = if tab == Tab::Trace && !self.shows_trace() {
+            Tab::Overview
+        } else {
+            tab
+        };
         if tab == Tab::Logs {
             self.request_logs(None, cx);
             return;
@@ -923,7 +946,7 @@ impl DetailPane {
             self.tab = tab;
         } else {
             self.tab = tab.page();
-            if tab != Tab::Yaml {
+            if !matches!(tab, Tab::Yaml | Tab::Trace) {
                 self.show_section(Section::of_tab(tab));
             }
         }
@@ -965,8 +988,9 @@ impl DetailPane {
     /// Moves `delta` tabs along, wrapping, and returns the tab now shown.
     fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) -> Option<Tab> {
         self.detail.as_ref()?;
-        let tabs = STRIP;
-        let next = (self.tab.index() as isize + delta).rem_euclid(tabs.len() as isize) as usize;
+        let tabs = self.strip();
+        let at = tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0);
+        let next = (at as isize + delta).rem_euclid(tabs.len() as isize) as usize;
         let tab = tabs[next];
         self.show_page(tab, cx);
         Some(tab)
@@ -1122,7 +1146,7 @@ impl DetailPane {
     fn find_match(&mut self, forward: bool, cx: &mut Context<Self>) {
         match self.tab {
             Tab::Yaml => self.step_match(if forward { 1 } else { -1 }, cx),
-            Tab::Overview | Tab::Events | Tab::Logs | Tab::Ports => {}
+            Tab::Overview | Tab::Events | Tab::Logs | Tab::Ports | Tab::Trace => {}
         }
     }
 

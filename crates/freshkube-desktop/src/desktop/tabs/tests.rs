@@ -505,10 +505,10 @@ fn the_file_holds_eight_tabs_at_most_and_the_shown_one_is_among_them(cx: &mut Te
     {
         open(cx, handle, &pilot, page(link), OpenIn::Background);
     }
-    assert_eq!(views(cx, &pilot).len(), 13);
+    assert_eq!(views(cx, &pilot).len(), 14);
     // Show the last: it is past the first eight.
-    let last = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[12].id);
-    let wanted = views(cx, &pilot)[12].clone();
+    let last = cx.read(|cx| pilot.read(cx).tabs.set.tabs()[13].id);
+    let wanted = views(cx, &pilot)[13].clone();
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| pilot.select_tab(last, window, cx))
     })

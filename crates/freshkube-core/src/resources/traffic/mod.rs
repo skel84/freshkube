@@ -6,6 +6,7 @@
 mod chain;
 mod endpoints;
 mod read;
+pub mod routes;
 mod service;
 
 pub use chain::{

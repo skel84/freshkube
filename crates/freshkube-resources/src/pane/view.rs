@@ -265,7 +265,13 @@ impl DetailPane {
                 .into_any_element()
         };
         self.tab_strip
-            .row("detail-tabs", self.tab.index())
+            .row(
+                "detail-tabs",
+                self.strip()
+                    .iter()
+                    .position(|tab| *tab == self.tab)
+                    .unwrap_or(0),
+            )
             .key_context(TABS_CONTEXT)
             .on_action(cx.listener(|pane, _: &NextTab, window, cx| pane.move_tab(1, window, cx)))
             .on_action(
@@ -278,6 +284,14 @@ impl DetailPane {
                 "Details".into(),
                 Some("The overview, ports and events, on one page".into()),
             ))
+            .children(self.shows_trace().then(|| {
+                tab(
+                    "detail-tab-trace",
+                    Tab::Trace,
+                    self.traffic.route_tab_title(),
+                    Some("Each step from the class down to the endpoints".into()),
+                )
+            }))
             .child(tab("detail-tab-yaml", Tab::Yaml, "YAML".into(), None))
     }
 
@@ -615,6 +629,7 @@ impl Render for DetailPane {
         let body = match (self.tab, &detail.view) {
             (Tab::Yaml, Some(view)) => self.yaml(view, cx),
             (Tab::Yaml, None) => self.document_state(detail, cx),
+            (Tab::Trace, _) if self.shows_trace() => self.trace_page(detail, cx),
             // The node's inspector shows its events alone.
             (Tab::Events, _) if self.embedded_node => div()
                 .id("detail-events-page")

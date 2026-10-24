@@ -13,6 +13,7 @@ use freshkube_ui::motion::Choice;
 use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
+use freshkube_core::resources::traffic::routes::example::Shape as RoutesShape;
 use freshkube_delivery::timeline::example::Shape as TimelineShape;
 use freshkube_resources::example::traffic::Shape as ServicesShape;
 
@@ -138,6 +139,12 @@ pub struct DebugOptions {
     /// `legacy`, `pending`, `no-selector`, `external-name`, `refused`,
     /// `services-refused`); anything else is `mixed`.
     pub(crate) services: ServicesShape,
+    /// `FRESHKUBE_ROUTES`: what the Routes page's example and an example
+    /// HTTPRoute's trace show (`all`, `serving`, `partly`, `cross-namespace`,
+    /// `listener`, `no-address`, `class`, `no-backend`, `stale`, `mesh`,
+    /// `not-installed`, `incomplete`, `mixed-bundle`, `refused`, `cut`); anything
+    /// else is `all`.
+    pub(crate) routes: RoutesShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -247,6 +254,9 @@ impl DebugOptions {
                 .unwrap_or_default(),
             services: text("FRESHKUBE_SERVICES")
                 .and_then(|shape| ServicesShape::parse(&shape))
+                .unwrap_or_default(),
+            routes: text("FRESHKUBE_ROUTES")
+                .and_then(|shape| RoutesShape::parse(&shape))
                 .unwrap_or_default(),
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
@@ -581,6 +591,20 @@ mod tests {
     }
 
     #[test]
+    fn routes_take_each_shape_and_fall_back_to_all() {
+        for name in RoutesShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_ROUTES", name)]).routes,
+                RoutesShape::parse(name).unwrap(),
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_ROUTES", "bogus")]).routes,
+            RoutesShape::All
+        );
+    }
+
+    #[test]
     fn timeline_takes_each_shape_and_falls_back_to_busy() {
         for name in TimelineShape::NAMES {
             assert_eq!(
@@ -681,8 +705,22 @@ mod tests {
                 ..Hold::default()
             }
         );
+        assert_eq!(
+            hold("routes"),
+            Hold {
+                routes: true,
+                ..Hold::default()
+            }
+        );
         let all = hold("all");
-        assert!(all.talos && all.lists && all.coroot && all.monitoring && all.applications);
+        assert!(
+            all.talos
+                && all.lists
+                && all.coroot
+                && all.monitoring
+                && all.applications
+                && all.routes
+        );
         for bad in ["", "Talos", "everything", "talos,lists"] {
             assert_eq!(hold(bad), Hold::default(), "{bad:?}");
         }
@@ -756,6 +794,7 @@ mod tests {
         assert_eq!(options.timeline, TimelineShape::Busy);
         assert_eq!(options.agent, crate::agent_shape::AgentShape::Ready);
         assert_eq!(options.services, ServicesShape::Mixed);
+        assert_eq!(options.routes, RoutesShape::All);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }
