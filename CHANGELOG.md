@@ -4,6 +4,14 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.21.2 (2026-10-24)
+
+### Other changes
+
+- **Kubeconfig login programs:** a cluster whose kubeconfig runs a credential plugin (`kubelogin`, `aws`, `az` and the like) now connects when the app is started from the Dock or Finder; the plugin is looked for in `/opt/homebrew/bin` and `/usr/local/bin` too, and a missing one is named with the places it was looked for.
+- **Agent tab:** Open Agent is now in the View menu, where the docs said it was. In the default data mode the Signed out card makes Freshkube's opencode folders private (0700, also when they already existed), then shows the sign-in command with Freshkube's own data, state and cache directories and `--standalone`, a Copy button, and a line that it needs a real terminal; with shared data the plain `opencode auth login` stays ([docs/features/agent.md](docs/features/agent.md)).
+- **Agent tab:** OpenCode's own models are offered again, marked "OpenCode" and never chosen for you, since opencode doesn't say which are free; when they are all there is, the tab says no other provider is signed in and shows the command to sign in to Freshkube's own agent data. A failed question is marked in the transcript and the card says "The question failed", so two failures read as two; a free-model refusal says in plain words that those models only work inside OpenCode; a connection failure no longer shows the session's token; and the copies kept of a settings file that could not be read stay in the order they were made, even within one second.
+
 ## 0.21.1 (2026-10-24)
 
 ### Other changes
