@@ -682,8 +682,10 @@ fn the_status_bar_carries_the_read_time_of_example_data(cx: &mut TestAppContext)
         window.render_frame(cx);
         let segment = page.update(cx, |page, cx| page.status(cx)).unwrap();
         let text = format!("{segment:?}");
-        assert!(text.contains("updated "), "{text}");
-        assert!(text.contains("example data"), "{text}");
+        // Ahead of the counts, so a narrow bar drops the counts' words first.
+        let at = text.find("Example data · ").expect(&text);
+        assert!(text.find("not serving").unwrap() > at, "{text}");
+        assert!(text[at..].contains(':'), "{text}");
     })
     .unwrap();
 }

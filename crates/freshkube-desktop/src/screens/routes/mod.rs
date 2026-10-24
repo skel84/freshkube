@@ -304,7 +304,30 @@ impl ScreenPanel for RoutesScreen {
 
     fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync();
-        let mut parts = vec![Part::new("All namespaces")];
+        // The read's time and whether it is example data come right after the
+        // first part, as on Pods, so a narrow bar drops the counts' words
+        // before them.
+        let example = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.access.is_example());
+        let mut parts = Vec::new();
+        if example {
+            parts.push(Part::new("Example data"));
+        }
+        let time = self.loader.last_successful().or(self.example_read);
+        match (example, time) {
+            (true, Some(at)) => {
+                parts.push(Part::new(ui::clock(at)));
+                parts.push(Part::new("All namespaces"));
+            }
+            (true, None) => parts.push(Part::new("All namespaces")),
+            (false, Some(at)) => {
+                parts.push(Part::new("All namespaces"));
+                parts.push(Part::new(format!("updated {}", ui::clock(at))));
+            }
+            (false, None) => parts.push(Part::new("All namespaces")),
+        }
         if !self.display.summary.is_empty() {
             parts.push(Part::new(self.display.summary.clone()));
         }
@@ -321,16 +344,6 @@ impl ScreenPanel for RoutesScreen {
                 "Couldn't read routes"
             };
             parts.push(Part::new(words).tone(ui::Tone::Warn))
-        }
-        if let Some(at) = self.loader.last_successful().or(self.example_read) {
-            parts.push(Part::new(format!("updated {}", ui::clock(at))).minor())
-        }
-        if self
-            .source
-            .as_ref()
-            .is_some_and(|source| source.access.is_example())
-        {
-            parts.push(Part::new("example data").minor())
         }
         Some(Segment::new(
             self.source.as_ref().map(|source| source.context.clone()),
