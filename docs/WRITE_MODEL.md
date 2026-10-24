@@ -137,6 +137,17 @@ The change page's Stage Inspector offers four actions on today's Kargo, through 
 - **What aborting stops** is the running Promotion's own steps and pushed commits (`status.stepExecutionMetadata`), not the change's.
 - **Handles:** a Stage action is offered only when the Stage's UID and resourceVersion were read, so the version check can hold; otherwise its button is greyed out with why.
 
+### Your access (#854)
+
+The access review that decides which actions are offered has two parts, and only one decides.
+
+- **The gate decides.** Before each write, `Runner::preflight` asks a `SelfSubjectAccessReview` on the exact object (verb, group, resource, namespace, name). It is never skipped, at any level, and a review that does not answer blocks with its reason ("Couldn't check", with Recheck in the dialog). This slice leaves it unchanged.
+- **The table guides.** The **Your access** page (Access control column, [features/access.md](features/access.md)) reads one `SelfSubjectRulesReview` per namespace, only while it shows and only for the rows a frame draws, and one `SelfSubjectReview` for who the person is. It says what to expect and, for each no, what is missing: "needs ⟨verb⟩ on ⟨resource⟩ in ⟨namespace⟩". A rules review can be incomplete (a webhook authorizer); those cells read "ask", never "no". Nothing reads these answers to allow or refuse a write, and a yes there never stands in for the gate.
+- **Cached per access identity.** Core's `access::Board` holds the answers for one access identity and one person. Another access, another person, or hiding the page drops them (in-flight answers by a generation check), so an answer is never shown for an identity it was not read under ([ACCESS_IDENTITY.md](ACCESS_IDENTITY.md)).
+- **Read-only.** Both are `create` calls of review objects the server evaluates and does not store; they add nothing to the safety suite, which lists what can change a cluster.
+
+The everyday actions' and Stage actions' disabled reasons stay what they were (the protection level's); showing a no from this view as the reason, with "See your access", is slice 2.
+
 ### Edit YAML (#858)
 
 The detail pane's YAML tab has an Edit button (`freshkube-resources`' `pane/edit/`; core's `write/edit_yaml/`). Core reads the object once (`EditSession::read`, a Secret as metadata only) and fixes its UID and resourceVersion; the editor's text is that object without the cluster's own fields. ⌘S or Review changes hands the text back to core, which describes it (`EditSession::describe`) and the shell sends the description through `write_flow` like any other write, so the level, the access review, the dry run and the audit are the framework's.
