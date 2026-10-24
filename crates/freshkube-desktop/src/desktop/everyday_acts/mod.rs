@@ -274,6 +274,12 @@ impl Pilot {
             }
             Everyday::Restart => everyday::restart(&subject, &chrono::Utc::now().to_rfc3339()),
             Everyday::Suspend => everyday::suspend(&subject),
+            Everyday::ArgoRefresh => everyday::argo_refresh(&subject, everyday::Refresh::Normal),
+            Everyday::ArgoHardRefresh => everyday::argo_refresh(&subject, everyday::Refresh::Hard),
+            Everyday::FluxReconcile => {
+                everyday::flux_reconcile(&subject, &chrono::Utc::now().to_rfc3339())
+            }
+            Everyday::Renew => everyday::renew(&subject, &chrono::Utc::now().to_rfc3339()),
             Everyday::RunNow => everyday::run_now(&subject, &job_suffix()),
             Everyday::Rollback => unreachable!("handled above"),
         };

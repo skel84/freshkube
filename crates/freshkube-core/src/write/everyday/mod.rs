@@ -34,6 +34,13 @@ pub enum Workload {
     ReplicaSet,
     DaemonSet,
     CronJob,
+    Application,
+    Kustomization,
+    HelmRelease,
+    GitRepository,
+    HelmRepository,
+    OciRepository,
+    Certificate,
 }
 
 impl Workload {
@@ -44,6 +51,13 @@ impl Workload {
             ("apps", "ReplicaSet") => Some(Self::ReplicaSet),
             ("apps", "DaemonSet") => Some(Self::DaemonSet),
             ("batch", "CronJob") => Some(Self::CronJob),
+            ("argoproj.io", "Application") => Some(Self::Application),
+            ("kustomize.toolkit.fluxcd.io", "Kustomization") => Some(Self::Kustomization),
+            ("helm.toolkit.fluxcd.io", "HelmRelease") => Some(Self::HelmRelease),
+            ("source.toolkit.fluxcd.io", "GitRepository") => Some(Self::GitRepository),
+            ("source.toolkit.fluxcd.io", "HelmRepository") => Some(Self::HelmRepository),
+            ("source.toolkit.fluxcd.io", "OCIRepository") => Some(Self::OciRepository),
+            ("cert-manager.io", "Certificate") => Some(Self::Certificate),
             _ => None,
         }
     }
@@ -55,6 +69,13 @@ impl Workload {
             Self::ReplicaSet => &[Everyday::Scale],
             Self::DaemonSet => &[Everyday::Restart],
             Self::CronJob => &[Everyday::Suspend, Everyday::RunNow],
+            Self::Application => &[Everyday::ArgoRefresh, Everyday::ArgoHardRefresh],
+            Self::Kustomization
+            | Self::HelmRelease
+            | Self::GitRepository
+            | Self::HelmRepository
+            | Self::OciRepository => &[Everyday::FluxReconcile],
+            Self::Certificate => &[Everyday::Renew],
         }
     }
 
@@ -65,6 +86,13 @@ impl Workload {
             Self::ReplicaSet => "replicasets",
             Self::DaemonSet => "daemonsets",
             Self::CronJob => "cronjobs",
+            Self::Application => "applications",
+            Self::Kustomization => "kustomizations",
+            Self::HelmRelease => "helmreleases",
+            Self::GitRepository => "gitrepositories",
+            Self::HelmRepository => "helmrepositories",
+            Self::OciRepository => "ocirepositories",
+            Self::Certificate => "certificates",
         }
     }
 }
@@ -82,6 +110,14 @@ pub enum Everyday {
     Scale,
     Restart,
     Suspend,
+    /// Argo CD: refresh an Application (`write/everyday/nudges.rs`).
+    ArgoRefresh,
+    /// Argo CD: refresh an Application and drop its cached manifests.
+    ArgoHardRefresh,
+    /// Flux: reconcile a Kustomization, HelmRelease or source now.
+    FluxReconcile,
+    /// cert-manager: renew a Certificate.
+    Renew,
     Rollback,
     RunNow,
 }
@@ -92,6 +128,10 @@ impl Everyday {
             Self::Scale => "scale",
             Self::Restart => "restart",
             Self::Suspend => "suspend",
+            Self::ArgoRefresh => "argo-refresh",
+            Self::ArgoHardRefresh => "argo-hard-refresh",
+            Self::FluxReconcile => "flux-reconcile",
+            Self::Renew => "renew",
             Self::Rollback => "rollback",
             Self::RunNow => "run-now",
         }
@@ -573,6 +613,9 @@ pub fn suspend(subject: &Subject) -> Result<ActionDescription, NotOffered> {
         }],
     })
 }
+
+mod nudges;
+pub use nudges::{Refresh, argo_refresh, flux_reconcile, renew};
 
 #[cfg(test)]
 mod tests {

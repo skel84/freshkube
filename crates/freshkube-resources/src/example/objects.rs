@@ -126,6 +126,7 @@ pub fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument>
             yaml
         }
         "certificates.cert-manager.io" => certificate_yaml(&row, ix, created),
+        "kustomizations.kustomize.toolkit.fluxcd.io" => super::gitops::yaml(&row, ix, created),
         "externalsecrets.external-secrets.io" => super::external_secrets::yaml(&row, now),
         _ => return None,
     };
