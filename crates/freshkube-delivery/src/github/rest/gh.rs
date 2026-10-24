@@ -8,15 +8,13 @@
 //! be sent to. Its standard error is dropped, never read, never shown; its
 //! standard output is the token and is kept in memory only.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
 use super::error::NotSetUp;
 
-/// Where Homebrew puts it, then where an installer does.
-const PLACES: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 /// How long `gh auth token` may take.
 pub(super) const DEADLINE: Duration = Duration::from_secs(10);
 /// The most of its output read: a token is far shorter.
@@ -24,33 +22,11 @@ const MOST_OUTPUT_BYTES: u64 = 16 * 1024;
 
 /// The usual places, then every directory of `PATH`.
 pub(super) fn default_dirs() -> Vec<PathBuf> {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    PLACES
-        .iter()
-        .map(PathBuf::from)
-        .chain(std::env::split_paths(&path))
-        .collect()
-}
-
-fn executable(path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return false;
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        meta.is_file() && meta.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        meta.is_file()
-    }
+    freshkube_core::exec_plugin::default_dirs()
 }
 
 fn find(dirs: &[PathBuf]) -> Option<PathBuf> {
-    dirs.iter()
-        .map(|dir| dir.join(if cfg!(windows) { "gh.exe" } else { "gh" }))
-        .find(|path| executable(path))
+    freshkube_core::exec_plugin::find_program("gh", dirs)
 }
 
 /// The token `gh` holds for github.com, looking for `gh` in `dirs`.

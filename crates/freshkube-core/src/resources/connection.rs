@@ -39,8 +39,10 @@ pub async fn connect(sources: Vec<PathBuf>, name: String) -> Result<Connection, 
             };
             Failure::new(FailureKind::Config, message)
         })?;
-        let kubeconfig = kubeconfig
+        let mut kubeconfig = kubeconfig
             .ok_or_else(|| Failure::new(FailureKind::Config, "No kubeconfig file could be read"))?;
+        // A GUI app's short PATH may not hold the exec plugin.
+        crate::exec_plugin::resolve(&mut kubeconfig, Some(&wanted))?;
         let options = KubeConfigOptions {
             context: Some(wanted.clone()),
             ..KubeConfigOptions::default()

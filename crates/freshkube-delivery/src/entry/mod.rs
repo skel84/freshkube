@@ -248,8 +248,10 @@ async fn open_listed(
         if report.context(&context).is_none() {
             return Ok(None);
         }
-        let kubeconfig = kubeconfig
+        let mut kubeconfig = kubeconfig
             .ok_or_else(|| Failure::new(FailureKind::Config, "no kubeconfig file could be read"))?;
+        // A GUI app's short PATH may not hold the exec plugin.
+        freshkube_core::exec_plugin::resolve(&mut kubeconfig, Some(&context))?;
         let options = KubeConfigOptions {
             context: Some(context),
             ..KubeConfigOptions::default()

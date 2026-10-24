@@ -742,9 +742,11 @@ async fn discovery_members_from_config(
 }
 
 async fn client_from_roster_config(
-    kubeconfig: kube::config::Kubeconfig,
+    mut kubeconfig: kube::config::Kubeconfig,
     options: kube::config::KubeConfigOptions,
 ) -> Result<Client, K8sError> {
+    crate::exec_plugin::resolve(&mut kubeconfig, options.context.as_deref())
+        .map_err(|failure| K8sError::ClientCreate(failure.message))?;
     let runtime = tokio::runtime::Handle::current();
     // kube-rs may read credential files or execute authentication plugins.
     // Keep setup isolated so an enclosing deadline can discard late results.

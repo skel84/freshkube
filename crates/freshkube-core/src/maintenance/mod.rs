@@ -1632,9 +1632,17 @@ async fn probe_client(
     .map_err(|error| worker_failure(&error))?
     .map_err(|error| config_failure(&error))?;
     let runtime = tokio::runtime::Handle::current();
+    let (mut kubeconfig, options) = prepared;
+    crate::exec_plugin::resolve(&mut kubeconfig, options.context.as_deref()).map_err(
+        |failure| {
+            config_failure(&crate::cluster_overview::K8sError::ClientCreate(
+                failure.message,
+            ))
+        },
+    )?;
     run_roster_setup(move || {
         Ok(runtime.block_on(async {
-            let config = Config::from_custom_kubeconfig(prepared.0, &prepared.1)
+            let config = Config::from_custom_kubeconfig(kubeconfig, &options)
                 .await
                 .map_err(|_| {
                     crate::cluster_overview::K8sError::ClientCreate(
