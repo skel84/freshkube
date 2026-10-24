@@ -407,7 +407,8 @@ mod tests {
             "dashboards": null,
             "prometheus": {"cluster-a": {"namespace": "metrics", "name": "prometheus", "port": 9090, "https": false, "path": "", "future": [false, null, 7]}},
             "sources": {"cluster-b": {"kind": "url", "url": "https://metrics.example.test/", "token": false, "future": {"label": "example"}}},
-            "future": {"options": [true, null, "example"]}
+            "future": {"options": [true, null, "example"]},
+            "version": 1
         });
         std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
         let store = MonitoringStore::new(&preferences, load(&preferences));
@@ -448,6 +449,7 @@ mod tests {
                 },
             },
             "future": {"options": [null, false, 7, "example"]},
+            "version": 1,
         });
         std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
         let store = MonitoringStore::new(&preferences, load(&preferences));

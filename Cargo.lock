@@ -3015,6 +3015,7 @@ dependencies = [
 name = "freshkube-prefs"
 version = "0.20.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "tempfile",

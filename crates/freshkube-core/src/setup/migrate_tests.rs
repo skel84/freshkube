@@ -594,3 +594,17 @@ fn invalid_legacy_rows_are_never_recovered_into_a_lossy_migration() {
         );
     }
 }
+
+#[test]
+fn the_files_own_version_is_not_carried_into_the_setup() {
+    let coroot =
+        r#"{"url": "https://coroot.example.test", "auth": "session", "future": 7, "version": 1}"#;
+    let home = Home::with(&[("workspace.json", WORKSPACE_JSON), ("coroot.json", coroot)]);
+    home.migrate();
+    let text = home.read("freshkube.yaml");
+    assert!(text.contains("future"), "{text}");
+    assert!(!text.contains("version: 1\n  "), "{text}");
+    let coroot = home.setup().coroot.unwrap();
+    assert!(!coroot.extra.contains_key("version"));
+    assert!(coroot.extra.contains_key("future"));
+}

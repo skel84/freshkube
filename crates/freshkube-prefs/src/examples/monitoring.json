@@ -23,5 +23,6 @@
       "url": "https://metrics.example/",
       "token": true
     }
-  }
+  },
+  "version": 1
 }
