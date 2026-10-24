@@ -17,7 +17,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use kube::config::Kubeconfig;
+use kube::config::{KubeConfigOptions, Kubeconfig};
 
 use crate::failure::{Failure, FailureKind};
 
@@ -64,6 +64,31 @@ pub fn find_program(program: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 /// A command that is only a name, to be looked up on a `PATH`.
 fn is_bare(command: &str) -> bool {
     !command.is_empty() && !command.contains(['/', '\\']) && !Path::new(command).has_root()
+}
+
+/// Why a kubeconfig context could not be made into a [`kube::Config`].
+#[derive(Debug)]
+pub enum ConfigError {
+    /// The context's login program was not found; the message names the
+    /// context, the program and the places.
+    Plugin(Failure),
+    /// kube could not load the credentials. Its own message can quote a
+    /// credential source, so it is dropped.
+    Credentials,
+}
+
+/// The one place a kubeconfig context becomes a `kube::Config`: the exec
+/// command is resolved in memory first (the file on disk is never written),
+/// then kube loads the credentials, which may run the plugin. Blocking work
+/// belongs on a blocking thread, as before.
+pub async fn config_from_kubeconfig(
+    mut kubeconfig: Kubeconfig,
+    options: &KubeConfigOptions,
+) -> Result<kube::Config, ConfigError> {
+    resolve(&mut kubeconfig, options.context.as_deref()).map_err(ConfigError::Plugin)?;
+    kube::Config::from_custom_kubeconfig(kubeconfig, options)
+        .await
+        .map_err(|_| ConfigError::Credentials)
 }
 
 /// Makes the exec command of the user that `context` (or the file's current
@@ -242,5 +267,64 @@ mod tests {
         let mut config = kubeconfig(None);
         resolve_with(&mut config, Some("dev"), &[], OsStr::new("")).unwrap();
         assert_eq!(command_of(&config), None);
+    }
+
+    #[test]
+    fn a_directory_or_a_file_without_the_execute_bit_does_not_count() {
+        let root = tempfile::tempdir().unwrap();
+        let place = root.path().join("place");
+        std::fs::create_dir_all(place.join("dir-login")).unwrap();
+        let plain = place.join("plain-login");
+        std::fs::write(&plain, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o644)).unwrap();
+        for program in ["dir-login", "plain-login"] {
+            let mut config = kubeconfig(Some(program));
+            let failure = resolve_with(
+                &mut config,
+                Some("dev"),
+                std::slice::from_ref(&place),
+                OsStr::new(""),
+            )
+            .unwrap_err();
+            assert!(failure.message.contains(program));
+        }
+    }
+
+    #[tokio::test]
+    async fn the_kubeconfig_file_is_unchanged_and_the_resolved_plugin_runs() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("ran");
+        let place = root.path().join("other");
+        std::fs::create_dir_all(&place).unwrap();
+        let script = place.join("fake-login");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ntouch {}\necho '{{\"apiVersion\":\"client.authentication.k8s.io/v1\",\"kind\":\"ExecCredential\",\"status\":{{\"token\":\"t\"}}}}'\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = root.path().join("config");
+        let text = serde_yaml::to_string(&kubeconfig(Some("fake-login"))).unwrap();
+        std::fs::write(&file, &text).unwrap();
+        let before = std::fs::read(&file).unwrap();
+        let (_, loaded) = crate::resources::load_kubeconfigs(std::slice::from_ref(&file));
+        let mut loaded = loaded.unwrap();
+        // The process's PATH can't find it; the other directory stands in for
+        // one of the usual places.
+        resolve_with(&mut loaded, Some("dev"), &[place], OsStr::new("")).unwrap();
+        let options = KubeConfigOptions {
+            context: Some("dev".into()),
+            ..KubeConfigOptions::default()
+        };
+        let config = kube::Config::from_custom_kubeconfig(loaded, &options)
+            .await
+            .unwrap();
+        let _ = crate::kube_client::client(config);
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        assert!(marker.exists(), "the plugin ran from its absolute path");
     }
 }

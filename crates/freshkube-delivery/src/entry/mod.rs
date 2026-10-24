@@ -40,6 +40,7 @@ use super::source::printable;
 use super::versions::resolve;
 use super::{argocd, kargo, tekton, words};
 use crate::applications::read::{PART_OF, argo_namespaces, read_argo_workloads};
+use freshkube_core::exec_plugin::ConfigError;
 use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 
@@ -248,24 +249,26 @@ async fn open_listed(
         if report.context(&context).is_none() {
             return Ok(None);
         }
-        let mut kubeconfig = kubeconfig
+        let kubeconfig = kubeconfig
             .ok_or_else(|| Failure::new(FailureKind::Config, "no kubeconfig file could be read"))?;
-        // A GUI app's short PATH may not hold the exec plugin.
-        freshkube_core::exec_plugin::resolve(&mut kubeconfig, Some(&context))?;
         let options = KubeConfigOptions {
             context: Some(context),
             ..KubeConfigOptions::default()
         };
         runtime.block_on(async move {
             // kube's messages can quote credential sources; keep them out.
-            let mut config = Config::from_custom_kubeconfig(kubeconfig, &options)
-                .await
-                .map_err(|_| {
-                    Failure::new(
-                        FailureKind::Config,
-                        "its kubeconfig entry couldn't be loaded",
-                    )
-                })?;
+            let mut config =
+                freshkube_core::exec_plugin::config_from_kubeconfig(kubeconfig, &options)
+                    .await
+                    .map_err(|error| match error {
+                        ConfigError::Plugin(failure) => {
+                            Failure::new(FailureKind::Config, failure.message)
+                        }
+                        ConfigError::Credentials => Failure::new(
+                            FailureKind::Config,
+                            "its kubeconfig entry couldn't be loaded",
+                        ),
+                    })?;
             config.connect_timeout = Some(limit);
             config.read_timeout = Some(REQUEST_DEADLINE);
             freshkube_core::kube_client::client(config)

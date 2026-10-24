@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use kube::Client;
-use kube::config::{Config, KubeConfigOptions};
+use kube::config::KubeConfigOptions;
 
 use super::contexts::{KubeContext, load};
 use super::failure::{Failure, FailureKind};
+use crate::exec_plugin::{ConfigError, config_from_kubeconfig};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -39,24 +40,23 @@ pub async fn connect(sources: Vec<PathBuf>, name: String) -> Result<Connection, 
             };
             Failure::new(FailureKind::Config, message)
         })?;
-        let mut kubeconfig = kubeconfig
+        let kubeconfig = kubeconfig
             .ok_or_else(|| Failure::new(FailureKind::Config, "No kubeconfig file could be read"))?;
-        // A GUI app's short PATH may not hold the exec plugin.
-        crate::exec_plugin::resolve(&mut kubeconfig, Some(&wanted))?;
         let options = KubeConfigOptions {
             context: Some(wanted.clone()),
             ..KubeConfigOptions::default()
         };
         runtime.block_on(async move {
             // kube's messages can quote credential sources; keep them out.
-            let mut config = Config::from_custom_kubeconfig(kubeconfig, &options)
-                .await
-                .map_err(|_| {
-                    Failure::new(
+            let mut config = config_from_kubeconfig(kubeconfig, &options).await.map_err(
+                |error| match error {
+                    ConfigError::Plugin(failure) => failure,
+                    ConfigError::Credentials => Failure::new(
                         FailureKind::Config,
                         format!("Couldn't load the credentials of context '{wanted}'"),
-                    )
-                })?;
+                    ),
+                },
+            )?;
             config.connect_timeout = Some(CONNECT_TIMEOUT);
             let client = crate::kube_client::client(config).map_err(|error| {
                 Failure::new(

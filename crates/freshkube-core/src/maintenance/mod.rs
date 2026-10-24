@@ -19,7 +19,7 @@ use std::{
 
 use k8s_openapi::api::core::v1::Node;
 use kube::{
-    Client, Config,
+    Client,
     api::{Api, ListParams},
 };
 use talos_rs::{
@@ -1632,22 +1632,20 @@ async fn probe_client(
     .map_err(|error| worker_failure(&error))?
     .map_err(|error| config_failure(&error))?;
     let runtime = tokio::runtime::Handle::current();
-    let (mut kubeconfig, options) = prepared;
-    crate::exec_plugin::resolve(&mut kubeconfig, options.context.as_deref()).map_err(
-        |failure| {
-            config_failure(&crate::cluster_overview::K8sError::ClientCreate(
-                failure.message,
-            ))
-        },
-    )?;
+    let (kubeconfig, options) = prepared;
     run_roster_setup(move || {
         Ok(runtime.block_on(async {
-            let config = Config::from_custom_kubeconfig(kubeconfig, &options)
+            let config = crate::exec_plugin::config_from_kubeconfig(kubeconfig, &options)
                 .await
-                .map_err(|_| {
-                    crate::cluster_overview::K8sError::ClientCreate(
-                        "Could not load credentials for verified readiness source".into(),
-                    )
+                .map_err(|error| match error {
+                    crate::exec_plugin::ConfigError::Plugin(failure) => {
+                        crate::cluster_overview::K8sError::ClientCreate(failure.message)
+                    }
+                    crate::exec_plugin::ConfigError::Credentials => {
+                        crate::cluster_overview::K8sError::ClientCreate(
+                            "Could not load credentials for verified readiness source".into(),
+                        )
+                    }
                 })?;
             crate::kube_client::client(config).map_err(|error| {
                 crate::cluster_overview::K8sError::ClientCreate(
