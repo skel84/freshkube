@@ -12,7 +12,7 @@ use super::{
     ActionDescription, Change, Everyday, NotOffered, ObjectChange, Observation, Subject, Tier,
     Workload,
 };
-use crate::write::Preview;
+use crate::write::{Depends, Preview};
 
 /// The annotation Argo CD's controller reads and then removes.
 pub const ARGO_REFRESH: &str = "argocd.argoproj.io/refresh";
@@ -32,7 +32,7 @@ pub const MANUAL_MESSAGE: &str = "Certificate re-issuance manually triggered";
 const REQUEST_REVISION: &str = "cert-manager.io/certificate-revision";
 
 /// Said in a renewal's dialog.
-pub const RENEW_NOTE: &str = "This can't be undone; the issuer counts each issuance toward its rate limits. The current certificate stays in its Secret until the new one is issued.";
+pub const RENEW_NOTE: &str = "This can't be undone; the issuer may count each issuance toward its rate limits. The current certificate stays in its Secret until the new one is issued.";
 
 /// How hard Argo CD is asked to look.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,12 +128,21 @@ pub fn argo_refresh(subject: &Subject, how: Refresh) -> Result<ActionDescription
         ));
     }
     let label = subject.target.label();
+    let automated = subject
+        .object
+        .pointer("/spec/syncPolicy/automated")
+        .is_some_and(|policy| !policy.is_null());
+    let outcome = if automated {
+        "Automated sync is on: if the refresh finds a difference, Argo CD syncs it."
+    } else {
+        "Nothing is synced."
+    };
     let sentence = match how {
         Refresh::Normal => format!(
-            "Ask Argo CD to refresh {label}: it compares the source it has with the cluster again. Nothing is synced."
+            "Ask Argo CD to refresh {label}: it compares the source it has with the cluster again. {outcome}"
         ),
         Refresh::Hard => format!(
-            "Ask Argo CD for a hard refresh of {label}: a refresh that also reloads the manifest cache, so the source is read again. Nothing is synced."
+            "Ask Argo CD for a hard refresh of {label}: it throws away the manifests Argo CD generated and generates them from the source again. {outcome}"
         ),
     };
     let was = subject
@@ -144,11 +153,20 @@ pub fn argo_refresh(subject: &Subject, how: Refresh) -> Result<ActionDescription
         "argo-refresh",
         "Refresh",
         sentence,
-        preview(
-            subject,
-            &format!("metadata.annotations[{ARGO_REFRESH}]"),
-            how.value(),
-        ),
+        {
+            let mut shown = preview(
+                subject,
+                &format!("metadata.annotations[{ARGO_REFRESH}]"),
+                how.value(),
+            );
+            if automated {
+                shown.push(Preview {
+                    title: "What follows".into(),
+                    lines: vec![outcome.into()],
+                });
+            }
+            shown
+        },
         ObjectChange {
             target: subject.target.clone(),
             change: Change::MergePatch(annotate(subject, ARGO_REFRESH, how.value())),
@@ -162,7 +180,13 @@ pub fn argo_refresh(subject: &Subject, how: Refresh) -> Result<ActionDescription
                 },
             ]),
             inverse: None,
-            depends: vec![],
+            // Review the new version takes a new resourceVersion only: a
+            // refresh that has since been asked for stays refused.
+            depends: vec![Depends {
+                target: subject.target.clone(),
+                verb: None,
+                holds: vec![(ARGO_REFRESH_POINTER.into(), Value::Null)],
+            }],
         },
     ))
 }
@@ -203,7 +227,20 @@ pub fn flux_reconcile(subject: &Subject, at: &str) -> Result<ActionDescription, 
                 value: json!(at),
             },
             inverse: None,
-            depends: vec![],
+            // A suspend made after the page read the object is not rebased
+            // away by Review the new version.
+            depends: vec![Depends {
+                target: subject.target.clone(),
+                verb: None,
+                holds: vec![(
+                    "/spec/suspend".into(),
+                    subject
+                        .object
+                        .pointer("/spec/suspend")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                )],
+            }],
         },
     ))
 }
@@ -219,9 +256,9 @@ pub fn renew(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffere
     if !subject.offered().contains(&Everyday::Renew) {
         return Err(NotOffered("Only a Certificate can be renewed."));
     }
-    let mut conditions: Vec<Value> = subject
-        .object
-        .pointer("/status/conditions")
+    let read = subject.object.pointer("/status/conditions").cloned();
+    let mut conditions: Vec<Value> = read
+        .as_ref()
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
@@ -294,7 +331,15 @@ pub fn renew(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffere
                 },
             ]),
             inverse: None,
-            depends: vec![],
+            // The conditions sent were built from the ones read. If the
+            // controller has written them since (Ready changed, or its own
+            // renewal started), Review the new version would otherwise send
+            // the old list under the new resourceVersion and replace them.
+            depends: vec![Depends {
+                target: subject.target.clone(),
+                verb: None,
+                holds: vec![("/status/conditions".into(), read.unwrap_or(Value::Null))],
+            }],
         },
     ))
 }
@@ -305,7 +350,8 @@ mod tests {
 
     use super::super::super::testing::{self as fake, Cluster};
     use super::super::super::{
-        Block, Confirmation, Headline, Protection, Verdict, requirement, requirement_for,
+        Block, ChangedWhat, Confirmation, Headline, Protection, Verdict, requirement,
+        requirement_for,
     };
     use super::*;
 
@@ -567,9 +613,7 @@ mod tests {
         let run = runner.execute(*prepared, Confirmation::Confirmed, || false, |_| {});
         let moved = async {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            let current = cluster.object(fake::CERTIFICATE);
             // Someone else's write moves the revision, so the version moves too.
-            let _ = current;
             cluster.foreign_write(
                 fake::CERTIFICATE,
                 "cert-manager",
@@ -712,6 +756,16 @@ mod tests {
             Verdict::Blocked(Block::Changed { .. })
         ));
         cluster.assert_nothing_written();
+        // Not even a dry run: the version check stops it first.
+        assert!(
+            cluster
+                .recorder
+                .requests()
+                .iter()
+                .all(|request| request.method != http::Method::PATCH),
+            "{:?}",
+            cluster.recorder.lines()
+        );
         // Sent: one patch, of these fields.
         let cluster = Cluster::new();
         let sent = action(&cluster);
@@ -776,36 +830,55 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_controller_write_between_the_check_and_the_send_is_refused_and_not_retried() {
-        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
-        let action = renew(&subject(&cluster, fake::CERTIFICATE), AT).unwrap();
-        let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
-        let Verdict::Ready(prepared) = runner.preflight(action).await else {
-            panic!("blocked");
-        };
-        // cert-manager updates the status after the check, before the send.
-        cluster.foreign_write(
-            fake::CERTIFICATE,
-            "cert-manager-trigger",
-            &json!({"status": {"conditions": [
-                {"type": "Ready", "status": "True"},
-                {"type": "Issuing", "status": "False", "reason": "Idle"}
-            ]}}),
-        );
-        let finished = runner
-            .execute(*prepared, Confirmation::Confirmed, || false, |_| {})
-            .await;
-        assert_ne!(finished.headline(), Headline::Done);
-        // The patch was offered once, was refused, and nothing was stored or retried.
-        let patches: Vec<_> = cluster
-            .recorder
-            .requests()
-            .into_iter()
-            .filter(|r| r.method == http::Method::PATCH && !r.query.contains("dryRun"))
-            .collect();
-        assert_eq!(patches.len(), 1);
-        let conditions = &cluster.object(fake::CERTIFICATE)["status"]["conditions"];
-        assert_eq!(conditions[1]["reason"], "Idle");
-        assert!(!cluster.exists(&format!("{}/web-tls-3", fake::CERTIFICATE_REQUESTS)));
+        // (what lands after the check, and what the run ends as)
+        let cases = [
+            // The conditions the patch was built from: held by `Depends`,
+            // read again just before the send.
+            (
+                json!({"status": {"conditions": [
+                    {"type": "Ready", "status": "True"},
+                    {"type": "Issuing", "status": "False", "reason": "Idle"}
+                ]}}),
+                "conditions",
+            ),
+            // Anything else on the object: the server refuses the patch on
+            // the resourceVersion in its body.
+            (json!({"metadata": {"labels": {"a": "b"}}}), "version"),
+        ];
+        for (landed, why) in cases {
+            let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+            let action = renew(&subject(&cluster, fake::CERTIFICATE), AT).unwrap();
+            let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+            let Verdict::Ready(prepared) = runner.preflight(action).await else {
+                panic!("blocked");
+            };
+            cluster.foreign_write(fake::CERTIFICATE, "cert-manager-trigger", &landed);
+            let finished = runner
+                .execute(*prepared, Confirmation::Confirmed, || false, |_| {})
+                .await;
+            let patches = cluster
+                .recorder
+                .requests()
+                .into_iter()
+                .filter(|r| r.method == http::Method::PATCH && !r.query.contains("dryRun"))
+                .count();
+            match why {
+                "conditions" => {
+                    assert_eq!(finished.headline(), Headline::NotSent, "{why}");
+                    assert!(matches!(
+                        finished.status,
+                        crate::write::Status::NotSent(crate::write::NotSent::Moved(_))
+                    ));
+                    assert_eq!(patches, 0);
+                }
+                _ => {
+                    assert_eq!(finished.headline(), Headline::Changed, "{why}");
+                    // Offered once, refused by the server, never retried.
+                    assert_eq!(patches, 1);
+                }
+            }
+            assert!(!cluster.exists(&format!("{}/web-tls-3", fake::CERTIFICATE_REQUESTS)));
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -825,5 +898,107 @@ mod tests {
             }
         }
         assert_eq!(cluster.object(fake::CERTIFICATE)["spec"], before);
+    }
+
+    /// A write lands after the page read the object; Review the new version
+    /// takes the new resourceVersion and no more, so the action is still
+    /// refused (`Moved`) and nothing is sent.
+    async fn review_cannot_rebase(
+        path: &str,
+        action: impl Fn(&Cluster) -> ActionDescription,
+        landed: serde_json::Value,
+    ) {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+        let stale = action(&cluster);
+        cluster.foreign_write(path, "controller", &landed);
+        assert!(matches!(
+            runner.preflight(stale.clone()).await,
+            Verdict::Blocked(Block::Changed {
+                what: ChangedWhat::Moved,
+                ..
+            })
+        ));
+        let rebased = runner.review_new_version(stale).await.unwrap();
+        let again = runner.preflight(rebased).await;
+        assert!(
+            matches!(
+                again,
+                Verdict::Blocked(Block::Changed {
+                    what: ChangedWhat::Moved,
+                    ..
+                })
+            ),
+            "{again:?}"
+        );
+        cluster.assert_nothing_written();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn safety_g16_renew_after_the_conditions_moved_sends_nothing_even_after_review_the_new_version()
+     {
+        // The controller sets Ready=False, or starts its own renewal.
+        for landed in [
+            json!({"status": {"conditions": [{"type": "Ready", "status": "False"}]}}),
+            json!({"status": {"conditions": [
+                {"type": "Ready", "status": "True"},
+                {"type": "Issuing", "status": "True", "reason": "Renewing"}
+            ]}}),
+        ] {
+            review_cannot_rebase(
+                fake::CERTIFICATE,
+                |cluster| renew(&subject(cluster, fake::CERTIFICATE), AT).unwrap(),
+                landed,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn safety_g15_reconcile_after_a_suspend_sends_nothing_even_after_review_the_new_version()
+    {
+        review_cannot_rebase(
+            fake::KUSTOMIZATION,
+            |cluster| flux_reconcile(&subject(cluster, fake::KUSTOMIZATION), AT).unwrap(),
+            json!({"spec": {"suspend": true}}),
+        )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn safety_g14_refresh_after_one_was_asked_for_sends_nothing_even_after_review_the_new_version()
+     {
+        review_cannot_rebase(
+            fake::APPLICATION,
+            |cluster| argo_refresh(&subject(cluster, fake::APPLICATION), Refresh::Normal).unwrap(),
+            json!({"metadata": {"annotations": {ARGO_REFRESH: "hard"}}}),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn automated_sync_is_said_in_the_sentence_and_the_preview_and_otherwise_nothing_is_synced()
+     {
+        let cluster = Cluster::new();
+        let plain = argo_refresh(&subject(&cluster, fake::APPLICATION), Refresh::Normal).unwrap();
+        assert!(plain.sentence.contains("Nothing is synced."));
+        assert_eq!(plain.preview.len(), 1);
+        cluster.foreign_write(
+            fake::APPLICATION,
+            "argocd-controller",
+            &json!({"spec": {"syncPolicy": {"automated": {"prune": true}}}}),
+        );
+        for how in [Refresh::Normal, Refresh::Hard] {
+            let action = argo_refresh(&subject(&cluster, fake::APPLICATION), how).unwrap();
+            let said = "Automated sync is on: if the refresh finds a difference, Argo CD syncs it.";
+            assert!(action.sentence.contains(said), "{}", action.sentence);
+            assert!(!action.sentence.contains("Nothing is synced"));
+            assert_eq!(action.preview[1].lines, [said]);
+        }
+        let hard = argo_refresh(&subject(&cluster, fake::APPLICATION), Refresh::Hard).unwrap();
+        assert!(
+            hard.sentence
+                .contains("throws away the manifests Argo CD generated")
+        );
     }
 }
