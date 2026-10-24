@@ -69,6 +69,8 @@ pub(crate) enum Notice {
     /// An answered turn made no read and showed the agent was not offered
     /// Freshkube's tools (`freshkube_agent::tools::not_offered`).
     ToolsNotOffered(NotOffered),
+    /// The saved model isn't offered any more; the agent's default is used.
+    ModelMissing(String),
     /// Turning access on could not be saved: it stays off.
     AccessNotSaved(String),
     /// Turning access off could not be saved. It is off now. The file may
@@ -173,6 +175,9 @@ pub(crate) struct AgentView {
     investigation: Investigation,
     trail: Trail,
     models: Models,
+    /// The model the person chose: saved in `agent.json`, and kept here for
+    /// the session when the save fails.
+    model: Option<String>,
     input: Entity<InputState>,
     elapsed: Entity<Elapsed>,
     session: Option<Running>,
@@ -274,6 +279,7 @@ impl AgentView {
             investigation: Investigation::default(),
             trail: Trail::default(),
             models: Models::default(),
+            model: None,
             input,
             elapsed: cx.new(|_| Elapsed::new()),
             session: None,
@@ -300,6 +306,7 @@ impl AgentView {
             .as_ref()
             .map(|own| follow::Follow::new(&own.entry, cx.entity().downgrade(), cx));
         view.chosen = view.host.access.opencode_path();
+        view.model = view.host.access.model();
         if view
             .own
             .as_ref()
@@ -587,6 +594,11 @@ impl AgentView {
 
     /// Chooses one of the models the agent offered.
     pub(crate) fn choose_model(&mut self, id: String, cx: &mut Context<Self>) {
+        self.model = Some(id.clone());
+        // A failed save keeps the choice for this session, quietly.
+        if let Err(error) = self.host.access.set_model(Some(id.clone())) {
+            tracing::debug!("the chosen agent model could not be saved: {error}");
+        }
         if let Some(session) = &self.session {
             let _ = session.commands.send(run::Command::SetModel(id));
         }
@@ -648,6 +660,7 @@ impl AgentView {
                 .injected_targets()
                 .unwrap_or_else(|| DockTargets::new(&own, workspace.as_ref()).shared()),
             agent,
+            model: self.model.clone(),
         };
         let (job, commands, mut receiver) = run::start(&self.runtime, launch);
         self.generation += 1;
@@ -684,7 +697,18 @@ impl AgentView {
                 }
                 self.follow_read(&read, cx);
             }
-            run::Message::Models(models) => self.models = models,
+            run::Message::Models(models) => {
+                match &models.missing {
+                    Some(id) if self.notice.is_none() => {
+                        self.notice = Some(Notice::ModelMissing(id.clone()));
+                    }
+                    None if matches!(self.notice, Some(Notice::ModelMissing(_))) => {
+                        self.notice = None;
+                    }
+                    _ => {}
+                }
+                self.models = models;
+            }
             run::Message::Listening(addr) => self.listening = Some(addr),
             run::Message::ToolsNotOffered(why) => self.tools_not_offered(why),
             run::Message::Ended(reason) => self.session_ended(reason, cx),

@@ -40,6 +40,8 @@ pub enum AgentShape {
     /// Access is on and the agent answers without asking for Freshkube's
     /// tools, so the tab says they weren't offered.
     NoTools,
+    /// Access is on and the question's turn failed with the provider's message.
+    TurnFailed,
     /// `data: shared` is set: the dock says investigations land in the
     /// person's own opencode history.
     Shared,
@@ -48,7 +50,7 @@ pub enum AgentShape {
 impl AgentShape {
     /// The names `FRESHKUBE_AGENT` takes.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const NAMES: [&'static str; 14] = [
+    pub const NAMES: [&'static str; 15] = [
         "ready",
         "not-installed",
         "unsupported",
@@ -62,6 +64,7 @@ impl AgentShape {
         "refused",
         "save-failed",
         "no-tools",
+        "turn-failed",
         "shared",
     ];
 
@@ -80,6 +83,7 @@ impl AgentShape {
             "refused" => Self::Refused,
             "save-failed" => Self::SaveFailed,
             "no-tools" => Self::NoTools,
+            "turn-failed" => Self::TurnFailed,
             "shared" => Self::Shared,
             _ => return None,
         })
@@ -96,6 +100,7 @@ impl AgentShape {
                 | Self::Refused
                 | Self::SaveFailed
                 | Self::NoTools
+                | Self::TurnFailed
         )
     }
 
@@ -110,6 +115,7 @@ impl AgentShape {
                 | Self::Following
                 | Self::Refused
                 | Self::NoTools
+                | Self::TurnFailed
         )
     }
 }

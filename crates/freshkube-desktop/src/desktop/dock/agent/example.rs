@@ -77,6 +77,7 @@ pub(crate) fn script(context: &str, other_entry: Option<&str>, shape: AgentShape
     Script {
         tour,
         offers_tools: shape != AgentShape::NoTools,
+        fail_turn: shape == AgentShape::TurnFailed,
         // A shell is always asked for last, and always refused.
         tour_shell: matches!(shape, AgentShape::Refused | AgentShape::Answered),
         tour_pause: match shape {
