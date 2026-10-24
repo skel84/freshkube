@@ -1,1 +1,0 @@
-- **Settings files:** a settings file that can't be read is kept beside the original as `<name>.corrupt-<time>.json` (the newest three) before it is replaced, and says so in a notice at launch; the JSON files now carry a version, and a file from a newer Freshkube is never overwritten by an older one. See [Settings](docs/features/settings.md#the-json-files-beside-the-preferences).
