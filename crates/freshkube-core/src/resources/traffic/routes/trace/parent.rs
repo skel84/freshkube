@@ -304,6 +304,7 @@ pub(super) fn listener_step(
     parent: &ParentRef,
     route: &RouteFacts,
     status: Option<&ParentStatus>,
+    inputs: &Inputs,
 ) -> (TraceStep, Vec<Listener>) {
     let id = StepId::Listener;
     let asks = format!(
@@ -335,15 +336,28 @@ pub(super) fn listener_step(
             return (overruled(step, accepted, route.generation), Vec::new());
         }
     };
-    // Of the listeners that fit, the one the controller accepted comes first.
+    // Of the listeners that fit, those that work come first, then those that
+    // allow the route's namespace, then the one the controller accepted, so
+    // the trace names one listener from this step to the next.
     let rank = |l: &Listener| match standing(gateway, l) {
         Standing::Good(Some(c)) if c.status == Tri::True => 0,
         Standing::Good(_) => 1,
         Standing::Silent => 2,
         Standing::Bad(_) => 3,
     };
+    let allowing = |l: &Listener| match allows(gateway, l, route, inputs).0 {
+        Allow::Yes(_) => 0,
+        Allow::Unknown(_) => 1,
+        Allow::No(_) => 2,
+    };
     let mut ordered = fit.into_iter().collect::<Vec<_>>();
-    ordered.sort_by_key(|l| rank(l));
+    ordered.sort_by_key(|l| {
+        (
+            matches!(standing(gateway, l), Standing::Bad(_)),
+            allowing(l),
+            rank(l),
+        )
+    });
     let best = ordered[0];
     let serves = describe_listener(best);
     let step = match standing(gateway, best) {

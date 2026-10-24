@@ -1140,6 +1140,9 @@ fn a_listener_that_allows_the_namespace_is_used_even_when_another_comes_first() 
     assert_eq!(namespace.verdict, StepVerdict::Pass);
     assert!(namespace.serves.contains("listener https"), "{namespace:?}");
     assert!(!namespace.serves.contains("listener http:"));
+    // One listener is named from the listener step to the namespace step.
+    let listener = step(&trace, StepId::Listener);
+    assert!(listener.serves.contains("listener https"), "{listener:?}");
 }
 
 #[test]

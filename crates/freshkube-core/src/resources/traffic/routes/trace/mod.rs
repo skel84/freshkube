@@ -508,7 +508,7 @@ fn trace_parent(
     chain.run(StepId::Gateway, || gateway_step(gateway));
     let mut fitting = Vec::new();
     chain.run(StepId::Listener, || {
-        let (step, listeners) = listener_step(gateway, parent, route, status);
+        let (step, listeners) = listener_step(gateway, parent, route, status, inputs);
         fitting = listeners;
         step
     });
