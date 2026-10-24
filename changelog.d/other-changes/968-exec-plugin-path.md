@@ -1,1 +1,0 @@
-- **Kubeconfig login programs:** a cluster whose kubeconfig runs a credential plugin (`kubelogin`, `aws`, `az` and the like) now connects when the app is started from the Dock or Finder; the plugin is looked for in `/opt/homebrew/bin` and `/usr/local/bin` too, and a missing one is named with the places it was looked for.
