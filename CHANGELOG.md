@@ -4,6 +4,13 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.21.1 (2026-10-24)
+
+### Other changes
+
+- **Agent tab: the chosen model sticks and a failed turn shows:** the model you pick is saved and applied to every new session before its first question; a saved model the agent no longer offers falls back to the agent's default and says so. OpenCode's free `opencode/*` models, which work only inside its own app, are left out of the picker and never the default. A turn that ends with no answer, or with the provider's error, shows as failed with that message. A metadata list with `"items": null` reads as empty ([#988](https://github.com/skel84/freshkube/issues/988)).
+- **Refresh, reconcile and renew:** the Resources page can ask Argo CD to refresh an Application (or hard refresh it), ask Flux to reconcile a Kustomization, HelmRelease or source, and ask cert-manager to renew a Certificate, from the row menu, a key or the toolbar. Each asks first at every level that allows writes, shows the field and value it sends, can't be undone, and says "Accepted, but not seen to take effect after 30 s" if the controller has not answered by then. A read-only cluster sends nothing. Like the 0.21.0 writes, they have been checked on example data and against a fake cluster in tests, not yet with a write to a live cluster ([#857](https://github.com/skel84/freshkube/issues/857)).
+
 ## 0.21.0 (2026-10-24)
 
 ### Other changes
