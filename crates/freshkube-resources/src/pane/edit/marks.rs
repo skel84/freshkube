@@ -1,9 +1,10 @@
 //! Which lines of the edited text differ from the text the editor started
 //! from, so the editor can mark them. Lines are compared whole, in order.
 
-/// The most cells of the comparison table; a larger edit marks every line
-/// between the text's unchanged start and end.
-const LIMIT: usize = 4_000_000;
+/// The most cells of the comparison table, which is built on every change of
+/// the text; a larger edit marks every line between the text's unchanged
+/// start and end.
+const LIMIT: usize = 250_000;
 
 /// What the edit did to the lines.
 #[derive(Debug, Default, PartialEq, Eq)]

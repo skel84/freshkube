@@ -73,13 +73,17 @@ pub enum Change {
     /// empty and preflight reads nothing: the access review and the dry run
     /// are what it checks, and a name already taken refuses the dry run.
     Create(Value),
+    /// An edit of an object's YAML (#858): sent as [`Change::Apply`] is, and
+    /// carrying the paths the person changed, so the audit records those and
+    /// not every field the body repeats to keep what `freshkube` owns.
+    Edit { body: Value, edited: Vec<String> },
 }
 
 impl Change {
     /// The RBAC verb the access review asks about.
     pub fn verb(&self) -> &'static str {
         match self {
-            Change::Apply(_) | Change::MergePatch(_) => "patch",
+            Change::Apply(_) | Change::MergePatch(_) | Change::Edit { .. } => "patch",
             Change::Delete => "delete",
             Change::Create(_) => "create",
         }
@@ -102,6 +106,7 @@ impl Change {
                 paths.sort();
                 paths
             }
+            Change::Edit { edited, .. } => edited.clone(),
             Change::Delete => vec![],
         }
     }

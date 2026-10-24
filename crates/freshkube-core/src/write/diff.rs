@@ -130,7 +130,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn safety_g11_a_secrets_diff_holds_its_metadata_and_the_key_names_it_writes_and_nothing_of_its_values()
+    fn safety_g13_a_secrets_diff_holds_its_metadata_and_the_key_names_it_writes_and_nothing_of_its_values()
      {
         let target = Target {
             group: String::new(),

@@ -216,6 +216,7 @@ impl Runner {
                     inverses.push(inverse);
                 }
                 Err(block) => {
+                    let block = super::edit_yaml::reopen(&action, block);
                     self.audit_block(&run, &action, change, &block);
                     return Verdict::Blocked(block);
                 }

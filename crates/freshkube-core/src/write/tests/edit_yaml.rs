@@ -48,7 +48,7 @@ fn labelled(session: &EditSession, label: &str) -> String {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_read_only_sends_an_edit_nothing_not_even_the_dry_run() {
+async fn safety_g13_read_only_sends_an_edit_nothing_not_even_the_dry_run() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let object = cluster.object(fake::DEPLOYMENT);
     let session = EditSession::from_object(fake::web(), &object).unwrap();
@@ -100,7 +100,9 @@ async fn an_object_that_moved_since_it_was_opened_blocks_the_edit() {
         let want = if recreated {
             ChangedWhat::Recreated
         } else {
-            ChangedWhat::Modified
+            // An edit is not rebased on a newer version: the editor is
+            // opened again.
+            ChangedWhat::Moved
         };
         match runner.preflight(action).await {
             Verdict::Blocked(Block::Changed { what, .. }) => assert_eq!(what, want),
@@ -156,7 +158,7 @@ async fn an_edit_sends_server_side_apply_as_freshkube_with_the_version_and_never
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_an_edit_never_sends_status_managed_fields_or_the_servers_own_fields() {
+async fn safety_g13_an_edit_never_sends_status_managed_fields_or_the_servers_own_fields() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let session = open(&cluster, &fake::web()).await;
     assert!(!session.text().contains("managedFields"));
@@ -258,7 +260,7 @@ async fn a_conflict_names_its_manager_and_fields_and_is_not_retried() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_an_edit_after_an_edit_keeps_what_the_first_one_set() {
+async fn safety_g13_an_edit_after_an_edit_keeps_what_the_first_one_set() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     for label in ["a: \"1\"", "b: \"2\""] {
@@ -327,7 +329,7 @@ async fn a_deleted_line_freshkube_owns_goes_and_one_another_manager_owns_stays_a
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_a_secret_is_read_as_metadata_and_no_value_is_asked_sent_or_kept() {
+async fn safety_g13_a_secret_is_read_as_metadata_and_no_value_is_asked_sent_or_kept() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let session = open(&cluster, &fake::db()).await;
     let text = session.text();
@@ -397,7 +399,7 @@ async fn the_gitops_warning_names_the_source_to_change() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g11_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoever_asked() {
+async fn safety_g13_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoever_asked() {
     for dry_run in [true, false] {
         for change in [
             Change::Apply(json!({"apiVersion": "v1", "kind": "Secret",
@@ -415,4 +417,120 @@ async fn safety_g11_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoeve
             assert!(!reply.to_string().contains("aHVudGVyMg"));
         }
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g13_a_new_version_is_never_reviewed_with_the_old_body() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let session = open(&cluster, &fake::web()).await;
+    let action = session.describe(&labelled(&session, "a: \"1\"")).unwrap();
+    // `freshkube` itself applies another field after the editor opened.
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "freshkube",
+        &json!({"metadata": {"labels": {"c": "3"}}}),
+    );
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner.preflight(action.clone()).await;
+    // No "Review the new version" is offered...
+    let Dialog::Changed { can_review, .. } = Dialog::for_verdict(&verdict, "e") else {
+        panic!("{verdict:?}");
+    };
+    assert!(!can_review);
+    // ...and asking for it anyway sends the old body nowhere.
+    assert!(matches!(
+        runner.review_new_version(action).await,
+        Err(Block::Changed {
+            what: ChangedWhat::Moved,
+            ..
+        })
+    ));
+    cluster.assert_nothing_written();
+    assert_eq!(
+        cluster.object(fake::DEPLOYMENT)["metadata"]["labels"]["c"],
+        "3"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g13_a_secret_whose_values_freshkube_owns_is_not_edited() {
+    let cluster = Cluster::new();
+    let mut object = cluster.object(fake::SECRET);
+    object["metadata"]["managedFields"] = json!([{
+        "manager": "freshkube", "operation": "Apply", "fieldsType": "FieldsV1",
+        "fieldsV1": {"f:data": {"f:password": {}}, "f:metadata": {"f:labels": {"f:a": {}}}}
+    }]);
+    let session = EditSession::from_object(fake::db(), &object).unwrap();
+    assert_eq!(
+        session
+            .describe(&labelled(&session, "owner: \"ops\""))
+            .unwrap_err(),
+        EditError::OwnsSecretValues
+    );
+    // Any other Secret is still edited.
+    let session = open(&cluster, &fake::db()).await;
+    assert!(
+        session
+            .describe(&labelled(&session, "owner: \"ops\""))
+            .is_ok()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_edit_is_seen_by_a_scalar_not_a_list_the_server_fills_in() {
+    let cluster = Cluster::new();
+    let session = open(&cluster, &fake::web()).await;
+    // `metadata.finalizers` (a list) sorts before `spec.paused` (a scalar).
+    let text = with_line(
+        &session.text(),
+        "  name:",
+        "  finalizers:\n  - example.test/hold",
+    );
+    let text = with_line(&text, "spec:", "  paused: true");
+    let action = session.describe(&text).unwrap();
+    assert_eq!(
+        action.changes[0].observe,
+        Observation::FieldEquals {
+            pointer: "/spec/paused".into(),
+            value: json!(true)
+        }
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_audit_records_what_the_person_changed_not_every_field_the_body_repeats() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let session = open(&cluster, &fake::web()).await;
+    let first = session
+        .describe(&session.text().replace("replicas: 2", "replicas: 5"))
+        .unwrap();
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    assert!(
+        run(
+            &runner,
+            ready(&runner, first).await,
+            Confirmation::Confirmed
+        )
+        .await
+        .succeeded()
+    );
+    // A second edit owns replicas through the first; its audit names only its label.
+    let session = open(&cluster, &fake::web()).await;
+    let second = session.describe(&labelled(&session, "a: \"1\"")).unwrap();
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    assert!(
+        run(
+            &runner,
+            ready(&runner, second).await,
+            Confirmation::Confirmed
+        )
+        .await
+        .succeeded()
+    );
+    let audit = std::fs::read_to_string(dir.path().join("audit/writes.jsonl")).unwrap();
+    let last = audit
+        .lines()
+        .rfind(|l| l.contains("metadata.labels"))
+        .unwrap();
+    assert!(!last.contains("spec.replicas"), "{last}");
 }

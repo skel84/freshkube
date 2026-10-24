@@ -130,7 +130,7 @@ pub async fn send(
 ) -> Result<Value, Refusal> {
     let api = api(client, target);
     let reply = match change {
-        Change::Apply(body) => {
+        Change::Apply(body) | Change::Edit { body, .. } => {
             let mut params = PatchParams::apply(FIELD_MANAGER);
             params.dry_run = dry_run;
             let body = with_version(body, target);

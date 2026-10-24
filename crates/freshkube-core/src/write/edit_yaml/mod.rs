@@ -19,6 +19,9 @@ use super::{
 
 pub use locked::{NOT_READ, locked_fields};
 
+/// The `kind` of an edit's [`ActionDescription`].
+pub const KIND: &str = "edit-yaml";
+
 /// Why an edit is not described.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditError {
@@ -31,6 +34,9 @@ pub enum EditError {
     Identity(&'static str),
     /// There is no change to send.
     NothingChanged,
+    /// `freshkube` owns some of this Secret's values, which an edit never
+    /// reads, so leaving them out of the body would delete them.
+    OwnsSecretValues,
 }
 
 impl EditError {
@@ -42,6 +48,7 @@ impl EditError {
                 format!("{field} is the object's identity and can't be changed here.")
             }
             Self::NothingChanged => "Nothing was changed.".to_owned(),
+            Self::OwnsSecretValues => "Freshkube owns some of this Secret's values, which are never read here, so an edit would delete them. Change it with kubectl.".to_owned(),
         }
     }
 }
@@ -114,6 +121,14 @@ impl EditSession {
         })
     }
 
+    /// Whether `freshkube` owns any of the Secret's values, by the server's
+    /// `fieldsV1` (`f:data`, `f:stringData`).
+    fn owns_values(&self) -> bool {
+        self.owned.as_ref().is_some_and(|owned| {
+            owned.get("f:data").is_some() || owned.get("f:stringData").is_some()
+        })
+    }
+
     pub fn target(&self) -> &Target {
         &self.target
     }
@@ -146,6 +161,9 @@ impl EditSession {
                 }));
             }
         }
+        if self.target.is_secret() && self.owns_values() {
+            return Err(EditError::OwnsSecretValues);
+        }
         let built = body::build(
             &self.document,
             &edited,
@@ -158,11 +176,16 @@ impl EditSession {
         let label = self.target.label();
         // ponytail: the first changed field stands for the edit; a value the
         // server normalises is told as not observed, never as a failure.
-        let observe = built.changed.iter().find_map(|path| {
-            let pointer: String = path
-                .iter()
-                .map(|key| format!("/{}", key.replace('~', "~0").replace('/', "~1")))
-                .collect();
+        // A scalar stands for the edit better than a list, which the server
+        // fills in with defaults; a list or map is the fallback.
+        let scalar = |path: &&Vec<String>| {
+            edited
+                .pointer(&pointer_of(path))
+                .is_some_and(|value| !value.is_object() && !value.is_array())
+        };
+        let first = built.changed.iter().find(scalar).or(built.changed.first());
+        let observe = first.into_iter().find_map(|path| {
+            let pointer = pointer_of(path);
             let value = edited.pointer(&pointer)?.clone();
             Some(Observation::FieldEquals { pointer, value })
         });
@@ -185,13 +208,16 @@ impl EditSession {
             });
         }
         Ok(ActionDescription {
-            kind: "edit-yaml".into(),
+            kind: KIND.into(),
             tier: Tier::SpecChange,
             verb: "Apply".into(),
             sentence,
             changes: vec![ObjectChange {
                 target: self.target.clone(),
-                change: Change::Apply(built.body),
+                change: Change::Edit {
+                    body: built.body,
+                    edited: built.changed.iter().map(|path| path.join(".")).collect(),
+                },
                 observe: observe.unwrap_or(Observation::Unobservable),
                 inverse: None,
                 depends: vec![],
@@ -203,6 +229,27 @@ impl EditSession {
             preview,
         })
     }
+}
+
+/// A modified object under an edit is not reviewed again: the text was made
+/// from the old version, so the person opens the editor on the new one.
+pub(super) fn reopen(action: &ActionDescription, block: super::Block) -> super::Block {
+    match block {
+        super::Block::Changed {
+            object,
+            what: super::ChangedWhat::Modified,
+        } if action.kind == KIND => super::Block::Changed {
+            object,
+            what: super::ChangedWhat::Moved,
+        },
+        other => other,
+    }
+}
+
+fn pointer_of(path: &[String]) -> String {
+    path.iter()
+        .map(|key| format!("/{}", key.replace('~', "~0").replace('/', "~1")))
+        .collect()
 }
 
 fn target_of(row: &Row) -> Target {

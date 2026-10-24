@@ -114,7 +114,7 @@ The app's binaries parse all of these knobs once into `DebugOptions` (`crates/fr
 
 ## Cluster safety
 
-- **The safety suite is the named list of what must never break** ([docs/SAFETY.md](docs/SAFETY.md)): eleven guarantees, each proved by tests named `safety_gNN_…` and run together with `cargo test --workspace --locked safety_g`, as their own CI step. A change that adds a write, exec, forward or reveal path adds its guarantee to the suite in the same change, and proves the test fails with its guard removed.
+- **The safety suite is the named list of what must never break** ([docs/SAFETY.md](docs/SAFETY.md)): thirteen guarantees, each proved by tests named `safety_gNN_…` and run together with `cargo test --workspace --locked safety_g`, as their own CI step. A change that adds a write, exec, forward or reveal path adds its guarantee to the suite in the same change, and proves the test fails with its guard removed.
 - **An agent's checks stay read-only.** A check against a real cluster lists, watches and reads; it never creates, changes or deletes resources, except an action the maintainer names, on an object the maintainer names as disposable. The app's write model below is for the people who use the app. It does not widen what an agent may do: a cluster's `open` or `guarded` level is not permission for an agent.
 - **The app's writes follow the write model** ([docs/WRITE_MODEL.md](docs/WRITE_MODEL.md)):
   - Every cluster entry has a protection level in `freshkube.yaml`: `read-only`, `protected`, `guarded` or `open`. An entry with none is `guarded`. A person sets a level; it is never inferred from a context's name.

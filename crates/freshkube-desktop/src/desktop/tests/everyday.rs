@@ -544,8 +544,9 @@ fn web_row() -> Row {
 
 impl World {
     /// The page asks to review an edit of `web` that sets `replicas: 5`,
-    /// from a session read off the fake cluster.
-    fn press_edit(&self, cx: &mut TestAppContext, access: ClusterAccess) {
+    /// from a session read off the fake cluster. Returns how many requests
+    /// the fake had seen when the page asked, the session's own read included.
+    fn press_edit(&self, cx: &mut TestAppContext, access: ClusterAccess) -> usize {
         let client = self.cluster.client.clone();
         let session = self
             .runtime
@@ -558,6 +559,7 @@ impl World {
             context: "ctx-a".into(),
             access,
         };
+        let seen = self.cluster.recorder.requests().len();
         let identity = ResourceIdentity {
             connection: "live-test".into(),
             resource: "deployments.apps".into(),
@@ -576,6 +578,7 @@ impl World {
             });
         });
         cx.run_until_parked();
+        seen
     }
 
     fn live(&self) -> ClusterAccess {
@@ -605,8 +608,10 @@ fn an_edit_asks_through_the_write_flow_and_sends_one_apply(cx: &mut TestAppConte
 #[gpui_kit::test]
 fn an_edit_on_a_read_only_cluster_makes_no_request(cx: &mut TestAppContext) {
     let w = world(cx, "stage-fra");
-    w.press_edit(cx, w.live());
+    let seen = w.press_edit(cx, w.live());
     w.drive(cx, Duration::from_secs(1));
+    // Nothing after the session's own read: no access review, GET or dry run.
+    assert_eq!(w.cluster.recorder.requests().len(), seen);
     assert!(w.cluster.writes().is_empty());
     assert!(!w.present(cx, "write-dialog") && !w.present(cx, "write-confirm"));
     assert_eq!(w.audit(), "");

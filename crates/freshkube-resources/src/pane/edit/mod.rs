@@ -63,6 +63,8 @@ struct Editing {
     marks: TextDecorationCollection,
     /// The text the editor started from.
     original: String,
+    /// The locked fields, as the strip under the toolbar lists them.
+    locked: String,
     changed: usize,
     _subscriptions: Vec<Subscription>,
 }
@@ -106,7 +108,7 @@ impl DetailPane {
             .is_some_and(|view| view.document.resource_version != *version);
         Some(EditView {
             state: editing.state.clone(),
-            locked: editing.session.locked().join(", "),
+            locked: editing.locked.clone(),
             secret: editing.session.target().is_secret(),
             changed: editing.changed,
             stale,
@@ -241,6 +243,7 @@ impl DetailPane {
         ];
         window.focus(&state.read(cx).focus_handle(cx).clone(), cx);
         Editing {
+            locked: session.locked().join(", "),
             session: Arc::new(session),
             state,
             marks,

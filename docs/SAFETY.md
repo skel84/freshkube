@@ -103,14 +103,16 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g10_confirmation_runs_only_against_the_preview_shown` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
 - `safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
 
-### 11. An edit of the YAML is a spec change that sends only what Freshkube owns plus its changes, and never reads or sends a Secret's values
+### 13. An edit of the YAML is a spec change that sends only what Freshkube owns plus its changes, and never reads or sends a Secret's values
 
-- `safety_g11_a_secret_is_read_as_metadata_and_no_value_is_asked_sent_or_kept` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
-- `safety_g11_a_secrets_diff_holds_its_metadata_and_the_key_names_it_writes_and_nothing_of_its_values` (`crates/freshkube-core/src/write/diff.rs`)
-- `safety_g11_an_edit_after_an_edit_keeps_what_the_first_one_set` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
-- `safety_g11_an_edit_never_sends_status_managed_fields_or_the_servers_own_fields` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
-- `safety_g11_read_only_sends_an_edit_nothing_not_even_the_dry_run` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
-- `safety_g11_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoever_asked` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_a_secret_is_read_as_metadata_and_no_value_is_asked_sent_or_kept` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_a_secrets_diff_holds_its_metadata_and_the_key_names_it_writes_and_nothing_of_its_values` (`crates/freshkube-core/src/write/diff.rs`)
+- `safety_g13_a_new_version_is_never_reviewed_with_the_old_body` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_a_secret_whose_values_freshkube_owns_is_not_edited` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_an_edit_after_an_edit_keeps_what_the_first_one_set` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_an_edit_never_sends_status_managed_fields_or_the_servers_own_fields` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_read_only_sends_an_edit_nothing_not_even_the_dry_run` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoever_asked` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 
 ## Known gaps
 
