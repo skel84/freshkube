@@ -115,8 +115,7 @@ pub(crate) fn copy_at(file: &Path, bytes: &[u8], now: SystemTime) -> std::io::Re
             {
                 (stamp, n) = (newest_stamp, newest_n + 1);
             }
-            let mut made = None;
-            loop {
+            let made = loop {
                 let suffix = if n == 0 {
                     String::new()
                 } else {
@@ -124,15 +123,11 @@ pub(crate) fn copy_at(file: &Path, bytes: &[u8], now: SystemTime) -> std::io::Re
                 };
                 let path = file.with_file_name(format!("{prefix}{stamp}{suffix}.json"));
                 match create(&path, bytes) {
-                    Ok(()) => {
-                        made = Some(path);
-                        break;
-                    }
+                    Ok(()) => break path,
                     Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
                     Err(error) => return Err(error),
                 }
-            }
-            let made = made.expect("the loop returns or breaks");
+            };
             copies.push(made.clone());
             // Copies are in time order, so the oldest come first.
             for old in copies.drain(..copies.len().saturating_sub(KEEP)) {

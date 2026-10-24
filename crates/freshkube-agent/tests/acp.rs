@@ -317,7 +317,7 @@ async fn a_saved_model_that_is_not_offered_falls_back_and_says_so() {
 }
 
 #[tokio::test]
-async fn opencode_models_are_never_offered_and_a_default_among_them_must_be_replaced() {
+async fn opencode_models_are_offered_marked_and_never_the_default() {
     let script = Script {
         models: vec![
             model("opencode/big-pickle"),
@@ -326,18 +326,72 @@ async fn opencode_models_are_never_offered_and_a_default_among_them_must_be_repl
         ],
         ..Script::default()
     };
-    let (session, _rx) = AcpSession::start(scripted::in_process(script), offline());
+    let (session, mut rx) = AcpSession::start(scripted::in_process(script), offline());
     let mut models = session.models();
     let models = models
         .wait_for(|m| !m.choices.is_empty())
         .await
         .unwrap()
         .clone();
-    let ids: Vec<_> = models.choices.iter().map(|m| m.id.as_str()).collect();
-    assert_eq!(ids, ["hosted/large"]);
+    let marked: Vec<_> = models
+        .choices
+        .iter()
+        .map(|m| (m.id.as_str(), m.app_only))
+        .collect();
+    assert_eq!(
+        marked,
+        [
+            ("opencode/big-pickle", true),
+            ("hosted/large", false),
+            ("OpenCode/other", true)
+        ]
+    );
     // The agent's own default is one of them: the tab must ask for a pick.
     assert!(models.must_pick);
-    assert!(session.set_model("opencode/big-pickle").is_err());
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert!(matches!(inv.outcome(), Outcome::Failed(why) if why.starts_with("Pick a model first")));
+    // A person who chooses one of OpenCode's, say one they pay for, may ask.
+    session.set_model("opencode/big-pickle").unwrap();
+    let mut watch = session.models();
+    watch
+        .wait_for(|m| !m.must_pick && m.current.as_deref() == Some("opencode/big-pickle"))
+        .await
+        .unwrap();
+    let inv = run_one(&session, &mut rx, "which model").await;
+    assert_eq!(said(&inv), "model=opencode/big-pickle");
+}
+
+#[tokio::test]
+async fn a_failed_turn_on_an_opencode_model_names_the_free_tier_and_the_picker() {
+    let script = Script {
+        models: vec![model("opencode/big-pickle"), model("hosted/large")],
+        ..Script::default()
+    };
+    let (session, mut rx) = AcpSession::start(scripted::in_process(script), offline());
+    session.models().wait_for(|m| m.must_pick).await.unwrap();
+    session.set_model("opencode/big-pickle").unwrap();
+    session
+        .models()
+        .wait_for(|m| !m.must_pick && m.current.as_deref() == Some("opencode/big-pickle"))
+        .await
+        .unwrap();
+    let inv = run_one(&session, &mut rx, "provider-error").await;
+    let Outcome::Failed(reason) = inv.outcome() else {
+        panic!("{:?}", inv.outcome());
+    };
+    assert!(
+        reason.contains("OpenCode's free models only work inside OpenCode"),
+        "{reason}"
+    );
+    assert!(reason.contains("model picker"), "{reason}");
+
+    // On another provider's model the hint is left out.
+    let (session, mut rx) = start_in_process(offline());
+    let inv = run_one(&session, &mut rx, "provider-error").await;
+    let Outcome::Failed(reason) = inv.outcome() else {
+        panic!("{:?}", inv.outcome());
+    };
+    assert!(!reason.contains("OpenCode's free models"), "{reason}");
 }
 
 #[tokio::test]
@@ -378,5 +432,6 @@ async fn an_empty_turn_and_an_error_turn_each_end_as_failed() {
         panic!("{:?}", inv.outcome());
     };
     assert!(reason.contains("free tier"), "{reason}");
-    assert!(!reason.contains("secret-token"));
+    assert!(!reason.contains("secret-token"), "{reason}");
+    assert!(!reason.contains("Bearer secret"), "{reason}");
 }

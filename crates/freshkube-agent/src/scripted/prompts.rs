@@ -51,7 +51,9 @@ pub(super) async fn run(turn: &Turn<'_>, prompt: &str) -> agent_client_protocol:
         StopReason::EndTurn
     } else if prompt.contains("provider-error") || turn.script.fail_turn {
         return Ok(Ending::Error(
-            "Failed to drain session: the free tier can only be used from within the app".into(),
+            "Failed to drain session: the free tier can only be used from within the app \
+             (sent Bearer secret-token, token secret-token)"
+                .into(),
         ));
     } else if prompt.contains("environment") {
         say(turn, &environment().to_string())?;
