@@ -258,7 +258,7 @@ async fn a_conflict_names_its_manager_and_fields_and_is_not_retried() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_edit_after_an_edit_keeps_what_the_first_one_set() {
+async fn safety_g11_an_edit_after_an_edit_keeps_what_the_first_one_set() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     for label in ["a: \"1\"", "b: \"2\""] {

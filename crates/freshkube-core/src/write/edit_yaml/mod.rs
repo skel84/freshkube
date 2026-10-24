@@ -63,17 +63,7 @@ impl EditSession {
     /// metadata only. An object that is another one now (a different UID) is
     /// not edited.
     pub async fn read(client: &kube::Client, row: &Row) -> Result<Self, String> {
-        let target = Target {
-            group: row.group.clone(),
-            version: row.version.clone(),
-            kind: row.kind.clone(),
-            resource: row.resource.clone(),
-            namespace: row.namespace.clone(),
-            name: row.name.clone(),
-            uid: row.uid.clone(),
-            resource_version: String::new(),
-            subresource: None,
-        };
+        let target = target_of(row);
         let object = get(client, &target)
             .await
             .map_err(|refusal| match refusal {
@@ -90,6 +80,12 @@ impl EditSession {
         }
         Self::from_object(target.clone(), &object)
             .ok_or_else(|| format!("{} has no identity to edit.", target.label()))
+    }
+
+    /// From the object a row names, as read (an example's, which has no
+    /// cluster to read).
+    pub fn from_row(row: &Row, object: &Value) -> Option<Self> {
+        Self::from_object(target_of(row), object)
     }
 
     /// From the object as read (`read`'s result, or an example's).
@@ -206,6 +202,20 @@ impl EditSession {
             subjects: vec![],
             preview,
         })
+    }
+}
+
+fn target_of(row: &Row) -> Target {
+    Target {
+        group: row.group.clone(),
+        version: row.version.clone(),
+        kind: row.kind.clone(),
+        resource: row.resource.clone(),
+        namespace: row.namespace.clone(),
+        name: row.name.clone(),
+        uid: row.uid.clone(),
+        resource_version: String::new(),
+        subresource: None,
     }
 }
 

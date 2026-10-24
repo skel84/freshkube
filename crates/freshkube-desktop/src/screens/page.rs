@@ -61,6 +61,8 @@ pub(crate) enum PageEvent {
     Settings(SettingsEvent),
     /// Resources asks to act on the selected workload.
     Act(crate::resources::WorkloadAct),
+    /// Resources asks to review an edit of the open object's YAML.
+    EditYaml(Box<crate::resources::EditYamlAct>),
 }
 
 impl From<ScreenEvent> for PageEvent {
@@ -149,6 +151,12 @@ impl From<OverviewEvent> for PageEvent {
 impl From<crate::resources::WorkloadAct> for PageEvent {
     fn from(act: crate::resources::WorkloadAct) -> Self {
         Self::Act(act)
+    }
+}
+
+impl From<crate::resources::EditYamlAct> for PageEvent {
+    fn from(act: crate::resources::EditYamlAct) -> Self {
+        Self::EditYaml(Box::new(act))
     }
 }
 

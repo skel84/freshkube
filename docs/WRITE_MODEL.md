@@ -4,7 +4,7 @@ How Freshkube decides what a person may change in a cluster, and what it asks fi
 
 ## What is enforced today
 
-The framework that sends changes to Kubernetes objects exists ([How a write goes](#how-a-write-goes-853)). The first actions through it are the Stage actions of the change page ([Stage actions](#stage-actions-855)) and the Resources page's Scale, Restart and Suspend or resume ([#857](https://github.com/skel84/freshkube/issues/857), `write/everyday.rs`), all reversible tier; every other page still sends nothing through it. What the level does today:
+The framework that sends changes to Kubernetes objects exists ([How a write goes](#how-a-write-goes-853)). The first actions through it are the Stage actions of the change page ([Stage actions](#stage-actions-855)) and the Resources page's Scale, Restart and Suspend or resume ([#857](https://github.com/skel84/freshkube/issues/857), `write/everyday.rs`), all reversible tier, and the detail pane's Edit YAML ([Edit YAML](#edit-yaml-858), spec-change tier); every other page still sends nothing through it. What the level does today:
 
 | Writer | `read-only` | `protected`, `guarded`, `open` |
 |--------|-------------|--------------------------------|
@@ -136,6 +136,18 @@ The change page's Stage Inspector offers four actions on today's Kargo, through 
 - **Promotion names sort by time, as Kargo's do** and stay within a name's 253 characters: the Stage's part is cut to 218, as Kargo cuts it. Kargo orders Promotions by name; ours carry a lowercase ULID (`acts::new_ulid`), so a Promotion made later never reads as older than one Kargo made before it.
 - **What aborting stops** is the running Promotion's own steps and pushed commits (`status.stepExecutionMetadata`), not the change's.
 - **Handles:** a Stage action is offered only when the Stage's UID and resourceVersion were read, so the version check can hold; otherwise its button is greyed out with why.
+
+### Edit YAML (#858)
+
+The detail pane's YAML tab has an Edit button (`freshkube-resources`' `pane/edit/`; core's `write/edit_yaml/`). Core reads the object once (`EditSession::read`, a Secret as metadata only) and fixes its UID and resourceVersion; the editor's text is that object without the cluster's own fields. ⌘S or Review changes hands the text back to core, which describes it (`EditSession::describe`) and the shell sends the description through `write_flow` like any other write, so the level, the access review, the dry run and the audit are the framework's.
+
+- **Tier:** spec change at every level: `guarded` asks, `protected` adds the typed name, `open` still asks, `read-only` makes no request at all, not even the dry run. The Edit button is disabled with the level's reason.
+- **What is sent** is server-side apply with field manager `freshkube`, never forced, guarded by the UID and resourceVersion read when Edit was pressed. The body is the fields `freshkube` already owns (read from its `managedFields` entry) **plus the changes**, with the object's identity: server-side apply removes a field its manager owned and left out of its next apply, so sending only the changes would quietly undo the last edit. A changed list is sent whole. A field only another manager owns is never in the body, so a line deleted from it removes nothing, and the review says so ("Not removed: another manager owns these"); a line the person can't change (below) is reported as "Not applied".
+- **Locked:** `status`, `metadata.managedFields`, `resourceVersion`, `uid`, `generation`, `creationTimestamp` and `selfLink` are left out of the text and never sent; the apiVersion, kind, name and namespace are the object's identity, and changing one is refused ("another object").
+- **A Secret's `data` and `stringData` read `‹not read›`:** the object is read as `PartialObjectMetadata`, so no value is fetched, and only its metadata can be edited. A reply to a Secret's write is stripped of both fields at once (`send::reply_value`), and the review's diff of a Secret holds its metadata and the key names the body writes, never a value.
+- **The review** is the dry run's diff, field paths and kinds, never values; changed lines are marked in the editor as they are typed.
+- **A conflict** names its manager and fields and is not retried (the framework's); an object that moved since Edit was pressed blocks with the framework's "changed" dialog, and the editor says so on the next change of the object it shows ("changed since you opened it"). Nothing is merged for the person.
+- **GitOps:** an object Argo CD or Flux manages says in the dialog which source to change instead, because the next sync reverts the edit (`GitOps::edit_warning`).
 
 ### The audit log
 

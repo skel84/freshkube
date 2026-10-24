@@ -5,6 +5,7 @@
 //! `write` module checks and sends it. Nothing here builds a request or
 //! decides a level's requirement.
 
+mod edit_yaml;
 mod scale;
 
 use std::collections::BTreeSet;
@@ -15,7 +16,7 @@ use super::*;
 use crate::backend::spawn_job;
 use crate::mutation::{Operations, entry_level_cell, write_audit_store};
 use crate::resources::model::ResourceIdentity;
-use crate::resources::{ClusterAccess, WorkloadAct};
+use crate::resources::{ClusterAccess, ClusterSource, WorkloadAct};
 use crate::write_flow::{self, WriteRequest};
 use freshkube_core::write::everyday::{self, Autoscaler, Everyday, Row, Subject};
 use freshkube_core::write::{ActionDescription, Runner, Who};
@@ -91,21 +92,21 @@ fn row_of(act: &WorkloadAct) -> Row {
 
 impl Pilot {
     /// The entry and context the window is on now.
-    fn everyday_where(&self, act: &WorkloadAct, cx: &App) -> Where {
+    fn everyday_where(&self, source: &ClusterSource, cx: &App) -> Where {
         Where {
             entry: self
                 .switch
                 .active_cluster()
-                .map_or_else(|| act.source.context.clone(), str::to_owned),
+                .map_or_else(|| source.context.clone(), str::to_owned),
             context: self.display_context(cx),
         }
     }
 
     /// Who is writing, and under what level, as of the press.
-    fn everyday_who(&self, act: &WorkloadAct, at: &Where, cx: &App) -> Who {
+    fn everyday_who(&self, source: &ClusterSource, at: &Where, cx: &App) -> Who {
         Who {
             entry: at.entry.clone(),
-            context: act.source.context.clone(),
+            context: source.context.clone(),
             protection: self.current_level(cx),
             actor: super::write_runner::actor(),
         }
@@ -117,8 +118,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let at = self.everyday_where(act, cx);
-        let who = self.everyday_who(act, &at, cx);
+        let at = self.everyday_where(&act.source, cx);
+        let who = self.everyday_who(&act.source, &at, cx);
         if let Some(reason) = who.protection.refusal() {
             window.push_notification(format!("{reason} Nothing was sent."), cx);
             return;
@@ -179,7 +180,7 @@ impl Pilot {
                 // The window may have moved to another cluster while the
                 // object was read: the level it works under is that
                 // cluster's now, so what was asked for is not sent.
-                if this.everyday_where(&pressed, cx) != at {
+                if this.everyday_where(&pressed.source, cx) != at {
                     release(&identity, cx);
                     window.push_notification(
                         format!(

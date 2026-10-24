@@ -1,3 +1,4 @@
+mod edit;
 mod event_rows;
 mod index;
 mod keys;

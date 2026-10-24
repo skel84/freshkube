@@ -21,6 +21,18 @@ pub struct WorkloadAct {
 
 impl EventEmitter<WorkloadAct> for ResourcesScreen {}
 
+/// A request to review an edit of the open object's YAML (#858), with the
+/// connection the pane read it from. `action` is core's description of the
+/// edit; the shell takes the window's level and hands it to the write flow.
+#[derive(Clone, Debug)]
+pub struct EditYamlAct {
+    pub source: ClusterSource,
+    pub identity: ResourceIdentity,
+    pub action: freshkube_core::write::ActionDescription,
+}
+
+impl EventEmitter<EditYamlAct> for ResourcesScreen {}
+
 /// The words the menu, the toolbar and the tooltips use.
 fn label(act: Everyday) -> &'static str {
     match act {
@@ -35,6 +47,8 @@ impl ResourcesScreen {
     /// cluster's level, so a read-only cluster shows the actions disabled
     /// with the reason instead of hiding them.
     pub fn set_write_block(&mut self, block: Option<&'static str>, cx: &mut Context<Self>) {
+        self.detail
+            .update(cx, |detail, cx| detail.set_write_block(block, cx));
         if self.write_block != block {
             self.write_block = block;
             cx.notify();

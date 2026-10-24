@@ -4,7 +4,8 @@
 //! opened and again whenever the list shows a new version of it, at most once
 //! a second, and watches the object's events while open on a visible page.
 //! Secret values stay hidden until one is revealed. Nothing here changes the
-//! cluster.
+//! cluster: an edit of the YAML (`edit/`) is described by core and handed to
+//! the shell's write flow.
 
 use freshkube_core::pluralize;
 use std::cell::Cell;
@@ -36,6 +37,7 @@ use freshkube_core::monitoring::history::Subject;
 use freshkube_monitoring::history::{HistorySource, HistoryView};
 
 mod cross_links;
+mod edit;
 mod events;
 mod external_secrets;
 mod overview;
@@ -73,6 +75,9 @@ pub enum DetailEvent {
     /// the deleted object the pane shows.
     Open(ResourceIdentity),
     Link(super::ResourceLink),
+    /// The user asked to review an edit of the YAML: core's description of
+    /// it, which the shell hands to the write flow. Nothing is sent yet.
+    EditYaml(Box<freshkube_core::write::ActionDescription>),
 }
 
 pub use freshkube_nav::Tab;
@@ -209,6 +214,10 @@ pub struct DetailPane {
     show_all_events: bool,
     show_all_annotations: bool,
     feedback: Option<SharedString>,
+    /// Why writes are not allowed now, which Edit shows as disabled.
+    write_block: Option<&'static str>,
+    /// The YAML being edited, if it is.
+    edit: Option<edit::Edit>,
     focus: FocusHandle,
     yaml_scroll: UniformListScrollHandle,
     /// The Shell menu's containers, derived when the document changes.
@@ -255,6 +264,7 @@ impl DetailPane {
             KeyBinding::new("right", NextTab, Some(TABS_CONTEXT)),
             KeyBinding::new("left", PreviousTab, Some(TABS_CONTEXT)),
         ]);
+        edit::bind(cx, CONTEXT);
         cx.bind_keys([
             KeyBinding::new("secondary-f", Find, Some("NodeDocument")),
             KeyBinding::new("secondary-a", input::SelectAll, Some("NodeDocument")),
@@ -324,6 +334,8 @@ impl DetailPane {
             show_all_events: false,
             show_all_annotations: false,
             feedback: None,
+            write_block: None,
+            edit: None,
             focus: cx.focus_handle(),
             yaml_scroll: UniformListScrollHandle::new(),
             shell_choices: Rc::default(),
@@ -421,6 +433,7 @@ impl DetailPane {
         self.show_all_events = false;
         self.show_all_annotations = false;
         self.feedback = None;
+        self.end_edit();
         self.yaml_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.show_tab(cx);
         cx.notify();
@@ -450,6 +463,7 @@ impl DetailPane {
         self.current = None;
         self.selection = None;
         self.feedback = None;
+        self.end_edit();
         self.show_history(cx);
         cx.notify();
     }

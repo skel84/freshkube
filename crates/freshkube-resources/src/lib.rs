@@ -35,8 +35,8 @@ pub use pane::{DetailEvent, DetailPane, Tab};
 #[cfg(any(test, feature = "testing"))]
 pub use screen::row_id;
 pub use screen::{
-    ClusterAccess, ClusterSource, LinkOutcomeCard, NodePodsEvent, NotServed, ResourcesScreen,
-    WorkloadAct, title,
+    ClusterAccess, ClusterSource, EditYamlAct, LinkOutcomeCard, NodePodsEvent, NotServed,
+    ResourcesScreen, WorkloadAct, title,
 };
 
 /// The drawer's width: one for the page, whatever kind it shows, kept in

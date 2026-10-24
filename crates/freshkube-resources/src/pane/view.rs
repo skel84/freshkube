@@ -674,6 +674,7 @@ impl Render for DetailPane {
             // YAML's search from Details too, the rest act on the YAML, and
             // elsewhere Copy goes on to Root, which copies selected text.
             .on_action(cx.listener(|pane, _: &Find, window, cx| pane.focus_find(window, cx)))
+            .on_action(cx.listener(|pane, _: &super::edit::ReviewEdit, _, cx| pane.review_edit(cx)))
             .when(self.tab == Tab::Yaml, |frame| {
                 frame
                     .on_action(cx.listener(|pane, _: &input::SelectAll, _, cx| pane.select_all(cx)))
