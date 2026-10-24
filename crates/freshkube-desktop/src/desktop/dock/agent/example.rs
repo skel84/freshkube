@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use freshkube_agent::scripted::{Script, TourRead};
+use freshkube_agent::scripted::{Script, ScriptModel, TourRead};
 use freshkube_resources::example;
 use serde_json::json;
 
@@ -74,7 +74,18 @@ pub(crate) fn script(context: &str, other_entry: Option<&str>, shape: AgentShape
             }),
         ));
     }
+    let models = if shape == AgentShape::OnlyOpencode {
+        ["opencode/big-pickle", "opencode/nano"]
+            .map(|id| ScriptModel {
+                id: id.into(),
+                name: id.into(),
+            })
+            .into()
+    } else {
+        Script::default().models
+    };
     Script {
+        models,
         tour,
         offers_tools: shape != AgentShape::NoTools,
         fail_turn: shape == AgentShape::TurnFailed,

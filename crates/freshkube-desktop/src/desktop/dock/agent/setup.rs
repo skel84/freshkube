@@ -9,6 +9,25 @@ use freshkube_agent::profile::{Checked, Data, Host, Profile, Version, VersionSta
 pub(crate) const INSTALL_COMMAND: &str = "curl -fsSL https://opencode.ai/install | bash";
 /// The command that signs in to a model provider, outside the app.
 pub(crate) const SIGN_IN_COMMAND: &str = "opencode auth login";
+
+/// The command that signs in to a model provider in the directories the
+/// agent uses. In Freshkube's own data (the default) opencode keeps its
+/// logins there, so the command points opencode at them, as the profile
+/// does for a session; `--standalone` keeps it off the shared service. With
+/// `data: shared` the person's own directories are the ones in use, and the
+/// plain command is the right one.
+pub(crate) fn sign_in_command(data: &Data) -> String {
+    let Some(environment) = data.own_environment() else {
+        return SIGN_IN_COMMAND.to_owned();
+    };
+    let platform = freshkube_ui::platform::Platform::current();
+    let set = environment
+        .iter()
+        .map(|(name, dir)| platform.set_variable(name, &dir.to_string_lossy()))
+        .collect::<String>();
+    format!("{set}{SIGN_IN_COMMAND} --standalone")
+}
+
 /// Where #945 is tracked.
 pub(crate) const ISSUE_945: &str = "https://github.com/skel84/freshkube/issues/945";
 /// The read-only identity how-to.
@@ -118,3 +137,34 @@ pub(crate) fn example(shape: crate::agent_shape::AgentShape) -> Setup {
 
 /// The upgrade command shown beside an unsupported version.
 pub(crate) const UPGRADE_COMMAND: &str = "opencode upgrade";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_sign_in_command_points_opencode_at_freshkubes_own_directories() {
+        if freshkube_ui::platform::Platform::current() == freshkube_ui::platform::Platform::Windows
+        {
+            return;
+        }
+        let own = Data::Own(PathBuf::from("/home/ada/Freshkube agent/opencode"));
+        assert_eq!(
+            sign_in_command(&own),
+            "XDG_DATA_HOME='/home/ada/Freshkube agent/opencode/data' \
+             XDG_STATE_HOME='/home/ada/Freshkube agent/opencode/state' \
+             XDG_CACHE_HOME='/home/ada/Freshkube agent/opencode/cache' \
+             opencode auth login --standalone"
+        );
+        let quoted = sign_in_command(&Data::Own(PathBuf::from("/tmp/it's")));
+        assert!(
+            quoted.contains("XDG_DATA_HOME='/tmp/it'\\''s/data' "),
+            "{quoted}"
+        );
+    }
+
+    #[test]
+    fn with_shared_data_the_plain_command_is_the_one() {
+        assert_eq!(sign_in_command(&Data::Shared), "opencode auth login");
+    }
+}

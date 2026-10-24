@@ -118,6 +118,14 @@ pub fn is_app_only(id: &str) -> bool {
         .is_some_and(|provider| provider.eq_ignore_ascii_case("opencode"))
 }
 
+/// Whether an error is OpenCode refusing a free model outside its own app
+/// ("the free tier can only be used from within the app"). The one place that
+/// reads the text; a message that doesn't match is shown as it is.
+fn is_free_tier_refusal(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("free tier") && text.contains("within the app")
+}
+
 /// An error's text without the session's token or an `Authorization` value.
 fn redacted(text: &str, token: &str) -> String {
     let mut out = if token.is_empty() {
@@ -148,9 +156,8 @@ fn connection_failure(text: &str, token: &str) -> Failure {
 /// The agent's own default is an OpenCode model, and none is chosen.
 const PICK_A_MODEL: &str = "Pick a model first. The agent's default model is one of OpenCode's, and its free models work only inside OpenCode.";
 
-/// Added to a failure of a turn that ran on an OpenCode model: a free one is
-/// refused outside OpenCode's app, and the error says so in the provider's
-/// words, if at all.
+/// Added to a failed turn whose error is OpenCode's refusal of a free model
+/// outside its own app.
 const APP_ONLY_HINT: &str = "OpenCode's free models only work inside OpenCode. Pick another model in the model picker, or one of OpenCode's you pay for.";
 
 /// What a turn says when the agent gave neither an answer nor a message.
@@ -614,7 +621,7 @@ impl Run {
             }
             Err(error) => {
                 let why = redacted(&error.to_string(), &self.endpoint.token.0);
-                let hint = if self.on_app_only_model() {
+                let hint = if is_free_tier_refusal(&why) {
                     format!(" {APP_ONLY_HINT}")
                 } else {
                     String::new()
@@ -627,15 +634,6 @@ impl Run {
                 false
             }
         }
-    }
-
-    /// The model in use is one of OpenCode's.
-    fn on_app_only_model(&self) -> bool {
-        self.models
-            .borrow()
-            .current
-            .as_deref()
-            .is_some_and(is_app_only)
     }
 
     /// Ends the turn once, whoever gets there first.
@@ -659,6 +657,18 @@ mod tests {
         assert!(!failure.starting);
         assert!(!failure.why.contains("secret-token"), "{}", failure.why);
         assert!(!failure.why.contains("Bearer secret"), "{}", failure.why);
+    }
+
+    #[test]
+    fn the_free_tier_refusal_is_told_by_its_text_and_nothing_else_is() {
+        assert!(is_free_tier_refusal(
+            "Failed to drain session: the free tier can only be used from within the app"
+        ));
+        assert!(is_free_tier_refusal(
+            "The Free Tier can only be used from within the App."
+        ));
+        assert!(!is_free_tier_refusal("rate limit reached on the free tier"));
+        assert!(!is_free_tier_refusal("model not found"));
     }
 
     #[test]

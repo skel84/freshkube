@@ -221,6 +221,21 @@ impl Platform {
     }
 }
 
+impl Platform {
+    /// What goes before a command so that it runs with the environment
+    /// variable `name` set to `value`, as a person types it in the platform's
+    /// shell: `NAME='value' ` in a POSIX shell and `$env:NAME='value'; ` in
+    /// PowerShell. The value is single-quoted, whatever it holds.
+    pub fn set_variable(self, name: &str, value: &str) -> String {
+        match self {
+            Platform::MacOs | Platform::Linux => {
+                format!("{name}='{}' ", value.replace('\'', "'\\''"))
+            }
+            Platform::Windows => format!("$env:{name}='{}'; ", value.replace('\'', "''")),
+        }
+    }
+}
+
 /// Where the app's menus go ([`Platform::app_menu`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AppMenu {
@@ -518,6 +533,17 @@ fn traffic_light_position(rem: f32) -> Point<Pixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_variable_is_set_in_each_shells_own_way_and_quoted() {
+        for posix in [Platform::MacOs, Platform::Linux] {
+            assert_eq!(posix.set_variable("A", "/a b/it's"), "A='/a b/it'\\''s' ");
+        }
+        assert_eq!(
+            Platform::Windows.set_variable("A", "C:\\a b\\it's"),
+            "$env:A='C:\\a b\\it''s'; "
+        );
+    }
 
     #[test]
     fn the_copy_link_tooltip_names_each_platforms_keys() {

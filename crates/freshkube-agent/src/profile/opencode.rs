@@ -364,6 +364,18 @@ impl Data {
         }
     }
 
+    /// The three variables that point opencode at Freshkube's own
+    /// directories, for a command the person runs themselves to sign in
+    /// there. `None` for `Shared`, whose directories are the person's own.
+    pub fn own_environment(&self) -> Option<[(&'static str, PathBuf); 3]> {
+        let Self::Own(dir) = self else { return None };
+        Some([
+            ("XDG_DATA_HOME", dir.join("data")),
+            ("XDG_STATE_HOME", dir.join("state")),
+            ("XDG_CACHE_HOME", dir.join("cache")),
+        ])
+    }
+
     /// Refuses a start when saved organisation config sources are seen in
     /// the data directory opencode will use, or when that cannot be told:
     /// they load after our configuration and their rules win. Both modes are

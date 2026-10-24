@@ -104,8 +104,12 @@ impl Args {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Entry {
-    /// A prompt the person sent.
-    Asked(String),
+    /// A prompt the person sent; `failed` once its turn ended as failed, so
+    /// two failed turns read as two.
+    Asked {
+        text: String,
+        failed: bool,
+    },
     Thought(Text),
     Said(Text),
     Note(String),
@@ -192,7 +196,10 @@ impl Investigation {
                 self.outcome = None;
                 let text = clip(&text, MAX_CHUNK_BYTES).to_string();
                 self.text_bytes += text.len();
-                self.entries.push(Entry::Asked(text));
+                self.entries.push(Entry::Asked {
+                    text,
+                    failed: false,
+                });
             }
             Event::Thought(chunk) => self.append(chunk, Kind::Thought),
             Event::Said(chunk) => self.append(chunk, Kind::Said),
@@ -220,6 +227,15 @@ impl Investigation {
             Event::Refused { .. } => {}
             Event::Ended(outcome) => {
                 if self.outcome.is_none() {
+                    if matches!(outcome, Outcome::Failed(_))
+                        && let Some(Entry::Asked { failed, .. }) = self
+                            .entries
+                            .iter_mut()
+                            .rev()
+                            .find(|entry| matches!(entry, Entry::Asked { .. }))
+                    {
+                        *failed = true;
+                    }
                     self.outcome = Some(outcome);
                 }
             }

@@ -27,6 +27,22 @@ pub(super) const LOADS_YOUR_CONFIG: &str = "A live check of opencode 2.1.3, the 
 /// The read-only identity suggestion.
 pub(super) const READ_ONLY: &str = "The agent reads with your own access. Prefer a read-only identity: an entry whose context is bound to the built-in view ClusterRole, with agent access on for that entry alone. Nothing detects or requires it.";
 
+/// Said when the agent offers only OpenCode's own models.
+pub(super) const ONLY_OPENCODE: &str = "Only OpenCode's own models are offered, and its free ones work only inside the OpenCode app. They are marked in the picker, and none is chosen for you.";
+/// What to do about it.
+pub(super) const ONLY_OPENCODE_STEPS: &str = "Sign in to a model provider outside the app with this command, then start a new session to see its models.";
+
+/// A model as the picker and the toolbar name it.
+fn choice_name(choice: &freshkube_agent::acp::ModelChoice) -> String {
+    if choice.app_only {
+        format!("{} · OpenCode", choice.name)
+    } else if choice.local {
+        format!("{} · local", choice.name)
+    } else {
+        choice.name.clone()
+    }
+}
+
 impl AgentView {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
@@ -37,8 +53,7 @@ impl AgentView {
             .iter()
             .find(|choice| Some(&choice.id) == models.current.as_ref());
         let label = match current {
-            Some(choice) if choice.local => format!("{} · local", choice.name),
-            Some(choice) => choice.name.clone(),
+            Some(choice) => choice_name(choice),
             None if models.must_pick => "Pick a model".to_owned(),
             None => "Model".to_owned(),
         };
@@ -52,17 +67,13 @@ impl AgentView {
             .tooltip(if models.choices.is_empty() {
                 "The agent offers its models once the session starts"
             } else {
-                "The model the agent uses; local ones stay on this machine"
+                "The model the agent uses; local ones stay on this machine. OpenCode's free models only work inside the OpenCode app. Its paid ones work here."
             })
             .dropdown_menu(move |mut menu, _, _| {
                 for choice in models.choices.clone() {
                     let view = view.clone();
                     let id = choice.id.clone();
-                    let name = if choice.local {
-                        format!("{} · local", choice.name)
-                    } else {
-                        choice.name.clone()
-                    };
+                    let name = choice_name(&choice);
                     menu = menu.item(
                         PopupMenuItem::new(name)
                             .checked(models.current.as_deref() == Some(choice.id.as_str()))
@@ -143,12 +154,7 @@ impl AgentView {
             )
     }
 
-    fn command(
-        &self,
-        id: &'static str,
-        text: &'static str,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn command(&self, id: &'static str, text: String, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         h_flex()
             .id(id)
@@ -162,7 +168,7 @@ impl AgentView {
                     .rounded(px(3.))
                     .bg(p.surface_2)
                     .text_color(p.ink)
-                    .child(ui::mono(text)),
+                    .child(ui::mono(text.clone())),
             )
             .child(
                 Button::new(SharedString::from(format!("{id}-copy")))
@@ -171,7 +177,7 @@ impl AgentView {
                     .icon(IconName::Copy)
                     .tooltip("Copy the command")
                     .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()))
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
                     }),
             )
     }
@@ -226,7 +232,11 @@ impl AgentView {
                         .text_color(p.muted)
                         .child("Install it yourself; Freshkube never installs or updates it."),
                 )
-                .child(self.command("agent-install-command", setup::INSTALL_COMMAND, cx))
+                .child(self.command(
+                    "agent-install-command",
+                    setup::INSTALL_COMMAND.to_owned(),
+                    cx,
+                ))
                 .child(
                     h_flex()
                         .gap(dp(8.))
@@ -249,7 +259,11 @@ impl AgentView {
                 )
             })
             .when(matches!(self.setup, Setup::Unsupported { .. }), |this| {
-                this.child(self.command("agent-upgrade-command", setup::UPGRADE_COMMAND, cx))
+                this.child(self.command(
+                    "agent-upgrade-command",
+                    setup::UPGRADE_COMMAND.to_owned(),
+                    cx,
+                ))
             })
             .when(matches!(self.setup, Setup::SignedOut { .. }), |this| {
                 this.child(
@@ -259,7 +273,7 @@ impl AgentView {
                 )
                 .child(self.command(
                     "agent-sign-in-command",
-                    setup::SIGN_IN_COMMAND,
+                    setup::sign_in_command(&self.data()),
                     cx,
                 ))
             })
@@ -328,7 +342,7 @@ impl AgentView {
             Option<String>,
             Option<AnyElement>,
         ) = match notice {
-            Notice::Failed(reason) => (Tone::Crit, "The agent stopped", reason.clone(), None, None),
+            Notice::Failed(reason) => (Tone::Crit, "The question failed", reason.clone(), None, None),
             Notice::ModelMissing(id) => (
                 Tone::Warn,
                 "The saved model isn't offered any more",
@@ -399,6 +413,38 @@ impl AgentView {
                 .test_support()
                 .aria_label(SharedString::from(label))
                 .into_any_element(),
+        )
+    }
+
+    /// Shown when every model the agent offers is one of OpenCode's own: no
+    /// other provider is signed in, and the sign-in command to fix that.
+    fn render_only_opencode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let models = &self.models;
+        if models.choices.is_empty() || !models.choices.iter().all(|choice| choice.app_only) {
+            return None;
+        }
+        let p = palette(cx);
+        let body = format!("{ONLY_OPENCODE} {ONLY_OPENCODE_STEPS}");
+        Some(
+            ui::banner(
+                Tone::Warn,
+                Some("No other model provider is signed in".into()),
+                v_flex()
+                    .gap(dp(6.))
+                    .child(div().child(ONLY_OPENCODE))
+                    .child(div().text_color(p.muted).child(ONLY_OPENCODE_STEPS))
+                    .child(self.command(
+                        "agent-only-opencode-command",
+                        setup::sign_in_command(&self.data()),
+                        cx,
+                    )),
+                None,
+                cx,
+            )
+            .id("agent-only-opencode")
+            .test_support()
+            .aria_label(SharedString::from(body))
+            .into_any_element(),
         )
     }
 
@@ -518,10 +564,28 @@ impl AgentView {
             .enumerate()
             .skip(hidden)
             .map(|(ix, entry)| match entry {
-                Entry::Asked(_) => div()
+                Entry::Asked { failed, .. } => h_flex()
                     .id(("agent-asked", ix))
+                    .test_support()
+                    .aria_label(if *failed {
+                        SharedString::from(format!("{} (failed)", self.texts[ix]))
+                    } else {
+                        self.texts[ix].clone()
+                    })
+                    .gap(dp(8.))
+                    .items_start()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(self.texts[ix].clone())
+                    .child(div().min_w_0().child(self.texts[ix].clone()))
+                    .when(*failed, |this| {
+                        this.child(
+                            div()
+                                .id(("agent-asked-failed", ix))
+                                .test_support()
+                                .aria_label("Failed")
+                                .flex_none()
+                                .child(ui::tag(Tone::Crit, None, "Failed", cx)),
+                        )
+                    })
                     .into_any_element(),
                 Entry::Thought(_) => div()
                     .id(("agent-thought", ix))
@@ -737,6 +801,7 @@ impl Render for AgentView {
                     // what the person has to answer.
                     .children(self.render_egress(cx))
                     .children(self.render_notice(cx))
+                    .children(self.render_only_opencode(cx))
                     .when(
                         (!started || !self.setup.can_start()) && self.pending.is_none(),
                         |this| this.child(self.render_setup(cx)),

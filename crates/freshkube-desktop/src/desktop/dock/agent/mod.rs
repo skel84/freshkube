@@ -722,7 +722,7 @@ impl AgentView {
         let entries = self.investigation.entries();
         let Some(start) = entries
             .iter()
-            .rposition(|entry| matches!(entry, Entry::Asked(_)))
+            .rposition(|entry| matches!(entry, Entry::Asked { .. }))
         else {
             return;
         };
@@ -813,7 +813,7 @@ impl AgentView {
         let entries = self.investigation.entries();
         let shown = |entry: &Entry| -> SharedString {
             match entry {
-                Entry::Asked(text) | Entry::Note(text) => text.clone().into(),
+                Entry::Asked { text, .. } | Entry::Note(text) => text.clone().into(),
                 Entry::Thought(text) | Entry::Said(text) => text.text.clone().into(),
                 Entry::Step(_) => SharedString::default(),
             }
@@ -859,6 +859,19 @@ impl AgentView {
             .iter()
             .filter_map(|entry| match entry {
                 Entry::Step(step) => Some((step.id.clone(), step.state)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Each question asked, and whether its turn failed.
+    #[cfg(test)]
+    pub(crate) fn questions(&self) -> Vec<(String, bool)> {
+        self.investigation
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Asked { text, failed } => Some((text.clone(), *failed)),
                 _ => None,
             })
             .collect()

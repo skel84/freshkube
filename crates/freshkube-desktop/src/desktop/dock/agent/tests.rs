@@ -1084,3 +1084,61 @@ fn a_read_that_broke_reads_couldnt_read_and_not_refused(cx: &mut TestAppContext)
         assert!(label.ends_with("Couldn't read"), "{label}");
     }
 }
+
+#[gpui_kit::test]
+fn only_opencode_models_are_marked_and_the_tab_says_no_other_provider_is_signed_in(
+    cx: &mut TestAppContext,
+) {
+    let tab = open(cx, "only-opencode", 1280., 880.);
+    tab.wait("the models are listed", cx, |view| {
+        !view.models().choices.is_empty()
+    });
+    let models = cx.update(|cx| tab.view.read(cx).models());
+    assert!(models.choices.iter().all(|choice| choice.app_only));
+    assert!(models.must_pick);
+    let notice = tab
+        .label("agent-only-opencode", cx)
+        .expect("the notice shows");
+    assert!(
+        notice.contains("Only OpenCode's own models are offered"),
+        "{notice}"
+    );
+    assert!(!notice.contains("once the session starts"), "{notice}");
+    assert!(tab.present("agent-only-opencode-command", cx));
+
+    // The example question was asked at once: it fails, naming the picker's
+    // need, and the question itself is marked.
+    tab.wait("the question fails", cx, |view| {
+        matches!(view.outcome(), Outcome::Failed(_))
+    });
+    let Outcome::Failed(reason) = cx.update(|cx| tab.view.read(cx).outcome()) else {
+        unreachable!()
+    };
+    assert!(reason.starts_with("Pick a model first"), "{reason}");
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).questions()),
+        [(super::example::QUESTION.to_owned(), true)]
+    );
+    assert!(
+        tab.label("agent-notice", cx)
+            .unwrap()
+            .contains("The question failed")
+    );
+}
+
+#[gpui_kit::test]
+fn a_second_failed_turn_marks_its_own_question(cx: &mut TestAppContext) {
+    let tab = open(cx, "turn-failed", 1280., 880.);
+    tab.wait("the first question fails", cx, |view| {
+        view.questions().iter().all(|(_, failed)| *failed) && !view.questions().is_empty()
+    });
+    tab.ask("and again?", cx);
+    tab.wait("the second question fails", cx, |view| {
+        let questions = view.questions();
+        questions.len() == 2 && questions.iter().all(|(_, failed)| *failed)
+    });
+    let questions = cx.update(|cx| tab.view.read(cx).questions());
+    assert_eq!(questions[1].0, "and again?");
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.starts_with("The question failed"), "{notice}");
+}

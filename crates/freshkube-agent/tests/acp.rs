@@ -98,7 +98,7 @@ async fn several_prompts_run_in_one_session_one_after_another() {
     let prompts = inv
         .entries()
         .iter()
-        .filter(|e| matches!(e, Entry::Asked(_)))
+        .filter(|e| matches!(e, Entry::Asked { .. }))
         .count();
     assert_eq!(prompts, 2);
     assert_eq!(said(&inv), "model=hosted/largemodel=hosted/large");
@@ -155,7 +155,7 @@ async fn a_cancel_drops_the_prompts_waiting_and_a_new_one_still_runs() {
         .entries()
         .iter()
         .filter_map(|e| match e {
-            Entry::Asked(text) => Some(text.as_str()),
+            Entry::Asked { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect();
@@ -362,7 +362,7 @@ async fn opencode_models_are_offered_marked_and_never_the_default() {
 }
 
 #[tokio::test]
-async fn a_failed_turn_on_an_opencode_model_names_the_free_tier_and_the_picker() {
+async fn a_free_tier_refusal_names_opencode_and_the_picker() {
     let script = Script {
         models: vec![model("opencode/big-pickle"), model("hosted/large")],
         ..Script::default()
@@ -384,14 +384,6 @@ async fn a_failed_turn_on_an_opencode_model_names_the_free_tier_and_the_picker()
         "{reason}"
     );
     assert!(reason.contains("model picker"), "{reason}");
-
-    // On another provider's model the hint is left out.
-    let (session, mut rx) = start_in_process(offline());
-    let inv = run_one(&session, &mut rx, "provider-error").await;
-    let Outcome::Failed(reason) = inv.outcome() else {
-        panic!("{:?}", inv.outcome());
-    };
-    assert!(!reason.contains("OpenCode's free models"), "{reason}");
 }
 
 #[tokio::test]
