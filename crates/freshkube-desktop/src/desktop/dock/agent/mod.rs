@@ -175,6 +175,9 @@ pub(crate) struct AgentView {
     investigation: Investigation,
     trail: Trail,
     models: Models,
+    /// What the picker shows, derived when the models arrive, not drawn.
+    picker_tooltip: &'static str,
+    picker_current: Option<String>,
     /// The model the person chose: saved in `agent.json`, and kept here for
     /// the session when the save fails.
     model: Option<String>,
@@ -279,6 +282,8 @@ impl AgentView {
             investigation: Investigation::default(),
             trail: Trail::default(),
             models: Models::default(),
+            picker_tooltip: view::picker_tooltip(&Models::default()),
+            picker_current: None,
             model: None,
             input,
             elapsed: cx.new(|_| Elapsed::new()),
@@ -714,6 +719,8 @@ impl AgentView {
                 {
                     self.prepare_sign_in();
                 }
+                self.picker_tooltip = view::picker_tooltip(&models);
+                self.picker_current = view::picker_current(&models);
                 self.models = models;
             }
             run::Message::Listening(addr) => self.listening = Some(addr),
@@ -899,6 +906,11 @@ impl AgentView {
                 _ => None,
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn picker_tooltip(&self) -> &'static str {
+        self.picker_tooltip
     }
 
     /// Each question asked, and whether its turn failed.

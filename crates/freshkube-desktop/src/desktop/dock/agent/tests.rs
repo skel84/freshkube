@@ -1258,3 +1258,52 @@ fn a_directory_that_cannot_be_made_private_shows_an_error_and_no_command(cx: &mu
     let error = tab.label("agent-sign-in-error", cx).unwrap();
     assert!(error.contains("couldn't make its opencode data directory private"));
 }
+
+#[gpui_kit::test]
+fn the_picker_asks_for_a_pick_and_checks_nothing_while_one_is_needed(cx: &mut TestAppContext) {
+    let tab = open(cx, "only-opencode", 1280., 880.);
+    tab.wait("the models are listed", cx, |view| {
+        !view.models().choices.is_empty()
+    });
+    assert!(cx.update(|cx| tab.view.read(cx).models().must_pick));
+    assert_eq!(
+        tab.label("agent-model", cx).as_deref(),
+        Some("Pick a model")
+    );
+    assert!(cx.update(|cx| tab.view.read(cx).picker_current.is_none()));
+
+    // A pick is checked and named, even one of OpenCode's.
+    tab.view
+        .update(cx, |view, cx| view.choose_model("opencode/nano".into(), cx));
+    tab.wait("the choice lands", cx, |view| !view.models().must_pick);
+    assert_eq!(
+        tab.label("agent-model", cx).as_deref(),
+        Some("opencode/nano · OpenCode")
+    );
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).picker_current.clone())
+            .as_deref(),
+        Some("opencode/nano")
+    );
+}
+
+#[gpui_kit::test]
+fn the_picker_tooltip_is_the_current_text_as_soon_as_models_are_offered(cx: &mut TestAppContext) {
+    // Nothing is asked yet, so no session has listed its models.
+    let tab = open(cx, "ready", 1280., 880.);
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).picker_tooltip()),
+        "The agent offers its models once the session starts"
+    );
+    tab.ask("model", cx);
+    tab.click("agent-turn-on", cx);
+    tab.wait("the models are listed", cx, |view| {
+        !view.models().choices.is_empty()
+    });
+    let tooltip = cx.update(|cx| tab.view.read(cx).picker_tooltip());
+    assert!(!tooltip.contains("once the session starts"), "{tooltip}");
+    assert!(
+        tooltip.contains("OpenCode's free models only work inside the OpenCode app"),
+        "{tooltip}"
+    );
+}

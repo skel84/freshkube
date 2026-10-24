@@ -45,15 +45,30 @@ fn choice_name(choice: &freshkube_agent::acp::ModelChoice) -> String {
     }
 }
 
+/// What the picker's tooltip says, for the models as they stand.
+pub(super) fn picker_tooltip(models: &freshkube_agent::acp::Models) -> &'static str {
+    if models.choices.is_empty() {
+        "The agent offers its models once the session starts"
+    } else {
+        "The model the agent uses; local ones stay on this machine. OpenCode's free models only work inside the OpenCode app. Its paid ones work here."
+    }
+}
+
+/// The model the picker shows as chosen: none while the person has to pick.
+pub(super) fn picker_current(models: &freshkube_agent::acp::Models) -> Option<String> {
+    models.current.clone().filter(|_| !models.must_pick)
+}
+
 impl AgentView {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let on = self.access_on();
         let models = self.models.clone();
+        let chosen = self.picker_current.clone();
         let current = models
             .choices
             .iter()
-            .find(|choice| Some(&choice.id) == models.current.as_ref());
+            .find(|choice| Some(&choice.id) == chosen.as_ref());
         let label = match current {
             Some(choice) => choice_name(choice),
             None if models.must_pick => "Pick a model".to_owned(),
@@ -66,11 +81,7 @@ impl AgentView {
             .label(label)
             .dropdown_caret(true)
             .disabled(models.choices.is_empty())
-            .tooltip(if models.choices.is_empty() {
-                "The agent offers its models once the session starts"
-            } else {
-                "The model the agent uses; local ones stay on this machine. OpenCode's free models only work inside the OpenCode app. Its paid ones work here."
-            })
+            .tooltip(self.picker_tooltip)
             .dropdown_menu(move |mut menu, _, _| {
                 for choice in models.choices.clone() {
                     let view = view.clone();
@@ -78,7 +89,7 @@ impl AgentView {
                     let name = choice_name(&choice);
                     menu = menu.item(
                         PopupMenuItem::new(name)
-                            .checked(models.current.as_deref() == Some(choice.id.as_str()))
+                            .checked(chosen.as_deref() == Some(choice.id.as_str()))
                             .on_click(move |_, _, cx| {
                                 let id = id.clone();
                                 _ = view.update(cx, |this, cx| this.choose_model(id, cx));
