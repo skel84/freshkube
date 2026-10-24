@@ -318,12 +318,14 @@ async fn a_saved_model_that_is_not_offered_falls_back_and_says_so() {
 
 #[tokio::test]
 async fn opencode_models_are_never_offered_and_a_default_among_them_must_be_replaced() {
-    let mut script = Script::default();
-    script.models = vec![
-        model("opencode/big-pickle"),
-        model("hosted/large"),
-        model("OpenCode/other"),
-    ];
+    let script = Script {
+        models: vec![
+            model("opencode/big-pickle"),
+            model("hosted/large"),
+            model("OpenCode/other"),
+        ],
+        ..Script::default()
+    };
     let (session, _rx) = AcpSession::start(scripted::in_process(script), offline());
     let mut models = session.models();
     let models = models
@@ -340,8 +342,10 @@ async fn opencode_models_are_never_offered_and_a_default_among_them_must_be_repl
 
 #[tokio::test]
 async fn a_saved_app_only_default_is_replaced_by_the_saved_model() {
-    let mut script = Script::default();
-    script.models = vec![model("opencode/big-pickle"), model("hosted/large")];
+    let script = Script {
+        models: vec![model("opencode/big-pickle"), model("hosted/large")],
+        ..Script::default()
+    };
     let (session, mut rx) = AcpSession::start_with(
         scripted::in_process(script),
         offline(),
