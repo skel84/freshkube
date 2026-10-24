@@ -4,6 +4,7 @@ use super::*;
 use crate::fixtures::FixtureReader;
 use freshkube_core::resources::FailureKind;
 use freshkube_core::workspace::{Role, Workspace};
+use kube::config::Config;
 
 /// A cluster that serves every part's kind, and has one of each.
 fn serving() -> FixtureReader {

@@ -189,6 +189,10 @@ pub(crate) struct AgentView {
     /// Presses Stop as soon as a step starts (the `stopped` shape).
     stop_at_first_step: bool,
     shared_shape: bool,
+    /// The sign-in command the Signed out card shows, made once the data
+    /// directories are ready, or the error line saying why they could not be
+    /// made.
+    sign_in: Option<Result<String, String>>,
     /// The endpoint's port while the session runs.
     #[cfg_attr(not(test), allow(dead_code))]
     listening: Option<std::net::SocketAddr>,
@@ -285,6 +289,7 @@ impl AgentView {
             notice: None,
             stop_at_first_step: false,
             shared_shape: shape == AgentShape::Shared,
+            sign_in: None,
             listening: None,
             focus: cx.focus_handle(),
             cite_carry: String::new(),
@@ -311,6 +316,9 @@ impl AgentView {
             view.notice = Some(Notice::HeldOff);
         }
         if example {
+            if matches!(view.setup, setup::Setup::SignedOut { .. }) {
+                view.prepare_sign_in();
+            }
             view.apply_shape(cx);
         } else {
             view.check_again(cx);
@@ -417,6 +425,27 @@ impl AgentView {
         } else {
             freshkube_agent::profile::Data::Own(self.host.own_data())
         }
+    }
+
+    /// Makes the data directories private, then the sign-in command for the
+    /// data mode the session runs in, built from the same directories its
+    /// environment gets. A failure to prepare is kept instead, as the
+    /// card's error line, and no command is shown.
+    fn prepare_sign_in(&mut self) {
+        let data = self.data();
+        let host = freshkube_agent::profile::Host::current();
+        self.sign_in = Some(
+            data.prepare(&host)
+                .map(|()| data.sign_in_command(&host))
+                .map_err(|error| {
+                    format!("Freshkube couldn't make its opencode data directory private: {error}")
+                }),
+        );
+    }
+
+    /// The sign-in command, or why there is none; None until signed out.
+    pub(crate) fn sign_in(&self) -> Option<&Result<String, String>> {
+        self.sign_in.as_ref()
     }
 
     /// Whether opencode runs on the person's own data (`data: shared` in
@@ -678,6 +707,13 @@ impl AgentView {
                     }
                     _ => {}
                 }
+                // Only OpenCode's own models: show how to sign in elsewhere.
+                if !models.choices.is_empty()
+                    && models.choices.iter().all(|choice| choice.app_only)
+                    && self.sign_in.is_none()
+                {
+                    self.prepare_sign_in();
+                }
                 self.models = models;
             }
             run::Message::Listening(addr) => self.listening = Some(addr),
@@ -773,6 +809,7 @@ impl AgentView {
                             self.setup = setup::Setup::SignedOut {
                                 version: version.clone(),
                             };
+                            self.prepare_sign_in();
                         }
                     } else {
                         self.notice = Some(Notice::Failed(reason.clone()));

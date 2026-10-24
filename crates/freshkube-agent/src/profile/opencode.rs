@@ -364,16 +364,29 @@ impl Data {
         }
     }
 
-    /// The three variables that point opencode at Freshkube's own
-    /// directories, for a command the person runs themselves to sign in
-    /// there. `None` for `Shared`, whose directories are the person's own.
-    pub fn own_environment(&self) -> Option<[(&'static str, PathBuf); 3]> {
-        let Self::Own(dir) = self else { return None };
-        Some([
-            ("XDG_DATA_HOME", dir.join("data")),
-            ("XDG_STATE_HOME", dir.join("state")),
-            ("XDG_CACHE_HOME", dir.join("cache")),
-        ])
+    /// The command that signs in to a model provider outside the app. In
+    /// [`Data::Own`] it names the three directories the session's environment
+    /// gets (the same [`Data::dirs`]), quoted for a POSIX shell; in
+    /// [`Data::Shared`] opencode's own directories are the right ones, so the
+    /// plain command stands. `--standalone` is what keeps the login in the
+    /// directories named: without it `auth login` attaches the background
+    /// service that is running, which uses the person's real ones, so the
+    /// login would land there and the session would stay signed out. It also
+    /// avoids the port collision with that service. It carries paths only.
+    pub fn sign_in_command(&self, host: &Host) -> String {
+        let mut words = Vec::new();
+        if let Self::Own(_) = self {
+            for (name, dir) in self.dirs(host) {
+                if let Some(dir) = dir {
+                    words.push(format!("{name}={}", shell_quote(&dir.to_string_lossy())));
+                }
+            }
+        }
+        words.push("opencode auth login".to_owned());
+        if let Self::Own(_) = self {
+            words.push("--standalone".to_owned());
+        }
+        words.join(" ")
     }
 
     /// Refuses a start when saved organisation config sources are seen in
@@ -415,10 +428,14 @@ impl Data {
         }
     }
 
-    /// Creates the owned directories, private to the person. Shared has none
-    /// to make.
-    pub(super) fn prepare(&self, host: &Host) -> io::Result<()> {
-        if let Self::Own(_) = self {
+    /// Creates the owned directories, private to the person: the root and
+    /// its three folders, all 0700, tightened if they were already there
+    /// (a sign-in run by hand before the first session can have made them).
+    /// Shared has none to make. Also run before the sign-in command is
+    /// shown, so the login is written into folders that are already private.
+    pub fn prepare(&self, host: &Host) -> io::Result<()> {
+        if let Self::Own(root) = self {
+            create_private(root)?;
             for (_, dir) in self.dirs(host) {
                 if let Some(dir) = dir {
                     create_private(&dir)?;
@@ -427,6 +444,12 @@ impl Data {
         }
         Ok(())
     }
+}
+
+/// `text` as one POSIX shell word: single quotes, with each embedded single
+/// quote written as `'\''`.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn create_private(dir: &Path) -> io::Result<()> {
@@ -1036,6 +1059,66 @@ mod tests {
         }
         // The config home is still the empty temporary one.
         assert!(!PathBuf::from(&plan.env["XDG_CONFIG_HOME"]).starts_with(&owned));
+    }
+
+    #[test]
+    fn the_sign_in_command_names_the_directories_the_session_gets() {
+        let (_root, data) = own();
+        let dirs = Dirs::create().unwrap();
+        let plan = Profile::opencode("/usr/bin/opencode", data.clone()).plan(&dirs, &host());
+        let command = data.sign_in_command(&host());
+        for name in ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] {
+            let word = format!("{name}={}", shell_quote(&plan.env[name]));
+            assert!(command.contains(&word), "{command} lacks {word}");
+        }
+        assert!(command.ends_with(" opencode auth login --standalone"));
+        assert!(!command.contains("XDG_CONFIG_HOME"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_tightens_the_root_and_the_folders_that_were_already_there() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let owned = root.path().join("opencode");
+        let data = Data::Own(owned.clone());
+        let dirs: Vec<PathBuf> = ["data", "state", "cache"]
+            .iter()
+            .map(|name| owned.join(name))
+            .collect();
+        for dir in std::iter::once(&owned).chain(&dirs) {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        data.prepare(&host()).unwrap();
+        for dir in std::iter::once(&owned).chain(&dirs) {
+            let mode = std::fs::metadata(dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700, "{dir:?}");
+        }
+    }
+
+    #[test]
+    fn the_shared_sign_in_command_is_plain() {
+        assert_eq!(Data::Shared.sign_in_command(&host()), "opencode auth login");
+    }
+
+    #[test]
+    fn a_path_is_quoted_for_a_posix_shell() {
+        assert_eq!(shell_quote("/a b/it's"), "'/a b/it'\\''s'");
+        let root = PathBuf::from("/tmp/a b");
+        let data = Data::Own(root.clone());
+        let word = |name: &str, folder: &str| {
+            format!(
+                "{name}={}",
+                shell_quote(&root.join(folder).to_string_lossy())
+            )
+        };
+        let expected = format!(
+            "{} {} ",
+            word("XDG_DATA_HOME", "data"),
+            word("XDG_STATE_HOME", "state")
+        );
+        assert!(data.sign_in_command(&host()).starts_with(&expected));
     }
 
     #[test]
