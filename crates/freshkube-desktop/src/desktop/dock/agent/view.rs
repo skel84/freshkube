@@ -12,6 +12,8 @@ use gpui_kit::*;
 
 use super::setup::{self, Setup};
 use super::trail::{Mark as TrailMark, Row};
+use freshkube_agent::tools::NotOffered;
+
 use super::{AgentView, DRAWN_ENTRIES, Notice};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
@@ -326,6 +328,23 @@ impl AgentView {
             Option<AnyElement>,
         ) = match notice {
             Notice::Failed(reason) => (Tone::Crit, "The agent stopped", reason.clone(), None, None),
+            Notice::ToolsNotOffered(why) => (
+                Tone::Warn,
+                "Freshkube's tools weren't offered to the agent",
+                match why {
+                    NotOffered::NeverListed => {
+                        "The agent answered without ever asking for them, so it cannot read the cluster."
+                    }
+                    NotOffered::ExecuteRefused => {
+                        "The agent listed them, then asked to run code with execute, which Freshkube refuses, and read nothing."
+                    }
+                }
+                .to_owned(),
+                Some(
+                    "Check that opencode loaded Freshkube's plugin for this session and that its version is in the supported range. Freshkube changes nothing to fix it: Code Mode and execute stay off.".to_owned(),
+                ),
+                None,
+            ),
             Notice::AccessNotSaved(error) => (
                 Tone::Warn,
                 "Access stays off",

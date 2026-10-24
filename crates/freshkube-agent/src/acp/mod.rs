@@ -324,6 +324,8 @@ impl Run {
                 async move |request: RequestPermissionRequest, responder, _cx| {
                     let (outcome, refused) = decide(&request, &calls);
                     if let Some(what) = refused {
+                        let name = calls.name_of(&request);
+                        let _ = refusals.send(Event::Refused { name }).await;
                         let _ = refusals.send(Event::Note(format!("Refused: {what}"))).await;
                     }
                     responder.respond(RequestPermissionResponse::new(outcome))

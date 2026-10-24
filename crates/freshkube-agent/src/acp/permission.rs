@@ -53,6 +53,8 @@ pub(super) struct Calls(Mutex<HashMap<String, Known>>);
 
 struct Known {
     label: String,
+    /// The last name the call was given.
+    name: Option<String>,
     ours: Option<bool>,
 }
 
@@ -79,15 +81,30 @@ impl Calls {
         }
         let call = calls.entry(id.clone()).or_insert_with(|| Known {
             label: clip(&id, MAX_LABEL_BYTES).to_string(),
+            name: None,
             ours: None,
         });
         if let Some(title) = title.filter(|t| !t.is_empty()) {
             call.label = clip(title, MAX_LABEL_BYTES).to_string();
         }
         if let Some(name) = name.filter(|n| !n.is_empty()) {
+            call.name = Some(clip(name, MAX_LABEL_BYTES).to_string());
             // Never from not ours to ours.
             call.ours = Some(call.ours.unwrap_or(true) && is_ours(name));
         }
+    }
+
+    /// The name the call was given, in a notification or the request.
+    pub(super) fn name_of(&self, request: &RequestPermissionRequest) -> Option<String> {
+        let id = request.tool_call.tool_call_id.to_string();
+        let asked = request
+            .tool_call
+            .fields
+            .name
+            .as_deref()
+            .filter(|n| !n.is_empty());
+        let known = self.0.lock().unwrap().get(&id).and_then(|c| c.name.clone());
+        known.or_else(|| asked.map(|n| clip(n, MAX_LABEL_BYTES).to_string()))
     }
 
     fn get(&self, id: &str) -> Option<(String, Option<bool>)> {
@@ -303,6 +320,25 @@ mod tests {
         let same = ToolCallUpdateFields::new().name("freshkube_get_object");
         let (outcome, _) = decide(&ask("t1", same), &calls);
         assert!(allowed(&outcome));
+    }
+
+    #[test]
+    fn a_refused_call_is_named_by_what_the_agent_called_it() {
+        let calls = Calls::default();
+        calls.note(&SessionUpdate::ToolCall(
+            ToolCall::new("t1", "Run code").name("execute"),
+        ));
+        assert_eq!(
+            calls
+                .name_of(&ask("t1", ToolCallUpdateFields::new()))
+                .as_deref(),
+            Some("execute")
+        );
+        // The request's own name counts when nothing announced one; a call
+        // with no name anywhere has none.
+        let named = ToolCallUpdateFields::new().name("bash");
+        assert_eq!(calls.name_of(&ask("t2", named)).as_deref(), Some("bash"));
+        assert_eq!(calls.name_of(&ask("t3", ToolCallUpdateFields::new())), None);
     }
 
     #[test]

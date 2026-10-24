@@ -8,8 +8,10 @@ publish = false
 description = "The preferences files: where they live and how one is read and written"
 
 [dependencies]
+chrono.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# Saves go through `Value`; this keeps a typed file's keys in field order.
+serde_json = { workspace = true, features = ["preserve_order"] }
 
 [dev-dependencies]
 tempfile = "3"

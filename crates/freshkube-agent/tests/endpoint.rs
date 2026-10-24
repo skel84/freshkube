@@ -127,6 +127,27 @@ fn call(tool: &'static str, arguments: Value) -> CallToolRequestParams {
 }
 
 #[tokio::test]
+async fn the_endpoint_counts_what_the_agent_asked() {
+    let (endpoint, _events) = start(&granted()).await;
+    assert!(!endpoint.listed());
+    assert_eq!(endpoint.calls(), 0);
+    let client = client(&endpoint).await;
+    // Connecting is not asking for the tools.
+    assert!(!endpoint.listed());
+    client.list_tools(None).await.unwrap();
+    assert!(endpoint.listed());
+    assert_eq!(endpoint.calls(), 0);
+    client
+        .call_tool(call(
+            "list_objects",
+            json!({"kind": "pods", "namespace": "shop"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(endpoint.calls(), 1);
+}
+
+#[tokio::test]
 async fn a_fake_agent_client_reads_through_the_endpoint() {
     let (endpoint, mut events) = start(&granted()).await;
     let client = client(&endpoint).await;
