@@ -515,6 +515,18 @@ fn close(
 /// Asserts DESIGN.md's table: a 26 dp column header, and 26 dp rows with
 /// group headers at the row height (a `uniform_list` needs uniform lines).
 pub fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> TableRows {
+    assert_table_rows(window, cx, table, ROW_HEIGHT)
+}
+
+/// [`assert_table`] for a table that declares its row height
+/// (`TableSource::row_height`), such as the Overview matrix's 40 dp. The
+/// header stays 26 dp.
+pub fn assert_table_rows(
+    window: &mut Window,
+    cx: &mut App,
+    table: &Table,
+    row_height: f32,
+) -> TableRows {
     window.render_frame(cx);
     let header = table
         .table
@@ -532,7 +544,7 @@ pub fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> TableRo
     if let Some(header) = rows.header {
         close("column header", header, HEADER_HEIGHT);
     }
-    close("row", rows.row, ROW_HEIGHT);
+    close("row", rows.row, row_height);
     if let Some(group) = rows.group {
         close("group header", group, ROW_HEIGHT);
     }

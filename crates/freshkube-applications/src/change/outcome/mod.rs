@@ -584,7 +584,13 @@ impl ChangePage {
                 .get(row.key.as_ref())
                 .and_then(|memo| memo.after.as_deref())
                 .map(Mark::of);
+            row.coroot_why = self
+                .outcomes
+                .memo
+                .get(row.key.as_ref())
+                .and_then(|memo| why_word(&memo.outcome));
         }
+        self.derive_overview();
     }
 
     /// Retry: reads the selected hop again.
@@ -624,6 +630,19 @@ impl Outcomes {
         self.listed = None;
         self.seen = None;
         self.no_connection = false;
+    }
+}
+
+/// What an outcome that is no verdict is, as a cause's word: Coroot not set
+/// up for the entry, the piece not found there, or not readable. `None` for
+/// a verdict, and for what was not looked for.
+fn why_word(outcome: &api::Outcome) -> Option<&'static str> {
+    use api::Outcome::*;
+    match outcome {
+        NoConnection | NotLinked | NoProjectForEntry => Some("Not set up"),
+        NoRevision | NoApplication | NoProject | NoData => Some("Not found"),
+        Refused(_) | Failed(_) => Some("Can't read"),
+        Found(_) | EndsEarly(..) | NotDeployment | NotLooked => None,
     }
 }
 
@@ -678,5 +697,32 @@ impl ChangePage {
         row.coroot
             .as_ref()
             .map(|mark| (mark.tone, mark.tooltip.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod why_tests {
+    use super::why_word;
+    use freshkube_core::coroot as api;
+
+    #[test]
+    fn an_outcome_without_a_verdict_is_a_cause_never_a_failure() {
+        use api::Outcome::*;
+        for (outcome, word) in [
+            (NoConnection, Some("Not set up")),
+            (NotLinked, Some("Not set up")),
+            (NoProjectForEntry, Some("Not set up")),
+            (NoProject, Some("Not found")),
+            (NoApplication, Some("Not found")),
+            (NoRevision, Some("Not found")),
+            (NoData, Some("Not found")),
+            (Refused(api::Refused::Window), Some("Can't read")),
+            // Not a cause: nothing was looked for, or Coroot keeps no
+            // revisions of a Rollout.
+            (NotLooked, None),
+            (NotDeployment, None),
+        ] {
+            assert_eq!(why_word(&outcome), word, "{outcome:?}");
+        }
     }
 }
