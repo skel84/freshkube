@@ -11,6 +11,7 @@ mod audit;
 mod dialog;
 mod diff;
 pub mod everyday;
+mod gitops;
 mod history;
 mod outcome;
 mod preflight;
@@ -34,6 +35,7 @@ pub use audit::{
 };
 pub use dialog::{ANNOTATION_NOTICE, Ask, Dialog, OPEN_NOTICE, REVIEW_LABEL};
 pub use diff::{ChangeKind, FieldChange};
+pub use gitops::GitOps;
 pub use history::{History, Row as HistoryRow, Source, SourceFilter, load as load_history};
 pub use outcome::{Accepted, DEFAULT_WAIT, MAX_WAIT, Observed, Watching};
 pub use preflight::{Block, ObjectDiff, Prepared, Verdict, Who};
