@@ -121,11 +121,11 @@ impl TrafficView {
         };
     }
 
-    /// The route's `host/path`, for its tab, once its trace is read.
-    pub(super) fn route_label(&self) -> SharedString {
+    /// The Trace tab's title, once the route's trace is read.
+    pub(super) fn route_tab_title(&self) -> SharedString {
         match &self.route {
-            Some(RouteView::Trace { model, .. }) => model.label.clone(),
-            _ => "route".into(),
+            Some(RouteView::Trace { model, .. }) => model.tab_title.clone(),
+            _ => "Trace".into(),
         }
     }
 

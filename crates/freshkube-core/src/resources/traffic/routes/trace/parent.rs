@@ -37,7 +37,7 @@ pub(super) fn class_step(gateway: &GatewayFacts, inputs: &Inputs) -> TraceStep {
         }
         return TraceStep::fail(
             id,
-            Owner::Yours,
+            Owner::Platform,
             format!("GatewayClass {} does not exist", gateway.class),
         )
         .quoting(asks, "no such class");
@@ -137,17 +137,20 @@ pub(super) fn gateway_step(gateway: &GatewayFacts) -> TraceStep {
     }
 }
 
-/// Why no listener fits, or the one that does.
-enum Pick<'a> {
-    Found(&'a Listener),
-    Miss(String),
+/// Why no listener fits by configuration, and whose problem that is.
+struct Miss {
+    reason: String,
+    owner: Owner,
 }
 
-fn pick_listener<'a>(
+/// The listeners that fit the route by name, port, protocol, kind and
+/// hostname, in the Gateway's order. The namespace is the next step's.
+fn fitting<'a>(
     gateway: &'a GatewayFacts,
     parent: &ParentRef,
     route: &RouteFacts,
-) -> Pick<'a> {
+) -> Result<Vec<&'a Listener>, Miss> {
+    let miss = |reason: String, owner| Miss { reason, owner };
     let mut candidates = gateway
         .listeners
         .iter()
@@ -155,10 +158,16 @@ fn pick_listener<'a>(
         .filter(|l| parent.port.is_none_or(|p| p == l.port))
         .collect::<Vec<_>>();
     if candidates.is_empty() {
-        return Pick::Miss(match (&parent.section, parent.port) {
-            (Some(section), _) => format!("the Gateway has no listener named {section}"),
-            (None, Some(port)) => format!("the Gateway has no listener on port {port}"),
-            (None, None) => "the Gateway has no listeners".into(),
+        return Err(match (&parent.section, parent.port) {
+            (Some(section), _) => miss(
+                format!("the Gateway has no listener named {section}"),
+                Owner::Yours,
+            ),
+            (None, Some(port)) => miss(
+                format!("the Gateway has no listener on port {port}"),
+                Owner::Yours,
+            ),
+            (None, None) => miss("the Gateway has no listeners".into(), Owner::Platform),
         });
     }
     candidates.retain(|l| matches!(l.protocol.as_str(), "HTTP" | "HTTPS"));
@@ -169,17 +178,19 @@ fn pick_listener<'a>(
             .map(|l| l.protocol.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        return Pick::Miss(format!(
-            "no HTTP or HTTPS listener to attach an HTTPRoute to (listeners speak {protocols})"
+        return Err(miss(
+            format!(
+                "no HTTP or HTTPS listener to attach an HTTPRoute to (listeners speak {protocols})"
+            ),
+            Owner::Platform,
         ));
     }
-    candidates.retain(|l| {
-        l.kinds
-            .as_ref()
-            .is_none_or(|k| k.iter().any(|k| k == "HTTPRoute"))
-    });
+    candidates.retain(|l| l.allows_http_route());
     if candidates.is_empty() {
-        return Pick::Miss("the listener does not allow HTTPRoute".into());
+        return Err(miss(
+            "the listener does not allow HTTPRoute".into(),
+            Owner::Platform,
+        ));
     }
     let matching = candidates
         .iter()
@@ -197,25 +208,15 @@ fn pick_listener<'a>(
             .map(|l| l.hostname.as_deref().unwrap_or("any host"))
             .collect::<Vec<_>>()
             .join(", ");
-        return Pick::Miss(format!(
-            "route hostnames {} match no listener hostname ({served})",
-            quote_hosts(&route.hostnames)
+        return Err(miss(
+            format!(
+                "route hostnames {} match no listener hostname ({served})",
+                quote_hosts(&route.hostnames)
+            ),
+            Owner::Yours,
         ));
     }
-    // Of the listeners that fit, prefer one the controller accepted.
-    let accepted = |l: &Listener| {
-        gateway
-            .listener_status
-            .iter()
-            .find(|s| s.name == l.name)
-            .is_some_and(|s| find(&s.conditions, "Accepted").is_some_and(|c| c.status == Tri::True))
-    };
-    let best = matching
-        .iter()
-        .copied()
-        .find(|l| accepted(l))
-        .unwrap_or(matching[0]);
-    Pick::Found(best)
+    Ok(matching)
 }
 
 fn describe_listener(l: &Listener) -> String {
@@ -233,65 +234,26 @@ fn describe_listener(l: &Listener) -> String {
     )
 }
 
-pub(super) fn listener_step(
-    gateway: &GatewayFacts,
-    parent: &ParentRef,
-    route: &RouteFacts,
-    status: Option<&ParentStatus>,
-) -> (TraceStep, Option<Listener>) {
-    let id = StepId::Listener;
-    let asks = format!(
-        "{} on {}",
-        quote_hosts(&route.hostnames),
-        parent.section.as_deref().unwrap_or("any listener")
-    );
-    let listener = match pick_listener(gateway, parent, route) {
-        Pick::Found(listener) => listener,
-        Pick::Miss(reason) => {
-            let served = gateway
-                .listeners
-                .iter()
-                .map(describe_listener)
-                .collect::<Vec<_>>()
-                .join("; ");
-            let controller = route_condition(status, "Accepted")
-                .filter(|c| c.status == Tri::False)
-                .map(Cond::says);
-            return (
-                TraceStep::fail(id, Owner::Yours, reason)
-                    .quoting(
-                        asks,
-                        if served.is_empty() {
-                            "no listeners".into()
-                        } else {
-                            served
-                        },
-                    )
-                    .reported(controller),
-                None,
-            );
-        }
-    };
-    let serves = describe_listener(listener);
+/// What the controller reports of one listener.
+enum Standing<'a> {
+    /// Nothing wrong reported, with its `Accepted` line when it wrote one.
+    Good(Option<&'a Cond>),
+    /// The Gateway has a status, but nothing for this listener.
+    Silent,
+    /// A condition that says the listener is not working.
+    Bad(&'a Cond),
+}
+
+fn standing<'a>(gateway: &'a GatewayFacts, listener: &Listener) -> Standing<'a> {
     let reported = gateway
         .listener_status
         .iter()
         .find(|s| s.name == listener.name);
-    let step = match reported {
+    match reported {
         None if !gateway.listener_status.is_empty() || !gateway.conditions.is_empty() => {
-            TraceStep::unknown(
-                id,
-                Owner::Controller,
-                format!(
-                    "the controller reports nothing for listener {}",
-                    listener.name
-                ),
-            )
+            Standing::Silent
         }
-        None => TraceStep::pass(
-            id,
-            format!("listener {} fits by configuration", listener.name),
-        ),
+        None => Standing::Good(None),
         Some(reported) => {
             let bad = ["Accepted", "Programmed", "ResolvedRefs", "Conflicted"]
                 .into_iter()
@@ -301,72 +263,176 @@ pub(super) fn listener_step(
                     _ => c.status == Tri::False,
                 });
             match bad {
-                Some(cond) => TraceStep::fail(
-                    id,
-                    blame(&cond.reason),
-                    format!("listener {} is not accepted", listener.name),
-                )
-                .reported(Some(cond.says())),
-                None => {
-                    TraceStep::pass(id, format!("listener {} accepts HTTPRoute", listener.name))
-                        .reported(find(&reported.conditions, "Accepted").map(Cond::says))
-                }
+                Some(cond) => Standing::Bad(cond),
+                None => Standing::Good(find(&reported.conditions, "Accepted")),
             }
         }
-    };
-    (step.quoting(asks, serves), Some(listener.clone()))
+    }
 }
 
-pub(super) fn namespace_step(
+/// A Fail worked out from configuration never overrules the route's own
+/// controller saying, for the current generation, that it accepted the route
+/// (or resolved its references): that reads Unknown, with both sides quoted.
+pub(super) fn overruled(
+    mut step: TraceStep,
+    controller: Option<&Cond>,
+    generation: i64,
+) -> TraceStep {
+    let current = controller
+        .filter(|c| c.status == Tri::True && c.generation.is_none_or(|seen| seen >= generation));
+    let Some(cond) = current else {
+        return step;
+    };
+    if step.verdict != StepVerdict::Fail {
+        return step;
+    }
+    step.verdict = StepVerdict::Unknown;
+    step.owner = Some(Owner::Controller);
+    step.reason = format!(
+        "configuration says: {}; but the controller reports {}",
+        step.reason,
+        cond.says()
+    );
+    step.controller = Some(cond.says());
+    step
+}
+
+/// Step 3: some listener fits the route and is not rejected. Returns the
+/// listeners the next step looks at, the best first.
+pub(super) fn listener_step(
+    gateway: &GatewayFacts,
+    parent: &ParentRef,
+    route: &RouteFacts,
+    status: Option<&ParentStatus>,
+) -> (TraceStep, Vec<Listener>) {
+    let id = StepId::Listener;
+    let asks = format!(
+        "{} on {}",
+        quote_hosts(&route.hostnames),
+        parent.section.as_deref().unwrap_or("any listener")
+    );
+    let accepted = route_condition(status, "Accepted");
+    let fit = match fitting(gateway, parent, route) {
+        Ok(fit) => fit,
+        Err(miss) => {
+            let served = gateway
+                .listeners
+                .iter()
+                .map(describe_listener)
+                .collect::<Vec<_>>()
+                .join("; ");
+            let controller = accepted.filter(|c| c.status == Tri::False).map(Cond::says);
+            let step = TraceStep::fail(id, miss.owner, miss.reason)
+                .quoting(
+                    asks,
+                    if served.is_empty() {
+                        "no listeners".into()
+                    } else {
+                        served
+                    },
+                )
+                .reported(controller);
+            return (overruled(step, accepted, route.generation), Vec::new());
+        }
+    };
+    // Of the listeners that fit, the one the controller accepted comes first.
+    let rank = |l: &Listener| match standing(gateway, l) {
+        Standing::Good(Some(c)) if c.status == Tri::True => 0,
+        Standing::Good(_) => 1,
+        Standing::Silent => 2,
+        Standing::Bad(_) => 3,
+    };
+    let mut ordered = fit.into_iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|l| rank(l));
+    let best = ordered[0];
+    let serves = describe_listener(best);
+    let step = match standing(gateway, best) {
+        Standing::Good(Some(cond)) => {
+            TraceStep::pass(id, format!("listener {} accepts HTTPRoute", best.name))
+                .reported(Some(cond.says()))
+        }
+        Standing::Good(None) => {
+            TraceStep::pass(id, format!("listener {} fits by configuration", best.name))
+        }
+        Standing::Silent => TraceStep::unknown(
+            id,
+            Owner::Controller,
+            format!("the controller reports nothing for listener {}", best.name),
+        ),
+        Standing::Bad(cond) => TraceStep::fail(
+            id,
+            blame(&cond.reason),
+            if ordered.len() == 1 {
+                format!("listener {} is not accepted", best.name)
+            } else {
+                format!(
+                    "none of the {} listeners that fit is accepted; {} is not",
+                    ordered.len(),
+                    best.name
+                )
+            },
+        )
+        .reported(Some(cond.says())),
+    };
+    let usable = ordered
+        .into_iter()
+        .filter(|l| !matches!(standing(gateway, l), Standing::Bad(_)))
+        .cloned()
+        .collect();
+    (step.quoting(asks, serves), usable)
+}
+
+/// Whether one listener lets the route's namespace attach.
+enum Allow {
+    Yes(String),
+    No(String),
+    Unknown(String),
+}
+
+fn allows(
     gateway: &GatewayFacts,
     listener: &Listener,
     route: &RouteFacts,
-    status: Option<&ParentStatus>,
     inputs: &Inputs,
-) -> TraceStep {
-    let id = StepId::Namespace;
-    let asks = format!("route in namespace {}", route.namespace);
-    let mut step = match &listener.namespaces {
-        AllowedNamespaces::All => {
-            TraceStep::pass(id, "the listener accepts routes from every namespace")
-                .quoting(asks, "from All")
-        }
+) -> (Allow, String) {
+    match &listener.namespaces {
+        AllowedNamespaces::All => (
+            Allow::Yes("the listener accepts routes from every namespace".into()),
+            format!("listener {}: from All", listener.name),
+        ),
         AllowedNamespaces::Same => {
-            let serves = format!("from Same ({})", gateway.namespace);
+            let text = format!(
+                "listener {}: from Same ({})",
+                listener.name, gateway.namespace
+            );
             if route.namespace == gateway.namespace {
-                TraceStep::pass(id, "same namespace as the Gateway").quoting(asks, serves)
+                (Allow::Yes("same namespace as the Gateway".into()), text)
             } else {
-                TraceStep::fail(
-                    id,
-                    Owner::Platform,
-                    format!(
+                (
+                    Allow::No(format!(
                         "the listener accepts only its own namespace, {}",
                         gateway.namespace
-                    ),
+                    )),
+                    text,
                 )
-                .quoting(asks, serves)
             }
         }
         AllowedNamespaces::Selector(selector) => {
-            let serves = format!("from Selector ({})", selector.describe());
-            match inputs.namespaces {
-                Err(failure) => TraceStep::unknown(
-                    id,
-                    Owner::Platform,
-                    format!(
-                        "namespaces unreadable ({}: {}), so the selector can't be checked",
-                        failure.kind.label(),
-                        failure.message
-                    ),
-                )
-                .quoting(asks, serves),
+            let text = format!(
+                "listener {}: from Selector ({})",
+                listener.name,
+                selector.describe()
+            );
+            let verdict = match inputs.namespaces {
+                Err(failure) => Allow::Unknown(format!(
+                    "namespaces unreadable ({}: {}), so the selector can't be checked",
+                    failure.kind.label(),
+                    failure.message
+                )),
                 // A cut list is no basis for a label match either way.
-                Ok(namespaces) if namespaces.cut => TraceStep::unknown(
-                    id,
-                    Owner::Platform,
-                    "the namespace list was cut, so the selector can't be checked",
-                )
-                .quoting(asks, serves),
+                Ok(namespaces) if namespaces.cut => Allow::Unknown(
+                    "the namespace list was cut, so the selector can't be checked".into(),
+                ),
                 Ok(namespaces) => {
                     match namespaces
                         .items
@@ -374,31 +440,65 @@ pub(super) fn namespace_step(
                         .find(|(name, _)| *name == route.namespace)
                     {
                         Some((_, labels)) if selector.matches(labels) => {
-                            TraceStep::pass(id, "the namespace's labels match the selector")
-                                .quoting(asks, serves)
+                            Allow::Yes("the namespace's labels match the selector".into())
                         }
-                        Some(_) => TraceStep::fail(
-                            id,
-                            Owner::Platform,
-                            "the namespace's labels do not match the listener's selector",
-                        )
-                        .quoting(asks, serves),
-                        None => TraceStep::unknown(
-                            id,
-                            Owner::Platform,
-                            "the route's namespace was not in the list",
-                        )
-                        .quoting(asks, serves),
+                        Some(_) => Allow::No(
+                            "the namespace's labels do not match the listener's selector".into(),
+                        ),
+                        None => Allow::Unknown("the route's namespace was not in the list".into()),
                     }
                 }
-            }
+            };
+            (verdict, text)
         }
+    }
+}
+
+/// Step 4: one of the listeners that fit lets the route's namespace attach,
+/// and the controller's own `Accepted` for the route agrees.
+pub(super) fn namespace_step(
+    gateway: &GatewayFacts,
+    listeners: &[Listener],
+    route: &RouteFacts,
+    status: Option<&ParentStatus>,
+    inputs: &Inputs,
+) -> TraceStep {
+    let id = StepId::Namespace;
+    let asks = format!("route in namespace {}", route.namespace);
+    let results = listeners
+        .iter()
+        .map(|l| allows(gateway, l, route, inputs))
+        .collect::<Vec<_>>();
+    let every = results
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let mut step = if let Some((Allow::Yes(reason), text)) =
+        results.iter().find(|(a, _)| matches!(a, Allow::Yes(_)))
+    {
+        TraceStep::pass(id, reason.clone()).quoting(asks, text.clone())
+    } else if let Some(Allow::Unknown(reason)) = results
+        .iter()
+        .map(|(a, _)| a)
+        .find(|a| matches!(a, Allow::Unknown(_)))
+    {
+        TraceStep::unknown(id, Owner::Platform, reason.clone()).quoting(asks, every)
+    } else {
+        let reason = match results.as_slice() {
+            [(Allow::No(reason), _)] => reason.clone(),
+            _ => format!(
+                "none of the listeners that fit accepts routes from namespace {}",
+                route.namespace
+            ),
+        };
+        TraceStep::fail(id, Owner::Platform, reason).quoting(asks, every)
     };
     // The controller's own verdict on the route, kept as its own line.
     let accepted = route_condition(status, "Accepted");
     step.controller = accepted.map(Cond::says);
     if step.verdict == StepVerdict::Fail {
-        return step;
+        return overruled(step, accepted, route.generation);
     }
     match (status, accepted) {
         (None, _) => {

@@ -29,12 +29,17 @@ fn heading(model: &TraceModel, cx: &App) -> impl IntoElement {
                 .whitespace_normal()
                 .child(model.headline.clone()),
         )
-        .children(model.owner.map(|owner| {
-            ui::tag(Tone::Outline, None, owner, cx)
-                .id(SharedString::from(format!("{}-owner", model.id)))
-                .aria_label(format!("Whose problem: {owner}"))
-                .test_support()
-        }))
+        .children(
+            model
+                .owner
+                .zip(model.owner_aria.clone())
+                .map(|(owner, aria)| {
+                    ui::tag(Tone::Outline, None, owner, cx)
+                        .id(SharedString::from(format!("{}-owner", model.id)))
+                        .aria_label(aria)
+                        .test_support()
+                }),
+        )
         .children(model.stale.then(|| {
             ui::tag(Tone::Warn, None, "Stale verdict", cx)
                 .id(SharedString::from(format!("{}-stale", model.id)))
@@ -66,10 +71,7 @@ pub fn compact(model: &TraceModel, cx: &App) -> AnyElement {
                         .flex_1()
                         .whitespace_normal()
                         .text_color(p.ink_2)
-                        .child(match &parent.stop {
-                            Some(stop) => format!("{} {stop}", parent.title),
-                            None => format!("{} · {}", parent.title, parent.state),
-                        }),
+                        .child(parent.compact.clone()),
                 )
         }))
         .into_any_element()
@@ -103,7 +105,7 @@ fn step(row: &StepRow, cx: &App) -> impl IntoElement {
         .id(row.id.clone())
         .test_support()
         .role(Role::Status)
-        .aria_label(format!("{}: {}. {}", row.name, row.state, row.reason))
+        .aria_label(row.aria.clone())
         .gap(dp(2.))
         .child(
             h_flex()
@@ -176,7 +178,7 @@ fn branch(row: &BranchRow, on_link: &Option<OnLink>, cx: &App) -> impl IntoEleme
                     div()
                         .text_size(dp(12.))
                         .text_color(p.muted)
-                        .child(format!("rule {}", row.rule)),
+                        .child(row.rule_text.clone()),
                 )
                 .children(link_button(
                     format!("{}-service", row.id).into(),
@@ -209,7 +211,7 @@ fn parent(row: &ParentRow, on_link: &Option<OnLink>, cx: &App) -> impl IntoEleme
                     div()
                         .text_size(dp(12.))
                         .text_color(p.muted)
-                        .child(format!("controller {controller}"))
+                        .child(controller.clone())
                 }))
                 .children(link_button(
                     format!("{}-gateway", row.id).into(),
@@ -219,6 +221,16 @@ fn parent(row: &ParentRow, on_link: &Option<OnLink>, cx: &App) -> impl IntoEleme
                 )),
         )
         .children(row.steps.iter().map(|row| step(row, cx)))
+        .children(row.others.iter().enumerate().map(|(ix, other)| {
+            div()
+                .id(SharedString::from(format!("{}-other-{ix}", row.id)))
+                .test_support()
+                .pl(dp(8.))
+                .text_size(dp(12.))
+                .text_color(p.muted)
+                .whitespace_normal()
+                .child(other.clone())
+        }))
         .children((!row.branches.is_empty()).then(|| ui::caption("Backends", cx)))
         .children(row.branches.iter().map(|row| branch(row, on_link, cx)))
 }
@@ -301,27 +313,19 @@ pub fn backends(model: &TraceModel, cx: &App) -> Option<AnyElement> {
             .text_size(dp(12.))
             .child(ui::caption("Backends", cx))
             .children(rows.into_iter().map(|row| {
-                let broken = row
-                    .steps
-                    .iter()
-                    .find(|s| matches!(s.tone, Tone::Crit | Tone::Unknown))
-                    .map(|s| format!(" — {}", s.reason))
-                    .unwrap_or_default();
                 h_flex()
                     .id(SharedString::from(format!("{}-line", row.id)))
                     .test_support()
                     .gap(dp(6.))
                     .items_start()
                     .children(ui::status_glyph(row.tone, cx))
-                    .child(div().min_w_0().flex_1().whitespace_normal().child(format!(
-                                "{}{} · {}{broken}",
-                                row.title,
-                                row.share
-                                    .as_ref()
-                                    .map(|share| format!(" ({share})"))
-                                    .unwrap_or_default(),
-                                row.state
-                            )))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .whitespace_normal()
+                            .child(row.line.clone()),
+                    )
             }))
             .into_any_element()
     })

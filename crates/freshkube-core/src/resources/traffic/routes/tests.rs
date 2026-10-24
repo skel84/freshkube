@@ -155,6 +155,26 @@ fn healthy_route() -> Value {
     route_json(json!({}), json!({}))
 }
 
+/// The route's own controller's verdict on the default parent.
+fn status_for(accepted: (&str, &str), resolved: (&str, &str)) -> Value {
+    json!({"parents": [{
+        "parentRef": {"name": "edge", "namespace": "infra", "sectionName": "https"},
+        "controllerName": "example.io/gateway",
+        "conditions": [
+            cond("Accepted", accepted.0, accepted.1, 3),
+            cond("ResolvedRefs", resolved.0, resolved.1, 3)],
+    }]})
+}
+
+/// The controller refused the route at the listeners.
+fn denied_status() -> Value {
+    status_for(("False", "NotAllowedByListeners"), ("True", "ResolvedRefs"))
+}
+
+fn denied_route() -> Value {
+    route_json(json!({}), denied_status())
+}
+
 fn step(trace: &RouteTrace, id: StepId) -> &TraceStep {
     let parent = &trace.parents[0];
     parent
@@ -258,7 +278,7 @@ fn the_class_must_exist_and_be_claimed() {
     world.classes = Ok(Listing::new(Vec::new(), false));
     let trace = world.trace(healthy_route());
     stops(&trace, StepId::Class);
-    assert_eq!(step(&trace, StepId::Class).owner, Some(Owner::Yours));
+    assert_eq!(step(&trace, StepId::Class).owner, Some(Owner::Platform));
     assert_eq!(trace.verdict, RouteVerdict::NotServing);
 
     let unclaimed = World::with(
@@ -363,7 +383,13 @@ fn a_stale_route_verdict_is_a_warning_too() {
 
 #[test]
 fn a_listener_that_does_not_serve_the_host_quotes_both_sides() {
-    let route = route_json(json!({"hostnames": ["shop.example.org"]}), json!({}));
+    let route = route_json(
+        json!({"hostnames": ["shop.example.org"]}),
+        status_for(
+            ("False", "NoMatchingListenerHostname"),
+            ("True", "ResolvedRefs"),
+        ),
+    );
     let trace = World::healthy().trace(route);
     stops(&trace, StepId::Listener);
     let listener = step(&trace, StepId::Listener);
@@ -487,7 +513,7 @@ fn the_namespace_must_be_allowed() {
             "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": from}}}]}}),
         )
     };
-    let trace = World::with(same("Same"), accepted_class()).trace(healthy_route());
+    let trace = World::with(same("Same"), accepted_class()).trace(denied_route());
     stops(&trace, StepId::Namespace);
     let namespace = step(&trace, StepId::Namespace);
     assert_eq!(namespace.owner, Some(Owner::Platform));
@@ -507,7 +533,7 @@ fn a_label_selector_is_checked_against_the_namespaces_labels() {
     let ok = World::with(gateway("web"), accepted_class()).trace(healthy_route());
     assert_eq!(ok.verdict, RouteVerdict::Serving);
     assert!(step(&ok, StepId::Namespace).serves.contains("team=web"));
-    let no = World::with(gateway("data"), accepted_class()).trace(healthy_route());
+    let no = World::with(gateway("data"), accepted_class()).trace(denied_route());
     stops(&no, StepId::Namespace);
     assert_eq!(step(&no, StepId::Namespace).verdict, StepVerdict::Fail);
     let mut refused_world = World::with(gateway("web"), accepted_class());
@@ -611,11 +637,18 @@ fn a_controller_that_writes_no_status_for_the_route_is_blind() {
     assert_eq!(trace.verdict, RouteVerdict::Unknown);
 }
 
-fn cross_namespace_route() -> Value {
+/// A route to a Service in another namespace, the controller having
+/// `resolved` its references.
+fn cross_namespace_route_with(resolved: (&str, &str)) -> Value {
     route_json(
         json!({"rules": [{"backendRefs": [{"name": "cart", "namespace": "payments", "port": 8080}]}]}),
-        json!({}),
+        status_for(("True", "Accepted"), resolved),
     )
+}
+
+/// The controller refused the reference, as it does with no grant.
+fn cross_namespace_route() -> Value {
+    cross_namespace_route_with(("False", "RefNotPermitted"))
 }
 
 fn payments_cart() -> BTreeMap<(String, String), BackendRead> {
@@ -676,7 +709,11 @@ fn a_grant_for_exactly_that_pair_resolves_the_ref() {
         let mut world = World::healthy();
         world.backends = payments_cart();
         world.grants = Ok(Listing::new(vec![grant], false));
-        let trace = world.trace(cross_namespace_route());
+        let trace = world.trace(cross_namespace_route_with(if resolves {
+            ("True", "ResolvedRefs")
+        } else {
+            ("False", "RefNotPermitted")
+        }));
         let refs = step(&trace, StepId::Refs);
         assert_eq!(refs.verdict == StepVerdict::Pass, resolves, "{refs:?}");
         assert_eq!(trace.verdict == RouteVerdict::Serving, resolves);
@@ -751,7 +788,7 @@ fn a_controller_that_still_refuses_a_granted_ref_is_the_controllers() {
 fn names_that_are_not_dns_names_get_no_proposal() {
     let route = route_json(
         json!({"rules": [{"backendRefs": [{"name": "Cart\nkind: Secret", "namespace": "payments", "port": 8080}]}]}),
-        json!({}),
+        status_for(("True", "Accepted"), ("False", "RefNotPermitted")),
     );
     let mut world = World::healthy();
     world.backends = BTreeMap::new();
@@ -999,28 +1036,49 @@ fn two_parents_serve_partly_when_one_is_down() {
 }
 
 #[test]
-fn each_controller_that_wrote_a_verdict_gets_its_own_trace() {
-    let entry = |controller: &str, status: &str| {
+fn only_the_classs_controller_is_judged_and_another_is_quoted_beside_the_trace() {
+    let entry = |controller: &str, status: &str, reason: &str| {
         json!({"parentRef": {"name": "edge", "namespace": "infra", "sectionName": "https"},
             "controllerName": controller,
-            "conditions": [cond("Accepted", status, "Accepted", 3), cond("ResolvedRefs", "True", "ResolvedRefs", 3)]})
+            "conditions": [cond("Accepted", status, reason, 3), cond("ResolvedRefs", "True", "ResolvedRefs", 3)]})
     };
+    // Another controller refusing the route cannot make it fail or partly serve.
     let trace = World::healthy().trace(route_json(
         json!({}),
-        json!({"parents": [entry("a.io/gateway", "True"), entry("b.io/gateway", "False")]}),
+        json!({"parents": [
+            entry("example.io/gateway", "True", "Accepted"),
+            entry("other.io/gateway", "False", "NotAllowedByListeners")]}),
     ));
-    assert_eq!(trace.parents.len(), 2);
-    assert_eq!(trace.parents[0].controller.as_deref(), Some("a.io/gateway"));
+    assert_eq!(trace.parents.len(), 1);
+    assert_eq!(
+        trace.parents[0].controller.as_deref(),
+        Some("example.io/gateway")
+    );
     assert_eq!(trace.parents[0].verdict, RouteVerdict::Serving);
-    assert_eq!(trace.parents[1].controller.as_deref(), Some("b.io/gateway"));
-    assert_eq!(trace.parents[1].verdict, RouteVerdict::NotServing);
+    assert_eq!(trace.verdict, RouteVerdict::Serving);
+    assert_eq!(trace.parents[0].others.len(), 1);
+    assert_eq!(trace.parents[0].others[0].controller, "other.io/gateway");
+    assert!(
+        trace.parents[0].others[0]
+            .says
+            .contains("NotAllowedByListeners")
+    );
+    // With only another controller's verdict, the class's controller has said nothing.
+    let blind = World::healthy().trace(route_json(
+        json!({}),
+        json!({"parents": [entry("other.io/gateway", "True", "Accepted")]}),
+    ));
+    assert_eq!(blind.parents.len(), 1);
+    assert_eq!(blind.verdict, RouteVerdict::Unknown);
+    assert!(step(&blind, StepId::Namespace).reason.starts_with("blind"));
+    assert_eq!(blind.parents[0].others.len(), 1);
 }
 
 #[test]
 fn a_parent_ref_without_a_namespace_means_the_routes_own() {
     let route = route_json(
         json!({"parentRefs": [{"name": "edge"}]}),
-        json!({"parents": [{"parentRef": {"name": "edge", "namespace": "shop"}, "controllerName": "c",
+        json!({"parents": [{"parentRef": {"name": "edge", "namespace": "shop"}, "controllerName": "example.io/gateway",
             "conditions": [cond("Accepted", "True", "Accepted", 3)]}]}),
     );
     let mut world = World::healthy();
@@ -1031,7 +1089,10 @@ fn a_parent_ref_without_a_namespace_means_the_routes_own() {
         false,
     ));
     let trace = world.trace(route);
-    assert_eq!(trace.parents[0].controller.as_deref(), Some("c"));
+    assert_eq!(
+        trace.parents[0].controller.as_deref(),
+        Some("example.io/gateway")
+    );
     assert_eq!(trace.verdict, RouteVerdict::Serving);
 }
 
@@ -1041,6 +1102,224 @@ fn verdicts_sort_not_serving_first() {
     all.sort();
     assert_eq!(all, RouteVerdict::ALL);
     assert_eq!(RouteVerdict::NotServing.label(), "Not serving");
+}
+
+// -- several listeners, and what a controller already said -------------
+
+/// A Gateway in `infra` with `http` on :80 (`from: Same`) and `https` on :443
+/// (`from: All`), both accepted, and a route in `shop` that names no listener.
+fn shared_gateway(first: &str, second: &str) -> Value {
+    let listener = |name: &str, port: u32, from: &str| {
+        json!({"name": name, "port": port, "protocol": if port == 80 { "HTTP" } else { "HTTPS" },
+            "allowedRoutes": {"namespaces": {"from": from}}})
+    };
+    gateway_json(json!({
+        "spec": {"listeners": [listener("http", 80, first), listener("https", 443, second)]},
+        "status": {"listeners": [
+            {"name": "http", "conditions": [cond("Accepted", "True", "Accepted", 2)]},
+            {"name": "https", "conditions": [cond("Accepted", "True", "Accepted", 2)]}]},
+    }))
+}
+
+fn unnamed_route(accepted: (&str, &str)) -> Value {
+    let parent = json!({"name": "edge", "namespace": "infra"});
+    route_json(
+        json!({"parentRefs": [parent]}),
+        json!({"parents": [{"parentRef": parent, "controllerName": "example.io/gateway",
+            "conditions": [cond("Accepted", accepted.0, accepted.1, 3), cond("ResolvedRefs", "True", "ResolvedRefs", 3)]}]}),
+    )
+}
+
+#[test]
+fn a_listener_that_allows_the_namespace_is_used_even_when_another_comes_first() {
+    // http is first and allows only `infra`; https allows every namespace.
+    let world = World::with(shared_gateway("Same", "All"), accepted_class());
+    let trace = world.trace(unnamed_route(("True", "Accepted")));
+    assert_eq!(trace.verdict, RouteVerdict::Serving, "{trace:#?}");
+    let namespace = step(&trace, StepId::Namespace);
+    assert_eq!(namespace.verdict, StepVerdict::Pass);
+    assert!(namespace.serves.contains("listener https"), "{namespace:?}");
+    assert!(!namespace.serves.contains("listener http:"));
+}
+
+#[test]
+fn no_listener_allowing_the_namespace_fails_the_step_naming_every_listener() {
+    let world = World::with(shared_gateway("Same", "Same"), accepted_class());
+    let trace = world.trace(unnamed_route(("False", "NotAllowedByListeners")));
+    stops(&trace, StepId::Namespace);
+    let namespace = step(&trace, StepId::Namespace);
+    assert_eq!(namespace.verdict, StepVerdict::Fail);
+    assert_eq!(namespace.owner, Some(Owner::Platform));
+    assert!(
+        namespace.serves.contains("listener http") && namespace.serves.contains("listener https")
+    );
+    assert_eq!(trace.verdict, RouteVerdict::NotServing);
+}
+
+#[test]
+fn a_rejected_listener_is_skipped_when_another_that_fits_is_working() {
+    let gateway = gateway_json(json!({
+        "spec": {"listeners": [
+            {"name": "a", "port": 443, "protocol": "HTTPS", "allowedRoutes": {"namespaces": {"from": "All"}}},
+            {"name": "b", "port": 8443, "protocol": "HTTPS", "allowedRoutes": {"namespaces": {"from": "All"}}}]},
+        "status": {"listeners": [
+            {"name": "a", "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]},
+            {"name": "b", "conditions": [cond("Accepted", "True", "Accepted", 2)]}]},
+    }));
+    let trace = World::with(gateway, accepted_class()).trace(unnamed_route(("True", "Accepted")));
+    assert_eq!(trace.verdict, RouteVerdict::Serving);
+    assert!(
+        step(&trace, StepId::Namespace)
+            .serves
+            .contains("listener b")
+    );
+    // When every listener that fits is rejected, the step fails on the controller's words.
+    let gateway = gateway_json(json!({
+        "spec": {"listeners": [
+            {"name": "a", "port": 443, "protocol": "HTTPS"},
+            {"name": "b", "port": 8443, "protocol": "HTTPS"}]},
+        "status": {"listeners": [
+            {"name": "a", "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]},
+            {"name": "b", "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]}]},
+    }));
+    let trace =
+        World::with(gateway, accepted_class()).trace(unnamed_route(("False", "NoMatchingParent")));
+    stops(&trace, StepId::Listener);
+    assert!(
+        step(&trace, StepId::Listener)
+            .reason
+            .contains("none of the 2 listeners")
+    );
+}
+
+#[test]
+fn a_failure_worked_out_from_configuration_never_overrules_the_controller_accepting_the_route() {
+    // The hostnames match no listener, yet the controller reports Accepted.
+    let hosts = json!({"hostnames": ["shop.example.org"]});
+    let accepted = status_for(("True", "Accepted"), ("True", "ResolvedRefs"));
+    let trace = World::healthy().trace(route_json(hosts.clone(), accepted));
+    stops(&trace, StepId::Listener);
+    let listener = step(&trace, StepId::Listener);
+    assert_eq!(listener.verdict, StepVerdict::Unknown);
+    assert_eq!(listener.owner, Some(Owner::Controller));
+    // Both sides are quoted.
+    assert!(
+        listener.reason.contains("match no listener hostname"),
+        "{listener:?}"
+    );
+    assert!(listener.controller.as_deref().unwrap().contains("Accepted"));
+    assert_eq!(trace.verdict, RouteVerdict::Unknown);
+    // The same configuration with the controller refusing the route stays broken.
+    let refused = status_for(
+        ("False", "NoMatchingListenerHostname"),
+        ("True", "ResolvedRefs"),
+    );
+    let trace = World::healthy().trace(route_json(hosts.clone(), refused));
+    assert_eq!(step(&trace, StepId::Listener).verdict, StepVerdict::Fail);
+    // And with no verdict from the controller at all.
+    let silent = World::healthy().trace(route_json(hosts, json!({"parents": []})));
+    assert_eq!(step(&silent, StepId::Listener).verdict, StepVerdict::Fail);
+    assert_eq!(silent.verdict, RouteVerdict::NotServing);
+
+    // The namespace is not allowed by configuration, yet Accepted is True.
+    let same = gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443,
+        "protocol": "HTTPS", "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": "Same"}}}]}}));
+    let trace = World::with(same, accepted_class()).trace(healthy_route());
+    stops(&trace, StepId::Namespace);
+    let namespace = step(&trace, StepId::Namespace);
+    assert_eq!(namespace.verdict, StepVerdict::Unknown);
+    assert!(
+        namespace.reason.contains("accepts only its own namespace"),
+        "{namespace:?}"
+    );
+    assert_eq!(trace.verdict, RouteVerdict::Unknown);
+
+    // No grant is found, yet the controller says ResolvedRefs is True: Unknown,
+    // and nothing is proposed.
+    let mut world = World::healthy();
+    world.backends = payments_cart();
+    let trace = world.trace(cross_namespace_route_with(("True", "ResolvedRefs")));
+    let refs = step(&trace, StepId::Refs);
+    assert_eq!(refs.verdict, StepVerdict::Unknown);
+    assert!(refs.reason.contains("no ReferenceGrant"), "{refs:?}");
+    assert!(refs.controller.as_deref().unwrap().contains("ResolvedRefs"));
+    assert!(trace.proposals().is_empty());
+    assert_eq!(trace.verdict, RouteVerdict::Unknown);
+}
+
+#[test]
+fn a_verdict_older_than_the_route_does_not_overrule_the_configuration() {
+    // Accepted was written for generation 2; the route is at 3.
+    let stale = json!({"parents": [{
+        "parentRef": {"name": "edge", "namespace": "infra", "sectionName": "https"},
+        "controllerName": "example.io/gateway",
+        "conditions": [cond("Accepted", "True", "Accepted", 2)],
+    }]});
+    let trace = World::healthy().trace(route_json(
+        json!({"hostnames": ["shop.example.org"]}),
+        stale,
+    ));
+    assert_eq!(step(&trace, StepId::Listener).verdict, StepVerdict::Fail);
+}
+
+#[test]
+fn a_listeners_kinds_default_when_empty_and_are_read_with_their_group() {
+    let with = |kinds: Value| {
+        World::with(
+            gateway_json(json!({"spec": {"listeners": [{"name": "https", "port": 443,
+                "protocol": "HTTPS", "hostname": "*.example.com", "allowedRoutes": {"namespaces": {"from": "All"}, "kinds": kinds}}]}})),
+            accepted_class(),
+        )
+        .trace(healthy_route())
+    };
+    // An empty list is the protocol's default kinds, like none at all.
+    assert_eq!(with(json!([])).verdict, RouteVerdict::Serving);
+    assert_eq!(
+        with(json!([{"group": "gateway.networking.k8s.io", "kind": "HTTPRoute"}])).verdict,
+        RouteVerdict::Serving
+    );
+    assert_eq!(
+        with(json!([{"kind": "HTTPRoute"}])).verdict,
+        RouteVerdict::Serving
+    );
+    // Another group's HTTPRoute is not ours.
+    let other = with(json!([{"group": "other.example.io", "kind": "HTTPRoute"}]));
+    assert!(
+        step(&other, StepId::Listener)
+            .reason
+            .contains("does not allow HTTPRoute")
+    );
+    assert_ne!(other.verdict, RouteVerdict::Serving);
+}
+
+#[test]
+fn no_http_listener_is_the_platforms_to_fix() {
+    let tcp = World::with(
+        gateway_json(
+            json!({"spec": {"listeners": [{"name": "https", "port": 443, "protocol": "TCP"}]}}),
+        ),
+        accepted_class(),
+    );
+    let trace = tcp.trace(route_json(
+        json!({}),
+        status_for(("False", "NoMatchingParent"), ("True", "ResolvedRefs")),
+    ));
+    assert_eq!(step(&trace, StepId::Listener).owner, Some(Owner::Platform));
+}
+
+#[test]
+fn no_ready_endpoint_on_a_cut_list_is_unknown_not_broken() {
+    let mut world = World::healthy();
+    let mut reading = service_reading(0, 2, &[8080]);
+    reading.published.as_mut().unwrap().truncated = true;
+    world
+        .backends
+        .insert(("shop".into(), "cart".into()), Ok(Some(reading)));
+    let trace = world.trace(healthy_route());
+    let endpoints = step(&trace, StepId::Endpoints);
+    assert_eq!(endpoints.verdict, StepVerdict::Unknown);
+    assert!(endpoints.reason.contains("cut"));
+    assert_eq!(trace.verdict, RouteVerdict::Unknown);
 }
 
 // -- reads -------------------------------------------------------------

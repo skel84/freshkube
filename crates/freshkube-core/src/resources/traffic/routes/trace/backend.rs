@@ -1,5 +1,6 @@
 //! The steps of one backend: its reference, its Service and its endpoints,
 //! and the branches a route's rules make of them.
+use super::parent::overruled;
 use super::*;
 
 fn dns_name(text: &str) -> bool {
@@ -87,29 +88,36 @@ fn refs_step(
             None,
         ),
         None => {
-            let grant =
-                (dns_name(&route.namespace) && dns_name(namespace) && dns_name(&backend.name))
-                    .then(|| {
-                        proposal(
-                            inputs.grant_version,
-                            &route.namespace,
-                            namespace,
-                            &backend.name,
-                        )
-                    });
-            (
-                TraceStep::fail(
-                    id,
-                    Owner::Platform,
-                    format!(
-                        "no ReferenceGrant in {namespace} lets HTTPRoutes in {} refer to Service {}",
-                        route.namespace, backend.name
-                    ),
-                )
-                .quoting(asks, "no grant")
-                .reported(refused),
-                grant,
+            let step = TraceStep::fail(
+                id,
+                Owner::Platform,
+                format!(
+                    "no ReferenceGrant in {namespace} lets HTTPRoutes in {} refer to Service {}",
+                    route.namespace, backend.name
+                ),
             )
+            .quoting(asks, "no grant")
+            .reported(refused);
+            // No grant found never overrules the controller saying it
+            // resolved the reference: that is Unknown, and proposes nothing.
+            let step = overruled(
+                step,
+                route_condition(status, "ResolvedRefs"),
+                route.generation,
+            );
+            let grant = (step.verdict == StepVerdict::Fail
+                && dns_name(&route.namespace)
+                && dns_name(namespace)
+                && dns_name(&backend.name))
+            .then(|| {
+                proposal(
+                    inputs.grant_version,
+                    &route.namespace,
+                    namespace,
+                    &backend.name,
+                )
+            });
+            (step, grant)
         }
     }
 }
@@ -235,6 +243,14 @@ fn endpoints_step(backend: &BackendRef, namespace: &str, reading: &ServiceReadin
             id,
             StepVerdict::Neutral,
             "a Service with no selector publishes what is added to it, and nothing yet",
+        )
+        .quoting(asks, serves);
+    }
+    if ready == 0 && published.truncated {
+        return TraceStep::unknown(
+            id,
+            Owner::Yours,
+            "none of the endpoints read is ready, but the list was cut, so a ready one may exist",
         )
         .quoting(asks, serves);
     }

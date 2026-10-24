@@ -703,8 +703,22 @@ mod tests {
                 ..Hold::default()
             }
         );
+        assert_eq!(
+            hold("routes"),
+            Hold {
+                routes: true,
+                ..Hold::default()
+            }
+        );
         let all = hold("all");
-        assert!(all.talos && all.lists && all.coroot && all.monitoring && all.applications);
+        assert!(
+            all.talos
+                && all.lists
+                && all.coroot
+                && all.monitoring
+                && all.applications
+                && all.routes
+        );
         for bad in ["", "Talos", "everything", "talos,lists"] {
             assert_eq!(hold(bad), Hold::default(), "{bad:?}");
         }

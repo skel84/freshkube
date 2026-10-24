@@ -120,3 +120,34 @@ fn links_name_the_gateway_and_the_service_at_the_end_of_a_branch() {
     // A rule with no backend has nothing to link to.
     assert!(model("empty").parents[0].branches[0].service.is_none());
 }
+
+#[test]
+fn the_text_a_frame_draws_is_derived_with_the_model() {
+    let web = model("web");
+    assert_eq!(web.tab_title, "Trace shop.example.com/api");
+    let parent = &web.parents[0];
+    assert!(parent.compact.contains("Gateway infra/edge"));
+    assert!(
+        parent
+            .controller
+            .as_deref()
+            .unwrap()
+            .starts_with("controller ")
+    );
+    let branch = &parent.branches[0];
+    assert!(branch.rule_text.starts_with("rule PathPrefix /api"));
+    assert!(branch.line.contains("shop/cart:8080") && branch.line.contains("Serving"));
+    let split = model("cart-split");
+    let broken = &split.parents[0].branches[1];
+    assert!(
+        broken.line.contains("(20%)") && broken.line.contains("Not serving —"),
+        "{}",
+        broken.line
+    );
+    assert!(parent.steps[0].aria.starts_with("Class claimed: Passes."));
+    let checkout = model("checkout");
+    assert_eq!(
+        checkout.owner_aria.as_deref(),
+        Some("Whose problem: Platform")
+    );
+}

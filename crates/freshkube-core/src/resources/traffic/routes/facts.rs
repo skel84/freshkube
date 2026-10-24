@@ -359,10 +359,23 @@ pub struct Listener {
     pub protocol: String,
     pub hostname: Option<String>,
     pub namespaces: AllowedNamespaces,
-    /// `allowedRoutes.kinds`; none means the protocol's default kinds.
-    pub kinds: Option<Vec<String>>,
+    /// `allowedRoutes.kinds` as `(group, kind)`; none, or an empty list,
+    /// means the protocol's default kinds.
+    pub kinds: Option<Vec<(String, String)>>,
     /// `tls.certificateRefs`, by name alone: no Secret is read.
     pub certificates: Vec<String>,
+}
+
+impl Listener {
+    /// Whether the listener lets HTTPRoute attach: its own kinds name it, or
+    /// it names none and the protocol's default kinds do.
+    pub fn allows_http_route(&self) -> bool {
+        self.kinds.as_ref().is_none_or(|kinds| {
+            kinds
+                .iter()
+                .any(|(group, kind)| group == GATEWAY_GROUP && kind == "HTTPRoute")
+        })
+    }
 }
 
 /// What the controller reported for one listener.
@@ -413,9 +426,20 @@ impl GatewayFacts {
                             }
                             _ => AllowedNamespaces::Same,
                         },
-                        kinds: allowed["kinds"].as_array().map(|kinds| {
-                            kinds.iter().map(|k| text(&k["kind"])).collect::<Vec<_>>()
-                        }),
+                        kinds: allowed["kinds"]
+                            .as_array()
+                            .filter(|kinds| !kinds.is_empty())
+                            .map(|kinds| {
+                                kinds
+                                    .iter()
+                                    .map(|k| {
+                                        (
+                                            k["group"].as_str().unwrap_or(GATEWAY_GROUP).to_owned(),
+                                            text(&k["kind"]),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                            }),
                         certificates: l["tls"]["certificateRefs"]
                             .as_array()
                             .into_iter()

@@ -342,7 +342,10 @@ mod route {
             );
             // The tab carries the route's host and path.
             window.find("detail-tab-trace");
-            assert_eq!(pane.read(cx).traffic.route_label(), "checkout.example.com/");
+            assert_eq!(
+                pane.read(cx).traffic.route_tab_title(),
+                "Trace checkout.example.com/"
+            );
             window.click("detail-tab-trace", cx);
             window.render_frame(cx);
             assert_eq!(pane.read(cx).tab(), Tab::Trace);

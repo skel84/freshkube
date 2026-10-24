@@ -273,7 +273,7 @@ fn open_trace_and_open_route_emit_the_route_link_on_the_right_tab(cx: &mut TestA
 }
 
 #[gpui_kit::test]
-fn a_page_that_is_hidden_reads_nothing_and_a_failed_read_keeps_the_last(cx: &mut TestAppContext) {
+fn showing_the_page_again_after_a_reset_reads_again(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
     cx.update_window(window.into(), |_, window, cx| {
         assert!(page.read(cx).loader.data().is_some());
@@ -419,4 +419,192 @@ fn the_networking_column_has_traffic_on_top_and_opens_routes(cx: &mut TestAppCon
         })
         .unwrap();
     }
+}
+
+// -- the live read, loading and a failed refresh ----------------------------
+
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+/// The page on `access`; a fake client is made inside `runtime`'s context.
+fn mount_access(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    access: ClusterAccess,
+    visible: bool,
+) -> (Entity<RoutesScreen>, WindowHandle<Root>) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        crate::theme::install(cx)
+    });
+    let mut page = None;
+    let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = RoutesScreen::new(runtime.handle().clone(), window, cx);
+            view.set_page_source(
+                PageSource {
+                    kube: Some(ClusterSource {
+                        id: "invented-live".into(),
+                        context: "invented-routes-context".into(),
+                        access,
+                    }),
+                    ..PageSource::default()
+                },
+                window,
+                cx,
+            );
+            view.set_visible(visible, window, cx);
+            view.activate(window, cx);
+            view
+        });
+        page = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    (page.unwrap(), window)
+}
+
+/// A cluster that hands out one client.
+struct Fake(kube::Client);
+
+impl freshkube_core::cluster_source::KubeClientSource for Fake {
+    fn client(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>>
+    {
+        let client = self.0.clone();
+        Box::pin(async move { Ok(client) })
+    }
+}
+
+fn live(client: kube::Client) -> ClusterAccess {
+    ClusterAccess::Live(std::sync::Arc::new(Fake(client)))
+}
+
+#[gpui_kit::test]
+async fn a_hidden_page_asks_the_cluster_nothing_and_a_shown_one_reads_with_gets_only(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::real_io::RealIo;
+    cx.executor().allow_parking();
+    let runtime = runtime();
+    let _entered = runtime.enter();
+    let (client, recorder) = freshkube_core::fake_api::client(|request| {
+        (request.path == "/apis").then(|| freshkube_core::fake_api::json(200, r#"{"groups":[]}"#))
+    });
+    let (page, window) = mount_access(cx, &runtime, live(client), false);
+    // Hidden: activating, refreshing and the shell's source updates read nothing.
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.refresh(window, cx);
+            page.activate(window, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(recorder.lines().is_empty(), "{:?}", recorder.lines());
+    assert!(!cx.read(|cx| page.read(cx).loader.is_loading()));
+    // Shown: one read, lists and gets only.
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| page.set_visible(true, window, cx))
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, cx| page.read(cx).loader.data().is_some())
+        .await;
+    recorder.assert_lines(&["GET /apis"]);
+    recorder.assert_all("the Routes page only reads", |r| {
+        r.method == http::Method::GET
+    });
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let state = window.find("routes-empty-state");
+        assert!(state.label().unwrap().contains("not installed"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn hiding_the_page_drops_the_read_in_flight(cx: &mut TestAppContext) {
+    use freshkube_ui::real_io::RealIo;
+    cx.executor().allow_parking();
+    let runtime = runtime();
+    let _entered = runtime.enter();
+    let held = freshkube_core::fake_api::held();
+    let (page, window) = mount_access(cx, &runtime, live(held.client.clone()), true);
+    cx.wait_for_io(window.into(), |_, _| !held.recorder.lines().is_empty())
+        .await;
+    assert!(cx.read(|cx| page.read(cx).loader.is_loading()));
+    assert_eq!(held.abandoned(), 0);
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| page.set_visible(false, window, cx))
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, _| held.abandoned() > 0)
+        .await;
+    assert!(!cx.read(|cx| page.read(cx).loader.is_loading()));
+    // Nothing else was asked, and nothing but a GET.
+    held.recorder.assert_all("the Routes page only reads", |r| {
+        r.method == http::Method::GET
+    });
+}
+
+#[gpui_kit::test]
+fn a_held_read_keeps_the_loading_rows_until_it_answers(cx: &mut TestAppContext) {
+    let hold = freshkube_core::cluster_source::Hold {
+        routes: true,
+        ..Default::default()
+    };
+    let runtime = runtime();
+    let (page, window) = mount_access(cx, &runtime, ClusterAccess::Example(hold), true);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(page.read(cx).loader.is_loading());
+        assert!(page.read(cx).loader.data().is_none());
+        // The table is there with its loading rows, not an empty state or an error.
+        window.find("routes-list");
+        window.find("routes-loading");
+        assert!(window.try_find("routes-empty-state").is_none());
+        assert!(window.try_find("routes-retry").is_none());
+        assert!(page.update(cx, |page, cx| page.status(cx)).is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_failed_refresh_keeps_the_last_read_under_a_banner(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let rows = page.read(cx).display.rows.len();
+        assert!(rows > 0);
+        assert!(window.try_find("routes-stale").is_none());
+        page.update(cx, |page, cx| {
+            let id = page.identity().unwrap();
+            let request = page.loader.start(id);
+            page.loader
+                .land(&request, Err("Forbidden: invented refusal".into()), cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        // The rows stay, the banner says why, and nothing claims a new read.
+        assert_eq!(page.read(cx).display.rows.len(), rows);
+        let banner = window.find("routes-stale");
+        assert!(banner.visible());
+        window.find("routes-list");
+        assert!(window.try_find("routes-retry").is_none());
+        let segment = page.update(cx, |page, cx| page.status(cx)).unwrap();
+        assert!(format!("{segment:?}").contains("last read retained"));
+        // A read that lands again clears the banner.
+        page.update(cx, |page, cx| page.read(cx));
+        window.render_frame(cx);
+        assert!(window.try_find("routes-stale").is_none());
+    })
+    .unwrap();
 }

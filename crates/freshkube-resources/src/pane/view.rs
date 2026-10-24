@@ -288,7 +288,7 @@ impl DetailPane {
                 tab(
                     "detail-tab-trace",
                     Tab::Trace,
-                    format!("Trace {}", self.traffic.route_label()).into(),
+                    self.traffic.route_tab_title(),
                     Some("Each step from the class down to the endpoints".into()),
                 )
             }))

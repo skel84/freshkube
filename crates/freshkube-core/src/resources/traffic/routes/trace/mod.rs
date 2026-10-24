@@ -253,6 +253,14 @@ impl RouteVerdict {
     }
 }
 
+/// A verdict another controller wrote for the same parent. It is quoted, and
+/// never judged: only the controller of the Gateway's class speaks for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OtherController {
+    pub controller: String,
+    pub says: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ParentTrace {
@@ -265,6 +273,8 @@ pub struct ParentTrace {
     pub steps: Vec<TraceStep>,
     pub branches: Vec<Branch>,
     pub verdict: RouteVerdict,
+    /// Other controllers' verdicts on this parent, not part of this one.
+    pub others: Vec<OtherController>,
 }
 
 /// The one line a Routes row reads: where it stops and why.
@@ -433,6 +443,7 @@ fn trace_parent(
             steps: Vec::new(),
             branches: Vec::new(),
             verdict: RouteVerdict::Mesh,
+            others: Vec::new(),
         };
     }
     let gateway_namespace = parent.namespace_or(&route.namespace);
@@ -489,20 +500,20 @@ fn trace_parent(
                 steps,
                 branches: Vec::new(),
                 verdict,
+                others: Vec::new(),
             };
         }
     };
     chain.run(StepId::Class, || class_step(gateway, inputs));
     chain.run(StepId::Gateway, || gateway_step(gateway));
-    let mut listener = None;
+    let mut fitting = Vec::new();
     chain.run(StepId::Listener, || {
-        let (step, picked) = listener_step(gateway, parent, route, status);
-        listener = picked;
+        let (step, listeners) = listener_step(gateway, parent, route, status);
+        fitting = listeners;
         step
     });
-    chain.run(StepId::Namespace, || match &listener {
-        Some(listener) => namespace_step(gateway, listener, route, status, inputs),
-        None => TraceStep::not_reached(StepId::Namespace),
+    chain.run(StepId::Namespace, || {
+        namespace_step(gateway, &fitting, route, status, inputs)
     });
     let reached = !chain.stopped;
     let branches = if reached {
@@ -518,6 +529,7 @@ fn trace_parent(
         steps: chain.steps,
         branches,
         verdict,
+        others: Vec::new(),
     }
 }
 
@@ -608,8 +620,33 @@ fn summarize(route: &RouteFacts, parents: &[ParentTrace], verdict: RouteVerdict)
     }
 }
 
-/// Traces one route against what was read. One trace per parent, and per
-/// controller when several wrote a verdict for the same parent.
+/// The controller that implements the class of the Gateway `parent` names,
+/// when the class and the Gateway were read.
+fn class_controller(route: &RouteFacts, parent: &ParentRef, inputs: &Inputs) -> Option<String> {
+    if !parent.is_gateway() {
+        return None;
+    }
+    let namespace = parent.namespace_or(&route.namespace);
+    let gateway = inputs
+        .gateways
+        .as_ref()
+        .ok()?
+        .items
+        .iter()
+        .find(|g| g.namespace == namespace && g.name == parent.name)?;
+    let class = inputs
+        .classes
+        .as_ref()
+        .ok()?
+        .items
+        .iter()
+        .find(|c| c.name == gateway.class)?;
+    (!class.controller.is_empty()).then(|| class.controller.clone())
+}
+
+/// Traces one route against what was read: one trace per parent. Only the
+/// entries of `status.parents` that the class's controller wrote are judged;
+/// another controller's are quoted beside the trace and decide nothing.
 pub fn trace_route(route: &RouteFacts, inputs: &Inputs) -> RouteTrace {
     let mut parents = Vec::new();
     for parent in &route.parents {
@@ -618,11 +655,27 @@ pub fn trace_route(route: &RouteFacts, inputs: &Inputs) -> RouteTrace {
             .iter()
             .filter(|s| s.parent.same_as(parent, &route.namespace))
             .collect::<Vec<_>>();
-        if statuses.is_empty() {
+        let ours = class_controller(route, parent, inputs);
+        let (ours, others): (Vec<_>, Vec<_>) = statuses
+            .into_iter()
+            .partition(|s| ours.as_ref().is_none_or(|c| *c == s.controller));
+        let others = others
+            .into_iter()
+            .map(|s| OtherController {
+                controller: s.controller.clone(),
+                says: find(&s.conditions, "Accepted")
+                    .map_or_else(|| "no Accepted condition".to_owned(), Cond::says),
+            })
+            .collect::<Vec<_>>();
+        let first = parents.len();
+        if ours.is_empty() {
             parents.push(trace_parent(route, parent, None, inputs));
         }
-        for status in statuses {
+        for status in ours {
             parents.push(trace_parent(route, parent, Some(status), inputs));
+        }
+        if let Some(trace) = parents.get_mut(first) {
+            trace.others = others;
         }
     }
     let verdict = route_verdict(&parents);

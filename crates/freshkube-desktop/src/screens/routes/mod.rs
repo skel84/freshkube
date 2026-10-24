@@ -15,6 +15,7 @@ use crate::{
     ui::{self, dp},
 };
 use display::Display;
+use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::resources::traffic::routes::{self, GATEWAY_GROUP, RoutesRead};
 use freshkube_reads::{Loader, OnShow};
 use freshkube_ui::{
@@ -125,7 +126,14 @@ impl RoutesScreen {
             return;
         };
         let id = self.identity().unwrap();
-        if source.access.is_example() {
+        if let ClusterAccess::Example(hold) = &source.access {
+            // Held, the read stays in flight, so the page keeps its loading
+            // rows.
+            if hold.routes {
+                self.loader.start(id);
+                cx.notify();
+                return;
+            }
             let read = routes::example::read(self.shape)
                 .map_err(|failure| format!("{}: {}", failure.kind.label(), failure.message));
             self.loader.resolve(id, read);

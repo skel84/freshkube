@@ -12,12 +12,12 @@ Tests that prove it: `routes/tests.rs` in core (each step's verdict, the fake AP
 
 ## The trace
 
-One trace per parent of the route, and per controller when several wrote a verdict for the same parent. The steps are:
+One trace per parent of the route. Only the entries of the route's `status.parents` that the Gateway's class controller wrote are judged; another controller's entry for the same parent is quoted beside the trace ("another controller reports ...") and decides nothing, so it cannot make a route partly serving. The steps are:
 
 1. **Class claimed:** the Gateway's GatewayClass exists and a controller accepted it.
 2. **Gateway programmed:** the Gateway is accepted, programmed and has an address.
-3. **Listener accepts:** a listener fits the route by name, port, protocol, kind and hostname, and the controller did not reject it. A listener's `certificateRefs` are shown by name; no Secret is read.
-4. **Namespace allowed:** the listener's `allowedRoutes` accepts the route's namespace (`Same`, `All`, or a label selector checked against the namespaces' labels), and the controller's own `Accepted` for the route agrees.
+3. **Listener accepts:** some listener fits the route by name, port, protocol, kind (an empty `allowedRoutes.kinds` is the protocol's default, and each kind's group is read) and hostname, and the controller did not reject it. A listener's `certificateRefs` are shown by name; no Secret is read.
+4. **Namespace allowed:** among the listeners that fit, one's `allowedRoutes` accepts the route's namespace (`Same`, `All`, or a label selector checked against the namespaces' labels), and the controller's own `Accepted` for the route agrees. A Gateway with several listeners passes when any of them allows the namespace; the step fails only when none does, and then quotes every listener.
 5. **References resolve:** a backend in another namespace needs a ReferenceGrant in the Service's namespace naming the route's namespace and that Service.
 6. **Service has the port:** the Service exists and exposes the port the route asks for.
 7. **Endpoints ready:** the Service publishes a ready endpoint (N1's `read_published`).
@@ -26,9 +26,11 @@ Steps 1 to 4 are the parent's; 5 to 7 are run per backend, so a weighted split i
 
 Each step carries what the route **asks for** and what the gateway **serves**, a reason, whose problem it is (Platform, Yours, Controller; This machine is for a later probe), and the **controller's own words** on a separate line. Configuration and status are never merged: a step can pass on configuration and fail on what the controller reports, and then it is the Controller's.
 
+**What the controller already said wins over what is inferred.** A Fail worked out from configuration alone (no listener fits, the namespace is not allowed, no ReferenceGrant is found) never overrules the route's own controller reporting `Accepted=True` (or `ResolvedRefs=True`) for the route's current generation. It reads Unknown, owned by the Controller, with both sides quoted, and proposes no grant. A verdict older than the route does not count as current.
+
 **Unknown is never green and never "not serving".** A refused, unserved or cut read makes only the steps that need it Unknown, with its reason. A Gateway or class with no status is *blind*, a Gateway not programmed yet is *pending*, a Programmed Gateway with no address is *blind* too, and a failed one is *broken*: three different words. A verdict older than the object's generation (`observedGeneration`) is a stale warning, not a failure.
 
-A route's verdict: **Not serving** (every part broken), **Partly serving** (some backends or parents serve and some are broken), **Unknown**, **Serving**, or **Mesh** (the parent is a Service; mesh routes are not judged). A redirect-only rule and an ExtensionRef rule are not missing backends: the first is answered by the gateway and serves; the second, and a backend that is not a Service, read Unknown ("not judged"). A rule with no backend and no filter is broken. A backend of weight 0 takes no traffic and is not judged.
+A route's verdict: **Not serving** (every part broken), **Partly serving** (some backends or parents serve and some are broken), **Unknown**, **Serving**, or **Mesh** (the parent is a Service; mesh routes are not judged). A redirect-only rule and an ExtensionRef rule are not missing backends: the first is answered by the gateway and serves; the second, and a backend that is not a Service, read Unknown ("not judged"). A rule with no backend and no filter is broken. A backend of weight 0 takes no traffic and is not judged. Zero ready endpoints in a list that was cut read Unknown, not broken. A missing GatewayClass and a Gateway with no HTTP or HTTPS listener are the Platform's.
 
 ## Reads
 
@@ -50,7 +52,7 @@ A backend refused across namespaces proposes a ReferenceGrant for that exact pai
 
 ## Example data
 
-`FRESHKUBE_ROUTES` (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)) shapes the page and an example route's trace: `all` (the default) shows every verdict at once. With `FRESHKUBE_KIND=httproutes.gateway.networking.k8s.io` Resources lists the example routes; their panes always read the full set, so every route finds its own trace, except under the shapes about the API itself (`not-installed`, `incomplete`, `mixed-bundle`, `refused`).
+`FRESHKUBE_FIXTURE_HOLD=routes` keeps the page on its loading rows. `FRESHKUBE_ROUTES` (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)) shapes the page and an example route's trace: `all` (the default) shows every verdict at once. With `FRESHKUBE_KIND=httproutes.gateway.networking.k8s.io` Resources lists the example routes; their panes always read the full set, so every route finds its own trace, except under the shapes about the API itself (`not-installed`, `incomplete`, `mixed-bundle`, `refused`).
 
 ## Left for later
 

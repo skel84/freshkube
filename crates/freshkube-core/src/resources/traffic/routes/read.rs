@@ -379,12 +379,6 @@ pub async fn read_routes(
         backends: &backends,
         grant_version: &version,
     };
-    let routes_cut = routes.cut;
-    let route_kind = Some(kinds.route.clone());
-    let mut notes_out = notes;
-    if routes_cut {
-        notes_out.push(format!("Routes were cut at {ROUTE_LIMIT}; more may exist"));
-    }
     let entries = facts
         .into_iter()
         .map(|facts| {
@@ -392,12 +386,16 @@ pub async fn read_routes(
             RouteEntry { facts, trace }
         })
         .collect();
-    Ok(RoutesRead {
+    let mut read = RoutesRead {
         api,
         routes: entries,
-        route_kind,
-        routes_cut,
+        route_kind: Some(kinds.route.clone()),
+        routes_cut: false,
         backends_cut,
-        notes: notes_out,
-    })
+        notes,
+    };
+    if routes.cut {
+        read.set_cut(ROUTE_LIMIT);
+    }
+    Ok(read)
 }

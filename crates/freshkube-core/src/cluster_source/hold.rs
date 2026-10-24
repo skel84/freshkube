@@ -16,6 +16,7 @@ pub struct Hold {
     pub coroot: bool,
     pub monitoring: bool,
     pub applications: bool,
+    pub routes: bool,
 }
 
 impl Hold {
@@ -26,6 +27,7 @@ impl Hold {
         coroot: false,
         monitoring: false,
         applications: false,
+        routes: false,
     };
 
     /// The holds a `FRESHKUBE_FIXTURE_HOLD` value names; an unknown or
@@ -37,6 +39,7 @@ impl Hold {
             coroot: matches!(value, "coroot" | "all"),
             monitoring: matches!(value, "monitoring" | "all"),
             applications: matches!(value, "applications" | "all"),
+            routes: matches!(value, "routes" | "all"),
         }
     }
 }
