@@ -36,6 +36,7 @@ pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;
 pub mod example;
+pub mod exec_plugin;
 pub mod failure;
 #[cfg(any(test, feature = "testing"))]
 pub mod fake_api;
