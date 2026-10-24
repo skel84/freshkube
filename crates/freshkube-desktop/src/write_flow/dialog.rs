@@ -160,7 +160,7 @@ impl Render for WriteFlow {
                 let more = if *can_review {
                     "Nothing was sent. Review the new version to see what it would change now."
                 } else {
-                    "Nothing was sent."
+                    "Nothing was sent. Close this and ask again."
                 };
                 v_flex()
                     .gap(dp(8.))

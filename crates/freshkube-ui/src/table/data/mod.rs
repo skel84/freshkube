@@ -13,7 +13,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Hsla, Pixels, Role,
     ScrollHandle, ScrollStrategy, SharedString, Stateful, TestSupportExt, UniformListScrollHandle,
-    WeakEntity, Window, div, px, uniform_list,
+    WeakEntity, Window, div, point, px, uniform_list,
 };
 
 use super::pinned::{Passing, Pinned, Watch, pins, scrolled_by};
@@ -140,6 +140,61 @@ impl TableState {
         self.scroll.scroll_to_item(line, strategy);
     }
 
+    /// Scrolls a line into view, and a line below the window ends as the
+    /// last whole row, so the first row under the header is whole too (see
+    /// [`TableSource::whole_rows`]).
+    pub fn reveal_whole(&self, line: usize, lines: usize) {
+        match self.last_whole_row(line, lines) {
+            Some(top) => self.scroll.scroll_to_item_strict(top, ScrollStrategy::Top),
+            None => self.scroll.scroll_to_item(line, ScrollStrategy::Nearest),
+        }
+    }
+
+    /// The line the window starts at when `line` is its last whole row, if
+    /// `line` is below the window as the list's last frame drew it; `None`
+    /// before it has drawn, when the window holds less than a row, or when
+    /// `line` shows already or is above.
+    fn last_whole_row(&self, line: usize, lines: usize) -> Option<usize> {
+        let state = self.scroll.0.borrow();
+        // The list's last frame: `item` is its window, `contents` all its
+        // lines, which are one height.
+        let row = f32::from(state.last_item_size?.contents.height) / lines.max(1) as f32;
+        let view = f32::from(state.base_handle.bounds().size.height);
+        if row < 1. || view < row {
+            return None;
+        }
+        // A fraction of a pixel over a whole row count is the hairlines'
+        // rounding, not room for another row.
+        let whole = ((view + 1.5) / row).floor() as usize;
+        let scrolled = (-f32::from(state.base_handle.offset().y)).max(0.);
+        let first = (scrolled / row - 0.01).ceil().max(0.) as usize;
+        (line >= first + whole).then(|| line + 1 - whole)
+    }
+
+    /// Scrolls the table sideways so the column spanning `left..left +
+    /// width` dp from its left edge shows beside the pinned run of `pinned`
+    /// dp, for a selection in a wide table. `false` before the table has
+    /// drawn, when nothing can be said yet.
+    pub fn reveal_column(&self, left: f32, width: f32, pinned: f32, window: &Window) -> bool {
+        let view = self.sideways.bounds().size.width;
+        if view <= Pixels::ZERO {
+            return false;
+        }
+        let unit = ui::dp_px(1., window);
+        let (from, to, pinned) = (unit * left, unit * (left + width), unit * pinned);
+        let at = -self.sideways.offset().x;
+        let target = if from < at + pinned {
+            from - pinned
+        } else if to > at + view {
+            to - view
+        } else {
+            return true;
+        };
+        self.sideways
+            .set_offset(point(-target.max(Pixels::ZERO), self.sideways.offset().y));
+        true
+    }
+
     /// Whether the table is scrolled sideways. Until it is, nothing pins
     /// and the rows draw as if pinning didn't exist.
     fn scrolled(&self) -> bool {
@@ -187,6 +242,21 @@ pub trait TableSource: Sized + 'static {
     /// A header click: the page decides the order, as a cycle.
     fn sort(&mut self, sort: Self::Sort, cx: &mut Context<Self>);
     fn line_count(&self) -> usize;
+    /// The height of a row, in dp. A table declares a taller row only when
+    /// its cells hold two lines (DESIGN.md: the Overview matrix's 40 dp);
+    /// the header stays at [`HEADER_HEIGHT`] and group lines at
+    /// [`ROW_HEIGHT`], so a table with groups keeps the default.
+    fn row_height(&self) -> f32 {
+        ROW_HEIGHT
+    }
+    /// Whether a reveal keeps the rows whole under the header: a row below
+    /// the window ends as its last whole row. Off by default, since it
+    /// goes by the list's last frame and a page whose rows change size
+    /// between reveals scrolls from stale numbers; a trail page that scrolls
+    /// as a whole in a short window turns it on.
+    fn whole_rows(&self) -> bool {
+        false
+    }
     fn line(&self, line: usize, cx: &App) -> Option<Line<Self::Key, Self::Row<'_>>>;
     fn cell(
         &self,
@@ -278,7 +348,11 @@ pub fn step<S: TableSource>(source: &S, delta: isize, cx: &App) -> Option<S::Key
 /// Scrolls the selected row into view.
 pub fn reveal<S: TableSource>(source: &S, strategy: ScrollStrategy) {
     if let Some(line) = source.selected_key().and_then(|key| source.line_of(key)) {
-        source.table_state().reveal(line, strategy);
+        if strategy == ScrollStrategy::Nearest && source.whole_rows() {
+            source.table_state().reveal_whole(line, source.line_count());
+        } else {
+            source.table_state().reveal(line, strategy);
+        }
     }
 }
 
@@ -433,8 +507,8 @@ impl DataTable {
         // A fitted list is as tall as its lines, or while loading as its
         // most lines; an empty one as its state.
         let list_height = self.fit.and_then(|max| match (&loading, &empty) {
-            (Some(_), _) => Some(max.min(super::LOADING_ROWS) as f32 * ROW_HEIGHT),
-            (None, None) => Some(source.line_count().min(max) as f32 * ROW_HEIGHT),
+            (Some(_), _) => Some(max.min(super::LOADING_ROWS) as f32 * source.row_height()),
+            (None, None) => Some(source.line_count().min(max) as f32 * source.row_height()),
             (None, Some(_)) => None,
         });
         let list = div()
@@ -448,7 +522,9 @@ impl DataTable {
                 None => this.flex_1().min_h_0(),
             })
             .map(|this| match (loading, empty) {
-                (Some(rows), _) => this.child(rows.render(source.columns(), fill, window, cx)),
+                (Some(rows), _) => {
+                    this.child(rows.render(source.columns(), fill, source.row_height(), window, cx))
+                }
                 (None, Some(empty)) => this.child(
                     div()
                         .id(ids.empty.clone())
@@ -680,7 +756,7 @@ fn render_line<S: TableSource>(
     }
     let style = RowStyle { selected, p };
     let clickable = source.clickable();
-    let mut element = row_frame(&row, &style, clickable);
+    let mut element = row_frame(&row, &style, clickable, source.row_height());
     let columns = source.columns();
     let (count, run) = pinned_run(columns);
     let pinned = count > 0 && state.pins(run, window);
@@ -768,6 +844,7 @@ fn row_frame<K, R>(
     row: &TableRow<K, R>,
     style: &RowStyle,
     clickable: bool,
+    height: f32,
 ) -> Observed<Stateful<Div>> {
     let (selected, p) = (style.selected, style.p);
     let (marked, muted) = (row.marked, row.muted);
@@ -779,7 +856,7 @@ fn row_frame<K, R>(
         .aria_selected(selected)
         .aria_label(row.label.clone())
         .w_full()
-        .h(dp(ROW_HEIGHT))
+        .h(dp(height))
         .border_1()
         .border_color(if selected {
             p.accent

@@ -384,4 +384,16 @@ fn the_example_holds_what_the_everyday_actions_show() {
         .unwrap();
     let set = object_json(&set.identity, TEST_NOW).unwrap();
     assert_eq!(set["metadata"]["ownerReferences"][0]["kind"], "Deployment");
+    // A Deployment has three revisions of its own; nothing else has any.
+    let sets = replicasets_of(&of("api"), TEST_NOW);
+    let numbers: Vec<_> = sets
+        .iter()
+        .map(|set| set["metadata"]["annotations"]["deployment.kubernetes.io/revision"].clone())
+        .collect();
+    assert_eq!(numbers, ["1", "2", "3"]);
+    assert!(sets.iter().all(|set| {
+        set["metadata"]["ownerReferences"][0]["uid"] == tracked["metadata"]["uid"]
+            || set["metadata"]["ownerReferences"][0]["uid"] == plain["metadata"]["uid"]
+    }));
+    assert!(replicasets_of(&cronjobs[0].identity, TEST_NOW).is_empty());
 }

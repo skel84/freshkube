@@ -69,6 +69,48 @@ pub fn columns() -> Vec<Column> {
     ]
 }
 
+/// How much of the trail a page has room for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Width {
+    /// Every column.
+    Full,
+    /// Without Time and Read from, which would be cut at the page's edge.
+    Compact,
+    /// Also without Link, in a page narrower still (a text size of 20 in
+    /// a small window, beside the shell's narrow column).
+    Tiny,
+}
+
+/// The columns of a page too narrow for [`columns`], which would cut Time
+/// and Read from at its edge: the same four that matter, with Detail down
+/// to its least. A row's tooltip carries the time and where it was read
+/// from, as the full table's last two columns do.
+pub fn compact_columns() -> Vec<Column> {
+    let mut columns = columns();
+    columns.truncate(4);
+    columns[3].width = 120.;
+    columns
+}
+
+/// The columns of a page narrower than [`compact_columns`]: the glyph, the
+/// hop and Detail. The link's word is in the row's tooltip and in the
+/// Inspector.
+pub fn tiny_columns() -> Vec<Column> {
+    let mut columns = compact_columns();
+    columns.remove(2);
+    columns
+}
+
+/// The width the full columns need, in dp: below it the table is compact.
+pub fn full_width() -> f32 {
+    columns().iter().map(TableColumn::width).sum()
+}
+
+/// The width the compact columns need, in dp: below it the table is tiny.
+pub fn compact_width() -> f32 {
+    compact_columns().iter().map(TableColumn::width).sum()
+}
+
 /// A link's glyph, if any, and its word: Confirmed muted, the other two
 /// in ink.
 pub(super) fn link_mark(confidence: Confidence, cause: Option<&Cause>, cx: &App) -> Div {
@@ -120,11 +162,15 @@ impl TableSource for ChangePage {
     }
 
     fn columns(&self) -> &[Column] {
-        &self.columns
+        match self.compact.get() {
+            Width::Full => &self.columns,
+            Width::Compact => &self.compact_columns,
+            Width::Tiny => &self.tiny_columns,
+        }
     }
 
     fn width(&self) -> f32 {
-        self.columns.iter().map(TableColumn::width).sum()
+        self.columns().iter().map(TableColumn::width).sum()
     }
 
     fn list_label(&self) -> String {
@@ -142,6 +188,13 @@ impl TableSource for ChangePage {
 
     fn sort(&mut self, _: (), _: &mut Context<Self>) {}
 
+    /// A short window scrolls the trail as a whole, with a few rows in
+    /// view: a revealed row ends as the last whole one, never half under
+    /// the column header.
+    fn whole_rows(&self) -> bool {
+        true
+    }
+
     fn line_count(&self) -> usize {
         self.lines.len()
     }
@@ -156,7 +209,11 @@ impl TableSource for ChangePage {
             key: row.key.clone(),
             id: SharedString::from(format!("{PREFIX}-hop-{}", row.key)).into(),
             label: row.label.clone(),
-            tooltip: Some(row.name.clone()),
+            tooltip: Some(if self.compact.get() == Width::Full {
+                row.name.clone()
+            } else {
+                row.tip.clone()
+            }),
             marked: false,
             muted: false,
             data: row,
