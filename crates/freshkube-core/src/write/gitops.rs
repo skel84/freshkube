@@ -24,6 +24,54 @@ impl GitOps {
         }
     }
 
+    /// The sentence an edit of the whole object adds: it names the source to
+    /// change instead when the object says which it is.
+    pub fn edit_warning(self, object: &Value) -> String {
+        let source = self.source(object);
+        match (self, source) {
+            (Self::ArgoCd, source) => format!(
+                " Argo CD manages this object{}: change the source it syncs from instead. With self-heal on it will put this edit back; with it off the object shows OutOfSync.",
+                source
+                    .map(|name| format!(" (application {name})"))
+                    .unwrap_or_default()
+            ),
+            (Self::Flux, source) => format!(
+                " Flux manages this object{}: change its source instead, or its next reconcile will put this edit back.",
+                source.map(|name| format!(" ({name})")).unwrap_or_default()
+            ),
+        }
+    }
+
+    /// What the object names as its source: Argo CD's application, from the
+    /// tracking id (`<app>:<group>/<Kind>:<namespace>/<name>`) or the
+    /// instance stamp, or Flux's Kustomization or HelmRelease, from its labels.
+    fn source(self, object: &Value) -> Option<String> {
+        let meta = object.get("metadata")?;
+        let stamp = |field: &str, key: &str| meta.get(field)?.get(key)?.as_str();
+        let named = |value: &str| (!value.is_empty()).then(|| value.to_owned());
+        match self {
+            Self::ArgoCd => stamp("annotations", "argocd.argoproj.io/tracking-id")
+                .and_then(|id| id.split(':').next())
+                .and_then(named)
+                .or_else(|| {
+                    ["labels", "annotations"]
+                        .iter()
+                        .find_map(|field| stamp(field, "argocd.argoproj.io/instance"))
+                        .and_then(named)
+                }),
+            Self::Flux => [
+                ("kustomize.toolkit.fluxcd.io", "Kustomization"),
+                ("helm.toolkit.fluxcd.io", "HelmRelease"),
+            ]
+            .iter()
+            .find_map(|(domain, kind)| {
+                let name = stamp("labels", &format!("{domain}/name"))?;
+                let namespace = stamp("labels", &format!("{domain}/namespace"))?;
+                Some(format!("{kind} {namespace}/{name}"))
+            }),
+        }
+    }
+
     /// The tool that manages `object`, when it says so.
     pub fn of(object: &Value) -> Option<Self> {
         let meta = object.get("metadata")?;
@@ -55,5 +103,46 @@ impl GitOps {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn an_edit_names_the_source_the_object_says_it_has() {
+        let argo = json!({"metadata": {"annotations": {
+            "argocd.argoproj.io/tracking-id": "ledger:apps/Deployment:payments/ledger"}}});
+        let warning = GitOps::of(&argo).unwrap().edit_warning(&argo);
+        assert!(warning.contains("application ledger"), "{warning}");
+        let by_label = json!({"metadata": {"labels": {"argocd.argoproj.io/instance": "checkout"}}});
+        assert!(
+            GitOps::ArgoCd
+                .edit_warning(&by_label)
+                .contains("application checkout")
+        );
+        let flux = json!({"metadata": {"labels": {
+            "kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}}});
+        let warning = GitOps::of(&flux).unwrap().edit_warning(&flux);
+        assert!(
+            warning.contains("Kustomization flux-system/apps"),
+            "{warning}"
+        );
+        let helm = json!({"metadata": {"labels": {
+            "helm.toolkit.fluxcd.io/name": "podinfo", "helm.toolkit.fluxcd.io/namespace": "web"}}});
+        assert!(
+            GitOps::Flux
+                .edit_warning(&helm)
+                .contains("HelmRelease web/podinfo")
+        );
+        // An object that names no source still gets the warning.
+        let bare = json!({"metadata": {"managedFields": [{"manager": "argocd-controller"}]}});
+        let warning = GitOps::of(&bare).unwrap().edit_warning(&bare);
+        assert!(
+            warning.contains("Argo CD manages this object:"),
+            "{warning}"
+        );
     }
 }

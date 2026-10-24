@@ -44,6 +44,11 @@ impl Target {
         }
     }
 
+    /// A core-group Secret, whose values the app never reads on a write path.
+    pub fn is_secret(&self) -> bool {
+        self.group.is_empty() && self.kind == "Secret"
+    }
+
     /// `kind/name`, how a dialog and a toast name the object.
     pub fn label(&self) -> String {
         format!("{}/{}", self.kind, self.name)

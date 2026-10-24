@@ -10,6 +10,7 @@ mod action;
 mod audit;
 mod dialog;
 mod diff;
+pub mod edit_yaml;
 pub mod everyday;
 mod gitops;
 mod history;

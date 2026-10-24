@@ -15,6 +15,7 @@ mod create;
 mod dependencies;
 mod dialogs;
 mod dry_run;
+mod edit_yaml;
 mod example;
 mod identity;
 mod levels;
