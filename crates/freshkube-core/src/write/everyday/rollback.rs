@@ -114,7 +114,7 @@ impl Revisions {
             })
             .filter_map(|replicaset| Revision::of(replicaset, deployment))
             .collect();
-        found.sort_by(|a, b| b.number.cmp(&a.number));
+        found.sort_by_key(|revision| std::cmp::Reverse(revision.number));
         found.truncate(MOST_REVISIONS);
         Self::Read(found)
     }

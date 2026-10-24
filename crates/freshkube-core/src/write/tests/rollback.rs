@@ -142,10 +142,7 @@ async fn safety_g02_roll_back_asks_the_typed_name_when_protected_and_shows_the_d
     let action = everyday::rollback(&read(&cluster).await, 2).unwrap();
     for (level, typed) in [(Protection::Protected, true), (Protection::Open, false)] {
         let given = requirement_for(&action, level);
-        assert!(
-            given.confirm && given.diff && given.undo == false,
-            "{level:?}"
-        );
+        assert!(given.confirm && given.diff && !given.undo, "{level:?}");
         assert_eq!(given.type_name, typed, "{level:?}");
     }
     let runner = fake::runner(&cluster, dir.path(), Protection::Protected);
