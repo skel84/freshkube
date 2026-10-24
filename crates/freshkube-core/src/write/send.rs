@@ -76,13 +76,35 @@ fn api(client: &kube::Client, target: &Target) -> Api<DynamicObject> {
     }
 }
 
-/// Reads the object as it is now.
+/// Reads the object as it is now. A Secret is read as metadata only, for every
+/// action: the app never asks for a Secret's values on a write path.
 pub async fn get(client: &kube::Client, target: &Target) -> Result<Value, Refusal> {
-    let object = api(client, target)
-        .get(&target.name)
-        .await
-        .map_err(classify)?;
+    let api = api(client, target);
+    if target.is_secret() {
+        let meta = api.get_metadata(&target.name).await.map_err(classify)?;
+        let mut object = serde_json::to_value(meta).unwrap_or(Value::Null);
+        // The metadata form answers as `PartialObjectMetadata`; the object is
+        // still the Secret.
+        object["apiVersion"] = json!(target.api_resource().api_version);
+        object["kind"] = json!(target.kind);
+        return Ok(object);
+    }
+    let object = api.get(&target.name).await.map_err(classify)?;
     Ok(serde_json::to_value(object).unwrap_or(Value::Null))
+}
+
+/// The server's reply as a value. The reply to a Secret's write carries its
+/// values whatever was asked, so they are dropped here, before anything else
+/// holds the reply: the diff, an observation, `Debug`, the audit and an error
+/// all see a Secret without them.
+fn reply_value(target: &Target, mut object: DynamicObject) -> Value {
+    if target.is_secret()
+        && let Some(map) = object.data.as_object_mut()
+    {
+        map.remove("data");
+        map.remove("stringData");
+    }
+    serde_json::to_value(object).unwrap_or(Value::Null)
 }
 
 /// The body to send: the change's, with the resourceVersion the person saw, so
@@ -108,7 +130,7 @@ pub async fn send(
 ) -> Result<Value, Refusal> {
     let api = api(client, target);
     let reply = match change {
-        Change::Apply(body) => {
+        Change::Apply(body) | Change::Edit { body, .. } => {
             let mut params = PatchParams::apply(FIELD_MANAGER);
             params.dry_run = dry_run;
             let body = with_version(body, target);
@@ -119,7 +141,7 @@ pub async fn send(
                 }
                 None => api.patch(&target.name, &params, &Patch::Apply(&body)).await,
             }
-            .map(|object| serde_json::to_value(object).unwrap_or(Value::Null))
+            .map(|object| reply_value(target, object))
         }
         Change::MergePatch(body) => {
             let params = PatchParams {
@@ -135,7 +157,7 @@ pub async fn send(
                 }
                 None => api.patch(&target.name, &params, &Patch::Merge(&body)).await,
             }
-            .map(|object| serde_json::to_value(object).unwrap_or(Value::Null))
+            .map(|object| reply_value(target, object))
         }
         Change::Create(body) => {
             let params = PostParams {
@@ -154,7 +176,7 @@ pub async fn send(
                 }
             };
             return match api.create(&params, &object).await {
-                Ok(created) => Ok(serde_json::to_value(created).unwrap_or(Value::Null)),
+                Ok(created) => Ok(reply_value(target, created)),
                 Err(kube::Error::Api(response)) if response.code == 409 => Err(Refusal::Rejected {
                     code: 409,
                     message: scrub(&response.message),
@@ -173,7 +195,7 @@ pub async fn send(
             };
             api.delete(&target.name, &params).await.map(|either| {
                 either.either(
-                    |object| serde_json::to_value(object).unwrap_or(Value::Null),
+                    |object| reply_value(target, object),
                     |status| serde_json::to_value(status).unwrap_or(Value::Null),
                 )
             })

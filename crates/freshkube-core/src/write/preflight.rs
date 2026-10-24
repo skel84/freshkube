@@ -10,7 +10,7 @@ use super::{
     access::{self, Access},
     action::{ActionDescription, Change, Depends, Inverse, ObjectChange},
     audit::{Phase, RunId, scrub},
-    diff::{FieldChange, diff},
+    diff::{FieldChange, diff_for},
     requirement::{Requirement, Tier, expected_name, requirement_for},
     run::Runner,
     send::{ChangedWhat, Conflict, Refusal, get, send},
@@ -216,6 +216,7 @@ impl Runner {
                     inverses.push(inverse);
                 }
                 Err(block) => {
+                    let block = super::edit_yaml::reopen(&action, block);
                     self.audit_block(&run, &action, change, &block);
                     return Verdict::Blocked(block);
                 }
@@ -300,7 +301,7 @@ impl Runner {
         }
         match send(&self.client, target, &change.change, true).await {
             Ok(after) => Ok((
-                diff(&before, &after),
+                diff_for(target, &change.change, &before, &after),
                 change.inverse.as_ref().and_then(|from| from.of(&before)),
             )),
             Err(Refusal::Conflict(conflict)) => Err(Block::Conflict { object, conflict }),

@@ -83,6 +83,21 @@ fn applied_fields(body: &Value) -> Vec<String> {
     out
 }
 
+/// The `fieldsV1` of a managed-fields entry that owns these leaf fields, as
+/// the server writes it: `f:` for each key down to the leaf, which is `{}`.
+fn fields_v1(pointers: &[String]) -> Value {
+    let mut root = serde_json::Map::new();
+    for pointer in pointers {
+        let mut at = &mut root;
+        for key in pointer.split('/').skip(1) {
+            let key = format!("f:{}", key.replace("~1", "/").replace("~0", "~"));
+            let entry = at.entry(key).or_insert_with(|| json!({}));
+            at = entry.as_object_mut().expect("a trie node is an object");
+        }
+    }
+    Value::Object(root)
+}
+
 /// Removes the field at a JSON pointer, if it is there.
 fn remove_field(object: &mut Value, pointer: &str) {
     let Some((parent, last)) = pointer.rsplit_once('/') else {
@@ -416,6 +431,16 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
         );
     }
     match request.method.as_str() {
+        // A metadata-only read gets the metadata and nothing else, as the
+        // server answers `as=PartialObjectMetadata`.
+        "GET" if request.accept.contains("as=PartialObjectMetadata") => (
+            fake_api::json(
+                200,
+                json!({"apiVersion": "meta.k8s.io/v1", "kind": "PartialObjectMetadata",
+                       "metadata": state.objects[path]["metadata"]}),
+            ),
+            false,
+        ),
         "GET" => (fake_api::json(200, &state.objects[path]), false),
         "PATCH" | "DELETE" => {
             // The server enforces what the request carries, as a real one
@@ -494,6 +519,17 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
                         if !now.contains(gone) {
                             remove_field(&mut next, gone);
                         }
+                    }
+                    // The server records what the manager owns on the object.
+                    let entry = json!({"manager": key.1, "operation": "Apply",
+                        "fieldsType": "FieldsV1", "fieldsV1": fields_v1(&now)});
+                    if let Some(fields) = next["metadata"]["managedFields"].as_array_mut() {
+                        fields.retain(|held| {
+                            held["manager"] != entry["manager"] || held["operation"] != "Apply"
+                        });
+                        fields.push(entry);
+                    } else {
+                        next["metadata"]["managedFields"] = json!([entry]);
                     }
                     state.owned.insert(key, now);
                 }

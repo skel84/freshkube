@@ -295,6 +295,15 @@ impl Runner {
         if self.example {
             return Ok(action);
         }
+        // An edit's body was made from the version the person opened: it is
+        // never carried to a newer one.
+        if action.kind == super::edit_yaml::KIND {
+            let object = action.changes.first().map(|change| change.target.label());
+            return Err(Block::Changed {
+                object: object.unwrap_or_default(),
+                what: ChangedWhat::Moved,
+            });
+        }
         for change in &mut action.changes {
             // A new object has no version to take again.
             if matches!(change.change, super::action::Change::Create(_)) {

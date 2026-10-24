@@ -65,6 +65,9 @@ fn line_highlights(
 
 impl DetailPane {
     pub(super) fn yaml(&self, view: &Arc<DocumentView>, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(editing) = self.edit_view() {
+            return self.editor(editing, cx);
+        }
         let p = palette(cx);
         let count = self.matches.len();
         let counter = (!self.query.is_empty()).then(|| match (count, self.current) {
@@ -121,7 +124,8 @@ impl DetailPane {
                     .icon(IconName::Copy)
                     .label(format!("Copy {}", pluralize(lines, "line", "lines")))
                     .on_click(cx.listener(|pane, _, _, cx| pane.copy_lines(cx)))
-            }));
+            }))
+            .children(self.edit_button(cx));
         let lines = view.lines.len();
         // Room for the widest line number.
         let gutter = dp(lines.to_string().len() as f32 * 7.2 + 20.);
