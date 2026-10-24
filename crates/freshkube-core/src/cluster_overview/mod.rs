@@ -14,7 +14,7 @@ use std::{
 
 use k8s_openapi::api::core::v1::Node;
 use kube::{
-    Client, Config,
+    Client,
     api::{Api, ListParams},
 };
 use talos_rs::{
@@ -750,12 +750,15 @@ async fn client_from_roster_config(
     // Keep setup isolated so an enclosing deadline can discard late results.
     crate::kubeconfig_selection::run_roster_setup(move || {
         runtime.block_on(async {
-            let config = Config::from_custom_kubeconfig(kubeconfig, &options)
+            let config = crate::exec_plugin::config_from_kubeconfig(kubeconfig, &options)
                 .await
-                .map_err(|_| {
-                    K8sError::ClientCreate(
+                .map_err(|error| match error {
+                    crate::exec_plugin::ConfigError::Plugin(failure) => {
+                        K8sError::ClientCreate(failure.message)
+                    }
+                    crate::exec_plugin::ConfigError::Credentials => K8sError::ClientCreate(
                         "Could not load credentials for the validated Kubernetes source".into(),
-                    )
+                    ),
                 })?;
             crate::kube_client::client(config).map_err(|error| {
                 K8sError::ClientCreate(
@@ -1136,9 +1139,17 @@ async fn fetch_node_kubeconfig(client: &TalosClient) -> Result<kube::config::Kub
 }
 
 async fn client_from_kubeconfig(kubeconfig: kube::config::Kubeconfig) -> Result<Client, K8sError> {
-    let config = Config::from_custom_kubeconfig(kubeconfig, &Default::default())
+    // kube's messages can quote credential sources; the builder drops them.
+    let config = crate::exec_plugin::config_from_kubeconfig(kubeconfig, &Default::default())
         .await
-        .map_err(|error| K8sError::ClientCreate(error.to_string()))?;
+        .map_err(|error| match error {
+            crate::exec_plugin::ConfigError::Plugin(failure) => {
+                K8sError::ClientCreate(failure.message)
+            }
+            crate::exec_plugin::ConfigError::Credentials => K8sError::ClientCreate(
+                "Could not load credentials for the kubeconfig Talos serves".into(),
+            ),
+        })?;
     crate::kube_client::client(config).map_err(|error| K8sError::ClientCreate(error.to_string()))
 }
 
