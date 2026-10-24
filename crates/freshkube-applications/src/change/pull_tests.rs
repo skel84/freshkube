@@ -33,6 +33,8 @@ fn open_at(
         freshkube_ui::theme::install(cx);
         freshkube_ui::text_size::install(None, cx);
         cx.set_reduce_motion(true);
+        // These tests are about the hop table's rows.
+        crate::change_view::use_session(crate::change_view::ChangeView::Hops, cx);
     });
     let mut page = None;
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {

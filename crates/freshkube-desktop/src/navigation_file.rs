@@ -283,24 +283,39 @@ mod tests {
         .unwrap();
         let preferences = directory.join("preferences.json");
         let file = NavigationFile::open(Some(&preferences));
-        assert_eq!(file.view(), ChangeView::List);
-        cx.update(|cx| ViewStore::save(&file, ChangeView::Chain, cx));
+        // No choice yet: the Overview.
+        assert_eq!(file.view(), ChangeView::Overview);
+        cx.update(|cx| ViewStore::save(&file, ChangeView::Hops, cx));
         cx.run_until_parked();
         assert_eq!(
             NavigationFile::open(Some(&preferences)).view(),
-            ChangeView::Chain
+            ChangeView::Hops
         );
         let saved = read(path.clone());
-        assert_eq!(saved["change"]["view"], "chain");
+        assert_eq!(saved["change"]["view"], "hops");
         assert_eq!(saved["change"]["future"], 7);
         assert_eq!(saved["future"]["key"], 3);
         assert_eq!(saved["collapsed"], true);
-        cx.update(|cx| ViewStore::save(&file, ChangeView::List, cx));
+        cx.update(|cx| ViewStore::save(&file, ChangeView::Overview, cx));
         cx.run_until_parked();
         assert_eq!(
             NavigationFile::open(Some(&preferences)).view(),
-            ChangeView::List
+            ChangeView::Overview
         );
+        // What an earlier build saved keeps its meaning: its List is All
+        // hops, and the Chain it dropped opens the Overview.
+        for (saved, expected) in [("list", ChangeView::Hops), ("chain", ChangeView::Overview)] {
+            std::fs::write(
+                &path,
+                format!(r#"{{"collapsed":true,"change":{{"view":"{saved}"}}}}"#),
+            )
+            .unwrap();
+            assert_eq!(
+                NavigationFile::open(Some(&preferences)).view(),
+                expected,
+                "{saved}"
+            );
+        }
         std::fs::remove_dir_all(directory).unwrap();
     }
 

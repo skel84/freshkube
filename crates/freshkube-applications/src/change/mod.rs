@@ -22,13 +22,13 @@ mod act;
 mod act_tests;
 #[cfg(test)]
 mod cause_tests;
-mod chain;
 mod changes;
 mod detail;
 mod fixbar;
 #[cfg(test)]
 mod fixbar_tests;
 mod outcome;
+mod overview;
 mod pull;
 #[cfg(test)]
 mod pull_tests;
@@ -37,11 +37,10 @@ mod results;
 pub(crate) mod table;
 #[cfg(test)]
 mod tests;
-mod trail;
 mod view;
+mod views;
 
 use crate::change_view::{ChangeView, ViewStore};
-use freshkube_ui::graph::GraphState;
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Local, Utc};
@@ -87,12 +86,16 @@ gpui_kit::actions!(
         Back,
         /// Opens the selected hop's object in Resources.
         OpenHop,
-        /// Switches between List and Chain.
-        ToggleView
+        /// Switches between the Overview and All hops.
+        ToggleView,
+        /// Overview: selects the next step along the row.
+        NextCell,
+        /// Overview: selects the previous step along the row.
+        PreviousCell
     ]
 );
 
-pub(crate) fn key_bindings() -> [KeyBinding; 6] {
+pub(crate) fn key_bindings() -> [KeyBinding; 8] {
     [
         KeyBinding::new("down", NextHop, Some(CONTEXT)),
         KeyBinding::new("up", PreviousHop, Some(CONTEXT)),
@@ -100,6 +103,8 @@ pub(crate) fn key_bindings() -> [KeyBinding; 6] {
         KeyBinding::new("o", OpenHop, Some(CONTEXT)),
         KeyBinding::new("enter", OpenHop, Some(CONTEXT)),
         KeyBinding::new("v", ToggleView, Some(CONTEXT)),
+        KeyBinding::new("right", NextCell, Some(CONTEXT)),
+        KeyBinding::new("left", PreviousCell, Some(CONTEXT)),
     ]
 }
 
@@ -122,6 +127,17 @@ pub enum ChangeEvent {
 /// trail is what the page is for, and a short window keeps rows of it.
 const STACKED: Stacked = Stacked {
     lead: Pane::new(280.).least(inspector::LIST_MIN_HEIGHT),
+    trail: Pane::new(280.).least(inspector::MIN_HEIGHT),
+};
+
+/// Stacked, the Overview's strip and matrix keep the strip's height, the
+/// matrix's header and two 40 dp rows, and the Inspector what it keeps
+/// under All hops.
+/// The least the strip and the matrix keep, in dp: the stacked strip's three
+/// cards and two joins, and the matrix's header and two rows.
+const OVERVIEW_LEAD: f32 = 300.;
+const OVERVIEW_STACKED: Stacked = Stacked {
+    lead: Pane::new(320.).least(OVERVIEW_LEAD),
     trail: Pane::new(280.).least(inspector::MIN_HEIGHT),
 };
 
@@ -320,6 +336,13 @@ pub struct HopRow {
     pub coroot: Option<Mark>,
     /// The row's accessibility label.
     pub label: SharedString,
+    /// The row's tooltip when the table has no Time, Read from or Link
+    /// column to say them: the name, when, where it was read from, and
+    /// the link's word.
+    pub tip: SharedString,
+    /// Why Coroot's outcome for the hop isn't a verdict, once it was read:
+    /// the cause's word.
+    pub coroot_why: Option<&'static str>,
 }
 
 /// A group row's words, derived with the change.
@@ -401,6 +424,15 @@ pub struct ChangePage {
     folded: BTreeSet<usize>,
     filter: Option<Tone>,
     columns: Vec<table::Column>,
+    /// The columns of a page too narrow for them, and whether the table
+    /// draws those now: set from the width it has, as it draws.
+    compact_columns: Vec<table::Column>,
+    tiny_columns: Vec<table::Column>,
+    compact: std::cell::Cell<table::Width>,
+    /// The matrix needs its rows again: the change, the selection, the
+    /// filter or the loading state moved.
+    matrix_stale: std::cell::Cell<bool>,
+    matrix_loading: std::cell::Cell<bool>,
     table: TableState,
     focus: FocusHandle,
     split: InspectorSplit,
@@ -412,10 +444,14 @@ pub struct ChangePage {
     notes_cap_used: std::cell::Cell<gpui::Pixels>,
     view: ChangeView,
     view_store: std::rc::Rc<dyn ViewStore>,
-    trail: trail::Trail,
-    graph: GraphState<SharedString>,
+    /// The Overview: its matrix rows and start strip, derived with the
+    /// change, the matrix that draws them, and the split it shares the
+    /// Inspector's width in.
+    overview: Vec<overview::StageRow>,
+    strip: overview::Strip,
+    matrix: Entity<overview::Matrix>,
+    overview_split: InspectorSplit,
     link_selected: bool,
-    chain_reveal_pending: bool,
     selected: Option<SharedString>,
     /// What the Inspector says of the selection.
     detail: Option<detail::Detail>,
@@ -448,6 +484,8 @@ impl ChangePage {
         let mut loader = Loader::default();
         loader.set_visible(visible, read::ON_SHOW, cx);
         let view_store = crate::change_view::store(window, cx);
+        let page = cx.weak_entity();
+        let matrix = cx.new(|_| overview::Matrix::new(page));
         let mut page = Self {
             page_link: page_link(&change),
             copied: false,
@@ -476,6 +514,11 @@ impl ChangePage {
             folded: BTreeSet::new(),
             filter: None,
             columns: table::columns(),
+            compact_columns: table::compact_columns(),
+            tiny_columns: table::tiny_columns(),
+            compact: std::cell::Cell::new(table::Width::Full),
+            matrix_stale: std::cell::Cell::new(true),
+            matrix_loading: std::cell::Cell::new(false),
             table: TableState::new(PREFIX),
             focus: cx.focus_handle(),
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
@@ -484,10 +527,11 @@ impl ChangePage {
             notes_cap_used: std::cell::Cell::new(gpui::Pixels::ZERO),
             view: view_store.view(),
             view_store,
-            trail: Default::default(),
-            graph: chain::state(cx),
+            overview: Vec::new(),
+            strip: Default::default(),
+            matrix,
+            overview_split: InspectorSplit::new(PREFIX, cx).stacked(OVERVIEW_STACKED),
             link_selected: false,
-            chain_reveal_pending: false,
             selected: None,
             detail: None,
             detail_scroll: ScrollHandle::new(),
@@ -558,6 +602,19 @@ impl ChangePage {
                     detail: hop.detail.clone().into(),
                     from: hop.from.clone().into(),
                     label: format!("{}: {}{link}", hop.name, hop.detail).into(),
+                    tip: [
+                        Some(hop.name.clone()),
+                        hop.at.map(|at| format!("at {}", clock(at))),
+                        (!hop.from.is_empty()).then(|| format!("read from {}", hop.from)),
+                        hop.link
+                            .map(|link| format!("link {}", cause_word(link, hop.cause.as_ref()))),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+                    .into(),
+                    coroot_why: None,
                     time: time.into(),
                     link: hop.link,
                     cause: hop.cause.clone(),
@@ -671,7 +728,7 @@ impl ChangePage {
         {
             self.selected = None;
         }
-        self.derive_chain();
+        self.derive_overview();
         self.prune_outcomes();
         self.sync_marks();
         self.detail = self.derive_detail();
@@ -713,12 +770,7 @@ impl ChangePage {
     }
 
     pub fn focus_handle(&self) -> FocusHandle {
-        if self.view == ChangeView::Chain && !self.rows.is_empty() && self.loading_rows().is_none()
-        {
-            self.graph.focus_handle().expect("Chain has keys").clone()
-        } else {
-            self.focus.clone()
-        }
+        self.focus.clone()
     }
 
     /// Selects a hop, unfolding its group so its row shows.
@@ -732,8 +784,8 @@ impl ChangePage {
             self.detail_scroll.set_offset(point(px(0.), px(0.)));
         }
         self.selected = Some(row.key.clone());
+        self.matrix_stale.set(true);
         self.link_selected = false;
-        self.graph.clear_selection();
         self.detail = self.derive_detail();
         self.offer_follows(cx);
         self.read_outcome(false, cx);
@@ -743,33 +795,21 @@ impl ChangePage {
             .is_some_and(|tone| tone != self.groups[group].counts_as);
         if hidden {
             self.filter = None;
-            self.dim_chain();
         }
         if self.folded.remove(&group) || hidden {
             self.derive();
         }
-        if self.view == ChangeView::Chain {
-            if let Some(key) = self
-                .selected
-                .as_ref()
-                .and_then(|key| self.trail.cards.get(key))
-            {
-                self.graph.reveal_node(key, window);
-            }
-            self.chain_reveal_pending = true;
-        } else {
+        if self.view == ChangeView::Hops {
             kit::reveal(self, ScrollStrategy::Nearest);
-        }
-        // Stacked, the Inspector shrinks the table over a few frames: the
-        // selection is revealed again until its height holds.
-        if self.view == ChangeView::List
-            && freshkube_ui::page::page_width(window) < inspector::SPLIT_WIDTH
-        {
-            kit::reveal_when_settled(
-                cx.entity().downgrade(),
-                |page| page.view == ChangeView::List && page.selected.is_some(),
-                window,
-            );
+            // Stacked, the Inspector shrinks the table over a few frames: the
+            // selection is revealed again until its height holds.
+            if freshkube_ui::page::page_width(window) < inspector::SPLIT_WIDTH {
+                kit::reveal_when_settled(
+                    cx.entity().downgrade(),
+                    |page| page.view == ChangeView::Hops && page.selected.is_some(),
+                    window,
+                );
+            }
         }
         cx.notify();
     }
@@ -791,7 +831,9 @@ impl ChangePage {
     }
 
     fn step(&mut self, delta: isize, window: &Window, cx: &mut Context<Self>) {
-        if let Some(key) = kit::step(self, delta, cx) {
+        if self.view == ChangeView::Overview {
+            self.step_overview(delta.signum(), 0, window, cx);
+        } else if let Some(key) = kit::step(self, delta, cx) {
             self.select(&key, window, cx);
         }
     }
@@ -812,16 +854,16 @@ impl ChangePage {
 
     fn toggle_filter(&mut self, tone: Tone, cx: &mut Context<Self>) {
         self.filter = (self.filter != Some(tone)).then_some(tone);
+        self.matrix_stale.set(true);
         self.derive();
-        self.dim_chain();
         cx.notify();
     }
 
     /// Escape: the selection first, then back.
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.selected.take().is_some() {
+            self.matrix_stale.set(true);
             self.link_selected = false;
-            self.graph.clear_selection();
             self.detail = None;
             self.hide_outcomes();
             cx.notify();

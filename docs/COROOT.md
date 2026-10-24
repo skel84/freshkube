@@ -267,7 +267,7 @@ The outcome needs no open Kubernetes connection for the entry: it reads Coroot o
 
 ### What its metrics did after it
 
-**Where it shows.** In the Inspector of a Deployment hop, an **After the deploy** section, below the hop's fields and above its actions. In List, the row's Detail gains nothing; in Chain, the card gains nothing. Once an outcome is read, the hop carries a small Coroot mark (below). The section reads only for the hop that is selected, and only while the change page shows.
+**Where it shows.** In the Inspector of a Deployment hop, an **After the deploy** section, below the hop's fields and above its actions. In All hops, the row's Detail gains nothing; in the Overview, the Stage's After deploy cell shows the verdict. Once an outcome is read, the hop carries a small Coroot mark (below). The section reads only for the hop that is selected, and only while the change page shows.
 
 **What the section shows, for a found revision:**
 
@@ -276,7 +276,7 @@ The outcome needs no open Kubernetes connection for the entry: it reads Coroot o
 - **The charts split at the start.** The chart of the report the revision's first finding names (SLO when there are none), drawn in the shared `PanelView` the Deployments Inspector uses, split at the start, with the samples counted on each side ("Before the start: all 90 samples across 3 series · after: 80 of 93 samples across 3 series"). At most four charts of that report; the rest are Compare's. A value of one side is never subtracted from the other's, and no percentage or arrow is drawn between them. Coroot is the only one that compares, and it does so in its findings.
 - **Data that stops early** says where, as Deployments does; **no data for the window** replaces the charts with Coroot's words.
 
-**The mark.** In List and in Chain, a Deployment hop whose outcome has been read shows Coroot's status glyph, small, after its Detail (List) or in the card's corner (Chain), with the tooltip "Coroot: ⟨status⟩ · ⟨first finding⟩". It is not the hop's status glyph and not its link: it is drawn beside both, it never colours a link, and **it is not counted in `StatusChips`**, since a chip counts the hop's own state and the verdict is Coroot's. A hop whose outcome hasn't been read draws no mark, never an "ok".
+**The mark.** In All hops, a Deployment hop whose outcome has been read shows Coroot's status glyph, small, after its Detail, with the tooltip "Coroot: ⟨status⟩ · ⟨first finding⟩". It is not the hop's status glyph and not its link: it is drawn beside both, it never colours a link, and **it is not counted in `StatusChips`**, since a chip counts the hop's own state and the verdict is Coroot's. A hop whose outcome hasn't been read draws no mark, never an "ok". In the Overview (#823, which replaced the Chain), the Stage's After deploy cell shows the same verdict once the hop was selected and read, `Not looked` before, and, when Coroot answered with no verdict, its cause: `Not set up` (no connection, no cluster linked, no project), `Not found` (no application, no revision, no data) or `Can't read` (refused, failed), never a failure.
 
 **Read cost.** Only the selected hop reads (the owner's decision). The first read for a link costs at most three requests: the project's applications list (once per link for the page's shown life, 30 s as the change page's own freshness), the application's page, and the window. A second hop of the same link costs two. One job is in flight at a time, and all three go through the provider's two shared slots with its 20 s deadline. A change with four Deployment hops, read one after another, costs at most 3 + 3 × 2 = 9 requests, never started together.
 
@@ -320,9 +320,9 @@ DESIGN.md's change page text is updated by slice 4, so it doesn't collide with [
 - *Stale*: a failed refresh keeps the last answer under a `Couldn't read again` Warn banner with the last good time.
 - The section's footer line, `Read from Coroot · ⟨time⟩`, in `muted`.
 
-**The mark** (List's Detail, Chain's card). Coroot's status glyph at 12 dp with the tooltip above. It is absent until read. In Chain it sits in the card's top-right corner, beside the hop's own glyph; links keep their three confidence line styles.
+**The mark** (All hops' Detail; the Overview's After deploy cell). Coroot's status glyph at 12 dp with the tooltip above. It is absent until read.
 
-**List and Chain.** Both draw one derived trail, so the section, the mark and the selection are the same in both. A Deployment hop is one card in Chain and one row in List; selecting either shows the Inspector with the section, and switching views keeps the selection and the read. The reverse link adds nothing to the Chain: its key is the image digest the Freight link already shows in its pill.
+**All hops and the Overview.** Both draw one derived change, so the section, the mark and the selection are the same in both. A Deployment hop is one row in All hops and one cell of its Stage's row in the Overview; selecting either shows the Inspector with the section, and switching views keeps the selection and the read. The reverse link adds nothing to the strip: its key is the image digest the Freight link already shows in its pill.
 
 **Narrow windows and large text.** At 760 × 560 and text size 20 the Inspector stacks under the trail, and the section's charts are one per row at the Inspector's width; counts and findings wrap, never cut. Sizes are `dp`.
 
@@ -340,7 +340,7 @@ Each slice is one pull request with a changelog fragment under `changelog.d/coro
 | 3 | **Marker focus and Show on charts.** `PanelView::set_focused_marker`; Show on charts on a revision row and in the Application page. UI tests, smoke. | Codex | `freshkube-monitoring` `panel/`, observability `deployments/`, `application/` | none; merge #520 first |
 | 4 | **The change page's section.** The `OutcomeReader` handed to the shell and the change page; the job, its identity and generation; the section, the mark, every state; example data for every outcome (new Applications shape, listed in AGENTS.md's knob table); DESIGN.md's change page text. UI tests (a late answer doesn't land, hide drops it, another entry's answer never draws), smoke at 1280 × 880 and 760 × 560, light and dark, and at text size 20 once. | Codex (core seam: Claude) | `applications/change/`, `delivery/change/example.rs`, `desktop/shell/` | 2, #697 slice 10 (Observability reads the connection from the setup file), #706 slice 3 (the owner that reloads the setup) |
 | 5 | **Per-entry link in Observability.** The map's and reports' Kubernetes links read the open entry's key; `Association` and "Link Kubernetes cluster…" go. | Codex | observability `connection.rs`, `settings.rs`; desktop shell | 4. Done; it reads the hand-edited file, and the editor ([#697](https://github.com/skel84/freshkube/issues/697) slice 12) comes later |
-| 6 | **The chain's Coroot mark in Chain.** The corner mark on a Deployment card; the same tests in Chain. | Codex | `applications/change/` (the Chain view) | 4, #698's Chain slice |
+| 6 | **The Coroot verdict in the Overview.** (Was the Chain's corner mark; the Chain is gone.) The After deploy cell. | Codex | `applications/change/overview/` | 4 |
 | 7 | **The Changes list.** The Inspector's per-Stage line and the memo that feeds it. | Codex | `applications/changes/` | 4 |
 | 8 | **Core: from a revision to its Freight.** The join in the reverse-link section, with every reason. | Claude | core `coroot/`, `freshkube-delivery` (a seam, no UI types) | 2, 5 |
 | 9 | **Open the change.** The Inspector button, `ChangeLink`, the shell's navigation, the greyed-out reasons. UI tests, smoke. | Codex | observability `deployments/`, desktop shell | 8 |

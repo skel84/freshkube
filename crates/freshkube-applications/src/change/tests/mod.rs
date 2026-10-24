@@ -1,11 +1,10 @@
 //! The actual change page on invented data, without the shell or I/O.
-mod chain;
 mod follows;
 mod layout;
 mod lifetime;
 mod links;
 mod navigation;
-mod reveal;
+mod overview;
 mod states;
 
 use super::{ChangeEvent, ChangePage, Connections, Fetch, HealthIndicator, SessionKey, Shows};
@@ -13,11 +12,8 @@ use crate::change_view::ChangeView;
 use chrono::{DateTime, Utc};
 use freshkube_delivery::change::example::Shape;
 use freshkube_delivery::join::Confidence;
+use freshkube_ui::layout_check;
 use freshkube_ui::ui::Tone;
-use freshkube_ui::{
-    graph::{Cursor, EdgeStyle, GraphSource},
-    layout_check,
-};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
@@ -26,6 +22,7 @@ use gpui_kit::{
 };
 use std::time::Duration;
 
+/// A page on All hops, the table most of these tests are about.
 pub(super) fn open(
     cx: &mut TestAppContext,
     width: f32,
@@ -37,6 +34,27 @@ pub(super) fn open(
     open_stage(cx, width, height, shape, delay, text, None)
 }
 
+/// A page on the Overview, which a window with no saved choice opens on.
+pub(super) fn open_overview(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    shape: Shape,
+    delay: Duration,
+    text: f32,
+) -> (AnyWindowHandle, Entity<ChangePage>) {
+    open_view(
+        cx,
+        width,
+        height,
+        shape,
+        delay,
+        text,
+        None,
+        ChangeView::Overview,
+    )
+}
+
 fn open_stage(
     cx: &mut TestAppContext,
     width: f32,
@@ -46,8 +64,32 @@ fn open_stage(
     text: f32,
     stage: Option<&str>,
 ) -> (AnyWindowHandle, Entity<ChangePage>) {
+    open_view(
+        cx,
+        width,
+        height,
+        shape,
+        delay,
+        text,
+        stage,
+        ChangeView::Hops,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_view(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    shape: Shape,
+    delay: Duration,
+    text: f32,
+    stage: Option<&str>,
+    view: ChangeView,
+) -> (AnyWindowHandle, Entity<ChangePage>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        crate::change_view::use_session(view, cx);
         freshkube_ui::theme::install(cx);
         freshkube_ui::text_size::install(None, cx);
         freshkube_ui::text_size::set(text, cx);
@@ -83,19 +125,20 @@ fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ChangePage>) {
     open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.)
 }
 
-fn chain(page: &Entity<ChangePage>, window: &mut Window, cx: &mut App) {
-    page.update(cx, |page, cx| page.set_view(ChangeView::Chain, window, cx));
+fn overview_fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ChangePage>) {
+    open_overview(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.)
+}
+
+fn hops(page: &Entity<ChangePage>, window: &mut Window, cx: &mut App) {
+    page.update(cx, |page, cx| page.set_view(ChangeView::Hops, window, cx));
     window.render_frame(cx);
 }
 
-fn settle_chain(window: &mut Window, cx: &mut App) {
-    assert!(
-        window.simulate_next_frame(cx) > 0,
-        "reveal requests a frame"
-    );
+/// Draws until the frames the page asks for have run: the Inspector's
+/// stacked split settles over a few.
+fn settle(window: &mut Window, cx: &mut App) {
     window.render_frame(cx);
-    // The stacked Inspector can change the canvas's height after it opens.
-    for _ in 0..6 {
+    for _ in 0..8 {
         if window.simulate_next_frame(cx) == 0 {
             break;
         }

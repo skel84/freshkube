@@ -25,7 +25,7 @@ use gpui_kit::{
     linear_gradient, point, px, size, white,
 };
 
-use super::{CELL_PAD, GLYPH_WIDTH, ROW_HEIGHT, TableColumn};
+use super::{CELL_PAD, GLYPH_WIDTH, TableColumn};
 use crate::motion;
 use crate::ui::dp_px;
 
@@ -127,6 +127,7 @@ impl LoadingRows {
         &self,
         columns: &[C],
         surface: Hsla,
+        row_height: f32,
         window: &Window,
         cx: &App,
     ) -> AnyElement {
@@ -160,7 +161,7 @@ impl LoadingRows {
                 canvas(
                     |_, _, _| (),
                     move |region, _, window, _| {
-                        let bars = place(&slots, region, window);
+                        let bars = place(&slots, region, row_height, window);
                         for bar_at in &bars {
                             window.paint_quad(
                                 fill(bar_at.bounds, bar).corner_radii(Corners::all(bar_at.radius)),
@@ -194,12 +195,12 @@ struct Slot {
 /// Where each bar goes in `region`, row by row: the rows the region has
 /// room for, at most [`LOADING_ROWS`]. Flexible columns share the room the
 /// others leave, as the real rows' cells do.
-fn place(slots: &[Slot], region: Bounds<Pixels>, window: &Window) -> Vec<Bar> {
+fn place(slots: &[Slot], region: Bounds<Pixels>, row_height: f32, window: &Window) -> Vec<Bar> {
     let unit = dp_px(1., window);
     let total: f32 = slots.iter().map(|slot| slot.width).sum();
     let flexible = slots.iter().filter(|slot| slot.flexible).count().max(1);
     let spare = (region.size.width / unit - total).max(0.) / flexible as f32;
-    let row_height = dp_px(ROW_HEIGHT, window);
+    let row_height = dp_px(row_height, window);
     let rows = ((region.size.height / row_height).ceil() as usize).min(LOADING_ROWS);
     let mut bars = Vec::with_capacity(rows * slots.len());
     for row in 0..rows {

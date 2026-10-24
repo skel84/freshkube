@@ -386,15 +386,6 @@ impl<K: Clone + Ord> GraphState<K> {
         self
     }
 
-    /// Keep the source's order within columns, even when routes cross.
-    /// Ordinary maps reduce crossings instead.
-    #[must_use]
-    pub fn in_source_order(mut self) -> Self {
-        self.metrics.preserve_order = true;
-        self.prepare();
-        self
-    }
-
     /// Answers the arrow keys bound by [`bind_keys`]: the graph takes focus
     /// as one stop, and a key asks its source to move the cursor.
     #[must_use]
@@ -741,63 +732,6 @@ impl<K: Clone + Ord> GraphState<K> {
             pages,
         };
     }
-}
-
-/// Reveals the highlighted card on both axes until the canvas bounds have
-/// changed and then held, for at most six frames. A stacked Inspector learns
-/// its size during layout and can apply it on a later frame. Stops when the
-/// card is no longer highlighted or `showing` returns false.
-pub fn reveal_when_settled<S: GraphSource>(
-    view: gpui_kit::WeakEntity<S>,
-    key: S::Key,
-    showing: fn(&S) -> bool,
-    window: &Window,
-) {
-    settle_reveal(view, key, showing, None, false, 6, window);
-}
-
-fn settle_reveal<S: GraphSource>(
-    view: gpui_kit::WeakEntity<S>,
-    key: S::Key,
-    showing: fn(&S) -> bool,
-    last: Option<(gpui_kit::Pixels, gpui_kit::Pixels)>,
-    changed: bool,
-    frames: usize,
-    window: &Window,
-) {
-    window.on_next_frame(move |window, cx| {
-        let Some(bounds) = view
-            .update(cx, |source, cx| {
-                if !showing(source) || source.highlighted() != Some(&key) {
-                    return None;
-                }
-                let graph = source.graph();
-                graph.reveal_node(&key, window);
-                let bounds = (
-                    graph.pan.bounds().size.width,
-                    graph.vertical.bounds().size.height,
-                );
-                cx.notify();
-                Some(bounds)
-            })
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        if frames > 1 && !(changed && Some(bounds) == last) {
-            let changed = changed || last.is_some_and(|last| last != bounds);
-            settle_reveal(
-                view,
-                key,
-                showing,
-                Some(bounds),
-                changed,
-                frames - 1,
-                window,
-            );
-        }
-    });
 }
 
 #[cfg(test)]
