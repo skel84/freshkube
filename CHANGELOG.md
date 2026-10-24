@@ -4,6 +4,23 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.20.0 (2026-10-23)
+
+### Other changes
+
+- **Agent tab:** the dock has an Agent tab (View › Open Agent), where your own opencode investigates the cluster through Freshkube's four read tools. Each read is bounded, and Secrets are read as metadata only. Agent access is off for every cluster until you turn it on for that cluster. The tab has a setup card, a model picker, a transcript with steps that say Refused or Couldn't read plainly, a trail of the reads it made, and Stop. With `--fixture` it answers from example data. It has been checked against invented data, not yet against a live cluster ([docs/features/agent.md](docs/features/agent.md)).
+- **Agent tools:** opencode 2.1.3 now offers the model Freshkube's four read tools directly. A small fixed plugin, which Freshkube writes into the session's own private directory and checks byte for byte before the agent starts, turns off Code Mode for Freshkube's server. `execute`, the shell, file reads and web fetches stay unavailable. A check with invented data confirmed this, and that the agent session loaded no configuration of the person's own.
+- **Database explorer:** Explore on a CloudNativePG database in Databases opens a read-only session to a ready replica through a port forward, with a schema browser that reads each schema when opened and a table's first 200 rows. The session is read-only (`BEGIN READ ONLY` per request, `SET`, `BEGIN` and `COMMIT` refused), sets its own timeouts, and uses TLS to the server (verified against the cluster CA when it can be read), and reads one login Secret per connection, the team's reader Secret first and then the operator's app user, never the superuser's. Writes are shown as a later slice ([docs/features/database-explorer.md](docs/features/database-explorer.md)).
+- **Service endpoints:** a Service's Details now show what it publishes (ready, draining, not ready and unrouted endpoints, the selected pods nothing publishes and why, and whether EndpointSlices or the legacy Endpoints answered), and a workload's Details show the Services that select its pods and what each publishes; a refused read reads unknown, never zero.
+- **Plain empty states:** pages that find nothing now say so in plain words: what Freshkube looked for and where, whether it is missing, not installed, not allowed or out of reach, and what to do next. Optional tools such as Kargo, Argo CD, Coroot and Prometheus are described as optional, and a refusal no longer offers Retry.
+- **Crash log:** the previous sessions' logs are kept (the last three) instead of wiped at launch, a panic from the main thread or a Tokio task is written into the log, and the next start says "The last session ended unexpectedly" with Reveal log and Copy diagnostics, also in Settings › About; logs and diagnostics have credentials removed.
+- **Team setup:** the Clusters rows and the Inspector carry Team and Yours chips, the Inspector greys out the protection levels looser than the team's and says why, and a team version waiting for review shows a Settings banner and a status-bar item ([#849](https://github.com/skel84/freshkube/issues/849)). Clusters and the Inspector show the level that applies, never looser than the team's floor. Applying a reviewed version moves the setup revision and never loosens a protection level, and a newer version ends "Review later". Still example data: nothing is fetched or saved yet.
+- **Safety suite:** the read-only and protection guarantees (read-only on every write path, the typed name, the team floor, per-tab levels, dock shells, exec and forward, deep links, agents, Secrets, Operations) are now one named set of tests that CI runs as its own step.
+- **Status bar:** squeezed page segments disappear before losing their first word, and status controls keep their whole focus ring in small windows with large text.
+- **Tab test:** leaving an open entry for a stricter context is now tested to re-derive the shown level and what writes ask; the test fails without the call that does it.
+- **Write tests:** split the write framework tests into modules by concern, with shared helpers and unchanged test coverage.
+- **Maintenance:** split large test suites into scenario modules and use the `mod.rs` layout for the moved modules, preserving existing test coverage and behavior.
+
 ## 0.19.0 (2026-10-23)
 
 ### Other changes

@@ -91,6 +91,7 @@ pub(crate) enum LinkShape {
 pub struct DebugOptions {
     /// Invented database inventory shape, parsed once with the other knobs.
     pub(crate) databases: String,
+    pub(crate) access: String,
     /// `FRESHKUBE_DB_EXPLORE`: how an example explorer connection ends
     /// (`connected`, `no-secret`, `forward-failed`, `refused`, `timed-out`,
     /// `not-read-only`, `loading`); a known value also opens the first
@@ -206,6 +207,7 @@ impl DebugOptions {
         let text = |name: &str| var(name).and_then(|value| value.into_string().ok());
         Self {
             databases: text("FRESHKUBE_DATABASES").unwrap_or_default(),
+            access: text("FRESHKUBE_ACCESS").unwrap_or_default(),
             db_explore: text("FRESHKUBE_DB_EXPLORE").unwrap_or_default(),
             page: text("FRESHKUBE_PAGE"),
             kind: text("FRESHKUBE_KIND"),

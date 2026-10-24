@@ -104,6 +104,7 @@ generation used inside `Loader`.
 | `Pages.delivery_revision` (`freshkube-desktop/src/desktop/page_map.rs`) | Remembers `SetupFile.setup_revision`, which advances only for effective configuration/source-availability changes or successful explicit Reload. Sanitized diagnostics publish independently and deduplicate against Applications’ current text, preserving reads across warning-only or refusal-only edits. |
 | `Fetch::Live.setup_revision` and `ChangesPage.setup_revision` (`freshkube-applications/src/change/read.rs` and `changes/mod.rs`) | Identify the setup used by each delivery read owner. Reloading trust advances them before resetting the Loader, so an old completion cannot match a new setup even when its request generation repeats. A workspace remap keeps the setup identity and expires the retained read. |
 | Databases' `evidence` Loader (`freshkube-desktop/src/screens/databases/mod.rs`) | Owns the Coroot read for the inventory's databases. Its identity is the inventory's revision, the Coroot connection and the entry's link; the inventory landing starts it, a changed connection or link restarts it, and a late answer for an older identity or request is rejected. Hiding drops its job and task (`set_visible(false)`), showing reads again after 30 s; with no link or connection it asks nothing and resolves at once. |
+| Your access' `Board.generation` (`freshkube-core/src/access/board.rs`) | Rejects an answer from before the access identity or the person changed, or the page hid. The page owns one `OwnedJob` and task per row in flight (`screens/access/mod.rs`) and drops them with the answers; a row is asked only while the page shows, after a frame drew it. |
 | `Memory.setup_generation` (`freshkube-observability/src/remember.rs`) | Rejects obsolete inspection of the app's local setup file. |
 | Log streams' `StreamSet.next_generation`, copied `Stream.generation` and `Fed.generation`, and example `Stream.sequence` (`freshkube-desktop/src/logs/streams.rs`) | Distinguish retries and number example lines within user-started log sessions. |
 | `Maintenance.generation` (`freshkube-desktop/src/maintenance/mod.rs`) | Guards a mixed read/run workflow under the mutation exception until its own migration. |
@@ -379,6 +380,18 @@ forwarding the page's hide to `Watch::set_visible`.
   access off (`Access::set_access`) revokes the gate first, which ends the
   reads in flight. The tab is saved nowhere. See
   [the agent](features/agent.md#the-dock-tab-slice-d1c).
+- **The follow-owned log tab:** while the page follows an Agent tab, a log read
+  shows its pod in one dock log tab that
+  [`Dock`](../crates/freshkube-desktop/src/desktop/dock/follow.rs) owns for
+  following (`follow_tab`). The next log read takes its place, so there is at
+  most one. It reads only the named pod and container, with the person's
+  access. It lives until following stops (the person's input, ×, the toggle,
+  the session ending or failing to start, the Agent tab closing, or the window
+  showing another cluster or connection) and then closes, unless the person used it
+  (selected it, pressed in it or opened that pod): it is theirs from then on
+  and ends like any log tab. The follower's timer is dropped with the hand-back
+  and with the session's view. See
+  [follow](features/agent.md#follow-slice-d1d).
 - **Followed items:** [`Followed`](../crates/freshkube-followed/src/owner/mod.rs)
   is the app's follows, made once at startup like `ForwardList` and kept as
   a global. See [Followed items](#followed-items).

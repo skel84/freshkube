@@ -271,7 +271,7 @@ mod tests {
         save_size(&fresh, 16.).unwrap();
         assert_eq!(
             std::fs::read_to_string(&fresh).unwrap(),
-            "{\n  \"text_size\": 16.0\n}\n"
+            "{\n  \"text_size\": 16.0,\n  \"version\": 1\n}\n"
         );
     }
 
@@ -288,7 +288,7 @@ mod tests {
         save_size(&path, 20.).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "{\n  \"a_future_key\": {\n    \"nested\": [\n      1,\n      \"two\",\n      null\n    ]\n  },\n  \"other\": true,\n  \"text_size\": 20.0\n}\n"
+            "{\n  \"a_future_key\": {\n    \"nested\": [\n      1,\n      \"two\",\n      null\n    ]\n  },\n  \"other\": true,\n  \"text_size\": 20.0,\n  \"version\": 1\n}\n"
         );
     }
 

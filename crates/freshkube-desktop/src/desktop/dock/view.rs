@@ -450,10 +450,20 @@ impl Render for Dock {
                 _ = this.update(cx, |dock, cx| dock.resize(height, window, cx));
             }),
         };
+        let bounds = self.bounds.clone();
         div()
             .size_full()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|dock, _, _, _| dock.used_in_dock()),
+            )
+            .child(
+                canvas(move |laid_out, _, _| bounds.set(laid_out), |_, _, _, _| ())
+                    .absolute()
+                    .size_full(),
+            )
             .on_action(cx.listener(|dock, _: &CloseDockTab, window, cx| {
                 if let Some(id) = dock.selected {
                     let count = dock.tabs.len();

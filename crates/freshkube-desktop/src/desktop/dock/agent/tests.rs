@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use freshkube_agent::investigation::{Outcome, StepState};
 use freshkube_agent::scripted::{Script, TourRead};
+use freshkube_agent::tools::NotOffered;
 use freshkube_ui::real_io::until_io;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
@@ -18,15 +19,15 @@ use crate::desktop::testing::mount;
 use crate::desktop::{Page, Pilot};
 use crate::{DebugOptions, GpuiOptions};
 
-struct Tab {
-    _runtime: tokio::runtime::Runtime,
-    handle: AnyWindowHandle,
-    pilot: Entity<Pilot>,
-    dock: Entity<Dock>,
-    view: Entity<AgentView>,
+pub(super) struct Tab {
+    pub(super) _runtime: tokio::runtime::Runtime,
+    pub(super) handle: AnyWindowHandle,
+    pub(super) pilot: Entity<Pilot>,
+    pub(super) dock: Entity<Dock>,
+    pub(super) view: Entity<AgentView>,
 }
 
-fn open(cx: &mut TestAppContext, shape: &str, width: f32, height: f32) -> Tab {
+pub(super) fn open(cx: &mut TestAppContext, shape: &str, width: f32, height: f32) -> Tab {
     // The session runs on a real Tokio runtime and a real loopback socket.
     cx.executor().allow_parking();
     let (runtime, handle, pilot) = mount(
@@ -65,19 +66,19 @@ fn open(cx: &mut TestAppContext, shape: &str, width: f32, height: f32) -> Tab {
 }
 
 impl Tab {
-    fn draw(&self, cx: &mut TestAppContext) {
+    pub(super) fn draw(&self, cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update_window(self.handle, |_, window, cx| window.render_frame(cx))
             .unwrap();
     }
 
-    fn present(&self, id: &'static str, cx: &mut TestAppContext) -> bool {
+    pub(super) fn present(&self, id: &'static str, cx: &mut TestAppContext) -> bool {
         self.draw(cx);
         cx.update_window(self.handle, |_, window, _| window.try_find(id).is_some())
             .unwrap()
     }
 
-    fn label(&self, id: &'static str, cx: &mut TestAppContext) -> Option<String> {
+    pub(super) fn label(&self, id: &'static str, cx: &mut TestAppContext) -> Option<String> {
         self.draw(cx);
         cx.update_window(self.handle, |_, window, _| {
             window
@@ -87,19 +88,19 @@ impl Tab {
         .unwrap()
     }
 
-    fn click(&self, id: &'static str, cx: &mut TestAppContext) {
+    pub(super) fn click(&self, id: &'static str, cx: &mut TestAppContext) {
         self.draw(cx);
         cx.update_window(self.handle, |_, window, cx| window.click(id, cx))
             .unwrap();
         cx.run_until_parked();
     }
 
-    fn script(&self, script: Script, cx: &mut TestAppContext) {
+    pub(super) fn script(&self, script: Script, cx: &mut TestAppContext) {
         self.view.update(cx, |view, _| view.with_script(script));
     }
 
     /// Types into the question box and presses Ask.
-    fn ask(&self, question: &str, cx: &mut TestAppContext) {
+    pub(super) fn ask(&self, question: &str, cx: &mut TestAppContext) {
         let input = cx.update(|cx| self.view.read(cx).input.clone());
         cx.update_window(self.handle, |_, window, cx| {
             input.update(cx, |input, cx| input.set_value(question, window, cx))
@@ -108,19 +109,24 @@ impl Tab {
         self.click("agent-ask", cx);
     }
 
-    fn wait(&self, what: &str, cx: &mut TestAppContext, done: impl Fn(&AgentView) -> bool) {
+    pub(super) fn wait(
+        &self,
+        what: &str,
+        cx: &mut TestAppContext,
+        done: impl Fn(&AgentView) -> bool,
+    ) {
         let view = self.view.clone();
         until_io(cx, what, move |cx| cx.update(|cx| done(view.read(cx))));
     }
 
-    fn answered(&self, cx: &mut TestAppContext) {
+    pub(super) fn answered(&self, cx: &mut TestAppContext) {
         self.wait("the turn answers", cx, |view| {
             view.outcome() == Outcome::Answered
         });
         self.draw(cx);
     }
 
-    fn rows(&self, cx: &mut TestAppContext) -> Vec<super::trail::Row> {
+    pub(super) fn rows(&self, cx: &mut TestAppContext) -> Vec<super::trail::Row> {
         cx.update(|cx| self.view.read(cx).trail_rows())
     }
 }
@@ -134,7 +140,7 @@ fn read(tool: &str, arguments: serde_json::Value) -> TourRead {
 
 /// The reads of the example cluster's payments namespace, with `pause`
 /// before each.
-fn tour(pause: Duration) -> Script {
+pub(super) fn tour(pause: Duration) -> Script {
     Script {
         tour: vec![
             read(
@@ -711,6 +717,8 @@ fn closing_the_tab_ends_the_session(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_session_reads_while_another_page_shows(cx: &mut TestAppContext) {
     let tab = open(cx, "ready", 1280., 880.);
+    // A tab that doesn't follow: the page the person chose stays.
+    tab.view.update(cx, |view, _| view.follow = None);
     tab.script(tour(Duration::from_millis(300)), cx);
     tab.ask("why is api restarting?", cx);
     tab.click("agent-turn-on", cx);
@@ -728,9 +736,11 @@ fn the_session_reads_while_another_page_shows(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_page_never_moves_on_a_read(cx: &mut TestAppContext) {
+fn the_page_never_moves_on_a_read_of_a_tab_that_does_not_follow(cx: &mut TestAppContext) {
     let tab = open(cx, "ready", 1280., 880.);
     tab.script(tour(Duration::ZERO), cx);
+    // A tab that doesn't follow only draws the trail.
+    tab.view.update(cx, |view, _| view.follow = None);
     cx.update_window(tab.handle, |_, window, cx| {
         tab.pilot
             .update(cx, |pilot, cx| pilot.navigate(Page::Resources, window, cx))
@@ -802,7 +812,10 @@ fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
         if shape == AgentShape::AccessOff {
             assert!(tab.present("agent-egress", cx), "{name}");
         }
-        if matches!(shape, AgentShape::Answered | AgentShape::Refused) {
+        if matches!(
+            shape,
+            AgentShape::Answered | AgentShape::Refused | AgentShape::NoTools
+        ) {
             tab.answered(cx);
         }
         if shape == AgentShape::Stopped {
@@ -814,6 +827,83 @@ fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
             });
         }
     }
+}
+
+#[gpui_kit::test]
+fn the_tab_says_when_the_tools_were_not_offered_and_only_then(cx: &mut TestAppContext) {
+    // An agent that answers without ever asking for the tools.
+    let tab = open(cx, "no-tools", 1280., 880.);
+    tab.answered(cx);
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.contains("tools weren't offered"), "{notice}");
+    assert!(matches!(
+        cx.update(|cx| tab.view.read(cx).notice()),
+        Some(Notice::ToolsNotOffered(NotOffered::NeverListed))
+    ));
+
+    // Nothing is said before a question, or when reads were made.
+    for shape in ["ready", "answered", "refused"] {
+        let tab = open(cx, shape, 1280., 880.);
+        if shape != "ready" {
+            tab.answered(cx);
+        }
+        assert!(!tab.present("agent-notice", cx), "{shape}");
+        assert_eq!(cx.update(|cx| tab.view.read(cx).notice()), None, "{shape}");
+    }
+}
+
+/// A session that lists Freshkube's tools, asks to run each of `asks`, which
+/// is refused, reads nothing and answers.
+fn listing_and_asking(asks: &[&str]) -> Script {
+    Script {
+        offers_tools: false,
+        lists_tools: true,
+        asks_for: asks.iter().map(|name| name.to_string()).collect(),
+        ..Script::default()
+    }
+}
+
+#[gpui_kit::test]
+fn a_refused_execute_without_a_read_says_the_tools_weren_t_offered(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    tab.script(listing_and_asking(&["execute"]), cx);
+    tab.ask("why is api restarting?", cx);
+    tab.click("agent-turn-on", cx);
+    tab.answered(cx);
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.contains("execute"), "{notice}");
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).notice()),
+        Some(Notice::ToolsNotOffered(NotOffered::ExecuteRefused))
+    );
+}
+
+#[gpui_kit::test]
+fn another_refused_tool_or_no_refusal_after_listing_says_nothing(cx: &mut TestAppContext) {
+    // A person's config put a shell back on ask: listed, refused, no read.
+    for asks in [&["bash"][..], &[][..]] {
+        let tab = open(cx, "ready", 1280., 880.);
+        tab.script(listing_and_asking(asks), cx);
+        tab.ask("why is api restarting?", cx);
+        tab.click("agent-turn-on", cx);
+        tab.answered(cx);
+        assert_eq!(cx.update(|cx| tab.view.read(cx).notice()), None, "{asks:?}");
+    }
+}
+
+#[gpui_kit::test]
+fn the_notice_waits_behind_another_and_comes_up_when_it_clears(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let why = NotOffered::NeverListed;
+    tab.view.update(cx, |view, _| {
+        view.notice = Some(Notice::HeldOff);
+        view.tools_not_offered(why);
+        assert_eq!(view.notice, Some(Notice::HeldOff));
+        // The session tells it again at the next answered turn.
+        view.notice = None;
+        view.tools_not_offered(why);
+        assert_eq!(view.notice, Some(Notice::ToolsNotOffered(why)));
+    });
 }
 
 #[gpui_kit::test]

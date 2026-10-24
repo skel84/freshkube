@@ -20,9 +20,9 @@ use crate::{
     monitoring::page::MonitoringPage,
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
-        DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen, NetworkScreen,
-        OperationsScreen, ProcessesScreen, ScreenHandle, ScreenPanel, SecurityScreen,
-        StorageScreen, WorkloadsScreen,
+        AccessScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen,
+        NetworkScreen, OperationsScreen, ProcessesScreen, ScreenHandle, ScreenPanel,
+        SecurityScreen, StorageScreen, WorkloadsScreen,
     },
 };
 
@@ -80,12 +80,17 @@ impl Pages {
                     .with_explore_example(&explore)
             })
         };
+        let access = {
+            let shape = options.debug.access.clone();
+            cx.new(|cx| AccessScreen::new(runtime.clone(), window, cx).with_example(&shape))
+        };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
                     PageId::Databases => ScreenHandle::new(databases.clone()),
+                    PageId::Access => ScreenHandle::new(access.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
                     PageId::Network => screen(NetworkScreen::new, runtime, window, cx),
@@ -276,6 +281,11 @@ impl Pages {
             |this, _, event: &dock::DockEvent, window, cx| {
                 this.page_event(&event.clone().into(), window, cx)
             },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            dock,
+            window,
+            |this, _, event: &dock::FollowEvent, window, cx| this.follow_event(event, window, cx),
         ));
         subscriptions.push(cx.observe(custom, |_, _, cx| cx.notify()));
         subscriptions

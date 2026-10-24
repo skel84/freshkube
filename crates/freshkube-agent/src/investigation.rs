@@ -63,6 +63,11 @@ pub enum Event {
     /// Something the person should see that isn't the agent's own words, such
     /// as a refused permission.
     Note(String),
+    /// A tool call was refused, by the name the agent gave it (`None`: it
+    /// gave none). The transcript says nothing of it: the note does.
+    Refused {
+        name: Option<String>,
+    },
     /// How the turn ended; the first outcome of a turn wins.
     Ended(Outcome),
 }
@@ -212,6 +217,7 @@ impl Investigation {
                 }
             }
             Event::Note(text) => self.note(&text),
+            Event::Refused { .. } => {}
             Event::Ended(outcome) => {
                 if self.outcome.is_none() {
                     self.outcome = Some(outcome);

@@ -14,6 +14,7 @@
 
 mod agent;
 mod feed;
+mod follow;
 mod saved;
 #[cfg(test)]
 mod tests;
@@ -38,7 +39,8 @@ use crate::resources::shell::{self, ShellEvent, ShellView};
 use crate::resources::{ClusterAccess, ClusterSource, LogsAt, LogsRequest, ShellRequest};
 use crate::ui::dp_px;
 pub(crate) use agent::AgentHost;
-use agent::AgentView;
+pub(crate) use agent::FollowStrip;
+use agent::{AgentEvent, AgentView};
 use feed::Feed;
 
 /// The dock's key context, on its root in every state that draws it.
@@ -85,6 +87,22 @@ pub(crate) enum DockEvent {
 }
 
 impl EventEmitter<DockEvent> for Dock {}
+
+/// What the dock asks the shell to show for an Agent tab on the cluster the
+/// window shows. Only closed views of reads that ran, and only the shell may
+/// act on them, through `apply_view`.
+#[derive(Clone, Debug)]
+pub(crate) enum FollowEvent {
+    /// The page follows the agent: show this view.
+    Show(freshkube_nav::ViewState),
+    /// The person pressed a trail row: show this view as their own
+    /// navigation.
+    Open(freshkube_nav::ViewState),
+    /// Following started again: the hand-back toast is closed.
+    Resumed,
+}
+
+impl EventEmitter<FollowEvent> for Dock {}
 
 /// What makes two tabs the same: opening an object that has a tab selects it.
 /// A pod's UID is part of it, since a pod created again with the name, as a
@@ -376,6 +394,13 @@ pub(crate) struct Dock {
     pub(crate) count_label: SharedString,
     /// `FRESHKUBE_AGENT`: how an Agent tab's example starts.
     agent_shape: crate::agent_shape::AgentShape,
+    /// The one log tab that following owns: the agent's log reads show their
+    /// pod here, and it closes when following stops unless the person has
+    /// used it (`follow.rs`).
+    follow_tab: Option<u64>,
+    /// Where the dock was last laid out, so the shell can tell the person's
+    /// input in the dock (the agent's own tab) from input in the page.
+    bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
 }
 
 impl Dock {
@@ -426,6 +451,8 @@ impl Dock {
             body_width: None,
             count_label: SharedString::default(),
             agent_shape,
+            follow_tab: None,
+            bounds: Default::default(),
         };
         if let Some(restore) = restore {
             dock.open = restore.open;
@@ -695,6 +722,11 @@ impl Dock {
         let runtime = self.runtime.clone();
         let shape = self.agent_shape;
         let view = cx.new(|cx| AgentView::new(runtime, own, level, shape, window, cx));
+        let heard = cx.subscribe_in(
+            &view,
+            window,
+            move |dock, _, event: &AgentEvent, window, cx| dock.agent_event(id, event, window, cx),
+        );
         let base = format!("Agent {}", origin.cluster);
         let target = DetailTarget {
             identity: ResourceIdentity {
@@ -714,7 +746,7 @@ impl Dock {
             base,
             TabKind::Agent(view),
             None,
-            Vec::new(),
+            vec![heard],
             cx,
         );
         if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
@@ -945,6 +977,10 @@ impl Dock {
         if self.position(id).is_none() {
             return;
         }
+        // The person chose this tab: it is theirs now.
+        if self.follow_tab == Some(id) {
+            self.follow_tab = None;
+        }
         self.selected = Some(id);
         self.open = true;
         self.sync_shown(cx);
@@ -1060,6 +1096,21 @@ impl Dock {
     /// Removes `ids` at once, ending their shells politely. The next tab,
     /// or the one before, is selected.
     fn remove_tabs(&mut self, ids: &[u64], window: &mut Window, cx: &mut Context<Self>) {
+        let mut ids = ids.to_vec();
+        // An Agent tab going takes the log tab it was following with.
+        if let Some(follow) = self.follow_tab
+            && !ids.contains(&follow)
+            && self
+                .tabs
+                .iter()
+                .any(|tab| ids.contains(&tab.id) && tab.is_agent())
+        {
+            ids.push(follow);
+        }
+        if self.follow_tab.is_some_and(|follow| ids.contains(&follow)) {
+            self.follow_tab = None;
+        }
+        let ids = &ids[..];
         let had_focus = self.focus.contains_focused(window, cx);
         let anchor = self.selected.and_then(|id| self.position(id));
         let mut removed = Vec::new();
@@ -1185,6 +1236,10 @@ impl Dock {
     /// later capture and the headers name, and has every tab read its own
     /// level again. A session already running is left to end.
     pub(crate) fn set_shown(&mut self, entry: Option<String>, cx: &mut Context<Self>) {
+        if self.shown_entry != entry {
+            // The page no longer shows the cluster the agent was read for.
+            self.stop_following(cx);
+        }
         self.shown_entry = entry;
         self.refresh_gates(cx);
     }
@@ -1316,11 +1371,19 @@ impl Dock {
             // The tabs keep their own connections (#878); only new ones wait
             // for the next source.
             if !kept {
+                self.stop_following(cx);
                 self.source = None;
                 self.refresh_gates(cx);
             }
             return;
         };
+        if self
+            .source
+            .as_ref()
+            .is_some_and(|current| current.id != source.id)
+        {
+            self.stop_following(cx);
+        }
         // A tab on this connection takes its refreshed handle; the tabs of
         // another connection keep theirs.
         for tab in &mut self.tabs {

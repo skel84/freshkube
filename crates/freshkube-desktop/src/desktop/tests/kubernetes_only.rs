@@ -197,6 +197,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
                 Page::Overview
                     | Page::Resources
                     | Page::Databases
+                    | Page::Access
                     | Page::Health
                     | Page::Nodes
                     | Page::Monitoring
@@ -213,6 +214,11 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         view.update(cx, |view, cx| view.navigate(Page::Databases, window, cx));
         window.render_frame(cx);
         assert!(window.find("databases-page").visible());
+        assert!(window.try_find("needs-talosconfig").is_none());
+        // Your access reads the cluster's reviews, which need no Talos.
+        view.update(cx, |view, cx| view.navigate(Page::Access, window, cx));
+        window.render_frame(cx);
+        assert!(window.find("access-page").visible());
         assert!(window.try_find("needs-talosconfig").is_none());
         // Monitoring reads the cluster's Prometheus, which needs no Talos.
         view.update(cx, |view, cx| view.navigate(Page::Monitoring, window, cx));

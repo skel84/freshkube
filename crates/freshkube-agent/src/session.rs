@@ -47,6 +47,12 @@ impl fmt::Debug for SessionId {
 pub struct ReadId(u32);
 
 impl ReadId {
+    /// The id with this number, for an event a test makes by hand; the
+    /// endpoint hands out its own in order.
+    pub fn numbered(number: u32) -> Self {
+        Self(number)
+    }
+
     pub fn number(self) -> u32 {
         self.0
     }
@@ -65,6 +71,10 @@ pub(crate) struct ReadIds(AtomicU32);
 impl ReadIds {
     pub(crate) fn next(&self) -> ReadId {
         ReadId(self.0.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+
+    pub(crate) fn count(&self) -> u32 {
+        self.0.load(Ordering::SeqCst)
     }
 }
 

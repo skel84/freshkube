@@ -6,12 +6,14 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
+use gpui_kit::component::{Disableable, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::setup::{self, Setup};
 use super::trail::{Mark as TrailMark, Row};
+use freshkube_agent::tools::NotOffered;
+
 use super::{AgentView, DRAWN_ENTRIES, Notice};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
@@ -113,6 +115,21 @@ impl AgentView {
                         "Agent access is off for this cluster; the first question asks"
                     })
                     .on_click(cx.listener(|this, _, _, cx| this.turn_off_access(cx))),
+            )
+            .child(
+                Button::new("agent-following")
+                    .outline()
+                    .small()
+                    .icon(IconName::Eye)
+                    .label("Following")
+                    .selected(self.is_following())
+                    .disabled(self.follow.is_none())
+                    .tooltip(if self.is_following() {
+                        "The page follows the agent's reads. Press to stop."
+                    } else {
+                        "Let the page follow the agent's reads again"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_following(cx))),
             )
             .child(
                 Button::new("agent-stop")
@@ -311,6 +328,23 @@ impl AgentView {
             Option<AnyElement>,
         ) = match notice {
             Notice::Failed(reason) => (Tone::Crit, "The agent stopped", reason.clone(), None, None),
+            Notice::ToolsNotOffered(why) => (
+                Tone::Warn,
+                "Freshkube's tools weren't offered to the agent",
+                match why {
+                    NotOffered::NeverListed => {
+                        "The agent answered without ever asking for them, so it cannot read the cluster."
+                    }
+                    NotOffered::ExecuteRefused => {
+                        "The agent listed them, then asked to run code with execute, which Freshkube refuses, and read nothing."
+                    }
+                }
+                .to_owned(),
+                Some(
+                    "Check that opencode loaded Freshkube's plugin for this session and that its version is in the supported range. Freshkube changes nothing to fix it: Code Mode and execute stay off.".to_owned(),
+                ),
+                None,
+            ),
             Notice::AccessNotSaved(error) => (
                 Tone::Warn,
                 "Access stays off",
@@ -439,6 +473,8 @@ impl AgentView {
             StepState::Failed if !super::is_ours(&step.tool) => (Tone::Unknown, "Refused"),
             StepState::Failed => match self.step_marks.get(&ix) {
                 Some(TrailMark::Refused) => (Tone::Unknown, "Refused"),
+                // The read worked and the object isn't there.
+                Some(TrailMark::NotFound) => (Tone::Unknown, "Not found"),
                 Some(TrailMark::CouldntRead) => (Tone::Warn, "Couldn't read"),
                 _ => (Tone::Crit, "Failed"),
             },
@@ -544,6 +580,7 @@ impl AgentView {
             TrailMark::Cited => Tone::Good,
             // Neutral, as the transcript's Refused is: the app refused it.
             TrailMark::Refused => Tone::Unknown,
+            TrailMark::NotFound => Tone::Unknown,
             // The read broke: amber, not red.
             TrailMark::CouldntRead => Tone::Warn,
         };
@@ -558,6 +595,11 @@ impl AgentView {
                 row.mark.label()
             )))
             .gap(dp(2.))
+            .when(row.view.is_some(), |this| {
+                let number = row.number;
+                this.cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| this.go_to_read(number, cx)))
+            })
             .child(
                 h_flex()
                     .gap(dp(8.))
@@ -581,17 +623,22 @@ impl AgentView {
                     .child(ui::mono(row.place.clone())),
             )
             .when_some(row.elsewhere.clone(), |this, cluster| {
+                let own = self.own.as_ref().map(|own| own.entry.as_str());
+                let words = match own {
+                    Some(own) => format!(
+                        "The agent read {cluster}; this page stays on {own}. It needs agent access of its own."
+                    ),
+                    None => format!(
+                        "The agent read {cluster}, not this cluster. It needs agent access of its own."
+                    ),
+                };
                 this.child(
                     div()
                         .id(SharedString::from(format!("agent-elsewhere-{}", row.id)))
                         .test_support()
-                        .aria_label(SharedString::from(format!(
-                            "Another cluster: {cluster}. It needs agent access of its own."
-                        )))
+                        .aria_label(SharedString::from(words.clone()))
                         .text_color(p.warn_ink)
-                        .child(format!(
-                            "Read on {cluster}, not this cluster. It needs agent access of its own."
-                        )),
+                        .child(words),
                 )
             })
     }

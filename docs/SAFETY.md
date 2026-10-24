@@ -74,7 +74,9 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 - `safety_g08_a_cluster_without_agent_access_refuses_before_any_request` (`crates/freshkube-core/src/agent_reads/tests.rs`)
 - `safety_g08_a_grant_for_another_context_reads_as_off` (`crates/freshkube-core/src/agent_reads/tests.rs`)
+- `safety_g08_a_corrupt_or_newer_marker_beside_a_grant_grants_nothing` (`crates/freshkube-agent/tests/saved.rs`)
 - `safety_g08_a_missing_file_grants_nothing_and_an_unparsable_one_grants_nothing_and_logs_once` (`crates/freshkube-agent/tests/saved.rs`)
+- `safety_g08_a_truncated_corrupt_or_newer_file_grants_nothing_and_a_newer_one_is_not_written` (`crates/freshkube-agent/tests/saved.rs`)
 - `safety_g08_every_agent_read_is_a_get` (`crates/freshkube-core/src/agent_reads/tests.rs`)
 - `safety_g08_only_freshkube_tools_are_allowed` (`crates/freshkube-agent/tests/acp.rs`)
 - `safety_g08_the_agent_reads_through_the_endpoint_and_a_shell_is_refused` (`crates/freshkube-agent/tests/acp.rs`)
@@ -100,6 +102,10 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g10_apply_needs_an_explicit_confirmation_of_the_reviewed_yaml` (`crates/freshkube-desktop/src/maintenance/tests.rs`)
 - `safety_g10_confirmation_runs_only_against_the_preview_shown` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
 - `safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+
+### 11. Your access only lists namespaces and creates reviews, for the rows in view, and only while shown
+
+- `safety_g11_the_page_only_lists_namespaces_and_creates_reviews_for_rows_in_view` (`crates/freshkube-desktop/src/screens/access/tests.rs`)
 
 ## Known gaps
 
