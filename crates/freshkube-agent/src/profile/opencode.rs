@@ -1105,11 +1105,20 @@ mod tests {
     #[test]
     fn a_path_is_quoted_for_a_posix_shell() {
         assert_eq!(shell_quote("/a b/it's"), "'/a b/it'\\''s'");
-        let data = Data::Own(PathBuf::from("/tmp/a b"));
-        assert!(
-            data.sign_in_command(&host())
-                .starts_with("XDG_DATA_HOME='/tmp/a b/data' XDG_STATE_HOME='/tmp/a b/state' ")
+        let root = PathBuf::from("/tmp/a b");
+        let data = Data::Own(root.clone());
+        let word = |name: &str, folder: &str| {
+            format!(
+                "{name}={}",
+                shell_quote(&root.join(folder).to_string_lossy())
+            )
+        };
+        let expected = format!(
+            "{} {} ",
+            word("XDG_DATA_HOME", "data"),
+            word("XDG_STATE_HOME", "state")
         );
+        assert!(data.sign_in_command(&host()).starts_with(&expected));
     }
 
     #[test]
