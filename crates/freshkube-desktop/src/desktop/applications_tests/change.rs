@@ -2495,13 +2495,14 @@ fn overview_on(
     width: f32,
     height: f32,
     stage: &str,
+    text: Option<f32>,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     let (runtime, handle, view) = fixture_stepped(cx, width, height);
     cx.update(|cx| {
         freshkube_applications::change_view::use_session(
             freshkube_applications::change_view::ChangeView::Overview,
             cx,
-        )
+        );
     });
     let mark = format!("application-part-cicd-fra/0/checkout/{stage}");
     cx.update_window(handle, |_, window, cx| {
@@ -2514,6 +2515,12 @@ fn overview_on(
         window.render_frame(cx);
         window.click(SharedString::from(mark), cx);
         window.render_frame(cx);
+        // At the size before the change page opens, so it is laid out at
+        // it from its first frame; the application page's rows, which
+        // this test presses, need the room of the default size.
+        if let Some(text) = text {
+            crate::text_size::set(text, cx);
+        }
         window.press("f", cx);
         window.render_frame(cx);
     })
@@ -2527,9 +2534,7 @@ fn overview_on(
 /// on the Overview with that Stage selected and its cell in view.
 #[gpui_kit::test]
 fn the_overview_opens_on_its_stage_in_the_shell_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = overview_on(cx, 760., 560., "prod-lon");
-    cx.update(|cx| crate::text_size::set(20., cx));
-    cx.run_until_parked();
+    let (_runtime, handle, view) = overview_on(cx, 760., 560., "prod-lon", Some(20.));
     cx.update_window(handle, |_, window, cx| {
         for _ in 0..8 {
             window.render_frame(cx);
@@ -2595,12 +2600,15 @@ fn all_hops_fits_the_real_page_at_760_by_560_and_text_20(cx: &mut TestAppContext
 /// a protected Stage asks for its name, and sends nothing on example data.
 #[gpui_kit::test]
 fn the_stage_actions_work_from_the_overview(cx: &mut TestAppContext) {
-    let (runtime, handle, view) = overview_on(cx, 1280., 1200., "prod-ams");
+    let (runtime, handle, view) = overview_on(cx, 1280., 1200., "prod-ams", None);
     cx.update_window(handle, |_, window, cx| {
         // A Stage cell selects its first gate; the Promotion gate's cell
         // shows the Stage's actions in the Inspector.
         window.click("change-cell-prod-ams-promoted", cx);
         window.render_frame(cx);
+        // Still on the Overview when the action is pressed.
+        assert!(window.try_find("change-overview").is_some());
+        assert!(window.try_find("change-table").is_none());
     })
     .unwrap();
     stage_action(

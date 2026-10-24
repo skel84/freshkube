@@ -496,3 +496,29 @@ fn not_found_is_drawn_on_the_builds_card_under_the_causes_shape(cx: &mut TestApp
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_cell_keys_reach_what_is_behind_the_page_in_all_hops_only(cx: &mut TestAppContext) {
+    use crate::change::{NextCell, PreviousCell};
+    let (handle, page) = overview_fixture(cx);
+    let reached = std::rc::Rc::new(std::cell::Cell::new(0));
+    cx.update(|cx| {
+        let seen = reached.clone();
+        cx.on_action(move |_: &NextCell, _| seen.set(seen.get() + 1));
+        let seen = reached.clone();
+        cx.on_action(move |_: &PreviousCell, _| seen.set(seen.get() + 1));
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.focus(window, cx));
+        window.press("right", cx);
+        window.press("left", cx);
+        assert_eq!(reached.get(), 0, "the Overview takes them");
+        hops(&page, window, cx);
+        page.update(cx, |page, cx| page.focus(window, cx));
+        window.press("right", cx);
+        window.press("left", cx);
+        assert_eq!(reached.get(), 2, "All hops lets them through");
+    })
+    .unwrap();
+}
