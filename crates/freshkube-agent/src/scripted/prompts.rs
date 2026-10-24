@@ -49,11 +49,17 @@ pub(super) async fn run(turn: &Turn<'_>, prompt: &str) -> agent_client_protocol:
         return Ok(Ending::Crash);
     } else if prompt.contains("nothing") {
         StopReason::EndTurn
-    } else if prompt.contains("provider-error") || turn.script.fail_turn {
+    } else if prompt.contains("provider-error") {
+        // Carries the endpoint's token the way a provider's error could, so
+        // the tests prove it is redacted.
         return Ok(Ending::Error(
             "Failed to drain session: the free tier can only be used from within the app \
              (sent Bearer secret-token, token secret-token)"
                 .into(),
+        ));
+    } else if turn.script.fail_turn {
+        return Ok(Ending::Error(
+            "Failed to drain session: the free tier can only be used from within the app".into(),
         ));
     } else if prompt.contains("environment") {
         say(turn, &environment().to_string())?;

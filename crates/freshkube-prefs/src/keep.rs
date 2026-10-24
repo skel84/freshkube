@@ -113,7 +113,7 @@ pub(crate) fn copy_at(file: &Path, bytes: &[u8], now: SystemTime) -> std::io::Re
             if let Some((newest_stamp, newest_n)) = copies.last().and_then(|p| order_of(p, &prefix))
                 && (newest_stamp.as_str(), newest_n) >= (stamp.as_str(), 0)
             {
-                (stamp, n) = (newest_stamp, newest_n + 1);
+                (stamp, n) = (newest_stamp, newest_n.saturating_add(1));
             }
             let made = loop {
                 let suffix = if n == 0 {

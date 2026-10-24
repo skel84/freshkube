@@ -599,11 +599,7 @@ impl AgentView {
                 Entry::Asked { failed, .. } => h_flex()
                     .id(("agent-asked", ix))
                     .test_support()
-                    .aria_label(if *failed {
-                        SharedString::from(format!("{} (failed)", self.texts[ix]))
-                    } else {
-                        self.texts[ix].clone()
-                    })
+                    .aria_label(self.texts[ix].clone())
                     .gap(dp(8.))
                     .items_start()
                     .font_weight(FontWeight::SEMIBOLD)
