@@ -71,10 +71,15 @@ async fn roll_back_sends_one_merge_patch_that_makes_the_template_the_revisions()
     let writes = cluster.writes();
     assert_eq!(writes.len(), 1, "{writes:?}");
     assert!(writes[0].content_type.contains("merge-patch"));
-    assert!(writes[0].query.contains("fieldManager=freshkube") && !writes[0].query.contains("force"));
+    assert!(
+        writes[0].query.contains("fieldManager=freshkube") && !writes[0].query.contains("force")
+    );
     // Revision 1's template, without the controller's hash label.
     let now = template(&cluster);
-    assert_eq!(now["spec"]["containers"][0]["image"], "registry.example/web:1");
+    assert_eq!(
+        now["spec"]["containers"][0]["image"],
+        "registry.example/web:1"
+    );
     assert_eq!(now["spec"]["containers"][0]["env"][0]["name"], "TOKEN");
     assert!(now["metadata"]["labels"].get("pod-template-hash").is_none());
 }
@@ -111,8 +116,14 @@ async fn the_dry_run_shows_changed_paths_and_never_a_value() {
         .iter()
         .map(|change| (change.path.as_str(), change.kind))
         .collect();
-    assert!(paths.contains(&("spec.template.spec.containers[0].image", ChangeKind::Changed)));
-    assert!(paths.contains(&("spec.template.spec.containers[0].env[0].name", ChangeKind::Added)));
+    assert!(paths.contains(&(
+        "spec.template.spec.containers[0].image",
+        ChangeKind::Changed
+    )));
+    assert!(paths.contains(&(
+        "spec.template.spec.containers[0].env[0].name",
+        ChangeKind::Added
+    )));
     let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "prod-fra") else {
         panic!("a spec change asks");
     };
@@ -125,12 +136,16 @@ async fn the_dry_run_shows_changed_paths_and_never_a_value() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g02_roll_back_asks_the_typed_name_when_protected_and_shows_the_diff_even_when_open() {
+async fn safety_g02_roll_back_asks_the_typed_name_when_protected_and_shows_the_diff_even_when_open()
+{
     let (cluster, dir) = (Cluster::with_history(), tmp());
     let action = everyday::rollback(&read(&cluster).await, 2).unwrap();
     for (level, typed) in [(Protection::Protected, true), (Protection::Open, false)] {
         let given = requirement_for(&action, level);
-        assert!(given.confirm && given.diff && given.undo == false, "{level:?}");
+        assert!(
+            given.confirm && given.diff && given.undo == false,
+            "{level:?}"
+        );
         assert_eq!(given.type_name, typed, "{level:?}");
     }
     let runner = fake::runner(&cluster, dir.path(), Protection::Protected);
@@ -146,7 +161,11 @@ async fn a_deployment_that_changed_since_it_was_read_blocks_and_sends_nothing() 
     let (cluster, dir) = (Cluster::with_history(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
     let action = everyday::rollback(&read(&cluster).await, 1).unwrap();
-    cluster.foreign_write(fake::DEPLOYMENT, "kubectl", &json!({"spec": {"replicas": 5}}));
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &json!({"spec": {"replicas": 5}}),
+    );
     assert!(matches!(
         runner.preflight(action).await,
         Verdict::Blocked(Block::Changed {
@@ -158,7 +177,8 @@ async fn a_deployment_that_changed_since_it_was_read_blocks_and_sends_nothing() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g01_roll_back_on_a_read_only_cluster_sends_no_request_and_a_denied_review_sends_nothing() {
+async fn safety_g01_roll_back_on_a_read_only_cluster_sends_no_request_and_a_denied_review_sends_nothing()
+ {
     let (cluster, dir) = (Cluster::with_history(), tmp());
     let action = everyday::rollback(&read(&cluster).await, 1).unwrap();
     let before = cluster.recorder.requests().len();
@@ -167,7 +187,11 @@ async fn safety_g01_roll_back_on_a_read_only_cluster_sends_no_request_and_a_deni
         runner.preflight(action.clone()).await,
         Verdict::Blocked(Block::ReadOnly(_))
     ));
-    assert_eq!(cluster.recorder.requests().len(), before, "no request at all");
+    assert_eq!(
+        cluster.recorder.requests().len(),
+        before,
+        "no request at all"
+    );
     cluster.deny_access();
     let runner = fake::runner(&cluster, dir.path(), Protection::Open);
     assert!(matches!(
@@ -187,14 +211,30 @@ async fn it_refuses_what_cannot_be_rolled_back_to() {
     };
     // The revision it runs now, one it does not have, and one another
     // Deployment owns.
-    assert_eq!(why(everyday::rollback(&subject, 3)), "It is already at this revision.");
-    assert_eq!(why(everyday::rollback(&subject, 7)), "It has no such revision any more.");
-    assert_eq!(why(everyday::rollback(&subject, 9)), "It has no such revision any more.");
+    assert_eq!(
+        why(everyday::rollback(&subject, 3)),
+        "It is already at this revision."
+    );
+    assert_eq!(
+        why(everyday::rollback(&subject, 7)),
+        "It has no such revision any more."
+    );
+    assert_eq!(
+        why(everyday::rollback(&subject, 9)),
+        "It has no such revision any more."
+    );
     // An object made from a document has read no revisions.
     let unread = Subject::from_object(&cluster.object(fake::DEPLOYMENT)).unwrap();
-    assert_eq!(why(everyday::rollback(&unread, 1)), "Its revisions were not read.");
+    assert_eq!(
+        why(everyday::rollback(&unread, 1)),
+        "Its revisions were not read."
+    );
     // A paused one, as `kubectl rollout undo` refuses it.
-    cluster.foreign_write(fake::DEPLOYMENT, "kubectl", &json!({"spec": {"paused": true}}));
+    cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "kubectl",
+        &json!({"spec": {"paused": true}}),
+    );
     let paused = read(&cluster).await;
     assert!(why(everyday::rollback(&paused, 1)).contains("paused"));
     // Not a Deployment.
@@ -224,6 +264,10 @@ async fn a_gitops_managed_deployment_adds_the_warning() {
         &json!({"metadata": {"annotations": {"argocd.argoproj.io/tracking-id": "shop:web"}}}),
     );
     let action = everyday::rollback(&read(&cluster).await, 1).unwrap();
-    assert!(action.sentence.contains("Argo CD manages this object"), "{}", action.sentence);
+    assert!(
+        action.sentence.contains("Argo CD manages this object"),
+        "{}",
+        action.sentence
+    );
     assert!(action.sentence.contains("OutOfSync"));
 }

@@ -127,7 +127,9 @@ impl GitOps {
             Self::ArgoCd => "Argo CD",
             Self::Flux => "Flux",
         };
-        format!(" {tool} manages this {kind}. The {kind} itself is not changed; the Job is created beside it.")
+        format!(
+            " {tool} manages this {kind}. The {kind} itself is not changed; the Job is created beside it."
+        )
     }
 }
 
@@ -388,7 +390,9 @@ impl Subject {
         } else {
             Revisions::NotRead
         };
-        Ok(subject.with_autoscaler(autoscaler).with_revisions(revisions))
+        Ok(subject
+            .with_autoscaler(autoscaler)
+            .with_revisions(revisions))
     }
 }
 

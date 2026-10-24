@@ -6,8 +6,8 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    ActionDescription, Change, Everyday, NotOffered, ObjectChange, Observation, Subject,
-    Target, Tier,
+    ActionDescription, Change, Everyday, NotOffered, ObjectChange, Observation, Subject, Target,
+    Tier,
 };
 use crate::write::{Depends, Preview};
 
@@ -32,7 +32,10 @@ fn job_name(cronjob: &str, suffix: &str) -> String {
 /// never a command, an argument or an environment value.
 fn container_lines(template: &Value) -> Vec<String> {
     let mut lines = vec![];
-    for (kind, key) in [("Init container", "initContainers"), ("Container", "containers")] {
+    for (kind, key) in [
+        ("Init container", "initContainers"),
+        ("Container", "containers"),
+    ] {
         let containers = template
             .pointer(&format!("/spec/template/spec/{key}"))
             .and_then(Value::as_array);
@@ -114,7 +117,10 @@ pub fn run_now(subject: &Subject, suffix: &str) -> Result<ActionDescription, Not
     };
     let mut lines = vec![
         format!("Job {name} in {namespace}"),
-        format!("Owned by {}, so it is listed with its Jobs", cronjob.label()),
+        format!(
+            "Owned by {}, so it is listed with its Jobs",
+            cronjob.label()
+        ),
     ];
     lines.extend(container_lines(template));
     if let Some(account) = template

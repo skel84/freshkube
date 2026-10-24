@@ -388,7 +388,10 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
         let items: Vec<&Value> = state
             .objects
             .iter()
-            .filter(|(key, _)| key.rsplit_once('/').is_some_and(|(parent, _)| parent == path))
+            .filter(|(key, _)| {
+                key.rsplit_once('/')
+                    .is_some_and(|(parent, _)| parent == path)
+            })
             .map(|(_, object)| object)
             .collect();
         if !items.is_empty() {

@@ -109,6 +109,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g11_a_template_that_changed_since_the_page_read_it_blocks` (`crates/freshkube-core/src/write/tests/run_now.rs`)
 - `safety_g11_a_template_that_changes_after_the_dialog_sends_nothing` (`crates/freshkube-core/src/write/tests/run_now.rs`)
 - `safety_g11_run_now_always_confirms_at_every_level_and_sends_nothing_unasked` (`crates/freshkube-core/src/write/tests/run_now.rs`)
+- `safety_g11_run_now_asks_at_every_level_with_a_preview_and_no_typing_or_countdown` (`crates/freshkube-desktop/src/write_flow/everyday_tests.rs`)
 
 ## Known gaps
 

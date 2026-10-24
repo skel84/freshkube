@@ -6,8 +6,8 @@
 use serde_json::{Map, Value, json};
 
 use super::{
-    ActionDescription, Change, Everyday, NotOffered, ObjectChange, Observation, Subject, Tier,
-    MOST_PAGES, PAGE,
+    ActionDescription, Change, Everyday, MOST_PAGES, NotOffered, ObjectChange, Observation, PAGE,
+    Subject, Tier,
 };
 
 /// The label the Deployment controller adds to a ReplicaSet's pod template.
@@ -93,9 +93,35 @@ pub enum Revisions {
     Failed(String),
 }
 
-/// Reads the ReplicaSets the Deployment owns. Only an owner's UID makes a
-/// ReplicaSet a revision: a label selector alone could match another
-/// controller's, and its template is not this Deployment's history.
+impl Revisions {
+    /// The revisions among `replicasets`, newest first: those whose controller
+    /// is the Deployment with this `uid` and which carry a revision number.
+    /// Only an owner's UID makes a ReplicaSet a revision: a label selector
+    /// alone could match another controller's, and its template is not this
+    /// Deployment's history.
+    pub fn from_replicasets(deployment: &Value, uid: &str, replicasets: &[Value]) -> Self {
+        let mut found: Vec<Revision> = replicasets
+            .iter()
+            .filter(|replicaset| {
+                replicaset
+                    .pointer("/metadata/ownerReferences")
+                    .and_then(Value::as_array)
+                    .is_some_and(|owners| {
+                        owners.iter().any(|owner| {
+                            owner["controller"] == true && owner["uid"].as_str() == Some(uid)
+                        })
+                    })
+            })
+            .filter_map(|replicaset| Revision::of(replicaset, deployment))
+            .collect();
+        found.sort_by(|a, b| b.number.cmp(&a.number));
+        found.truncate(MOST_REVISIONS);
+        Self::Read(found)
+    }
+}
+
+/// Reads the ReplicaSets of the Deployment's namespace that its selector
+/// matches, a few pages at most.
 pub(super) async fn find_revisions(client: &kube::Client, subject: &Subject) -> Revisions {
     use kube::api::{Api, ApiResource, DynamicObject, ListParams};
     let Some(namespace) = subject.target.namespace.as_deref() else {
@@ -113,7 +139,7 @@ pub(super) async fn find_revisions(client: &kube::Client, subject: &Subject) -> 
     if let Some(selector) = selector(&subject.object) {
         params = params.labels(&selector);
     }
-    let mut found = vec![];
+    let mut all = vec![];
     for _ in 0..MOST_PAGES {
         let list = match api.list(&params).await {
             Ok(list) => list,
@@ -124,21 +150,11 @@ pub(super) async fn find_revisions(client: &kube::Client, subject: &Subject) -> 
                 ));
             }
         };
-        for replicaset in list.items {
-            let owned = replicaset
-                .metadata
-                .owner_references
+        all.extend(
+            list.items
                 .iter()
-                .flatten()
-                .any(|owner| owner.controller == Some(true) && owner.uid == subject.target.uid);
-            if !owned {
-                continue;
-            }
-            let Ok(value) = serde_json::to_value(&replicaset) else {
-                continue;
-            };
-            found.extend(Revision::of(&value, &subject.object));
-        }
+                .filter_map(|replicaset| serde_json::to_value(replicaset).ok()),
+        );
         match list
             .metadata
             .continue_
@@ -147,9 +163,7 @@ pub(super) async fn find_revisions(client: &kube::Client, subject: &Subject) -> 
         {
             Some(token) => params = params.continue_token(token),
             None => {
-                found.sort_by(|a, b| b.number.cmp(&a.number));
-                found.truncate(MOST_REVISIONS);
-                return Revisions::Read(found);
+                return Revisions::from_replicasets(&subject.object, &subject.target.uid, &all);
             }
         }
     }
@@ -195,6 +209,28 @@ fn merge_patch(from: &Value, to: &Value) -> Value {
         }
     }
     Value::Object(patch)
+}
+
+impl Subject {
+    /// Why Roll back can't start for this Deployment, or `None`: checked
+    /// before the picker opens, and again by [`rollback`].
+    pub fn rollback_refusal(&self) -> Option<String> {
+        if !self.offered().contains(&Everyday::Rollback) {
+            return Some("Only a Deployment can be rolled back.".to_owned());
+        }
+        // As `kubectl rollout undo` refuses it.
+        if self.object.pointer("/spec/paused") == Some(&Value::Bool(true)) {
+            return Some("A paused Deployment can't be rolled back. Resume it first.".to_owned());
+        }
+        match &self.revisions {
+            Revisions::NotRead => Some("Its revisions were not read.".to_owned()),
+            Revisions::Failed(why) => Some(why.clone()),
+            Revisions::Read(revisions) if revisions.iter().all(|r| r.current) => {
+                Some("It has no earlier revision to roll back to.".to_owned())
+            }
+            Revisions::Read(_) => None,
+        }
+    }
 }
 
 /// Roll the Deployment back to `revision`: a merge patch that makes its pod
