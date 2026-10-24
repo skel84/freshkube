@@ -132,6 +132,26 @@ pub enum Observation {
     /// count that is omitted at zero, such as `readyReplicas` after a scale
     /// to 0. Only a value of 0 is ever met by an absent field.
     FieldEqualsOrAbsent { pointer: String, value: Value },
+    /// The field is absent or null: a request annotation a controller has
+    /// taken off.
+    FieldAbsent { pointer: String },
+    /// The field is there and is not `from` (null: it was absent): a
+    /// timestamp or a revision a controller moved on.
+    FieldMoved { pointer: String, from: Value },
+    /// Every one of these holds.
+    All(Vec<Observation>),
+    /// At least one of these holds.
+    Any(Vec<Observation>),
+    /// An object in the target's namespace that the target controls (its
+    /// owner reference carries the target's UID) has this annotation: a
+    /// CertificateRequest for the revision a renewal asks for.
+    Child {
+        group: String,
+        version: String,
+        kind: String,
+        resource: String,
+        annotation: (String, String),
+    },
     /// The object is gone.
     Gone,
     /// The object exists: what a created object is seen by.

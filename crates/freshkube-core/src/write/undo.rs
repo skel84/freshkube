@@ -90,7 +90,15 @@ fn holds(guard: &Observation, object: &Value) -> bool {
             object.pointer(pointer) == Some(value)
                 || super::outcome::absent_is_zero(object, pointer, value)
         }
-        Observation::Gone => false,
+        Observation::FieldAbsent { pointer } => {
+            matches!(object.pointer(pointer), None | Some(Value::Null))
+        }
+        Observation::FieldMoved { pointer, from } => object
+            .pointer(pointer)
+            .is_some_and(|now| !now.is_null() && now != from),
+        Observation::All(all) => all.iter().all(|one| holds(one, object)),
+        Observation::Any(any) => any.iter().any(|one| holds(one, object)),
+        Observation::Gone | Observation::Child { .. } => false,
         // Nothing can be checked, so nothing is known to be safe: not holding.
         Observation::Exists | Observation::Unobservable => false,
     }

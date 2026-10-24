@@ -24,6 +24,12 @@ use crate::fake_api::{self, Recorded, Recorder};
 pub const DEPLOYMENT: &str = "/apis/apps/v1/namespaces/shop/deployments/web";
 pub const CRONJOB: &str = "/apis/batch/v1/namespaces/shop/cronjobs/nightly";
 pub const SECRET: &str = "/api/v1/namespaces/shop/secrets/db";
+pub const APPLICATION: &str = "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications/shop";
+pub const KUSTOMIZATION: &str =
+    "/apis/kustomize.toolkit.fluxcd.io/v1/namespaces/flux-system/kustomizations/apps";
+pub const CERTIFICATE: &str = "/apis/cert-manager.io/v1/namespaces/shop/certificates/web-tls";
+pub const CERTIFICATE_REQUESTS: &str =
+    "/apis/cert-manager.io/v1/namespaces/shop/certificaterequests";
 
 #[derive(Default)]
 struct State {
@@ -122,6 +128,40 @@ fn cronjob() -> Value {
     })
 }
 
+fn application() -> Value {
+    json!({
+        "apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
+        "metadata": {"name": "shop", "namespace": "argocd", "uid": "uid-shop-app", "resourceVersion": "400", "managedFields": [{"manager": "kubectl", "time": "2026-10-22T09:00:00Z"}]},
+        "spec": {"project": "default"},
+        "status": {"reconciledAt": "2026-10-24T08:00:00Z", "sync": {"status": "Synced"}}
+    })
+}
+
+fn kustomization() -> Value {
+    json!({
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1", "kind": "Kustomization",
+        "metadata": {"name": "apps", "namespace": "flux-system", "uid": "uid-apps", "resourceVersion": "500", "managedFields": [{"manager": "kubectl", "time": "2026-10-22T09:00:00Z"}]},
+        "spec": {"interval": "10m", "path": "./apps"},
+        "status": {"lastHandledReconcileAt": "2026-10-24T07:00:00Z"}
+    })
+}
+
+fn certificate() -> Value {
+    json!({
+        "apiVersion": "cert-manager.io/v1", "kind": "Certificate",
+        "metadata": {"name": "web-tls", "namespace": "shop", "uid": "uid-web-tls",
+            "resourceVersion": "600", "generation": 3,
+            "managedFields": [{"manager": "kubectl", "time": "2026-10-22T09:00:00Z"}]},
+        "spec": {"secretName": "web-tls", "dnsNames": ["web.shop.example.internal"],
+            "issuerRef": {"name": "internal", "kind": "ClusterIssuer"}},
+        "status": {"revision": 2, "conditions": [
+            {"type": "Ready", "status": "True", "reason": "Ready",
+             "message": "Certificate is up to date and has not expired",
+             "lastTransitionTime": "2026-09-01T00:00:00Z", "observedGeneration": 3}
+        ]}
+    })
+}
+
 fn secret() -> Value {
     json!({
         "apiVersion": "v1", "kind": "Secret",
@@ -136,6 +176,9 @@ impl Cluster {
             (DEPLOYMENT.to_owned(), deployment()),
             (SECRET.to_owned(), secret()),
             (CRONJOB.to_owned(), cronjob()),
+            (APPLICATION.to_owned(), application()),
+            (KUSTOMIZATION.to_owned(), kustomization()),
+            (CERTIFICATE.to_owned(), certificate()),
         ])
     }
 
@@ -316,9 +359,20 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
             false,
         );
     }
+    // A write to a subresource lands on the object, as the fake keeps one.
     let path = request.path.as_str();
+    let path = path
+        .strip_suffix("/status")
+        .filter(|object| state.objects.contains_key(*object))
+        .unwrap_or(path);
     if request.method == "POST" {
         return (create(state, request, dry), false);
+    }
+    if request.method == "GET"
+        && !state.objects.contains_key(path)
+        && let Some(items) = collection(state, path)
+    {
+        return (fake_api::json(200, items), false);
     }
     if !state.objects.contains_key(path) {
         return (
@@ -420,6 +474,9 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
                 next["status"]["readyReplicas"] = next["spec"]["replicas"].clone();
                 next["status"]["replicas"] = next["spec"]["replicas"].clone();
             }
+            if !dry && !state.stuck {
+                controllers(state, path, &mut next);
+            }
             if !dry {
                 state.objects.insert(path.to_owned(), next.clone());
             }
@@ -427,6 +484,67 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
         }
         _ => (fake_api::unknown(request), false),
     }
+}
+
+/// What the controllers behind the nudges do once they see the request:
+/// Argo CD's takes the refresh annotation off and records when it reconciled,
+/// Flux's records the request it handled, and cert-manager's, seeing
+/// `Issuing`, makes the CertificateRequest for the next revision.
+fn controllers(state: &mut State, path: &str, next: &mut Value) {
+    if next
+        .pointer("/metadata/annotations/argocd.argoproj.io~1refresh")
+        .is_some()
+    {
+        remove_field(next, "/metadata/annotations/argocd.argoproj.io~1refresh");
+        next["status"]["reconciledAt"] = json!("2026-10-24T09:00:00Z");
+    }
+    if let Some(at) = next
+        .pointer("/metadata/annotations/reconcile.fluxcd.io~1requestedAt")
+        .cloned()
+    {
+        next["status"]["lastHandledReconcileAt"] = at;
+    }
+    let issuing = next["status"]["conditions"].as_array().is_some_and(|all| {
+        all.iter()
+            .any(|one| one["type"] == "Issuing" && one["status"] == "True")
+    });
+    if next["kind"] == "Certificate" && issuing {
+        let revision = next["status"]["revision"].as_i64().unwrap_or(0) + 1;
+        let name = format!(
+            "{}-{revision}",
+            next["metadata"]["name"].as_str().unwrap_or_default()
+        );
+        state.objects.insert(
+            format!("{CERTIFICATE_REQUESTS}/{name}"),
+            json!({
+                "apiVersion": "cert-manager.io/v1", "kind": "CertificateRequest",
+                "metadata": {"name": name, "namespace": "shop", "uid": format!("uid-{name}"),
+                    "resourceVersion": "1",
+                    "annotations": {"cert-manager.io/certificate-revision": revision.to_string()},
+                    "ownerReferences": [{"apiVersion": "cert-manager.io/v1", "kind": "Certificate",
+                        "name": next["metadata"]["name"], "uid": next["metadata"]["uid"],
+                        "controller": true}]},
+                "spec": {}
+            }),
+        );
+    }
+}
+
+/// A list of the objects stored directly under a collection's path; `None`
+/// when there are none (the fake answers that as it does an unknown path).
+fn collection(state: &State, path: &str) -> Option<Value> {
+    let prefix = format!("{path}/");
+    let items: Vec<Value> = state
+        .objects
+        .iter()
+        .filter(|(key, _)| {
+            key.strip_prefix(&prefix)
+                .is_some_and(|rest| !rest.contains('/'))
+        })
+        .map(|(_, object)| object.clone())
+        .collect();
+    (!items.is_empty())
+        .then(|| json!({"apiVersion": "v1", "kind": "List", "metadata": {}, "items": items}))
 }
 
 /// A create: the object goes under the collection's path, by its name.
