@@ -88,7 +88,7 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Strip {
             .max_by_key(|tone| rank(*tone))
             .unwrap_or(Tone::Good);
         // What the Build can't confirm is said on its card: the hop and its
-        // cause (`Policy acme-prod · Not found`), not the run it shows.
+        // cause (`Not found · Policy acme-prod`), not the run it shows.
         let unconfirmed = build.iter().find_map(|(_, row)| {
             row.cause
                 .as_ref()
@@ -101,7 +101,7 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Strip {
             hops: build.iter().map(|(_, row)| row.key.clone()).collect(),
             title: "Build".into(),
             detail: match unconfirmed {
-                Some((name, cause)) => format!("{name} · {}", cause.word()).into(),
+                Some((name, cause)) => format!("{} · {name}", cause.word()).into(),
                 None => last.1.name.clone(),
             },
             tone,
@@ -269,6 +269,7 @@ impl ChangePage {
                     .text_color(p.muted)
                     .child(card.detail.clone()),
             )
+            .follow_tooltip(format!("{}: {}", card.title, card.detail))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select(&select, window, cx);
                 this.focus(window, cx);
