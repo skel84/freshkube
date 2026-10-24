@@ -977,7 +977,7 @@ mod acme;
 mod agent;
 mod everyday;
 mod gateway;
-pub use everyday::{autoscaler_of, object_json};
+pub use everyday::{autoscaler_of, object_json, replicasets_of};
 mod objects;
 mod summary;
 pub use agent::agent_objects;
