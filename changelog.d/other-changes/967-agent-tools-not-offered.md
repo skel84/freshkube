@@ -1,0 +1,1 @@
+- **Agent tab:** says when Freshkube's tools were not offered to the agent, and what to check.

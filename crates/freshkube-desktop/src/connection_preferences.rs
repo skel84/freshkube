@@ -239,6 +239,7 @@ mod tests {
             };
             let mut value = serde_json::to_value(&remembered).unwrap();
             value["future"] = serde_json::json!({"options": [null, false, 7, "example"]});
+            value["version"] = serde_json::json!(1);
             std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
             assert_eq!(load_remembered(&preferences), Some(remembered));
             let store = ConnectionStore::new(&preferences);
@@ -294,7 +295,8 @@ mod tests {
         assert_eq!(load(&preferences), Some(selected));
         let value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(file(&preferences)).unwrap()).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 2);
+        // The selection's two keys and the file's version.
+        assert_eq!(value.as_object().unwrap().len(), 3);
         assert_eq!(
             std::fs::read_to_string(preferences).unwrap(),
             "{\"text_size\":18}"
@@ -390,8 +392,8 @@ mod tests {
     #[test]
     fn the_example_files_round_trip_byte_for_byte_off_unix() {
         round_trip(&[
-            "{\n  \"talosconfig\": \"C:\\\\acme\\\\talosconfig\",\n  \"context\": \"cluster-a\"\n}\n",
-            "{\n  \"mode\": \"kubernetes\",\n  \"kubeconfig\": \"C:\\\\acme\\\\kubeconfig\",\n  \"context\": \"cluster-a\"\n}\n",
+            "{\n  \"talosconfig\": \"C:\\\\acme\\\\talosconfig\",\n  \"context\": \"cluster-a\",\n  \"version\": 1\n}\n",
+            "{\n  \"mode\": \"kubernetes\",\n  \"kubeconfig\": \"C:\\\\acme\\\\kubeconfig\",\n  \"context\": \"cluster-a\",\n  \"version\": 1\n}\n",
         ]);
     }
 

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use freshkube_agent::investigation::{Outcome, StepState};
 use freshkube_agent::scripted::{Script, TourRead};
+use freshkube_agent::tools::NotOffered;
 use freshkube_ui::real_io::until_io;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
@@ -811,7 +812,10 @@ fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
         if shape == AgentShape::AccessOff {
             assert!(tab.present("agent-egress", cx), "{name}");
         }
-        if matches!(shape, AgentShape::Answered | AgentShape::Refused) {
+        if matches!(
+            shape,
+            AgentShape::Answered | AgentShape::Refused | AgentShape::NoTools
+        ) {
             tab.answered(cx);
         }
         if shape == AgentShape::Stopped {
@@ -823,6 +827,83 @@ fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
             });
         }
     }
+}
+
+#[gpui_kit::test]
+fn the_tab_says_when_the_tools_were_not_offered_and_only_then(cx: &mut TestAppContext) {
+    // An agent that answers without ever asking for the tools.
+    let tab = open(cx, "no-tools", 1280., 880.);
+    tab.answered(cx);
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.contains("tools weren't offered"), "{notice}");
+    assert!(matches!(
+        cx.update(|cx| tab.view.read(cx).notice()),
+        Some(Notice::ToolsNotOffered(NotOffered::NeverListed))
+    ));
+
+    // Nothing is said before a question, or when reads were made.
+    for shape in ["ready", "answered", "refused"] {
+        let tab = open(cx, shape, 1280., 880.);
+        if shape != "ready" {
+            tab.answered(cx);
+        }
+        assert!(!tab.present("agent-notice", cx), "{shape}");
+        assert_eq!(cx.update(|cx| tab.view.read(cx).notice()), None, "{shape}");
+    }
+}
+
+/// A session that lists Freshkube's tools, asks to run each of `asks`, which
+/// is refused, reads nothing and answers.
+fn listing_and_asking(asks: &[&str]) -> Script {
+    Script {
+        offers_tools: false,
+        lists_tools: true,
+        asks_for: asks.iter().map(|name| name.to_string()).collect(),
+        ..Script::default()
+    }
+}
+
+#[gpui_kit::test]
+fn a_refused_execute_without_a_read_says_the_tools_weren_t_offered(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    tab.script(listing_and_asking(&["execute"]), cx);
+    tab.ask("why is api restarting?", cx);
+    tab.click("agent-turn-on", cx);
+    tab.answered(cx);
+    let notice = tab.label("agent-notice", cx).expect("the notice shows");
+    assert!(notice.contains("execute"), "{notice}");
+    assert_eq!(
+        cx.update(|cx| tab.view.read(cx).notice()),
+        Some(Notice::ToolsNotOffered(NotOffered::ExecuteRefused))
+    );
+}
+
+#[gpui_kit::test]
+fn another_refused_tool_or_no_refusal_after_listing_says_nothing(cx: &mut TestAppContext) {
+    // A person's config put a shell back on ask: listed, refused, no read.
+    for asks in [&["bash"][..], &[][..]] {
+        let tab = open(cx, "ready", 1280., 880.);
+        tab.script(listing_and_asking(asks), cx);
+        tab.ask("why is api restarting?", cx);
+        tab.click("agent-turn-on", cx);
+        tab.answered(cx);
+        assert_eq!(cx.update(|cx| tab.view.read(cx).notice()), None, "{asks:?}");
+    }
+}
+
+#[gpui_kit::test]
+fn the_notice_waits_behind_another_and_comes_up_when_it_clears(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let why = NotOffered::NeverListed;
+    tab.view.update(cx, |view, _| {
+        view.notice = Some(Notice::HeldOff);
+        view.tools_not_offered(why);
+        assert_eq!(view.notice, Some(Notice::HeldOff));
+        // The session tells it again at the next answered turn.
+        view.notice = None;
+        view.tools_not_offered(why);
+        assert_eq!(view.notice, Some(Notice::ToolsNotOffered(why)));
+    });
 }
 
 #[gpui_kit::test]
