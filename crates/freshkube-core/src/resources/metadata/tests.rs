@@ -109,3 +109,18 @@ async fn identity_reads_use_the_kinds_scope_and_group_path() {
         recorder.assert_lines(&[&format!("GET {path}")]);
     }
 }
+
+#[tokio::test]
+async fn a_metadata_list_with_null_items_reads_as_empty() {
+    let (client, _recorder) = crate::fake_api::client(|_| {
+        Some(crate::fake_api::json(
+            200,
+            r#"{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{},"items":null}"#,
+        ))
+    });
+    let names = super::list_metadata(&client, &super::super::builtin("secrets").unwrap())
+        .await
+        .unwrap();
+    assert!(names.objects.is_empty());
+    assert!(!names.capped);
+}

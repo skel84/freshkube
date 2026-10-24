@@ -99,7 +99,47 @@ impl Endpoint {
 pub struct Models {
     pub choices: Vec<ModelChoice>,
     pub current: Option<String>,
+    /// The saved model the agent didn't offer; the agent's default is in use.
+    pub missing: Option<String>,
+    /// The agent's model is one that works only inside OpenCode's own app, so
+    /// the person has to pick another before the first question.
+    pub must_pick: bool,
 }
+
+/// Models that work only inside OpenCode itself: never offered, never the
+/// default.
+pub fn is_app_only(id: &str) -> bool {
+    id.split('/')
+        .next()
+        .is_some_and(|provider| provider.eq_ignore_ascii_case("opencode"))
+}
+
+/// An error's text without the session's token or an `Authorization` value.
+fn redacted(text: &str, token: &str) -> String {
+    let mut out = if token.is_empty() {
+        text.to_string()
+    } else {
+        text.replace(token, "…")
+    };
+    for marker in ["Bearer ", "bearer ", "Authorization: ", "authorization: "] {
+        while let Some(at) = out.find(marker) {
+            let start = at + marker.len();
+            let end = out[start..]
+                .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '}'))
+                .map_or(out.len(), |n| start + n);
+            out.replace_range(at..end, "…");
+        }
+    }
+    clip(&out, MAX_REASON_BYTES).to_string()
+}
+
+/// The agent's own model works only inside OpenCode's app, and none is chosen.
+const PICK_A_MODEL: &str =
+    "Pick a model first. The agent's default model works only inside OpenCode's own app.";
+
+/// What a turn says when the agent gave neither an answer nor a message.
+const EMPTY_TURN: &str =
+    "The agent ended the turn without an answer. Check that the chosen model is signed in.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelChoice {
@@ -133,6 +173,7 @@ impl ModelOption {
         };
         let choices = flat
             .into_iter()
+            .filter(|choice| !is_app_only(&choice.value.to_string()))
             .take(MAX_MODELS)
             .map(|choice| {
                 let id = clip(&choice.value.to_string(), MAX_MODEL_ID_BYTES).to_string();
@@ -148,13 +189,14 @@ impl ModelOption {
                 }
             })
             .collect();
+        let current = clip(&select.current_value.to_string(), MAX_MODEL_ID_BYTES).to_string();
         Some(Self {
             config_id: option.id.to_string(),
             models: Models {
                 choices,
-                current: Some(
-                    clip(&select.current_value.to_string(), MAX_MODEL_ID_BYTES).to_string(),
-                ),
+                must_pick: is_app_only(&current),
+                current: Some(current),
+                missing: None,
             },
         })
     }
@@ -187,6 +229,17 @@ impl AcpSession {
     /// back as events; a session that can't start, or that dies in a prompt,
     /// ends that turn as failed.
     pub fn start(link: Link, endpoint: Endpoint) -> (Self, Receiver<Event>) {
+        Self::start_with(link, endpoint, None)
+    }
+
+    /// Like [`AcpSession::start`], and applies `model` right after
+    /// `session/new`, before any prompt. A model the agent doesn't offer is
+    /// left out and named in [`Models::missing`].
+    pub fn start_with(
+        link: Link,
+        endpoint: Endpoint,
+        model: Option<String>,
+    ) -> (Self, Receiver<Event>) {
         let (events, rx) = channel(EVENT_BUFFER);
         let (commands, command_rx) = unbounded_channel();
         let (models_tx, models) = watch::channel(Models::default());
@@ -199,6 +252,8 @@ impl AcpSession {
             models: models_tx,
             guard: guard.clone(),
             turn: Arc::clone(&turn),
+            output: Arc::new(AtomicBool::new(false)),
+            model,
             name: link.name,
         };
         tokio::spawn(async move {
@@ -283,6 +338,10 @@ struct Run {
     models: watch::Sender<Models>,
     guard: Guard,
     turn: Arc<AtomicBool>,
+    /// The turn showed text or a tool call.
+    output: Arc<AtomicBool>,
+    /// The model to apply before the first prompt.
+    model: Option<String>,
     name: &'static str,
 }
 
@@ -302,6 +361,7 @@ impl Run {
         let calls = Arc::new(Calls::default());
         let seen = Arc::clone(&calls);
         let updates = self.events.clone();
+        let output = Arc::clone(&self.output);
         let refusals = self.events.clone();
         let transport = ByteStreams::new(
             writer.compat_write(),
@@ -314,6 +374,11 @@ impl Run {
                 async move |notification: SessionNotification, _cx| {
                     seen.note(&notification.update);
                     for event in updates::events(notification.update) {
+                        if matches!(&event, Event::Said(text) if !text.trim().is_empty())
+                            || matches!(event, Event::StepStarted { .. })
+                        {
+                            output.store(true, Ordering::SeqCst);
+                        }
                         let _ = updates.send(event).await;
                     }
                     Ok(())
@@ -387,6 +452,9 @@ impl Run {
             self.models.send_replace(option.models.clone());
         }
         let session = created.session_id;
+        if let Some(wanted) = self.model.take() {
+            self.apply_saved(&cx, &session, &mut option, wanted).await;
+        }
 
         let mut pending = VecDeque::new();
         loop {
@@ -400,6 +468,11 @@ impl Run {
             match command {
                 Command::Cancel => pending.clear(),
                 Command::SetModel(id) => self.set_model(&cx, &session, &mut option, id).await,
+                Command::Prompt(text) if option.as_ref().is_some_and(|o| o.models.must_pick) => {
+                    let _ = self.events.send(Event::Prompt(text)).await;
+                    self.turn.store(true, Ordering::SeqCst);
+                    self.finish(Outcome::failed(PICK_A_MODEL)).await;
+                }
                 Command::Prompt(text) => {
                     if !self.prompt(&cx, &session, text, &mut pending).await {
                         return Ok(Exit::Closed);
@@ -407,6 +480,26 @@ impl Run {
                 }
             }
         }
+    }
+
+    /// Applies the saved model, and finishes before the first prompt is read.
+    async fn apply_saved(
+        &self,
+        cx: &ConnectionTo<agent_client_protocol::Agent>,
+        session: &SessionId,
+        option: &mut Option<ModelOption>,
+        wanted: String,
+    ) {
+        let Some(current) = option else { return };
+        if current.models.current.as_deref() == Some(wanted.as_str()) && !is_app_only(&wanted) {
+            return;
+        }
+        if !current.models.choices.iter().any(|m| m.id == wanted) {
+            current.models.missing = Some(wanted);
+            self.models.send_replace(current.models.clone());
+            return;
+        }
+        self.set_model(cx, session, option, wanted).await;
     }
 
     async fn set_model(
@@ -457,6 +550,7 @@ impl Run {
     ) -> bool {
         let _ = self.events.send(Event::Prompt(text.clone())).await;
         self.turn.store(true, Ordering::SeqCst);
+        self.output.store(false, Ordering::SeqCst);
         let answer = cx
             .send_request(PromptRequest::new(
                 session.clone(),
@@ -487,6 +581,9 @@ impl Run {
         match response {
             Ok(response) => {
                 self.finish(match response.stop_reason {
+                    StopReason::EndTurn if !self.output.load(Ordering::SeqCst) => {
+                        Outcome::failed(EMPTY_TURN)
+                    }
                     StopReason::EndTurn => Outcome::Answered,
                     StopReason::Cancelled => Outcome::Cancelled,
                     other => Outcome::failed(format!("stopped: {other:?}")),
@@ -495,7 +592,8 @@ impl Run {
                 true
             }
             Err(error) => {
-                self.finish(Outcome::failed(format!("{} stopped: {error}", self.name)))
+                let why = redacted(&error.to_string(), &self.endpoint.token.0);
+                self.finish(Outcome::failed(format!("{} stopped: {why}", self.name)))
                     .await;
                 false
             }

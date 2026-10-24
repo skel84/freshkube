@@ -39,6 +39,7 @@ impl AgentView {
         let label = match current {
             Some(choice) if choice.local => format!("{} · local", choice.name),
             Some(choice) => choice.name.clone(),
+            None if models.must_pick => "Pick a model".to_owned(),
             None => "Model".to_owned(),
         };
         let view = cx.entity().downgrade();
@@ -328,6 +329,13 @@ impl AgentView {
             Option<AnyElement>,
         ) = match notice {
             Notice::Failed(reason) => (Tone::Crit, "The agent stopped", reason.clone(), None, None),
+            Notice::ModelMissing(id) => (
+                Tone::Warn,
+                "The saved model isn't offered any more",
+                format!("{id} is not on the agent's list, so its own default is in use. Pick a model to change it."),
+                None,
+                None,
+            ),
             Notice::ToolsNotOffered(why) => (
                 Tone::Warn,
                 "Freshkube's tools weren't offered to the agent",

@@ -46,7 +46,11 @@ pub async fn list_metadata(
     struct MetadataList {
         #[serde(default)]
         metadata: k8s_openapi::apimachinery::pkg::apis::meta::v1::ListMeta,
+        #[serde(default, deserialize_with = "null_as_empty")]
         items: Vec<Metadata>,
+    }
+    fn null_as_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Metadata>, D::Error> {
+        Ok(Option::deserialize(d)?.unwrap_or_default())
     }
     let request = json_get(
         format!(

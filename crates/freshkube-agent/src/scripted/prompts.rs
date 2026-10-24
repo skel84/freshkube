@@ -30,6 +30,8 @@ pub(super) enum Ending {
     Stop(StopReason),
     /// Drop the connection without answering.
     Crash,
+    /// Answer the prompt with an error carrying this message.
+    Error(String),
 }
 
 pub(super) async fn run(turn: &Turn<'_>, prompt: &str) -> agent_client_protocol::Result<Ending> {
@@ -45,6 +47,12 @@ pub(super) async fn run(turn: &Turn<'_>, prompt: &str) -> agent_client_protocol:
         )?;
         tokio::time::sleep(Duration::from_millis(50)).await;
         return Ok(Ending::Crash);
+    } else if prompt.contains("nothing") {
+        StopReason::EndTurn
+    } else if prompt.contains("provider-error") || turn.script.fail_turn {
+        return Ok(Ending::Error(
+            "Failed to drain session: the free tier can only be used from within the app".into(),
+        ));
     } else if prompt.contains("environment") {
         say(turn, &environment().to_string())?;
         StopReason::EndTurn

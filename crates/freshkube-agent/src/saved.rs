@@ -62,6 +62,8 @@ pub struct Saved {
     pub data: DataMode,
     /// The opencode the person chose with "Choose a file", tried first.
     pub opencode: Option<PathBuf>,
+    /// The model the person chose, applied to every new session.
+    pub model: Option<String>,
 }
 
 /// A revocation that has not reached `agent.json`.
@@ -241,6 +243,23 @@ impl Access {
         let mut saved = self.state();
         let mut after = saved.clone();
         after.opencode = path;
+        self.document.save(&after)?;
+        *saved = after;
+        self.saved_ok();
+        Ok(())
+    }
+
+    /// The model the person chose, if any.
+    pub fn model(&self) -> Option<String> {
+        self.state().model.clone()
+    }
+
+    /// Keeps the model the person chose in `agent.json`. A failed save is
+    /// returned; the caller keeps the choice for the session.
+    pub fn set_model(&self, model: Option<String>) -> io::Result<()> {
+        let mut saved = self.state();
+        let mut after = saved.clone();
+        after.model = model;
         self.document.save(&after)?;
         *saved = after;
         self.saved_ok();
