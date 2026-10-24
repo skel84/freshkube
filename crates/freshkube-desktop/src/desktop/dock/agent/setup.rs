@@ -7,8 +7,6 @@ use freshkube_agent::profile::{Checked, Data, Host, Profile, Version, VersionSta
 
 /// The command a person runs to install opencode; Freshkube never does.
 pub(crate) const INSTALL_COMMAND: &str = "curl -fsSL https://opencode.ai/install | bash";
-/// The command that signs in to a model provider, outside the app.
-pub(crate) const SIGN_IN_COMMAND: &str = "opencode auth login";
 /// Where #945 is tracked.
 pub(crate) const ISSUE_945: &str = "https://github.com/skel84/freshkube/issues/945";
 /// The read-only identity how-to.

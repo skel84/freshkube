@@ -90,7 +90,6 @@ fn the_menus_differ_only_by_the_systems_entries() {
             "Next tab",
             "Previous tab",
             "Close tab",
-            "Open Agent",
             "Minimize dock"
         ]
     );
@@ -121,7 +120,9 @@ fn the_menus_differ_only_by_the_systems_entries() {
             "Smaller text",
             "Default text size",
             "—",
-            "Refresh"
+            "Refresh",
+            "—",
+            "Open Agent"
         ]
     );
     for platform in [Platform::Windows, Platform::Linux] {
@@ -143,7 +144,6 @@ fn the_menus_differ_only_by_the_systems_entries() {
                 "Next tab",
                 "Previous tab",
                 "Close tab",
-                "Open Agent",
                 "Minimize dock"
             ]
         );

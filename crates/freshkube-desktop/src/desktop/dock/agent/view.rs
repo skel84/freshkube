@@ -20,6 +20,8 @@ use crate::ui::{self, Tone, dp};
 
 /// What the egress card says leaves the machine and where it goes.
 pub(super) const EGRESS: &str = "Everything the agent reads (names, specs, logs and events) goes to the model provider opencode uses for the chosen model. Logs, ConfigMaps and env literals can still hold secrets. A local model keeps it on this machine. The agent reads with your own access and only through Freshkube's four read tools; it changes nothing. Nothing is read until you turn this on.";
+/// Beside the sign-in command: a script or a non-interactive shell fails.
+pub(super) const REAL_TERMINAL: &str = "Run it in a real terminal; a non-interactive run fails with \"Pass an integration ID or name\".";
 /// The warning when opencode runs on the person's own data (`data: shared`).
 pub(super) const SHARED: &str = "opencode runs on your own data (data: shared in agent.json). Investigations are saved in your own opencode history, and configs saved there load.";
 /// The plain statement of #945.
@@ -146,9 +148,10 @@ impl AgentView {
     fn command(
         &self,
         id: &'static str,
-        text: &'static str,
+        text: impl Into<String>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let text: String = text.into();
         let p = palette(cx);
         h_flex()
             .id(id)
@@ -157,12 +160,13 @@ impl AgentView {
             .items_center()
             .child(
                 div()
+                    .min_w_0()
                     .px(dp(8.))
                     .py(dp(3.))
                     .rounded(px(3.))
                     .bg(p.surface_2)
                     .text_color(p.ink)
-                    .child(ui::mono(text)),
+                    .child(ui::mono(text.clone())),
             )
             .child(
                 Button::new(SharedString::from(format!("{id}-copy")))
@@ -171,7 +175,7 @@ impl AgentView {
                     .icon(IconName::Copy)
                     .tooltip("Copy the command")
                     .on_click(move |_, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()))
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
                     }),
             )
     }
@@ -257,11 +261,28 @@ impl AgentView {
                         "Sign in to a model provider outside the app; Freshkube keeps no keys.",
                     ),
                 )
-                .child(self.command(
-                    "agent-sign-in-command",
-                    setup::SIGN_IN_COMMAND,
-                    cx,
-                ))
+                .child(match self.sign_in() {
+                    Some(Ok(command)) => v_flex()
+                        .gap(dp(8.))
+                        .child(self.command("agent-sign-in-command", command.clone(), cx))
+                        .child(
+                            div()
+                                .id("agent-sign-in-terminal")
+                                .test_support()
+                                .aria_label(SharedString::from(REAL_TERMINAL))
+                                .text_color(p.muted)
+                                .child(REAL_TERMINAL),
+                        )
+                        .into_any_element(),
+                    Some(Err(text)) => div()
+                        .id("agent-sign-in-error")
+                        .test_support()
+                        .aria_label(SharedString::from(text.clone()))
+                        .text_color(p.ink)
+                        .child(text.clone())
+                        .into_any_element(),
+                    None => div().into_any_element(),
+                })
             })
             .child(
                 ui::banner(

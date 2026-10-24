@@ -205,6 +205,71 @@ fn setup_states_show_what_to_do(cx: &mut TestAppContext) {
     // Signed out shows the command to run outside the app.
     let tab = open(cx, "signed-out", 1280., 880.);
     assert!(tab.present("agent-sign-in-command", cx));
+    assert!(tab.present("agent-sign-in-terminal", cx));
+}
+
+/// The command the card shows, which the view made after preparing.
+fn shown_command(tab: &Tab, cx: &mut TestAppContext) -> String {
+    cx.update(|cx| tab.view.read(cx).sign_in().cloned())
+        .expect("signed out has a command or an error")
+        .expect("the directories were prepared")
+}
+
+/// The directories a command names: its `NAME='dir'` words.
+fn named_dirs(command: &str) -> Vec<(String, String)> {
+    ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
+        .into_iter()
+        .filter_map(|name| {
+            let rest = command.split(&format!("{name}='")).nth(1)?;
+            Some((name.to_owned(), rest.split('\'').next()?.to_owned()))
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn the_signed_out_command_names_the_directories_the_session_gets(cx: &mut TestAppContext) {
+    let tab = open(cx, "signed-out", 1280., 880.);
+    let command = shown_command(&tab, cx);
+    assert!(command.ends_with(" opencode auth login --standalone"));
+    // The same three directories as the session environment's plan.
+    let own = cx.update(|cx| tab.view.read(cx).host().own_data());
+    let dirs = freshkube_agent::profile::Dirs::create().unwrap();
+    let plan = freshkube_agent::profile::Profile::opencode(
+        "/usr/bin/opencode",
+        freshkube_agent::profile::Data::Own(own.clone()),
+    )
+    .plan(&dirs, &freshkube_agent::profile::Host::current());
+    let named = named_dirs(&command);
+    assert_eq!(named.len(), 3, "{command}");
+    for (name, dir) in named {
+        assert_eq!(dir, plan.env[&name], "{name}");
+        assert!(std::path::Path::new(&dir).starts_with(&own), "{name}");
+    }
+    assert!(!command.contains("XDG_CONFIG_HOME") && !command.contains("TOKEN"));
+    let note = tab.label("agent-sign-in-terminal", cx).unwrap();
+    assert!(note.contains("real terminal") && note.contains("Pass an integration ID or name"));
+}
+
+#[gpui_kit::test]
+fn shared_data_keeps_the_plain_sign_in_command(cx: &mut TestAppContext) {
+    let tab = open(cx, "signed-out", 1280., 880.);
+    tab.view.update(cx, |view, _| {
+        view.shared_shape = true;
+        view.prepare_sign_in();
+    });
+    assert_eq!(shown_command(&tab, cx), "opencode auth login");
+    assert!(tab.present("agent-sign-in-command", cx));
+}
+
+#[gpui_kit::test]
+fn copy_writes_the_sign_in_command_to_the_clipboard(cx: &mut TestAppContext) {
+    let tab = open(cx, "signed-out", 1280., 880.);
+    let command = shown_command(&tab, cx);
+    tab.click("agent-sign-in-command-copy", cx);
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(command)
+    );
 }
 
 #[gpui_kit::test]
@@ -1083,4 +1148,55 @@ fn a_read_that_broke_reads_couldnt_read_and_not_refused(cx: &mut TestAppContext)
         let label = tab.label(id, cx).unwrap();
         assert!(label.ends_with("Couldn't read"), "{label}");
     }
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn the_command_is_shown_only_after_the_directories_are_private(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let tab = open(cx, "signed-out", 1280., 880.);
+    let temp = tempfile::tempdir().unwrap();
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let owned = temp.path().join("opencode");
+    let dirs = [
+        owned.clone(),
+        owned.join("data"),
+        owned.join("state"),
+        owned.join("cache"),
+    ];
+    for dir in &dirs {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    tab.view.update(cx, |view, _| {
+        view.host.preferences = Some(temp.path().join("preferences.json"));
+        view.sign_in = None;
+    });
+    // Before it is prepared there is no command to show.
+    assert!(!tab.present("agent-sign-in-command", cx));
+    tab.view.update(cx, |view, _| view.prepare_sign_in());
+    for dir in &dirs {
+        assert_eq!(mode(dir), 0o700, "{dir:?}");
+    }
+    assert!(tab.present("agent-sign-in-command", cx));
+    let command = shown_command(&tab, cx);
+    assert!(command.contains(&owned.join("data").to_string_lossy().into_owned()));
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+fn a_directory_that_cannot_be_made_private_shows_an_error_and_no_command(cx: &mut TestAppContext) {
+    let tab = open(cx, "signed-out", 1280., 880.);
+    let temp = tempfile::tempdir().unwrap();
+    let blocker = temp.path().join("blocked");
+    std::fs::write(&blocker, "a file where the directory should go").unwrap();
+    tab.view.update(cx, |view, _| {
+        view.host.preferences = Some(blocker.join("preferences.json"));
+        view.prepare_sign_in();
+    });
+    assert!(!tab.present("agent-sign-in-command", cx));
+    assert!(!tab.present("agent-sign-in-terminal", cx));
+    let error = tab.label("agent-sign-in-error", cx).unwrap();
+    assert!(error.contains("couldn't make its opencode data directory private"));
 }
