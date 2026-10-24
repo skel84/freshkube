@@ -3,16 +3,21 @@
 //! An application started from the Dock or Finder gets launchd's short
 //! `PATH`, so `gh` or a kubeconfig's `exec` credential plugin (`kubelogin`,
 //! `aws`, `gke-gcloud-auth-plugin`, `az`) is not found, though it works from a
-//! terminal. The usual install directories are looked in first, then `PATH`.
-//! Nothing is read from a shell: no login shell is started and no shell
-//! configuration is sourced.
+//! terminal. Nothing is read from a shell: no login shell is started and no
+//! shell configuration is sourced.
 //!
-//! [`resolve`] makes a kubeconfig's exec command absolute before kube-rs
-//! runs it. Only a bare command name that the process's own `PATH` can't
-//! find is touched; an absolute path, a path with a directory in it and a
-//! user with no `exec` are left as they are. Failures name the program and
-//! the places, never its arguments, environment or output, which can carry
-//! tokens.
+//! Two lookups share the directory check, with different orders:
+//!
+//! - [`default_dirs`] and [`find_program`], for `gh`, which is never on
+//!   `PATH` unless the person put it there: the usual install directories
+//!   first, then every directory of `PATH`.
+//! - [`resolve`], for a kubeconfig's exec command, which must behave as the
+//!   person's shell would where it can: the process's own `PATH` first, so a
+//!   program it finds is left alone, and only then the usual directories. It
+//!   makes the command absolute before kube-rs runs it. An absolute path, a
+//!   path with a directory in it and a user with no `exec` are left as they
+//!   are. Failures name the context and the program and the places, never its
+//!   arguments, environment or output, which can carry tokens.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -82,42 +87,65 @@ pub enum ConfigError {
 /// then kube loads the credentials, which may run the plugin. Blocking work
 /// belongs on a blocking thread, as before.
 pub async fn config_from_kubeconfig(
-    mut kubeconfig: Kubeconfig,
+    kubeconfig: Kubeconfig,
     options: &KubeConfigOptions,
 ) -> Result<kube::Config, ConfigError> {
-    resolve(&mut kubeconfig, options.context.as_deref()).map_err(ConfigError::Plugin)?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    config_from_kubeconfig_with(kubeconfig, options, &usual_places(), &path).await
+}
+
+async fn config_from_kubeconfig_with(
+    mut kubeconfig: Kubeconfig,
+    options: &KubeConfigOptions,
+    places: &[PathBuf],
+    path: &OsStr,
+) -> Result<kube::Config, ConfigError> {
+    resolve_with(&mut kubeconfig, options, places, path).map_err(ConfigError::Plugin)?;
     kube::Config::from_custom_kubeconfig(kubeconfig, options)
         .await
         .map_err(|_| ConfigError::Credentials)
 }
 
-/// Makes the exec command of the user that `context` (or the file's current
-/// context) names absolute, when it is a bare name the process's `PATH`
-/// can't find but the usual places can. Fails, naming the program and the
-/// places, when neither finds it.
-pub fn resolve(kubeconfig: &mut Kubeconfig, context: Option<&str>) -> Result<(), Failure> {
+fn usual_places() -> Vec<PathBuf> {
+    PLACES.iter().map(PathBuf::from).collect()
+}
+
+/// Makes the exec command of the user that `options` select absolute, when it
+/// is a bare name the process's `PATH` can't find but the usual places can.
+/// The user is `options.user` if set, else the user of the context
+/// `options.context` (or the file's current context) names, as kube picks it.
+/// Fails, naming the program and the places, when neither finds it.
+pub fn resolve(kubeconfig: &mut Kubeconfig, options: &KubeConfigOptions) -> Result<(), Failure> {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let places: Vec<PathBuf> = PLACES.iter().map(PathBuf::from).collect();
-    resolve_with(kubeconfig, context, &places, &path)
+    resolve_with(kubeconfig, options, &usual_places(), &path)
 }
 
 fn resolve_with(
     kubeconfig: &mut Kubeconfig,
-    context: Option<&str>,
+    options: &KubeConfigOptions,
     places: &[PathBuf],
     path: &OsStr,
 ) -> Result<(), Failure> {
-    let Some(context_name) = context.or(kubeconfig.current_context.as_deref()) else {
-        return Ok(());
-    };
-    let Some(user) = kubeconfig
-        .contexts
-        .iter()
-        .find(|named| named.name == context_name)
-        .and_then(|named| named.context.as_ref())
-        .and_then(|context| context.user.clone())
-    else {
-        return Ok(());
+    let context_name = options
+        .context
+        .as_deref()
+        .or(kubeconfig.current_context.as_deref())
+        .map(str::to_owned);
+    let user = match &options.user {
+        Some(user) => user.clone(),
+        None => {
+            let Some(user) = context_name.as_deref().and_then(|name| {
+                kubeconfig
+                    .contexts
+                    .iter()
+                    .find(|named| named.name == name)
+                    .and_then(|named| named.context.as_ref())
+                    .and_then(|context| context.user.clone())
+            }) else {
+                return Ok(());
+            };
+            user
+        }
     };
     let Some(exec) = kubeconfig
         .auth_infos
@@ -142,18 +170,22 @@ fn resolve_with(
         }
         None => Err(Failure::new(
             FailureKind::Config,
-            not_found(context_name, command, places),
+            not_found(context_name.as_deref(), command, places),
         )),
     }
 }
 
-fn not_found(context: &str, program: &str, places: &[PathBuf]) -> String {
+fn not_found(context: Option<&str>, program: &str, places: &[PathBuf]) -> String {
+    let subject = match context {
+        Some(context) => format!("Context '{context}'"),
+        None => "The kubeconfig".to_owned(),
+    };
     let places: Vec<String> = places
         .iter()
         .map(|place| place.display().to_string())
         .collect();
     format!(
-        "Context '{context}' needs the login program '{program}', which was not found in {} or on PATH",
+        "{subject} needs the login program '{program}', which was not found in {} or on PATH",
         places.join(", ")
     )
 }
@@ -180,6 +212,13 @@ mod tests {
         .unwrap()
     }
 
+    fn dev() -> KubeConfigOptions {
+        KubeConfigOptions {
+            context: Some("dev".into()),
+            ..KubeConfigOptions::default()
+        }
+    }
+
     fn command_of(kubeconfig: &Kubeconfig) -> Option<String> {
         kubeconfig.auth_infos[0]
             .auth_info
@@ -204,7 +243,7 @@ mod tests {
         let place = root.path().join("other");
         let installed = install(&place, "fake-login");
         let mut config = kubeconfig(Some("fake-login"));
-        resolve_with(&mut config, Some("dev"), &[place], OsStr::new("")).unwrap();
+        resolve_with(&mut config, &dev(), &[place], OsStr::new("")).unwrap();
         assert_eq!(
             command_of(&config).as_deref(),
             installed.to_str(),
@@ -221,7 +260,7 @@ mod tests {
         install(&other, "fake-login");
         let mut config = kubeconfig(Some("fake-login"));
         let path = std::env::join_paths([&on_path]).unwrap();
-        resolve_with(&mut config, None, &[other], &path).unwrap();
+        resolve_with(&mut config, &KubeConfigOptions::default(), &[other], &path).unwrap();
         assert_eq!(command_of(&config).as_deref(), Some("fake-login"));
     }
 
@@ -233,7 +272,7 @@ mod tests {
         let mut config = kubeconfig(Some("fake-login"));
         let failure = resolve_with(
             &mut config,
-            Some("dev"),
+            &dev(),
             std::slice::from_ref(&place),
             OsStr::new(""),
         )
@@ -252,20 +291,20 @@ mod tests {
     #[test]
     fn an_absolute_path_is_never_changed_or_looked_up() {
         let mut config = kubeconfig(Some("/nonexistent/dir/fake-login"));
-        resolve_with(&mut config, Some("dev"), &[], OsStr::new("")).unwrap();
+        resolve_with(&mut config, &dev(), &[], OsStr::new("")).unwrap();
         assert_eq!(
             command_of(&config).as_deref(),
             Some("/nonexistent/dir/fake-login")
         );
         let mut relative = kubeconfig(Some("./bin/fake-login"));
-        resolve_with(&mut relative, Some("dev"), &[], OsStr::new("")).unwrap();
+        resolve_with(&mut relative, &dev(), &[], OsStr::new("")).unwrap();
         assert_eq!(command_of(&relative).as_deref(), Some("./bin/fake-login"));
     }
 
     #[test]
     fn a_kubeconfig_without_exec_is_not_resolved() {
         let mut config = kubeconfig(None);
-        resolve_with(&mut config, Some("dev"), &[], OsStr::new("")).unwrap();
+        resolve_with(&mut config, &dev(), &[], OsStr::new("")).unwrap();
         assert_eq!(command_of(&config), None);
     }
 
@@ -281,7 +320,7 @@ mod tests {
             let mut config = kubeconfig(Some(program));
             let failure = resolve_with(
                 &mut config,
-                Some("dev"),
+                &dev(),
                 std::slice::from_ref(&place),
                 OsStr::new(""),
             )
@@ -312,19 +351,37 @@ mod tests {
         std::fs::write(&file, &text).unwrap();
         let before = std::fs::read(&file).unwrap();
         let (_, loaded) = crate::resources::load_kubeconfigs(std::slice::from_ref(&file));
-        let mut loaded = loaded.unwrap();
+        let loaded = loaded.unwrap();
         // The process's PATH can't find it; the other directory stands in for
         // one of the usual places.
-        resolve_with(&mut loaded, Some("dev"), &[place], OsStr::new("")).unwrap();
-        let options = KubeConfigOptions {
-            context: Some("dev".into()),
-            ..KubeConfigOptions::default()
-        };
-        let config = kube::Config::from_custom_kubeconfig(loaded, &options)
+        let config = config_from_kubeconfig_with(loaded, &dev(), &[place], OsStr::new(""))
             .await
             .unwrap();
         let _ = crate::kube_client::client(config);
         assert_eq!(std::fs::read(&file).unwrap(), before);
         assert!(marker.exists(), "the plugin ran from its absolute path");
+    }
+
+    #[test]
+    fn the_user_an_option_names_is_the_one_resolved() {
+        let mut config = kubeconfig(Some("fake-login"));
+        // A second user without exec; options.user picks it over the context's.
+        let other: Kubeconfig = serde_yaml::from_str(
+            "apiVersion: v1\nkind: Config\nusers:\n- name: v\n  user:\n    token: not-a-real-token\n",
+        )
+        .unwrap();
+        config.auth_infos.extend(other.auth_infos);
+        let options = KubeConfigOptions {
+            user: Some("v".into()),
+            ..dev()
+        };
+        resolve_with(&mut config, &options, &[], OsStr::new("")).unwrap();
+        // Naming the exec user explicitly does resolve (and fail here).
+        let options = KubeConfigOptions {
+            user: Some("u".into()),
+            ..dev()
+        };
+        let failure = resolve_with(&mut config, &options, &[], OsStr::new("")).unwrap_err();
+        assert!(failure.message.contains("'fake-login'"));
     }
 }

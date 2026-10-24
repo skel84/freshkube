@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
-use kube::config::{Config, KubeConfigOptions};
+use kube::config::KubeConfigOptions;
 
 use super::discover::ClusterSecrets;
 use super::discover::NamespaceCounts;
@@ -436,13 +436,14 @@ async fn through_talos(
         context: kubeconfig.contexts.first().map(|named| named.name.clone()),
         ..KubeConfigOptions::default()
     };
-    let mut config = Config::from_custom_kubeconfig(kubeconfig, &options)
+    let mut config = freshkube_core::exec_plugin::config_from_kubeconfig(kubeconfig, &options)
         .await
-        .map_err(|_| {
-            Failure::new(
+        .map_err(|error| match error {
+            ConfigError::Plugin(failure) => Failure::new(FailureKind::Config, failure.message),
+            ConfigError::Credentials => Failure::new(
                 FailureKind::Config,
                 "the kubeconfig its control plane gave couldn't be loaded",
-            )
+            ),
         })?;
     config.connect_timeout = Some(limit);
     config.read_timeout = Some(REQUEST_DEADLINE);
