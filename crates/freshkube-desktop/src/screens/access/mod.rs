@@ -469,6 +469,8 @@ impl ScreenPanel for AccessScreen {
     }
 
     fn status(&mut self, _: &App) -> Option<Segment> {
+        // What is wrong comes first, so a narrow bar cuts the counts and not it.
+        let mut warnings = Vec::new();
         let mut parts = Vec::new();
         parts.push(match (self.board.who(), self.who.error()) {
             (Some(who), _) => Part::new(format!(
@@ -497,15 +499,15 @@ impl ScreenPanel for AccessScreen {
             )));
         }
         if self.display.failed() > 0 {
-            parts.push(
+            warnings.push(
                 Part::new(format!("{} couldn't check", self.display.failed())).tone(ui::Tone::Warn),
             );
         }
         if self.display.incomplete() {
-            parts.push(Part::new("Rules incomplete").tone(ui::Tone::Warn));
+            warnings.push(Part::new("Rules incomplete").tone(ui::Tone::Warn));
         }
         if self.board.changed().is_some() {
-            parts.push(Part::new("Identity changed").tone(ui::Tone::Warn));
+            warnings.push(Part::new("Identity changed").tone(ui::Tone::Warn));
         }
         if self.namespaces.error().is_some()
             || self
@@ -513,11 +515,13 @@ impl ScreenPanel for AccessScreen {
                 .data()
                 .is_some_and(|namespaces| namespaces.refused.is_some())
         {
-            parts.push(Part::new("Can't list namespaces").tone(ui::Tone::Warn));
+            warnings.push(Part::new("Can't list namespaces").tone(ui::Tone::Warn));
         }
         if self.is_example() {
             parts.push(Part::new("example data").minor());
         }
+        warnings.append(&mut parts);
+        let parts = warnings;
         Some(Segment::new(
             self.source.as_ref().map(|source| source.context.clone()),
             parts,

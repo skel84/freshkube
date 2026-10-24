@@ -121,6 +121,15 @@ fn the_page_says_what_the_rules_grant_in_words(cx: &mut TestAppContext) {
         assert_eq!(all("Nodes"), "yes – – – – no – –");
         let shop = row(&page, "shop", cx);
         assert_eq!(shop.tone, ui::Tone::Info);
+        // A yes names what was allowed, as a no names what is missing.
+        assert_eq!(
+            shop.cells[0].tip.as_ref(),
+            "Allowed: get, list, watch on pods in shop"
+        );
+        assert_eq!(
+            row(&page, "Nodes", cx).cells[0].tip.as_ref(),
+            "Allowed: get, list on nodes cluster-wide"
+        );
         assert_eq!(
             shop.cells[3].tip.as_ref(),
             "needs create on pods/portforward in shop"

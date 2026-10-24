@@ -1,7 +1,9 @@
 //! What the table draws, derived from the board: all of it when the list of
 //! namespaces changes, and one row when its answer lands.
 
-use freshkube_core::access::{Board, COLUMNS, Cell, Cells, Need, RowKey, RowView};
+use freshkube_core::access::{
+    Board, COLUMNS, Cell, Cells, Column as AccessColumn, Need, RowKey, RowView,
+};
 use gpui_kit::SharedString;
 use std::collections::HashMap;
 
@@ -79,7 +81,41 @@ impl Default for Display {
     }
 }
 
-fn cell_view(cells: &Cells, cell: &Cell, namespace: Option<&str>) -> CellView {
+/// What a column asks, for a tooltip: `get, list on pods in shop`.
+fn asked(column: AccessColumn, namespace: Option<&str>) -> String {
+    let needs = match namespace {
+        Some(_) => Some(column.needs()),
+        None => column.node_needs(),
+    }
+    .unwrap_or_default();
+    let mut words = Vec::new();
+    for need in needs {
+        let target = need.resource_words();
+        match words
+            .iter_mut()
+            .find(|(t, _): &&mut (String, Vec<&str>)| *t == target)
+        {
+            Some((_, verbs)) => verbs.push(need.verb),
+            None => words.push((target, vec![need.verb])),
+        }
+    }
+    let list = words
+        .iter()
+        .map(|(target, verbs)| format!("{} on {target}", verbs.join(", ")))
+        .collect::<Vec<_>>()
+        .join("; ");
+    match namespace {
+        Some(namespace) => format!("{list} in {namespace}"),
+        None => format!("{list} cluster-wide"),
+    }
+}
+
+fn cell_view(
+    column: AccessColumn,
+    cells: &Cells,
+    cell: &Cell,
+    namespace: Option<&str>,
+) -> CellView {
     let words = |needs: &[Need]| {
         needs
             .iter()
@@ -90,7 +126,7 @@ fn cell_view(cells: &Cells, cell: &Cell, namespace: Option<&str>) -> CellView {
     match cell {
         Cell::Yes => CellView {
             word: "yes",
-            tip: "Allowed".into(),
+            tip: format!("Allowed: {}", asked(column, namespace)).into(),
         },
         Cell::No(needs) => CellView {
             word: "no",
@@ -112,19 +148,19 @@ fn cell_view(cells: &Cells, cell: &Cell, namespace: Option<&str>) -> CellView {
 }
 
 fn cell_views(cells: &Cells, namespace: Option<&str>) -> Vec<CellView> {
-    cells
-        .cells
+    COLUMNS
         .iter()
-        .map(|cell| cell_view(cells, cell, namespace))
+        .zip(&cells.cells)
+        .map(|(column, cell)| cell_view(*column, cells, cell, namespace))
         .collect()
 }
 
-fn placeholder(word: &'static str, tip: &str) -> Vec<CellView> {
+fn placeholder(word: &'static str, tip: &str, namespace: Option<&str>) -> Vec<CellView> {
     COLUMNS
         .iter()
-        .map(|_| CellView {
+        .map(|column| CellView {
             word,
-            tip: tip.to_owned().into(),
+            tip: format!("{tip} ({})", asked(*column, namespace)).into(),
         })
         .collect()
 }
@@ -195,7 +231,7 @@ fn row_of(key: RowKey, board: &Board) -> Row {
             Standing::Checking,
             Tone::Waiting,
             "Checking".to_owned(),
-            placeholder("…", "Checking"),
+            placeholder("…", "Checking", namespace_ref),
             Detail {
                 headline: "Checking".into(),
                 checking: true,
@@ -231,7 +267,7 @@ fn row_of(key: RowKey, board: &Board) -> Row {
             Standing::Failed,
             Tone::Warn,
             "Couldn't check".to_owned(),
-            placeholder("?", &format!("Couldn't check: {message}")),
+            placeholder("?", &format!("Couldn't check: {message}"), namespace_ref),
             Detail {
                 headline: "Couldn't check".into(),
                 failure: Some(message.to_owned().into()),
