@@ -37,6 +37,9 @@ pub enum AgentShape {
     /// Access was turned off and the save failed: the tab says access comes
     /// back after a restart.
     SaveFailed,
+    /// Access is on and the agent answers without asking for Freshkube's
+    /// tools, so the tab says they weren't offered.
+    NoTools,
     /// `data: shared` is set: the dock says investigations land in the
     /// person's own opencode history.
     Shared,
@@ -45,7 +48,7 @@ pub enum AgentShape {
 impl AgentShape {
     /// The names `FRESHKUBE_AGENT` takes.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub const NAMES: [&'static str; 13] = [
+    pub const NAMES: [&'static str; 14] = [
         "ready",
         "not-installed",
         "unsupported",
@@ -58,6 +61,7 @@ impl AgentShape {
         "following",
         "refused",
         "save-failed",
+        "no-tools",
         "shared",
     ];
 
@@ -75,6 +79,7 @@ impl AgentShape {
             "following" => Self::Following,
             "refused" => Self::Refused,
             "save-failed" => Self::SaveFailed,
+            "no-tools" => Self::NoTools,
             "shared" => Self::Shared,
             _ => return None,
         })
@@ -90,6 +95,7 @@ impl AgentShape {
                 | Self::Following
                 | Self::Refused
                 | Self::SaveFailed
+                | Self::NoTools
         )
     }
 
@@ -103,6 +109,7 @@ impl AgentShape {
                 | Self::Stopped
                 | Self::Following
                 | Self::Refused
+                | Self::NoTools
         )
     }
 }

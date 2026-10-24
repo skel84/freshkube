@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 use freshkube_agent::acp::Models;
 use freshkube_agent::investigation::{Entry, Event, Investigation, Outcome};
 use freshkube_agent::scripted::Script;
+use freshkube_agent::tools::NotOffered;
 use freshkube_core::job::OwnedJob;
 use freshkube_core::workspace::Workspace;
 use freshkube_ui::level::Mark;
@@ -65,6 +66,9 @@ const CITE_CARRY: usize = 8;
 pub(crate) enum Notice {
     /// The session could not start, or the turn failed.
     Failed(String),
+    /// An answered turn made no read and showed the agent was not offered
+    /// Freshkube's tools (`freshkube_agent::tools::not_offered`).
+    ToolsNotOffered(NotOffered),
     /// Turning access on could not be saved: it stays off.
     AccessNotSaved(String),
     /// Turning access off could not be saved. It is off now. The file may
@@ -653,10 +657,18 @@ impl AgentView {
             }
             run::Message::Models(models) => self.models = models,
             run::Message::Listening(addr) => self.listening = Some(addr),
+            run::Message::ToolsNotOffered(why) => self.tools_not_offered(why),
             run::Message::Ended(reason) => self.session_ended(reason, cx),
         }
         self.refresh_steps();
         cx.notify();
+    }
+
+    /// Shows that the tools weren't offered unless another notice is up. The
+    /// session tells it at each answered turn that shows it, so it comes up
+    /// after the other one clears.
+    fn tools_not_offered(&mut self, why: NotOffered) {
+        self.notice.get_or_insert(Notice::ToolsNotOffered(why));
     }
 
     /// The session is over (the agent exited, or it could not start): the
