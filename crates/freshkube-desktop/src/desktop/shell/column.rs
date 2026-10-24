@@ -295,7 +295,7 @@ pub(super) fn page_icon(page: Page) -> IconName {
         Page::Health => IconName::HeartPulse,
         Page::Etcd | Page::Databases => IconName::Database,
         Page::SystemServices => IconName::ServerCog,
-        Page::Security => IconName::ShieldCheck,
+        Page::Security | Page::Access => IconName::ShieldCheck,
         Page::Lifecycle => IconName::RefreshCw,
         Page::Operations => IconName::Wrench,
         _ => IconName::Box,
