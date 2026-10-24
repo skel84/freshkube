@@ -2569,6 +2569,27 @@ fn the_overview_opens_on_its_stage_in_the_shell_at_760_by_560_and_text_20(cx: &m
     .unwrap();
 }
 
+/// The Stage a change is followed from is whole under the matrix's header
+/// on the first open, with the stacked Inspector leaving it a row or two.
+#[gpui_kit::test]
+fn the_selected_stage_is_whole_under_the_matrix_header_on_first_open(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = overview_on(cx, 760., 560., "prod-ams", Some(20.));
+    cx.update_window(handle, |_, window, cx| {
+        for _ in 0..10 {
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+        }
+        let list = window.find("change-matrix-list").bounds();
+        let row = window.find("change-matrix-row-prod-ams").bounds();
+        // Not under the header: it starts at the list's top or below.
+        assert!(
+            row.top() >= list.top() - gpui_kit::px(2.),
+            "{row:?} starts above the list {list:?}"
+        );
+    })
+    .unwrap();
+}
+
 /// The same shell and size on All hops: nothing is cut at the right edge,
 /// whatever columns the page has room for.
 #[gpui_kit::test]

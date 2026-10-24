@@ -353,6 +353,12 @@ impl TableSource for Matrix {
         false
     }
 
+    /// A stacked Inspector leaves the matrix a row or two: the selected
+    /// Stage ends whole under the header, never half.
+    fn whole_rows(&self) -> bool {
+        true
+    }
+
     fn loading(&self) -> Option<&kit::LoadingRows> {
         self.loading.as_ref()
     }

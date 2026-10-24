@@ -33,6 +33,17 @@ impl ChangePage {
         self.matrix_stale.set(true);
     }
 
+    /// The width the strip and the matrix have, in dp: the page's, less the
+    /// Inspector's beside them when it is open.
+    pub(super) fn lead_width(&self, window: &Window, cx: &App) -> f32 {
+        let page = freshkube_ui::page::page_width(window);
+        if page >= inspector::SPLIT_WIDTH && self.selected.is_some() {
+            page - self.overview_split.live_width(cx)
+        } else {
+            page
+        }
+    }
+
     /// Hands the matrix its rows and the selection, which it draws.
     ///
     /// Only when something it shows moved: the change, its marks, the
@@ -110,7 +121,7 @@ impl ChangePage {
 
     /// Three skeleton cards in the strip's place, until the first answer.
     fn render_strip_loading(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let stacked = freshkube_ui::page::page_width(window) < strip::STACKS_BELOW;
+        let stacked = self.lead_width(window, cx) < strip::STACKS_BELOW;
         let bar = cx.theme().skeleton;
         let card = |ix: usize| {
             freshkube_ui::page::card(cx)

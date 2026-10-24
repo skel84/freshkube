@@ -87,17 +87,21 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Strip {
             .map(|(_, row)| status(row.tone))
             .max_by_key(|tone| rank(*tone))
             .unwrap_or(Tone::Good);
-        // What the Build can't confirm is said on its card, with its cause.
-        let unconfirmed = build
-            .iter()
-            .find_map(|(_, row)| row.cause.as_ref().filter(|cause| cause.is_problem()));
+        // What the Build can't confirm is said on its card: the hop and its
+        // cause (`Policy acme-prod · Not found`), not the run it shows.
+        let unconfirmed = build.iter().find_map(|(_, row)| {
+            row.cause
+                .as_ref()
+                .filter(|cause| cause.is_problem())
+                .map(|cause| (row.name.clone(), cause))
+        });
         cards.push(Card {
             id: "build",
             select: last.1.key.clone(),
             hops: build.iter().map(|(_, row)| row.key.clone()).collect(),
             title: "Build".into(),
             detail: match unconfirmed {
-                Some(cause) => format!("{} · {}", last.1.name, cause.word()).into(),
+                Some((name, cause)) => format!("{name} · {}", cause.word()).into(),
                 None => last.1.name.clone(),
             },
             tone,
@@ -198,7 +202,7 @@ pub fn short_key(key: &str) -> String {
 
 impl ChangePage {
     pub(super) fn render_strip(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let stacked = page::page_width(window) < STACKS_BELOW;
+        let stacked = self.lead_width(window, cx) < STACKS_BELOW;
         let p = palette(cx);
         let mut strip = if stacked { v_flex() } else { h_flex() }
             .id("change-strip")
@@ -206,6 +210,7 @@ impl ChangePage {
             .flex_none()
             .w_full()
             .min_w_0()
+            .overflow_hidden()
             .gap(dp(0.))
             .px(dp(page::PANE_PADDING))
             .py(dp(page::PANE_PADDING_Y))

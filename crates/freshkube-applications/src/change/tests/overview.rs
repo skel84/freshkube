@@ -487,6 +487,8 @@ fn not_found_is_drawn_on_the_builds_card_under_the_causes_shape(cx: &mut TestApp
             .unwrap()
             .clone();
         assert!(build.detail.contains("Not found"), "{}", build.detail);
+        // It names the hop that was not found, not the run it shows.
+        assert!(!build.detail.contains("x7k2"), "{}", build.detail);
         let label = window
             .find("change-strip-build")
             .label()
@@ -519,6 +521,37 @@ fn the_cell_keys_reach_what_is_behind_the_page_in_all_hops_only(cx: &mut TestApp
         window.press("right", cx);
         window.press("left", cx);
         assert_eq!(reached.get(), 2, "All hops lets them through");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_strip_stays_in_the_pane_beside_the_inspector(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("prod-ams-pods", window, cx));
+        settle(window, cx);
+        let pane = bounds(window, "change-overview".into());
+        let detail = bounds(window, "change-detail".into());
+        // The pane beside the Inspector is under 640 dp, so the strip
+        // stacks there, though the page itself is wide.
+        let (build, freight) = (
+            bounds(window, "change-strip-build".into()),
+            bounds(window, "change-strip-freight".into()),
+        );
+        assert!(build.bottom() <= freight.top(), "{build:?} {freight:?}");
+        for card in ["pr", "build", "freight"] {
+            let card = bounds(window, format!("change-strip-{card}"));
+            assert!(
+                card.right() <= pane.right() + px(1.),
+                "{card:?} in {pane:?}"
+            );
+            assert!(
+                card.right() <= detail.left() + px(1.),
+                "{card:?} under {detail:?}"
+            );
+        }
     })
     .unwrap();
 }
