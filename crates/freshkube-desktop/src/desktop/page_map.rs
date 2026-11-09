@@ -141,7 +141,7 @@ impl Pages {
         // What an action is offered as (#854): the example answers by the
         // same knob as Your access.
         let shape = freshkube_core::access::example::Shape::parse(&options.debug.access);
-        freshkube_reads::offer_desk(&runtime, cx).update(cx, |desk, _| desk.set_example(shape));
+        freshkube_reads::offer_desk(runtime, cx).update(cx, |desk, _| desk.set_example(shape));
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), options.debug.agent, cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
