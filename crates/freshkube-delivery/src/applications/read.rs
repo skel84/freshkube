@@ -109,6 +109,18 @@ pub fn argo_namespaces(workloads: &Source<Vec<LabelledWorkload>>) -> (Vec<String
     (namespaces, ArgoFound::Labelled { skipped })
 }
 
+/// Where Argo CD runs on the cluster `reader` reads: the first namespace its
+/// own workloads are labelled in, else [`ARGOCD`]. What the Applications page
+/// hands the Changes list, for a caller that has no such page.
+pub async fn argocd_namespace<R: Reader>(reader: &R) -> String {
+    let workloads = read_argo_workloads(reader).await;
+    argo_namespaces(&workloads)
+        .0
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| ARGOCD.to_owned())
+}
+
 /// Applications in every discovered namespace, merged as the Applications
 /// page merges them: an unread namespace leaves the whole source unread.
 pub(crate) async fn read_applications_in<R: Reader>(

@@ -571,6 +571,9 @@ async fn without_supply_chain_or_results_derives_exactly_as_main() {
     // the `cause` fields, the Debug output differs from main's only there.
     // Moved by #846: `Change` names the Kubernetes context Kargo runs in
     // (`kargo_context`), which main's Debug output doesn't have.
+    // Moved by #848: a `Missing` names whether it is about GitHub (`github:
+    // false` here). Only the refused case holds one; with that line taken out
+    // of the Debug output its fingerprint is the one it had before.
     for (name, reader, expected) in [
         (
             "live",
@@ -590,7 +593,7 @@ async fn without_supply_chain_or_results_derives_exactly_as_main() {
         (
             "refused",
             reader(vec![], vec![]).refusing("pipelineruns"),
-            "924db154754d349be7f615e256a267c6dca763987d9ced084a4c4bfdff99f0bd",
+            "812671c0ea4117b113fe8d1214a2bf8d10cef52d5bcaa100dfa5dc68646f9c08",
         ),
     ] {
         let pool = Pool::new(
