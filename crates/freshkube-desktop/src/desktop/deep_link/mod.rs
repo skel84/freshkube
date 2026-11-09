@@ -38,6 +38,9 @@ pub(super) struct State {
     /// log read then shows its pod in the tab that following owns. Set per
     /// `apply_view`, so an open still being read is the latest one's.
     followed: bool,
+    /// The keyboard was in the dock (the Agent tab's Ask) when that move
+    /// began, so the log tab it opens is not selected over it.
+    followed_from_dock: bool,
 }
 
 /// The most links held while the window has no cluster yet.
@@ -56,6 +59,7 @@ impl State {
             identities: cluster::Identities::open(preferences),
             waiting: Vec::new(),
             followed: false,
+            followed_from_dock: false,
         }
     }
 }
@@ -330,10 +334,14 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         self.deep_link.followed = true;
+        self.deep_link.followed_from_dock = self.pages.dock.read(cx).holds_keyboard(window, cx);
         self.apply_view_now(view, window, cx);
     }
 
     fn apply_view_now(&mut self, view: &ViewState, window: &mut Window, cx: &mut Context<Self>) {
+        // A link or the agent's page-follow moves the page under a modal: a
+        // destructive countdown confirmed on the old view sends nothing.
+        crate::write_flow::cancel_countdowns(cx);
         self.target.cancel_object_open();
         match view.page {
             LinkPage::Resources => self.apply_resources(view, window, cx),
@@ -633,9 +641,11 @@ impl Pilot {
                 at: None,
             };
             if self.deep_link.followed {
-                self.pages
-                    .dock
-                    .update(cx, |dock, cx| dock.open_followed_logs(request, window, cx));
+                let keyboard_in_dock = self.deep_link.followed_from_dock
+                    || self.pages.dock.read(cx).holds_keyboard(window, cx);
+                self.pages.dock.update(cx, |dock, cx| {
+                    dock.open_followed_logs(request, keyboard_in_dock, window, cx)
+                });
             } else {
                 self.resource_link(resources::ResourceLink::Logs(request), window, cx);
             }

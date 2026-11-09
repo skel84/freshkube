@@ -63,8 +63,14 @@ struct Editing {
     marks: TextDecorationCollection,
     /// The text the editor started from.
     original: String,
-    /// The locked fields, as the strip under the toolbar lists them.
+    /// The locked fields, as the list under the toolbar opens to show them.
     locked: String,
+    /// How many there are, for the toolbar's disclosure.
+    locked_count: usize,
+    /// A Secret's `data` and `stringData`, as the locked block's lines.
+    locked_values: Vec<String>,
+    /// Whether the locked list is open or one line.
+    locked_open: bool,
     changed: usize,
     _subscriptions: Vec<Subscription>,
 }
@@ -73,7 +79,9 @@ struct Editing {
 pub(super) struct EditView {
     state: Entity<EditorState>,
     locked: String,
-    secret: bool,
+    locked_count: usize,
+    locked_values: Vec<String>,
+    locked_open: bool,
     changed: usize,
     stale: bool,
 }
@@ -109,10 +117,36 @@ impl DetailPane {
         Some(EditView {
             state: editing.state.clone(),
             locked: editing.locked.clone(),
-            secret: editing.session.target().is_secret(),
+            locked_count: editing.locked_count,
+            locked_values: editing.locked_values.clone(),
+            locked_open: editing.locked_open,
             changed: editing.changed,
             stale,
         })
+    }
+
+    /// Whether a text is being edited: the pane's footer strip stays out of
+    /// the way then, as the editor says what it has to say itself.
+    pub(super) fn is_editing(&self) -> bool {
+        matches!(
+            &self.edit,
+            Some(Edit {
+                phase: Phase::Editing(_),
+                ..
+            })
+        )
+    }
+
+    /// Opens or closes the locked list.
+    fn toggle_locked(&mut self, cx: &mut Context<Self>) {
+        if let Some(Edit {
+            phase: Phase::Editing(editing),
+            ..
+        }) = self.edit.as_mut()
+        {
+            editing.locked_open = !editing.locked_open;
+            cx.notify();
+        }
     }
 
     /// The editor's state, while a text is edited.
@@ -219,7 +253,7 @@ impl DetailPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Editing {
-        let original = session.text();
+        let original = session.editable_text();
         let state = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("yaml")
@@ -244,6 +278,9 @@ impl DetailPane {
         window.focus(&state.read(cx).focus_handle(cx).clone(), cx);
         Editing {
             locked: session.locked().join(", "),
+            locked_count: session.locked().len(),
+            locked_values: session.locked_values(),
+            locked_open: false,
             session: Arc::new(session),
             state,
             marks,
@@ -395,6 +432,7 @@ impl DetailPane {
                     .text_color(p.muted)
                     .child(counter),
             )
+            .child(self.locked_toggle(&view, cx))
             .child(
                 Button::new("detail-edit-cancel")
                     .ghost()
@@ -415,17 +453,9 @@ impl DetailPane {
             .test_support()
             .size_full()
             .child(toolbar)
-            .child(note(
-                "detail-edit-locked",
-                format!("Locked, not editable here: {}.", view.locked),
-                p.muted,
-            ))
-            .when(view.secret, |this| {
-                this.child(note(
-                    "detail-edit-secret",
-                    "A Secret's values are not read: only its metadata can be edited.".to_owned(),
-                    p.muted,
-                ))
+            .when(view.locked_open, |this| this.child(self.locked_list(&view, cx)))
+            .when(!view.locked_values.is_empty(), |this| {
+                this.child(self.locked_block(&view, cx))
             })
             .children(self.feedback.as_ref().map(|why| {
                 note("detail-edit-error", why.to_string(), p.warn_ink)
@@ -441,6 +471,7 @@ impl DetailPane {
             .child(
                 div()
                     .id("detail-edit-editor")
+                    .test_support()
                     .flex_1()
                     .min_h_0()
                     .border_t_1()
@@ -448,6 +479,61 @@ impl DetailPane {
                     .font_family(cx.theme().mono_font_family.clone())
                     .child(Editor::new(&view.state).size_full()),
             )
+            .into_any_element()
+    }
+
+    /// The disclosure in the toolbar that opens the list of locked fields.
+    fn locked_toggle(&self, view: &EditView, cx: &mut Context<Self>) -> AnyElement {
+        let label = format!(
+            "{} Locked ({})",
+            if view.locked_open { "▾" } else { "▸" },
+            view.locked_count
+        );
+        Button::new("detail-edit-locked")
+            .ghost()
+            .xsmall()
+            .label(label.clone())
+            .accessibility_label(label)
+            .tooltip("Fields an edit can't change")
+            .on_click(cx.listener(|pane, _, _, cx| pane.toggle_locked(cx)))
+            .into_any_element()
+    }
+
+    /// The locked fields, listed while the disclosure is open.
+    fn locked_list(&self, view: &EditView, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let text = format!("Locked, not editable here: {}.", view.locked);
+        div()
+            .id("detail-edit-locked-list")
+            .test_support()
+            .aria_label(text.clone())
+            .px(dp(freshkube_ui::page::PANE_PADDING))
+            .py(dp(3.))
+            .text_size(dp(11.5))
+            .text_color(p.muted)
+            .child(text)
+            .into_any_element()
+    }
+
+    /// A Secret's `data` and `stringData`, drawn outside the text so the
+    /// placeholder can't be edited.
+    fn locked_block(&self, view: &EditView, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        v_flex()
+            .id("detail-edit-locked-values")
+            .test_support()
+            .aria_label(format!(
+                "A Secret's values are not read: only its metadata can be edited. {}",
+                view.locked_values.join("; ")
+            ))
+            .px(dp(freshkube_ui::page::PANE_PADDING))
+            .py(dp(3.))
+            .border_t_1()
+            .border_color(p.line)
+            .font_family(cx.theme().mono_font_family.clone())
+            .text_size(dp(11.5))
+            .text_color(p.muted)
+            .child(view.locked_values.join(" · "))
             .into_any_element()
     }
 }

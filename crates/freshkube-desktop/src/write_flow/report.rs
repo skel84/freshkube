@@ -282,6 +282,8 @@ impl WriteReport {
                     Headline::NotObserved
                     | Headline::Unknown
                     | Headline::Diverged
+                    | Headline::Recreated
+                    | Headline::Terminating
                     | Headline::Partial => Tone::Warn,
                     _ => Tone::Crit,
                 };

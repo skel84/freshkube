@@ -12,6 +12,7 @@ mod access;
 mod apply;
 mod audit;
 mod create;
+mod delete;
 mod dependencies;
 mod dialogs;
 mod dry_run;

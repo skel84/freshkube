@@ -584,6 +584,11 @@ impl Pilot {
         {
             return;
         }
+        // Leaving the page a destructive action was confirmed on: it sends
+        // nothing. A page that is only shown again keeps its countdown.
+        if self.navigation.page != page {
+            crate::write_flow::cancel_countdowns(cx);
+        }
         self.target.cancel_object_open();
         self.navigation.page = page;
         self.navigation.column_changed();

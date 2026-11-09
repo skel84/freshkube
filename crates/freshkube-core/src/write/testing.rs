@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use super::{
     ActionDescription, AuditStore, Change, Depends, Inverse, InverseFrom, ObjectChange,
-    Observation, Protection, Runner, Target, Tier, Who,
+    Observation, Propagation, Protection, Runner, Target, Tier, Who,
 };
 use crate::fake_api::{self, Recorded, Recorder};
 
@@ -28,6 +28,12 @@ pub const APPLICATION: &str = "/apis/argoproj.io/v1alpha1/namespaces/argocd/appl
 pub const KUSTOMIZATION: &str =
     "/apis/kustomize.toolkit.fluxcd.io/v1/namespaces/flux-system/kustomizations/apps";
 pub const CERTIFICATE: &str = "/apis/cert-manager.io/v1/namespaces/shop/certificates/web-tls";
+pub const REPLICASETS: &str = "/apis/apps/v1/namespaces/shop/replicasets";
+pub const PODS: &str = "/api/v1/namespaces/shop/pods";
+/// A Pod the ReplicaSet `web-a1` owns.
+pub const POD: &str = "/api/v1/namespaces/shop/pods/web-a1-x1";
+/// A claim a protection finalizer holds.
+pub const CLAIM: &str = "/api/v1/namespaces/shop/persistentvolumeclaims/data";
 pub const CERTIFICATE_REQUESTS: &str =
     "/apis/cert-manager.io/v1/namespaces/shop/certificaterequests";
 
@@ -51,6 +57,17 @@ struct State {
     /// apply keeps them: a manager that stops listing a field it applied
     /// before loses it.
     owned: BTreeMap<(String, String), Vec<String>>,
+    /// Paths whose object comes back under a new UID once it is deleted, as a
+    /// controller's does.
+    recreate_on_delete: Vec<String>,
+    /// An answer for every read of a collection.
+    fail_lists: Option<u16>,
+    /// Every list is cut at its page: the reply carries a continue token.
+    cut_lists: bool,
+    /// A read of a collection never gets an answer.
+    hang_lists: bool,
+    /// A read of an object is never answered.
+    hang_gets: bool,
 }
 
 /// The fake cluster, its recorder and a client over it.
@@ -232,6 +249,35 @@ impl Cluster {
         ])
     }
 
+    /// `web` with the ReplicaSet `web-a1` it owns, that ReplicaSet's Pod, and a
+    /// claim a protection finalizer holds.
+    pub fn with_owned() -> Self {
+        let (rs_path, mut rs) = replicaset("a1", 1, "registry.example/web:1", "uid-web");
+        rs["metadata"]["uid"] = json!("uid-rs-a1");
+        let pod = json!({
+            "apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": "web-a1-x1", "namespace": "shop", "uid": "uid-pod-x1",
+                "resourceVersion": "700", "managedFields": [],
+                "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet",
+                    "name": "web-a1", "uid": "uid-rs-a1", "controller": true}]},
+            "spec": {"containers": [{"name": "web", "image": "registry.example/web:1"}]}
+        });
+        let claim = json!({
+            "apiVersion": "v1", "kind": "PersistentVolumeClaim",
+            "metadata": {"name": "data", "namespace": "shop", "uid": "uid-claim",
+                "resourceVersion": "800",
+                "finalizers": ["kubernetes.io/pvc-protection"]},
+            "spec": {"resources": {"requests": {"storage": "1Gi"}}}
+        });
+        Self::with(vec![
+            (DEPLOYMENT.to_owned(), deployment()),
+            (SECRET.to_owned(), secret()),
+            (rs_path, rs),
+            (POD.to_owned(), pod),
+            (CLAIM.to_owned(), claim),
+        ])
+    }
+
     /// `web` with three revisions behind it, as a Deployment keeps them: the
     /// current one is 3, running `web:3`. Beside its ReplicaSets are one
     /// another Deployment owns (revision 9) and one with no revision.
@@ -280,6 +326,18 @@ impl Cluster {
                 let request = Request::from_parts(parts, ());
                 let recorded =
                     log.record_with_body(&request, String::from_utf8_lossy(&bytes).into_owned());
+                let hangs = {
+                    let state = shared.lock().unwrap();
+                    recorded.method == http::Method::GET
+                        && if state.objects.contains_key(&recorded.path) {
+                            state.hang_gets
+                        } else {
+                            state.hang_lists
+                        }
+                };
+                if hangs {
+                    std::future::pending::<()>().await;
+                }
                 let (answer, silent) = answer(&mut shared.lock().unwrap(), &recorded);
                 if silent {
                     return Err(io::Error::new(
@@ -358,6 +416,36 @@ impl Cluster {
             .as_array_mut()
             .unwrap()
             .push(json!({"manager": manager, "time": "2026-10-22T11:00:00Z"}));
+    }
+
+    /// Once this object is deleted, a new one with the same name and another
+    /// UID takes its place.
+    pub fn recreate_when_deleted(&self, path: &str) {
+        self.state
+            .lock()
+            .unwrap()
+            .recreate_on_delete
+            .push(path.to_owned());
+    }
+
+    /// Every list answers with a continue token, as one longer than a page.
+    pub fn cut_lists(&self) {
+        self.state.lock().unwrap().cut_lists = true;
+    }
+
+    /// A read of one object is never answered.
+    pub fn hang_object_reads(&self) {
+        self.state.lock().unwrap().hang_gets = true;
+    }
+
+    /// A read of a collection is never answered.
+    pub fn hang_lists(&self) {
+        self.state.lock().unwrap().hang_lists = true;
+    }
+
+    /// Every read of a collection is answered with this code.
+    pub fn refuse_lists(&self, code: u16) {
+        self.state.lock().unwrap().fail_lists = Some(code);
     }
 
     /// The object is deleted and created again: the UID moves.
@@ -448,6 +536,9 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
     }
     // A read of a collection lists what lives directly under it.
     if request.method == "GET" && !state.objects.contains_key(path) {
+        if let Some(code) = state.fail_lists {
+            return (status(code, "Forbidden", "lists are not allowed"), false);
+        }
         let items: Vec<&Value> = state
             .objects
             .iter()
@@ -457,11 +548,20 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
             })
             .map(|(_, object)| object)
             .collect();
-        if !items.is_empty() {
+        // A collection nothing is in is an empty list, as a server answers.
+        let collection = ["pods", "jobs", "endpointslices", "persistentvolumeclaims"]
+            .iter()
+            .any(|plural| path.ends_with(&format!("/{plural}")));
+        if !items.is_empty() || collection {
             return (
                 fake_api::json(
                     200,
-                    json!({"apiVersion": "v1", "kind": "List", "metadata": {"resourceVersion": "1"},
+                    json!({"apiVersion": "v1", "kind": "List",
+                           "metadata": if state.cut_lists {
+                               json!({"resourceVersion": "1", "continue": "more"})
+                           } else {
+                               json!({"resourceVersion": "1"})
+                           },
                            "items": items}),
                 ),
                 false,
@@ -542,7 +642,23 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
             }
             if request.method == "DELETE" {
                 if !dry {
-                    state.objects.remove(path);
+                    let held = state.objects[path]["metadata"]["finalizers"]
+                        .as_array()
+                        .is_some_and(|all| !all.is_empty());
+                    if held {
+                        // Finalizers keep it: it is Terminating until they go.
+                        state.objects.get_mut(path).unwrap()["metadata"]["deletionTimestamp"] =
+                            json!("2026-10-24T09:00:00Z");
+                    } else {
+                        let mut gone = state.objects.remove(path).unwrap();
+                        if state.recreate_on_delete.iter().any(|one| one == path) {
+                            state.next_version += 1;
+                            gone["metadata"]["uid"] = json!("uid-made-again");
+                            gone["metadata"]["resourceVersion"] =
+                                json!(state.next_version.to_string());
+                            state.objects.insert(path.to_owned(), gone);
+                        }
+                    }
                 }
                 return (
                     fake_api::json(200, json!({"kind": "Status", "status": "Success"})),
@@ -785,7 +901,7 @@ pub fn delete_web() -> ActionDescription {
         changes: vec![ObjectChange {
             depends: vec![],
             target: web(),
-            change: Change::Delete,
+            change: Change::Delete(Propagation::Background),
             observe: Observation::Gone,
             inverse: None,
         }],

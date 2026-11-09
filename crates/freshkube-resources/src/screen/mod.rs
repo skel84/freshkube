@@ -98,7 +98,8 @@ actions!(
         ReconcileSelected,
         RenewSelected,
         RollbackSelected,
-        RunNowSelected
+        RunNowSelected,
+        DeleteSelected
     ]
 );
 
@@ -294,6 +295,9 @@ impl ResourcesScreen {
             KeyBinding::new("w", RenewSelected, Some(CONTEXT)),
             KeyBinding::new("b", RollbackSelected, Some(CONTEXT)),
             KeyBinding::new("j", RunNowSelected, Some(CONTEXT)),
+            // Not a letter, and not Backspace alone: a stray key must not
+            // start a delete. Command-Backspace as in Finder; Ctrl elsewhere.
+            KeyBinding::new("secondary-backspace", DeleteSelected, Some(CONTEXT)),
             // Option-Command-] and [; Command-Shift-] and [ step the shell's
             // view tabs.
             KeyBinding::new("secondary-alt-]", NextTab, Some(CONTEXT)),

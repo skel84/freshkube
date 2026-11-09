@@ -11,7 +11,7 @@ use freshkube_nav::{KindKey, LinkPage, Name, Namespace, ViewObject, ViewState, V
 use freshkube_probe::probe;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::{AppContext, ScrollDelta, TestAppContext, point, px};
+use gpui_kit::{AppContext, Focusable as _, ScrollDelta, TestAppContext, point, px};
 
 use super::follow::HOLD;
 use super::tests::{Tab, open, tour};
@@ -495,6 +495,11 @@ fn following_never_opens_a_dialog_or_moves_focus_onto_a_button(cx: &mut TestAppC
             .unwrap()
     };
     let before = focused(cx);
+    let dock_had = cx
+        .update_window(tab.handle, |_, window, cx| {
+            tab.dock.read(cx).has_focus(window, cx)
+        })
+        .unwrap();
     tab.read(
         1,
         view("pods", Some(&at.namespace), None, ViewTab::Details),
@@ -533,14 +538,57 @@ fn following_never_opens_a_dialog_or_moves_focus_onto_a_button(cx: &mut TestAppC
         );
         assert!(focused(cx) == before, "read {number} moved the focus");
     }
-    assert!(
-        !cx.update_window(tab.handle, |_, window, cx| {
+    // Whether the dock holds the keyboard is what it was: a followed log tab
+    // opens without it.
+    assert_eq!(
+        cx.update_window(tab.handle, |_, window, cx| {
             tab.dock.read(cx).has_focus(window, cx)
         })
         .unwrap(),
+        dock_had,
         "the log tab opened without the keyboard"
     );
     assert!(tab.following(cx));
+}
+
+#[gpui_kit::test]
+fn a_followed_log_tab_leaves_the_keyboard_in_ask(cx: &mut TestAppContext) {
+    let tab = open(cx, "ready", 1280., 880.);
+    let at = places(&tab, cx);
+    let pod = at.pods[0].clone();
+    let ask = cx.update(|cx| tab.view.read(cx).input.read(cx).focus_handle(cx));
+    cx.update_window(tab.handle, |_, window, cx| {
+        let view = tab.view.clone();
+        view.update(cx, |view, cx| view.focus_input(window, cx))
+    })
+    .unwrap();
+    tab.draw(cx);
+    let in_ask = |cx: &mut TestAppContext| {
+        cx.update_window(tab.handle, |_, window, _| ask.is_focused(window))
+            .unwrap()
+    };
+    assert!(in_ask(cx), "Ask has the keyboard to begin with");
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), Some(&pod), ViewTab::Logs),
+        cx,
+    );
+    tab.draw(cx);
+    assert_eq!(tab.log_tabs(cx), [format!("Pod {pod}")]);
+    // Selecting the log tab would take the Ask input off the screen, and
+    // the keyboard with it: the log tab waits, opened, in the strip.
+    assert!(
+        tab.present("agent-input", cx),
+        "the Agent tab is still the one shown"
+    );
+    assert_ne!(
+        tab.follow_tab(cx),
+        cx.read(|cx| tab.dock.read(cx).selected())
+    );
+    assert!(
+        in_ask(cx),
+        "the followed log tab took the keyboard from Ask"
+    );
 }
 
 #[gpui_kit::test]

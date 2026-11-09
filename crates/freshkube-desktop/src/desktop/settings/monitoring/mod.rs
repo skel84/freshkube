@@ -1367,7 +1367,7 @@ impl SettingsPage {
                     .ok()
                     .is_some_and(|url| draft.kept_token(&url)))
         {
-            form::SavedIn::file(format!("freshkube.yaml; the token in {STORE_NAME}"))
+            form::SavedIn::file("freshkube.yaml").and(format!("; the token in {STORE_NAME}"))
         } else {
             form::SavedIn::file("freshkube.yaml")
         };
