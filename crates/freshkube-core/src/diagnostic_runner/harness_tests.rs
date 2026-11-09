@@ -1,28 +1,55 @@
-//! The diagnostic harness (#968, safety guarantee 17).
+//! The diagnostic harness (#968, safety guarantee 19).
 //!
 //! `DiagnosticSnapshot::evaluate` is the one place every check is made, so the
-//! harness runs it, never a check by name:
+//! harness runs it, never a check by name. The snapshots are not typed in
+//! whole: what the collector decides without I/O is called here, so a decision
+//! that turns an error into a verdict is run too. Those are `file_probe` and
+//! `cni_type_from_files` (the CNI provider from Talos file reads),
+//! `derive_addon_statuses` and `unavailable_addon_pod_sources` (addons) and
+//! `service_health_source` (service health). What the collector reads from a
+//! live API stays out of reach.
 //!
 //! - **source down:** every source of the snapshot unavailable, for each CNI
-//!   provider, must give only unknown checks and never panic; and each source
-//!   down alone, over a healthy snapshot, may change a check only to unknown;
+//!   provider and node role, must give only unknown checks and never panic;
+//!   each source down alone, over a healthy snapshot, may change a check only
+//!   to unknown; and Talos file reads that fail with "not found" text are run
+//!   as their own scenario;
 //! - **healthy:** a healthy snapshot for each provider and node role gives no
 //!   failing check.
 //!
 //! A new check made by an existing builder is run by both cases with no edit
 //! here. The snapshots are built with struct literals that name every field, so
 //! a new source field stops this file compiling until it is given both a
-//! healthy and a down value. And `every_check_id_in_the_builders_is_produced`
-//! fails when a check id written in `evaluate.rs` is made by none of the
-//! scenarios, so a check behind a branch the scenarios never reach is found.
+//! healthy and a down value. The id scan below finds a check id that no
+//! scenario makes; it does not prove every branch of a check is run.
+// The reads return the collector's own `TalosError`, as `file_probe` takes it.
+#![allow(clippy::result_large_err)]
+
 use super::*;
+use crate::constants::CERT_MANAGER_CRDS;
 use crate::diagnostics::{CniInfo, CniPodInfo, CniType, PodHealthInfo};
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use talos_rs::TalosError;
+use tonic::Status;
 
-/// A check that fails the harness today: its id, the issue that tracks it, and
-/// the scenario it fails in. Empty while every check passes both cases.
-const KNOWN_GAPS: &[(&str, &str)] = &[];
+/// A check that fails a scenario today, and the issue that tracks it. The
+/// scenario's name must contain `scenario`; the check is skipped only there.
+/// An entry that no longer fails is itself a failure, so a fix removes it.
+struct Gap {
+    id: &'static str,
+    scenario: &'static str,
+    issue: &'static str,
+}
+
+const KNOWN_GAPS: &[Gap] = &[Gap {
+    id: "cni",
+    scenario: "Talos file reads say not found",
+    // `is_missing_file_error` calls any error whose text holds "not found" a
+    // missing file, so four such errors name the provider `None` and `cni`
+    // fails with Talos unreached.
+    issue: "#1005",
+}];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Provider {
@@ -74,6 +101,94 @@ fn target(control_plane: bool) -> DiagnosticTarget {
     DiagnosticTarget::new("node-1", "10.0.0.11", role, "lab-admin")
 }
 
+fn access() -> SourceState<KubernetesAccess> {
+    SourceState::Available(KubernetesAccess {
+        control_plane_address: "10.0.0.10".to_string(),
+        config_identity: "lab-admin".to_string(),
+        source: None,
+        warning: None,
+    })
+}
+
+/// What Talos says when the file really is not there.
+fn no_such_file() -> TalosError {
+    TalosError::Grpc(Status::not_found("file not found"))
+}
+
+/// An error that is not the file's absence, yet whose text holds "not found",
+/// as `is_missing_file_error` reads it.
+fn not_found_text() -> TalosError {
+    TalosError::Grpc(Status::unavailable("peer unavailable, not found in cache"))
+}
+
+/// The evidence the collector builds from the five reads, made with its own
+/// `file_probe` and `apply_flannel_reads`. Every read is made here; the
+/// collector skips those a found provider makes needless, which never changes
+/// the provider `cni_type_from_files` names.
+fn evidence_from_reads(read: impl Fn(&str) -> Result<String, TalosError>) -> CniFileEvidence {
+    let mut evidence = CniFileEvidence::default();
+    apply_flannel_reads(
+        &mut evidence,
+        file_probe(FLANNEL_SUBNET_PATH, read(FLANNEL_SUBNET_PATH)),
+        file_probe(BR_NETFILTER_PATH, read(BR_NETFILTER_PATH)),
+    );
+    evidence.cilium_config = file_probe(CILIUM_CONFIG_PATH, read(CILIUM_CONFIG_PATH)).0;
+    evidence.calico_config = file_probe(CALICO_CONFIG_PATH, read(CALICO_CONFIG_PATH)).0;
+    let (directory, content) = file_probe(CNI_DIRECTORY_PATH, read(CNI_DIRECTORY_PATH));
+    evidence.cni_directory = directory;
+    evidence.generic_config_present = content.map(|content| !content.trim().is_empty());
+    evidence
+}
+
+fn healthy_read(provider: Provider, path: &str) -> Result<String, TalosError> {
+    let present = |wanted: Provider| provider == wanted;
+    match path {
+        FLANNEL_SUBNET_PATH if present(Provider::Flannel) => {
+            Ok("FLANNEL_NETWORK=10.244.0.0/16\nFLANNEL_SUBNET=10.244.1.1/24\n".to_string())
+        }
+        BR_NETFILTER_PATH => Ok("1\n".to_string()),
+        CILIUM_CONFIG_PATH if present(Provider::Cilium) => Ok("{}".to_string()),
+        CALICO_CONFIG_PATH if present(Provider::Calico) => Ok("{}".to_string()),
+        CNI_DIRECTORY_PATH if present(Provider::Unrecognised) => Ok("10-custom.conf\n".to_string()),
+        _ => Err(no_such_file()),
+    }
+}
+
+fn service(id: &str, health: SourceState<ServiceHealthSnapshot>) -> ServiceSnapshot {
+    ServiceSnapshot {
+        node: "node-1".to_string(),
+        id: id.to_string(),
+        state: "Running".to_string(),
+        health,
+    }
+}
+
+fn healthy_service_health() -> SourceState<ServiceHealthSnapshot> {
+    service_health_source(Some(talos_rs::ServiceHealth {
+        unknown: false,
+        healthy: true,
+        last_message: String::new(),
+    }))
+}
+
+/// A source's pods, read from the namespaces the collector asks about.
+fn healthy_pod_sources(access: &SourceState<KubernetesAccess>) -> Vec<AddonPodSource> {
+    unavailable_addon_pod_sources(access)
+        .into_iter()
+        .map(|source| {
+            let pods = if source.namespace == "kube-system" {
+                vec!["coredns-5d78c9869d-x7k2p".to_string()]
+            } else {
+                Vec::new()
+            };
+            AddonPodSource {
+                namespace: source.namespace,
+                pods: SourceState::Available(pods),
+            }
+        })
+        .collect()
+}
+
 fn cert_manager_pods() -> Vec<AddonPod> {
     ["cert-manager-5c9d", "cert-manager-webhook-7d6f"]
         .into_iter()
@@ -86,11 +201,11 @@ fn cert_manager_pods() -> Vec<AddonPod> {
 }
 
 fn healthy(provider: Provider, control_plane: bool) -> DiagnosticSnapshot {
-    let (cni_type, prefix) = match provider {
-        Provider::Flannel => (CniType::Flannel, "kube-flannel-ds"),
-        Provider::Cilium => (CniType::Cilium, "cilium"),
-        Provider::Calico => (CniType::Calico, "calico-node"),
-        Provider::Unrecognised => (CniType::Unknown, "cni"),
+    let prefix = match provider {
+        Provider::Flannel => "kube-flannel-ds",
+        Provider::Cilium => "cilium",
+        Provider::Calico => "calico-node",
+        Provider::Unrecognised => "cni",
     };
     let ready_deployment = DeploymentEvidence::Found {
         replicas: 2,
@@ -98,17 +213,30 @@ fn healthy(provider: Provider, control_plane: bool) -> DiagnosticSnapshot {
         available: 2,
         unavailable: 0,
     };
+    // As `collect_cni` does: the provider and the flannel files it reads, then
+    // the same decision from all the files.
+    let files = evidence_from_reads(|path| healthy_read(provider, path));
+    let cni_type = match provider {
+        Provider::Flannel => SourceState::Available(CniType::Flannel),
+        Provider::Cilium => SourceState::Available(CniType::Cilium),
+        Provider::Calico => SourceState::Available(CniType::Calico),
+        Provider::Unrecognised => cni_type_from_files(&files),
+    };
+    let access = access();
+    let crd_names = SourceState::Available(
+        CERT_MANAGER_CRDS
+            .iter()
+            .map(|crd| crd.to_string())
+            .collect::<Vec<_>>(),
+    );
+    let pod_sources = healthy_pod_sources(&access);
+    let addons = derive_addon_statuses(&crd_names, &pod_sources);
     DiagnosticSnapshot {
         context: DiagnosticContext {
             target: target(control_plane),
             platform: SourceState::Available("metal".to_string()),
             cpu_count: SourceState::Available(4),
-            kubernetes_access: SourceState::Available(KubernetesAccess {
-                control_plane_address: "10.0.0.10".to_string(),
-                config_identity: "lab-admin".to_string(),
-                source: None,
-                warning: None,
-            }),
+            kubernetes_access: access,
         },
         system: SystemSnapshot {
             memory: SourceState::Available(MemorySnapshot {
@@ -127,15 +255,7 @@ fn healthy(provider: Provider, control_plane: bool) -> DiagnosticSnapshot {
             services: SourceState::Available(
                 ["apid", "kubelet", "etcd"]
                     .into_iter()
-                    .map(|id| ServiceSnapshot {
-                        node: "node-1".to_string(),
-                        id: id.to_string(),
-                        state: "Running".to_string(),
-                        health: SourceState::Available(ServiceHealthSnapshot {
-                            healthy: true,
-                            last_message: String::new(),
-                        }),
-                    })
+                    .map(|id| service(id, healthy_service_health()))
                     .collect(),
             ),
         },
@@ -166,56 +286,53 @@ fn healthy(provider: Provider, control_plane: bool) -> DiagnosticSnapshot {
             }),
         },
         cni: CniSnapshot {
-            cni_type: SourceState::Available(cni_type),
+            cni_type,
             pods: SourceState::Available(cni_pods(prefix)),
-            files: CniFileEvidence {
-                flannel_subnet: FileProbe::Present,
-                flannel_subnet_valid: Some(true),
-                cilium_config: FileProbe::NotChecked,
-                calico_config: FileProbe::NotChecked,
-                cni_directory: FileProbe::NotChecked,
-                generic_config_present: None,
-                br_netfilter: FileProbe::Present,
-            },
+            files,
             cilium: (provider == Provider::Cilium).then(|| CiliumEvidence {
                 operator: ready_deployment.clone(),
                 hubble_relay: ready_deployment,
             }),
         },
         addons: AddonSnapshot {
-            crd_names: SourceState::Available(vec!["certificates.cert-manager.io".to_string()]),
-            pod_sources: vec![AddonPodSource {
-                namespace: "cert-manager".to_string(),
-                pods: SourceState::Available(vec!["cert-manager-5c9d".to_string()]),
-            }],
-            addons: vec![AddonStatus {
-                id: "cert-manager",
-                name: "cert-manager",
-                presence: AddonPresence::Detected,
-            }],
+            crd_names,
+            pod_sources,
+            addons,
             cert_manager: Some(SourceState::Available(cert_manager_pods())),
         },
         checks: Vec::new(),
     }
 }
 
-/// Every source of the snapshot down. Struct literals name every field, so a
-/// new one does not compile until it is given its down value here.
-fn all_down(provider: Provider, control_plane: bool) -> DiagnosticSnapshot {
-    // `Unknown` is an answer (configuration present, provider not recognised),
-    // so a down snapshot has no provider at all for it.
+/// Every source of the snapshot down: a Talos that answers nothing and no
+/// Kubernetes client. Struct literals name every field, so a new one does not
+/// compile until it is given its down value here. `reads` is what each Talos
+/// file read says; the provider the files name is what `collect_cni` would
+/// find. A pod-detected provider is kept, though its pods are down, so that
+/// provider's checks run with everything they read down: `collect_cni` gets
+/// it from the pods alone, and these scenarios have no pods.
+fn all_down(
+    provider: Provider,
+    control_plane: bool,
+    reads: fn() -> TalosError,
+) -> DiagnosticSnapshot {
+    let access = gone::<KubernetesAccess>("Kubernetes kubeconfig");
+    let files = evidence_from_reads(|_| Err(reads()));
     let cni_type = match provider {
         Provider::Flannel => SourceState::Available(CniType::Flannel),
         Provider::Cilium => SourceState::Available(CniType::Cilium),
         Provider::Calico => SourceState::Available(CniType::Calico),
-        Provider::Unrecognised => gone("Kubernetes CNI API"),
+        Provider::Unrecognised => cni_type_from_files(&files),
     };
+    let crd_names = gone("Kubernetes CRD API");
+    let pod_sources = unavailable_addon_pod_sources(&access);
+    let addons = derive_addon_statuses(&crd_names, &pod_sources);
     DiagnosticSnapshot {
         context: DiagnosticContext {
             target: target(control_plane),
             platform: gone("Talos Version API"),
             cpu_count: gone("Talos CPUInfo API"),
-            kubernetes_access: gone("Kubernetes kubeconfig"),
+            kubernetes_access: access,
         },
         system: SystemSnapshot {
             memory: gone("Talos Memory API"),
@@ -233,39 +350,45 @@ fn all_down(provider: Provider, control_plane: bool) -> DiagnosticSnapshot {
             pod_health: gone("Kubernetes Pod API"),
         },
         cni: CniSnapshot {
-            // A known provider is kept, as a snapshot keeps it from an earlier
-            // read; what is down is everything its checks read.
             cni_type,
             pods: gone("Kubernetes CNI pod API"),
-            files: CniFileEvidence {
-                flannel_subnet: FileProbe::Unavailable(down("Talos flannel state")),
-                flannel_subnet_valid: None,
-                cilium_config: FileProbe::Unavailable(down("Talos cilium state")),
-                calico_config: FileProbe::Unavailable(down("Talos calico state")),
-                cni_directory: FileProbe::Unavailable(down("Talos CNI directory")),
-                generic_config_present: None,
-                br_netfilter: FileProbe::Unavailable(down("Talos br_netfilter state")),
-            },
+            files,
             cilium: (provider == Provider::Cilium).then(|| CiliumEvidence {
                 operator: DeploymentEvidence::Unavailable(down("Kubernetes Cilium operator API")),
                 hubble_relay: DeploymentEvidence::Unavailable(down("Kubernetes Hubble API")),
             }),
         },
         addons: AddonSnapshot {
-            crd_names: gone("Kubernetes CRD API"),
-            pod_sources: vec![AddonPodSource {
-                namespace: "cert-manager".to_string(),
-                pods: gone("Kubernetes cert-manager pod API"),
-            }],
-            addons: vec![AddonStatus {
-                id: "cert-manager",
-                name: "cert-manager",
-                presence: AddonPresence::Unknown,
-            }],
+            crd_names,
+            pod_sources,
+            addons,
             cert_manager: None,
         },
         checks: Vec::new(),
     }
+}
+
+fn refused() -> TalosError {
+    TalosError::Connection("connection refused".to_string())
+}
+
+/// The down scenarios: every provider and role with Talos refusing the
+/// connection, and the one whose file reads fail with "not found" text.
+fn down_scenarios() -> Vec<(String, DiagnosticSnapshot)> {
+    let mut scenarios = Vec::new();
+    for provider in PROVIDERS {
+        for control_plane in [true, false] {
+            scenarios.push((
+                format!("{provider:?} down, control plane {control_plane}"),
+                all_down(provider, control_plane, refused),
+            ));
+        }
+    }
+    scenarios.push((
+        "Unrecognised down, Talos file reads say not found".to_string(),
+        all_down(Provider::Unrecognised, true, not_found_text),
+    ));
+    scenarios
 }
 
 /// Runs `evaluate`, turning a panic into a failure that says which scenario.
@@ -274,8 +397,10 @@ fn run(scenario: &str, snapshot: &DiagnosticSnapshot) -> Vec<DiagnosticCheck> {
         .unwrap_or_else(|_| panic!("{scenario}: evaluate panicked"))
 }
 
-fn is_known_gap(id: &str) -> bool {
-    KNOWN_GAPS.iter().any(|(gap, _)| *gap == id)
+fn is_known_gap(scenario: &str, id: &str) -> bool {
+    KNOWN_GAPS
+        .iter()
+        .any(|gap| gap.id == id && scenario.contains(gap.scenario))
 }
 
 fn statuses(checks: &[DiagnosticCheck]) -> Vec<(String, CheckStatus)> {
@@ -286,43 +411,40 @@ fn statuses(checks: &[DiagnosticCheck]) -> Vec<(String, CheckStatus)> {
 }
 
 #[test]
-fn safety_g17_every_check_with_its_sources_down_says_unknown_and_never_fails() {
-    for provider in PROVIDERS {
-        for control_plane in [true, false] {
-            let scenario = format!("{provider:?} down, control plane {control_plane}");
-            let checks = run(&scenario, &all_down(provider, control_plane));
-            assert!(!checks.is_empty(), "{scenario}: no check was made");
-            for check in &checks {
-                if is_known_gap(&check.id) {
-                    continue;
-                }
-                assert_eq!(
-                    check.status,
-                    CheckStatus::Unknown,
-                    "{scenario}: {} said {:?} ({}) with its source down",
-                    check.id,
-                    check.status,
-                    check.message
-                );
-                assert!(
-                    check.fix.is_none(),
-                    "{scenario}: {} offers a fix with its source down",
-                    check.id
-                );
+fn safety_g19_every_check_with_its_sources_down_says_unknown_and_never_fails() {
+    for (scenario, snapshot) in down_scenarios() {
+        let checks = run(&scenario, &snapshot);
+        assert!(!checks.is_empty(), "{scenario}: no check was made");
+        for check in &checks {
+            if is_known_gap(&scenario, &check.id) {
+                continue;
             }
+            assert_eq!(
+                check.status,
+                CheckStatus::Unknown,
+                "{scenario}: {} said {:?} ({}) with its source down",
+                check.id,
+                check.status,
+                check.message
+            );
+            assert!(
+                check.fix.is_none(),
+                "{scenario}: {} offers a fix with its source down",
+                check.id
+            );
         }
     }
 }
 
 #[test]
-fn safety_g17_every_check_on_a_healthy_fixture_reports_no_failure() {
+fn safety_g19_every_check_on_a_healthy_fixture_reports_no_failure() {
     for provider in PROVIDERS {
         for control_plane in [true, false] {
             let scenario = format!("{provider:?} healthy, control plane {control_plane}");
             let checks = run(&scenario, &healthy(provider, control_plane));
             assert!(!checks.is_empty(), "{scenario}: no check was made");
             for check in &checks {
-                if is_known_gap(&check.id) {
+                if is_known_gap(&scenario, &check.id) {
                     continue;
                 }
                 assert!(
@@ -342,8 +464,9 @@ fn safety_g17_every_check_on_a_healthy_fixture_reports_no_failure() {
 }
 
 /// One source down over a healthy snapshot: a check it feeds may change only
-/// to unknown, and no check may begin to fail. Each entry only names a source;
-/// the all-down test above is what proves nothing was left out.
+/// to unknown, and no check may begin to fail. The entries are a second list,
+/// kept by hand, of single sources; the all-down case is what finds one left
+/// out.
 type Mutation = (&'static str, fn(&mut DiagnosticSnapshot));
 
 const ONE_DOWN: &[Mutation] = &[
@@ -366,7 +489,8 @@ const ONE_DOWN: &[Mutation] = &[
     ("service health", |s| {
         if let SourceState::Available(services) = &mut s.services.services {
             for service in services {
-                service.health = gone("Talos service health");
+                // As the collector turns an omitted health field.
+                service.health = service_health_source(None);
             }
         }
     }),
@@ -396,11 +520,13 @@ const ONE_DOWN: &[Mutation] = &[
             cilium.hubble_relay = DeploymentEvidence::Unavailable(down("Hubble Relay"));
         }
     }),
-    ("crds", |s| s.addons.crd_names = gone("Kubernetes CRD API")),
+    ("crds", |s| {
+        s.addons.crd_names = gone("Kubernetes CRD API");
+        s.addons.addons = derive_addon_statuses(&s.addons.crd_names, &s.addons.pod_sources);
+    }),
     ("addon pods", |s| {
-        for source in &mut s.addons.pod_sources {
-            source.pods = gone("Kubernetes addon pod API");
-        }
+        s.addons.pod_sources = unavailable_addon_pod_sources(&s.context.kubernetes_access);
+        s.addons.addons = derive_addon_statuses(&s.addons.crd_names, &s.addons.pod_sources);
     }),
     ("cert-manager pods", |s| {
         s.addons.cert_manager = Some(gone("Kubernetes cert-manager pod API"))
@@ -408,17 +534,16 @@ const ONE_DOWN: &[Mutation] = &[
 ];
 
 #[test]
-fn safety_g17_each_source_down_alone_changes_a_check_only_to_unknown() {
+fn safety_g19_each_source_down_alone_changes_a_check_only_to_unknown() {
     for provider in PROVIDERS {
-        let base = healthy(provider, true);
-        let before = statuses(&run("healthy base", &base));
+        let before = statuses(&run("healthy base", &healthy(provider, true)));
         for (name, mutate) in ONE_DOWN {
             let scenario = format!("{provider:?} with {name} down");
             let mut snapshot = healthy(provider, true);
             mutate(&mut snapshot);
             let after = run(&scenario, &snapshot);
             for check in &after {
-                if is_known_gap(&check.id) {
+                if is_known_gap(&scenario, &check.id) {
                     continue;
                 }
                 let was = before
@@ -446,8 +571,10 @@ fn safety_g17_each_source_down_alone_changes_a_check_only_to_unknown() {
     }
 }
 
-/// The ids a builder writes as a string literal, found in `evaluate.rs`
-/// itself: a constructor's first argument, or a helper's (`cni_pod_check`).
+/// The check ids written as string literals in `evaluate.rs`: a constructor's
+/// first argument, or `cni_pod_check`'s. A helper that takes an id needs its
+/// name here, so this is a second list kept by hand; and it shows that an id
+/// is reached, not that each branch under it is.
 fn literal_check_ids() -> BTreeSet<String> {
     let source = include_str!("evaluate.rs");
     let source = source.split("#[cfg(test)]").next().unwrap_or(source);
@@ -472,17 +599,20 @@ fn literal_check_ids() -> BTreeSet<String> {
 }
 
 #[test]
-fn safety_g17_every_check_id_in_the_builders_is_produced_by_the_harness() {
+fn safety_g19_every_check_id_in_the_builders_is_produced_by_the_harness() {
     let mut produced = BTreeSet::new();
     for provider in PROVIDERS {
         for control_plane in [true, false] {
-            for snapshot in [
-                healthy(provider, control_plane),
-                all_down(provider, control_plane),
-            ] {
-                produced.extend(snapshot.evaluate().into_iter().map(|check| check.id));
-            }
+            produced.extend(
+                healthy(provider, control_plane)
+                    .evaluate()
+                    .into_iter()
+                    .map(|check| check.id),
+            );
         }
+    }
+    for (_, snapshot) in down_scenarios() {
+        produced.extend(snapshot.evaluate().into_iter().map(|check| check.id));
     }
     let literals = literal_check_ids();
     assert!(literals.len() > 10, "the id scan found {literals:?}");
@@ -493,16 +623,31 @@ fn safety_g17_every_check_id_in_the_builders_is_produced_by_the_harness() {
     assert!(
         missing.is_empty(),
         "check ids no harness scenario makes: {missing:?}. Add a scenario that reaches them \
-         in `healthy` or `all_down`, so both cases run them"
+         in `healthy` or `down_scenarios`, so both cases run them"
     );
 }
 
 #[test]
-fn safety_g17_a_known_gap_names_an_issue() {
-    for (id, issue) in KNOWN_GAPS {
+fn safety_g19_a_known_gap_names_an_issue_and_still_fails() {
+    for gap in KNOWN_GAPS {
         assert!(
-            issue.starts_with('#') && issue[1..].chars().all(|c| c.is_ascii_digit()),
-            "known gap {id} must name its issue, as `#123`: {issue:?}"
+            gap.issue.starts_with('#') && gap.issue[1..].chars().all(|c| c.is_ascii_digit()),
+            "known gap {} must name its issue, as `#123`: {:?}",
+            gap.id,
+            gap.issue
+        );
+        let reproduced = down_scenarios()
+            .iter()
+            .filter(|(scenario, _)| scenario.contains(gap.scenario))
+            .any(|(scenario, snapshot)| {
+                run(scenario, snapshot)
+                    .iter()
+                    .any(|check| check.id == gap.id && check.status != CheckStatus::Unknown)
+            });
+        assert!(
+            reproduced,
+            "known gap {} ({}) no longer fails in {:?}; remove it from KNOWN_GAPS",
+            gap.id, gap.issue, gap.scenario
         );
     }
 }

@@ -236,7 +236,7 @@ Diagnostic checks follow these rules; [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 - Degrade gracefully: when a data source is unavailable, show unknown (`DiagnosticCheck::unknown`), don't crash.
 - No false positives: a diagnostic showing failure for a healthy system is worse than showing unknown.
 - Find the source of truth first, use the `DiagnosticCheck` constructors (`pass`, `fail`, `warn`, `unknown`) and provide an actionable fix where possible. Implement `HasHealth` for health enums in core; desktop maps it to a tag's tone and icon with `ui::health_tone`.
-- Before merging a check: create its error condition, fix it and see the check show healthy; disconnect the API and see no crash (the harness's `safety_g17` tests run every check with its sources down and on a healthy fixture, with no list to edit, [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md#the-harness)); make sure old log messages don't affect the current state.
+- Before merging a check: create its error condition, fix it and see the check show healthy; disconnect the API and see no crash (the harness's `safety_g19` tests run every check `evaluate` makes with its sources down and on a healthy fixture, with no entry to add for a new check, [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md#the-harness)); make sure old log messages don't affect the current state.
 - The COSI State API is internal and not exposed through port 50000: don't implement a COSI gRPC client (it fails with `PermissionDenied`); run `talosctl get` as a subprocess.
 
 ## Adding a screen

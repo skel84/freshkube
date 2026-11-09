@@ -92,28 +92,45 @@ DiagnosticCheck::unknown("etcd", "Etcd")  // When data unavailable
 ## The harness
 
 `DiagnosticSnapshot::evaluate` makes every check, from evidence alone, so the harness
-(`freshkube-core`'s `diagnostic_runner/harness_tests.rs`, safety guarantee 17 in
-[SAFETY.md](SAFETY.md#17-every-diagnostic-check-says-unknown-with-its-source-down-and-reports-no-failure-on-a-healthy-fixture))
-runs `evaluate` in two cases and you add no entry for a new check:
+(`freshkube-core`'s `diagnostic_runner/harness_tests.rs`, safety guarantee 19 in
+[SAFETY.md](SAFETY.md#19-every-diagnostic-check-says-unknown-with-its-source-down-and-reports-no-failure-on-a-healthy-fixture))
+runs `evaluate` on snapshots in two cases, for each CNI provider (Flannel, Cilium,
+Calico, unrecognised) and for control-plane and worker nodes. You add no entry for a new
+check:
 
-- **Source down:** every source of the snapshot unavailable, for each CNI provider and
-  for control-plane and worker nodes. Every check must say unknown, offer no fix, and not
-  panic. Then each source down alone over a healthy snapshot may change a check only to
-  unknown.
-- **Healthy:** a healthy snapshot for the same providers and roles gives no failing check.
+- **Source down:** every source of the snapshot unavailable. Every check must say unknown,
+  offer no fix, and not panic. Then each source down alone over a healthy snapshot may
+  change a check only to unknown. One more scenario has the Talos file reads fail with
+  "not found" text.
+- **Healthy:** a healthy snapshot gives no failing check.
 
-A check added to an existing builder runs in both with no edit. The snapshots are built
-with struct literals that name every field, so a new source field doesn't compile until
-the harness gives it a healthy and a down value. A test also scans `evaluate.rs` for the
-check ids written as literals and fails when a scenario makes none of one; add a scenario
-that reaches it. A check that fails a case today is listed in `KNOWN_GAPS` with its
-issue, and is never silently skipped. The `ONE_DOWN` table of single sources is the only
-list kept by hand, and the all-down case covers what it leaves out.
+**What it covers.** Every check `evaluate` makes from a snapshot. The snapshots are not
+typed whole: they are built through the decisions the collector makes without I/O, so a
+decision that turns an error into a verdict is run too (`file_probe` and
+`cni_type_from_files` for the CNI provider, `derive_addon_statuses` and
+`unavailable_addon_pod_sources` for addons, `service_health_source` for service
+health). Keep a new decision of that kind a pure function and build the harness's
+snapshots through it. What the collector reads from a live API stays out of reach.
+
+**How a new check is picked up.**
+- A check added to an existing builder runs in both cases with no edit.
+- The snapshots use struct literals that name every field, so a new source field doesn't
+  compile until the harness gives it a healthy and a down value.
+- A test scans `evaluate.rs` for the check ids written as literals and fails when no
+  scenario makes one. That finds an id that is never reached, not a branch under an id
+  that is (a new branch under `cni` or `cilium_operator` slips through), and its helper
+  names (`cni_pod_check(`) are a list kept by hand, like the `ONE_DOWN` table of
+  single sources. The all-down case is what finds a source `ONE_DOWN` leaves out.
+
+**Known gaps.** A check that fails a scenario today is listed in `KNOWN_GAPS` with the
+scenario and its issue, and is skipped only there. The harness fails when a listed gap no
+longer fails, so a fix removes its entry. Today: `cni` when the file reads say "not found"
+(#1005).
 
 ## Before Merging
 
 1. **No false positives:** Create error condition, fix it, verify check shows healthy
-   (`cargo test -p freshkube-core --lib safety_g17` runs the healthy case)
+   (`cargo test -p freshkube-core --lib safety_g19` runs all five harness tests)
 2. **Graceful degradation:** Disconnect API, verify no crashes (the harness's
    source-down case does this for every check)
 3. **Stale log immunity:** Ensure old log messages don't affect current state
