@@ -869,3 +869,37 @@ fn every_class_reads_as_the_trace_judges_it() {
         );
     }
 }
+
+#[test]
+fn a_stale_class_does_not_hide_a_gateway_that_is_failing() {
+    let mut read = read(Shape::Serving);
+    // The class is accepted for an older generation: a warning.
+    if let Ok(list) = read.classes.as_mut() {
+        list.items
+            .iter_mut()
+            .find(|c| c.name == "example")
+            .unwrap()
+            .generation = 4;
+    }
+    // And a Gateway of that class is not programmed.
+    let broken = GatewayFacts::parse(&json!({
+        "metadata": {"name": "broken", "namespace": "infra", "generation": 2},
+        "spec": {"gatewayClassName": "example", "listeners": []},
+        "status": {"conditions": [
+            {"type": "Accepted", "status": "True", "observedGeneration": 2},
+            {"type": "Programmed", "status": "False", "reason": "Invalid", "observedGeneration": 2}]},
+    }))
+    .unwrap();
+    read.gateways.as_mut().unwrap().items.push(broken);
+    let view = GatewaysView::new(&read);
+    let broken = entry(&view, "infra/broken");
+    assert_eq!(broken.state, GatewayState::Failed);
+    assert!(
+        broken.reason.contains("not programmed"),
+        "{}",
+        broken.reason
+    );
+    // A healthy Gateway of the stale class still reads Serving, stale.
+    let edge = entry(&view, "infra/edge");
+    assert_eq!((edge.state, edge.stale), (GatewayState::Serving, true));
+}

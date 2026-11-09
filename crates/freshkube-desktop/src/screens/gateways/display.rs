@@ -327,7 +327,10 @@ fn class_row(entry: &ClassEntry) -> (Row, usize) {
         .controller
         .clone()
         .unwrap_or_else(|| "no such class".to_owned());
-    let status = format!("{} — {}", entry.state.label(), entry.reason);
+    let mut status = format!("{} — {}", entry.state.label(), entry.reason);
+    if entry.stale {
+        status.push_str(" · stale verdict");
+    }
     let users = match entry.gateways.len() {
         0 => "no Gateways".to_owned(),
         n => plural(n, "Gateway", "Gateways"),

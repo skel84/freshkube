@@ -832,3 +832,24 @@ fn contested_hosts_and_class_members_are_capped_with_a_count_and_their_lines_pre
     );
     assert!(detail.gateways_more > 0);
 }
+
+#[test]
+fn a_stale_class_verdict_is_marked_in_the_list() {
+    let mut read = example::read(Shape::Gateways).unwrap();
+    if let Ok(list) = read.classes.as_mut() {
+        list.items
+            .iter_mut()
+            .find(|c| c.name == "example")
+            .unwrap()
+            .generation = 4;
+    }
+    let display = Display::new(Mode::Classes, Some(&read));
+    let row = display.rows.iter().find(|r| r.name == "example").unwrap();
+    assert!(
+        row.cells[1].ends_with(" · stale verdict"),
+        "{}",
+        row.cells[1]
+    );
+    let legacy = display.rows.iter().find(|r| r.name == "legacy").unwrap();
+    assert!(!legacy.cells[1].contains("stale"));
+}

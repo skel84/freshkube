@@ -238,9 +238,12 @@ struct Assessed {
 /// them as one.
 fn assess(gateway: &GatewayFacts, classes: &Result<Listing<ClassFacts>, Failure>) -> Assessed {
     let steps = [class_step(gateway, classes), gateway_step(gateway)];
+    // A break outranks a warning: a stale class must not hide a Gateway that
+    // is failing, as the Routes trace stops at that Fail.
     let deciding = steps
         .iter()
-        .find(|step| !matches!(step.verdict, StepVerdict::Pass))
+        .find(|step| !matches!(step.verdict, StepVerdict::Pass | StepVerdict::Warn))
+        .or_else(|| steps.iter().find(|step| step.verdict == StepVerdict::Warn))
         .unwrap_or(&steps[1]);
     let state = match (deciding.verdict, deciding.cause) {
         (StepVerdict::Fail, _) => GatewayState::Failed,
@@ -378,7 +381,6 @@ fn contested_hosts(gateways: &[GatewayFacts]) -> BTreeMap<String, Vec<Contested>
 }
 
 fn class_entries(
-    list: &Listing<ClassFacts>,
     classes: &Result<Listing<ClassFacts>, Failure>,
     gateways: &Result<Vec<GatewayEntry>, Failure>,
 ) -> Vec<ClassEntry> {
@@ -393,18 +395,15 @@ fn class_entries(
             })
             .unwrap_or_default()
     };
-    let classes_read = classes;
-    let classes = list;
-    let mut entries = classes
+    let Ok(listing) = classes else {
+        return Vec::new();
+    };
+    let mut entries = listing
         .items
         .iter()
         .map(|class| {
             // The trace's own judgement of the class, so the pages agree.
-            let step = class_check(
-                &class.name,
-                format!("GatewayClass {}", class.name),
-                classes_read,
-            );
+            let step = class_check(&class.name, format!("GatewayClass {}", class.name), classes);
             let state = match (step.verdict, step.cause) {
                 (StepVerdict::Fail, _) => ClassState::Refused,
                 (StepVerdict::Unknown, Some(Cause::Pending)) => ClassState::Pending,
@@ -426,10 +425,10 @@ fn class_entries(
         .collect::<Vec<_>>();
     // Classes the Gateways name and the cluster does not have; a cut list
     // can't say they are missing.
-    if !classes.cut
+    if !listing.cut
         && let Ok(list) = gateways
     {
-        let known = classes
+        let known = listing
             .items
             .iter()
             .map(|c| c.name.as_str())
@@ -555,7 +554,7 @@ impl GatewaysView {
             entries
         });
         let classes = match &read.classes {
-            Ok(list) => Ok(class_entries(list, &read.classes, &gateways)),
+            Ok(_) => Ok(class_entries(&read.classes, &gateways)),
             Err(failure) => Err(failure.clone()),
         };
         Self {
