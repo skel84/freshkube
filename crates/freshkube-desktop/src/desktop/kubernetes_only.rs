@@ -25,6 +25,9 @@ const READ_DEADLINE: Duration = Duration::from_secs(10);
 /// The access bounds connecting itself; this only catches a stuck worker.
 const CONNECT_DEADLINE: Duration = Duration::from_secs(40);
 
+const NEEDS_TALOS_TITLE: &str = "This page is for Talos Linux nodes.";
+const NEEDS_TALOS_DESCRIPTION: &str = "This window opened with a kubeconfig only. Choose a talosconfig in Settings › Connection to read these nodes. You can keep browsing Kubernetes without it.";
+
 pub(super) struct KubernetesOnly {
     /// `--kubeconfig` or a file chosen in Settings. Without one, the files
     /// `KUBECONFIG` names, or `~/.kube/config`.
@@ -723,11 +726,8 @@ impl Pilot {
             .child(
                 ui::empty_state(
                     IconName::KeyRound,
-                    "Needs a talosconfig",
-                    format!(
-                        "{} reads the Talos API. This window opened with a kubeconfig only, so it can browse Kubernetes but can't reach the nodes. Choose a talosconfig in Settings to manage them.",
-                        self.navigation.page.title()
-                    ),
+                    NEEDS_TALOS_TITLE,
+                    NEEDS_TALOS_DESCRIPTION,
                     None,
                     vec![
                         Button::new("open-settings")
@@ -735,7 +735,11 @@ impl Pilot {
                             .icon(IconName::Settings)
                             .label("Open Settings")
                             .on_click(cx.listener(|view, _, window, cx| {
-                                view.show_settings(super::settings::SettingsSection::Connection, window, cx);
+                                view.show_settings(
+                                    super::settings::SettingsSection::Connection,
+                                    window,
+                                    cx,
+                                );
                             }))
                             .into_any_element(),
                         Button::new("browse-kubernetes")
@@ -823,6 +827,18 @@ mod tests {
     use crate::resources::direct::DirectAccess;
     use freshkube_core::resources::discover_contexts;
     use gpui_kit::{AppContext, TestAppContext};
+
+    #[test]
+    fn talos_page_explains_what_it_is_for_and_how_to_connect() {
+        assert_eq!(
+            super::NEEDS_TALOS_TITLE,
+            "This page is for Talos Linux nodes."
+        );
+        assert_eq!(
+            super::NEEDS_TALOS_DESCRIPTION,
+            "This window opened with a kubeconfig only. Choose a talosconfig in Settings › Connection to read these nodes. You can keep browsing Kubernetes without it."
+        );
+    }
 
     #[gpui_kit::test]
     fn direct_reload_preserves_unchanged_access_but_replaces_same_path_configuration(

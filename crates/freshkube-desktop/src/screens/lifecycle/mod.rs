@@ -32,6 +32,7 @@ use super::{
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_ui::inspector::{self, InspectorSplit};
+use freshkube_ui::read_state::ReadState;
 use freshkube_ui::status::{self, Segment};
 use freshkube_ui::table::{self as data_table, TableState};
 
@@ -39,6 +40,12 @@ const CONTEXT: &str = "TalosLifecycle";
 const PREFIX: &str = "lifecycle";
 /// Between the etcd and sources cards.
 const GAP: f32 = 14.;
+
+fn pending_nodes(context: &str) -> ReadState {
+    ReadState::NotReadYet {
+        what: format!("Kubernetes nodes in {context}"),
+    }
+}
 
 actions!(
     talos_lifecycle,
@@ -197,7 +204,7 @@ impl ScreenPanel for LifecycleScreen {
                     .and_then(Subscription::latest)
                     .map(|p| p.summary.node_roster())
                     .unwrap_or_else(|| SourceSnapshot::Unavailable {
-                        reason: "Waiting for the shared Node observation".into(),
+                        reason: pending_nodes(&context).description(),
                     });
                 let collector = LifecycleCollector::new(live.config_path.clone());
                 let snapshot = collector
@@ -208,7 +215,7 @@ impl ScreenPanel for LifecycleScreen {
                     .and_then(Subscription::latest)
                     .map(|p| observed_kubelets(&p))
                     .unwrap_or_else(|| SourceSnapshot::Unavailable {
-                        reason: "Waiting for the shared Node observation".into(),
+                        reason: pending_nodes(&context).description(),
                     });
                 let data = LifecycleView {
                     snapshot,
@@ -969,6 +976,17 @@ use example::example;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod ui_tests;
+
+#[cfg(test)]
+mod wording_tests {
+    #[test]
+    fn pending_nodes_names_the_read_and_cluster() {
+        assert_eq!(
+            super::pending_nodes("example-cluster").description(),
+            "Freshkube hasn't finished reading Kubernetes nodes in example-cluster."
+        );
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 struct LifecycleDisplay {

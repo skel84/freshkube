@@ -23,6 +23,8 @@ use crate::notice::{Notice, Settings};
 use crate::owner::{Followed, Item};
 use crate::rules::Status;
 
+const NOTHING_FOLLOWED: &str = "You follow nothing. Choose Notify me on a change page, or right-click a pod in Resources and choose Notify me if it keeps crash-looping.";
+
 pub struct FollowedBell {
     followed: Entity<Followed>,
     panel: Entity<BellPanel>,
@@ -343,9 +345,20 @@ impl Render for BellPanel {
             .child(section(
                 "followed-following",
                 "Following",
-                "You follow nothing.",
+                NOTHING_FOLLOWED,
                 following,
             ))
+    }
+}
+
+#[cfg(test)]
+mod wording_tests {
+    #[test]
+    fn empty_following_points_to_the_controls_that_start_a_follow() {
+        assert_eq!(
+            super::NOTHING_FOLLOWED,
+            "You follow nothing. Choose Notify me on a change page, or right-click a pod in Resources and choose Notify me if it keeps crash-looping."
+        );
     }
 }
 

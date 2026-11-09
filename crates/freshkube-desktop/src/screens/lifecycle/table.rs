@@ -47,6 +47,8 @@ const NODE_WIDTH: f32 = 200.;
 /// The presence column holds two glyphs and a dot, whatever the rows say.
 const PRESENCE_CHARS: usize = 15;
 
+const NO_NODES: &str = "No nodes are available from Talos or Kubernetes, so versions, time and configuration are unknown.";
+
 /// DESIGN.md's widths: 7.5 a character plus 24, between 64 and 280.
 fn fit(label: &str, texts: impl Iterator<Item = usize>) -> f32 {
     let chars = texts
@@ -268,9 +270,17 @@ impl TableSource for LifecycleScreen {
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
-        (self.line_count() == 0).then(|| {
-            "No node roster is available, so versions, time and configuration are unknown."
-                .into_any_element()
-        })
+        (self.line_count() == 0).then(|| NO_NODES.into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod wording_tests {
+    #[test]
+    fn no_nodes_explains_which_sources_are_missing_and_what_is_unknown() {
+        assert_eq!(
+            super::NO_NODES,
+            "No nodes are available from Talos or Kubernetes, so versions, time and configuration are unknown."
+        );
     }
 }
