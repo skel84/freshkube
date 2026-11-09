@@ -105,7 +105,7 @@ pub fn wanted(args: &GetArgs) -> Result<Wanted, Stop> {
 
 pub async fn run(args: &GetArgs, target: &Target) -> Result<Report, Stop> {
     if let Some(name) = application_of(args)? {
-        return crate::waiting::application(args, &name, target).await;
+        return crate::waiting::application(&name, target).await;
     }
     let Wanted { kind, name, wide } = wanted(args)?;
     let namespace = args.namespace.as_deref().filter(|_| kind.namespaced);

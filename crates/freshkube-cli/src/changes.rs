@@ -3,15 +3,16 @@
 //! it is that each Stage's pods run it.
 
 use chrono::{DateTime, Duration, Utc};
+use freshkube_core::failure::FailureKind;
 use freshkube_delivery::change::Reach;
-use freshkube_delivery::changes::{Changes, Fold, Named, Note, Row, derive};
+use freshkube_delivery::changes::{Changes, Fold, Gap, Named, Note, Row, derive};
 use freshkube_delivery::source::Source;
 use serde_json::{Map, Value, json};
 
 use crate::Report;
 use crate::args::ChangesArgs;
 use crate::cluster::{Stop, Target};
-use crate::delivery;
+use crate::delivery::{self, Fetched};
 use crate::exit::Findings;
 use crate::notes::{ago, note_findings, notes_json, span};
 use crate::read::{Class, Problem, Read};
@@ -73,87 +74,168 @@ fn named(row: &Row) -> (String, Value) {
     }
 }
 
-fn missing(
-    app: &str,
-    projects: &Source<Vec<freshkube_delivery::changes::Project>>,
-) -> Option<String> {
-    let all = projects.read()?;
-    if all.iter().any(|project| project.name == app) {
-        return None;
+fn not_found(target: &Target, kind: &str, message: String) -> Problem {
+    Problem {
+        class: Class::NotFound,
+        read: Box::new(Read {
+            verb: "list",
+            kind: kind.into(),
+            namespaced: false,
+            namespace: None,
+            context: target.context.clone(),
+        }),
+        message,
     }
-    let mut names: Vec<&str> = all.iter().map(|project| project.name.as_str()).collect();
-    names.sort_unstable();
-    Some(format!(
-        "no Kargo project \"{app}\". Projects: {}",
-        if names.is_empty() {
-            "none".to_owned()
-        } else {
-            names.join(", ")
+}
+
+/// What the application's own changes could not be told, from the changes
+/// this command shows: the lines each change's trail is missing and the
+/// changes that were not followed at all, each once. Other applications'
+/// changes are not looked at, so what they miss never reaches this one.
+fn followed(rows: &[&Row], app: &str, findings: &mut Findings) -> Vec<Note> {
+    let mut notes: Vec<Note> = Vec::new();
+    let mut keep = |note: Note| {
+        if !notes.iter().any(|held| held.text == note.text) {
+            notes.push(note);
         }
-    ))
+    };
+    for row in rows {
+        match &row.trail {
+            Ok(change) => {
+                for line in &change.missing {
+                    keep(Note {
+                        github: line.github,
+                        gap: match line.gap {
+                            freshkube_delivery::change::Gap::NotServed => Gap::NotServed,
+                            freshkube_delivery::change::Gap::Refused => Gap::Refused,
+                            freshkube_delivery::change::Gap::Unreadable => Gap::Unreadable,
+                        },
+                        project: Some(app.to_owned()),
+                        text: line.text.clone(),
+                    });
+                }
+            }
+            // A change no Stage runs, or whose Stages weren't read (a note
+            // of the project says so), was never meant to be followed.
+            Err(_) if row.fold == Fold::NotRunning || row.stages.is_empty() => {}
+            Err(failure) => {
+                findings.sign_in |= failure.kind == FailureKind::Unauthorized;
+                keep(Note {
+                    github: false,
+                    gap: match failure.kind {
+                        FailureKind::Forbidden => Gap::Refused,
+                        _ => Gap::Unreadable,
+                    },
+                    project: Some(app.to_owned()),
+                    text: format!("{} wasn't followed: {}", row.freight, failure.message),
+                });
+            }
+        }
+    }
+    notes
 }
 
 pub async fn run(args: &ChangesArgs, target: &Target) -> Result<Report, Stop> {
     let Wanted { since } = wanted(args)?;
-    let (read, now) = match delivery::changes(target).await {
-        Ok(read) => read,
+    let Fetched {
+        read: (read, now),
+        sign_in,
+    } = match delivery::changes(target).await {
+        Ok(fetched) => fetched,
         Err(problem) => return Ok(problem_report(args, &problem)),
     };
     let list = derive(&read);
     let mut findings = Findings::default();
     let mut problems: Vec<Problem> = Vec::new();
-    if let Some(why) = missing(&args.app, &read.projects) {
-        let problem = Problem {
-            class: Class::NotFound,
-            read: Box::new(Read {
-                verb: "list",
-                kind: "Kargo project".into(),
-                namespaced: false,
-                namespace: None,
-                context: target.context.clone(),
-            }),
-            message: why,
-        };
-        findings.merge(problem.findings());
-        problems.push(problem);
+    let mut notes: Vec<Note> = Vec::new();
+    let all = match &read.projects {
+        Source::Read(all) | Source::Capped(all, _) => Some(all),
+        _ => None,
+    };
+    let project = all.and_then(|all| all.iter().find(|project| project.name == args.app));
+    match &read.projects {
+        Source::Read(all) if project.is_none() => {
+            let mut names: Vec<&str> = all.iter().map(|project| project.name.as_str()).collect();
+            names.sort_unstable();
+            problems.push(not_found(
+                target,
+                "Kargo project",
+                format!(
+                    "no Kargo project \"{}\". Projects: {}",
+                    args.app,
+                    if names.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        names.join(", ")
+                    }
+                ),
+            ));
+        }
+        // The list stopped at its cap: the application may be past it, which
+        // is not the same as not being there.
+        Source::Capped(_, truncation) if project.is_none() => notes.push(Note {
+            github: false,
+            gap: Gap::Unreadable,
+            project: None,
+            text: format!(
+                "Only {} Kargo projects on {} were read; {} may be among the others",
+                truncation.read, read.cluster, args.app
+            ),
+        }),
+        _ => {}
     }
-    // Every row carries its project's Stages in promotion order.
+    // When Kargo itself wasn't read, the list is that one note. Otherwise a
+    // note with no project is about every project (a cap, a change that
+    // wasn't followed in time, a destination one of them lacks) and is left
+    // to the changes below, which say what they miss themselves.
+    if all.is_none() || read.unreached.is_some() {
+        notes.extend(list.notes.iter().cloned());
+    } else {
+        notes.extend(
+            list.notes
+                .iter()
+                .filter(|note| note.project.as_deref() == Some(args.app.as_str()))
+                .cloned(),
+        );
+    }
+    // The Stages as Kargo lists them; in promotion order when a change
+    // carries them.
+    let mut stage_set: Vec<String> = project
+        .and_then(|project| project.stages.read())
+        .map(|stages| stages.iter().map(|stage| stage.name.clone()).collect())
+        .unwrap_or_default();
+    stage_set.sort();
+    let stages_read = project.is_some_and(|project| project.stages.read().is_some());
     let stage_names: Vec<String> = list
         .rows
         .iter()
         .find(|row| row.project == args.app)
         .map(|row| row.stages.iter().map(|stage| stage.name.clone()).collect())
-        .unwrap_or_default();
+        .unwrap_or_else(|| stage_set.clone());
     if let Some(wanted) = &args.stage
-        && !stage_names.is_empty()
-        && !stage_names.contains(wanted)
+        && stages_read
+        && !stage_set.contains(wanted)
     {
-        let problem = Problem {
-            class: Class::NotFound,
-            read: Box::new(Read {
-                verb: "list",
-                kind: "Kargo stage".into(),
-                namespaced: false,
-                namespace: None,
-                context: target.context.clone(),
-            }),
-            message: format!(
+        problems.push(not_found(
+            target,
+            "Kargo stage",
+            format!(
                 "{} has no Stage \"{wanted}\". Stages: {}",
                 args.app,
-                stage_names.join(", ")
+                stage_set.join(", ")
             ),
-        };
-        findings.merge(problem.findings());
-        problems.push(problem);
+        ));
     }
     let rows = chosen(&list, args, since, now);
-    let notes: Vec<&Note> = list
-        .notes
-        .iter()
-        .filter(|note| note.project.as_deref().is_none_or(|name| name == args.app))
-        .collect();
+    notes.extend(followed(&rows, &args.app, &mut findings));
+    for problem in &problems {
+        findings.merge(problem.findings());
+    }
     for note in &notes {
         findings.merge(note_findings(note));
+    }
+    if !sign_in.is_empty() {
+        findings.sign_in = true;
     }
     for row in &rows {
         for stage in shown(row, args) {
@@ -163,6 +245,12 @@ pub async fn run(args: &ChangesArgs, target: &Target) -> Result<Report, Stop> {
         }
     }
     let text = text(args, target, &stage_names, &rows, &notes, &problems, now);
+    let mut text = text;
+    for entry in &sign_in {
+        text.push_str(&format!(
+            "\n? entry {entry} signs in with a credential plugin and was not connected; run it again with --allow-login\n"
+        ));
+    }
     let mut json = Map::new();
     json.insert("application".into(), json!(args.app));
     json.insert("stages".into(), json!(stage_names));
@@ -174,6 +262,7 @@ pub async fn run(args: &ChangesArgs, target: &Target) -> Result<Report, Stop> {
         Value::Array(rows.iter().map(|row| row_json(row, args, now)).collect()),
     );
     json.insert("notes".into(), Value::Array(notes_json(&notes)));
+    json.insert("sign_in".into(), json!(sign_in));
     json.insert(
         "problems".into(),
         Value::Array(problems.iter().map(Problem::json).collect()),
@@ -268,7 +357,7 @@ fn text(
     target: &Target,
     stage_names: &[String],
     rows: &[&Row],
-    notes: &[&Note],
+    notes: &[Note],
     problems: &[Problem],
     now: DateTime<Utc>,
 ) -> String {

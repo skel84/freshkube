@@ -127,6 +127,8 @@ struct Fake {
     logins: Mutex<Vec<bool>>,
     /// The GitHub the delivery commands read through, when a test has one.
     github: Mutex<Option<freshkube_delivery::github::Handle>>,
+    /// Fake servers a test keeps running for as long as the fake lives.
+    servers: Mutex<Vec<Box<dyn std::any::Any + Send>>>,
 }
 
 impl Fake {
@@ -139,6 +141,7 @@ impl Fake {
             opened: Mutex::default(),
             logins: Mutex::default(),
             github: Mutex::default(),
+            servers: Mutex::default(),
         })
     }
 
@@ -153,6 +156,7 @@ impl Fake {
             opened: Mutex::default(),
             logins: Mutex::default(),
             github: Mutex::default(),
+            servers: Mutex::default(),
         })
     }
 }
@@ -174,6 +178,7 @@ impl Connector for Arc<Fake> {
             entry: request.entry.clone(),
             context: request.context.clone(),
             setup: request.setup.clone(),
+            allow_login,
             github: self.github.lock().unwrap().clone(),
             source: ClusterSource {
                 id: "fake".into(),

@@ -67,29 +67,23 @@ pub fn gap_findings(gap: Gap) -> Findings {
     findings
 }
 
-/// Whether a note is about GitHub: the pull requests, never the cluster.
-/// GitHub is read anonymously here and its look-ups are optional, so what
-/// it could not say is shown and never changes the exit code.
-pub fn about_github(note: &Note) -> bool {
-    let text = note.text.to_ascii_lowercase();
-    text.contains("github") || text.contains("pull request")
-}
-
-/// What a note means for the exit code: its gap's, unless it is GitHub's.
+/// What a note means for the exit code: its gap's, unless it is about GitHub,
+/// whose look-ups are optional and shown without changing the code.
 pub fn note_findings(note: &Note) -> Findings {
-    if about_github(note) {
+    if note.github {
         Findings::default()
     } else {
         gap_findings(note.gap)
     }
 }
 
-pub fn notes_json(notes: &[&Note]) -> Vec<Value> {
+pub fn notes_json<'a>(notes: impl IntoIterator<Item = &'a Note>) -> Vec<Value> {
     notes
-        .iter()
+        .into_iter()
         .map(|note| {
             json!({
                 "gap": gap_word(note.gap),
+                "github": note.github,
                 "project": note.project,
                 "text": note.text,
             })

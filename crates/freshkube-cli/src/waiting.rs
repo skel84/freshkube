@@ -5,16 +5,17 @@
 //! same read's Stages, without asking GitHub.
 
 use chrono::{DateTime, Duration, Utc};
-use freshkube_delivery::changes::Note;
+use freshkube_delivery::changes::{Gap, Note};
+use freshkube_delivery::source::Source;
 use freshkube_delivery::waiting::{App, Item, PullRead, State, Waiting, derive};
 use serde_json::{Map, Value, json};
 
 use crate::Report;
-use crate::args::{GetArgs, WaitingArgs};
+use crate::args::WaitingArgs;
 use crate::cluster::{Stop, Target};
-use crate::delivery;
+use crate::delivery::{self, Fetched};
 use crate::exit::Findings;
-use crate::notes::{about_github, ago, gap_findings, note_findings, notes_json, span};
+use crate::notes::{ago, gap_findings, note_findings, notes_json, span};
 use crate::read::{Class, Problem, Read};
 
 pub struct Wanted {
@@ -216,8 +217,8 @@ fn problem_report(problem: &Problem, apps_key: &str) -> Report {
 
 pub async fn run(args: &WaitingArgs, target: &Target) -> Result<Report, Stop> {
     let Wanted { older_than } = wanted(args)?;
-    let read = match delivery::waiting(target, true).await {
-        Ok(read) => read,
+    let Fetched { read, sign_in } = match delivery::waiting(target, true).await {
+        Ok(fetched) => fetched,
         Err(problem) => return Ok(problem_report(&problem, "apps")),
     };
     let now = read.observed_at;
@@ -230,6 +231,9 @@ pub async fn run(args: &WaitingArgs, target: &Target) -> Result<Report, Stop> {
     for app in &waiting.apps {
         findings.merge(state_findings(app));
     }
+    if !sign_in.is_empty() {
+        findings.sign_in = true;
+    }
     let overdue: Vec<(&App, &Item)> = match older_than {
         Some(limit) => waiting
             .apps
@@ -241,6 +245,20 @@ pub async fn run(args: &WaitingArgs, target: &Target) -> Result<Report, Stop> {
     };
     if !overdue.is_empty() {
         findings.failed = true;
+    }
+    // A wait Kargo doesn't date can't be told to be short: with --older-than
+    // it is unknown, never quietly fine.
+    let undated: Vec<(&App, &Item)> = match older_than {
+        Some(_) => waiting
+            .apps
+            .iter()
+            .flat_map(|app| app.items.iter().map(move |item| (app, item)))
+            .filter(|(_, item)| item.waited(now).is_none())
+            .collect(),
+        None => Vec::new(),
+    };
+    if !undated.is_empty() {
+        findings.unknown = true;
     }
     let mut text = format!(
         "Waiting to ship on {}: {} {} across {} {}\n",
@@ -272,11 +290,36 @@ pub async fn run(args: &WaitingArgs, target: &Target) -> Result<Report, Stop> {
             ago(limit)
         ));
     }
+    if !undated.is_empty() {
+        text.push_str(&format!(
+            "\n? {} {} no date from Kargo for how long {} waited, so {} older than {} can't be told\n",
+            undated.len(),
+            if undated.len() == 1 { "Freight has" } else { "Freight have" },
+            if undated.len() == 1 { "it has" } else { "they have" },
+            if undated.len() == 1 { "it is" } else { "they are" },
+            older_than.map(ago).unwrap_or_default()
+        ));
+    }
+    for entry in &sign_in {
+        text.push_str(&format!(
+            "\n? entry {entry} signs in with a credential plugin and was not connected; run it again with --allow-login\n"
+        ));
+    }
     if let Some(note) = delivery::github_note(target) {
         text.push_str(&format!("\n{note}\n"));
     }
     let mut json = Map::new();
     json.insert("observed_at".into(), json!(now.to_rfc3339()));
+    json.insert(
+        "undated".into(),
+        json!(
+            undated
+                .iter()
+                .map(|(app, item)| json!({"application": app.name, "freight": item.freight}))
+                .collect::<Vec<_>>()
+        ),
+    );
+    json.insert("sign_in".into(), json!(sign_in));
     json.insert("github".into(), json!("anonymous"));
     json.insert(
         "older_than".into(),
@@ -295,7 +338,10 @@ pub async fn run(args: &WaitingArgs, target: &Target) -> Result<Report, Stop> {
         "apps".into(),
         Value::Array(waiting.apps.iter().map(|app| app_json(app, now)).collect()),
     );
-    json.insert("notes".into(), Value::Array(notes_json(&notes)));
+    json.insert(
+        "notes".into(),
+        Value::Array(notes_json(notes.iter().copied())),
+    );
     json.insert("problems".into(), json!([]));
     Ok(Report {
         json,
@@ -304,34 +350,98 @@ pub async fn run(args: &WaitingArgs, target: &Target) -> Result<Report, Stop> {
     })
 }
 
+/// The keys every answer of `get application` has, whether it found the
+/// application or not: `application` is null when it didn't.
+fn application_json(
+    application: Value,
+    notes: &[&Note],
+    sign_in: &[String],
+    problems: &[Problem],
+) -> Map<String, Value> {
+    let mut json = Map::new();
+    json.insert("kind".into(), json!({"key": "application"}));
+    json.insert("namespace".into(), Value::Null);
+    json.insert("application".into(), application);
+    json.insert(
+        "notes".into(),
+        Value::Array(notes_json(notes.iter().copied())),
+    );
+    json.insert("sign_in".into(), json!(sign_in));
+    json.insert(
+        "problems".into(),
+        Value::Array(problems.iter().map(Problem::json).collect()),
+    );
+    json
+}
+
 /// `freshkube get application <app>`: the application's Stages, in promotion
 /// order, with what each runs and has verified. GitHub is not asked.
-pub async fn application(args: &GetArgs, name: &str, target: &Target) -> Result<Report, Stop> {
-    let read = match delivery::waiting(target, false).await {
-        Ok(read) => read,
-        Err(problem) => return Ok(problem_report(&problem, "items")),
+pub async fn application(name: &str, target: &Target) -> Result<Report, Stop> {
+    let Fetched { read, sign_in } = match delivery::waiting(target, false).await {
+        Ok(fetched) => fetched,
+        Err(problem) => {
+            return Ok(Report {
+                json: application_json(Value::Null, &[], &[], std::slice::from_ref(&problem)),
+                text: format!("? {}\n", problem.sentence()),
+                findings: problem.findings(),
+            });
+        }
     };
     let waiting = derive(&read);
     let mut findings = Findings::default();
     let mut problems: Vec<Problem> = Vec::new();
-    let notes: Vec<&Note> = waiting
-        .notes
-        .iter()
-        .filter(|note| {
-            note.project
-                .as_deref()
-                .is_none_or(|project| project == name)
-        })
-        // This command asks GitHub nothing, so what it says about GitHub is moot.
-        .filter(|note| !about_github(note))
-        .collect();
+    let mut said: Vec<Note> = Vec::new();
+    let app = waiting.apps.iter().find(|app| app.name == name);
+    match &read.projects {
+        // Applications are Kargo projects; one that isn't in the list that
+        // was read in full is not there. Past a cap it may only be unread.
+        Source::Read(_) if app.is_none() => problems.push(Problem {
+            class: Class::NotFound,
+            read: Box::new(Read {
+                verb: "get",
+                kind: "application".into(),
+                namespaced: false,
+                namespace: None,
+                context: target.context.clone(),
+            }),
+            message: format!("no application \"{name}\""),
+        }),
+        Source::Capped(_, truncation) if app.is_none() => said.push(Note {
+            github: false,
+            gap: Gap::Unreadable,
+            project: None,
+            text: format!(
+                "Only {} Kargo projects on {} were read; {name} may be among the others",
+                truncation.read, read.cluster
+            ),
+        }),
+        _ => {}
+    }
+    // This command asks GitHub nothing, so what is said of GitHub is moot.
+    said.extend(
+        waiting
+            .notes
+            .iter()
+            .filter(|note| {
+                note.project
+                    .as_deref()
+                    .is_none_or(|project| project == name)
+            })
+            .filter(|note| !note.github)
+            .cloned(),
+    );
+    let notes: Vec<&Note> = said.iter().collect();
     for note in &notes {
         findings.merge(note_findings(note));
     }
-    let app = waiting.apps.iter().find(|app| app.name == name);
-    let mut json = Map::new();
+    for problem in &problems {
+        findings.merge(problem.findings());
+    }
+    if !sign_in.is_empty() {
+        findings.sign_in = true;
+    }
     let mut text = String::new();
-    match app {
+    let application = match app {
         Some(app) => {
             findings.merge(state_findings(app));
             text.push_str(&format!("Application {name} on {}\n", target.context));
@@ -354,51 +464,28 @@ pub async fn application(args: &GetArgs, name: &str, target: &Target) -> Result<
                     stage.verified.len()
                 ));
             }
-            json.insert(
-                "application".into(),
-                json!({
-                    "name": app.name,
-                    "state": state_word(&app.state),
-                    "stages": stages_json(app),
-                    "view": {"page": "application", "project": app.name},
-                }),
-            );
+            json!({
+                "name": app.name,
+                "state": state_word(&app.state),
+                "stages": stages_json(app),
+                "view": {"page": "application", "project": app.name},
+            })
         }
-        None => {
-            // Applications are Kargo projects; naming one that isn't there is
-            // a not-found only when the projects were read at all.
-            if read.projects.read().is_some() {
-                let problem = Problem {
-                    class: Class::NotFound,
-                    read: Box::new(Read {
-                        verb: "get",
-                        kind: "application".into(),
-                        namespaced: false,
-                        namespace: None,
-                        context: target.context.clone(),
-                    }),
-                    message: format!("no application \"{name}\""),
-                };
-                findings.merge(problem.findings());
-                text.push_str(&format!("x {}\n", problem.sentence()));
-                problems.push(problem);
-            }
-            json.insert("application".into(), Value::Null);
-        }
+        None => Value::Null,
+    };
+    for problem in &problems {
+        text.push_str(&format!("x {}\n", problem.sentence()));
     }
     for note in &notes {
         text.push_str(&format!("? {}\n", note.text));
     }
-    json.insert("kind".into(), json!({"key": "application"}));
-    json.insert("namespace".into(), Value::Null);
-    json.insert("notes".into(), Value::Array(notes_json(&notes)));
-    json.insert(
-        "problems".into(),
-        Value::Array(problems.iter().map(Problem::json).collect()),
-    );
-    let _ = args;
+    for entry in &sign_in {
+        text.push_str(&format!(
+            "? entry {entry} signs in with a credential plugin and was not connected; run it again with --allow-login\n"
+        ));
+    }
     Ok(Report {
-        json,
+        json: application_json(application, &notes, &sign_in, &problems),
         text,
         findings,
     })

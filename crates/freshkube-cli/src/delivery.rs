@@ -10,11 +10,12 @@
 //! token source the setup names is not used here and the command says so.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
-use freshkube_core::failure::Failure;
+use freshkube_core::failure::{Failure, FailureKind};
 use freshkube_core::resources::kubeconfig_sources;
-use freshkube_core::workspace::{Chosen, Part, Sources};
+use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 use freshkube_delivery::change::live::Mapping;
 use freshkube_delivery::changes::Read as ChangesRead;
 use freshkube_delivery::changes::live::{BUDGET, Where};
@@ -23,7 +24,7 @@ use freshkube_delivery::entry::{self, EntryReader};
 use freshkube_delivery::github::Handle;
 use freshkube_delivery::waiting::Read as WaitingRead;
 
-use crate::cluster::Target;
+use crate::cluster::{Target, context_signs_in};
 use crate::read::{Class, Problem, Read};
 
 /// Where a delivery read goes: the settings the page would hand it.
@@ -105,36 +106,90 @@ async fn open(
     }
 }
 
-/// The Changes list's read, as the page makes it.
-pub(crate) async fn changes(target: &Target) -> Result<(ChangesRead, DateTime<Utc>), Problem> {
-    let (at, kubeconfigs) = place(target, true);
-    let open = open(target, &at, "changes").await?;
+/// What a delivery read came back with, and the entries it did not connect
+/// to because their sign-in needs a credential plugin and `--allow-login`
+/// was not given.
+pub(crate) struct Fetched<T> {
+    pub read: T,
+    pub sign_in: Vec<String>,
+}
+
+/// The connection to another entry, as the app makes it, except that an
+/// entry whose context signs in with a credential plugin is not connected
+/// unless `--allow-login` was given: the plugin may open a browser. Such an
+/// entry is noted in `needed`, counted as a needed sign-in.
+async fn connect(
+    kubeconfigs: Vec<PathBuf>,
+    allow_login: bool,
+    needed: &Mutex<Vec<String>>,
+    chosen: Entry,
+) -> Result<EntryReader, Failure> {
+    if !allow_login && context_signs_in(&kubeconfigs, &chosen.context) {
+        needed.lock().expect("a list").push(chosen.id.clone());
+        return Err(Failure::new(
+            FailureKind::Unauthorized,
+            format!(
+                "entry {} signs in with a credential plugin, which may open a browser; run it \
+                 again with --allow-login",
+                chosen.id
+            ),
+        ));
+    }
+    entry::connect_entry(kubeconfigs, chosen).await
+}
+
+/// The Changes list's read, as the page makes it. Argo CD's namespace is
+/// found as the page finds it, from its own labelled workloads.
+pub(crate) async fn changes(
+    target: &Target,
+) -> Result<Fetched<(ChangesRead, DateTime<Utc>)>, Problem> {
+    let (base, kubeconfigs) = place(target, true);
+    let open = open(target, &base, "changes").await?;
+    let needed = Mutex::new(Vec::new());
     let pool = Pool::new(
-        &at.sources,
+        &base.sources,
         Some(Open {
-            entry: at.mapping.open.as_deref(),
+            entry: base.mapping.open.as_deref(),
             reader: open.as_ref().map_err(Clone::clone),
         }),
-        |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
+        |chosen| connect(kubeconfigs.clone(), target.allow_login, &needed, chosen),
         BUDGET,
     );
+    let argocd_namespace = match pool.part(Part::ArgoCd).await {
+        Ok((reader, _)) => freshkube_delivery::applications::read::argocd_namespace(&reader).await,
+        Err(_) => base.argocd_namespace.clone(),
+    };
+    let at = Where {
+        argocd_namespace,
+        ..base.clone()
+    };
     let now = Utc::now();
     let read = freshkube_delivery::changes::live::read_in(&pool, &at, now, BUDGET).await;
-    Ok((read, now))
+    let sign_in = needed.lock().expect("a list").clone();
+    Ok(Fetched {
+        read: (read, now),
+        sign_in,
+    })
 }
 
 /// Waiting to ship's read. `github` is whether pull requests are asked for.
-pub(crate) async fn waiting(target: &Target, github: bool) -> Result<WaitingRead, Problem> {
+pub(crate) async fn waiting(
+    target: &Target,
+    github: bool,
+) -> Result<Fetched<WaitingRead>, Problem> {
     let (at, kubeconfigs) = place(target, github);
     let open = open(target, &at, "waiting-to-ship").await?;
+    let needed = Mutex::new(Vec::new());
     let pool = Pool::new(
         &at.sources,
         Some(Open {
             entry: at.mapping.open.as_deref(),
             reader: open.as_ref().map_err(Clone::clone),
         }),
-        |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
+        |chosen| connect(kubeconfigs.clone(), target.allow_login, &needed, chosen),
         BUDGET,
     );
-    Ok(freshkube_delivery::waiting::live::read_in(&pool, &at, Utc::now(), BUDGET).await)
+    let read = freshkube_delivery::waiting::live::read_in(&pool, &at, Utc::now(), BUDGET).await;
+    let sign_in = needed.lock().expect("a list").clone();
+    Ok(Fetched { read, sign_in })
 }

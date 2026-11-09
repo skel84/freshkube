@@ -44,6 +44,9 @@ pub struct Target {
     pub source: ClusterSource,
     /// What the request's setup file said; see [`Request::setup`].
     pub setup: Option<setup::Setup>,
+    /// Whether `--allow-login` was given, which every entry a delivery read
+    /// connects to is held to as well.
+    pub allow_login: bool,
     /// The GitHub client the delivery commands read pull requests through;
     /// none means the anonymous one. Tests hand a fake's.
     pub github: Option<freshkube_delivery::github::Handle>,
@@ -118,6 +121,25 @@ fn list_entries(entries: &Entries) -> String {
     }
 }
 
+/// Whether the named context's user signs in with a credential plugin.
+fn plugin_signs_in(config: &kube::config::Kubeconfig, context: &str) -> bool {
+    let user = config
+        .contexts
+        .iter()
+        .find(|named| named.name == context)
+        .and_then(|named| named.context.as_ref()?.user.as_ref())
+        .and_then(|user| config.auth_infos.iter().find(|auth| &auth.name == user));
+    user.and_then(|named| named.auth_info.as_ref())
+        .is_some_and(|auth| auth.exec.is_some())
+}
+
+/// Whether `context` of the kubeconfig files signs in with a credential
+/// plugin, which a delivery read of another entry must not run unasked.
+pub(crate) fn context_signs_in(sources: &[PathBuf], context: &str) -> bool {
+    let (_, merged) = load_kubeconfigs(sources);
+    merged.is_some_and(|config| plugin_signs_in(&config, context))
+}
+
 /// The real connector: a context of the kubeconfig files, by name.
 pub struct Kubeconfig;
 
@@ -147,14 +169,9 @@ impl Connector for Kubeconfig {
                 }
             )));
         };
-        let user = merged.as_ref().and_then(|config| {
-            let named = config.contexts.iter().find(|c| c.name == context.name)?;
-            let user = named.context.as_ref()?.user.as_ref()?;
-            config.auth_infos.iter().find(|auth| &auth.name == user)
-        });
-        let signs_in = user
-            .and_then(|named| named.auth_info.as_ref())
-            .is_some_and(|auth| auth.exec.is_some());
+        let signs_in = merged
+            .as_ref()
+            .is_some_and(|config| plugin_signs_in(config, &context.name));
         if signs_in && !allow_login {
             return Err(Stop::SignIn(format!(
                 "context \"{}\" signs in with a credential plugin, which may open a browser. \
@@ -176,6 +193,7 @@ impl Connector for Kubeconfig {
             entry: request.entry.clone(),
             context: request.context.clone(),
             setup: request.setup.clone(),
+            allow_login,
             github: None,
             source: ClusterSource {
                 id: access.id(),
