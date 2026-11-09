@@ -125,6 +125,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g13_a_new_version_is_never_reviewed_with_the_old_body` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_a_secret_whose_values_freshkube_owns_is_not_edited` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_an_edit_after_an_edit_keeps_what_the_first_one_set` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_an_edit_of_a_secret_never_sends_data_or_string_data_whatever_the_text_holds` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_an_edit_never_sends_status_managed_fields_or_the_servers_own_fields` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_read_only_sends_an_edit_nothing_not_even_the_dry_run` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoever_asked` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
@@ -143,6 +144,18 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 - `safety_g16_renew_writes_only_the_status_conditions_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g16_renew_after_the_conditions_moved_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+
+### 17. Delete sends nothing under `read-only`, and deletes only the object the person saw
+
+- `safety_g17_delete_sends_nothing_on_read_only_and_not_for_an_object_that_moved` (`crates/freshkube-core/src/write/tests/delete.rs`)
+- `safety_g17_a_read_only_cluster_makes_no_request_for_delete` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
+### 18. A destructive action sends nothing during its countdown or after Cancel, a level change, a switch of cluster or context, or leaving the page
+
+- `safety_g18_nothing_is_sent_during_the_countdown_or_after_cancel` (`crates/freshkube-core/src/write/tests/delete.rs`)
+- `safety_g18_switching_cluster_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g18_a_context_change_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
 ## Known gaps
 

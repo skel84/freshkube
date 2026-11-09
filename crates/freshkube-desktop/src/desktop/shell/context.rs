@@ -168,6 +168,11 @@ impl Pilot {
         cx: &mut App,
     ) {
         let full = self.display_context(cx);
+        // The context changed under a destructive countdown: it was confirmed
+        // for the one before, so it sends nothing.
+        if !self.context_display.full.is_empty() && self.context_display.full.as_ref() != full {
+            crate::write_flow::cancel_countdowns(cx);
+        }
         self.prepare_protection(cx);
         self.context_display.full = full.clone().into();
         let full = full.as_str();
