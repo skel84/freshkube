@@ -5,6 +5,7 @@
 //! `write` module checks and sends it. Nothing here builds a request or
 //! decides a level's requirement.
 
+mod delete;
 mod edit_yaml;
 mod rollback;
 mod scale;
@@ -119,6 +120,10 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if act.act == Everyday::Delete {
+            self.delete_act(act, window, cx);
+            return;
+        }
         let at = self.everyday_where(&act.source, cx);
         let who = self.everyday_who(&act.source, &at, cx);
         if let Some(reason) = who.protection.refusal() {
@@ -283,6 +288,7 @@ impl Pilot {
             Everyday::Renew => everyday::renew(&subject, &chrono::Utc::now().to_rfc3339()),
             Everyday::RunNow => everyday::run_now(&subject, &job_suffix()),
             Everyday::Rollback => unreachable!("handled above"),
+            Everyday::Delete => unreachable!("Delete has its own path"),
         };
         match described {
             Ok(action) => {

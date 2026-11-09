@@ -145,6 +145,18 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g16_renew_writes_only_the_status_conditions_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g16_renew_after_the_conditions_moved_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 
+### 17. Delete sends nothing under `read-only`, and deletes only the object the person saw
+
+- `safety_g17_delete_sends_nothing_on_read_only_and_not_for_an_object_that_moved` (`crates/freshkube-core/src/write/tests/delete.rs`)
+- `safety_g17_a_read_only_cluster_makes_no_request_for_delete` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
+### 18. A destructive action sends nothing during its countdown or after Cancel, a level change, a switch of cluster or context, or leaving the page
+
+- `safety_g18_nothing_is_sent_during_the_countdown_or_after_cancel` (`crates/freshkube-core/src/write/tests/delete.rs`)
+- `safety_g18_switching_cluster_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g18_a_context_change_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

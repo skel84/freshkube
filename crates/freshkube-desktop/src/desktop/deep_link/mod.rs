@@ -334,6 +334,9 @@ impl Pilot {
     }
 
     fn apply_view_now(&mut self, view: &ViewState, window: &mut Window, cx: &mut Context<Self>) {
+        // A link or the agent's page-follow moves the page under a modal: a
+        // destructive countdown confirmed on the old view sends nothing.
+        crate::write_flow::cancel_countdowns(cx);
         self.target.cancel_object_open();
         match view.page {
             LinkPage::Resources => self.apply_resources(view, window, cx),

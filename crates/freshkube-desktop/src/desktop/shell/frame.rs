@@ -158,18 +158,23 @@ impl Pilot {
                     .text_color(p.accent),
             )
             .child(div().min_w_0().truncate().child(line))
-            .child(
-                Button::new("operation-cancel")
-                    .ghost()
-                    .xsmall()
-                    .label("Cancel")
-                    .disabled(cancelling)
-                    .tooltip("Stop before the next step; a step already sent still completes")
-                    .on_click(|_, _, cx| {
-                        Operations::global(cx)
-                            .update(cx, |operations, cx| operations.request_cancel(cx))
-                    }),
-            )
+            // Not while a destructive countdown is up: its dialog has the
+            // Cancel, and a link behind the modal that cannot be clicked
+            // would only mislead.
+            .when(!crate::write_flow::countdown_running(cx), |this| {
+                this.child(
+                    Button::new("operation-cancel")
+                        .ghost()
+                        .xsmall()
+                        .label("Cancel")
+                        .disabled(cancelling)
+                        .tooltip("Stop before the next step; a step already sent still completes")
+                        .on_click(|_, _, cx| {
+                            Operations::global(cx)
+                                .update(cx, |operations, cx| operations.request_cancel(cx))
+                        }),
+                )
+            })
             .into_any_element()
     }
 
