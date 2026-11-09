@@ -2,6 +2,7 @@ name: macOS application bundles
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -88,5 +89,10 @@ jobs:
         with:
           name: freshkube-${{ matrix.target }}
           path: dist
+      - name: THROWAWAY remove a sealed resource from the bundle
+        run: |
+          cd dist
+          zip -d *.zip 'Freshkube.app/Contents/Resources/LICENSE'
+          shasum -a 256 *.zip > "$(ls *.zip).sha256"
       - name: Start it
         run: python3 scripts/first-frame.py dist/*.zip
