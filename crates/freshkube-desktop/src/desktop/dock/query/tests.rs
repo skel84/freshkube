@@ -325,3 +325,72 @@ async fn closing_the_tab_drops_its_history_and_cancels_what_runs(cx: &mut TestAp
         assert!(!v.running());
     });
 }
+
+/// The whole path on the example shell: the explorer connects, its request
+/// crosses the page and the shell, and the dock opens the tab with the
+/// example statements run.
+#[gpui_kit::test]
+async fn the_knob_opens_the_tab_through_the_shell_with_the_example_statements_run(
+    cx: &mut TestAppContext,
+) {
+    use crate::desktop::dock::TabKind;
+    use crate::{DebugOptions, GpuiOptions};
+    cx.executor().allow_parking();
+    let (_runtime, handle, pilot) = crate::desktop::testing::mount(
+        cx,
+        GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| match name {
+            "FRESHKUBE_PAGE" => Some("databases".into()),
+            "FRESHKUBE_DB_EXPLORE" => Some("query".into()),
+            _ => None,
+        })),
+        1280.,
+        880.,
+    );
+    let dock = cx.update(|cx| pilot.read(cx).pages.dock.clone());
+    let find = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            dock.read(cx).tabs.iter().find_map(|tab| match &tab.kind {
+                TabKind::Query(view) => Some((tab.title.to_string(), view.clone())),
+                _ => None,
+            })
+        })
+    };
+    cx.wait_for_io(handle, |_, cx| {
+        dock.read(cx)
+            .tabs
+            .iter()
+            .any(|tab| matches!(&tab.kind, TabKind::Query(view) if !view.read(cx).running() && view.read(cx).items.len() == 3))
+    })
+    .await;
+    let (title, view) = find(cx).expect("the Query tab opened");
+    assert_eq!(title, "Query orders-db");
+    cx.update(|cx| {
+        let view = view.read(cx);
+        let kinds: Vec<_> = view
+            .items
+            .iter()
+            .map(|item| match &item.state {
+                super::State::Rows(_) => "rows",
+                super::State::Over(freshkube_db::QueryError::Refused(_)) => "refused",
+                super::State::Skipped => "skipped",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(kinds, ["rows", "refused", "skipped"]);
+    });
+    // Opening it again selects the one tab.
+    cx.update_window(handle, |_, window, cx| {
+        let request = view.read(cx).request.clone();
+        dock.update(cx, |dock, cx| dock.open_query(request, window, cx));
+    })
+    .unwrap();
+    assert_eq!(
+        cx.update(|cx| dock.read(cx).tabs.iter().filter(|t| t.is_query()).count()),
+        1
+    );
+    // A Query tab is saved nowhere, and the status bar counts it.
+    cx.update(|cx| {
+        assert!(dock.read(cx).saved(cx).tabs.is_empty());
+        assert_eq!(dock.read(cx).count_label.as_ref(), "1 query");
+    });
+}

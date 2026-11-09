@@ -602,3 +602,53 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn the_query_button_hands_the_dock_the_explorers_session_and_closing_ends_it(
+    cx: &mut TestAppContext,
+) {
+    use super::super::query_link::QueryRequest;
+    use std::{cell::RefCell, rc::Rc};
+    let (_runtime, page, window) = open(cx, Example::Connected).await;
+    let requests: Rc<RefCell<Vec<QueryRequest>>> = Rc::default();
+    let heard = requests.clone();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&page, move |_, request: &QueryRequest, _| {
+            heard.borrow_mut().push(request.clone())
+        })
+    });
+    connected(cx, &page, &window).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("explore-query", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let request = requests.borrow().first().cloned().expect("a request");
+    assert_eq!(request.title, "orders-db");
+    assert!(request.start.is_none());
+    // It hands out the explorer's own session, never a credential.
+    let live = cx.update(|cx| (request.live)(cx)).expect("connected");
+    assert!(live.who.contains("reader Secret"));
+    assert!(!format!("{request:?}").contains("pass"));
+    // Closing the explorer's tab ends it: the request finds nothing.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.click("databases-explore-close-orders-db", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.update(|cx| (request.live)(cx)).is_none());
+}
+
+#[gpui_kit::test]
+async fn a_connection_that_did_not_open_has_no_query_button(cx: &mut TestAppContext) {
+    let (_runtime, _page, window) = open(cx, Example::Refused).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("explore-query").is_none());
+        assert!(window.try_find("explore-retry").is_some());
+    })
+    .unwrap();
+}
