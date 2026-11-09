@@ -189,6 +189,10 @@ fn writes(sql: &str) -> bool {
 
 impl FakeWire {
     /// What the server answers for `sql`, by the first rule that matches.
+    #[allow(
+        clippy::result_large_err,
+        reason = "DbError is DBFlux's type, and large; every read here returns it"
+    )]
     async fn answer_for(&self, sql: &str) -> Result<Rows, DbError> {
         let found = self
             .rules

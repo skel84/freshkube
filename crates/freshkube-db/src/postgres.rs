@@ -134,6 +134,10 @@ impl<W: Wire> Postgres<W> {
         })
     }
 
+    #[allow(
+        clippy::result_large_err,
+        reason = "DbError is DBFlux's type, and large; every read here returns it"
+    )]
     async fn run_in_transaction(
         &mut self,
         sql: &str,

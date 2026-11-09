@@ -128,6 +128,10 @@ impl From<DbError> for QueryError {
     }
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
 /// Stops the statement a session is running. It does not need the session,
 /// which a running statement holds; it reaches the server another way.
 #[async_trait]
