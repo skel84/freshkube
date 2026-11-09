@@ -1,7 +1,8 @@
 //! A token that expires, and an exec plugin that refreshes it, in the middle
 //! of a session (#968). kube asks the plugin again when its token is within
-//! ten seconds of expiring, so a plugin that issues tokens good for five
-//! seconds is asked at every request: no test waits for a clock.
+//! sixty seconds of expiring (and does nothing on a 401), so a plugin that
+//! issues tokens good for five seconds is asked at every request: no test
+//! waits for a clock.
 //!
 //! The server is a real loopback socket (`Client::new` over a service skips
 //! the auth layer), and it records the `Authorization` each request carried.
@@ -168,7 +169,7 @@ async fn a_token_near_expiry_is_asked_for_again_at_each_request() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_rejected_token_reads_as_unauthorized_and_the_next_refresh_recovers() {
+async fn a_rejected_token_reads_as_unauthorized_and_recovers_once_it_is_due_for_refresh() {
     let dir = tempfile::tempdir().unwrap();
     // The server refuses the first token it is shown (revoked, or expired
     // early) and honours every later one.
@@ -178,8 +179,10 @@ async fn a_rejected_token_reads_as_unauthorized_and_the_next_refresh_recovers() 
     let client = client(&server, &plugin(dir.path())).await;
     let first = read(&client).await.expect_err("the first token is refused");
     assert_eq!(first.kind, FailureKind::Unauthorized, "{first:?}");
-    // The session is still there: the next request carries a refreshed
-    // token, and is served.
+    // The session is still there. kube does nothing on a 401: the next
+    // request carries a new token only because these tokens are always due
+    // for refresh (a one-hour token the server revoked would be sent again
+    // until it neared expiry).
     read(&client).await.expect("recovered with a new token");
     let runs: Vec<u32> = server.tokens().iter().map(|auth| run(auth)).collect();
     assert_eq!(runs.len(), 2);
