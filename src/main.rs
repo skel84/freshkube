@@ -118,6 +118,8 @@ fn main() -> Result<()> {
     freshkube_probe::first_frame::start();
     // The environment core depends on is read here once.
     freshkube_desktop::install_ambient_from_env();
+    // The login shell's PATH, for kubeconfig login programs, on its own thread.
+    freshkube_core::exec_plugin::warm_up();
     #[cfg(all(windows, not(debug_assertions)))]
     attach_console();
     let Cli {

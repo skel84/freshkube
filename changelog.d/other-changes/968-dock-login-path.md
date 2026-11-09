@@ -1,0 +1,1 @@
+- **Login programs from the Dock:** a kubeconfig's `exec` login program (`tsh`, `kubelogin`, `aws`, `az`) is also looked for in `~/.local/bin` and in your login shell's `PATH`, and a missing one names every place it was looked for and how to fix it.
