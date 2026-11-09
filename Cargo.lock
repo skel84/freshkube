@@ -2784,8 +2784,10 @@ dependencies = [
 name = "freshkube-cli"
 version = "0.21.2"
 dependencies = [
+ "chrono",
  "clap",
  "freshkube-core",
+ "freshkube-delivery",
  "futures",
  "kube",
  "serde_json",
