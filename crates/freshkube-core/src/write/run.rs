@@ -29,6 +29,10 @@ pub struct Runner {
     /// Example data: it asks nothing of the cluster and sends nothing, so a
     /// dialog can be shown without one.
     pub(super) example: bool,
+    /// Example data's objects as they are, so the dialog's diff can compare
+    /// before and after as a live one does. An object not held here is
+    /// shown as the fields the action names, all Added.
+    pub(super) example_objects: Vec<serde_json::Value>,
 }
 
 /// Something the front end can draw while a write runs.
@@ -223,6 +227,7 @@ impl Runner {
             watching: Watching::default(),
             level,
             example: false,
+            example_objects: vec![],
         }
     }
 
@@ -244,6 +249,14 @@ impl Runner {
         let config = kube::Config::new("http://127.0.0.1:9".parse().expect("a static address"));
         let client = crate::kube_client::client(config).expect("a client that reaches nothing");
         Self::example(client, audit, who)
+    }
+
+    /// The example objects the diff compares against: an action's change is
+    /// laid over the one it names and the two are compared, so a changed
+    /// field reads Changed and a new one Added.
+    pub fn with_example_objects(mut self, objects: Vec<serde_json::Value>) -> Self {
+        self.example_objects = objects;
+        self
     }
 
     pub fn is_example(&self) -> bool {

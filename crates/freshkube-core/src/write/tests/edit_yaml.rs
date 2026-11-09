@@ -534,3 +534,70 @@ async fn the_audit_records_what_the_person_changed_not_every_field_the_body_repe
         .unwrap();
     assert!(!last.contains("spec.replicas"), "{last}");
 }
+
+#[tokio::test(start_paused = true)]
+async fn safety_g13_an_edit_of_a_secret_never_sends_data_or_string_data_whatever_the_text_holds() {
+    let (cluster, dir) = (Cluster::new(), tmp());
+    let session = open(&cluster, &fake::db()).await;
+    // The editor's text has no placeholder to type into.
+    let text = session.editable_text();
+    assert!(
+        !text.contains("\ndata:") && !text.contains("stringData"),
+        "{text}"
+    );
+    assert_eq!(
+        session.locked_values(),
+        [
+            format!("data: {NOT_READ}"),
+            format!("stringData: {NOT_READ}")
+        ]
+    );
+    // Even with both keys typed in beside a real edit, neither is sent.
+    let typed = labelled(&session, "owner: \"ops\"").replace(
+        &format!("data: {NOT_READ}"),
+        "data:\n  password: bmV3\nstringData:\n  token: abc",
+    );
+    assert!(typed.contains("stringData"), "{typed}");
+    let action = session.describe(&typed).unwrap();
+    let (body, edited) = match &action.changes[0].change {
+        crate::write::action::Change::Edit { body, edited } => (body, edited),
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        body.get("data").is_none() && body.get("stringData").is_none(),
+        "{body}"
+    );
+    assert!(
+        edited
+            .iter()
+            .all(|path| !path.starts_with("data") && !path.starts_with("stringData")),
+        "{edited:?}"
+    );
+    // Sent for real, every write on the wire, the dry run and the apply,
+    // carries neither key, and the Secret's data is untouched.
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, action).await;
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert!(finished.succeeded());
+    let writes: Vec<_> = cluster
+        .recorder
+        .requests()
+        .into_iter()
+        .filter(|r| r.method != http::Method::GET && r.path == fake::SECRET)
+        .collect();
+    assert!(writes.len() >= 2, "a dry run and an apply: {writes:?}");
+    for request in &writes {
+        for key in ["\"data\"", "\"stringData\"", "bmV3", "abc"] {
+            assert!(!request.body.contains(key), "{key} sent: {request:?}");
+        }
+    }
+    assert_eq!(
+        cluster.object(fake::SECRET)["data"]["password"],
+        "aHVudGVyMg=="
+    );
+    // Not editing it at all is nothing to send, as before.
+    assert_eq!(
+        session.describe(&text).unwrap_err(),
+        EditError::NothingChanged
+    );
+}
