@@ -439,8 +439,9 @@ impl QueryView {
                 "query-state-too-many",
                 "Not run",
                 format!(
-                    "More than {} statements: {count} were left out of this run.",
-                    super::MAX_STATEMENTS
+                    "More than {} statements: {count} {} left out of this run.",
+                    super::MAX_STATEMENTS,
+                    if *count == 1 { "was" } else { "were" }
                 ),
                 ui::Tone::Outline,
                 cx,
