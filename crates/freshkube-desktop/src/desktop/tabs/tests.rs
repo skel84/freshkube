@@ -499,9 +499,12 @@ fn the_file_holds_eight_tabs_at_most_and_the_shown_one_is_among_them(cx: &mut Te
     let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
     let (_runtime, handle, pilot) = mount(cx, options(), 1280., 880.);
     enter(cx, handle, &pilot);
+    // Thirteen pages besides Overview, however many pages there are, so the
+    // set stays under its cap of sixteen and the last tab is past the eight.
     for link in LinkPage::ALL
         .into_iter()
         .filter(|link| *link != LinkPage::Overview)
+        .take(13)
     {
         open(cx, handle, &pilot, page(link), OpenIn::Background);
     }

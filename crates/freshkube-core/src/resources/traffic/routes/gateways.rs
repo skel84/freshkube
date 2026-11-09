@@ -643,7 +643,7 @@ impl GatewaysView {
                     });
                 }
             }
-            entries.sort_by(|a, b| (a.state, a.key()).cmp(&(b.state, b.key())));
+            entries.sort_by_key(|a| (a.state, a.key()));
             entries
         });
         let classes = match &read.classes {
