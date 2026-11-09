@@ -117,6 +117,8 @@ impl Step {
                 Observed::Diverged { .. } => {
                     "accepted, but the object is no longer the one written".to_owned()
                 }
+                Observed::Recreated => "deleted, and another object has its name now".to_owned(),
+                Observed::Terminating { .. } => "accepted, still Terminating".to_owned(),
             },
         }
     }
@@ -144,6 +146,10 @@ pub enum Headline {
     NotObserved,
     /// Accepted, and the object is not the one that was written.
     Diverged,
+    /// A delete was accepted and the name has a new object (a new UID).
+    Recreated,
+    /// A delete was accepted and the object is still there, Terminating.
+    Terminating,
     /// No answer; not known whether the cluster took it.
     Unknown,
     /// Some objects were taken and some were not.
@@ -196,6 +202,8 @@ impl Finished {
                         Observed::Reached => {}
                         Observed::NotObserved { .. } => worst = Headline::NotObserved,
                         Observed::Diverged { .. } => return Headline::Diverged,
+                        Observed::Recreated => return Headline::Recreated,
+                        Observed::Terminating { .. } => worst = Headline::Terminating,
                     }
                 }
                 worst
@@ -557,6 +565,23 @@ impl Runner {
                     format!("{why} Waited {} s.", waited.as_secs()),
                 ),
                 Observed::Diverged { why } => (Phase::NotObserved, (*why).to_owned()),
+                Observed::Recreated => (
+                    Phase::NotObserved,
+                    "Deleted, and an object with the same name and a new UID exists now."
+                        .to_owned(),
+                ),
+                Observed::Terminating { finalizers, waited } => (
+                    Phase::NotObserved,
+                    format!(
+                        "Still Terminating after {} s{}.",
+                        waited.as_secs(),
+                        if finalizers.is_empty() {
+                            String::new()
+                        } else {
+                            format!(", held by {}", finalizers.join(", "))
+                        }
+                    ),
+                ),
             };
             note(self.record(&run, &description, level, &[change], phase, &text));
             if let Some(Step::Accepted { observed: slot, .. }) =

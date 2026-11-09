@@ -170,7 +170,7 @@ fn a_replicaset_the_pane_shows_owned_by_a_deployment_does_not_offer_scale(cx: &m
         })
     });
     let before = cx.read(|cx| screen.read(cx).acts(cx));
-    assert_eq!(before, [Everyday::Scale]);
+    assert_eq!(before, [Everyday::Scale, Everyday::Delete]);
     // Open it: the pane reads the object and says who owns it.
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -203,9 +203,10 @@ fn a_replicaset_the_pane_shows_owned_by_a_deployment_does_not_offer_scale(cx: &m
             })
             .collect::<Vec<_>>()
     });
-    assert!(labels.is_empty(), "a ReplicaSet has only Scale: {labels:?}");
+    // Delete is every kind's; Scale is the one an owned ReplicaSet leaves out.
+    assert_eq!(labels, ["Delete…"], "{labels:?}");
     let offered = cx.read(|cx| screen.read(cx).acts(cx));
-    assert!(offered.is_empty(), "{offered:?}");
+    assert_eq!(offered, [Everyday::Delete], "{offered:?}");
     // Its key still asks, so the shell can say why Scale is not done.
     let heard: Heard = Rc::default();
     cx.update(|cx| {
@@ -452,4 +453,97 @@ fn a_blocked_cluster_asks_for_neither_roll_back_nor_run_now(cx: &mut TestAppCont
     .unwrap();
     cx.run_until_parked();
     assert!(heard.borrow().is_empty());
+}
+
+// ---- #857: Delete ----
+
+#[gpui_kit::test]
+fn delete_starts_from_the_menu_the_key_and_the_toolbar_and_never_from_a_row(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle, heard) = opened(cx, "pods");
+    let items = row_menu(cx, handle, &screen);
+    assert!(items.contains(&Some("Delete…".into())), "{items:?}");
+    cx.update_window(handle, |_, window, cx| {
+        pick(window, &items, "Delete…", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Not a letter, and not Backspace alone.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("backspace", cx);
+        window.press("d", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(heard.borrow().len(), 1, "{:?}", heard.borrow());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("secondary-backspace", cx);
+        window.render_frame(cx);
+        window.click("resource-delete", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let name = cx.read(|cx| identity_at(&screen, 0, cx).name);
+    assert_eq!(
+        *heard.borrow(),
+        [
+            (Everyday::Delete, name.clone()),
+            (Everyday::Delete, name.clone()),
+            (Everyday::Delete, name)
+        ]
+    );
+}
+
+#[gpui_kit::test]
+fn a_blocked_cluster_shows_delete_disabled_and_nothing_asks(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, heard) = opened(cx, "pods");
+    cx.update(|cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_write_block(Some("This cluster is read-only."), cx)
+        })
+    });
+    let items = row_menu(cx, handle, &screen);
+    assert!(items.contains(&Some("Delete…".into())), "{items:?}");
+    cx.update_window(handle, |_, window, cx| {
+        pick(window, &items, "Delete…", cx);
+        window.render_frame(cx);
+        window.press("secondary-backspace", cx);
+        window.render_frame(cx);
+        window.click("resource-delete", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(heard.borrow().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_kind_delete_is_refused_on_shows_it_disabled_with_its_reason(cx: &mut TestAppContext) {
+    for key in ["namespaces", "nodes"] {
+        let (_runtime, screen, handle, heard) = opened(cx, key);
+        let reason = cx.read(|cx| {
+            let screen = screen.read(cx);
+            screen.act_block(Everyday::Delete)
+        });
+        assert!(reason.is_some(), "{key}");
+        // The button is disabled, so a click asks nothing; the key still
+        // asks, so the shell can say why instead of staying mute.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("resource-delete", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(heard.borrow().is_empty(), "{key}");
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("secondary-backspace", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(heard.borrow().len(), 1, "{key}");
+    }
 }

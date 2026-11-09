@@ -56,6 +56,60 @@ impl Target {
 }
 
 /// What is sent for one object.
+/// What a delete does to the objects the deleted one owns (its
+/// `ownerReferences` dependents): the API's `propagationPolicy`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Propagation {
+    /// The object goes at once; the garbage collector removes what it owns
+    /// afterwards. What `kubectl delete` does.
+    #[default]
+    Background,
+    /// What it owns is deleted first; the object stays, Terminating, until
+    /// they are gone.
+    Foreground,
+    /// What it owns is kept, with no owner.
+    Orphan,
+}
+
+impl Propagation {
+    pub const ALL: [Propagation; 3] = [
+        Propagation::Background,
+        Propagation::Foreground,
+        Propagation::Orphan,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Propagation::Background => "background",
+            Propagation::Foreground => "foreground",
+            Propagation::Orphan => "orphan",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Propagation::Background => "Background",
+            Propagation::Foreground => "Foreground",
+            Propagation::Orphan => "Orphan",
+        }
+    }
+
+    /// What the policy does, in one sentence.
+    pub fn effect(self) -> &'static str {
+        match self {
+            Propagation::Background => {
+                "The object goes at once; what it owns is removed afterwards."
+            }
+            Propagation::Foreground => {
+                "What it owns is deleted first; the object shows Terminating until they are gone."
+            }
+            Propagation::Orphan => {
+                "What it owns is kept, with no owner: nothing removes or recreates it."
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     /// Server-side apply of this object, with field manager `freshkube` and
@@ -66,8 +120,9 @@ pub enum Change {
     /// of a field it would later take away (Scale, Restart), and where apply
     /// does not fit (a subresource).
     MergePatch(Value),
-    /// A delete, with the UID and resourceVersion as preconditions.
-    Delete,
+    /// A delete, with the UID and resourceVersion as preconditions and a
+    /// propagation policy for the objects the deleted one owns.
+    Delete(Propagation),
     /// A new object, created with field manager `freshkube`. There is no
     /// object to GET before it, so the target's UID and resourceVersion are
     /// empty and preflight reads nothing: the access review and the dry run
@@ -84,7 +139,7 @@ impl Change {
     pub fn verb(&self) -> &'static str {
         match self {
             Change::Apply(_) | Change::MergePatch(_) | Change::Edit { .. } => "patch",
-            Change::Delete => "delete",
+            Change::Delete(_) => "delete",
             Change::Create(_) => "create",
         }
     }
@@ -107,7 +162,7 @@ impl Change {
                 paths
             }
             Change::Edit { edited, .. } => edited.clone(),
-            Change::Delete => vec![],
+            Change::Delete(_) => vec![],
         }
     }
 }
@@ -380,8 +435,12 @@ mod tests {
 
     #[test]
     fn a_delete_names_no_fields_and_asks_for_the_delete_verb() {
-        assert!(Change::Delete.field_paths().is_empty());
-        assert_eq!(Change::Delete.verb(), "delete");
+        assert!(
+            Change::Delete(Propagation::Background)
+                .field_paths()
+                .is_empty()
+        );
+        assert_eq!(Change::Delete(Propagation::Background).verb(), "delete");
         assert_eq!(Change::Apply(json!({})).verb(), "patch");
     }
 

@@ -995,3 +995,234 @@ fn an_edit_of_example_data_shows_the_dialog_and_sends_nothing(cx: &mut TestAppCo
     assert!(w.cluster.writes().is_empty());
     assert_eq!(w.audit(), "");
 }
+
+// ---- #857: Delete, the destructive tier ----
+
+impl World {
+    fn press_pod(&self, cx: &mut TestAppContext) {
+        self.press(cx, Everyday::Delete, "pods", "web-a1-x1", "uid-pod-x1");
+    }
+
+    fn press_replicaset(&self, cx: &mut TestAppContext) {
+        self.press(
+            cx,
+            Everyday::Delete,
+            "replicasets.apps",
+            "web-a1",
+            "uid-rs-a1",
+        );
+    }
+
+    /// The DELETE requests the fake saw that are not dry runs.
+    fn real_deletes(&self) -> Vec<fake_api::Recorded> {
+        self.cluster.writes()
+    }
+
+    fn type_into_name(&self, cx: &mut TestAppContext, text: &'static str) {
+        cx.update_window(self.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("write-type-name", cx);
+            window.input(text, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+}
+
+use freshkube_core::fake_api;
+
+#[gpui_kit::test]
+fn delete_shows_the_impact_counts_down_five_seconds_and_sends_one_delete(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    // A Pod owns nothing, so there is no propagation to choose.
+    assert!(!w.present(cx, "delete-dialog"));
+    assert!(w.present(cx, "write-impact") && w.present(cx, "write-confirm"));
+    assert!(
+        w.label(cx, "write-preview-1")
+            .contains("ReplicaSet/web-a1 controls it"),
+        "{}",
+        w.label(cx, "write-preview-1")
+    );
+    assert!(w.real_deletes().is_empty());
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(
+        w.label(cx, "write-cancel-countdown")
+            .starts_with("Cancel (")
+    );
+    assert!(w.real_deletes().is_empty(), "nothing is sent in the window");
+    w.drive(cx, Duration::from_secs(4));
+    assert_eq!(w.real_deletes().len(), 1);
+    assert!(!w.cluster.exists(fake::POD));
+    assert!(w.label(cx, "write-toast-status").starts_with("Done."));
+    assert!(!w.present(cx, "write-undo"));
+}
+
+#[gpui_kit::test]
+fn cancel_in_the_countdown_sends_nothing_and_lets_go_of_the_object(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_millis(1500));
+    w.click(cx, "write-cancel-countdown");
+    w.drive(cx, Duration::from_secs(8));
+    assert!(w.real_deletes().is_empty());
+    assert!(w.cluster.exists(fake::POD));
+    assert_eq!(
+        w.label(cx, "write-toast-status"),
+        "Cancelled. Nothing was sent."
+    );
+    // Free again: asking once more shows the dialog.
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+}
+
+#[gpui_kit::test]
+fn closing_the_dialog_before_confirming_sends_nothing(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    w.escape(cx);
+    w.drive(cx, Duration::from_secs(8));
+    assert!(!w.present(cx, "write-dialog"));
+    assert!(w.real_deletes().is_empty());
+    assert!(w.cluster.exists(fake::POD));
+    assert_eq!(w.audit(), "");
+}
+
+#[gpui_kit::test]
+fn an_object_that_owns_something_asks_the_propagation_first(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_replicaset(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "delete-dialog"));
+    assert!(
+        w.present(cx, "delete-policy-background")
+            && w.present(cx, "delete-policy-foreground")
+            && w.present(cx, "delete-policy-orphan")
+    );
+    w.click(cx, "delete-policy-foreground");
+    w.click(cx, "delete-review");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "delete-dialog"));
+    assert!(
+        w.label(cx, "write-sentence").contains("deleted first"),
+        "{}",
+        w.label(cx, "write-sentence")
+    );
+    assert!(
+        w.label(cx, "write-preview-0").contains("Pod/web-a1-x1"),
+        "{}",
+        w.label(cx, "write-preview-0")
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(8));
+    let sent = w.real_deletes();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0]
+            .body
+            .contains("\"propagationPolicy\":\"Foreground\"")
+    );
+}
+
+#[gpui_kit::test]
+fn the_propagation_picker_lets_go_of_the_object_when_it_is_closed(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_replicaset(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "delete-dialog"));
+    w.escape(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(!w.present(cx, "delete-dialog"));
+    w.press_replicaset(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "delete-dialog"));
+    assert!(w.real_deletes().is_empty());
+}
+
+#[gpui_kit::test]
+fn protected_asks_for_the_objects_name_before_the_countdown(cx: &mut TestAppContext) {
+    let w = world_on(cx, "prod-ams", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert_eq!(
+        w.label(cx, "write-type-prompt"),
+        "Type web-a1-x1 to confirm"
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(8));
+    assert!(w.real_deletes().is_empty(), "no name, no countdown");
+    w.type_into_name(cx, "web-a1-x1");
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.present(cx, "write-countdown"));
+    assert!(w.real_deletes().is_empty());
+    w.drive(cx, Duration::from_secs(4));
+    assert_eq!(w.real_deletes().len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_read_only_cluster_makes_no_request_for_delete(cx: &mut TestAppContext) {
+    let w = world_on(cx, "stage-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.press_replicaset(cx);
+    w.drive(cx, Duration::from_secs(1));
+    assert!(w.cluster.recorder.requests().is_empty());
+    assert!(!w.present(cx, "write-dialog") && !w.present(cx, "delete-dialog"));
+    assert_eq!(w.audit(), "");
+}
+
+#[gpui_kit::test]
+fn kinds_delete_is_refused_on_make_no_request_and_open_no_dialog(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    for kind in ["namespaces", "nodes"] {
+        w.press(cx, Everyday::Delete, kind, "shop", "uid-x");
+        w.drive(cx, Duration::from_millis(500));
+        assert!(!w.present(cx, "write-dialog") && !w.present(cx, "delete-dialog"));
+    }
+    assert!(w.cluster.recorder.requests().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_finalizer_leaves_it_terminating_and_the_toast_names_it(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press(
+        cx,
+        Everyday::Delete,
+        "persistentvolumeclaims",
+        "data",
+        "uid-claim",
+    );
+    w.drive(cx, Duration::from_millis(500));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(45));
+    let toast = w.label(cx, "write-toast-status");
+    assert!(toast.contains("Terminating"), "{toast}");
+    assert!(toast.contains("kubernetes.io/pvc-protection"), "{toast}");
+}
+
+#[gpui_kit::test]
+fn the_example_shows_the_impact_and_sends_nothing(cx: &mut TestAppContext) {
+    let w = world(cx, "core-fra");
+    w.press_example(cx, Everyday::Delete, "deployments.apps", "ledger");
+    w.drive(cx, Duration::from_millis(500));
+    // A Deployment owns ReplicaSets: the policy is asked first.
+    assert!(w.present(cx, "delete-dialog"));
+    w.click(cx, "delete-review");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.label(cx, "write-preview-0").contains("ReplicaSet/"));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(8));
+    assert!(w.cluster.recorder.requests().is_empty());
+    assert_eq!(w.audit(), "");
+    assert!(
+        w.label(cx, "write-toast-status")
+            .to_lowercase()
+            .contains("example data")
+    );
+}
