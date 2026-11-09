@@ -169,6 +169,16 @@ impl ExploreView {
                     .test_support()
             }))
             .child(
+                Button::new("explore-query")
+                    .ghost()
+                    .small()
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .icon(IconName::SquareTerminal)
+                    .label("Query")
+                    .tooltip("Open a read-only query tab for this database in the dock")
+                    .on_click(cx.listener(|this, _, _, cx| this.open_query(cx))),
+            )
+            .child(
                 Button::new("explore-reload")
                     .ghost()
                     .small()

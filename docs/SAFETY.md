@@ -167,14 +167,26 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 An unreachable source is unknown, not a failure, and a healthy node shows no failure. The harness runs every check `DiagnosticSnapshot::evaluate` makes from a snapshot, and builds the snapshots through what the collector decides without I/O (CNI provider from file reads, addon presence, service health), so it does not reach what the collector reads from a live API ([DIAGNOSTICS.md](DIAGNOSTICS.md#the-harness)). A new check is run by it without an edit. The first and second tests are the source-down case, the third the healthy case; the fourth fails when a check id is written that no scenario reaches; the fifth keeps each known gap tied to an issue and fails once it stops failing.
 
-### 20. A Teleport child belongs to one explorer tab, runs only from Explore on loopback, never signs in for anyone, and carries no secret
+### 20. A database session never writes and never leaves its read-only transaction
 
-- `safety_g20_closing_the_tab_kills_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
-- `safety_g20_the_child_dies_with_its_proxy` (`crates/freshkube-db/src/teleport/tests.rs`)
-- `safety_g20_a_proxy_that_listens_beyond_loopback_is_killed` (`crates/freshkube-db/src/teleport/tests.rs`)
-- `safety_g20_not_signed_in_is_told_without_running_a_login` (`crates/freshkube-db/src/teleport/tests.rs`)
-- `safety_g20_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
-- `safety_g20_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
+The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.md](features/database-explorer.md)). The database refuses a write, and nothing is retried. The statement checks are a guard and not a sandbox: until a reader role arrives (E4) every live session is the application's own user, so what a read-only transaction lets through but still acts on the server (maintenance, other sessions, files) is refused by name before it is sent.
+
+- `safety_g20_a_write_is_refused_by_the_read_only_transaction_alone_and_nothing_is_applied` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_a_server_that_does_not_hold_read_only_is_never_used` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_statements_that_leave_the_transaction_or_change_the_session_are_not_sent` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_maintenance_and_functions_that_act_on_the_server_are_not_sent` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_sql_built_at_run_time_or_spelled_in_escapes_is_not_sent` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_a_plan_never_analyzes` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_every_request_ends_rolled_back_with_its_locks_let_go_and_nothing_is_committed` (`crates/freshkube-db/src/safety.rs`)
+
+### 21. A Teleport child belongs to one explorer tab, runs only from Explore on loopback, never signs in for anyone, and carries no secret
+
+- `safety_g21_closing_the_tab_kills_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
+- `safety_g21_the_child_dies_with_its_proxy` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_a_proxy_that_listens_beyond_loopback_is_killed` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_not_signed_in_is_told_without_running_a_login` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
 
 ## Known gaps
 

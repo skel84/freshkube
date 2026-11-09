@@ -603,6 +603,227 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
     .unwrap();
 }
 
+#[gpui_kit::test]
+async fn the_query_button_hands_the_dock_the_explorers_session_and_closing_ends_it(
+    cx: &mut TestAppContext,
+) {
+    use super::super::query_link::QueryRequest;
+    use std::{cell::RefCell, rc::Rc};
+    let (_runtime, page, window) = open(cx, Example::Connected).await;
+    let requests: Rc<RefCell<Vec<QueryRequest>>> = Rc::default();
+    let heard = requests.clone();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&page, move |_, request: &QueryRequest, _| {
+            heard.borrow_mut().push(request.clone())
+        })
+    });
+    connected(cx, &page, &window).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("explore-query", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let request = requests.borrow().first().cloned().expect("a request");
+    assert_eq!(request.title, "orders-db");
+    assert!(request.start.is_none());
+    // It hands out the explorer's own session, never a credential.
+    let live = cx.update(|cx| (request.live)(cx)).expect("connected");
+    assert!(live.who.contains("reader Secret"));
+    assert!(!format!("{request:?}").contains("pass"));
+    // Closing the explorer's tab ends it: the request finds nothing.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.click("databases-explore-close-orders-db", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.update(|cx| (request.live)(cx)).is_none());
+}
+
+#[gpui_kit::test]
+async fn a_connection_that_did_not_open_has_no_query_button(cx: &mut TestAppContext) {
+    let (_runtime, _page, window) = open(cx, Example::Refused).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("explore-query").is_none());
+        assert!(window.try_find("explore-retry").is_some());
+    })
+    .unwrap();
+}
+
+/// The Secret is read once per connection, however the Query tab is used
+/// afterwards. This drives the explorer's own live connect (`connect_live`,
+/// the only caller of `read_login`) against a recording fake of the Kubernetes
+/// API and a recording fake Postgres server, then opens Query, runs a
+/// statement, cancels one that hangs, and runs another. Each of them goes over
+/// the real wire; none of them asks the API for anything.
+#[gpui_kit::test]
+async fn the_login_secret_is_read_once_whatever_the_query_tab_runs_and_cancels(
+    cx: &mut TestAppContext,
+) {
+    use crate::desktop::dock::QueryView;
+    use crate::screens::{Live, QueryRequest};
+    use base64::Engine as _;
+    use freshkube_core::{
+        cluster_source::{ClusterAccess, KubeClientSource},
+        databases::example,
+        fake_api::{self, json},
+    };
+    use freshkube_db::fake::FakeServer;
+    use freshkube_ui::level::Mark;
+    use gpui_kit::{px, size};
+    use std::sync::Arc;
+
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    // The fake client's worker runs on this runtime.
+    let _entered = runtime.enter();
+    let database = example::inventory(chrono::Utc::now())
+        .databases
+        .items
+        .into_iter()
+        .find(|d| d.identity.name == "orders-db")
+        .expect("the example has orders-db");
+    let namespace = database.identity.namespace.clone();
+    let b64 = |text: &str| base64::engine::general_purpose::STANDARD.encode(text);
+    let secret = serde_json::json!({
+        "apiVersion": "v1", "kind": "Secret",
+        "metadata": {"name": "orders-db-app", "namespace": namespace},
+        "data": {"username": b64("shop_app"), "password": b64("hunter2"), "dbname": b64("shop")},
+    });
+    let not_found = serde_json::json!({
+        "kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 404,
+        "reason": "NotFound", "message": "not found",
+    });
+    let login_path = format!("/api/v1/namespaces/{namespace}/secrets/orders-db-app");
+    let (client, recorder) = fake_api::client(move |request| {
+        let secrets = format!("/api/v1/namespaces/{namespace}/secrets/");
+        if request.method != http::Method::GET {
+            return None;
+        }
+        if request.path == login_path {
+            Some(json(200, &secret))
+        } else if request.path.starts_with(&secrets) || request.path.contains("/clusters/") {
+            // The CA Secret and the Cluster object: not there.
+            Some(json(404, &not_found))
+        } else {
+            None
+        }
+    });
+    struct Source(kube::Client);
+    impl KubeClientSource for Source {
+        fn client(
+            &self,
+        ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>>
+        {
+            let client = self.0.clone();
+            Box::pin(async move { Ok(client) })
+        }
+    }
+    let access = ClusterAccess::Live(Arc::new(Source(client)));
+    let server = runtime.block_on(FakeServer::start());
+    let port = server.port();
+    let connected = runtime
+        .block_on(super::connect_live(access, database, port, true))
+        .map_err(|f| format!("{f:?}"))
+        .expect("the explorer connects to the fake server");
+    assert!(connected.app_user);
+    let login_reads = |lines: &[String]| {
+        lines
+            .iter()
+            .filter(|l| l.contains("/secrets/orders-db-app"))
+            .count()
+    };
+    let after_connect = recorder.lines();
+    assert_eq!(login_reads(&after_connect), 1, "{after_connect:?}");
+
+    // Open Query on that session.
+    let session = connected.session.clone();
+    let (who, encryption, app_user) = (
+        connected.who.clone(),
+        connected.encryption,
+        connected.app_user,
+    );
+    let request = QueryRequest {
+        start: None,
+        key: "uid".into(),
+        title: "orders-db".into(),
+        live: std::rc::Rc::new(move |_| {
+            Some(Live {
+                session: session.clone(),
+                who: who.clone(),
+                route: None,
+                encryption,
+                app_user,
+            })
+        }),
+    };
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        crate::theme::install(cx)
+    });
+    let handle = runtime.handle().clone();
+    let mut view = None;
+    let window = cx.open_window(size(px(1100.), px(700.)), |window, cx| {
+        let made = cx.new(|cx| QueryView::new(handle, request, Mark::Guarded, window, cx));
+        view = Some(made.clone());
+        gpui_kit::component::Root::new(made, window, cx)
+    });
+    let view = view.unwrap();
+    let run = |cx: &mut TestAppContext, text: &str| {
+        let text = text.to_owned();
+        cx.update_window(window.into(), |_, window, cx| {
+            view.update(cx, |v, cx| v.start_example(text, window, cx))
+        })
+        .unwrap();
+    };
+
+    run(cx, "select 1");
+    cx.wait_for_io(window.into(), |_, cx| !view.read(cx).running())
+        .await;
+    // A statement the server holds, then Cancel.
+    run(cx, "select pg_sleep(60)");
+    cx.wait_for_io(window.into(), |_, cx| view.read(cx).cancellable())
+        .await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("query-cancel", cx);
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, cx| !view.read(cx).running())
+        .await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("query-state-cancelled").is_some());
+    })
+    .unwrap();
+    // And run again, on the same session, after the cancel.
+    run(cx, "select 2");
+    cx.wait_for_io(window.into(), |_, cx| !view.read(cx).running())
+        .await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("query-summary").is_some());
+        assert!(window.try_find("query-state-cancelled").is_none());
+    })
+    .unwrap();
+
+    // The server saw one cancel request, on its own connection; and the
+    // Kubernetes API was asked nothing since the connect: still one read of
+    // the login Secret.
+    assert_eq!(server.cancels(), 1);
+    let lines = recorder.lines();
+    assert_eq!(lines, after_connect, "the API was asked again: {lines:?}");
+    assert_eq!(login_reads(&lines), 1);
+}
+
 // Teleport (E3).
 
 #[gpui_kit::test]

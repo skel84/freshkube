@@ -23,7 +23,10 @@ mod topology;
 mod workloads;
 
 pub(crate) use access::AccessScreen;
-pub(crate) use databases::{CorootInput, DatabasesScreen};
+pub(crate) use databases::{
+    CorootInput, DatabasesScreen,
+    query_link::{Live, QueryRequest, Shared},
+};
 pub(crate) use diagnostics::DiagnosticsScreen;
 pub(crate) use etcd::EtcdScreen;
 pub(crate) use gateways::{GatewaysScreen, Mode as GatewaysMode};

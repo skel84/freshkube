@@ -106,7 +106,7 @@ fn settings_that_could_be_options_or_hold_spaces_are_refused() {
 }
 
 #[test]
-fn safety_g20_the_childs_arguments_hold_no_secret() {
+fn safety_g21_the_childs_arguments_hold_no_secret() {
     let a = access(None);
     let all: Vec<String> = [a.status_args(), a.list_args(), a.proxy_args("orders-db-ro")].concat();
     assert_eq!(
@@ -259,7 +259,7 @@ async fn a_proxy_that_is_ready_listens_on_loopback() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn safety_g20_the_child_gets_only_the_environment_tsh_needs() {
+async fn safety_g21_the_child_gets_only_the_environment_tsh_needs() {
     let dir = tempfile_dir("env");
     let _proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
     let env = fs::read_to_string(dir.join("env")).unwrap();
@@ -277,7 +277,7 @@ async fn safety_g20_the_child_gets_only_the_environment_tsh_needs() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn safety_g20_the_child_dies_with_its_proxy() {
+async fn safety_g21_the_child_dies_with_its_proxy() {
     let dir = tempfile_dir("dies");
     let proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
     let pid = proxy.pid().unwrap();
@@ -299,7 +299,7 @@ async fn wait_gone(pid: u32) {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn safety_g20_not_signed_in_is_told_without_running_a_login() {
+async fn safety_g21_not_signed_in_is_told_without_running_a_login() {
     let dir = tempfile_dir("login");
     let status = "echo 'ERROR: Not logged in.' >&2; exit 1";
     let error = start(&dir, status, LISTED, READY).await.unwrap_err();
@@ -374,7 +374,7 @@ async fn a_proxy_that_fails_shows_redacted_stderr_and_the_command() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn safety_g20_a_proxy_that_listens_beyond_loopback_is_killed() {
+async fn safety_g21_a_proxy_that_listens_beyond_loopback_is_killed() {
     let dir = tempfile_dir("exposed");
     let proxy = format!(
         "echo $$ > '{}'; echo 'tunnel on 0.0.0.0:41234'; exec sleep 300",
