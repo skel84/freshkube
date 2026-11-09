@@ -15,6 +15,8 @@ pub mod fake;
 pub mod limits;
 pub mod postgres;
 pub mod readonly;
+#[cfg(test)]
+mod safety;
 pub mod session;
 pub mod statements;
 pub mod wire;

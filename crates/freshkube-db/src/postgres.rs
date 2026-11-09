@@ -51,6 +51,19 @@ impl<W: Wire> Postgres<W> {
         Ok(Self { wire, limits })
     }
 
+    /// Ends whatever transaction the connection is in, and lets go of any
+    /// session-level advisory lock. The refused functions are how a statement
+    /// would take one; this is the second line.
+    #[allow(
+        clippy::result_large_err,
+        reason = "DbError is DBFlux's type, and large; every read here returns it"
+    )]
+    async fn end_transaction(&mut self) -> Result<(), DbError> {
+        self.wire.simple("ROLLBACK").await?;
+        self.wire.simple("SELECT pg_advisory_unlock_all()").await?;
+        Ok(())
+    }
+
     /// One request of a caller's: checked, then run in a read-only transaction
     /// that is always rolled back. Reads at most `row_cap + 1` rows' worth is the
     /// caller's SQL (`LIMIT`); this cuts anything longer.
@@ -71,17 +84,17 @@ impl<W: Wire> Postgres<W> {
         readonly::check_statement(sql).map_err(|r: Refusal| DbError::query_failed(r.explain()))?;
         // A request cut off earlier may have left the connection inside its
         // transaction; end any before starting this one.
-        self.wire.simple("ROLLBACK").await?;
+        self.end_transaction().await?;
         self.wire.simple("BEGIN READ ONLY").await?;
         // The server's word that this is one statement, whatever our
         // splitter made of the text.
         if let Err(e) = self.wire.single_statement(sql).await {
-            let _ = self.wire.simple("ROLLBACK").await;
+            let _ = self.end_transaction().await;
             return Err(e);
         }
         let result = self.wire.simple(sql).await;
         // The rollback also ends an aborted transaction after a failed statement.
-        let rolled = self.wire.simple("ROLLBACK").await;
+        let rolled = self.end_transaction().await;
         let mut rows = result?;
         rolled?;
         rows.rows.truncate(keep);
@@ -103,16 +116,15 @@ impl<W: Wire> Postgres<W> {
     /// is read through a cursor, `row_cap + 1` rows at most. The database,
     /// not this function, refuses a write; nothing is retried.
     async fn run_statement(&mut self, sql: &str) -> Result<QueryResult, QueryError> {
-        readonly::check_statement(sql)
-            .map_err(|r: Refusal| QueryError::NotSent(r.explain().into()))?;
+        readonly::check_statement(sql).map_err(|r: Refusal| QueryError::NotSent(r.explain()))?;
         let started = std::time::Instant::now();
         let cap = self.limits.rows;
         let cursor = returns_rows(&readonly::leading_word(sql));
-        self.wire.simple("ROLLBACK").await?;
+        self.end_transaction().await?;
         self.wire.simple("BEGIN READ ONLY").await?;
         let result = self.run_in_transaction(sql, cursor, cap).await;
         // Also ends an aborted transaction after a failed statement.
-        let rolled = self.wire.simple("ROLLBACK").await;
+        let rolled = self.end_transaction().await;
         let mut rows = result?;
         rolled?;
         let capped = rows.rows.len() > cap;
@@ -308,14 +320,13 @@ impl<W: Wire> Session for Postgres<W> {
     }
 
     async fn explain(&mut self, sql: &str) -> Result<Plan, QueryError> {
-        // A statement that is already a plan is run as it is.
-        let text = if readonly::leading_word(sql) == "explain" {
-            sql.to_string()
-        } else {
-            format!("EXPLAIN (FORMAT TEXT) {sql}")
-        };
-        readonly::check_statement(sql)
-            .map_err(|r: Refusal| QueryError::NotSent(r.explain().into()))?;
+        // A statement that is already a plan is not wrapped, and is not run
+        // here: `explain analyze` would execute what it explains.
+        if readonly::leading_word(sql) == "explain" {
+            return Err(QueryError::NotSent("Already a plan; use Run".into()));
+        }
+        readonly::check_statement(sql).map_err(|r: Refusal| QueryError::NotSent(r.explain()))?;
+        let text = format!("EXPLAIN (FORMAT TEXT) {sql}");
         let rows = self.read_up_to(&text, MAX_PLAN_LINES + 1).await?;
         let mut lines: Vec<String> = rows
             .rows
@@ -365,6 +376,14 @@ mod tests {
     use crate::fake::{FakeWire, text_rows};
     use std::time::Duration;
 
+    const UNLOCK: &str = "SELECT pg_advisory_unlock_all()";
+
+    /// The request ended rolled back, with the session's advisory locks let go.
+    fn assert_ended(wire: &FakeWire) {
+        let sent = wire.sent();
+        assert_eq!(sent[sent.len() - 2..], ["ROLLBACK", UNLOCK], "{sent:?}");
+    }
+
     async fn open(wire: &FakeWire, limits: Limits) -> Postgres<FakeWire> {
         Postgres::open(wire.clone(), limits).await.unwrap()
     }
@@ -409,10 +428,12 @@ mod tests {
             wire.sent()[before..],
             [
                 "ROLLBACK",
+                UNLOCK,
                 "BEGIN READ ONLY",
                 "PARSE SELECT 1",
                 "SELECT 1",
-                "ROLLBACK"
+                "ROLLBACK",
+                UNLOCK
             ]
         );
     }
@@ -425,8 +446,8 @@ mod tests {
         let before = wire.sent().len();
         let error = session.read("SELECT boom").await.unwrap_err();
         assert!(matches!(error, DbError::Timeout));
-        assert_eq!(wire.sent().last().unwrap(), "ROLLBACK");
-        assert_eq!(wire.sent().len() - before, 5);
+        assert_ended(&wire);
+        assert_eq!(wire.sent().len() - before, 7);
     }
 
     #[tokio::test]
@@ -442,7 +463,7 @@ mod tests {
             !sent.iter().any(|s| s == "SELECT 1 /* hidden */"),
             "{sent:?}"
         );
-        assert_eq!(sent.last().unwrap(), "ROLLBACK");
+        assert_ended(&wire);
     }
 
     #[tokio::test]
@@ -578,7 +599,7 @@ mod tests {
                 1,
                 "{sql}"
             );
-            assert_eq!(sent.last().unwrap(), "ROLLBACK");
+            assert_ended(&wire);
         }
         assert!(wire.applied().is_empty(), "{:?}", wire.applied());
         assert!(!wire.sent().iter().any(|s| s.contains("COMMIT")));
@@ -633,11 +654,13 @@ mod tests {
             wire.sent()[before..],
             [
                 "ROLLBACK",
+                UNLOCK,
                 "BEGIN READ ONLY",
                 "PARSE select id from big",
                 "DECLARE freshkube_query NO SCROLL CURSOR FOR select id from big",
                 "FETCH 6 FROM freshkube_query",
-                "ROLLBACK"
+                "ROLLBACK",
+                UNLOCK
             ]
         );
     }
@@ -663,7 +686,7 @@ mod tests {
             error,
             QueryError::Failed("relation \"nope\" does not exist".into())
         );
-        assert_eq!(wire.sent().last().unwrap(), "ROLLBACK");
+        assert_ended(&wire);
         wire.time_out("slow");
         let error = session.run("select * from slow").await.unwrap_err();
         assert_eq!(error, QueryError::TimedOut);
@@ -690,11 +713,11 @@ mod tests {
         assert_eq!(error, QueryError::Cancelled);
         assert_eq!(wire.cancels(), 1);
         // The cancelled statement's transaction was rolled back.
-        assert_eq!(wire.sent().last().unwrap(), "ROLLBACK");
+        assert_ended(&wire);
     }
 
     #[tokio::test]
-    async fn a_plan_is_explain_without_analyze_and_a_plan_is_not_wrapped_twice() {
+    async fn a_plan_is_explain_without_analyze_and_a_statement_that_is_a_plan_is_not_sent() {
         let wire = FakeWire::new();
         wire.answer(
             "EXPLAIN",
@@ -717,13 +740,70 @@ mod tests {
                 .iter()
                 .any(|s| s.to_uppercase().contains("ANALYZE"))
         );
-        let before = wire.sent().len();
-        session.explain("explain select 1").await.unwrap();
-        assert!(wire.sent()[before..].contains(&"explain select 1".to_string()));
+        // Anything that already starts with EXPLAIN is not sent at all, so
+        // `explain analyze` never runs the statement it explains.
+        let before = wire.sent();
+        for sql in [
+            "explain select 1",
+            "explain analyze select 1",
+            "EXPLAIN (ANALYSE) select 1",
+            "explain (analyse true) delete from orders",
+        ] {
+            assert_eq!(
+                session.explain(sql).await.unwrap_err(),
+                QueryError::NotSent("Already a plan; use Run".into()),
+                "{sql}"
+            );
+        }
+        assert_eq!(wire.sent(), before);
         // A request that would change the session is not explained either.
         assert!(matches!(
             session.explain("set role x").await.unwrap_err(),
             QueryError::NotSent(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_real_wire_session_runs_a_statement_and_is_cancelled_through_its_handle() {
+        use crate::{
+            credentials::Password,
+            fake::FakeServer,
+            wire::{Target, TlsPlan, TokioPostgres},
+        };
+        let server = FakeServer::start().await;
+        let plan = TlsPlan {
+            server_name: "orders-db-ro.staging.svc".into(),
+            ca_pem: None,
+        };
+        let (wire, _) = TokioPostgres::connect(
+            Target {
+                address: "127.0.0.1".parse().unwrap(),
+                port: server.port(),
+                user: "shop_reader",
+                database: "shop",
+            },
+            &Password::new("hunter2"),
+            &Limits::default(),
+            &plan,
+        )
+        .await
+        .map_err(|e| e.to_string())
+        .unwrap();
+        let mut session = Postgres::open(wire, Limits::default()).await.unwrap();
+        let result = session.run("select 1").await.unwrap();
+        assert_eq!(result.rows.len(), 1);
+        let cancel = session.canceller();
+        let running = tokio::spawn(async move { session.run("select pg_sleep(60)").await });
+        // The statement is with the server; the session is busy, and Cancel
+        // does not need it.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        cancel.cancel().await.unwrap();
+        let error = tokio::time::timeout(std::time::Duration::from_secs(10), running)
+            .await
+            .expect("the statement ended")
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error, QueryError::Cancelled);
+        assert_eq!(server.cancels(), 1);
     }
 }

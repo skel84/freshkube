@@ -16,22 +16,98 @@ pub enum Refusal {
     /// More than one statement in one request.
     Several,
     Empty,
+    /// A first word that passes `BEGIN READ ONLY` but does maintenance and
+    /// takes exclusive locks: `REINDEX`, `CLUSTER`, `VACUUM`, `ANALYZE`,
+    /// `CHECKPOINT`.
+    Maintenance(&'static str),
+    /// A function that acts on the server or other sessions without writing,
+    /// so the read-only transaction lets it through.
+    Function(&'static str),
+    /// `EXPLAIN ANALYZE` runs the statement it explains.
+    Analyze,
 }
 
 impl Refusal {
-    pub fn explain(self) -> &'static str {
+    pub fn explain(self) -> String {
         match self {
             Self::SessionSetting => {
                 "This session is read-only. SET and RESET would change how it runs, so they are not sent."
+                    .into()
             }
             Self::Transaction => {
                 "Each request already runs in its own read-only transaction. BEGIN, COMMIT and ROLLBACK are not sent."
+                    .into()
             }
-            Self::Several => "One statement at a time.",
-            Self::Empty => "Nothing to run.",
+            Self::Several => "One statement at a time.".into(),
+            Self::Empty => "Nothing to run.".into(),
+            Self::Maintenance(word) => format!(
+                "{} {}. It is maintenance on the database, so it is not sent.",
+                word.to_uppercase(),
+                maintenance_why(word)
+            ),
+            Self::Function(name) => format!(
+                "{name}() {}, which a read-only transaction does not stop, so it is not sent.",
+                function_why(name)
+            ),
+            Self::Analyze => {
+                "EXPLAIN ANALYZE runs the statement it explains, so it is not sent. Plan shows the plan without running it."
+                    .into()
+            }
         }
     }
 }
+
+fn maintenance_why(word: &str) -> &'static str {
+    match word {
+        "reindex" => "rebuilds indexes under exclusive locks",
+        "cluster" => "rewrites a table under an exclusive lock",
+        "vacuum" => "rewrites and locks tables and uses the server's disk and CPU",
+        "checkpoint" => "forces a write-heavy checkpoint on the server",
+        _ => "reads whole tables to refresh statistics and takes locks",
+    }
+}
+
+fn function_why(name: &str) -> &'static str {
+    match name {
+        "pg_terminate_backend" | "pg_cancel_backend" => "ends other sessions' work",
+        "pg_reload_conf" | "pg_rotate_logfile" => "changes how the server runs",
+        "pg_notify" => "sends notifications to other sessions",
+        "set_config" => "can turn this session's settings, such as read-only, off",
+        "lo_import" | "lo_export" => "reads or writes files on the server",
+        "dblink" => "opens connections that are not read-only",
+        _ => "holds locks that block the application",
+    }
+}
+
+/// The first words refused because they are maintenance.
+pub(crate) const MAINTENANCE: [&str; 6] = [
+    "reindex",
+    "cluster",
+    "vacuum",
+    "analyze",
+    "analyse",
+    "checkpoint",
+];
+
+/// Functions refused by name, whole word, anywhere in a statement.
+pub(crate) const FUNCTIONS: [&str; 16] = [
+    "pg_terminate_backend",
+    "pg_cancel_backend",
+    "pg_reload_conf",
+    "pg_rotate_logfile",
+    "pg_notify",
+    "set_config",
+    "pg_advisory_lock",
+    "pg_advisory_lock_shared",
+    "pg_advisory_xact_lock",
+    "pg_advisory_xact_lock_shared",
+    "pg_try_advisory_lock",
+    "pg_try_advisory_lock_shared",
+    "pg_try_advisory_xact_lock",
+    "pg_try_advisory_xact_lock_shared",
+    "lo_import",
+    "lo_export",
+];
 
 /// Checks one request. `Ok` means only that it is a single statement that does
 /// not touch the session; the read-only transaction still decides what it may do.
@@ -39,7 +115,9 @@ pub fn check_statement(sql: &str) -> Result<(), Refusal> {
     let statements = split(sql);
     match statements.as_slice() {
         [] => Err(Refusal::Empty),
-        [one] => first_word_refusal(one),
+        [one] => first_word_refusal(one)
+            .and_then(|()| explain_analyze(one))
+            .and_then(|()| refused_function(one)),
         _ => Err(Refusal::Several),
     }
 }
@@ -69,8 +147,65 @@ fn first_word_refusal(statement: &str) -> Result<(), Refusal> {
         }
         "begin" | "start" | "commit" | "end" | "rollback" | "abort" | "savepoint" | "release"
         | "prepare" => Err(Refusal::Transaction),
-        _ => Ok(()),
+        word => match MAINTENANCE.iter().find(|m| **m == word) {
+            Some(found) => Err(Refusal::Maintenance(found)),
+            None => Ok(()),
+        },
     }
+}
+
+/// `EXPLAIN ANALYZE` in any spelling: `explain analyze`, `explain verbose
+/// analyse`, `explain (costs off, analyze)`. An option list that mentions
+/// ANALYZE at all is refused, even `analyze false`.
+fn explain_analyze(statement: &str) -> Result<(), Refusal> {
+    if word_of(statement) != "explain" {
+        return Ok(());
+    }
+    let after = statement
+        .trim_start_matches(|c: char| c == '(' || c.is_whitespace())
+        .get("explain".len()..)
+        .unwrap_or("")
+        .trim_start();
+    let options = if let Some(list) = after.strip_prefix('(') {
+        list.split(')').next().unwrap_or("")
+    } else {
+        // Bare options end at the first word that is not one of them.
+        let end = after
+            .split_whitespace()
+            .take_while(|w| {
+                matches!(
+                    w.to_ascii_lowercase().as_str(),
+                    "analyze" | "analyse" | "verbose"
+                )
+            })
+            .map(|w| w.len() + 1)
+            .sum::<usize>();
+        &after[..end.min(after.len())]
+    };
+    let found = words(options).any(|w| w == "analyze" || w == "analyse");
+    if found { Err(Refusal::Analyze) } else { Ok(()) }
+}
+
+/// Lowercased identifier words of `text`: runs of letters, digits, `_` and `$`.
+fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+/// A refused function named anywhere in the statement, as a whole word. The
+/// text is scanned with its comments gone and its strings in: a function
+/// run from a `DO` block's dollar quote is named inside one.
+fn refused_function(statement: &str) -> Result<(), Refusal> {
+    for word in words(statement) {
+        if let Some(found) = FUNCTIONS.iter().find(|f| **f == word) {
+            return Err(Refusal::Function(found));
+        }
+        if word.starts_with("dblink") {
+            return Err(Refusal::Function("dblink"));
+        }
+    }
+    Ok(())
 }
 
 /// Splits on `;` outside quotes, identifiers, dollar quotes and comments, and
@@ -242,5 +377,97 @@ mod tests {
         assert_eq!(check_statement("SELECT 1; SELECT 2"), Err(Refusal::Several));
         assert_eq!(check_statement(""), Err(Refusal::Empty));
         assert_eq!(check_statement(" ; -- nothing\n"), Err(Refusal::Empty));
+    }
+
+    #[test]
+    fn maintenance_first_words_are_refused_with_their_reason() {
+        for (sql, word) in [
+            ("REINDEX TABLE orders", "reindex"),
+            ("cluster orders using orders_pkey", "cluster"),
+            ("VACUUM FULL orders", "vacuum"),
+            ("analyze orders", "analyze"),
+            ("ANALYSE", "analyse"),
+            ("  /* x */ checkpoint", "checkpoint"),
+        ] {
+            let refusal = check_statement(sql).unwrap_err();
+            assert_eq!(refusal, Refusal::Maintenance(word), "{sql}");
+            assert!(
+                refusal.explain().starts_with(&word.to_uppercase()),
+                "{}",
+                refusal.explain()
+            );
+        }
+        // A column or table named like one is not a first word.
+        assert_eq!(check_statement("select vacuum from t"), Ok(()));
+    }
+
+    #[test]
+    fn refused_functions_are_refused_as_whole_words_in_any_case_anywhere() {
+        for name in FUNCTIONS {
+            for sql in [
+                format!("select {name}(1)"),
+                format!("SELECT {}(1)", name.to_uppercase()),
+                format!("select 1 where exists (select {name}(2))"),
+                format!("select pg_catalog.{name}(1)"),
+                format!("select \"{name}\"(1)"),
+                format!("do $$ begin perform {name}(1); end $$"),
+            ] {
+                assert_eq!(check_statement(&sql), Err(Refusal::Function(name)), "{sql}");
+            }
+        }
+        for sql in [
+            "select dblink('host=x', 'select 1')",
+            "select dblink_connect('x')",
+            "select * from DBLINK_EXEC('x','y')",
+        ] {
+            assert_eq!(
+                check_statement(sql),
+                Err(Refusal::Function("dblink")),
+                "{sql}"
+            );
+        }
+        let words = Refusal::Function("set_config").explain();
+        assert!(
+            words.contains("set_config()") && words.contains("read-only"),
+            "{words}"
+        );
+    }
+
+    #[test]
+    fn a_longer_name_is_not_a_refused_function_and_a_comment_is_not_a_call() {
+        for sql in [
+            "select my_set_config(1)",
+            "select pg_notify_all",
+            "select set_config_value from t",
+            "select 1 -- pg_notify('x', 'y')",
+            "select /* pg_terminate_backend(1) */ 1",
+        ] {
+            assert_eq!(check_statement(sql), Ok(()), "{sql}");
+        }
+    }
+
+    #[test]
+    fn explain_analyze_is_refused_in_every_spelling_and_a_plain_explain_is_not() {
+        for sql in [
+            "explain analyze select 1",
+            "EXPLAIN ANALYSE select 1",
+            "explain (analyze) select 1",
+            "explain (analyse true, costs off) select 1",
+            "explain (costs off, ANALYZE) select 1",
+            "explain verbose analyze select 1",
+            "explain analyze verbose select 1",
+            "explain (analyze false) select 1",
+        ] {
+            assert_eq!(check_statement(sql), Err(Refusal::Analyze), "{sql}");
+        }
+        for sql in [
+            "explain select 1",
+            "explain verbose select 1",
+            "explain (costs off, format text) select 1",
+            "explain select 'analyze'",
+            "explain select analyze from t",
+        ] {
+            assert_eq!(check_statement(sql), Ok(()), "{sql}");
+        }
     }
 }

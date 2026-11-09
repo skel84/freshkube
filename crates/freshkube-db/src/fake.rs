@@ -82,6 +82,12 @@ impl FakeWire {
         wire
     }
 
+    /// The server's `default_transaction_read_only` turns off after the
+    /// session connected, so only each request's `BEGIN READ ONLY` is left.
+    pub fn turn_setting_off(&self) {
+        *self.read_only_setting.lock().unwrap() = "off".into();
+    }
+
     pub fn ignoring_read_only() -> Self {
         let wire = Self::new();
         *wire.read_only_setting.lock().unwrap() = "off".into();
@@ -425,7 +431,7 @@ impl Session for FakeSession {
     }
 
     async fn run(&mut self, sql: &str) -> Result<QueryResult, QueryError> {
-        readonly::check_statement(sql).map_err(|r| QueryError::NotSent(r.explain().to_string()))?;
+        readonly::check_statement(sql).map_err(|r| QueryError::NotSent(r.explain()))?;
         let started = std::time::Instant::now();
         let word = readonly::leading_word(sql);
         if writes(sql) {
@@ -466,7 +472,10 @@ impl Session for FakeSession {
     }
 
     async fn explain(&mut self, sql: &str) -> Result<Plan, QueryError> {
-        readonly::check_statement(sql).map_err(|r| QueryError::NotSent(r.explain().to_string()))?;
+        if readonly::leading_word(sql) == "explain" {
+            return Err(QueryError::NotSent("Already a plan; use Run".into()));
+        }
+        readonly::check_statement(sql).map_err(|r| QueryError::NotSent(r.explain()))?;
         let table = from_table(sql).unwrap_or_else(|| "orders".into());
         let rows = if table == "orders" { ORDERS } else { 12 };
         Ok(Plan {
@@ -523,5 +532,242 @@ impl Session for FakeSession {
             capped: total > cap,
             row_cap: cap,
         })
+    }
+}
+
+/// A Postgres server that speaks just enough of the protocol for a real
+/// [`crate::wire::TokioPostgres`] to log in without a password, answer the
+/// session's settings and statements, and be cancelled. It records every byte
+/// each connection sent, so a test sees what really crossed the socket. Its
+/// backend key is fixed, and a statement containing `pg_sleep` runs until a
+/// cancel request carrying that key arrives on another connection.
+pub struct FakeServer {
+    port: u16,
+    connections: Arc<Mutex<Vec<Vec<u8>>>>,
+    cancels: Arc<Mutex<usize>>,
+    _accept: tokio::task::JoinHandle<()>,
+}
+
+const BACKEND_PID: i32 = 4242;
+const BACKEND_KEY: i32 = 777;
+
+impl FakeServer {
+    pub async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let connections = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let cancels = Arc::new(Mutex::new(0usize));
+        let cancel = Arc::new(Notify::new());
+        let (seen, counted) = (connections.clone(), cancels.clone());
+        let accept = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let slot = {
+                    let mut all = seen.lock().unwrap();
+                    all.push(Vec::new());
+                    all.len() - 1
+                };
+                tokio::spawn(serve(
+                    stream,
+                    seen.clone(),
+                    slot,
+                    cancel.clone(),
+                    counted.clone(),
+                ));
+            }
+        });
+        Self {
+            port,
+            connections,
+            cancels,
+            _accept: accept,
+        }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Every connection's bytes, in the order they were opened.
+    pub fn connections(&self) -> Vec<Vec<u8>> {
+        self.connections.lock().unwrap().clone()
+    }
+
+    /// How many cancel requests with the right key arrived.
+    pub fn cancels(&self) -> usize {
+        *self.cancels.lock().unwrap()
+    }
+
+    /// The bytes a cancel request is, for a test that compares them.
+    pub fn cancel_packet() -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.extend_from_slice(&16i32.to_be_bytes());
+        packet.extend_from_slice(&80877102i32.to_be_bytes());
+        packet.extend_from_slice(&BACKEND_PID.to_be_bytes());
+        packet.extend_from_slice(&BACKEND_KEY.to_be_bytes());
+        packet
+    }
+}
+
+fn message(kind: u8, body: &[u8]) -> Vec<u8> {
+    let mut out = vec![kind];
+    out.extend_from_slice(&(body.len() as i32 + 4).to_be_bytes());
+    out.extend_from_slice(body);
+    out
+}
+
+fn ready() -> Vec<u8> {
+    message(b'Z', b"I")
+}
+
+fn command(tag: &str) -> Vec<u8> {
+    let mut body = tag.as_bytes().to_vec();
+    body.push(0);
+    message(b'C', &body)
+}
+
+fn rows(columns: &[&str], data: &[&[&str]]) -> Vec<u8> {
+    let mut header = (columns.len() as i16).to_be_bytes().to_vec();
+    for name in columns {
+        header.extend_from_slice(name.as_bytes());
+        header.push(0);
+        header.extend_from_slice(&0i32.to_be_bytes());
+        header.extend_from_slice(&0i16.to_be_bytes());
+        header.extend_from_slice(&25i32.to_be_bytes());
+        header.extend_from_slice(&(-1i16).to_be_bytes());
+        header.extend_from_slice(&(-1i32).to_be_bytes());
+        header.extend_from_slice(&0i16.to_be_bytes());
+    }
+    let mut out = message(b'T', &header);
+    for row in data {
+        let mut body = (row.len() as i16).to_be_bytes().to_vec();
+        for cell in *row {
+            body.extend_from_slice(&(cell.len() as i32).to_be_bytes());
+            body.extend_from_slice(cell.as_bytes());
+        }
+        out.extend(message(b'D', &body));
+    }
+    out.extend(command(&format!("SELECT {}", data.len())));
+    out
+}
+
+fn error(code: &str, text: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (field, value) in [(b'S', "ERROR"), (b'C', code), (b'M', text)] {
+        body.push(field);
+        body.extend_from_slice(value.as_bytes());
+        body.push(0);
+    }
+    body.push(0);
+    message(b'E', &body)
+}
+
+/// What the server says to one simple query.
+fn answer(sql: &str) -> Vec<u8> {
+    let mut out = if sql.starts_with("SHOW default_transaction_read_only") {
+        rows(&["default_transaction_read_only"], &[&["on"]])
+    } else if sql.contains("pg_stat_ssl") {
+        rows(&["ssl"], &[&["f"]])
+    } else if sql.starts_with("FETCH") {
+        rows(&["?column?"], &[&["1"]])
+    } else {
+        command("OK")
+    };
+    out.extend(ready());
+    out
+}
+
+async fn serve(
+    mut stream: tokio::net::TcpStream,
+    seen: Arc<Mutex<Vec<Vec<u8>>>>,
+    slot: usize,
+    cancel: Arc<Notify>,
+    counted: Arc<Mutex<usize>>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    async fn take(
+        stream: &mut tokio::net::TcpStream,
+        n: usize,
+        record: &Mutex<Vec<Vec<u8>>>,
+        slot: usize,
+    ) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; n];
+        stream.read_exact(&mut buf).await.ok()?;
+        record.lock().unwrap()[slot].extend_from_slice(&buf);
+        Some(buf)
+    }
+    // The untyped opening: an SSL request, a cancel request or the startup.
+    loop {
+        let Some(head) = take(&mut stream, 8, &seen, slot).await else {
+            return;
+        };
+        let length = i32::from_be_bytes(head[0..4].try_into().unwrap()) as usize;
+        let code = i32::from_be_bytes(head[4..8].try_into().unwrap());
+        let Some(rest) = take(&mut stream, length.saturating_sub(8), &seen, slot).await else {
+            return;
+        };
+        match code {
+            80877103 => {
+                let _ = stream.write_all(b"N").await;
+            }
+            80877102 => {
+                let pid = i32::from_be_bytes(rest[0..4].try_into().unwrap());
+                let key = i32::from_be_bytes(rest[4..8].try_into().unwrap());
+                if (pid, key) == (BACKEND_PID, BACKEND_KEY) {
+                    *counted.lock().unwrap() += 1;
+                    cancel.notify_one();
+                }
+                return;
+            }
+            _ => break,
+        }
+    }
+    let mut hello = vec![b'R', 0, 0, 0, 8, 0, 0, 0, 0];
+    let mut key = Vec::new();
+    key.extend_from_slice(&BACKEND_PID.to_be_bytes());
+    key.extend_from_slice(&BACKEND_KEY.to_be_bytes());
+    hello.extend(message(b'K', &key));
+    hello.extend(ready());
+    if stream.write_all(&hello).await.is_err() {
+        return;
+    }
+    // Typed messages: simple queries, and the extended protocol's prepare.
+    loop {
+        let Some(head) = take(&mut stream, 5, &seen, slot).await else {
+            return;
+        };
+        let kind = head[0];
+        let length = i32::from_be_bytes(head[1..5].try_into().unwrap()) as usize;
+        let Some(body) = take(&mut stream, length.saturating_sub(4), &seen, slot).await else {
+            return;
+        };
+        let out = match kind {
+            b'Q' => {
+                let sql =
+                    String::from_utf8_lossy(&body[..body.len().saturating_sub(1)]).into_owned();
+                if sql.contains("pg_sleep") {
+                    cancel.notified().await;
+                    let mut out = error("57014", "canceling statement due to user request");
+                    out.extend(ready());
+                    out
+                } else {
+                    answer(&sql)
+                }
+            }
+            b'P' => message(b'1', &[]),
+            b'D' => {
+                let mut out = message(b't', &0i16.to_be_bytes());
+                out.extend(message(b'n', &[]));
+                out
+            }
+            b'S' => ready(),
+            b'X' => return,
+            _ => Vec::new(),
+        };
+        if !out.is_empty() && stream.write_all(&out).await.is_err() {
+            return;
+        }
     }
 }
