@@ -132,6 +132,7 @@ impl Dock {
     pub(crate) fn open_followed_logs(
         &mut self,
         request: LogsRequest,
+        keyboard_in_dock: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -144,7 +145,7 @@ impl Dock {
         let key = TabKey::of(&request.target.identity, request.target.kind.is_pod());
         if let Some(tab) = self.tabs.iter().rev().find(|tab| tab.key.shows(&key)) {
             let id = tab.id;
-            self.show_tab(id, cx);
+            self.show_followed_tab(id, keyboard_in_dock, cx);
             return;
         }
         if let Some(old) = self.follow_tab.take() {
@@ -156,6 +157,18 @@ impl Dock {
         let id = self.add_tab(origin, request.target, request.at, window, cx);
         self.follow_tab = Some(id);
         self.start_tab(id, cx);
+        self.show_followed_tab(id, keyboard_in_dock, cx);
+    }
+
+    /// Shows a followed log read's tab, unless the keyboard is in the dock:
+    /// selecting it would draw the Agent tab's Ask input away, and the focus
+    /// with it. The tab then waits, opened and not selected, in the strip.
+    fn show_followed_tab(&mut self, id: u64, keyboard_in_dock: bool, cx: &mut Context<Self>) {
+        if keyboard_in_dock {
+            self.sync_shown(cx);
+            cx.notify();
+            return;
+        }
         self.show_tab(id, cx);
     }
 

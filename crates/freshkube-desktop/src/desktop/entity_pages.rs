@@ -443,6 +443,10 @@ impl Pilot {
                 }
                 self.focus_page(window, cx)
             }
+            PageEvent::Query(request) => self
+                .pages
+                .dock
+                .update(cx, |dock, cx| dock.open_query(request.clone(), window, cx)),
             PageEvent::Observability(event) => self.observability_event(event, window, cx),
             PageEvent::Monitoring(event) => match event {
                 MonitoringEvent::Catalog => cx.notify(),

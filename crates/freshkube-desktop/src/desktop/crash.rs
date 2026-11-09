@@ -226,12 +226,82 @@ pub(super) fn tell_notices(
 ) {
     for notice in notices {
         let key = notice.file.to_string_lossy().into_owned();
-        window.push_notification(
-            Notification::warning(notice.to_string())
+        // A file from a newer Freshkube is never written: its sections say
+        // so where they say where they save.
+        if let freshkube_prefs::Why::Newer { version } = &notice.why {
+            let name = notice
+                .file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            freshkube_ui::form::refuse_saves(
+                &name,
+                Some(format!(
+                    "{name} was written by a newer Freshkube (version {version})"
+                )),
+                cx,
+            );
+        }
+        window.push_notification(settings_file_notice(&notice, key), cx);
+    }
+}
+
+/// A file name in the pieces it may break between: after each `-` and `.`.
+pub(super) fn name_parts(name: &str) -> Vec<String> {
+    let mut parts = vec![String::new()];
+    for c in name.chars() {
+        parts.last_mut().expect("one part").push(c);
+        if matches!(c, '-' | '.') {
+            parts.push(String::new());
+        }
+    }
+    parts.retain(|part| !part.is_empty());
+    parts
+}
+
+/// The toast for a notice. A kept copy's name goes on its own line, laid
+/// out as a wrapping row of its parts, so in a narrow window it breaks after
+/// a `-` or `.`, never inside a word; the text's own wrapping would cut a
+/// long name where it overflows.
+fn settings_file_notice(notice: &freshkube_prefs::Notice, key: String) -> Notification {
+    let file_name = |path: &std::path::Path| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+    };
+    match &notice.why {
+        freshkube_prefs::Why::Corrupt { kept_as } => {
+            let parts = name_parts(&file_name(kept_as));
+            Notification::new()
                 .id1::<SettingsFileNotice>(key)
-                .autohide(false),
-            cx,
-        );
+                .with_type(NotificationType::Warning)
+                .autohide(false)
+                .title(format!("{} could not be read", file_name(&notice.file)))
+                .content(move |_, _, _| {
+                    v_flex()
+                        .id("settings-notice")
+                        .test_support()
+                        .gap(dp(2.))
+                        .child("The old file is kept as")
+                        .child(
+                            h_flex()
+                                .id("settings-notice-copy")
+                                .test_support()
+                                .flex_wrap()
+                                .children(parts.iter().enumerate().map(|(ix, part)| {
+                                    div()
+                                        .id(("settings-notice-copy-part", ix))
+                                        .test_support()
+                                        .child(part.clone())
+                                })),
+                        )
+                        .into_any_element()
+                })
+        }
+        freshkube_prefs::Why::Newer { .. } => Notification::warning(notice.to_string())
+            .id1::<SettingsFileNotice>(key)
+            .autohide(false),
     }
 }
 

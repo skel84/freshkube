@@ -20,9 +20,9 @@ use crate::{
     monitoring::page::MonitoringPage,
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
-        AccessScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen, LifecycleScreen,
-        NetworkScreen, OperationsScreen, ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel,
-        SecurityScreen, StorageScreen, WorkloadsScreen,
+        AccessScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen, GatewaysMode, GatewaysScreen,
+        LifecycleScreen, NetworkScreen, OperationsScreen, ProcessesScreen, RoutesScreen,
+        ScreenHandle, ScreenPanel, SecurityScreen, StorageScreen, TopologyScreen, WorkloadsScreen,
     },
 };
 
@@ -84,6 +84,20 @@ impl Pages {
             let shape = options.debug.routes;
             cx.new(|cx| RoutesScreen::new(runtime.clone(), window, cx).with_example(shape))
         };
+        let (gateways, gateway_classes, topology) = {
+            let shape = options.debug.routes;
+            (
+                cx.new(|cx| {
+                    GatewaysScreen::new(GatewaysMode::Gateways, runtime.clone(), window, cx)
+                        .with_example(shape)
+                }),
+                cx.new(|cx| {
+                    GatewaysScreen::new(GatewaysMode::Classes, runtime.clone(), window, cx)
+                        .with_example(shape)
+                }),
+                cx.new(|cx| TopologyScreen::new(runtime.clone(), window, cx).with_example(shape)),
+            )
+        };
         let access = {
             let shape = options.debug.access.clone();
             cx.new(|cx| AccessScreen::new(runtime.clone(), window, cx).with_example(&shape))
@@ -95,6 +109,9 @@ impl Pages {
                 let handle = match page {
                     PageId::Databases => ScreenHandle::new(databases.clone()),
                     PageId::Routes => ScreenHandle::new(routes.clone()),
+                    PageId::Gateways => ScreenHandle::new(gateways.clone()),
+                    PageId::GatewayClasses => ScreenHandle::new(gateway_classes.clone()),
+                    PageId::Topology => ScreenHandle::new(topology.clone()),
                     PageId::Access => ScreenHandle::new(access.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
@@ -135,7 +152,8 @@ impl Pages {
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         resources.update(cx, |screen, cx| {
             screen.set_services_shape(options.debug.services, cx);
-            screen.set_routes_shape(options.debug.routes, cx)
+            screen.set_routes_shape(options.debug.routes, cx);
+            screen.set_netpol_shape(options.debug.netpol, cx)
         });
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), options.debug.agent, cx));
         // Its height and whether it shows are laid out by the shell.

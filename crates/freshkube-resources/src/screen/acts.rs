@@ -4,7 +4,8 @@
 //! describes and sends the write (`freshkube_core::write::everyday`). A row
 //! never gets a button.
 use super::*;
-use freshkube_core::write::everyday::{Everyday, offered_for};
+use freshkube_core::write::delete;
+use freshkube_core::write::everyday::{Everyday, acts_for};
 use freshkube_ui::menu::MenuAction;
 use gpui_kit::component::Disableable;
 
@@ -45,6 +46,7 @@ fn label(act: Everyday) -> &'static str {
         Everyday::Renew => "Renew",
         Everyday::Rollback => "Roll back…",
         Everyday::RunNow => "Run now",
+        Everyday::Delete => "Delete…",
     }
 }
 
@@ -62,11 +64,21 @@ impl ResourcesScreen {
     }
 
     /// The actions the listed kind has. None in the node pane's list.
-    fn kind_acts(&self) -> &'static [Everyday] {
+    fn kind_acts(&self) -> Vec<Everyday> {
         if self.embedded {
-            return &[];
+            return Vec::new();
         }
-        offered_for(&self.kind.group, &self.kind.kind)
+        acts_for(&self.kind.group, &self.kind.kind)
+    }
+
+    /// Why this action is unavailable now, or `None`: the cluster's level,
+    /// or, for Delete, a kind that is not deleted from here.
+    pub(super) fn act_block(&self, act: Everyday) -> Option<&'static str> {
+        self.write_block.or_else(|| {
+            (act == Everyday::Delete)
+                .then(|| delete::refusal(&self.kind.group, &self.kind.kind))
+                .flatten()
+        })
     }
 
     /// The actions on offer for the selected row: its kind's, except Scale
@@ -78,8 +90,7 @@ impl ResourcesScreen {
             self.detail.read(cx).controller_of(identity) == Some("Deployment")
         });
         self.kind_acts()
-            .iter()
-            .copied()
+            .into_iter()
             .filter(|act| !(owned && *act == Everyday::Scale))
             .collect()
     }
@@ -102,8 +113,9 @@ impl ResourcesScreen {
                 Everyday::Renew => MenuAction::new(label(act), RenewSelected),
                 Everyday::Rollback => MenuAction::new(label(act), RollbackSelected),
                 Everyday::RunNow => MenuAction::new(label(act), RunNowSelected),
+                Everyday::Delete => MenuAction::new(label(act), DeleteSelected),
             };
-            lines.push(line.enabled(self.write_block.is_none()));
+            lines.push(line.enabled(self.act_block(act).is_none()));
         }
         lines
     }
@@ -118,6 +130,8 @@ impl ResourcesScreen {
         if self.write_block.is_some() || !self.kind_acts().contains(&act) {
             return;
         }
+        // A kind Delete is refused on still asks: the shell says why, once,
+        // instead of the key staying mute.
         let (Some(identity), Some(source)) =
             (self.projection.selected().cloned(), self.source.clone())
         else {
@@ -145,7 +159,7 @@ impl ResourcesScreen {
                 .small()
                 .h(dp(ui::CONTROL_HEIGHT))
                 .label(label(act));
-            let (button, fold) = match self.write_block {
+            let (button, fold) = match self.act_block(act) {
                 Some(reason) => (
                     button.disabled(true).tooltip(reason),
                     page::disabled_item(label(act)),
@@ -170,6 +184,7 @@ impl ResourcesScreen {
                             page::action_item(label(act), RollbackSelected, focus)
                         }
                         Everyday::RunNow => page::action_item(label(act), RunNowSelected, focus),
+                        Everyday::Delete => page::action_item(label(act), DeleteSelected, focus),
                     };
                     let button = match act {
                         Everyday::Scale => button.on_click(page::dispatch(ScaleSelected, focus)),
@@ -193,6 +208,7 @@ impl ResourcesScreen {
                             button.on_click(page::dispatch(RollbackSelected, focus))
                         }
                         Everyday::RunNow => button.on_click(page::dispatch(RunNowSelected, focus)),
+                        Everyday::Delete => button.on_click(page::dispatch(DeleteSelected, focus)),
                     };
                     (button, fold)
                 }

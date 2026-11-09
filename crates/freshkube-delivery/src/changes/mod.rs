@@ -150,6 +150,9 @@ pub enum Gap {
 /// A source the list couldn't read in full, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Note {
+    /// Whether the note is about GitHub, whose look-ups are optional and
+    /// whose gaps never say anything of the cluster.
+    pub github: bool,
     pub gap: Gap,
     /// The project it is about, when it is about one.
     pub project: Option<String>,
@@ -176,6 +179,7 @@ pub fn derive(read: &Read) -> Changes {
     let mut changes = Changes::default();
     if let Some(why) = &read.unreached {
         changes.notes.push(Note {
+            github: false,
             gap: Gap::Unreadable,
             project: None,
             text: why.clone(),
@@ -186,6 +190,7 @@ pub fn derive(read: &Read) -> Changes {
         Source::Read(projects) => projects,
         Source::Capped(projects, truncation) => {
             changes.notes.push(Note {
+                github: false,
                 gap: Gap::Capped,
                 project: None,
                 text: format!(
@@ -204,6 +209,7 @@ pub fn derive(read: &Read) -> Changes {
     };
     if read.late > 0 {
         changes.notes.push(Note {
+            github: false,
             gap: Gap::Unreadable,
             project: None,
             text: format!(
@@ -256,6 +262,7 @@ fn followed_missing(rows: &[Row]) -> Vec<Note> {
     }
     kept.into_iter()
         .map(|line| Note {
+            github: line.github,
             gap: match line.gap {
                 change::Gap::NotServed => Gap::NotServed,
                 change::Gap::Refused => Gap::Refused,
@@ -281,6 +288,7 @@ pub(crate) fn unread<T>(
         Source::Read(_) | Source::Capped(..) => return None,
     };
     Some(Note {
+        github: false,
         gap,
         project: project.map(str::to_owned),
         text,
@@ -294,6 +302,7 @@ fn rows(project: &Project, cluster: &str, changes: &mut Changes) {
         Source::Read(freight) => freight,
         Source::Capped(freight, truncation) => {
             changes.notes.push(Note {
+                github: false,
                 gap: Gap::Capped,
                 project: Some(name.clone()),
                 text: format!(
@@ -314,6 +323,7 @@ fn rows(project: &Project, cluster: &str, changes: &mut Changes) {
     let stages = project.stages.read();
     match &project.stages {
         Source::Capped(_, truncation) => changes.notes.push(Note {
+            github: false,
             gap: Gap::Capped,
             project: Some(name.clone()),
             text: format!(
@@ -349,6 +359,7 @@ fn rows(project: &Project, cluster: &str, changes: &mut Changes) {
     }
     if left > 0 {
         changes.notes.push(Note {
+            github: false,
             gap: Gap::Capped,
             project: Some(name.clone()),
             text: format!(

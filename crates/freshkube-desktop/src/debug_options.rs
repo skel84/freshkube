@@ -15,6 +15,7 @@ use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
 use freshkube_core::resources::traffic::routes::example::Shape as RoutesShape;
 use freshkube_delivery::timeline::example::Shape as TimelineShape;
+use freshkube_resources::example::netpol::Shape as NetpolShape;
 use freshkube_resources::example::traffic::Shape as ServicesShape;
 
 /// `FRESHKUBE_THEME`.
@@ -139,6 +140,12 @@ pub struct DebugOptions {
     /// `legacy`, `pending`, `no-selector`, `external-name`, `refused`,
     /// `services-refused`); anything else is `mixed`.
     pub(crate) services: ServicesShape,
+    /// `FRESHKUBE_NETPOL`: what the NetworkPolicy, Pod and workload panes'
+    /// example network policy reads answer (`mixed`, `default-deny`, `open`,
+    /// `restricts`, `ip-block`, `namespace-selector`, `none`, `host-network`, `refused`,
+    /// `cut`);
+    /// anything else is `mixed`.
+    pub(crate) netpol: NetpolShape,
     /// `FRESHKUBE_ROUTES`: what the Routes page's example and an example
     /// HTTPRoute's trace show (`all`, `serving`, `partly`, `cross-namespace`,
     /// `listener`, `no-address`, `class`, `no-backend`, `stale`, `mesh`,
@@ -254,6 +261,9 @@ impl DebugOptions {
                 .unwrap_or_default(),
             services: text("FRESHKUBE_SERVICES")
                 .and_then(|shape| ServicesShape::parse(&shape))
+                .unwrap_or_default(),
+            netpol: text("FRESHKUBE_NETPOL")
+                .and_then(|shape| NetpolShape::parse(&shape))
                 .unwrap_or_default(),
             routes: text("FRESHKUBE_ROUTES")
                 .and_then(|shape| RoutesShape::parse(&shape))
@@ -577,6 +587,20 @@ mod tests {
     }
 
     #[test]
+    fn netpol_takes_each_shape_and_falls_back_to_mixed() {
+        for name in NetpolShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_NETPOL", name)]).netpol,
+                NetpolShape::parse(name).unwrap(),
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_NETPOL", "bogus")]).netpol,
+            NetpolShape::Mixed
+        );
+    }
+
+    #[test]
     fn services_take_each_shape_and_fall_back_to_mixed() {
         for name in ServicesShape::NAMES {
             assert_eq!(
@@ -783,6 +807,7 @@ mod tests {
                     | "FRESHKUBE_TIMELINE"
                     | "FRESHKUBE_AGENT"
                     | "FRESHKUBE_SERVICES"
+                    | "FRESHKUBE_NETPOL"
             )
             .then(bad)
         });
@@ -794,6 +819,7 @@ mod tests {
         assert_eq!(options.timeline, TimelineShape::Busy);
         assert_eq!(options.agent, crate::agent_shape::AgentShape::Ready);
         assert_eq!(options.services, ServicesShape::Mixed);
+        assert_eq!(options.netpol, NetpolShape::Mixed);
         assert_eq!(options.routes, RoutesShape::All);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());

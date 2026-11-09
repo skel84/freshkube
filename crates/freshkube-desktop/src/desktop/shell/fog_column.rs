@@ -33,14 +33,19 @@ impl Pilot {
         let mut column = self.compact_column().child(self.expand_toggle(cx));
         match self.navigation.area {
             Area::Group(slug) => {
-                let extra = match slug {
-                    "workloads" => Some((Page::Health, "Health · ⌘5")),
-                    "storage" => Some((Page::Databases, "Databases")),
-                    "networking" => Some((Page::Routes, "Routes")),
-                    "access-control" => Some((Page::Access, "Your access")),
-                    _ => None,
+                let extras: &[(Page, &str)] = match slug {
+                    "workloads" => &[(Page::Health, "Health · ⌘5")],
+                    "storage" => &[(Page::Databases, "Databases")],
+                    "networking" => &[
+                        (Page::Routes, "Routes"),
+                        (Page::Gateways, "Gateways"),
+                        (Page::GatewayClasses, "Gateway classes"),
+                        (Page::Topology, "Gateway topology"),
+                    ],
+                    "access-control" => &[(Page::Access, "Your access")],
+                    _ => &[],
                 };
-                if let Some((page, tooltip)) = extra {
+                for &(page, tooltip) in extras {
                     column = column.child(
                         Button::new(SharedString::from(format!("nav-{}", page.slug())))
                             .ghost()

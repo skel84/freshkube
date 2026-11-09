@@ -138,8 +138,38 @@ impl EditSession {
         serde_yaml::to_string(&self.document).unwrap_or_default()
     }
 
+    /// The text a page puts in its editor: [`Self::text`] without a Secret's
+    /// `data` placeholder line, which the page draws as a locked block
+    /// ([`Self::locked_values`]) so there is nothing to type into. Leaving the
+    /// key out of the edited text is not a removal: `data` is locked, and
+    /// `describe` never sends it either way.
+    pub fn editable_text(&self) -> String {
+        let mut document = self.document.clone();
+        if self.target.is_secret()
+            && let Some(map) = document.as_object_mut()
+        {
+            map.remove("data");
+            map.remove("stringData");
+        }
+        serde_yaml::to_string(&document).unwrap_or_default()
+    }
+
     pub fn locked(&self) -> Vec<&'static str> {
         locked_fields(self.target.is_secret())
+    }
+
+    /// A Secret's `data` and `stringData`, each as the line a page draws in
+    /// its locked block beside the text; empty for any other kind. Their
+    /// values are never read, and an edit never sends either key.
+    pub fn locked_values(&self) -> Vec<String> {
+        if self.target.is_secret() {
+            ["data", "stringData"]
+                .iter()
+                .map(|key| format!("{key}: {NOT_READ}"))
+                .collect()
+        } else {
+            vec![]
+        }
     }
 
     /// The write the edited text asks for: server-side apply of what

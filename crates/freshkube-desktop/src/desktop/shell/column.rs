@@ -294,7 +294,8 @@ pub(super) fn page_icon(page: Page) -> IconName {
     match page {
         Page::Health => IconName::HeartPulse,
         Page::Etcd | Page::Databases => IconName::Database,
-        Page::Routes => IconName::Network,
+        Page::Routes | Page::Gateways | Page::GatewayClasses => IconName::Network,
+        Page::Topology => IconName::Waypoints,
         Page::SystemServices => IconName::ServerCog,
         Page::Security | Page::Access => IconName::ShieldCheck,
         Page::Lifecycle => IconName::RefreshCw,

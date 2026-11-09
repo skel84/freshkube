@@ -97,6 +97,15 @@ impl Workload {
     }
 }
 
+/// What the Resources list offers for a kind: its everyday actions, then
+/// Delete. A kind Delete is refused on still lists it, so the person is shown
+/// why it is not available (`delete::refusal`).
+pub fn acts_for(group: &str, kind: &str) -> Vec<Everyday> {
+    let mut acts = offered_for(group, kind).to_vec();
+    acts.push(Everyday::Delete);
+    acts
+}
+
 /// The everyday actions a kind offers, by its API group and kind (`apps`,
 /// `Deployment`); none for a kind with none. A list asks this before it has
 /// read the object.
@@ -120,6 +129,9 @@ pub enum Everyday {
     Renew,
     Rollback,
     RunNow,
+    /// Delete, with an impact preview (`write/delete/`): offered on every
+    /// kind but the ones [`super::delete::refusal`] names.
+    Delete,
 }
 
 impl Everyday {
@@ -134,6 +146,7 @@ impl Everyday {
             Self::Renew => "renew",
             Self::Rollback => "rollback",
             Self::RunNow => "run-now",
+            Self::Delete => "delete",
         }
     }
 }
