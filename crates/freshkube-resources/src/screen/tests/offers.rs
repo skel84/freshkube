@@ -206,7 +206,13 @@ fn safety_g21_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppCon
     })
     .unwrap();
     settle(cx);
-    let second = cx.read(|cx| screen.read(cx).projection.selected().map(|id| id.name.clone()));
+    let second = cx.read(|cx| {
+        screen
+            .read(cx)
+            .projection
+            .selected()
+            .map(|id| id.name.clone())
+    });
     let names = distinct(asked_names(cx));
     assert_eq!(names.len(), 2, "{names:?}");
     assert!(names.contains(&second.unwrap()), "{names:?}");
@@ -227,7 +233,13 @@ fn safety_g21_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks
         .unwrap();
         cx.run_until_parked();
     }
-    let stops = cx.read(|cx| screen.read(cx).projection.selected().map(|id| id.name.clone()));
+    let stops = cx.read(|cx| {
+        screen
+            .read(cx)
+            .projection
+            .selected()
+            .map(|id| id.name.clone())
+    });
     settle(cx);
     let names = distinct(asked_names(cx));
     assert_eq!(
@@ -254,7 +266,8 @@ struct Fake(kube::Client);
 impl freshkube_core::cluster_source::KubeClientSource for Fake {
     fn client(
         &self,
-    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>> {
+    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>>
+    {
         let client = self.0.clone();
         Box::pin(async move { Ok(client) })
     }

@@ -426,10 +426,12 @@ impl DetailPane {
         // The level's reason wins over the cluster's.
         let reason = self.edit_reason();
         let refusal = self.access_refusal();
-        let tooltip = reason.clone().unwrap_or_else(|| match self.edit_offer.note() {
-            Some(note) => format!("Edit this object's YAML. {note}"),
-            None => "Edit this object's YAML".to_owned(),
-        });
+        let tooltip = reason
+            .clone()
+            .unwrap_or_else(|| match self.edit_offer.note() {
+                Some(note) => format!("Edit this object's YAML. {note}"),
+                None => "Edit this object's YAML".to_owned(),
+            });
         Some(
             Button::new("detail-edit")
                 .outline()

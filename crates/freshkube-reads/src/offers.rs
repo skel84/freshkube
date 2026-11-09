@@ -230,11 +230,9 @@ impl OfferDesk {
     }
 
     fn pump(&mut self, cx: &mut Context<Self>) {
-        let (Some(source), true, true) = (
-            self.source.clone(),
-            self.settled,
-            self.offers.is_ready(),
-        ) else {
+        let (Some(source), true, true) =
+            (self.source.clone(), self.settled, self.offers.is_ready())
+        else {
             return;
         };
         let now = cx.background_executor().now();

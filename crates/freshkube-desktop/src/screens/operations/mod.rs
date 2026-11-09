@@ -1127,7 +1127,6 @@ impl OperationsScreen {
         }
     }
 
-    /// The selection, operation or options changed.
     /// What the operation asks of Kubernetes for the nodes picked, asked of
     /// the cluster for what isn't known: only the plan's, never every node's,
     /// and only while the screen is shown (called when the plan changes or
@@ -1138,12 +1137,14 @@ impl OperationsScreen {
             .iter()
             .flat_map(|target| self.operation.access_needs(&target.name))
             .collect();
-        if !self.plan_needs.is_empty() {
-            let needs = self.plan_needs.clone();
-            self.offers.update(cx, |offers, cx| offers.want(&needs, cx));
-        }
+        // Always, even with nothing picked: a call replaces what was wanted.
+        let needs = self.plan_needs.clone();
+        let owner = cx.entity_id();
+        self.offers
+            .update(cx, |offers, cx| offers.want(owner, &needs, cx));
     }
 
+    /// The selection, operation or options changed.
     fn plan_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.derive_order();
         self.want_plan(cx);
