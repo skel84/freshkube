@@ -107,3 +107,92 @@ fn frame_with(
                 .child(div().flex_none().child(actions)),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::component::{Root, WindowExt};
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{
+        AppContext, Context, Render, ScrollDelta, ScrollHandle, TestAppContext, point, size,
+    };
+
+    use super::*;
+
+    struct Host;
+
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// At 760x560 with text 20 a tall body stays inside the dialog, scrolls
+    /// to its last row whole, and follows the handle its scrollbar uses.
+    #[gpui_kit::test]
+    fn a_tall_body_scrolls_whole_under_the_scrollbar_s_handle(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let scroll = ScrollHandle::new();
+        let window = cx
+            .open_window(size(px(760.), px(560.)), move |window, cx| {
+                Root::new(cx.new(|_| Host), window, cx)
+            })
+            .into();
+        cx.run_until_parked();
+        let handle = scroll.clone();
+        cx.update_window(window, |_, window, cx| {
+            window.open_dialog(cx, move |dialog, window, _| {
+                let rows = (0..12).map(|ix| {
+                    div()
+                        .id(gpui_kit::SharedString::from(format!("row-{ix}")))
+                        .test_support()
+                        .child(format!("Row {ix}"))
+                });
+                frame_scrolled(
+                    dialog,
+                    520.,
+                    "A tall dialog",
+                    v_flex().children(rows),
+                    div().id("tall-actions").test_support().child("Actions"),
+                    &handle,
+                    window,
+                )
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let body = window.find("app-dialog-body").bounds();
+            let actions = window.find("tall-actions").bounds();
+            assert!(actions.top() >= body.bottom(), "{actions:?} over {body:?}");
+            assert!(
+                scroll.max_offset().y > px(0.),
+                "the body has nothing to scroll"
+            );
+            let first = window.find("row-0").bounds();
+            assert!(first.top() >= body.top() && first.bottom() <= body.bottom());
+            window.scroll(
+                "app-dialog-body",
+                ScrollDelta::Pixels(point(px(0.), px(-5000.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let (body, last) = (
+                window.find("app-dialog-body").bounds(),
+                window.find("row-11").bounds(),
+            );
+            assert!(
+                last.top() >= body.top() && last.bottom() <= body.bottom(),
+                "{last:?} cut by {body:?}"
+            );
+            assert!(scroll.offset().y < px(0.));
+        })
+        .unwrap();
+    }
+}
