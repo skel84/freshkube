@@ -1,0 +1,1 @@
+- **Page states:** Overview explains when the data shown was last read and that the latest read failed; Operations and Lifecycle name the missing Talos or Kubernetes node list in plain words.
