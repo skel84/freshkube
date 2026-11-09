@@ -434,6 +434,7 @@ pub fn derive(read: &Read) -> Waiting {
     };
     if let Some(why) = &read.unreached {
         waiting.notes.push(Note {
+            github: false,
             gap: Gap::Unreadable,
             project: None,
             text: why.clone(),
@@ -444,6 +445,7 @@ pub fn derive(read: &Read) -> Waiting {
         Source::Read(projects) => projects,
         Source::Capped(projects, truncation) => {
             waiting.notes.push(Note {
+                github: false,
                 gap: Gap::Capped,
                 project: None,
                 text: format!(
@@ -475,6 +477,7 @@ pub fn derive(read: &Read) -> Waiting {
     });
     if !read.pulls_read && waiting.items() > 0 {
         waiting.notes.push(Note {
+            github: true,
             gap: Gap::NotServed,
             project: None,
             text: "Pull requests aren't read: GitHub isn't set up, so a Freight is named by its \
@@ -498,6 +501,7 @@ pub fn derive(read: &Read) -> Waiting {
             .count();
         if limited > 0 {
             waiting.notes.push(Note {
+                github: true,
                 gap: Gap::Unreadable,
                 project: Some(app.name.clone()),
                 text: format!(
@@ -514,6 +518,7 @@ pub fn derive(read: &Read) -> Waiting {
             }) = &item.pull
             {
                 let note = Note {
+                    github: true,
                     gap: Gap::Unreadable,
                     project: Some(app.name.clone()),
                     text: why.clone(),
@@ -682,6 +687,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
     };
     if let Source::Capped(_, truncation) = &project.freight {
         notes.push(Note {
+            github: false,
             gap: Gap::Capped,
             project: Some(name.clone()),
             text: format!(
@@ -693,6 +699,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
     }
     if let Source::Capped(_, truncation) = &project.stages {
         notes.push(Note {
+            github: false,
             gap: Gap::Capped,
             project: Some(name.clone()),
             text: format!(
@@ -705,6 +712,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
     let (newest, undated, left) = newest(freight);
     if undated > 0 {
         notes.push(Note {
+            github: false,
             gap: Gap::Unreadable,
             project: Some(name.clone()),
             text: format!(
@@ -716,6 +724,7 @@ fn app(project: &Project, read: &Read, notes: &mut Vec<Note>) -> App {
     }
     if left > 0 {
         notes.push(Note {
+            github: false,
             gap: Gap::Capped,
             project: Some(name.clone()),
             text: format!(

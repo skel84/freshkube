@@ -366,6 +366,7 @@ fn no_freight_is_empty_only_when_kargo_answered(cx: &mut TestAppContext) {
 fn refused_kargo_says_so_never_none(cx: &mut TestAppContext) {
     let refused = Changes {
         notes: vec![Note {
+            github: false,
             gap: Gap::Refused,
             project: None,
             text: "Kargo projects were refused on core-fra: projects is forbidden".into(),
@@ -466,6 +467,7 @@ fn a_refused_project_beside_rows_is_a_banner(cx: &mut TestAppContext) {
             &freshkube_delivery::changes::example::read(chrono::Utc::now()),
         );
         read.notes.push(Note {
+            github: false,
             gap: Gap::Refused,
             project: Some("loyalty".into()),
             text: "loyalty's Freight were refused on core-fra: freights is forbidden".into(),
@@ -686,6 +688,7 @@ fn another_connection_forgets_where_argo_cd_was_found(cx: &mut TestAppContext) {
 fn no_rows_beside_an_unread_project_never_says_none(cx: &mut TestAppContext) {
     let unread = Changes {
         notes: vec![Note {
+            github: false,
             gap: Gap::NotServed,
             project: Some("loyalty".into()),
             text: "loyalty's Freight aren't installed on core-fra".into(),
