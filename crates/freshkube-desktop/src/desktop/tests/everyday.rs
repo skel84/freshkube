@@ -1298,3 +1298,19 @@ fn safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing
         assert!(w.cluster.exists(fake::POD));
     }
 }
+
+#[gpui_kit::test]
+fn the_status_bars_cancel_is_not_shown_while_the_dialog_counts_down(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_millis(1500));
+    // The dialog's Cancel is the way; the link behind the modal is not offered.
+    assert!(w.present(cx, "write-cancel-countdown"));
+    assert!(w.present(cx, "operation-status"));
+    assert!(!w.present(cx, "operation-cancel"));
+    w.click(cx, "write-cancel-countdown");
+    w.drive(cx, Duration::from_secs(2));
+    assert!(w.real_deletes().is_empty());
+}
