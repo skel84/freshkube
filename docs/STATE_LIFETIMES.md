@@ -246,15 +246,28 @@ own and no owner changes:
 | Resources list watch | The open watch ends and a new one starts at once from the last resourceVersion: no list, no backoff, nothing repeated; if the version expired the server says 410 and the usual relist follows. Rows already batched are sent first. |
 | Dock log tabs (pods) | The open log ends where it stands and opens again from the last whole line's time, skipping the lines of that second already shown (`LogPosition`); it is no failure, so no "Reconnecting" row and no backoff. |
 | Followed items, workload pods, object events, a forward's pods and target watches | The watcher is made again, so it lists first and replaces what it held, as it does after a 410. Followed reducers hold state, not events, so a repeated list tells nothing twice. |
-| Talos log streams, forwards' own connections | Not reconnected by the wake: HTTP/2 pings find a dead connection in about 30 s, and each source's retry takes it from there. |
+| Talos log streams, forwards' own connections | Not reconnected by the wake: a dead connection is found by TCP keepalive (60 s), and each source's retry takes it from there; a later cut can reopen them. |
 
-The status bar says "Reconnecting to <context>…" from the wake until the next
-summary publication or overview answer lands (`Chrome.reconnecting`; it gives
-up after 45 s so a read that never answers cannot hold the words), then shows
-its usual line and refresh time. Talos channels also send HTTP/2 pings every
-20 s, even idle, and drop a connection that does not answer in 10 s; a
-read-only unary call carries a 30 s deadline (`talos_rs::client::READ_DEADLINE`),
-and streams and changes carry none.
+A wake does nothing when nothing is connected (a Kubernetes-only entry with
+no context chosen or tried, no overview read yet, a load or an error on screen),
+and a second wake within 60 s of the first (by the executor's clock) is the same
+one: an NTP step after waking relists nothing again.
+
+The status bar says "Reconnecting to <context>…" from the wake until a read has
+answered: a summary publication in which some watched source is current, or every
+source has settled, current or failed (`Publication::has_answered`; the
+publication a relist makes straight away carries only the syncing state and
+clears nothing), or the overview answers or fails (`Chrome.reconnecting`). It
+gives up after 45 s so a read that never answers cannot hold the words. Then the
+status shows its usual line and refresh time, or the failure. In this cut the
+status bar alone says the data may be old: the Overview and the shown page keep
+their values unmarked until the new read lands.
+
+Talos channels keep a 60 s TCP keepalive and send no HTTP/2 pings: apid sets no
+keepalive enforcement policy, so grpc-go's default applies (a ping less than five
+minutes after the last is a strike, and the third closes the connection), and a
+ping on a quiet log follow would end it. A read-only unary call carries a 30 s
+deadline (`talos_rs::client::READ_DEADLINE`); streams and changes carry none.
 
 ### The change page's outcome read
 

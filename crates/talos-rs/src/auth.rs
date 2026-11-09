@@ -15,12 +15,6 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity};
 /// waits when every configured endpoint is unreachable.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How often an HTTP/2 ping goes out on a connection.
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
-
-/// How long a ping may go unanswered before the connection is dropped.
-const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// Convert Ed25519 private key PEM to standard PKCS8 format
 /// Talos uses "ED25519 PRIVATE KEY" header but tonic/rustls expects "PRIVATE KEY"
 fn convert_ed25519_key_to_pkcs8(pem: &[u8]) -> Vec<u8> {
@@ -84,14 +78,14 @@ pub async fn create_channel(ctx: &Context) -> Result<Channel, TalosError> {
             .tls_config(tls_config.clone())
             .map_err(|e| TalosError::Tls(format!("TLS config error: {:?}", e)))?
             .connect_timeout(CONNECT_TIMEOUT)
-            .tcp_keepalive(Some(Duration::from_secs(60)))
-            // HTTP/2 pings find a connection that went dead without a reset
-            // (a sleep, a VPN dropping): TCP keepalive alone takes minutes.
-            // Idle channels ping too, so a follow waiting for a quiet
-            // service notices before the next line is due.
-            .http2_keep_alive_interval(KEEPALIVE_INTERVAL)
-            .keep_alive_timeout(KEEPALIVE_TIMEOUT)
-            .keep_alive_while_idle(true);
+            // No HTTP/2 keepalive: apid sets no keepalive enforcement
+            // policy, so grpc-go's default applies (a ping less than five
+            // minutes after the last is a strike, the third closes the
+            // connection with `too_many_pings`), and a ping every few
+            // seconds would end a follow on a quiet service. A dead
+            // connection is found by TCP keepalive, the read deadline and
+            // the wake (`freshkube_core::wake`).
+            .tcp_keepalive(Some(Duration::from_secs(60)));
         endpoints.push((url.clone(), endpoint));
     }
 
