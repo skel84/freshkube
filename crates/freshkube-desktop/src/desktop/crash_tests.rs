@@ -229,27 +229,55 @@ fn a_notice_queued_after_launch_is_told_when_the_queue_wakes(cx: &mut TestAppCon
     assert_eq!(notices(cx, handle), 2, "a later notice is told too");
 }
 
-/// At 760x560 and text 18 the copy's name is cut inside a word unless it
-/// offers a break at each `-` and `.`, and the zero-width spaces that offer
-/// it take nothing from the words around them.
-#[test]
-fn the_kept_copys_name_breaks_at_dashes_and_dots_only() {
-    let dir = Path::new("/invented");
-    let notice = corrupt(dir);
-    let text = crash::notice_text(&notice);
+/// In a narrow window at a large text size the kept copy's name sits on its
+/// own line and breaks only between its parts, after a `-` or a `.`: every
+/// part is drawn whole and inside the window.
+#[gpui_kit::test]
+fn the_kept_copys_name_breaks_only_between_its_parts(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    cx.update(|cx| crash::set_session(session(dir.path(), None), cx));
+    let (_runtime, handle, _view) = mount(cx, GpuiOptions::fixture(), 760., 560.);
     let name = "preferences.corrupt-20261024T101500Z.json";
-    assert!(text.ends_with(&crash::breakable(name)));
     assert_eq!(
-        crash::breakable(name),
-        "preferences.\u{200B}corrupt-\u{200B}20261024T101500Z.\u{200B}json"
+        crash::name_parts(name),
+        ["preferences.", "corrupt-", "20261024T101500Z.", "json"]
     );
-    assert_eq!(text.replace('\u{200B}', ""), notice.to_string());
-    // Text that is not the copy's name is left alone.
-    let newer = freshkube_prefs::Notice {
-        file: dir.join("follows.json"),
-        why: freshkube_prefs::Why::Newer { version: 2 },
-    };
-    assert_eq!(crash::notice_text(&newer), newer.to_string());
+    for text_size in [18., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            crash::tell_notices(vec![corrupt(dir.path())], window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let size = window.viewport_size();
+            let mut rows = Vec::new();
+            for ix in 0..4usize {
+                let part = window.find(("settings-notice-copy-part", ix));
+                let bounds = part.bounds();
+                assert!(
+                    bounds.left() >= gpui_kit::px(0.) && bounds.right() <= size.width,
+                    "part {ix} at {text_size}: {bounds:?} in {size:?}"
+                );
+                // One line: a part is never itself wrapped.
+                assert!(
+                    bounds.size.height < gpui_kit::px(text_size * 2.),
+                    "part {ix} at {text_size} is wrapped: {bounds:?}"
+                );
+                rows.push(bounds.top());
+            }
+            // The parts follow each other, so rows only go down.
+            assert!(rows.windows(2).all(|pair| pair[0] <= pair[1]), "{rows:?}");
+            // At the larger size the name is wider than the toast, so it
+            // really does wrap.
+            if text_size >= 20. {
+                assert!(rows.last() > rows.first(), "{rows:?}");
+            }
+        })
+        .unwrap();
+    }
 }
 
 /// A file from a newer Freshkube is never written, so each section that says

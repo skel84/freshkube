@@ -242,41 +242,66 @@ pub(super) fn tell_notices(
                 cx,
             );
         }
-        window.push_notification(
-            Notification::warning(notice_text(&notice))
-                .id1::<SettingsFileNotice>(key)
-                .autohide(false),
-            cx,
-        );
+        window.push_notification(settings_file_notice(&notice, key), cx);
     }
 }
 
-/// Lets a file name break after a `-` or a `.`, where GPUI otherwise keeps
-/// the whole name as one word and cuts it inside a word in a narrow toast.
-/// A zero-width space is a break opportunity and draws nothing.
-pub(super) fn breakable(name: &str) -> String {
-    let mut out = String::with_capacity(name.len() + 8);
+/// A file name in the pieces it may break between: after each `-` and `.`.
+pub(super) fn name_parts(name: &str) -> Vec<String> {
+    let mut parts = vec![String::new()];
     for c in name.chars() {
-        out.push(c);
+        parts.last_mut().expect("one part").push(c);
         if matches!(c, '-' | '.') {
-            out.push('\u{200B}');
+            parts.push(String::new());
         }
     }
-    out
+    parts.retain(|part| !part.is_empty());
+    parts
 }
 
-/// The notice's line, with the kept copy's name breakable.
-pub(super) fn notice_text(notice: &freshkube_prefs::Notice) -> String {
-    let text = notice.to_string();
+/// The toast for a notice. A kept copy's name goes on its own line, laid
+/// out as a wrapping row of its parts, so in a narrow window it breaks after
+/// a `-` or `.`, never inside a word; the text's own wrapping would cut a
+/// long name where it overflows.
+fn settings_file_notice(notice: &freshkube_prefs::Notice, key: String) -> Notification {
+    let file_name = |path: &std::path::Path| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
+    };
     match &notice.why {
         freshkube_prefs::Why::Corrupt { kept_as } => {
-            let name = kept_as.file_name().unwrap_or_default().to_string_lossy();
-            match text.strip_suffix(&*name) {
-                Some(lead) => format!("{lead}{}", breakable(&name)),
-                None => text,
-            }
+            let parts = name_parts(&file_name(kept_as));
+            Notification::new()
+                .id1::<SettingsFileNotice>(key)
+                .with_type(NotificationType::Warning)
+                .autohide(false)
+                .title(format!("{} could not be read", file_name(&notice.file)))
+                .content(move |_, _, _| {
+                    v_flex()
+                        .id("settings-notice")
+                        .test_support()
+                        .gap(dp(2.))
+                        .child("The old file is kept as")
+                        .child(
+                            h_flex()
+                                .id("settings-notice-copy")
+                                .test_support()
+                                .flex_wrap()
+                                .children(parts.iter().enumerate().map(|(ix, part)| {
+                                    div()
+                                        .id(("settings-notice-copy-part", ix))
+                                        .test_support()
+                                        .child(part.clone())
+                                })),
+                        )
+                        .into_any_element()
+                })
         }
-        freshkube_prefs::Why::Newer { .. } => text,
+        freshkube_prefs::Why::Newer { .. } => Notification::warning(notice.to_string())
+            .id1::<SettingsFileNotice>(key)
+            .autohide(false),
     }
 }
 
