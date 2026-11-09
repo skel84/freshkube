@@ -48,7 +48,7 @@ actions!(
 pub(super) const CONTEXT: &str = "Query";
 
 /// Said when the explorer this tab was opened from is closed or not connected.
-const CLOSED: &str = "Connection closed. Open Query again from the explorer once it is connected.";
+const CLOSED: &str = "Connection closed — connect again from Databases › Explore.";
 
 /// The least height the dock keeps for this tab, in dp: the strip, a few
 /// lines of editor and a few rows.
@@ -91,6 +91,8 @@ pub(crate) struct QueryView {
     run: Option<Run>,
     epoch: u64,
     notice: Option<SharedString>,
+    /// After a Run that took one of this many statements: said in the status.
+    partial: Option<usize>,
     focus: FocusHandle,
     least: Pixels,
     /// The plan list's scroll, kept so a plan stays where it was read.
@@ -142,6 +144,7 @@ impl QueryView {
             run: None,
             epoch: 0,
             notice: None,
+            partial: None,
             focus: cx.focus_handle(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             plan_scroll: UniformListScrollHandle::new(),
@@ -202,7 +205,18 @@ impl QueryView {
     /// Run: the selection's statements, else the one at the cursor.
     pub(super) fn run(&mut self, cx: &mut Context<Self>) {
         let texts = self.statements_to_run(cx);
+        // Nothing selected and several statements in the editor: only one
+        // runs, and the status says so.
+        let editor = self.editor.read(cx);
+        let total = if editor.selected_range().is_empty() {
+            statements::statements(&editor.value()).len()
+        } else {
+            0
+        };
         self.start(texts, false, cx);
+        if self.run.is_some() && total > 1 {
+            self.partial = Some(total);
+        }
     }
 
     /// Run all: every statement in the editor, whatever is selected.
@@ -246,6 +260,7 @@ impl QueryView {
             return;
         }
         self.notice = None;
+        self.partial = None;
         self.epoch += 1;
         let epoch = self.epoch;
         // A run takes at most MAX_STATEMENTS; one more item says what was left out.

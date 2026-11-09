@@ -148,10 +148,9 @@ async fn the_statement_at_the_cursor_runs_and_its_rows_show_capped(cx: &mut Test
     assert_eq!(h.view.read_with(cx, |v, _| v.items.len()), 1);
     // The words around the elapsed time are the point.
     let summary = h.label("query-summary", cx).unwrap();
-    assert!(
-        summary.starts_with("first 200 rows (row cap) · "),
-        "{summary}"
-    );
+    // Two statements in the editor and one run: the status says so first.
+    assert!(summary.starts_with("Ran 1 of 2. Select all"), "{summary}");
+    assert!(summary.contains("first 200 rows (row cap) · "), "{summary}");
     assert!(summary.ends_with(" ms"), "{summary}");
     h.view.read_with(cx, |v, _| {
         // Cursor in the second statement: only it ran.
@@ -310,20 +309,27 @@ async fn the_strip_carries_the_clusters_level_and_the_read_only_session(cx: &mut
 }
 
 #[gpui_kit::test]
-async fn a_closed_explorer_says_the_connection_closed_and_keeps_the_editor(
+async fn a_closed_explorer_says_so_turns_run_and_plan_off_and_keeps_the_editor(
     cx: &mut TestAppContext,
 ) {
     let h = mount(cx, Mark::Guarded);
     h.type_text("select 1", 3, 0..0, cx);
     *h.live.borrow_mut() = None;
-    h.click("query-run", cx);
+    cx.update_window(h.window.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    // Said at once, with no click: where to connect again, and the badge gone.
     let note = h.label("query-notice", cx).unwrap();
-    assert!(note.contains("Connection closed"), "{note}");
-    // And the strip no longer calls it a read-only session.
+    assert!(note.contains("connect again from Databases"), "{note}");
     assert!(h.present("query-closed", cx));
     assert!(!h.present("query-read-only", cx));
-    assert_eq!(h.view.read_with(cx, |v, cx| v.text(cx)), "select 1");
-    assert!(h.view.read_with(cx, |v, _| v.items.is_empty()));
+    // Run, Run all and Plan do nothing: nothing is run and nothing recorded.
+    for id in ["query-run", "query-run-all", "query-plan"] {
+        h.click(id, cx);
+    }
+    h.view.read_with(cx, |v, cx| {
+        assert!(v.items.is_empty() && v.history.is_empty());
+        assert_eq!(v.text(cx), "select 1");
+    });
 }
 
 #[gpui_kit::test]
@@ -649,7 +655,8 @@ async fn closing_the_explorer_after_a_run_says_so_above_the_results_and_in_the_s
     h.click("query-run", cx);
     h.finished(cx).await;
     *h.live.borrow_mut() = None;
-    h.click("query-run", cx);
+    cx.update_window(h.window.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
     // The earlier result stays; the words are in a banner over it, and the
     // strip no longer says there is a read-only session.
     assert!(
@@ -681,7 +688,11 @@ async fn a_run_of_fifty_statements_can_all_be_reached_one_result_at_a_time(
         h.label("query-result-position", cx).unwrap(),
         "Result 50 of 51"
     );
+    // The left-out note is a tab like the others: drawn, and a click on it
+    // shows it.
     h.click("query-result-next", cx);
+    assert!(h.present("query-result-51", cx));
+    h.click("query-result-51", cx);
     assert_eq!(
         h.label("query-result-position", cx).unwrap(),
         "Result 51 of 51"
@@ -804,4 +815,23 @@ async fn a_small_window_at_a_large_text_size_scrolls_instead_of_cutting_off_and_
         assert!(window.try_find("query-results").is_none());
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+async fn run_says_when_it_ran_one_of_several_statements(cx: &mut TestAppContext) {
+    let h = mount(cx, Mark::Guarded);
+    h.type_text("select 1; select 2; select 3", 3, 0..0, cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    let status = h.label("query-summary", cx).unwrap();
+    assert!(status.starts_with("Ran 1 of 3. Select all"), "{status}");
+    // A selection, or a single statement, says nothing of the kind.
+    h.type_text("select 1; select 2", 0, 0..18, cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    assert!(!h.label("query-summary", cx).unwrap().contains("Ran 1 of"));
+    h.type_text("select 1", 3, 0..0, cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    assert!(!h.label("query-summary", cx).unwrap().contains("Ran 1 of"));
 }

@@ -128,6 +128,8 @@ impl QueryView {
         let p = palette(cx);
         let running = self.running();
         let summary = self.summary();
+        // With no session there is nothing to run on.
+        let closed = self.live(cx).is_none();
         h_flex()
             .id("query-actions")
             .test_support()
@@ -144,7 +146,7 @@ impl QueryView {
                     .icon(IconName::Play)
                     .label("Run")
                     .tooltip("Run the selection, else the statement at the cursor (Command-Enter)")
-                    .disabled(running)
+                    .disabled(running || closed)
                     .on_click(cx.listener(|this, _, _, cx| this.run(cx))),
             )
             .child(
@@ -156,7 +158,7 @@ impl QueryView {
                     .tooltip(
                         "Run every statement in the editor, one after another (Command-Option-Enter)",
                     )
-                    .disabled(running)
+                    .disabled(running || closed)
                     .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
             )
             .child(
@@ -166,7 +168,7 @@ impl QueryView {
                     .h(dp(ui::CONTROL_HEIGHT))
                     .label("Plan")
                     .tooltip("Show the plan without running the statement (Command-Shift-Enter)")
-                    .disabled(running)
+                    .disabled(running || closed)
                     .on_click(cx.listener(|this, _, _, cx| this.explain(cx))),
             )
             .child(
@@ -224,7 +226,10 @@ impl QueryView {
                 .count();
             return Some(format!("Running · {done} of {total} done"));
         }
-        match &self.items.get(self.selected)?.state {
+        let partial = self
+            .partial
+            .map(|n| format!("Ran 1 of {n}. Select all, or Run all, to run every statement"));
+        let shown = match &self.items.get(self.selected)?.state {
             State::Rows(rows) => {
                 let n = rows.len();
                 let words = if rows.capped {
@@ -235,6 +240,11 @@ impl QueryView {
                 Some(format!("{words} · {} ms", rows.elapsed.as_millis()))
             }
             _ => None,
+        };
+        match (partial, shown) {
+            (Some(partial), Some(shown)) => Some(format!("{partial} · {shown}")),
+            (Some(partial), None) => Some(partial),
+            (None, shown) => shown,
         }
     }
 
@@ -554,20 +564,24 @@ impl Render for QueryView {
             .child(Editor::new(&self.editor).h_full().bordered(false));
         // Narrow, History is shown where the results are, not squeezed beside.
         let history_here = self.show_history && narrow;
-        let banner = self.notice.clone().map(|notice| {
-            div()
-                .id("query-notice")
-                .aria_label(notice.clone())
-                .test_support()
-                .flex_none()
-                .px(dp(page::PANE_PADDING))
-                .py(dp(4.))
-                .border_b_1()
-                .border_color(p.line)
-                .text_size(dp(12.))
-                .text_color(p.warn)
-                .child(notice)
-        });
+        let banner = self
+            .notice
+            .clone()
+            .or_else(|| self.live(cx).is_none().then(|| super::CLOSED.into()))
+            .map(|notice| {
+                div()
+                    .id("query-notice")
+                    .aria_label(notice.clone())
+                    .test_support()
+                    .flex_none()
+                    .px(dp(page::PANE_PADDING))
+                    .py(dp(4.))
+                    .border_b_1()
+                    .border_color(p.line)
+                    .text_size(dp(12.))
+                    .text_color(p.warn)
+                    .child(notice)
+            });
         let main = v_flex()
             .flex_1()
             .h_full()
