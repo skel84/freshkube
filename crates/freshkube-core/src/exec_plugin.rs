@@ -350,7 +350,7 @@ fn try_resolve(
 }
 
 /// [`try_resolve`] against one list, as a failure when the command is missing.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn resolve_with(
     kubeconfig: &mut Kubeconfig,
     options: &KubeConfigOptions,
