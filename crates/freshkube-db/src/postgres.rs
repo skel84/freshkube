@@ -10,13 +10,14 @@ use crate::{
     limits::Limits,
     readonly::{self, Refusal},
     session::{
-        ColumnEntry, ConnectError, Listed, MAX_SCHEMAS, MAX_TABLES, Session, TableEntry, TableKind,
-        TablePage,
+        Canceller, ColumnEntry, ConnectError, Listed, MAX_PLAN_LINES, MAX_SCHEMAS, MAX_TABLES,
+        Plan, QueryError, QueryResult, Session, TableEntry, TableKind, TablePage,
     },
     wire::{Rows, Wire},
 };
 use async_trait::async_trait;
 use dbflux_core::{DbError, Value};
+use std::sync::Arc;
 
 pub struct Postgres<W: Wire> {
     wire: W,
@@ -85,6 +86,72 @@ impl<W: Wire> Postgres<W> {
         rolled?;
         rows.rows.truncate(keep);
         Ok(rows)
+    }
+}
+
+/// What `run` sends for a statement that returns rows: a cursor, so the
+/// server hands over only the cap and one more, never the whole result.
+const CURSOR: &str = "freshkube_query";
+
+fn returns_rows(word: &str) -> bool {
+    matches!(word, "select" | "with" | "values" | "table")
+}
+
+impl<W: Wire> Postgres<W> {
+    /// One statement of the query tab: checked, then run in a read-only
+    /// transaction that is always rolled back. A statement that returns rows
+    /// is read through a cursor, `row_cap + 1` rows at most. The database,
+    /// not this function, refuses a write; nothing is retried.
+    async fn run_statement(&mut self, sql: &str) -> Result<QueryResult, QueryError> {
+        readonly::check_statement(sql)
+            .map_err(|r: Refusal| QueryError::NotSent(r.explain().into()))?;
+        let started = std::time::Instant::now();
+        let cap = self.limits.rows;
+        let cursor = returns_rows(&readonly::leading_word(sql));
+        self.wire.simple("ROLLBACK").await?;
+        self.wire.simple("BEGIN READ ONLY").await?;
+        let result = self.run_in_transaction(sql, cursor, cap).await;
+        // Also ends an aborted transaction after a failed statement.
+        let rolled = self.wire.simple("ROLLBACK").await;
+        let mut rows = result?;
+        rolled?;
+        let capped = rows.rows.len() > cap;
+        rows.rows.truncate(cap);
+        Ok(QueryResult {
+            columns: rows.columns,
+            rows: rows
+                .rows
+                .into_iter()
+                .map(|r| {
+                    r.into_iter()
+                        .map(|c| c.map_or(Value::Null, Value::Text))
+                        .collect()
+                })
+                .collect(),
+            capped,
+            row_cap: cap,
+            elapsed: started.elapsed(),
+        })
+    }
+
+    async fn run_in_transaction(
+        &mut self,
+        sql: &str,
+        cursor: bool,
+        cap: usize,
+    ) -> Result<Rows, DbError> {
+        // The server's word that this is one statement, before the text is
+        // sent anywhere it could be read as more.
+        self.wire.single_statement(sql).await?;
+        if !cursor {
+            return self.wire.simple(sql).await;
+        }
+        self.wire
+            .simple(&format!("DECLARE {CURSOR} NO SCROLL CURSOR FOR {sql}"))
+            .await?;
+        self.wire
+            .simple(&format!("FETCH {} FROM {CURSOR}", cap + 1))
+            .await
     }
 }
 
@@ -230,6 +297,34 @@ impl<W: Wire> Session for Postgres<W> {
                 })
             })
             .collect())
+    }
+
+    async fn run(&mut self, sql: &str) -> Result<QueryResult, QueryError> {
+        self.run_statement(sql).await
+    }
+
+    async fn explain(&mut self, sql: &str) -> Result<Plan, QueryError> {
+        // A statement that is already a plan is run as it is.
+        let text = if readonly::leading_word(sql) == "explain" {
+            sql.to_string()
+        } else {
+            format!("EXPLAIN (FORMAT TEXT) {sql}")
+        };
+        readonly::check_statement(sql)
+            .map_err(|r: Refusal| QueryError::NotSent(r.explain().into()))?;
+        let rows = self.read_up_to(&text, MAX_PLAN_LINES + 1).await?;
+        let mut lines: Vec<String> = rows
+            .rows
+            .into_iter()
+            .map(|r| r.into_iter().next().flatten().unwrap_or_default())
+            .collect();
+        let capped = lines.len() > MAX_PLAN_LINES;
+        lines.truncate(MAX_PLAN_LINES);
+        Ok(Plan { lines, capped })
+    }
+
+    fn canceller(&self) -> Arc<dyn Canceller> {
+        self.wire.canceller()
     }
 
     async fn table_rows(&mut self, schema: &str, table: &str) -> Result<TablePage, DbError> {
@@ -454,5 +549,177 @@ mod tests {
         assert_eq!(tables[0].rows_estimate, None);
         assert_eq!(tables[0].size_bytes, Some(8192));
         assert_eq!(tables[1].kind, TableKind::View);
+    }
+
+    // --- the query tab (E2) ---
+
+    #[tokio::test]
+    async fn a_write_is_sent_refused_by_the_database_and_nothing_is_committed() {
+        let wire = FakeWire::new();
+        let mut session = open(&wire, Limits::default()).await;
+        for sql in [
+            "INSERT INTO orders (id) VALUES (1)",
+            "update orders set status = 'paid'",
+            "DELETE FROM orders",
+            "DROP TABLE orders",
+            "TRUNCATE orders",
+        ] {
+            let error = session.run(sql).await.unwrap_err();
+            assert!(matches!(error, QueryError::Refused(_)), "{sql}: {error:?}");
+            assert!(error.to_string().contains("read-only"), "{error}");
+            // Sent once, never again: no retry.
+            let sent = wire.sent();
+            assert_eq!(
+                sent.iter().filter(|s| s.as_str() == sql).count(),
+                1,
+                "{sql}"
+            );
+            assert_eq!(sent.last().unwrap(), "ROLLBACK");
+        }
+        assert!(wire.applied().is_empty(), "{:?}", wire.applied());
+        assert!(!wire.sent().iter().any(|s| s.contains("COMMIT")));
+    }
+
+    #[tokio::test]
+    async fn a_server_that_ignored_the_setting_would_have_applied_the_write() {
+        // The control for the test above: the refusal comes from the
+        // session's read-only transaction, which this fake does not have.
+        let wire = FakeWire::ignoring_read_only();
+        wire.fail("never", "x");
+        let mut raw = wire.clone();
+        raw.simple("DELETE FROM orders").await.unwrap();
+        assert_eq!(wire.applied(), vec!["DELETE FROM orders"]);
+    }
+
+    #[tokio::test]
+    async fn a_request_that_changes_the_session_is_not_sent_and_says_so() {
+        let wire = FakeWire::new();
+        let mut session = open(&wire, Limits::default()).await;
+        let before = wire.sent();
+        for sql in [
+            "SET default_transaction_read_only = off",
+            "COMMIT",
+            "select 1; select 2",
+            " ",
+        ] {
+            let error = session.run(sql).await.unwrap_err();
+            assert!(matches!(error, QueryError::NotSent(_)), "{sql}: {error:?}");
+        }
+        assert_eq!(wire.sent(), before);
+    }
+
+    #[tokio::test]
+    async fn a_query_reads_through_a_cursor_and_stops_at_the_row_cap() {
+        let wire = FakeWire::new();
+        let many: Vec<Vec<Option<&str>>> = (0..6).map(|_| vec![Some("a")]).collect();
+        let refs: Vec<&[Option<&str>]> = many.iter().map(|r| r.as_slice()).collect();
+        wire.answer("from big", text_rows(&["id"], &refs));
+        let limits = Limits {
+            rows: 5,
+            ..Limits::default()
+        };
+        let mut session = open(&wire, limits).await;
+        let before = wire.sent().len();
+        let result = session.run("select id from big").await.unwrap();
+        assert_eq!(
+            (result.rows.len(), result.capped, result.row_cap),
+            (5, true, 5)
+        );
+        assert_eq!(
+            wire.sent()[before..],
+            [
+                "ROLLBACK",
+                "BEGIN READ ONLY",
+                "PARSE select id from big",
+                "DECLARE freshkube_query NO SCROLL CURSOR FOR select id from big",
+                "FETCH 6 FROM freshkube_query",
+                "ROLLBACK"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_statement_that_returns_no_cursor_rows_runs_as_it_is_and_is_cut_at_the_cap() {
+        let wire = FakeWire::new();
+        wire.answer("SHOW", text_rows(&["v"], &[&[Some("16.2")]]));
+        let mut session = open(&wire, Limits::default()).await;
+        let result = session.run("SHOW server_version").await.unwrap();
+        assert_eq!(result.rows, vec![vec![Value::Text("16.2".into())]]);
+        assert!(!result.capped);
+        assert!(!wire.sent().iter().any(|s| s.starts_with("DECLARE")));
+    }
+
+    #[tokio::test]
+    async fn a_database_error_keeps_its_words_and_the_transaction_is_ended() {
+        let wire = FakeWire::new();
+        wire.fail("nope", "relation \"nope\" does not exist");
+        let mut session = open(&wire, Limits::default()).await;
+        let error = session.run("select * from nope").await.unwrap_err();
+        assert_eq!(
+            error,
+            QueryError::Failed("relation \"nope\" does not exist".into())
+        );
+        assert_eq!(wire.sent().last().unwrap(), "ROLLBACK");
+        wire.time_out("slow");
+        let error = session.run("select * from slow").await.unwrap_err();
+        assert_eq!(error, QueryError::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn cancel_stops_the_running_statement_without_the_session() {
+        let wire = FakeWire::new();
+        wire.hold("pg_sleep");
+        let session = open(&wire, Limits::default()).await;
+        let cancel = {
+            let session: &dyn Session = &session;
+            session.canceller()
+        };
+        let mut session = session;
+        let running = tokio::spawn(async move { session.run("select pg_sleep(60)").await });
+        // The statement is out and waiting; the session itself is busy.
+        while !wire.sent().iter().any(|s| s.contains("pg_sleep")) {
+            tokio::task::yield_now().await;
+        }
+        assert!(!running.is_finished());
+        cancel.cancel().await.unwrap();
+        let error = running.await.unwrap().unwrap_err();
+        assert_eq!(error, QueryError::Cancelled);
+        assert_eq!(wire.cancels(), 1);
+        // The cancelled statement's transaction was rolled back.
+        assert_eq!(wire.sent().last().unwrap(), "ROLLBACK");
+    }
+
+    #[tokio::test]
+    async fn a_plan_is_explain_without_analyze_and_a_plan_is_not_wrapped_twice() {
+        let wire = FakeWire::new();
+        wire.answer(
+            "EXPLAIN",
+            text_rows(
+                &["QUERY PLAN"],
+                &[&[Some("Seq Scan on orders")], &[Some("  Filter: x")]],
+            ),
+        );
+        let mut session = open(&wire, Limits::default()).await;
+        let plan = session.explain("select * from orders").await.unwrap();
+        assert_eq!(plan.lines, vec!["Seq Scan on orders", "  Filter: x"]);
+        assert!(
+            wire.sent()
+                .iter()
+                .any(|s| s == "EXPLAIN (FORMAT TEXT) select * from orders")
+        );
+        assert!(
+            !wire
+                .sent()
+                .iter()
+                .any(|s| s.to_uppercase().contains("ANALYZE"))
+        );
+        let before = wire.sent().len();
+        session.explain("explain select 1").await.unwrap();
+        assert!(wire.sent()[before..].contains(&"explain select 1".to_string()));
+        // A request that would change the session is not explained either.
+        assert!(matches!(
+            session.explain("set role x").await.unwrap_err(),
+            QueryError::NotSent(_)
+        ));
     }
 }

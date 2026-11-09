@@ -44,13 +44,25 @@ pub fn check_statement(sql: &str) -> Result<(), Refusal> {
     }
 }
 
-fn first_word_refusal(statement: &str) -> Result<(), Refusal> {
-    let word: String = statement
+/// The first word of a statement, lowercased, past comments and opening
+/// parentheses; empty when there is none.
+pub fn leading_word(sql: &str) -> String {
+    let statements = split(sql);
+    let statement = statements.first().map_or("", String::as_str);
+    word_of(statement)
+}
+
+fn word_of(statement: &str) -> String {
+    statement
         .trim_start_matches(|c: char| c == '(' || c.is_whitespace())
         .chars()
         .take_while(|c| c.is_ascii_alphabetic())
         .collect::<String>()
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+fn first_word_refusal(statement: &str) -> Result<(), Refusal> {
+    let word = word_of(statement);
     match word.as_str() {
         "set" | "reset" | "discard" | "load" | "listen" | "unlisten" => {
             Err(Refusal::SessionSetting)
@@ -125,7 +137,7 @@ fn split(sql: &str) -> Vec<String> {
     out
 }
 
-fn prev_is_ident(chars: &[char], i: usize) -> bool {
+pub(crate) fn prev_is_ident(chars: &[char], i: usize) -> bool {
     i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_' || chars[i - 1] == '$')
 }
 
@@ -137,7 +149,7 @@ fn push(out: &mut Vec<String>, current: &mut String) {
 }
 
 /// End (exclusive) of the quoted run starting at `start`; doubled quotes stay inside.
-fn skip_quoted(chars: &[char], start: usize, quote: char) -> usize {
+pub(crate) fn skip_quoted(chars: &[char], start: usize, quote: char) -> usize {
     let mut i = start + 1;
     while i < chars.len() {
         if chars[i] == quote {
@@ -153,7 +165,7 @@ fn skip_quoted(chars: &[char], start: usize, quote: char) -> usize {
 }
 
 /// End of a `$tag$ ... $tag$` string starting at `start`, if one starts there.
-fn skip_dollar(chars: &[char], start: usize) -> Option<usize> {
+pub(crate) fn skip_dollar(chars: &[char], start: usize) -> Option<usize> {
     let mut j = start + 1;
     while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
         j += 1;

@@ -7,12 +7,17 @@
 //! connection to it ends.
 use crate::{
     limits::Limits,
-    session::{ColumnEntry, ConnectError, Listed, Session, TableEntry, TableKind, TablePage},
+    readonly,
+    session::{
+        Canceller, ColumnEntry, ConnectError, Listed, Plan, QueryError, QueryResult, Session,
+        TableEntry, TableKind, TablePage,
+    },
     wire::{Rows, Wire},
 };
 use async_trait::async_trait;
 use dbflux_core::{DbError, Value};
 use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
 
 /// How a connection to the example database ends.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,6 +48,8 @@ enum Answer {
     Rows(Rows),
     Timeout,
     Failed(String),
+    /// Runs until the session is cancelled.
+    Hold,
 }
 
 type Rule = (String, Answer);
@@ -58,6 +65,14 @@ pub struct FakeWire {
     read_only_setting: Arc<Mutex<String>>,
     /// Texts the fake server's parser takes for several statements.
     multi: Arc<Mutex<Vec<String>>>,
+    /// Inside `BEGIN READ ONLY`, until the next `ROLLBACK`.
+    in_read_only: Arc<Mutex<bool>>,
+    /// Writes the server accepted. Empty for any read-only session.
+    applied: Arc<Mutex<Vec<String>>>,
+    /// The rows the last `DECLARE` will `FETCH`.
+    cursor: Arc<Mutex<Rows>>,
+    cancel: Arc<Notify>,
+    cancels: Arc<Mutex<usize>>,
 }
 
 impl FakeWire {
@@ -80,6 +95,25 @@ impl FakeWire {
             .unwrap()
             .push((needle.into(), Answer::Rows(rows)));
         self
+    }
+
+    /// Statements containing `needle` run until cancelled.
+    pub fn hold(&self, needle: &str) -> &Self {
+        self.rules
+            .lock()
+            .unwrap()
+            .push((needle.into(), Answer::Hold));
+        self
+    }
+
+    /// The writes the server accepted: none, for a read-only session.
+    pub fn applied(&self) -> Vec<String> {
+        self.applied.lock().unwrap().clone()
+    }
+
+    /// How many cancel requests reached the server.
+    pub fn cancels(&self) -> usize {
+        *self.cancels.lock().unwrap()
     }
 
     pub fn time_out(&self, needle: &str) -> &Self {
@@ -119,6 +153,63 @@ pub fn text_rows(columns: &[&str], rows: &[&[Option<&str>]]) -> Rows {
     }
 }
 
+struct FakeCanceller {
+    cancel: Arc<Notify>,
+    cancels: Arc<Mutex<usize>>,
+}
+
+#[async_trait]
+impl Canceller for FakeCanceller {
+    async fn cancel(&self) -> Result<(), String> {
+        *self.cancels.lock().unwrap() += 1;
+        // A permit, so a cancel that lands just before the wait still counts.
+        self.cancel.notify_one();
+        Ok(())
+    }
+}
+
+/// Whether a statement changes data or the schema, as the fake server's
+/// read-only transaction sees it.
+fn writes(sql: &str) -> bool {
+    matches!(
+        readonly::leading_word(sql).as_str(),
+        "insert"
+            | "update"
+            | "delete"
+            | "drop"
+            | "create"
+            | "alter"
+            | "truncate"
+            | "grant"
+            | "revoke"
+            | "merge"
+            | "copy"
+    )
+}
+
+impl FakeWire {
+    /// What the server answers for `sql`, by the first rule that matches.
+    async fn answer_for(&self, sql: &str) -> Result<Rows, DbError> {
+        let found = self
+            .rules
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(needle, _)| sql.contains(needle.as_str()))
+            .map(|(_, answer)| answer.clone());
+        match found {
+            Some(Answer::Rows(rows)) => Ok(rows),
+            Some(Answer::Timeout) => Err(DbError::Timeout),
+            Some(Answer::Failed(message)) => Err(DbError::query_failed(message)),
+            Some(Answer::Hold) => {
+                self.cancel.notified().await;
+                Err(DbError::Cancelled)
+            }
+            None => Ok(Rows::default()),
+        }
+    }
+}
+
 #[allow(
     clippy::double_must_use,
     reason = "the async_trait expansion marks its boxed futures must_use"
@@ -129,8 +220,51 @@ pub fn text_rows(columns: &[&str], rows: &[&[Option<&str>]]) -> Rows {
 )]
 #[async_trait]
 impl Wire for FakeWire {
+    fn canceller(&self) -> Arc<dyn Canceller> {
+        Arc::new(FakeCanceller {
+            cancel: self.cancel.clone(),
+            cancels: self.cancels.clone(),
+        })
+    }
+
     async fn simple(&mut self, sql: &str) -> Result<Rows, DbError> {
         self.sent.lock().unwrap().push(sql.to_string());
+        if sql == "BEGIN READ ONLY" {
+            *self.in_read_only.lock().unwrap() = true;
+        } else if sql == "ROLLBACK" || sql == "COMMIT" {
+            *self.in_read_only.lock().unwrap() = false;
+        }
+        if let Some(inner) = sql
+            .strip_prefix("DECLARE ")
+            .and_then(|rest| rest.split_once(" CURSOR FOR "))
+        {
+            let rows = self.answer_for(inner.1).await?;
+            *self.cursor.lock().unwrap() = rows;
+            return Ok(Rows::default());
+        }
+        if let Some(n) = sql
+            .strip_prefix("FETCH ")
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|n| n.parse::<usize>().ok())
+        {
+            let mut rows = self.cursor.lock().unwrap().clone();
+            rows.rows.truncate(n);
+            return Ok(rows);
+        }
+        // The server's read-only session and transaction refuse a write,
+        // whatever is typed; a server that ignores the setting applies it.
+        if writes(sql) {
+            let read_only = *self.in_read_only.lock().unwrap()
+                || *self.read_only_setting.lock().unwrap() == "on";
+            if read_only {
+                return Err(DbError::permission_denied(format!(
+                    "cannot execute {} in a read-only transaction",
+                    readonly::leading_word(sql).to_uppercase()
+                )));
+            }
+            self.applied.lock().unwrap().push(sql.to_string());
+            return Ok(Rows::default());
+        }
         if sql.starts_with("SHOW default_transaction_read_only") {
             let value = self.read_only_setting.lock().unwrap().clone();
             return Ok(text_rows(
@@ -138,16 +272,7 @@ impl Wire for FakeWire {
                 &[&[Some(&value)]],
             ));
         }
-        for (needle, answer) in self.rules.lock().unwrap().iter() {
-            if sql.contains(needle.as_str()) {
-                return match answer.clone() {
-                    Answer::Rows(rows) => Ok(rows),
-                    Answer::Timeout => Err(DbError::Timeout),
-                    Answer::Failed(message) => Err(DbError::query_failed(message)),
-                };
-            }
-        }
-        Ok(Rows::default())
+        self.answer_for(sql).await
     }
 
     async fn single_statement(&mut self, sql: &str) -> Result<(), DbError> {
@@ -172,14 +297,36 @@ impl Wire for FakeWire {
 /// with more rows than a page holds so the cap shows.
 pub struct FakeSession {
     limits: Limits,
+    cancel: Arc<Notify>,
+    cancels: Arc<Mutex<usize>>,
 }
 
 const ORDERS: usize = 250;
 
 impl FakeSession {
     pub fn shop(limits: Limits) -> Self {
-        Self { limits }
+        Self {
+            limits,
+            cancel: Arc::new(Notify::new()),
+            cancels: Arc::new(Mutex::new(0)),
+        }
     }
+
+    /// How many cancel requests this session received.
+    pub fn cancels(&self) -> usize {
+        *self.cancels.lock().unwrap()
+    }
+}
+
+/// The table a statement of the example reads, after `from`.
+fn from_table(sql: &str) -> Option<String> {
+    let lower = sql.to_ascii_lowercase();
+    let after = lower.split(" from ").nth(1)?;
+    let name = after
+        .split(|c: char| c.is_whitespace() || c == ';' || c == ')')
+        .next()?
+        .trim_matches('"');
+    Some(name.rsplit('.').next().unwrap_or(name).to_string())
 }
 
 fn entry(name: &str, kind: TableKind, rows: u64, size: u64) -> TableEntry {
@@ -266,6 +413,67 @@ impl Session for FakeSession {
             }
             _ => Err(DbError::object_not_found(format!("{schema}.{table}"))),
         }
+    }
+
+    async fn run(&mut self, sql: &str) -> Result<QueryResult, QueryError> {
+        readonly::check_statement(sql).map_err(|r| QueryError::NotSent(r.explain().to_string()))?;
+        let started = std::time::Instant::now();
+        let word = readonly::leading_word(sql);
+        if writes(sql) {
+            // What the database answers a write in a read-only session.
+            return Err(QueryError::Refused(format!(
+                "cannot execute {} in a read-only transaction",
+                word.to_uppercase()
+            )));
+        }
+        if sql.to_ascii_lowercase().contains("pg_sleep") {
+            self.cancel.notified().await;
+            return Err(QueryError::Cancelled);
+        }
+        if let Some(table) = from_table(sql) {
+            let page = match self.table_rows("public", &table).await {
+                Ok(page) => page,
+                Err(_) => {
+                    return Err(QueryError::Failed(format!(
+                        "relation \"{table}\" does not exist"
+                    )));
+                }
+            };
+            return Ok(QueryResult {
+                columns: page.columns,
+                rows: page.rows,
+                capped: page.capped,
+                row_cap: page.row_cap,
+                elapsed: started.elapsed(),
+            });
+        }
+        Ok(QueryResult {
+            columns: vec!["?column?".into()],
+            rows: vec![vec![Value::Int(1)]],
+            capped: false,
+            row_cap: self.limits.rows,
+            elapsed: started.elapsed(),
+        })
+    }
+
+    async fn explain(&mut self, sql: &str) -> Result<Plan, QueryError> {
+        readonly::check_statement(sql).map_err(|r| QueryError::NotSent(r.explain().to_string()))?;
+        let table = from_table(sql).unwrap_or_else(|| "orders".into());
+        let rows = if table == "orders" { ORDERS } else { 12 };
+        Ok(Plan {
+            lines: vec![
+                format!("Seq Scan on {table}  (cost=0.00..5.50 rows={rows} width=64)"),
+                "  Filter: (status = 'paid'::text)".into(),
+            ],
+            capped: false,
+        })
+    }
+
+    fn canceller(&self) -> Arc<dyn Canceller> {
+        Arc::new(FakeCanceller {
+            cancel: self.cancel.clone(),
+            cancels: self.cancels.clone(),
+        })
     }
 
     async fn table_rows(&mut self, schema: &str, table: &str) -> Result<TablePage, DbError> {
