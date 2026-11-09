@@ -131,6 +131,45 @@ fn a_second_gap_soon_after_the_first_is_the_same_wake(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_second_long_sleep_soon_after_the_first_is_its_own_wake(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let wall = watch(cx, handle, &view);
+    tick(cx, &wall, Duration::ZERO);
+    let before = generation(cx, handle, &view);
+    tick(cx, &wall, Duration::from_secs(600));
+    // The app is used for half a minute, then the lid closes for ten
+    // minutes: the executor's clock moved only about that half minute.
+    for _ in 0..5 {
+        tick(cx, &wall, Duration::ZERO);
+    }
+    tick(cx, &wall, Duration::from_secs(600));
+    assert_eq!(generation(cx, handle, &view), before + 2);
+}
+
+#[gpui_kit::test]
+fn a_wake_leaves_the_shown_resources_list_to_resume_its_own_watch(cx: &mut TestAppContext) {
+    use crate::desktop::testing::open_kind;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| open_kind(window, cx, "pods"))
+        .unwrap();
+    cx.run_until_parked();
+    let lists = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, _, cx| {
+            view.read(cx).pages.resources.read(cx).lists_started()
+        })
+        .unwrap()
+    };
+    let wall = watch(cx, handle, &view);
+    tick(cx, &wall, Duration::ZERO);
+    let before = lists(cx);
+    let generation_before = generation(cx, handle, &view);
+    tick(cx, &wall, Duration::from_secs(600));
+    // The summary relisted; the list was not read from scratch.
+    assert_eq!(generation(cx, handle, &view), generation_before + 1);
+    assert_eq!(lists(cx), before);
+}
+
+#[gpui_kit::test]
 fn a_wake_with_nothing_read_yet_says_nothing_and_reads_nothing(cx: &mut TestAppContext) {
     use crate::{DebugOptions, GpuiOptions};
     let mut debug = DebugOptions::default();

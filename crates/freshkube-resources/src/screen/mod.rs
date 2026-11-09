@@ -771,6 +771,13 @@ impl ResourcesScreen {
         self.detail.update(cx, |detail, cx| detail.refresh(cx));
     }
 
+    /// How many times the list was read from scratch: a Refresh raises it,
+    /// and a watch that only resumes does not.
+    #[cfg(feature = "testing")]
+    pub fn lists_started(&self) -> u64 {
+        self.store.epoch()
+    }
+
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
     }

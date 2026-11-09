@@ -15,9 +15,10 @@ use freshkube_core::wake::{GapDetector, TICK};
 /// only stops a read that never answers from holding the words forever.
 pub(super) const RECONNECTING_LIMIT: Duration = Duration::from_secs(45);
 
-/// A wake this soon after the last (by the executor's clock) is the same
-/// one: an NTP step right after waking, or a clock that keeps stepping,
-/// relists nothing again.
+/// A gap shorter than this, soon after the last wake (by the executor's
+/// clock), is the same wake: an NTP step right after waking, or a clock
+/// that keeps stepping, relists nothing again. A gap this long or longer is
+/// always a sleep of its own.
 pub(super) const WAKE_DEBOUNCE: Duration = Duration::from_secs(60);
 
 impl Pilot {
@@ -49,7 +50,14 @@ impl Pilot {
                 let now = cx.background_executor().now();
                 let slept = detector
                     .observe(now.duration_since(origin), wall())
-                    .filter(|_| last_wake.is_none_or(|at| now.duration_since(at) >= WAKE_DEBOUNCE));
+                    // Only a short gap can be the same wake again (an NTP step
+                    // right after waking). A long one is a real sleep, and
+                    // the executor's clock, which stood still through it,
+                    // cannot say how long ago the last wake was.
+                    .filter(|slept| {
+                        *slept >= WAKE_DEBOUNCE
+                            || last_wake.is_none_or(|at| now.duration_since(at) >= WAKE_DEBOUNCE)
+                    });
                 if slept.is_some() {
                     last_wake = Some(now);
                 }
@@ -81,8 +89,28 @@ impl Pilot {
         #[cfg(not(test))]
         freshkube_core::wake::announce();
         self.chrome.reconnecting = Some(Duration::ZERO);
-        self.refresh_now(window, cx);
+        self.refresh_for_wake(window, cx);
         cx.notify();
+    }
+
+    /// What a wake refreshes: what the person's Refresh does (`refresh_now`),
+    /// except that the Resources list is not listed again. Its watch was
+    /// announced the wake, and resumes from its last version by itself; a
+    /// full list on top would drop that watch the moment it started.
+    fn refresh_for_wake(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode().has_talos() || self.mode().is_example() {
+            self.refresh_summary(window, cx);
+            self.refresh(window, cx);
+        } else {
+            // Kubernetes only: the summary relists now, and the local files
+            // are looked at again as the automatic refresh does.
+            self.refresh_summary(window, cx);
+            self.refresh_kubernetes(false, window, cx);
+            self.refresh_screen(window, cx);
+        }
+        if self.navigation.page != Page::Resources {
+            self.refresh_page(window, cx);
+        }
     }
 
     /// Called from the one-second tick: stops saying "Reconnecting…" once

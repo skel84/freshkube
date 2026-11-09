@@ -243,15 +243,17 @@ own and no owner changes:
 | Session alert read | Read again, as the summary's relist does. |
 | Talos overview | Read again, unless one is already running. |
 | The shown page | Refreshed through `ScreenPanel::refresh`; a hidden page stays stopped. |
-| Resources list watch | The open watch ends and a new one starts at once from the last resourceVersion: no list, no backoff, nothing repeated; if the version expired the server says 410 and the usual relist follows. Rows already batched are sent first. |
+| Resources list watch | The open watch ends and a new one starts at once from the last resourceVersion: no list, no backoff, nothing repeated. The wake leaves the shown Resources page out of its refresh (it does not list from scratch, as a Refresh does), so this resume is what runs; a hidden page has no watch. Rows already batched are sent first. If the version has expired, the server says 410 and the usual relist follows. |
 | Dock log tabs (pods) | The open log ends where it stands and opens again from the last whole line's time, skipping the lines of that second already shown (`LogPosition`); it is no failure, so no "Reconnecting" row and no backoff. |
-| Followed items, workload pods, object events, a forward's pods and target watches | The watcher is made again, so it lists first and replaces what it held, as it does after a 410. Followed reducers hold state, not events, so a repeated list tells nothing twice. |
+| Followed items, workload pods, object events, a forward's pods and target watches | The watcher is made again, so it lists first and replaces what it held, as it does after a 410. Followed reducers hold state, not events, so a repeated list tells nothing twice; a followed pod that is not in the new list is reported gone (a pod deleted while nobody watched leaves no delete event). |
 | Talos log streams, forwards' own connections | Not reconnected by the wake: a dead connection is found by TCP keepalive (60 s), and each source's retry takes it from there; a later cut can reopen them. |
+| A read waiting out a retry backoff, or in its first list | Not heard: it ends by its own timeout or backoff (30 s at most), then reads as it always does. |
 
 A wake does nothing when nothing is connected (a Kubernetes-only entry with
 no context chosen or tried, no overview read yet, a load or an error on screen),
-and a second wake within 60 s of the first (by the executor's clock) is the same
-one: an NTP step after waking relists nothing again.
+and a gap under 60 s soon after the last wake (by the executor's clock) is the same
+wake: an NTP step after waking relists nothing again. A gap of 60 s or more is a sleep
+of its own, since the executor's clock stood still through it.
 
 The status bar says "Reconnecting to <context>…" from the wake until a read has
 answered: a summary publication in which some watched source is current, or every
