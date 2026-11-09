@@ -2,7 +2,7 @@
 //! schema browser, and a capped table. The example session is
 //! `freshkube_db::fake`; no forward, Secret or socket is used.
 use super::super::tests::mount;
-use super::{Example, Phase};
+use super::{Connected, Example, Fail, Phase};
 use crate::screens::ScreenPanel;
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::test::TestWindowExt;
@@ -601,4 +601,220 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
         assert!(gate.right() <= viewport.width, "{gate:?}");
     })
     .unwrap();
+}
+
+// Teleport (E3).
+
+#[gpui_kit::test]
+async fn each_teleport_state_is_shown_with_its_command(cx: &mut TestAppContext) {
+    for (shape, id, command) in [
+        (
+            Example::TeleportNoTsh,
+            "explore-state-teleport-not-installed",
+            "brew install teleport",
+        ),
+        (
+            Example::TeleportNotLoggedIn,
+            "explore-state-teleport-not-logged-in",
+            "tsh login --proxy=teleport.example.com",
+        ),
+        (
+            Example::TeleportNoRole,
+            "explore-state-teleport-no-role",
+            "tsh status --proxy=teleport.example.com",
+        ),
+        (
+            Example::TeleportNotFound,
+            "explore-state-teleport-not-found",
+            "tsh db ls --proxy=teleport.example.com",
+        ),
+        (
+            Example::TeleportProxyFailed,
+            "explore-state-teleport-proxy-failed",
+            "tsh --proxy=teleport.example.com proxy db --tunnel",
+        ),
+    ] {
+        let (_runtime, page, window) = open(cx, shape).await;
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let state = window.try_find(id).unwrap_or_else(|| panic!("{id}"));
+            let words = state.label().unwrap_or_default().to_owned();
+            assert!(words.contains(command), "{id}: {words}");
+            // The person copies the command; Freshkube runs nothing.
+            assert!(window.try_find("explore-copy-command").is_some(), "{id}");
+            assert!(window.try_find("explore-retry").is_some(), "{id}");
+            assert!(window.try_find("explore-read-only").is_none());
+        })
+        .unwrap();
+        cx.update(|cx| {
+            let view = explorer(&page, cx);
+            let Phase::Failed(fail) = view.read(cx).phase().clone() else {
+                panic!("{id}: not failed");
+            };
+            assert!(fail.command().unwrap().contains(command));
+        });
+    }
+}
+
+#[gpui_kit::test]
+async fn teleport_connects_read_only_and_never_claims_a_verified_certificate(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = open(cx, Example::Teleport).await;
+    connected(cx, &page, &window).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("explore-read-only").label(),
+            Some("Read-only session")
+        );
+        assert_eq!(
+            window.find("explore-encryption").label(),
+            Some("Encrypted, certificate not verified")
+        );
+        let who = window
+            .find("explore-who")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(who.contains("Teleport") && !who.contains("Secret"), "{who}");
+        let route = window
+            .find("explore-route")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(route.contains("orders-db-prod-eu"), "{route}");
+    })
+    .unwrap();
+}
+
+/// A fake `tsh` that signs in, lists `orders-db-prod-eu` and "listens" on a
+/// loopback port nothing serves.
+#[cfg(unix)]
+fn fake_tsh(dir: &std::path::Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = "#!/bin/sh\n[ \"$1\" = --warmup ] && exit 0\ncase \"$2\" in\n  status) echo '{\"active\":{}}' ;;\n  db) echo '[{\"metadata\":{\"name\":\"orders-db-prod-eu\"}}]' ;;\n  proxy) echo \"$$\" > \"$(dirname \"$0\")/pid\"; echo 'tunnel on 127.0.0.1:9.'; exec sleep 300 ;;\nesac\n";
+    let path = dir.join("tsh");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for _ in 0..200 {
+        match std::process::Command::new(&path).arg("--warmup").status() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            _ => break,
+        }
+    }
+    path
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("freshkube-explore-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[cfg(unix)]
+async fn gone(pid: u32) {
+    for _ in 0..100 {
+        if !pid_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the proxy child {pid} outlived its owner");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_connect_over_the_proxy_leaves_no_child() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let dir = temp_dir("failed");
+    let access = freshkube_db::teleport::TeleportAccess {
+        tsh: Some(fake_tsh(&dir)),
+        ..super::example_teleport()
+    };
+    // Nothing serves the announced port, so the connection is refused; the
+    // job's end drops the proxy and with it the child.
+    let result = runtime.block_on(super::connect_teleport(access, "orders-db".into()));
+    assert!(
+        matches!(
+            result,
+            Err(Fail::Unreachable(_) | Fail::Refused(_) | Fail::TimedOut)
+        ),
+        "{result:?}"
+    );
+    let pid: u32 = std::fs::read_to_string(dir.join("pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    runtime.block_on(gone(pid));
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+async fn safety_g19_closing_the_tab_kills_the_teleport_child(cx: &mut TestAppContext) {
+    use freshkube_db::teleport::Proxy;
+    let (runtime, page, window) = open(cx, Example::Teleport).await;
+    connected(cx, &page, &window).await;
+    let dir = temp_dir("close");
+    let access = freshkube_db::teleport::TeleportAccess {
+        tsh: Some(fake_tsh(&dir)),
+        ..super::example_teleport()
+    };
+    let proxy = runtime
+        .block_on(Proxy::start(&access, "orders-db"))
+        .expect("the fake tsh listens");
+    let pid = proxy.pid().unwrap();
+    assert!(pid_alive(pid));
+    // The tab owns the connection that holds the proxy.
+    cx.update(|cx| {
+        explorer(&page, cx).update(cx, |view, _| {
+            let mut connected: Connected = view.connect.data().unwrap().clone().unwrap();
+            connected.proxy = Some(std::sync::Arc::new(proxy));
+            view.connect.resolve(view.epoch, Ok(Ok(connected)));
+        })
+    });
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("databases-explore-close-orders-db", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(|cx| page.read(cx).explorers.is_empty()));
+    runtime.block_on(gone(pid));
+}
+
+#[test]
+fn nothing_secret_is_in_teleports_words_or_debug() {
+    use freshkube_db::teleport::TeleportError;
+    let hostile = "token=sekrit password=hunter2";
+    let proxy_failed = Fail::Teleport(TeleportError::ProxyFailed {
+        why: freshkube_db::teleport::redact(hostile, &[]),
+        command: "tsh --proxy=teleport.example.com proxy db --tunnel".into(),
+    });
+    for text in [
+        format!("{proxy_failed:?}"),
+        proxy_failed.words(),
+        proxy_failed.title().to_owned(),
+    ] {
+        assert!(
+            !text.contains("sekrit") && !text.contains("hunter2"),
+            "{text}"
+        );
+    }
 }

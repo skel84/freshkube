@@ -1,8 +1,8 @@
 # Database explorer
 
-Code: `freshkube-db` (`crates/freshkube-db/src/`) is the session, with no GPUI and nothing of desktop: `postgres.rs` (the read-only Postgres session), `readonly.rs` (the statement check), `limits.rs` (timeouts and row cap), `wire.rs` (the `tokio-postgres` connection under it), `session.rs` (the `Session` trait and its types), `credentials.rs` (the in-memory password) and `fake.rs` (the example `shop` database and a recording fake server). `freshkube-core`'s `databases/explore.rs` picks the pod and reads the login. `freshkube-desktop/src/screens/databases/explore/` is the tab: `mod.rs` (the connection), `browser.rs` (schemas and tables), `data.rs` (a table's rows and the record Inspector), `view.rs` and `fail.rs` (the connect step's states). Design and slices: [#948](https://github.com/skel84/freshkube/issues/948). Tests: the unit tests in each `freshkube-db` module, core's `databases::explore::tests` and desktop's `explore/tests.rs`.
+Code: `freshkube-db` (`crates/freshkube-db/src/`) is the session, with no GPUI and nothing of desktop: `postgres.rs` (the read-only Postgres session), `readonly.rs` (the statement check), `limits.rs` (timeouts and row cap), `wire.rs` (the `tokio-postgres` connection under it), `session.rs` (the `Session` trait and its types), `credentials.rs` (the in-memory password) and `fake.rs` (the example `shop` database and a recording fake server). `freshkube-core`'s `databases/explore.rs` picks the pod and reads the login. `freshkube-desktop/src/screens/databases/explore/` is the tab: `mod.rs` (the connection), `browser.rs` (schemas and tables), `data.rs` (a table's rows and the record Inspector), `view.rs` and `fail.rs` (the connect step's states). Design and slices: [#948](https://github.com/skel84/freshkube/issues/948). `teleport/` (`mod.rs`, `redact.rs`) is Teleport's route (slice E3). Tests: the unit tests in each `freshkube-db` module (Teleport's use fake `tsh` scripts), core's `databases::explore::tests` and desktop's `explore/tests.rs`.
 
-This is slice E1: PostgreSQL by CloudNativePG, read-only, through a port forward. The query tab (E2), Teleport (E3), the `databases:` block of Team setup (E4), MySQL and MariaDB (E5) and writes (E7) are later; until E4 the row cap (200) and the timeouts are built in.
+This is slice E1: PostgreSQL by CloudNativePG, read-only, through a port forward. The query tab (E2), Teleport (E3, [below](#teleport)), the `databases:` block of Team setup (E4), MySQL and MariaDB (E5) and writes (E7) are later; until E4 the row cap (200) and the timeouts are built in.
 
 ## Opening it
 
@@ -30,6 +30,27 @@ This is the one place Databases reads a Secret. It is read **once per connection
 CloudNativePG enables TLS by default (`ssl = 'on'`, operator-managed server certificate) and its generated `pg_hba.conf` ends with `host all all all scram-sha-256` (`md5` on PostgreSQL 13 and older), so both TLS and plain logins are admitted for ordinary users; `hostssl … cert` rules cover only `streaming_replica` and the pooler. The server certificate covers the `<cluster>-rw`, `-r` and `-ro` Services (also with `.<namespace>` and `.<namespace>.svc`) ([postgresql_conf](https://cloudnative-pg.io/docs/current/postgresql_conf), [certificates](https://cloudnative-pg.io/docs/current/certificates)).
 
 The session behaves like `sslmode=prefer` with rustls (`tokio-postgres-rustls`, `ring`; no OpenSSL): it tries TLS and falls back to plain **only when the server doesn't offer it**; a server that offers TLS and fails the handshake or the certificate check is an error (*The server's certificate was not accepted*), never a downgrade. Through a port forward the address is loopback, so the name checked is the Service's: `<cluster>-ro.<namespace>.svc` for a replica, `-rw` for the primary (`hostaddr` is the forward, `host` the name). The strip says which happened: *Encrypted, certificate verified* (checked against `ca.crt`), *encrypted, certificate not verified* (no CA could be read), or *not encrypted* (the server offered no TLS), found by asking the server (`pg_stat_ssl`).
+
+## Teleport
+
+Where the team uses Teleport database access, Explore reaches the database through `tsh proxy db` instead of a pod forward (`freshkube-db`'s `teleport/`). The route changes; the rules don't: the session is the same read-only session, with the same timeouts and caps. **Until E4 reads the `databases:` block of the Team setup, the settings (`TeleportAccess`: proxy, name pattern, database user, database, an optional `tsh` file) come only from an example or a test, so the route is off in the running app.**
+
+The connect step has one job on this route: validate the settings, find `tsh`, check the login, resolve the database name, start the proxy, connect and verify read-only.
+
+1. **`tsh` is found** on `PATH`, or is the file the person chose. *tsh is not installed* otherwise.
+2. **Signed in?** `tsh status --format=json`: a failing exit, or no active profile, is *Not signed in to Teleport*. Only that and the exit are read, never the profile's contents. Freshkube never runs `tsh login`; the state shows `tsh login --proxy=<proxy>` to run in a terminal, and a Copy command button.
+3. **The name** is the pattern with `{name}` replaced by the Cluster's name (`{name}-prod-eu` gives `orders-db-prod-eu`). `tsh db ls --format=json` must list it, else *Teleport has no database by that name*, with `tsh db ls`. A role that can't see the database never lists it, so that reads alike; a role that sees it but may not log in as the database user is refused by the proxy and shown as *No role allows this database*.
+4. **The proxy** is `tsh --proxy=<proxy> proxy db --tunnel --db-user=<user> --db-name=<database> <name>`. `--tunnel` makes `tsh` sign in with its own certificate, so Freshkube passes no certificate, key or password and reads no Secret. It waits (15 s) for `tsh` to say where it listens. Anything else is *The Teleport proxy failed*, with redacted stderr and the same command.
+5. **Connect** to the announced loopback port over rustls, as above.
+
+### What it guarantees
+
+- **A child belongs to one tab.** It starts only from the tab's Explore (or Try again), is held by that tab's connection and is killed when the tab closes, the connection is made again, the connect job is dropped, or the app quits (`Proxy`'s drop; `kill_on_drop`). A failed connect after the proxy started drops it too.
+- **Loopback only.** The port is the one `tsh` announces; an announced address that isn't loopback ends the child and is *The Teleport proxy failed*.
+- **No secret goes in.** The arguments hold the proxy, user, database and name only. The child's environment is cleared down to `PATH`, `HOME`, `TELEPORT_HOME`, `USER`, `LOGNAME`, `TMPDIR`, `SYSTEMROOT` and `USERPROFILE`. Freshkube never opens `tsh`'s profile directory or names a certificate.
+- **Stderr is redacted** before it is shown: key and certificate paths, the profile directory, `key=value` pairs that name a secret, a word after one, PEM blocks, JWT- and base64-shaped runs and URLs that carry a login are replaced, and the rest is cut to its last 8 lines (1,000 characters).
+- **TLS.** The Postgres leg uses the same `prefer` plan. There is no cluster CA on this route and `tsh`'s certificates are off limits, so the strip never says *verified* here: it says *encrypted, certificate not verified*, or *not encrypted* when the server offers no TLS. The hop to Teleport itself is `tsh`'s own mutually authenticated TLS.
+- If the proxy dies while connected, the next read fails and says so; Try again starts a new one.
 
 ## Read-only, enforced by the session
 

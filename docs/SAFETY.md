@@ -157,6 +157,15 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g18_a_context_change_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 - `safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 19. A Teleport child belongs to one explorer tab, runs only from Explore on loopback, never signs in for anyone, and carries no secret
+
+- `safety_g19_closing_the_tab_kills_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
+- `safety_g19_the_child_dies_with_its_proxy` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g19_a_proxy_that_listens_beyond_loopback_is_killed` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g19_not_signed_in_is_told_without_running_a_login` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g19_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g19_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

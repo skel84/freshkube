@@ -46,22 +46,40 @@ impl ExploreView {
             Phase::Connecting => (
                 "explore-state-connecting".into(),
                 format!("Connecting to {name}"),
-                "Connecting read-only…".into(),
+                if self.teleport.is_some() {
+                    "Checking Teleport, starting its proxy and connecting read-only…".into()
+                } else {
+                    "Connecting read-only…".into()
+                },
                 false,
             ),
             Phase::Connected => unreachable!("a connected tab draws its tables"),
         };
-        let actions = if retry {
-            vec![
+        let mut actions = Vec::new();
+        // The command is for the person's own terminal; copying it is as far
+        // as Freshkube goes.
+        if let Phase::Failed(fail) = &self.phase
+            && let Some(command) = fail.command().filter(|c| !c.is_empty())
+        {
+            actions.push(
+                Button::new("explore-copy-command")
+                    .icon(IconName::Copy)
+                    .label("Copy command")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(command.clone()))
+                    })
+                    .into_any_element(),
+            );
+        }
+        if retry {
+            actions.push(
                 Button::new("explore-retry")
                     .icon(IconName::RefreshCw)
                     .label("Try again")
                     .on_click(cx.listener(|this, _, _, cx| this.connect(cx)))
                     .into_any_element(),
-            ]
-        } else {
-            Vec::new()
-        };
+            );
+        }
         // A narrow window or a large text size may not fit the words and the
         // button: the state scrolls, so Try again can always be reached.
         div()

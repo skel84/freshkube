@@ -1,0 +1,424 @@
+use super::*;
+use std::fs;
+
+fn access(tsh: Option<PathBuf>) -> TeleportAccess {
+    TeleportAccess {
+        proxy: "teleport.example.com".into(),
+        name_pattern: "{name}-prod-eu".into(),
+        db_user: "reader".into(),
+        database: "shop".into(),
+        tsh,
+    }
+}
+
+const READY: &str = "echo 'Started authenticated tunnel for the PostgreSQL database \"orders-db-prod-eu\" in cluster \"teleport.example.com\" on 127.0.0.1:41234.'\nexec sleep 300";
+const LISTED: &str = "echo '[{\"metadata\":{\"name\":\"orders-db-prod-eu\"}},{\"metadata\":{\"name\":\"billing-prod-eu\"}}]'";
+
+/// A fake `tsh` in `dir`. It logs each call's subcommand to `calls`, then
+/// answers `status`, `db ls` and `proxy db` the way the three bodies say.
+#[cfg(unix)]
+fn fake_tsh(dir: &Path, status: &str, list: &str, proxy: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = format!(
+        "#!/bin/sh\n[ \"$1\" = --warmup ] && exit 0\necho \"$2 $3\" >> '{calls}'\ncase \"$2\" in\n  status) {status} ;;\n  db) {list} ;;\n  proxy) printf '%s\\n' \"$@\" > '{args}'; env > '{env}'; {proxy} ;;\n  *) echo 'unknown' >&2; exit 2 ;;\nesac\n",
+        calls = dir.join("calls").display(),
+        args = dir.join("args").display(),
+        env = dir.join("env").display(),
+    );
+    let path = dir.join("tsh");
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    // Another test's fork may still hold the file open for writing, which
+    // makes running it fail with "text file busy" for a moment.
+    for _ in 0..200 {
+        match std::process::Command::new(&path).arg("--warmup").status() {
+            Err(e) if e.raw_os_error() == Some(26) => std::thread::sleep(Duration::from_millis(10)),
+            _ => break,
+        }
+    }
+    path
+}
+
+const SIGNED_IN: &str = "echo '{\"active\":{\"username\":\"alice\"}}'";
+
+fn calls(dir: &Path) -> String {
+    fs::read_to_string(dir.join("calls")).unwrap_or_default()
+}
+
+fn alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+async fn start(dir: &Path, status: &str, list: &str, proxy: &str) -> Result<Proxy, TeleportError> {
+    let tsh = fake_tsh(dir, status, list, proxy);
+    Proxy::start_within(&access(Some(tsh)), "orders-db", Duration::from_secs(5)).await
+}
+
+#[test]
+fn the_name_pattern_names_the_database() {
+    let a = access(None);
+    assert_eq!(a.database_name("orders-db").unwrap(), "orders-db-prod-eu");
+    assert!(a.validate().is_ok());
+}
+
+#[test]
+fn settings_that_could_be_options_or_hold_spaces_are_refused() {
+    let cases: [(fn(&mut TeleportAccess), bool); 8] = [
+        (|a: &mut TeleportAccess| a.proxy = "-evil".into(), false),
+        (|a: &mut TeleportAccess| a.proxy = "a b".into(), false),
+        (
+            |a: &mut TeleportAccess| a.db_user = "--db-user=x".into(),
+            false,
+        ),
+        (|a: &mut TeleportAccess| a.database = "x y".into(), false),
+        (
+            |a: &mut TeleportAccess| a.name_pattern = "fixed".into(),
+            false,
+        ),
+        (
+            |a: &mut TeleportAccess| a.name_pattern = "-{name}".into(),
+            false,
+        ),
+        (
+            |a: &mut TeleportAccess| a.proxy = "teleport.example.com:443".into(),
+            true,
+        ),
+        (
+            |a: &mut TeleportAccess| a.db_user = "reader@example.com".into(),
+            true,
+        ),
+    ];
+    for (change, ok) in cases {
+        let mut a = access(None);
+        change(&mut a);
+        assert_eq!(a.validate().is_ok(), ok, "{a:?}");
+    }
+    let mut a = access(None);
+    a.name_pattern = "{name}-x".into();
+    assert!(a.database_name("bad name").is_err());
+}
+
+#[test]
+fn safety_g19_the_childs_arguments_hold_no_secret() {
+    let a = access(None);
+    let all: Vec<String> = [
+        a.status_args(),
+        a.list_args(),
+        a.proxy_args("orders-db-prod-eu"),
+    ]
+    .concat();
+    assert_eq!(
+        a.proxy_args("orders-db-prod-eu"),
+        [
+            "--proxy=teleport.example.com",
+            "proxy",
+            "db",
+            "--tunnel",
+            "--db-user=reader",
+            "--db-name=shop",
+            "orders-db-prod-eu"
+        ]
+    );
+    for arg in &all {
+        let lower = arg.to_lowercase();
+        for word in [
+            "password",
+            "token",
+            "secret",
+            "cert",
+            "key",
+            "identity",
+            "-i=",
+            "--identity",
+        ] {
+            assert!(!lower.contains(word), "{arg} holds {word}");
+        }
+    }
+}
+
+#[test]
+fn each_state_has_a_command_to_run() {
+    let a = access(None);
+    let states = [
+        TeleportError::NotInstalled,
+        TeleportError::NotLoggedIn {
+            proxy: a.proxy.clone(),
+        },
+        TeleportError::NoRole {
+            name: "n".into(),
+            user: "u".into(),
+            proxy: a.proxy.clone(),
+        },
+        TeleportError::NotFound {
+            name: "n".into(),
+            pattern: "p".into(),
+            proxy: a.proxy.clone(),
+        },
+        TeleportError::ProxyFailed {
+            why: "w".into(),
+            command: "tsh proxy db".into(),
+        },
+    ];
+    for state in states {
+        assert!(state.command().is_some(), "{state}");
+    }
+    assert_eq!(
+        TeleportError::NotLoggedIn { proxy: a.proxy }
+            .command()
+            .unwrap(),
+        "tsh login --proxy=teleport.example.com"
+    );
+}
+
+#[test]
+fn the_announced_address_is_read_and_only_loopback_is_used() {
+    let line = "Started authenticated tunnel for the PostgreSQL database \"orders-db-prod-eu\" in cluster \"teleport.example.com:443\" on 127.0.0.1:41234.";
+    assert!(matches!(
+        parse_listen(line),
+        Some(Listen::Loopback(_, 41234))
+    ));
+    assert!(matches!(
+        parse_listen("listening on [::1]:5000"),
+        Some(Listen::Loopback(_, 5000))
+    ));
+    assert!(matches!(
+        parse_listen("on localhost:6000"),
+        Some(Listen::Loopback(_, 6000))
+    ));
+    assert!(matches!(
+        parse_listen("on 0.0.0.0:7000"),
+        Some(Listen::Exposed(_))
+    ));
+    assert!(parse_listen("proxy teleport.example.com:443 ok").is_none());
+    assert!(parse_listen("nothing here").is_none());
+}
+
+#[test]
+fn stderr_is_redacted_before_it_is_shown() {
+    let text = "\
+ERROR: failed to load /home/alice/.tsh/keys/teleport.example.com/alice-db/key.pem\n\
+token=abc123 password: hunter2 Authorization: Bearer abcdefghijklmnop1234567890XYZ\n\
+-----BEGIN CERTIFICATE-----\nMIIBsecretbytes\n-----END CERTIFICATE-----\n\
+login at https://alice:pw@teleport.example.com/x and key /var/lib/x/id.key\n\
+eyJhbGciOiJIUzI1NiJ9.payload.signature\n\
+access to db denied for user reader";
+    let shown = redact(text, &["/home/alice"]);
+    for secret in [
+        "abc123",
+        "hunter2",
+        "abcdefghijklmnop",
+        "MIIB",
+        "alice:pw",
+        ".tsh",
+        "/home/alice",
+        "id.key",
+        "eyJh",
+    ] {
+        assert!(!shown.contains(secret), "{secret} in {shown}");
+    }
+    assert!(shown.contains("access to db denied"), "{shown}");
+}
+
+#[test]
+fn redacted_output_is_bounded() {
+    let long = (0..100)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let shown = redact(&long, &[]);
+    assert!(shown.lines().count() <= 8);
+    assert!(shown.contains("line 99"));
+    assert!(redact(&"x ".repeat(2000), &[]).chars().count() <= 201);
+}
+
+#[tokio::test]
+async fn tsh_that_is_not_installed_is_its_own_state() {
+    let a = access(Some(PathBuf::from("/nonexistent/tsh")));
+    let error = Proxy::start(&a, "orders-db").await.unwrap_err();
+    assert_eq!(error, TeleportError::NotInstalled);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_proxy_that_is_ready_listens_on_loopback() {
+    let dir = tempfile_dir("ready");
+    let mut proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
+    assert_eq!(proxy.port(), 41234);
+    assert!(proxy.address().is_loopback());
+    assert_eq!(proxy.name(), "orders-db-prod-eu");
+    assert!(proxy.running());
+    // It was asked for with the checks first, and never with a login.
+    assert_eq!(
+        calls(&dir).lines().collect::<Vec<_>>(),
+        ["status --format=json", "db ls", "proxy db"]
+    );
+    assert!(!calls(&dir).contains("login"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn safety_g19_the_child_gets_only_the_environment_tsh_needs() {
+    let dir = tempfile_dir("env");
+    let _proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
+    let env = fs::read_to_string(dir.join("env")).unwrap();
+    for line in env.lines() {
+        let key = line.split('=').next().unwrap();
+        // `sh` adds its own PWD, SHLVL and `_`.
+        assert!(
+            KEPT_ENV.contains(&key) || ["PWD", "SHLVL", "_", "OLDPWD"].contains(&key),
+            "{key}"
+        );
+    }
+    let args = fs::read_to_string(dir.join("args")).unwrap();
+    assert!(args.contains("--tunnel") && !args.contains("--identity"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn safety_g19_the_child_dies_with_its_proxy() {
+    let dir = tempfile_dir("dies");
+    let proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
+    let pid = proxy.pid().unwrap();
+    assert!(alive(pid));
+    drop(proxy);
+    wait_gone(pid).await;
+}
+
+#[cfg(unix)]
+async fn wait_gone(pid: u32) {
+    for _ in 0..100 {
+        if !alive(pid) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("the child {pid} is still running");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn safety_g19_not_signed_in_is_told_without_running_a_login() {
+    let dir = tempfile_dir("login");
+    let status = "echo 'ERROR: Not logged in.' >&2; exit 1";
+    let error = start(&dir, status, LISTED, READY).await.unwrap_err();
+    assert_eq!(
+        error,
+        TeleportError::NotLoggedIn {
+            proxy: "teleport.example.com".into()
+        }
+    );
+    assert_eq!(
+        error.command().unwrap(),
+        "tsh login --proxy=teleport.example.com"
+    );
+    assert_eq!(calls(&dir).trim(), "status --format=json");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_expired_session_reads_as_not_signed_in() {
+    let dir = tempfile_dir("expired");
+    let status = "echo '{\"active\":null}'";
+    let error = start(&dir, status, LISTED, READY).await.unwrap_err();
+    assert!(
+        matches!(error, TeleportError::NotLoggedIn { .. }),
+        "{error:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_database_not_under_the_pattern_is_not_found_and_no_proxy_starts() {
+    let dir = tempfile_dir("notfound");
+    let list = "echo '[{\"metadata\":{\"name\":\"billing-prod-eu\"}}]'";
+    let error = start(&dir, SIGNED_IN, list, READY).await.unwrap_err();
+    match error {
+        TeleportError::NotFound { name, pattern, .. } => {
+            assert_eq!(name, "orders-db-prod-eu");
+            assert_eq!(pattern, "{name}-prod-eu");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!calls(&dir).contains("proxy"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_role_the_proxy_refuses_is_its_own_state() {
+    let dir = tempfile_dir("role");
+    let proxy =
+        "echo 'ERROR: access to db denied. User reader does not have permissions.' >&2; exit 1";
+    let error = start(&dir, SIGNED_IN, LISTED, proxy).await.unwrap_err();
+    assert!(matches!(error, TeleportError::NoRole { .. }), "{error:?}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_proxy_that_fails_shows_redacted_stderr_and_the_command() {
+    let dir = tempfile_dir("failed");
+    let proxy =
+        "echo 'ERROR: listen failed, token=sekrit key /home/alice/.tsh/keys/x.pem' >&2; exit 1";
+    let error = start(&dir, SIGNED_IN, LISTED, proxy).await.unwrap_err();
+    let TeleportError::ProxyFailed { why, command } = error else {
+        panic!("{error:?}");
+    };
+    assert!(why.contains("listen failed"), "{why}");
+    assert!(!why.contains("sekrit") && !why.contains(".tsh"), "{why}");
+    assert!(
+        command.starts_with("tsh --proxy=teleport.example.com proxy db --tunnel"),
+        "{command}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn safety_g19_a_proxy_that_listens_beyond_loopback_is_killed() {
+    let dir = tempfile_dir("exposed");
+    let proxy = format!(
+        "echo $$ > '{}'; echo 'tunnel on 0.0.0.0:41234'; exec sleep 300",
+        dir.join("pid").display()
+    );
+    let error = start(&dir, SIGNED_IN, LISTED, &proxy).await.unwrap_err();
+    assert!(
+        matches!(error, TeleportError::ProxyFailed { .. }),
+        "{error:?}"
+    );
+    wait_gone(recorded_pid(&dir)).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_proxy_that_never_listens_is_killed_at_the_deadline() {
+    let dir = tempfile_dir("silent");
+    let body = format!("echo $$ > '{}'; exec sleep 300", dir.join("pid").display());
+    let tsh = fake_tsh(&dir, SIGNED_IN, LISTED, &body);
+    let started =
+        Proxy::start_within(&access(Some(tsh)), "orders-db", Duration::from_millis(400)).await;
+    let TeleportError::ProxyFailed { why, .. } = started.unwrap_err() else {
+        panic!("not a proxy failure");
+    };
+    assert!(why.contains("in time"), "{why}");
+    wait_gone(recorded_pid(&dir)).await;
+}
+
+#[cfg(unix)]
+fn recorded_pid(dir: &Path) -> u32 {
+    fs::read_to_string(dir.join("pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[cfg(unix)]
+fn tempfile_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("freshkube-tsh-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}

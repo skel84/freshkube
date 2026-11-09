@@ -21,6 +21,7 @@ tokio-postgres-rustls = "0.14"
 rustls.workspace = true
 rustls-pemfile = "2"
 zeroize = "1"
+serde_json.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libdbus-sys = { version = "0.2", features = ["vendored"] }

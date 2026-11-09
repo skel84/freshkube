@@ -15,6 +15,7 @@ pub mod limits;
 pub mod postgres;
 pub mod readonly;
 pub mod session;
+pub mod teleport;
 pub mod wire;
 
 pub use dbflux_core::{DbError, Value};

@@ -31,6 +31,7 @@ use freshkube_db::{
     credentials::Password,
     fake,
     postgres::Postgres,
+    teleport::{Proxy, TeleportAccess, TeleportError},
     wire::{Encryption, Target, TlsPlan, TokioPostgres},
 };
 use freshkube_reads::{Loader, OnShow};
@@ -62,9 +63,41 @@ pub(crate) enum Example {
     Plain,
     /// Stays on the first step, as a capture of the loading state.
     Loading,
+    /// Through Teleport, connected over TLS whose certificate can't be checked.
+    Teleport,
+    /// Teleport's states (E3), each with the command to run.
+    TeleportNoTsh,
+    TeleportNotLoggedIn,
+    TeleportNoRole,
+    TeleportNotFound,
+    TeleportProxyFailed,
+}
+
+/// The invented Teleport settings the examples use.
+pub(crate) fn example_teleport() -> TeleportAccess {
+    TeleportAccess {
+        proxy: "teleport.example.com".into(),
+        name_pattern: "{name}-prod-eu".into(),
+        db_user: "reader".into(),
+        database: "shop".into(),
+        tsh: None,
+    }
 }
 
 impl Example {
+    /// Whether the example reaches the database through Teleport.
+    pub(crate) fn is_teleport(self) -> bool {
+        matches!(
+            self,
+            Self::Teleport
+                | Self::TeleportNoTsh
+                | Self::TeleportNotLoggedIn
+                | Self::TeleportNoRole
+                | Self::TeleportNotFound
+                | Self::TeleportProxyFailed
+        )
+    }
+
     pub(crate) fn parse(text: &str) -> Option<Self> {
         Some(match text {
             "connected" | "" => Self::Connected,
@@ -76,6 +109,12 @@ impl Example {
             "unverified" => Self::Unverified,
             "plain" => Self::Plain,
             "loading" => Self::Loading,
+            "teleport" => Self::Teleport,
+            "teleport-no-tsh" => Self::TeleportNoTsh,
+            "teleport-not-logged-in" => Self::TeleportNotLoggedIn,
+            "teleport-no-role" => Self::TeleportNoRole,
+            "teleport-not-found" => Self::TeleportNotFound,
+            "teleport-proxy-failed" => Self::TeleportProxyFailed,
             _ => return None,
         })
     }
@@ -97,6 +136,11 @@ struct Connected {
     who: SharedString,
     /// What protects the connection to the server.
     encryption: Encryption,
+    /// Where it goes, when the route (Teleport) is known only once connected.
+    route: Option<SharedString>,
+    /// The Teleport child, owned by this connection: dropping the last
+    /// handle, with the tab, kills it.
+    proxy: Option<Arc<Proxy>>,
 }
 
 // By hand: the session is not printable, and nothing here is a secret.
@@ -125,6 +169,8 @@ pub(super) struct ExploreView {
     pick: Loader<Result<PodChoice, Fail>, u64>,
     connect: Loader<Result<Connected, Fail>, u64>,
     link: Option<Link>,
+    /// Teleport's settings when the database is reached through it.
+    teleport: Option<TeleportAccess>,
     /// The pod used and the local port, for the header.
     route: Option<SharedString>,
     /// Whether the pod chosen is a replica, which decides the Service name
@@ -144,6 +190,7 @@ impl ExploreView {
         source: ClusterSource,
         database: Database,
         example: Option<Example>,
+        teleport: Option<TeleportAccess>,
         cx: &mut Context<Self>,
     ) -> Self {
         let browser = cx.new(|cx| Browser::new(runtime.clone(), cx));
@@ -166,6 +213,7 @@ impl ExploreView {
             pick: Loader::default(),
             connect: Loader::default(),
             link: None,
+            teleport,
             route: None,
             replica: true,
             waiting_port: None,
@@ -232,12 +280,18 @@ impl ExploreView {
         if let Some(example) = self.example {
             self.connect_example(example, cx);
         } else if self.visible {
-            self.start_pick(cx);
+            match self.teleport.clone() {
+                Some(access) => self.start_teleport(access, cx),
+                None => self.start_pick(cx),
+            }
         }
         cx.notify();
     }
 
     fn connect_example(&mut self, example: Example, cx: &mut Context<Self>) {
+        if example.is_teleport() {
+            return self.connect_teleport_example(example, cx);
+        }
         let shape = match example {
             Example::Loading => {
                 // A read that is never answered: the tab waits on its first step.
@@ -252,6 +306,7 @@ impl ExploreView {
             Example::Refused => fake::Shape::Refused,
             Example::TimedOut => fake::Shape::TimedOut,
             Example::NotReadOnly => fake::Shape::NotReadOnly,
+            _ => unreachable!("Teleport's examples are handled above"),
         };
         self.route = Some("example · no forward".into());
         match fake::connect(shape, Limits::default()) {
@@ -266,12 +321,58 @@ impl ExploreView {
                     session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
                     who,
                     encryption,
+                    route: None,
+                    proxy: None,
                 };
                 self.connect.resolve(self.epoch, Ok(Ok(connected)));
                 self.connected(cx);
             }
             Err(error) => self.fail(Fail::of_connect(error), cx),
         }
+    }
+
+    /// Teleport's examples: connected over the tunnel, or one of its states.
+    /// No `tsh` runs and nothing listens.
+    fn connect_teleport_example(&mut self, example: Example, cx: &mut Context<Self>) {
+        let access = self.teleport.clone().unwrap_or_else(example_teleport);
+        let name = access
+            .database_name(&self.database.identity.name)
+            .unwrap_or_default();
+        let error = match example {
+            Example::TeleportNoTsh => TeleportError::NotInstalled,
+            Example::TeleportNotLoggedIn => TeleportError::NotLoggedIn {
+                proxy: access.proxy.clone(),
+            },
+            Example::TeleportNoRole => TeleportError::NoRole {
+                name,
+                user: access.db_user.clone(),
+                proxy: access.proxy.clone(),
+            },
+            Example::TeleportNotFound => TeleportError::NotFound {
+                name,
+                pattern: access.name_pattern.clone(),
+                proxy: access.proxy.clone(),
+            },
+            Example::TeleportProxyFailed => TeleportError::ProxyFailed {
+                why: "ERROR: listen tcp 127.0.0.1:41234: bind: address already in use".into(),
+                command: format!("tsh {}", access.proxy_args(&name).join(" ")),
+            },
+            _ => {
+                let route = format!("Teleport · {name} · localhost:41234 · example");
+                let session = fake::connect(fake::Shape::Connected, Limits::default())
+                    .expect("the example database connects");
+                let connected = Connected {
+                    session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
+                    who: "reader · Teleport · example".into(),
+                    encryption: Encryption::Unverified,
+                    route: Some(route.into()),
+                    proxy: None,
+                };
+                self.connect.resolve(self.epoch, Ok(Ok(connected)));
+                return self.connected(cx);
+            }
+        };
+        self.fail(Fail::Teleport(error), cx);
     }
 
     fn fail(&mut self, fail: Fail, cx: &mut Context<Self>) {
@@ -415,6 +516,27 @@ impl ExploreView {
         );
     }
 
+    /// The Teleport route: one job checks `tsh`, the login and the name,
+    /// starts the proxy and connects over it. There is no pod, forward or
+    /// Secret. The proxy child goes with the connection, or with the job
+    /// if it is dropped before it lands.
+    fn start_teleport(&mut self, access: TeleportAccess, cx: &mut Context<Self>) {
+        self.phase = Phase::Connecting;
+        let cluster = self.database.identity.name.clone();
+        let runtime = self.runtime.clone();
+        let epoch = self.epoch;
+        reading::read(
+            self,
+            |this: &mut Self| &mut this.connect,
+            epoch,
+            &runtime,
+            "the database",
+            async move { Ok(connect_teleport(access, cluster).await) },
+            |this, cx| this.connected(cx),
+            cx,
+        );
+    }
+
     fn connected(&mut self, cx: &mut Context<Self>) {
         let Some(result) = self.connect.data().cloned() else {
             let error = self
@@ -427,6 +549,9 @@ impl ExploreView {
         match result {
             Err(fail) => self.fail(fail, cx),
             Ok(connected) => {
+                if connected.route.is_some() {
+                    self.route = connected.route.clone();
+                }
                 self.phase = Phase::Connected;
                 let session = connected.session.clone();
                 self.browser
@@ -522,6 +647,49 @@ async fn connect_live(
         session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
         who: format!("{} · {}", login.user, login.kind.label()).into(),
         encryption,
+        route: None,
+        proxy: None,
+    })
+}
+
+/// The Teleport route, off the UI thread: `tsh`'s checks, the proxy and the
+/// same read-only session as ever. No Secret is read and no password exists:
+/// the tunnel signs in with Teleport's certificate, which Freshkube never
+/// sees. A failure after the proxy started drops it, which kills the child.
+async fn connect_teleport(access: TeleportAccess, cluster: String) -> Result<Connected, Fail> {
+    let proxy = Proxy::start(&access, &cluster)
+        .await
+        .map_err(Fail::Teleport)?;
+    // The certificate the server shows can't be checked against the cluster's
+    // CA here (there is none on this route), so it is named, never verified.
+    let tls = TlsPlan {
+        server_name: proxy.name().to_owned(),
+        ca_pem: None,
+    };
+    let limits = Limits::default();
+    let (wire, encryption) = TokioPostgres::connect(
+        Target {
+            address: proxy.address(),
+            port: proxy.port(),
+            user: &access.db_user,
+            database: &access.database,
+        },
+        &Password::new(""),
+        &limits,
+        &tls,
+    )
+    .await
+    .map_err(Fail::of_connect)?;
+    let session = Postgres::open(wire, limits)
+        .await
+        .map_err(Fail::of_connect)?;
+    let route = format!("Teleport · {} · localhost:{}", proxy.name(), proxy.port());
+    Ok(Connected {
+        session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
+        who: format!("{} · Teleport", access.db_user).into(),
+        encryption,
+        route: Some(route.into()),
+        proxy: Some(Arc::new(proxy)),
     })
 }
 
