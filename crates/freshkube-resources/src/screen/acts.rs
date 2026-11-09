@@ -109,7 +109,7 @@ impl ResourcesScreen {
     }
 
     /// What the cluster said of `act` on the selected row.
-    fn act_offer(&self, act: Everyday, cx: &App) -> Offer {
+    pub(super) fn act_offer(&self, act: Everyday, cx: &App) -> Offer {
         let needs = self.act_needs(act);
         if needs.is_empty() {
             return Offer::Pending;

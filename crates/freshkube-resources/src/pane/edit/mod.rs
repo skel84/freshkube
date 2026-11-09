@@ -126,7 +126,7 @@ impl DetailPane {
     }
 
     /// What the cluster said of Edit on the open object.
-    fn edit_offer(&self, cx: &App) -> Offer {
+    pub(crate) fn edit_offer(&self, cx: &App) -> Offer {
         let needs = self.edit_needs();
         if needs.is_empty() {
             return Offer::Pending;
@@ -135,7 +135,7 @@ impl DetailPane {
     }
 
     /// Why the cluster says Edit is not allowed, when it did.
-    fn access_refusal(&self, cx: &App) -> Option<String> {
+    pub(crate) fn access_refusal(&self, cx: &App) -> Option<String> {
         self.edit_offer(cx).refusal().map(str::to_owned)
     }
 
