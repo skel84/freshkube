@@ -127,6 +127,13 @@ fn promote_becomes_abort_while_a_promotion_runs_whoever_made_it(cx: &mut TestApp
 
 // ---- #854: what the cluster says before an action is offered ----
 
+/// The selection rests: the clock passes the pause before the desk asks.
+fn settle(cx: &mut TestAppContext) {
+    cx.executor()
+        .advance_clock(freshkube_reads::OFFER_PAUSE + Duration::from_millis(1));
+    cx.run_until_parked();
+}
+
 /// The app's offer desk, bound to example data that answers `shape`, as the
 /// Resources page binds it in the app; made before the page.
 fn offers_answering(
@@ -170,7 +177,7 @@ fn a_stage_action_the_cluster_refuses_is_greyed_out_with_the_reason(cx: &mut Tes
     let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
     let (events, _subscription) = asked(cx, &page);
     select(cx, handle, &page, "prod-ams-promotion");
-    cx.run_until_parked();
+    settle(cx);
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
     let project = cx.read(|cx| page.read(cx).change.project.clone());
@@ -206,7 +213,7 @@ fn a_stage_action_whose_review_did_not_answer_stays_on_and_says_so(cx: &mut Test
     let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
     let (events, _subscription) = asked(cx, &page);
     select(cx, handle, &page, "prod-ams-promotion");
-    cx.run_until_parked();
+    settle(cx);
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
     let (why, tooltip) = words(cx, &page, 1);
@@ -235,7 +242,7 @@ fn only_the_selected_stages_actions_are_asked_about(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(asked_names(cx).is_empty());
     select(cx, handle, &page, "prod-ams-promotion");
-    cx.run_until_parked();
+    settle(cx);
     let names = asked_names(cx);
     assert!(!names.is_empty());
     let others = cx.read(|cx| {

@@ -286,6 +286,53 @@ fn restart_asks_even_on_an_open_cluster_and_a_double_press_sends_once(cx: &mut T
 }
 
 #[gpui_kit::test]
+fn safety_g21_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::access::Offer;
+    let w = world(cx, "dev-fra");
+    // The app's offer desk, bound to the fake cluster, is asked what a
+    // Restart of `web` needs, and the cluster allows it.
+    let questions = Everyday::Restart.needs(&web_row());
+    let source = ClusterSource {
+        id: "live-test".into(),
+        context: "ctx-a".into(),
+        access: ClusterAccess::Live(Arc::new(Fake(w.cluster.client.clone()))),
+    };
+    let desk = cx.update(|cx| freshkube_reads::existing_offer_desk(cx).expect("the shell's desk"));
+    cx.update(|cx| {
+        desk.update(cx, |desk, cx| {
+            desk.bind(Some(&source), cx);
+            let owner = cx.entity_id();
+            desk.want(owner, &questions, cx);
+        })
+    });
+    cx.executor()
+        .advance_clock(freshkube_reads::OFFER_PAUSE + Duration::from_millis(1));
+    w.drive(cx, Duration::from_secs(1));
+    let offer = cx.read(|cx| desk.read(cx).offer(&questions, cx));
+    assert_eq!(offer, Offer::Allowed, "{:?}", w.cluster.recorder.lines());
+    // The cluster says no by the time the person presses Restart. The page
+    // would offer it, and the dialog's check still asks and decides.
+    let reviews = |w: &World| {
+        w.cluster
+            .recorder
+            .lines()
+            .iter()
+            .filter(|line| line.contains("selfsubjectaccessreviews"))
+            .count()
+    };
+    let before = reviews(&w);
+    w.cluster.deny_access();
+    w.press_web(cx, Everyday::Restart);
+    w.drive(cx, Duration::from_secs(1));
+    assert!(w.present(cx, "write-refused"), "the review decided");
+    assert!(!w.present(cx, "write-confirm"));
+    assert!(reviews(&w) > before, "the preflight asked afresh");
+    assert!(w.cluster.writes().is_empty());
+}
+
+#[gpui_kit::test]
 fn switching_clusters_during_the_read_sends_and_asks_nothing(cx: &mut TestAppContext) {
     let w = world(cx, "prod-ams");
     w.press_web(cx, Everyday::Restart);

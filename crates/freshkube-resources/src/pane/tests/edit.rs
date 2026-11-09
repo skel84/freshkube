@@ -194,7 +194,9 @@ fn a_cluster_that_refuses_writes_leaves_edit_off(cx: &mut TestAppContext) {
     assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
 }
 
-/// Binds the app's offer desk to example data answering `shape`.
+/// Binds the app's offer desk to example data answering `shape`, and has it
+/// asked about the open object's Edit, as the screen does with the row's
+/// actions.
 fn offers_answering(cx: &mut TestAppContext, shape: freshkube_core::access::example::Shape) {
     cx.update(|cx| {
         let desk = freshkube_reads::existing_offer_desk(cx).expect("the pane made the desk");
@@ -210,6 +212,19 @@ fn offers_answering(cx: &mut TestAppContext, shape: freshkube_core::access::exam
     });
 }
 
+/// The object is open and the desk is asked about its Edit, then answers.
+fn asked_about_edit(cx: &mut TestAppContext, pane: &Entity<DetailPane>) {
+    cx.update(|cx| {
+        let needs = pane.read(cx).edit_needs();
+        let desk = freshkube_reads::existing_offer_desk(cx).unwrap();
+        let owner = desk.entity_id();
+        desk.update(cx, |desk, cx| desk.want(owner, &needs, cx));
+    });
+    cx.executor()
+        .advance_clock(freshkube_reads::OFFER_PAUSE + Duration::from_millis(1));
+    cx.run_until_parked();
+}
+
 #[gpui_kit::test]
 fn a_cluster_that_refuses_the_edit_leaves_it_off_with_the_reason(cx: &mut TestAppContext) {
     use freshkube_core::access::example::Shape;
@@ -219,17 +234,27 @@ fn a_cluster_that_refuses_the_edit_leaves_it_off_with_the_reason(cx: &mut TestAp
     let space = pod.identity.namespace.clone();
     assert!(!matches!(space.as_str(), "shop" | "payments"), "{space}");
     on_yaml(cx, &pane, handle, &pod);
-    let refusal = pane.read_with(cx, |pane, cx| pane.access_refusal(cx));
+    asked_about_edit(cx, &pane);
+    let refusal = pane.read_with(cx, |pane, _| pane.access_refusal());
     assert_eq!(refusal, Some(format!("Needs patch on pods in {space}")));
-    // Shown, not hidden, and it opens no editor.
+    // That is what Edit's tooltip says, shown, not hidden, and it opens no
+    // editor.
+    assert_eq!(
+        pane.read_with(cx, |pane, _| pane.edit_reason()),
+        Some(format!("Needs patch on pods in {space}"))
+    );
     assert!(label(cx, handle, "detail-edit").is_some());
     press(cx, handle, "detail-edit");
     assert!(label(cx, handle, "detail-edit-view").is_none());
     assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
-    // The level's reason is the one shown when both apply.
+    // The level's reason is the one it says when both apply.
     pane.update(cx, |pane, cx| {
         pane.set_write_block(Some("This cluster is read-only."), cx)
     });
+    assert_eq!(
+        pane.read_with(cx, |pane, _| pane.edit_reason()),
+        Some("This cluster is read-only.".to_owned())
+    );
     press(cx, handle, "detail-edit");
     assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
 }
@@ -241,8 +266,10 @@ fn an_edit_whose_review_did_not_answer_stays_on(cx: &mut TestAppContext) {
     offers_answering(cx, Shape::Failed);
     let (pod, _) = running_pod();
     on_yaml(cx, &pane, handle, &pod);
-    let offer = pane.read_with(cx, |pane, cx| pane.edit_offer(cx));
+    asked_about_edit(cx, &pane);
+    let offer = pane.read_with(cx, |pane, _| pane.edit_offer.clone());
     assert_eq!(offer, Offer::Unchecked);
+    assert_eq!(pane.read_with(cx, |pane, _| pane.edit_reason()), None);
     press(cx, handle, "detail-edit");
     assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_some()));
 }

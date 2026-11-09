@@ -88,33 +88,62 @@ impl ResourcesScreen {
     }
 
     /// Asks the cluster whether the actions the selection shows may be
-    /// offered, for what isn't known: only the selected row's, never every
-    /// row's. Called when the selection changes or the page shows, and never
-    /// while drawing. The answers only guide; the gate asks afresh.
+    /// offered, for what isn't known: only the selected row's, and the open
+    /// pane's Edit, never every row's, in one call that replaces what the
+    /// last one wanted. Called when the selection changes or the page shows,
+    /// and never while drawing. The answers only guide; the gate asks afresh.
     pub(super) fn want_offers(&mut self, cx: &mut Context<Self>) {
         if !self.visible || self.embedded || self.projection.selected().is_none() {
             return;
         }
-        let questions: Vec<AccessQuestion> = self
+        let mut questions: Vec<AccessQuestion> = self
             .kind_acts()
             .into_iter()
             .flat_map(|act| self.act_needs(act))
             .collect();
-        if questions.is_empty() {
-            return;
+        questions.extend(self.detail.read(cx).edit_needs());
+        if !questions.is_empty() {
+            let owner = cx.entity_id();
+            self.offers
+                .update(cx, |offers, cx| offers.want(owner, &questions, cx));
         }
-        self.offers
-            .update(cx, |offers, cx| offers.want(&questions, cx));
-        self.detail.update(cx, |detail, cx| detail.want_edit(cx));
+        self.derive_offers(cx);
     }
 
-    /// What the cluster said of `act` on the selected row.
-    pub(super) fn act_offer(&self, act: Everyday, cx: &App) -> Offer {
-        let needs = self.act_needs(act);
-        if needs.is_empty() {
+    /// What the cluster has said of each action on the selected row so far,
+    /// worked out here and read while drawing.
+    pub(super) fn derive_offers(&mut self, cx: &mut Context<Self>) {
+        let selected = self.projection.selected().cloned();
+        let derived: Vec<(Everyday, Offer)> = match (&selected, self.embedded) {
+            (Some(_), false) => self
+                .kind_acts()
+                .into_iter()
+                .map(|act| {
+                    let needs = self.act_needs(act);
+                    let offer = if needs.is_empty() {
+                        Offer::Pending
+                    } else {
+                        self.offers.read(cx).offer(&needs, cx)
+                    };
+                    (act, offer)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        self.act_offers = derived;
+        self.act_offers_for = selected;
+    }
+
+    /// What the cluster said of `act` on the selected row: nothing is said of
+    /// another row than the one it was derived for.
+    pub(super) fn act_offer(&self, act: Everyday) -> Offer {
+        if self.act_offers_for.as_ref() != self.projection.selected() {
             return Offer::Pending;
         }
-        self.offers.read(cx).offer(&needs, cx)
+        self.act_offers
+            .iter()
+            .find(|(asked, _)| *asked == act)
+            .map_or(Offer::Pending, |(_, offer)| offer.clone())
     }
 
     /// The actions the listed kind has. None in the node pane's list.
@@ -130,7 +159,7 @@ impl ResourcesScreen {
     /// The level's reason wins over a kind's, and a kind's over the cluster's
     /// ("Needs patch on deployments in shop"): a review that didn't answer
     /// blocks nothing here.
-    pub(super) fn act_block(&self, act: Everyday, cx: &App) -> Option<SharedString> {
+    pub(super) fn act_block(&self, act: Everyday) -> Option<SharedString> {
         self.write_block
             .or_else(|| {
                 (act == Everyday::Delete)
@@ -139,7 +168,7 @@ impl ResourcesScreen {
             })
             .map(SharedString::from)
             .or_else(|| {
-                self.act_offer(act, cx)
+                self.act_offer(act)
                     .refusal()
                     .map(|reason| SharedString::from(reason.to_owned()))
             })
@@ -179,7 +208,7 @@ impl ResourcesScreen {
                 Everyday::RunNow => MenuAction::new(label(act), RunNowSelected),
                 Everyday::Delete => MenuAction::new(label(act), DeleteSelected),
             };
-            lines.push(line.enabled(self.act_block(act, cx).is_none()));
+            lines.push(line.enabled(self.act_block(act).is_none()));
         }
         lines
     }
@@ -193,7 +222,7 @@ impl ResourcesScreen {
         // why it does nothing ("scale its Deployment") instead of staying mute.
         if self.write_block.is_some()
             || !self.kind_acts().contains(&act)
-            || self.act_offer(act, cx).refusal().is_some()
+            || self.act_offer(act).refusal().is_some()
         {
             return;
         }
@@ -226,7 +255,7 @@ impl ResourcesScreen {
                 .small()
                 .h(dp(ui::CONTROL_HEIGHT))
                 .label(label(act));
-            let (button, fold) = match self.act_block(act, cx) {
+            let (button, fold) = match self.act_block(act) {
                 Some(reason) => (
                     button.disabled(true).tooltip(reason),
                     page::disabled_item(label(act)),
@@ -234,7 +263,7 @@ impl ResourcesScreen {
                 None => {
                     let focus = &self.focus;
                     // On offer, but the review didn't answer: say so.
-                    let button = match self.act_offer(act, cx).note() {
+                    let button = match self.act_offer(act).note() {
                         Some(note) => button.tooltip(note),
                         None => button,
                     };

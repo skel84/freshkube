@@ -4,6 +4,9 @@
 //! asked for a row that is not selected. The answers only guide, so nothing
 //! here sends a write.
 use super::*;
+use std::sync::Arc;
+use std::time::Duration;
+
 use freshkube_core::access::{Offer, example::Shape};
 use freshkube_core::write::everyday::Everyday;
 use freshkube_reads::OfferDesk;
@@ -12,6 +15,13 @@ use super::acts::row_menu;
 use crate::screen::WorkloadAct;
 
 type Heard = Rc<RefCell<Vec<(Everyday, String)>>>;
+
+/// The selection rests: the clock passes the pause before the desk asks.
+fn settle(cx: &mut TestAppContext) {
+    cx.executor()
+        .advance_clock(freshkube_reads::OFFER_PAUSE + Duration::from_millis(1));
+    cx.run_until_parked();
+}
 
 fn desk(cx: &gpui_kit::App) -> Entity<OfferDesk> {
     freshkube_reads::existing_offer_desk(cx).expect("the screen made the desk")
@@ -47,7 +57,9 @@ fn opened(
         window.render_frame(cx);
     })
     .unwrap();
-    cx.run_until_parked();
+    settle(cx);
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
     (runtime, screen, handle, heard)
 }
 
@@ -59,7 +71,7 @@ fn block(
     cx.read(|cx| {
         screen
             .read(cx)
-            .act_block(act, cx)
+            .act_block(act)
             .map(|reason| reason.to_string())
     })
 }
@@ -137,7 +149,7 @@ fn the_levels_reason_wins_over_the_clusters(cx: &mut TestAppContext) {
 fn a_review_that_failed_leaves_the_action_on_and_says_so(cx: &mut TestAppContext) {
     let (_runtime, screen, handle, heard) = opened(cx, Shape::Failed);
     assert_eq!(block(&screen, Everyday::Restart, cx), None);
-    let offer = cx.read(|cx| screen.read(cx).act_offer(Everyday::Restart, cx));
+    let offer = cx.read(|cx| screen.read(cx).act_offer(Everyday::Restart));
     assert_eq!(offer, Offer::Unchecked);
     assert_eq!(offer.note(), Some("Couldn't check your access"));
     // It still asks the shell: the gate decides.
@@ -155,31 +167,35 @@ fn a_review_that_failed_leaves_the_action_on_and_says_so(cx: &mut TestAppContext
 fn an_allowed_action_is_on_and_says_nothing(cx: &mut TestAppContext) {
     let (_runtime, screen, _handle, _) = opened(cx, Shape::Full);
     assert_eq!(block(&screen, Everyday::Delete, cx), None);
-    let offer = cx.read(|cx| screen.read(cx).act_offer(Everyday::Delete, cx));
+    let offer = cx.read(|cx| screen.read(cx).act_offer(Everyday::Delete));
     assert_eq!(offer, Offer::Allowed);
     assert_eq!(offer.note(), None);
+}
+
+fn asked_names(cx: &mut TestAppContext) -> Vec<String> {
+    cx.read(|cx| {
+        desk(cx)
+            .read(cx)
+            .asked()
+            .iter()
+            .filter_map(|question| question.name.clone())
+            .collect()
+    })
+}
+
+fn distinct(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names.dedup();
+    names
 }
 
 #[gpui_kit::test]
 fn safety_g21_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppContext) {
     let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
-    let rows = cx.read(|cx| {
-        let screen = screen.read(cx);
-        screen.store.len()
-    });
+    let rows = cx.read(|cx| screen.read(cx).store.len());
     assert!(rows > 3, "the example lists several deployments: {rows}");
     let first = cx.read(|cx| identity_at(&screen, 0, cx).name);
-    let asked = |cx: &mut TestAppContext| -> Vec<String> {
-        cx.read(|cx| {
-            desk(cx)
-                .read(cx)
-                .asked()
-                .iter()
-                .filter_map(|question| question.name.clone())
-                .collect()
-        })
-    };
-    let names = asked(cx);
+    let names = asked_names(cx);
     assert!(!names.is_empty());
     assert!(names.iter().all(|name| *name == first), "{names:?}");
     // Moving the selection asks about the next row, and still no other.
@@ -189,33 +205,143 @@ fn safety_g21_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppCon
         window.render_frame(cx);
     })
     .unwrap();
-    cx.run_until_parked();
-    let second = cx.read(|cx| {
-        screen
-            .read(cx)
-            .projection
-            .selected()
-            .map(|id| id.name.clone())
-    });
-    let names = asked(cx);
-    let mut distinct: Vec<_> = names.iter().collect();
-    distinct.sort();
-    distinct.dedup();
-    assert_eq!(distinct.len(), 2, "{names:?}");
+    settle(cx);
+    let second = cx.read(|cx| screen.read(cx).projection.selected().map(|id| id.name.clone()));
+    let names = distinct(asked_names(cx));
+    assert_eq!(names.len(), 2, "{names:?}");
     assert!(names.contains(&second.unwrap()), "{names:?}");
 }
 
 #[gpui_kit::test]
-fn safety_g21_a_hidden_page_asks_no_review(cx: &mut TestAppContext) {
+fn safety_g21_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
+    let first = cx.read(|cx| identity_at(&screen, 0, cx).name);
+    // The arrow is held through five rows without resting.
+    for _ in 0..5 {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("down", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    let stops = cx.read(|cx| screen.read(cx).projection.selected().map(|id| id.name.clone()));
+    settle(cx);
+    let names = distinct(asked_names(cx));
+    assert_eq!(
+        names.len(),
+        2,
+        "only the first row and the one it stopped on: {names:?}"
+    );
+    assert!(names.contains(&first) && names.contains(&stops.unwrap()));
+    // Moving on and hiding before the selection rests asks nothing more.
+    let before = asked_names(cx).len();
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("down", cx);
         screen.update(cx, |screen, cx| screen.set_visible(false, window, cx));
-        desk(cx).update(cx, |desk, _| desk.forget_answers());
-        let second = identity_at(&screen, 1, cx);
-        screen.update(cx, |screen, cx| screen.select_identity(&second, window, cx));
     })
     .unwrap();
+    settle(cx);
+    assert_eq!(asked_names(cx).len(), before);
+}
+
+/// A source that hands out one fake client.
+struct Fake(kube::Client);
+
+impl freshkube_core::cluster_source::KubeClientSource for Fake {
+    fn client(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>> {
+        let client = self.0.clone();
+        Box::pin(async move { Ok(client) })
+    }
+}
+
+fn question(name: &str) -> freshkube_core::write::AccessQuestion {
+    freshkube_core::write::AccessQuestion {
+        verb: "patch",
+        group: "apps".into(),
+        resource: "deployments".into(),
+        subresource: None,
+        namespace: Some("shop".into()),
+        name: Some(name.into()),
+    }
+}
+
+/// The reviews that reached the fake, as the names they asked about.
+fn reviewed(recorder: &freshkube_core::fake_api::Recorder) -> Vec<String> {
+    recorder
+        .requests()
+        .iter()
+        .filter(|request| request.path.ends_with("selfsubjectaccessreviews"))
+        .map(|request| {
+            let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+            body["spec"]["resourceAttributes"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn safety_g21_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::fake_api::{self, Recorded};
+    let (runtime, screen, _handle) = mount(cx, Some("homelab"));
+    let (client, recorder) = {
+        let _entered = runtime.enter();
+        fake_api::client(|request: &Recorded| {
+            request.path.ends_with("selfsubjectaccessreviews").then(|| {
+                fake_api::json(
+                    201,
+                    serde_json::json!({"apiVersion":"authorization.k8s.io/v1",
+                        "kind":"SelfSubjectAccessReview",
+                        "status":{"allowed": true, "reason": ""}}),
+                )
+            })
+        })
+    };
+    cx.executor().allow_parking();
+    let source = ClusterSource {
+        id: "live-offers".into(),
+        context: "ctx-a".into(),
+        access: ClusterAccess::Live(Arc::new(Fake(client))),
+    };
+    let owner = cx.read(|_| screen.entity_id());
+    let offers = cx.update(|cx| {
+        let offers = desk(cx);
+        offers.update(cx, |offers, cx| offers.bind(Some(&source), cx));
+        offers
+    });
+    // The selection moves through five rows, resting on none of them.
+    for ix in 0..5 {
+        cx.update(|cx| {
+            offers.update(cx, |offers, cx| {
+                offers.want(owner, &[question(&format!("web-{ix}"))], cx)
+            })
+        });
+        cx.run_until_parked();
+    }
+    settle(cx);
+    freshkube_ui::real_io::until_io(cx, "the last row's review", |_| {
+        !reviewed(&recorder).is_empty()
+    });
+    assert_eq!(reviewed(&recorder), ["web-4"]);
+    // Another row is wanted, and the page hides before the selection rests:
+    // nothing is recorded for it.
+    cx.update(|cx| {
+        offers.update(cx, |offers, cx| {
+            offers.want(owner, &[question("web-5")], cx);
+            offers.stop(owner);
+        })
+    });
+    settle(cx);
+    std::thread::sleep(Duration::from_millis(200));
     cx.run_until_parked();
-    let asked = cx.read(|cx| desk(cx).read(cx).asked().len());
-    assert_eq!(asked, 0);
+    assert_eq!(reviewed(&recorder), ["web-4"]);
 }

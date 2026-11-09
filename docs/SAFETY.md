@@ -179,11 +179,12 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g20_a_plan_never_analyzes` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_every_request_ends_rolled_back_with_its_locks_let_go_and_nothing_is_committed` (`crates/freshkube-db/src/safety.rs`)
 
-### 21. What is offered asks reviews only for the selection's actions and only while shown, and an answer never stands in for the gate
+### 21. What is offered asks reviews only for the selection's actions, once the selection has rested and only while shown, and an answer never stands in for the gate
 
 - `safety_g21_only_the_selected_rows_actions_are_asked_about` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
-- `safety_g21_a_hidden_page_asks_no_review` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
-- `safety_g21_a_cached_allowed_answer_does_not_skip_the_preflight_review` (`crates/freshkube-core/src/write/tests/offer.rs`)
+- `safety_g21_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g21_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g21_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
 ## Known gaps
 

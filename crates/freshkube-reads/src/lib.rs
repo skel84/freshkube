@@ -12,7 +12,7 @@ mod visibility;
 mod watch;
 
 pub use loader::Loader;
-pub use offers::{OfferChanged, OfferDesk, existing as existing_offer_desk, shared as offer_desk};
+pub use offers::{OfferChanged, OfferDesk, existing as existing_offer_desk, shared as offer_desk, PAUSE as OFFER_PAUSE};
 pub use visibility::OnShow;
 pub use watch::{Pace, Watch};
 

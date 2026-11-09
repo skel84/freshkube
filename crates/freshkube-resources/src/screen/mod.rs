@@ -259,6 +259,11 @@ pub struct ResourcesScreen {
     /// The app's reviews of what the person may do (#854): an action the
     /// cluster says no to is shown disabled with the reason. It only guides.
     offers: Entity<freshkube_reads::OfferDesk>,
+    /// What the cluster said of each action on the selected row, derived
+    /// when the selection or an answer changes and read while drawing; and
+    /// the row it was derived for, so another row's answer is never shown.
+    act_offers: Vec<(Everyday, freshkube_core::access::Offer)>,
+    act_offers_for: Option<ResourceIdentity>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -333,7 +338,10 @@ impl ResourcesScreen {
         let offers = freshkube_reads::offer_desk(&runtime, cx);
         let subscriptions = vec![
             // An answer lands: an action may now read as refused.
-            cx.observe(&offers, |_, _, cx| cx.notify()),
+            cx.observe(&offers, |this, _, cx| {
+                this.derive_offers(cx);
+                cx.notify();
+            }),
             // Every change to the rows notifies the screen; the flash hears
             // of it before the next frame draws, so a fade never paints on
             // a row's old line.
@@ -465,6 +473,8 @@ impl ResourcesScreen {
             usage_state: UsageState::default(),
             write_block: None,
             offers,
+            act_offers: Vec::new(),
+            act_offers_for: None,
             _subscriptions: subscriptions,
         }
     }
@@ -765,6 +775,10 @@ impl ResourcesScreen {
                 }
             }));
         } else {
+            // A hidden page asks nothing: what it wanted is forgotten and the
+            // reviews in flight are dropped.
+            let owner = cx.entity_id();
+            self.offers.update(cx, |offers, _| offers.stop(owner));
             self.tick = None;
             self.clear_flash(cx);
             if self.namespace_read.is_loading() {
@@ -1121,6 +1135,8 @@ impl ResourcesScreen {
             detail.set_context(context, cx);
             detail.open(target, access, &version, delay, cx)
         });
+        // The pane's Edit is asked about with the row's actions.
+        self.want_offers(cx);
         // A short page scrolls its frame: reveal the drawer.
         self.page_scroll.scroll_to_bottom();
         cx.notify();

@@ -1140,21 +1140,29 @@ fn offers_answering(cx: &mut TestAppContext, shape: freshkube_core::access::exam
     });
 }
 
+/// The selection rests: the clock passes the pause before the desk asks.
+fn settle(cx: &mut TestAppContext) {
+    cx.executor()
+        .advance_clock(freshkube_reads::OFFER_PAUSE + Duration::from_millis(1));
+    cx.run_until_parked();
+}
+
 #[gpui_kit::test]
 fn a_plan_the_cluster_refuses_says_why_and_cannot_be_reviewed(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
     offers_answering(cx, freshkube_core::access::example::Shape::ActionsRefused);
-    // The plan changes: the nodes picked are asked about.
+    // The plan is on show: the nodes picked are asked about. The example
+    // allows the node patch and refuses evictions, so a drain says why.
     cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| screen.activate(window, cx));
     })
     .unwrap();
-    cx.run_until_parked();
+    settle(cx);
     render(cx, handle);
     cx.update_window(handle.into(), |_, window, cx| {
         let blocked = window.find("ops-blocked").label().unwrap().to_owned();
         assert!(
-            blocked.contains("Needs patch on nodes cluster-wide"),
+            blocked.contains("Needs create on pods/eviction cluster-wide"),
             "{blocked}"
         );
         // Shown, not hidden: Review is there, and opens nothing.
@@ -1166,13 +1174,12 @@ fn a_plan_the_cluster_refuses_says_why_and_cannot_be_reviewed(cx: &mut TestAppCo
         assert!(window.try_find("confirm-dialog").is_none());
     })
     .unwrap();
-    // A drain also needs to evict; the first no is the one said.
+    // A cordon needs only the node patch, which the example allows.
     set_operation(cx, handle, &screen, OperationKind::Cordon);
-    cx.run_until_parked();
+    settle(cx);
     render(cx, handle);
     cx.update_window(handle.into(), |_, window, _| {
-        let blocked = window.find("ops-blocked").label().unwrap().to_owned();
-        assert!(blocked.contains("Needs patch on nodes"), "{blocked}");
+        assert!(window.try_find("ops-blocked").is_none());
     })
     .unwrap();
 }
@@ -1185,7 +1192,7 @@ fn a_plan_whose_review_did_not_answer_is_not_blocked_by_it(cx: &mut TestAppConte
         screen.update(cx, |screen, cx| screen.activate(window, cx));
     })
     .unwrap();
-    cx.run_until_parked();
+    settle(cx);
     render(cx, handle);
     cx.update_window(handle.into(), |_, window, _| {
         assert!(window.try_find("ops-blocked").is_none());
@@ -1201,7 +1208,7 @@ fn only_the_nodes_in_the_plan_are_asked_about(cx: &mut TestAppContext) {
         screen.update(cx, |screen, cx| screen.activate(window, cx));
     })
     .unwrap();
-    cx.run_until_parked();
+    settle(cx);
     let asked = |cx: &mut TestAppContext| -> Vec<String> {
         cx.read(|cx| {
             freshkube_reads::existing_offer_desk(cx)
@@ -1221,6 +1228,6 @@ fn only_the_nodes_in_the_plan_are_asked_about(cx: &mut TestAppContext) {
         window.click(row(1), cx);
     })
     .unwrap();
-    cx.run_until_parked();
+    settle(cx);
     assert_eq!(asked(cx), ["talos-cp-fra1-01", "talos-cp-fra1-02"]);
 }

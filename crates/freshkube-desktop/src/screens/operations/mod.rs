@@ -910,6 +910,15 @@ impl OperationsScreen {
 }
 
 impl ScreenPanel for OperationsScreen {
+    /// A hidden screen asks nothing: what the plan wanted of the cluster is
+    /// forgotten and the reviews in flight are dropped (#854).
+    fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
+        if !visible {
+            let owner = cx.entity_id();
+            self.offers.update(cx, |offers, _| offers.stop(owner));
+        }
+    }
+
     fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
         self.loading.motion(self.first_read(cx))
     }

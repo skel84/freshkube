@@ -104,8 +104,9 @@ impl DetailPane {
         })
     }
 
-    /// What an edit of the open object needs, which core declares.
-    fn edit_needs(&self) -> Vec<AccessQuestion> {
+    /// What an edit of the open object needs, which core declares. The
+    /// screen asks it with the row's actions.
+    pub(crate) fn edit_needs(&self) -> Vec<AccessQuestion> {
         if self.embedded_node {
             return Vec::new();
         }
@@ -114,28 +115,35 @@ impl DetailPane {
             .unwrap_or_default()
     }
 
-    /// Asks the cluster whether Edit may be offered for the open object, if
-    /// it isn't known. Called when an object opens, never while drawing.
-    pub(crate) fn want_edit(&mut self, cx: &mut Context<Self>) {
+    /// What the cluster has said of Edit on the open object so far, worked
+    /// out here and read while drawing.
+    pub(super) fn derive_edit_offer(&mut self, cx: &mut Context<Self>) {
         let needs = self.edit_needs();
-        if !self.active || needs.is_empty() {
-            return;
-        }
-        self.offers.update(cx, |offers, cx| offers.want(&needs, cx));
-    }
-
-    /// What the cluster said of Edit on the open object.
-    pub(crate) fn edit_offer(&self, cx: &App) -> Offer {
-        let needs = self.edit_needs();
-        if needs.is_empty() {
-            return Offer::Pending;
-        }
-        self.offers.read(cx).offer(&needs, cx)
+        self.edit_offer = if needs.is_empty() {
+            Offer::Pending
+        } else {
+            self.offers.read(cx).offer(&needs, cx)
+        };
     }
 
     /// Why the cluster says Edit is not allowed, when it did.
-    pub(crate) fn access_refusal(&self, cx: &App) -> Option<String> {
-        self.edit_offer(cx).refusal().map(str::to_owned)
+    pub(crate) fn access_refusal(&self) -> Option<String> {
+        self.edit_offer.refusal().map(str::to_owned)
+    }
+
+    /// What Edit's tooltip says when it is off: the level's reason, then a
+    /// failed read's, then the cluster's no; `None` while it is on.
+    pub(crate) fn edit_reason(&self) -> Option<String> {
+        self.write_block
+            .map(str::to_owned)
+            .or_else(|| match &self.edit {
+                Some(Edit {
+                    phase: Phase::Failed(why),
+                    ..
+                }) => Some(why.to_string()),
+                _ => None,
+            })
+            .or_else(|| self.access_refusal())
     }
 
     /// Why Edit is off, or `None`: the shell sets it from the cluster's level,
@@ -224,7 +232,7 @@ impl DetailPane {
         };
         if self.embedded_node
             || self.write_block.is_some()
-            || self.access_refusal(cx).is_some()
+            || self.access_refusal().is_some()
             || self.edit.is_some()
             || detail.read == DocumentRead::Deleted
         {
@@ -415,21 +423,10 @@ impl DetailPane {
                 ..
             })
         );
-        let reason = self
-            .write_block
-            .map(str::to_owned)
-            .or_else(|| match &self.edit {
-                Some(Edit {
-                    phase: Phase::Failed(why),
-                    ..
-                }) => Some(why.to_string()),
-                _ => None,
-            });
         // The level's reason wins over the cluster's.
-        let offer = self.edit_offer(cx);
-        let refusal = offer.refusal().map(str::to_owned);
-        let reason = reason.or_else(|| refusal.clone());
-        let tooltip = reason.clone().unwrap_or_else(|| match offer.note() {
+        let reason = self.edit_reason();
+        let refusal = self.access_refusal();
+        let tooltip = reason.clone().unwrap_or_else(|| match self.edit_offer.note() {
             Some(note) => format!("Edit this object's YAML. {note}"),
             None => "Edit this object's YAML".to_owned(),
         });

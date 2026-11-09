@@ -225,6 +225,9 @@ pub struct DetailPane {
     /// The app's reviews of what the person may do (#854): Edit is shown
     /// disabled with the reason when the cluster said no. It only guides.
     offers: Entity<freshkube_reads::OfferDesk>,
+    /// What the cluster said of Edit on the open object, derived when the
+    /// object opens or an answer lands and read while drawing.
+    edit_offer: freshkube_core::access::Offer,
     /// The YAML being edited, if it is.
     edit: Option<edit::Edit>,
     focus: FocusHandle,
@@ -292,7 +295,10 @@ impl DetailPane {
             // Whether the pod's history shows, which this cached view draws.
             cx.observe(&history, |_, _, cx| cx.notify()),
             // An answer to a review lands: Edit may now read as refused.
-            cx.observe(&offers, |_, _, cx| cx.notify()),
+            cx.observe(&offers, |this, _, cx| {
+                this.derive_edit_offer(cx);
+                cx.notify();
+            }),
             cx.subscribe_in(&find, window, |this, input, event, _, cx| match event {
                 InputEvent::Change => {
                     let query = input.read(cx).value().to_string();
@@ -349,6 +355,7 @@ impl DetailPane {
             feedback: None,
             write_block: None,
             offers,
+            edit_offer: freshkube_core::access::Offer::Pending,
             edit: None,
             focus: cx.focus_handle(),
             yaml_scroll: UniformListScrollHandle::new(),
@@ -453,7 +460,7 @@ impl DetailPane {
         self.show_all_annotations = false;
         self.feedback = None;
         self.end_edit();
-        self.want_edit(cx);
+        self.derive_edit_offer(cx);
         self.yaml_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.show_tab(cx);
         cx.notify();

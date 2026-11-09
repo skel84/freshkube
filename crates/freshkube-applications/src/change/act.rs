@@ -108,7 +108,8 @@ impl ChangePage {
                 .iter()
                 .flat_map(|(_, asked)| asked.iter().cloned())
                 .collect();
-            desk.update(cx, |desk, cx| desk.want(&all, cx));
+            let owner = cx.entity_id();
+            desk.update(cx, |desk, cx| desk.want(owner, &all, cx));
         }
         let offers: Vec<_> = questions
             .iter()

@@ -526,7 +526,7 @@ fn a_kind_delete_is_refused_on_shows_it_disabled_with_its_reason(cx: &mut TestAp
         let (_runtime, screen, handle, heard) = opened(cx, key);
         let reason = cx.read(|cx| {
             let screen = screen.read(cx);
-            screen.act_block(Everyday::Delete, cx)
+            screen.act_block(Everyday::Delete)
         });
         assert!(reason.is_some(), "{key}");
         // The button is disabled, so a click asks nothing; the key still
