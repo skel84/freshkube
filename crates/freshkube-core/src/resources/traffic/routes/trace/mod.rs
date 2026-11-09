@@ -323,7 +323,7 @@ impl RouteTrace {
 }
 
 /// Which side of the platform a controller's reason points at.
-fn blame(reason: &str) -> Owner {
+pub(super) fn blame(reason: &str) -> Owner {
     match reason {
         "InvalidCertificateRef"
         | "InvalidRouteKinds"

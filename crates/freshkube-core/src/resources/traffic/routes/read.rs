@@ -86,8 +86,18 @@ pub struct RoutesRead {
     pub routes: Vec<RouteEntry>,
     /// HTTPRoute at the version the cluster serves it, for a link to one.
     pub route_kind: Option<ResourceKind>,
+    /// Gateway and GatewayClass at the versions the cluster serves them.
+    pub gateway_kind: Option<ResourceKind>,
+    pub class_kind: Option<ResourceKind>,
     /// The route list stopped at its limit.
     pub routes_cut: bool,
+    /// The Gateways and GatewayClasses the traces were made against, kept so
+    /// the Gateway pages read nothing a second time (N2b). A refused read is
+    /// the error, never an empty list.
+    pub gateways: Result<Listing<GatewayFacts>, Failure>,
+    pub classes: Result<Listing<ClassFacts>, Failure>,
+    /// The backend Services as read, kept for the topology's workloads.
+    pub services: BTreeMap<(String, String), BackendRead>,
     /// Distinct backends past the limit, which read Unknown.
     pub backends_cut: usize,
     /// Reads that were refused or cut, in words, so a banner can say what the
@@ -101,10 +111,36 @@ impl RoutesRead {
             api,
             routes: Vec::new(),
             route_kind: None,
+            gateway_kind: None,
+            class_kind: None,
             routes_cut: false,
+            gateways: Ok(Listing::new(Vec::new(), false)),
+            classes: Ok(Listing::new(Vec::new(), false)),
+            services: BTreeMap::new(),
             backends_cut: 0,
             notes: Vec::new(),
         }
+    }
+
+    pub fn with_gateways(
+        mut self,
+        gateways: Result<Listing<GatewayFacts>, Failure>,
+        classes: Result<Listing<ClassFacts>, Failure>,
+    ) -> Self {
+        self.gateways = gateways;
+        self.classes = classes;
+        self
+    }
+
+    pub fn with_gateway_kinds(mut self, gateway: ResourceKind, class: ResourceKind) -> Self {
+        self.gateway_kind = Some(gateway);
+        self.class_kind = Some(class);
+        self
+    }
+
+    pub fn with_services(mut self, services: BTreeMap<(String, String), BackendRead>) -> Self {
+        self.services = services;
+        self
     }
 
     pub fn with_routes(mut self, routes: Vec<RouteEntry>) -> Self {
@@ -390,7 +426,12 @@ pub async fn read_routes(
         api,
         routes: entries,
         route_kind: Some(kinds.route.clone()),
+        gateway_kind: Some(kinds.gateway.clone()),
+        class_kind: Some(kinds.class.clone()),
         routes_cut: false,
+        gateways,
+        classes,
+        services: backends,
         backends_cut,
         notes,
     };

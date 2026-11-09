@@ -20,6 +20,9 @@ pub(crate) enum Page {
     Resources,
     Databases,
     Routes,
+    Gateways,
+    GatewayClasses,
+    Topology,
     Access,
     Etcd,
     SystemServices,
@@ -47,6 +50,9 @@ pub(super) enum PageId {
     Resources,
     Databases,
     Routes,
+    Gateways,
+    GatewayClasses,
+    Topology,
     Access,
     Processes,
     Storage,
@@ -61,9 +67,12 @@ pub(super) enum PageId {
 
 impl PageId {
     /// The retained inspection views (Databases uses the Kubernetes source).
-    pub(super) const SCREENS: [Self; 12] = [
+    pub(super) const SCREENS: [Self; 15] = [
         Self::Databases,
         Self::Routes,
+        Self::Gateways,
+        Self::GatewayClasses,
+        Self::Topology,
         Self::Access,
         Self::Processes,
         Self::Storage,
@@ -95,8 +104,9 @@ mod tests {
         let screen = |id: PageId| match id {
             Overview | Nodes | SystemServices | Monitoring | Observability | Applications
             | Settings | Resources => false,
-            Databases | Routes | Access | Processes | Storage | Network | Diagnostics | Etcd
-            | Health | Security | Lifecycle | Operations => true,
+            Databases | Routes | Gateways | GatewayClasses | Topology | Access | Processes
+            | Storage | Network | Diagnostics | Etcd | Health | Security | Lifecycle
+            | Operations => true,
         };
         let pages = [
             Overview,
@@ -181,7 +191,9 @@ impl Area {
             Page::Nodes => Self::Nodes,
             Page::Health => Self::Group("workloads"),
             Page::Databases => Self::Group("storage"),
-            Page::Routes => Self::Group("networking"),
+            Page::Routes | Page::Gateways | Page::GatewayClasses | Page::Topology => {
+                Self::Group("networking")
+            }
             Page::Access => Self::Group("access-control"),
             Page::Resources => match kind.key().as_str() {
                 "namespaces" => Self::Namespaces,
@@ -271,7 +283,7 @@ impl Area {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 16] = [
+    pub(super) const ALL: [Page; 19] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -287,6 +299,9 @@ impl Page {
         Self::Settings,
         Self::Databases,
         Self::Routes,
+        Self::Gateways,
+        Self::GatewayClasses,
+        Self::Topology,
         Self::Access,
     ];
 
@@ -299,6 +314,9 @@ impl Page {
             Self::Resources => PageId::Resources,
             Self::Databases => PageId::Databases,
             Self::Routes => PageId::Routes,
+            Self::Gateways => PageId::Gateways,
+            Self::GatewayClasses => PageId::GatewayClasses,
+            Self::Topology => PageId::Topology,
             Self::Access => PageId::Access,
             Self::Etcd => PageId::Etcd,
             Self::SystemServices => PageId::SystemServices,
@@ -323,6 +341,9 @@ impl Page {
                 | Self::Resources
                 | Self::Databases
                 | Self::Routes
+                | Self::Gateways
+                | Self::GatewayClasses
+                | Self::Topology
                 | Self::Access
                 | Self::Monitoring
                 | Self::Observability
@@ -343,6 +364,9 @@ impl Page {
             Self::Resources => "Resources",
             Self::Databases => "Databases",
             Self::Routes => "Routes",
+            Self::Gateways => "Gateways",
+            Self::GatewayClasses => "Gateway classes",
+            Self::Topology => "Topology",
             Self::Access => "Your access",
             Self::Etcd => "etcd",
             Self::SystemServices => "System services",
@@ -363,6 +387,9 @@ impl Page {
             Self::Resources => "resources",
             Self::Databases => "databases",
             Self::Routes => "routes",
+            Self::Gateways => "gateways",
+            Self::GatewayClasses => "gateway-classes",
+            Self::Topology => "topology",
             Self::Access => "access",
             Self::Etcd => "etcd",
             Self::SystemServices => "system-services",

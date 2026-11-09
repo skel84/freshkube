@@ -1,4 +1,4 @@
-# Routes and the HTTPRoute trace (#949, N2a)
+# Routes, Gateways and the HTTPRoute trace (#949, N2a and N2b)
 
 Where traffic stops on its way from a hostname to the pods behind it. The Service endpoints and the workload chain (N1) are in [resources.md](resources.md#service-endpoints-and-the-workload-traffic-chain-949-n1); this is the Gateway API half, for HTTPRoute. Everything here is read-only: lists and gets, no Secret, no write path, and a proposed fix is text to copy that nothing applies.
 
@@ -54,6 +54,38 @@ A backend refused across namespaces proposes a ReferenceGrant for that exact pai
 
 `FRESHKUBE_FIXTURE_HOLD=routes` keeps the page on its loading rows. `FRESHKUBE_ROUTES` (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)) shapes the page and an example route's trace: `all` (the default) shows every verdict at once. With `FRESHKUBE_KIND=httproutes.gateway.networking.k8s.io` Resources lists the example routes; a link from the page to one names it without a UID, since the example objects are listed again there under identities of their own (a cluster's link carries the route's UID). Their panes always read the full set, so every route finds its own trace, except under the shapes about the API itself (`not-installed`, `incomplete`, `mixed-bundle`, `refused`).
 
+## The Gateway and GatewayClass pages (N2b)
+
+Both pages are in the Networking column's Traffic section under Routes, in the closed set of pages a link can name (`gateways`, `gateway-classes`, `topology`), and read-only: nothing here applies a fix or writes.
+
+Code:
+
+- `crates/freshkube-core/src/resources/traffic/routes/gateways.rs`: `GatewaysView`, built from a `RoutesRead`. `read.rs` keeps the Gateway and GatewayClass lists it traced against (`RoutesRead::gateways`, `classes`, as `Result<Listing<_>, Failure>`), so the pages read nothing N2a had not.
+- `.../routes/topology.rs`: `Topology` (boxes and calls) and `read_workloads`.
+- `crates/freshkube-desktop/src/screens/gateways/` (one screen, `Mode::Gateways` and `Mode::Classes`) and `screens/topology/`.
+
+Tests that prove it: `routes/gateway_tests.rs` in core (each state, the fake API's requests) and the `tests.rs` of both screens.
+
+### Gateways
+
+A Gateway is **Failed**, **Partly serving** (programmed, but a listener the controller did not accept), **Pending** (no `Programmed` yet), **Blind** (the controller writes no status, its class has none, or it is Programmed with no address), **Unknown** (the class list was refused or cut, so nothing is said) or **Serving**; a parent the routes name that no Gateway answers to is **Not found**, owned by the route's author. A refused or cut class list reads Unknown, never Failed, and a cut Gateway list cannot say a parent is not found. Unknown and blind are never green. A verdict older than the Gateway's generation is a stale mark on a Serving Gateway.
+
+A row reads *state — reason*, with the address, the class and how many routes attach (and how many of them don't serve, from N2a's traces). Groups are Failed first, Serving last; a cluster where everything serves gets a flat list. The Inspector keeps configuration and the controller's report apart: the status (whose problem it is, the reason, and a separate "Controller reports" line), the listeners (port, protocol, host, which namespaces may attach, what the controller counts as attached, whether it accepted the listener, and the certificate refs **by name**, since no Secret is read), the attached routes with their verdicts, and the hostnames another Gateway's listeners name exactly (a wildcard overlaps too widely to call contested). **Open Gateway** (Enter or O, the toolbar, the row menu) opens it in Resources.
+
+### GatewayClasses
+
+A class is **Claimed**, **Not accepted**, **Pending** or **Blind** (no status), or **Not found** when Gateways name a class the cluster lacks. A row reads the controller and how many Gateways use the class; the Inspector lists those Gateways with their states.
+
+### Topology
+
+Address, Gateways, routes, backends and workloads, left to right, drawn with the shared graph view (paged at 24 boxes, ordered Gateway by Gateway). A box and a call read as N2a's trace says: a broken branch is a broken call, a weighted split shows its shares, and a Gateway with no address has a dashed "no address" box. A parent no Gateway answers to is a dashed Gateway box. Mesh routes (a Service as parent) are not drawn, and the page says so.
+
+The one read beyond N2a's is the workloads: the pods a backend Service publishes, resolved to the workload that controls them (a ReplicaSet to its Deployment) from two bounded lists per namespace (pods and ReplicaSets, 500 each, at most 25 namespaces). A pod the list doesn't have is a `Pod` box of its own, so nothing is dropped. A refused list, or a namespace past the cap, draws a dashed "workloads unknown" box on that Service, a Service that publishes nothing a dashed "no pods published" box, and a Service the read never reached "workloads not read": never an empty column. A click selects a box; its footer opens the object in Resources.
+
+### Reads and lifetime
+
+Each page reads only while shown (30 s before a shown page reads again) and drops a read in flight when it hides, like Routes. A refused Gateway list is an error with Retry on the Gateways page and Topology; the classes page still answers from its own list. `FRESHKUBE_ROUTES=gateways` shapes all three (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)).
+
 ## Left for later
 
-The Gateway and GatewayClass pages and the topology graph (N2b); Ingress (N3); certificates (N4); NetworkPolicy (N5); probes, Overview attention rows, the rail mark and Search (N6); the other route kinds and further controllers (N7); applying a ReferenceGrant (N8).
+Ingress (N3); certificates (N4); NetworkPolicy (N5); probes, Overview attention rows, the rail mark and Search (N6); the other route kinds and further controllers (N7); applying a ReferenceGrant (N8).
