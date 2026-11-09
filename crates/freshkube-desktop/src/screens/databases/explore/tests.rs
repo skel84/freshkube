@@ -987,7 +987,7 @@ fn a_failed_connect_over_the_proxy_leaves_no_child() {
 
 #[cfg(unix)]
 #[gpui_kit::test]
-async fn safety_g20_closing_the_tab_kills_the_teleport_child(cx: &mut TestAppContext) {
+async fn safety_g21_closing_the_tab_kills_the_teleport_child(cx: &mut TestAppContext) {
     use freshkube_db::teleport::Proxy;
     let (runtime, page, window) = open(cx, Example::Teleport).await;
     connected(cx, &page, &window).await;
