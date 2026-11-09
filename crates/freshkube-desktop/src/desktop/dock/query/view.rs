@@ -256,6 +256,11 @@ impl QueryView {
                 } else {
                     "Next result"
                 })
+                .tooltip(if id.ends_with("prev") {
+                    "Previous result"
+                } else {
+                    "Next result"
+                })
                 .disabled(to.is_none())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Some(to) = to {
