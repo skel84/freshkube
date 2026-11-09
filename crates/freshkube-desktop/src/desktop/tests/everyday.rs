@@ -329,7 +329,16 @@ fn safety_g21_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review(
     assert!(w.present(cx, "write-refused"), "the review decided");
     assert!(!w.present(cx, "write-confirm"));
     assert!(reviews(&w) > before, "the preflight asked afresh");
-    assert!(w.cluster.writes().is_empty());
+    // Nothing was written: the one POST that isn't an access review is the
+    // desk's question of who you are, which creates nothing.
+    let written: Vec<_> = w
+        .cluster
+        .writes()
+        .into_iter()
+        .filter(|request| !request.path.ends_with("/selfsubjectreviews"))
+        .map(|request| request.line())
+        .collect();
+    assert!(written.is_empty(), "{written:?}");
 }
 
 #[gpui_kit::test]
