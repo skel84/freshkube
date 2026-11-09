@@ -42,6 +42,8 @@ impl Ended {
 pub(super) struct Entry {
     pub(super) id: u64,
     pub(super) sql: String,
+    /// The text on one line, for the list; made once, here.
+    pub(super) one_line: String,
     pub(super) ended: Ended,
     /// "14:05:09", the local time it finished.
     pub(super) at: String,
@@ -70,6 +72,7 @@ impl History {
             0,
             Entry {
                 id: self.next,
+                one_line: sql.split_whitespace().collect::<Vec<_>>().join(" "),
                 sql,
                 ended,
                 at,
@@ -144,5 +147,19 @@ mod tests {
         let id = history.entries()[0].id;
         assert_eq!(history.get(id).unwrap().sql, "select 1");
         assert!(history.get(id + 1).is_none());
+    }
+
+    #[test]
+    fn the_one_line_text_is_made_once_with_the_entry() {
+        let mut history = History::default();
+        history.push(
+            "select *\n  from orders\n\twhere id = 1;",
+            Ended::Rows(1),
+            "10:00:00".into(),
+        );
+        assert_eq!(
+            history.entries()[0].one_line,
+            "select * from orders where id = 1;"
+        );
     }
 }

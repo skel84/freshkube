@@ -15,6 +15,9 @@ use std::time::Duration;
 
 #[derive(Clone)]
 pub(super) struct Column {
+    /// Its place among the statement's columns. Labels repeat (`select o.id,
+    /// c.id`) and are no key.
+    ix: usize,
     label: SharedString,
     width: f32,
     flexible: bool,
@@ -82,6 +85,7 @@ impl Rows {
                     },
                 );
                 Column {
+                    ix,
                     label: name.clone().into(),
                     width,
                     flexible,
@@ -109,6 +113,25 @@ impl Rows {
     pub(super) fn len(&self) -> usize {
         self.rows.len()
     }
+
+    /// What each row draws under each column, as `cell()` finds it.
+    #[cfg(test)]
+    pub(super) fn drawn(&self) -> Vec<Vec<String>> {
+        self.rows
+            .iter()
+            .map(|row| {
+                self.columns
+                    .iter()
+                    .map(|column| text_at(row, column).text.to_string())
+                    .collect()
+            })
+            .collect()
+    }
+}
+
+/// The cell a row draws under `column`: by the column's place, never its label.
+fn text_at<'a>(row: &'a Row, column: &Column) -> &'a Cell {
+    &row.cells[column.ix]
 }
 
 fn cell_of(value: &Value) -> Cell {
@@ -134,19 +157,22 @@ pub(super) enum State {
     Pending,
     Running,
     Rows(Rows),
-    Plan(Plan),
+    /// The plan and the index of its longest line.
+    Plan(Plan, usize),
     /// The statement's own words, with the kind of failure.
     Over(QueryError),
     /// Not run: an earlier statement failed or was cancelled.
     Skipped,
+    /// Not run: the run is cut at `MAX_STATEMENTS`; this many were left out.
+    TooMany(usize),
 }
 
 impl State {
     pub(super) fn ended(&self) -> Option<Ended> {
         Some(match self {
-            Self::Pending | Self::Running | Self::Skipped => return None,
+            Self::Pending | Self::Running | Self::Skipped | Self::TooMany(_) => return None,
             Self::Rows(rows) => Ended::Rows(rows.len()),
-            Self::Plan(_) => Ended::Plan,
+            Self::Plan(..) => Ended::Plan,
             Self::Over(QueryError::Refused(_)) => Ended::Refused,
             Self::Over(QueryError::TimedOut) => Ended::TimedOut,
             Self::Over(QueryError::Cancelled) => Ended::Cancelled,
@@ -158,20 +184,34 @@ impl State {
 
 pub(super) struct Item {
     pub(super) sql: SharedString,
-    pub(super) plan: bool,
+    /// "1 · select * from orders", for the result's tab; made once, with the
+    /// item, never while drawing.
+    pub(super) label: SharedString,
     pub(super) state: State,
 }
 
 impl Item {
-    /// "1 · select * from orders", for the result's tab.
-    pub(super) fn label(&self, ordinal: usize) -> String {
-        let one_line: String = self.sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    pub(super) fn new(ordinal: usize, sql: String, plan: bool) -> Self {
+        let one_line: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
         let mut short: String = one_line.chars().take(28).collect();
         if one_line.chars().count() > 28 {
             short.push('…');
         }
-        let plan = if self.plan { "Plan · " } else { "" };
-        format!("{ordinal} · {plan}{short}")
+        let kind = if plan { "Plan · " } else { "" };
+        Self {
+            label: format!("{ordinal} · {kind}{short}").into(),
+            sql: sql.into(),
+            state: State::Pending,
+        }
+    }
+
+    /// The item for the statements a run left out.
+    pub(super) fn left_out(ordinal: usize, count: usize) -> Self {
+        Self {
+            label: format!("{ordinal} · +{count} more").into(),
+            sql: SharedString::default(),
+            state: State::TooMany(count),
+        }
     }
 }
 
@@ -290,12 +330,8 @@ impl TableSource for Grid {
         column: &Column,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let ix = self
-            .columns()
-            .iter()
-            .position(|c| c.label == column.label)
-            .unwrap_or_default();
-        let cell = &row.data.cells[ix];
+        let ix = column.ix;
+        let cell = text_at(row.data, column);
         let id = format!("{}-text-{}", row.data.id, ix + 1);
         if cell.null {
             return kit::cell(column)

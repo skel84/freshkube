@@ -52,6 +52,9 @@ const CLOSED: &str = "Connection closed. Open Query again from the explorer once
 /// lines of editor and a few rows.
 const LEAST_HEIGHT: f32 = 260.;
 
+/// The most statements one run takes; the rest are listed as not run.
+const MAX_STATEMENTS: usize = 50;
+
 /// A little over the session's statement timeout, so the server's own answer
 /// arrives first; past it the statement is cancelled from here.
 const STATEMENT_DEADLINE: Duration = Duration::from_secs(40);
@@ -88,6 +91,8 @@ pub(crate) struct QueryView {
     notice: Option<SharedString>,
     focus: FocusHandle,
     least: Pixels,
+    /// The plan list's scroll, kept so a plan stays where it was read.
+    plan_scroll: UniformListScrollHandle,
     _editor: Subscription,
 }
 
@@ -128,6 +133,7 @@ impl QueryView {
             notice: None,
             focus: cx.focus_handle(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
+            plan_scroll: UniformListScrollHandle::new(),
             _editor: subscription,
         }
     }
@@ -173,7 +179,7 @@ impl QueryView {
         self.history.clear();
     }
 
-    pub(super) fn running(&self) -> bool {
+    pub(crate) fn running(&self) -> bool {
         self.run.is_some()
     }
 
@@ -202,7 +208,7 @@ impl QueryView {
             .collect()
     }
 
-    fn start(&mut self, texts: Vec<String>, plan: bool, cx: &mut Context<Self>) {
+    fn start(&mut self, mut texts: Vec<String>, plan: bool, cx: &mut Context<Self>) {
         if self.run.is_some() {
             return;
         }
@@ -220,14 +226,18 @@ impl QueryView {
         self.notice = None;
         self.epoch += 1;
         let epoch = self.epoch;
+        // A run takes at most MAX_STATEMENTS; one more item says what was left out.
+        let left_out = texts.len().saturating_sub(MAX_STATEMENTS);
+        texts.truncate(MAX_STATEMENTS);
         self.items = texts
             .iter()
-            .map(|sql| Item {
-                sql: sql.clone().into(),
-                plan,
-                state: State::Pending,
-            })
+            .enumerate()
+            .map(|(ix, sql)| Item::new(ix + 1, sql.clone(), plan))
             .collect();
+        if left_out > 0 {
+            self.items
+                .push(Item::left_out(MAX_STATEMENTS + 1, left_out));
+        }
         self.selected = 0;
         let cancelled = Arc::new(AtomicBool::new(false));
         let canceller = CancelSlot::default();
@@ -312,7 +322,15 @@ impl QueryView {
         };
         item.state = match outcome {
             Ok(Outcome::Rows(result)) => State::Rows(Rows::of(result)),
-            Ok(Outcome::Plan(plan)) => State::Plan(plan),
+            Ok(Outcome::Plan(plan)) => {
+                let longest = plan
+                    .lines
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, line)| line.chars().count())
+                    .map_or(0, |(ix, _)| ix);
+                State::Plan(plan, longest)
+            }
             Err(error) => State::Over(error),
         };
         let ended = item.state.ended();
@@ -328,7 +346,9 @@ impl QueryView {
             .is_some_and(|run| run.cancelled.load(Ordering::SeqCst));
         if failed || stopped {
             for later in self.items.iter_mut().skip(ix + 1) {
-                later.state = State::Skipped;
+                if matches!(later.state, State::Pending) {
+                    later.state = State::Skipped;
+                }
             }
         }
         self.show(ix, cx);
@@ -393,9 +413,25 @@ impl QueryView {
         cx.notify();
     }
 
+    /// Plan line `ix` of the selected result, drawn while it is in view.
+    pub(super) fn plan_line(&self, ix: usize) -> Option<AnyElement> {
+        let State::Plan(plan, _) = &self.items.get(self.selected)?.state else {
+            return None;
+        };
+        let line = plan.lines.get(ix)?;
+        Some(
+            freshkube_ui::document::line()
+                .id(SharedString::from(format!("query-plan-line-{}", ix + 1)))
+                .test_support()
+                .px(crate::ui::dp(12.))
+                .child(line.clone())
+                .into_any_element(),
+        )
+    }
+
     /// Whether the running statement has the session and Cancel can reach it.
     #[cfg(test)]
-    pub(super) fn cancellable(&self) -> bool {
+    pub(crate) fn cancellable(&self) -> bool {
         self.run
             .as_ref()
             .is_some_and(|run| run.canceller.lock().is_ok_and(|slot| slot.is_some()))
@@ -408,8 +444,22 @@ impl QueryView {
     }
 }
 
+/// What the person sees of a statement that ended, given whether Cancel was
+/// pressed: a server that words its cancel in another language, or answers
+/// Cancel with its time limit, still shows Cancelled.
+fn settled(result: Result<Outcome, QueryError>, cancelled: bool) -> Result<Outcome, QueryError> {
+    match result {
+        Err(QueryError::TimedOut) if cancelled => Err(QueryError::Cancelled),
+        other => other,
+    }
+}
+
 /// One statement on the shared session: waits its turn, hands out the cancel
 /// handle, runs, and past the deadline cancels it itself.
+///
+/// The handle is filled before the flag is read, and Cancel sets the flag
+/// before it reads the handle, so a Cancel is never lost between the two:
+/// either it finds the handle, or this sees the flag and does not start.
 async fn statement(
     session: Shared,
     sql: String,
@@ -418,11 +468,14 @@ async fn statement(
     slot: CancelSlot,
 ) -> Result<Result<Outcome, QueryError>, String> {
     let mut session = session.lock().await;
-    if cancelled.load(Ordering::SeqCst) {
-        return Ok(Err(QueryError::Cancelled));
-    }
     if let Ok(mut held) = slot.lock() {
         *held = Some(session.canceller());
+    }
+    if cancelled.load(Ordering::SeqCst) {
+        if let Ok(mut held) = slot.lock() {
+            *held = None;
+        }
+        return Ok(Err(QueryError::Cancelled));
     }
     let work = async {
         if plan {
@@ -434,12 +487,15 @@ async fn statement(
     let done = tokio::time::timeout(STATEMENT_DEADLINE, work).await;
     let canceller = slot.lock().ok().and_then(|mut held| held.take());
     match done {
-        Ok(result) => Ok(result),
+        Ok(result) => Ok(settled(result, cancelled.load(Ordering::SeqCst))),
         Err(_) => {
             if let Some(canceller) = canceller {
                 let _ = canceller.cancel().await;
             }
-            Ok(Err(QueryError::TimedOut))
+            Ok(settled(
+                Err(QueryError::TimedOut),
+                cancelled.load(Ordering::SeqCst),
+            ))
         }
     }
 }

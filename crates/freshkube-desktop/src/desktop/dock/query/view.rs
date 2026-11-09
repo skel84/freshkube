@@ -20,6 +20,9 @@ use gpui_kit::*;
 const EDITOR_HEIGHT: f32 = 112.;
 const HISTORY_WIDTH: f32 = 300.;
 
+/// Said beside the session's mark when the login is the application's own.
+const APP_USER: &str = "This session is the application's own user, not a read-only reader. The database's read-only transaction keeps it from writing; a reader role is the real fix (E4).";
+
 impl QueryView {
     fn render_strip(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
@@ -46,6 +49,12 @@ impl QueryView {
                     .aria_label("Read-only session")
                     .test_support(),
             )
+            .children(live.as_ref().filter(|live| live.app_user).map(|_| {
+                ui::tag(ui::Tone::Warn, None, "Application user", cx)
+                    .id("query-app-user")
+                    .aria_label(APP_USER)
+                    .test_support()
+            }))
             .child(
                 level::tag(self.level, level::Form::Cell, cx)
                     .id("query-level")
@@ -149,12 +158,15 @@ impl QueryView {
     /// "2 statements · running", or the selected result's rows and time.
     fn summary(&self) -> Option<String> {
         if self.running() {
+            let counted = |item: &&super::results::Item| !matches!(item.state, State::TooMany(_));
+            let total = self.items.iter().filter(counted).count();
             let done = self
                 .items
                 .iter()
+                .filter(counted)
                 .filter(|item| !matches!(item.state, State::Pending | State::Running))
                 .count();
-            return Some(format!("Running · {done} of {} done", self.items.len()));
+            return Some(format!("Running · {done} of {total} done"));
         }
         match &self.items.get(self.selected)?.state {
             State::Rows(rows) => {
@@ -187,7 +199,7 @@ impl QueryView {
                 .border_b_1()
                 .border_color(p.line)
                 .children(self.items.iter().enumerate().map(|(ix, item)| {
-                    let label = item.label(ix + 1);
+                    let label = item.label.clone();
                     Button::new(SharedString::from(format!("query-result-{}", ix + 1)))
                         .ghost()
                         .small()
@@ -271,31 +283,49 @@ impl QueryView {
                 };
                 note(id, title, words, tone, cx)
             }
-            State::Plan(plan) => {
+            State::Plan(plan, longest) => {
                 let capped = plan.capped.then(|| {
                     div()
+                        .px(dp(12.))
+                        .py(dp(4.))
+                        .text_size(dp(12.))
                         .text_color(p.muted)
                         .child("The plan is longer than this; these are its first lines.")
                 });
+                // Fixed-height lines, drawn only while in view.
                 v_flex()
                     .id("query-plan-lines")
                     .test_support()
-                    .size_full()
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .p(dp(12.))
-                    .text_size(dp(12.))
-                    .children(plan.lines.iter().enumerate().map(|(i, line)| {
-                        ui::mono(line.clone())
-                            .id(SharedString::from(format!("query-plan-line-{}", i + 1)))
-                            .test_support()
-                            .whitespace_nowrap()
-                    }))
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div().flex_1().min_h_0().child(
+                            freshkube_ui::document::lines(
+                                "query-plan-list",
+                                plan.lines.len(),
+                                Some(*longest),
+                                &self.plan_scroll,
+                                |view: &mut Self, ix, _, _| view.plan_line(ix),
+                                cx,
+                            )
+                            .size_full(),
+                        ),
+                    )
                     .children(capped)
                     .into_any_element()
             }
+            State::TooMany(count) => note(
+                "query-state-too-many",
+                "Not run",
+                format!(
+                    "More than {} statements: {count} were left out of this run.",
+                    super::MAX_STATEMENTS
+                ),
+                ui::Tone::Outline,
+                cx,
+            ),
             State::Rows(_) => v_flex()
-                .size_full()
+                .flex_1()
                 .min_h_0()
                 .child(div().flex_1().min_h_0().child(self.grid.clone()))
                 .into_any_element(),
@@ -323,8 +353,7 @@ impl QueryView {
                 .min_h_0()
                 .children(self.history.entries().iter().map(|entry| {
                     let id = entry.id;
-                    let one_line: String =
-                        entry.sql.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let one_line = entry.one_line.clone();
                     let tone = if entry.ended.is_error() {
                         p.warn
                     } else {
@@ -401,12 +430,13 @@ impl Render for QueryView {
             .child(Editor::new(&self.editor).h_full().bordered(false));
         let main = v_flex()
             .flex_1()
+            .h_full()
             .min_w_0()
             .min_h_0()
             .child(self.render_strip(cx))
             .child(editor)
             .children(self.render_results_strip(cx))
-            .child(div().flex_1().min_h_0().child(self.render_result(cx)));
+            .child(v_flex().flex_1().min_h_0().child(self.render_result(cx)));
         h_flex()
             .id("query")
             .test_support()

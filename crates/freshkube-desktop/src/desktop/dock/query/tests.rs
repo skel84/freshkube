@@ -51,6 +51,7 @@ fn mount(cx: &mut TestAppContext, level: Mark) -> Harness {
                 who: "shop_reader · reader Secret · example".into(),
                 route: Some("example · no forward".into()),
                 encryption: Encryption::Verified,
+                app_user: false,
             })
         }),
     };
@@ -153,6 +154,15 @@ async fn the_statement_at_the_cursor_runs_and_its_rows_show_capped(cx: &mut Test
         assert_eq!(v.items[0].sql.as_ref(), "select * from orders");
     });
     assert!(h.present("query-grid", cx));
+    // The tab fills its cell: the strip is at the top and the rows have room.
+    cx.update_window(h.window.into(), |_, window, _| {
+        assert_eq!(
+            window.find("query-strip").bounds().origin.y,
+            gpui_kit::px(0.)
+        );
+        assert!(window.find("query-grid").bounds().size.height > gpui_kit::px(150.));
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -231,10 +241,21 @@ async fn the_plan_is_shown_without_running_the_statement(cx: &mut TestAppContext
     h.type_text("select * from orders where status = 'paid'", 5, 0..0, cx);
     h.click("query-plan", cx);
     h.finished(cx).await;
+    // A virtual list measures its first line, then draws the ones in view.
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // The list has room: a zero-height one draws nothing.
+    cx.update_window(h.window.into(), |_, window, _| {
+        assert!(window.find("query-plan-lines").bounds().size.height > gpui_kit::px(40.));
+    })
+    .unwrap();
     assert!(h.present("query-plan-line-1", cx));
     h.view.read_with(cx, |v, _| {
-        assert!(matches!(v.items[0].state, super::State::Plan(_)));
-        assert!(v.items[0].plan);
+        assert!(matches!(v.items[0].state, super::State::Plan(..)));
+        assert!(v.items[0].label.contains("Plan · "), "{}", v.items[0].label);
     });
 }
 
@@ -393,4 +414,163 @@ async fn the_knob_opens_the_tab_through_the_shell_with_the_example_statements_ru
         assert!(dock.read(cx).saved(cx).tabs.is_empty());
         assert_eq!(dock.read(cx).count_label.as_ref(), "1 query");
     });
+}
+
+#[test]
+fn the_same_column_label_twice_draws_each_columns_own_values() {
+    use super::results::Rows;
+    use freshkube_db::{QueryResult, Value};
+    // `select o.id, c.id`, and `select 1, 2` once both read "?column?".
+    let rows = Rows::of(QueryResult {
+        columns: vec![
+            "id".into(),
+            "id".into(),
+            "?column?".into(),
+            "?column?".into(),
+        ],
+        rows: vec![vec![
+            Value::Int(11),
+            Value::Int(22),
+            Value::Text("a".into()),
+            Value::Text("b".into()),
+        ]],
+        capped: false,
+        row_cap: 200,
+        elapsed: std::time::Duration::ZERO,
+    });
+    // Each column draws its own value, though three labels repeat.
+    assert_eq!(rows.drawn(), vec![vec!["11", "22", "a", "b"]]);
+}
+
+#[gpui_kit::test]
+async fn a_run_takes_at_most_fifty_statements_and_says_what_it_left_out(cx: &mut TestAppContext) {
+    let h = mount(cx, Mark::Guarded);
+    let text = "select 1; ".repeat(60);
+    h.type_text(&text, 0, 0..text.len(), cx);
+    h.click("query-run", cx);
+    cx.wait_for_io(h.window.into(), |_, cx| {
+        let v = h.view.read(cx);
+        !v.running() && v.items.len() == 51
+    })
+    .await;
+    h.view.read_with(cx, |v, _| {
+        let ran = v
+            .items
+            .iter()
+            .filter(|i| matches!(i.state, super::State::Rows(_)))
+            .count();
+        assert_eq!(ran, 50);
+        assert!(matches!(v.items[50].state, super::State::TooMany(10)));
+        assert_eq!(v.items[50].label.as_ref(), "51 · +10 more");
+        // The left-out statements are not in the history, which holds the
+        // text once (a repeat moves to the front).
+        assert_eq!(v.history.entries().len(), 1);
+    });
+}
+
+#[test]
+fn a_cancel_before_the_statement_starts_is_not_lost() {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(cancel_before_start());
+}
+
+async fn cancel_before_start() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let session = FakeSession::shop(Limits::default());
+    let cancels = session.cancel_counter();
+    let shared: Shared = Arc::new(tokio::sync::Mutex::new(
+        Box::new(session) as Box<dyn Session>
+    ));
+    let slot = super::CancelSlot::default();
+    // Cancel was pressed while the statement waited for the session: it never runs.
+    let cancelled = Arc::new(AtomicBool::new(true));
+    let result = super::statement(
+        shared.clone(),
+        "select pg_sleep(60)".into(),
+        false,
+        cancelled.clone(),
+        slot.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(freshkube_db::QueryError::Cancelled)));
+    assert!(slot.lock().unwrap().is_none());
+    assert_eq!(*cancels.lock().unwrap(), 0);
+    // The other order: the handle is out before the flag is read, so a Cancel
+    // that sets the flag and then reads the handle always finds one of them.
+    cancelled.store(false, Ordering::SeqCst);
+    let running = tokio::spawn(super::statement(
+        shared,
+        "select pg_sleep(60)".into(),
+        false,
+        cancelled.clone(),
+        slot.clone(),
+    ));
+    while slot.lock().unwrap().is_none() {
+        tokio::task::yield_now().await;
+    }
+    cancelled.store(true, Ordering::SeqCst);
+    let canceller = slot.lock().unwrap().clone().unwrap();
+    canceller.cancel().await.unwrap();
+    let result = running.await.unwrap().unwrap();
+    assert!(matches!(result, Err(freshkube_db::QueryError::Cancelled)));
+}
+
+#[test]
+fn a_time_limit_after_cancel_reads_as_cancelled_whatever_language_the_server_speaks() {
+    use freshkube_db::QueryError;
+    let settled = |error, cancelled| super::settled(Err(error), cancelled).err().unwrap();
+    assert_eq!(settled(QueryError::TimedOut, true), QueryError::Cancelled);
+    assert_eq!(settled(QueryError::TimedOut, false), QueryError::TimedOut);
+    assert_eq!(
+        settled(QueryError::Failed("x".into()), true),
+        QueryError::Failed("x".into())
+    );
+}
+
+#[gpui_kit::test]
+async fn the_strip_says_when_the_session_is_the_applications_user(cx: &mut TestAppContext) {
+    let h = mount(cx, Mark::Guarded);
+    cx.update_window(h.window.into(), |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(!h.present("query-app-user", cx));
+    // The explorer's example with the application's own login.
+    use crate::DebugOptions;
+    use crate::GpuiOptions;
+    cx.executor().allow_parking();
+    let (_runtime, handle, pilot) = crate::desktop::testing::mount(
+        cx,
+        GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| match name {
+            "FRESHKUBE_PAGE" => Some("databases".into()),
+            "FRESHKUBE_DB_EXPLORE" => Some("query-app-user".into()),
+            _ => None,
+        })),
+        1280.,
+        880.,
+    );
+    let dock = cx.update(|cx| pilot.read(cx).pages.dock.clone());
+    cx.wait_for_io(handle, |_, cx| {
+        dock.read(cx).tabs.iter().any(
+            |tab| matches!(&tab.kind, crate::desktop::dock::TabKind::Query(v) if !v.read(cx).running() && v.read(cx).items.len() == 3),
+        )
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.update_window(handle, |_, window, _| {
+        let label = window.find("query-app-user").label().map(str::to_owned);
+        assert!(label.unwrap().contains("not a read-only reader"));
+        assert!(
+            window
+                .find("query-who")
+                .label()
+                .unwrap()
+                .contains("application user")
+        );
+    })
+    .unwrap();
 }

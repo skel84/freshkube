@@ -22,6 +22,9 @@ pub(crate) struct Live {
     /// The pod and local port.
     pub(crate) route: Option<SharedString>,
     pub(crate) encryption: Encryption,
+    /// The login is the application's own user, not a reader: its role can
+    /// write, and only the session's read-only transaction stops it.
+    pub(crate) app_user: bool,
 }
 
 /// Finds the explorer's session now.

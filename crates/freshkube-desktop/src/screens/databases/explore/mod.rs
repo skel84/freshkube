@@ -65,6 +65,9 @@ pub(crate) enum Example {
     /// Connected, and the Query tab opens with example statements run: rows,
     /// a refused write and a statement that did not run.
     Query,
+    /// As `Query`, with the application's own user as the login, so the
+    /// strip warns that the session is not a reader.
+    QueryAppUser,
 }
 
 /// What the example Query tab opens with.
@@ -84,6 +87,7 @@ impl Example {
             "plain" => Self::Plain,
             "loading" => Self::Loading,
             "query" => Self::Query,
+            "query-app-user" => Self::QueryAppUser,
             _ => return None,
         })
     }
@@ -105,6 +109,8 @@ struct Connected {
     who: SharedString,
     /// What protects the connection to the server.
     encryption: Encryption,
+    /// The login is the application's own user, not a reader.
+    app_user: bool,
 }
 
 // By hand: the session is not printable, and nothing here is a secret.
@@ -258,9 +264,11 @@ impl ExploreView {
             Example::ForwardFailed => {
                 return self.fail(Fail::ForwardFailed("Port 15432 is in use".into()), cx);
             }
-            Example::Connected | Example::Unverified | Example::Plain | Example::Query => {
-                fake::Shape::Connected
-            }
+            Example::Connected
+            | Example::Unverified
+            | Example::Plain
+            | Example::Query
+            | Example::QueryAppUser => fake::Shape::Connected,
             Example::Refused => fake::Shape::Refused,
             Example::TimedOut => fake::Shape::TimedOut,
             Example::NotReadOnly => fake::Shape::NotReadOnly,
@@ -268,7 +276,12 @@ impl ExploreView {
         self.route = Some("example · no forward".into());
         match fake::connect(shape, Limits::default()) {
             Ok(session) => {
-                let who = "shop_reader · reader Secret · example".into();
+                let app_user = example == Example::QueryAppUser;
+                let who = if app_user {
+                    "shop_app · application user · example".into()
+                } else {
+                    "shop_reader · reader Secret · example".into()
+                };
                 let encryption = match example {
                     Example::Unverified => Encryption::Unverified,
                     Example::Plain => Encryption::Plain,
@@ -278,10 +291,11 @@ impl ExploreView {
                     session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
                     who,
                     encryption,
+                    app_user,
                 };
                 self.connect.resolve(self.epoch, Ok(Ok(connected)));
                 self.connected(cx);
-                if example == Example::Query {
+                if matches!(example, Example::Query | Example::QueryAppUser) {
                     self.open_query_with(Some(EXAMPLE_QUERY.to_owned()), cx);
                 }
             }
@@ -495,6 +509,7 @@ impl ExploreView {
             who: connected.who.clone(),
             route: self.route.clone(),
             encryption: connected.encryption,
+            app_user: connected.app_user,
         })
     }
 
@@ -568,6 +583,7 @@ async fn connect_live(
         session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
         who: format!("{} · {}", login.user, login.kind.label()).into(),
         encryption,
+        app_user: login.kind == explore::LoginKind::AppUser,
     })
 }
 

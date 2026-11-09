@@ -144,6 +144,17 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g16_renew_writes_only_the_status_conditions_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g16_renew_after_the_conditions_moved_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 
+### 20. A database session never writes and never leaves its read-only transaction
+
+The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.md](features/database-explorer.md)). The database refuses a write, and nothing is retried. The statement checks are a guard and not a sandbox: until a reader role arrives (E4) every live session is the application's own user, so what a read-only transaction lets through but still acts on the server (maintenance, other sessions, files) is refused by name before it is sent.
+
+- `safety_g20_a_write_is_refused_by_the_read_only_transaction_alone_and_nothing_is_applied` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_a_server_that_does_not_hold_read_only_is_never_used` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_statements_that_leave_the_transaction_or_change_the_session_are_not_sent` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_maintenance_and_functions_that_act_on_the_server_are_not_sent` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_a_plan_never_analyzes` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_every_request_ends_rolled_back_with_its_locks_let_go_and_nothing_is_committed` (`crates/freshkube-db/src/safety.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
