@@ -15,6 +15,11 @@ use freshkube_core::wake::{GapDetector, TICK};
 /// only stops a read that never answers from holding the words forever.
 pub(super) const RECONNECTING_LIMIT: Duration = Duration::from_secs(45);
 
+/// A wake this soon after the last (by the executor's clock) is the same
+/// one: an NTP step right after waking, or a clock that keeps stepping,
+/// relists nothing again.
+pub(super) const WAKE_DEBOUNCE: Duration = Duration::from_secs(60);
+
 impl Pilot {
     /// Watches the clocks for the rest of the window's life.
     pub(super) fn start_wake_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -27,7 +32,8 @@ impl Pilot {
 
     /// Reads the executor's clock and `wall` (the time since any fixed
     /// origin) every [`TICK`], and runs [`woke`](Self::woke) when the wall
-    /// clock ran on without the executor's.
+    /// clock ran on without the executor's. The loop ends with the shell:
+    /// every tick reaches it, and a dropped one stops the loop.
     pub(super) fn watch_wake(
         &mut self,
         wall: impl Fn() -> Duration + 'static,
@@ -37,16 +43,22 @@ impl Pilot {
         cx.spawn_in(window, async move |this, cx| {
             let origin = cx.background_executor().now();
             let mut detector = GapDetector::new();
+            let mut last_wake = None;
             loop {
                 cx.background_executor().timer(TICK).await;
-                let monotonic = cx.background_executor().now().duration_since(origin);
-                let Some(slept) = detector.observe(monotonic, wall()) else {
-                    continue;
-                };
-                if this
-                    .update_in(cx, |view, window, cx| view.woke(slept, window, cx))
-                    .is_err()
-                {
+                let now = cx.background_executor().now();
+                let slept = detector
+                    .observe(now.duration_since(origin), wall())
+                    .filter(|_| last_wake.is_none_or(|at| now.duration_since(at) >= WAKE_DEBOUNCE));
+                if slept.is_some() {
+                    last_wake = Some(now);
+                }
+                let alive = this.update_in(cx, |view, window, cx| {
+                    if let Some(slept) = slept {
+                        view.woke(slept, window, cx);
+                    }
+                });
+                if alive.is_err() {
                     break;
                 }
             }
@@ -55,17 +67,13 @@ impl Pilot {
     }
 
     /// The machine woke after `slept`: the live data may be old, so say so
-    /// and read again.
+    /// and read again, if there is a connection to read again.
     pub(super) fn woke(&mut self, slept: Duration, window: &mut Window, cx: &mut Context<Self>) {
         tracing::info!("the machine woke after about {} s", slept.as_secs());
-        if self.config_loading || self.config_error.is_some() {
-            // Nothing is connected to reconnect; the load in progress or
-            // the error on screen is already the whole story.
+        if self.config_loading || self.config_error.is_some() || !self.has_connection() {
+            // Nothing is connected to reconnect; the load in progress, the
+            // error or the choice of a context on screen is the whole story.
             return;
-        }
-        #[cfg(test)]
-        {
-            self.chrome.wakes += 1;
         }
         self.chrome.reconnecting = Some(Duration::ZERO);
         self.refresh_now(window, cx);

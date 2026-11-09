@@ -215,6 +215,26 @@ pub struct Publication {
     pub staging_peak: usize,
 }
 
+impl Publication {
+    /// Whether any read has answered since the sources were last marked
+    /// syncing (a relist): some watched source is current, or every one has
+    /// settled, current or failed. A publication that carries only the
+    /// syncing state says nothing of the connection.
+    pub fn has_answered(&self) -> bool {
+        use super::observation::ReadStatus;
+        let observations = &self.summary.observations;
+        Source::WATCHED
+            .iter()
+            .any(|source| observations[source].is_current())
+            || Source::WATCHED.iter().all(|source| {
+                !matches!(
+                    observations[source].status(),
+                    ReadStatus::Syncing | ReadStatus::Resyncing
+                )
+            })
+    }
+}
+
 #[derive(Clone)]
 pub struct Subscription {
     receiver: watch::Receiver<Option<Arc<Publication>>>,

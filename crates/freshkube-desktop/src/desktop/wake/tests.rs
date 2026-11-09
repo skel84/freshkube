@@ -1,6 +1,6 @@
 //! The wake watcher on the executor's clock (#968). Real sleep can't be
 //! tested: the clocks are stepped by hand, the wall clock by a cell.
-use super::RECONNECTING_LIMIT;
+use super::{RECONNECTING_LIMIT, WAKE_DEBOUNCE};
 use crate::desktop::Pilot;
 use crate::desktop::testing::fixture;
 use freshkube_core::wake::TICK;
@@ -58,8 +58,7 @@ fn a_wake_says_reconnecting_in_the_status_bar_until_an_answer_lands(cx: &mut Tes
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let wall = watch(cx, handle, &view);
     tick(cx, &wall, Duration::ZERO);
-    // The summary's answer clears the state, so hold it by marking the wake
-    // as the watcher does and looking before anything answers.
+    // Mark the wake as the shell does, and look before anything answers.
     wall.set(wall.get() + Duration::from_secs(600));
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
@@ -77,27 +76,71 @@ fn a_wake_says_reconnecting_in_the_status_bar_until_an_answer_lands(cx: &mut Tes
     .unwrap();
 }
 
+/// The generation of the summary session's reads, which each relist raises.
+fn generation(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    view: &gpui_kit::Entity<Pilot>,
+) -> u64 {
+    cx.update_window(handle, |_, _, cx| {
+        view.read(cx)
+            .switch
+            .registry
+            .active()
+            .summary_session
+            .as_ref()
+            .expect("the fixture's summary session")
+            .core
+            .generation()
+    })
+    .unwrap()
+}
+
 #[gpui_kit::test]
-fn the_watcher_runs_the_wake_once_per_sleep(cx: &mut TestAppContext) {
+fn each_sleep_relists_the_summary_once(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let wall = watch(cx, handle, &view);
-    let wakes = |cx: &mut TestAppContext| {
-        cx.update_window(handle, |_, _, cx| view.read(cx).chrome.wakes)
-            .unwrap()
-    };
     tick(cx, &wall, Duration::ZERO);
-    assert_eq!(wakes(cx), 0);
-    // A ten-minute sleep inside one tick runs the wake once.
+    let before = generation(cx, handle, &view);
+    // A ten-minute sleep inside one tick relists once.
     tick(cx, &wall, Duration::from_secs(600));
-    assert_eq!(wakes(cx), 1);
-    // The ordinary ticks after it are quiet.
+    assert_eq!(generation(cx, handle, &view), before + 1);
+    // The ordinary ticks after it relist nothing.
     for _ in 0..5 {
         tick(cx, &wall, Duration::ZERO);
     }
-    assert_eq!(wakes(cx), 1);
-    // A second sleep is a second wake.
+    assert_eq!(generation(cx, handle, &view), before + 1);
+    // A second sleep, after the debounce, is a second relist.
+    for _ in 0..(WAKE_DEBOUNCE.as_secs() / TICK.as_secs()) {
+        tick(cx, &wall, Duration::ZERO);
+    }
     tick(cx, &wall, Duration::from_secs(90));
-    assert_eq!(wakes(cx), 2);
+    assert_eq!(generation(cx, handle, &view), before + 2);
+}
+
+#[gpui_kit::test]
+fn a_second_gap_soon_after_the_first_is_the_same_wake(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let wall = watch(cx, handle, &view);
+    tick(cx, &wall, Duration::ZERO);
+    let before = generation(cx, handle, &view);
+    // A sleep, then a clock step five seconds on (an NTP correction).
+    tick(cx, &wall, Duration::from_secs(600));
+    tick(cx, &wall, Duration::from_secs(40));
+    assert_eq!(generation(cx, handle, &view), before + 1);
+}
+
+#[gpui_kit::test]
+fn a_wake_with_nothing_read_yet_says_nothing_and_reads_nothing(cx: &mut TestAppContext) {
+    use crate::{DebugOptions, GpuiOptions};
+    let mut debug = DebugOptions::default();
+    debug.hold.talos = true;
+    let (_runtime, handle, view) =
+        crate::desktop::testing::mount(cx, GpuiOptions::fixture().with_debug(debug), 1280., 820.);
+    let wall = watch(cx, handle, &view);
+    tick(cx, &wall, Duration::ZERO);
+    tick(cx, &wall, Duration::from_secs(600));
+    assert!(!reconnecting(cx, handle, &view));
 }
 
 #[gpui_kit::test]
