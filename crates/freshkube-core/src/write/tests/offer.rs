@@ -108,7 +108,7 @@ async fn edit_yaml_declares_the_review_its_description_makes() {
         crate::write::edit_yaml::EditSession::from_row(&row, &cluster.object(fake::DEPLOYMENT))
             .unwrap();
     let mut text = session.editable_text();
-    text.push_str("\n");
+    text.push('\n');
     let text = text.replace("replicas: 2", "replicas: 3");
     let action = session.describe(&text).unwrap();
     assert_eq!(

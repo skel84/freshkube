@@ -40,7 +40,10 @@ fn a_refused_answer_reads_in_the_short_form_and_a_failed_one_leaves_it_open() {
     let (mut offers, now) = ready();
     let patch = q("patch", "deployments", "shop", "web");
     let delete = q("delete", "deployments", "shop", "web");
-    assert_eq!(offers.offer(&[patch.clone()], now), Offer::Pending);
+    assert_eq!(
+        offers.offer(std::slice::from_ref(&patch), now),
+        Offer::Pending
+    );
     for ticket in offers.wants(&[patch.clone(), delete.clone()], now) {
         let verdict = if ticket.question == patch {
             Verdict::Refused
@@ -49,12 +52,12 @@ fn a_refused_answer_reads_in_the_short_form_and_a_failed_one_leaves_it_open() {
         };
         assert!(offers.land(&ticket, verdict, now));
     }
-    let refused = offers.offer(&[patch.clone()], now);
+    let refused = offers.offer(std::slice::from_ref(&patch), now);
     assert_eq!(
         refused.refusal(),
         Some("Needs patch on deployments in shop")
     );
-    let unchecked = offers.offer(&[delete.clone()], now);
+    let unchecked = offers.offer(std::slice::from_ref(&delete), now);
     assert_eq!(unchecked, Offer::Unchecked);
     assert_eq!(unchecked.refusal(), None);
     assert_eq!(unchecked.note(), Some("Couldn't check your access"));
@@ -99,7 +102,12 @@ fn another_person_on_the_same_access_drops_every_answer() {
     let tickets = offers.wants(std::slice::from_ref(&patch), now);
     offers.land(&tickets[0], Verdict::Refused, now);
     assert!(!offers.set_person(Some("alice".into())), "the same person");
-    assert!(offers.offer(&[patch.clone()], now).refusal().is_some());
+    assert!(
+        offers
+            .offer(std::slice::from_ref(&patch), now)
+            .refusal()
+            .is_some()
+    );
     let late = offers.wants(&[q("patch", "deployments", "shop", "api")], now);
     assert!(offers.set_person(Some("bob".into())));
     assert_eq!(offers.answered(), 0);
@@ -114,10 +122,22 @@ fn answers_expire_after_a_bounded_time_and_are_asked_again() {
     let tickets = offers.wants(std::slice::from_ref(&patch), now);
     offers.land(&tickets[0], Verdict::Refused, now);
     let before = now + OFFER_TTL - Duration::from_secs(1);
-    assert!(offers.offer(&[patch.clone()], before).refusal().is_some());
-    assert!(offers.wants(&[patch.clone()], before).is_empty());
+    assert!(
+        offers
+            .offer(std::slice::from_ref(&patch), before)
+            .refusal()
+            .is_some()
+    );
+    assert!(
+        offers
+            .wants(std::slice::from_ref(&patch), before)
+            .is_empty()
+    );
     let after = now + OFFER_TTL;
-    assert_eq!(offers.offer(&[patch.clone()], after), Offer::Pending);
+    assert_eq!(
+        offers.offer(std::slice::from_ref(&patch), after),
+        Offer::Pending
+    );
     assert_eq!(offers.wants(&[patch], after).len(), 1);
 }
 
