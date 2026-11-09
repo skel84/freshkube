@@ -50,6 +50,8 @@ pub(crate) enum PageEvent {
     Observability(ObservabilityEvent),
     /// Monitoring's catalog, history source and breadcrumb.
     Monitoring(MonitoringEvent),
+    /// The database explorer's Query button: open its Query tab in the dock.
+    Query(super::QueryRequest),
     /// The kind Resources shows isn't served, so its group's discovery may
     /// be out of date.
     NotServed(ResourceKind),
@@ -121,6 +123,12 @@ impl From<DockEvent> for PageEvent {
 impl From<ObservabilityEvent> for PageEvent {
     fn from(event: ObservabilityEvent) -> Self {
         Self::Observability(event)
+    }
+}
+
+impl From<super::QueryRequest> for PageEvent {
+    fn from(request: super::QueryRequest) -> Self {
+        Self::Query(request)
     }
 }
 

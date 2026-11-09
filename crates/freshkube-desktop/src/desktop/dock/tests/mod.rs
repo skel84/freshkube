@@ -88,7 +88,7 @@ fn titles(dock: &Entity<Dock>, cx: &mut TestAppContext) -> Vec<String> {
 fn pod_view(dock: &Entity<Dock>, ix: usize, cx: &mut TestAppContext) -> Entity<PodLogView> {
     cx.update(|cx| match &dock.read(cx).tabs[ix].kind {
         TabKind::Pod(view) => view.clone(),
-        TabKind::Workload(_) | TabKind::Shell(_) | TabKind::Agent(_) => {
+        TabKind::Workload(_) | TabKind::Shell(_) | TabKind::Agent(_) | TabKind::Query(_) => {
             panic!("not a pod's log tab")
         }
     })
@@ -101,7 +101,7 @@ fn workload_view(
 ) -> Entity<WorkloadLogView> {
     cx.update(|cx| match &dock.read(cx).tabs[ix].kind {
         TabKind::Workload(view) => view.clone(),
-        TabKind::Pod(_) | TabKind::Shell(_) | TabKind::Agent(_) => {
+        TabKind::Pod(_) | TabKind::Shell(_) | TabKind::Agent(_) | TabKind::Query(_) => {
             panic!("not a workload's log tab")
         }
     })

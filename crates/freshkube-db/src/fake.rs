@@ -316,6 +316,11 @@ impl FakeSession {
     pub fn cancels(&self) -> usize {
         *self.cancels.lock().unwrap()
     }
+
+    /// A handle on the cancel count, for a test that has boxed the session.
+    pub fn cancel_counter(&self) -> Arc<Mutex<usize>> {
+        self.cancels.clone()
+    }
 }
 
 /// The table a statement of the example reads, after `from`.

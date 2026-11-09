@@ -411,4 +411,123 @@ mod tests {
             Err(ConnectError::Untrusted(_))
         ));
     }
+
+    /// A server that speaks just enough Postgres to accept a login without a
+    /// password and hand out a backend key, and records every byte each
+    /// connection sends it.
+    struct FakeServer {
+        port: u16,
+        connections: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    }
+
+    async fn fake_server() -> FakeServer {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let connections = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+        let seen = connections.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let slot = {
+                        let mut all = seen.lock().unwrap();
+                        all.push(Vec::new());
+                        all.len() - 1
+                    };
+                    let mut buf = [0u8; 4096];
+                    let mut answered = false;
+                    loop {
+                        let Ok(n) = stream.read(&mut buf).await else {
+                            return;
+                        };
+                        if n == 0 {
+                            return;
+                        }
+                        seen.lock().unwrap()[slot].extend_from_slice(&buf[..n]);
+                        let packet = &buf[..n];
+                        let code = packet
+                            .get(4..8)
+                            .map(|c| i32::from_be_bytes(c.try_into().unwrap()));
+                        match code {
+                            // SSLRequest: no TLS here.
+                            Some(80877103) => {
+                                let _ = stream.write_all(b"N").await;
+                            }
+                            // CancelRequest: the server closes, as Postgres does.
+                            Some(80877102) => return,
+                            // StartupMessage: log in, no password asked.
+                            _ if !answered => {
+                                answered = true;
+                                let mut out = vec![b'R', 0, 0, 0, 8, 0, 0, 0, 0];
+                                out.extend_from_slice(&[b'K', 0, 0, 0, 12]);
+                                out.extend_from_slice(&4242i32.to_be_bytes());
+                                out.extend_from_slice(&777i32.to_be_bytes());
+                                out.extend_from_slice(&[b'Z', 0, 0, 0, 5, b'I']);
+                                let _ = stream.write_all(&out).await;
+                            }
+                            // Anything after: hang up, so a query fails.
+                            _ => return,
+                        }
+                    }
+                });
+            }
+        });
+        FakeServer { port, connections }
+    }
+
+    #[tokio::test]
+    async fn the_cancel_request_carries_no_login_and_no_password() {
+        let server = fake_server().await;
+        let password = Password::new("hunter2");
+        let plan = TlsPlan {
+            server_name: "orders-db-ro.staging.svc".into(),
+            ca_pem: None,
+        };
+        let (wire, _) = TokioPostgres::connect(
+            Target {
+                address: "127.0.0.1".parse().unwrap(),
+                port: server.port,
+                user: "shop_reader",
+                database: "shop",
+            },
+            &password,
+            &Limits::default(),
+            &plan,
+        )
+        .await
+        .map_err(|e| e.to_string())
+        .expect("the fake server accepts the login");
+        let before = server.connections.lock().unwrap().len();
+        wire.canceller().cancel().await.unwrap();
+        // The cancel was its own connection, and it said only what a cancel
+        // request says: the process id and the key, nothing of who asks.
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&16i32.to_be_bytes());
+        expected.extend_from_slice(&80877102i32.to_be_bytes());
+        expected.extend_from_slice(&4242i32.to_be_bytes());
+        expected.extend_from_slice(&777i32.to_be_bytes());
+        // The server reads it a moment after the client's request returns.
+        let found = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let all = server.connections.lock().unwrap().clone();
+                if let Some(found) = all.iter().skip(before).find(|c| c.ends_with(&expected)) {
+                    return found.clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        let cancel = found.expect("the server received a cancel request");
+        let text = String::from_utf8_lossy(&cancel);
+        for secret in ["hunter2", "shop_reader", "user", "password"] {
+            assert!(
+                !text.contains(secret),
+                "{secret} reached the cancel: {text}"
+            );
+        }
+    }
 }

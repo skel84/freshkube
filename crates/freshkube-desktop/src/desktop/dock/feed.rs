@@ -76,7 +76,7 @@ impl Dock {
                     FeedState::Failed("Example data has no such object".into())
                 }
                 // An agent tab reads no object.
-                (TabKind::Agent(_), _) => FeedState::Idle,
+                (TabKind::Agent(_) | TabKind::Query(_), _) => FeedState::Idle,
             };
             cx.notify();
             return;
@@ -192,7 +192,7 @@ impl Dock {
             match &tab.kind {
                 TabKind::Pod(view) => view.update(cx, |view, cx| view.end(cx)),
                 TabKind::Shell(view) => view.update(cx, |view, cx| view.set_gone(cx)),
-                TabKind::Workload(_) | TabKind::Agent(_) => {}
+                TabKind::Workload(_) | TabKind::Agent(_) | TabKind::Query(_) => {}
             }
             tab.feed.job = None;
         }
@@ -249,7 +249,7 @@ fn set_containers(tab: &mut DockTab, containers: PodContainers, cx: &mut Context
             view.update(cx, |view, cx| view.set_containers(containers, cx));
             return;
         }
-        TabKind::Workload(_) | TabKind::Agent(_) => return,
+        TabKind::Workload(_) | TabKind::Agent(_) | TabKind::Query(_) => return,
     };
     let at = tab.at.take();
     view.update(cx, |view, cx| {

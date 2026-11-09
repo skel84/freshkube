@@ -39,8 +39,8 @@ use gpui_kit::*;
 use std::sync::Arc;
 use tokio::runtime::Handle;
 
-/// The session every read of this tab goes through, one at a time.
-pub(super) type Shared = Arc<tokio::sync::Mutex<Box<dyn Session>>>;
+pub(super) use super::query_link::Shared;
+use super::query_link::{Live, QueryRequest};
 
 pub(super) async fn session_of(shared: &Shared) -> tokio::sync::MutexGuard<'_, Box<dyn Session>> {
     shared.lock().await
@@ -62,7 +62,14 @@ pub(crate) enum Example {
     Plain,
     /// Stays on the first step, as a capture of the loading state.
     Loading,
+    /// Connected, and the Query tab opens with example statements run: rows,
+    /// a refused write and a statement that did not run.
+    Query,
 }
+
+/// What the example Query tab opens with.
+const EXAMPLE_QUERY: &str =
+    "select * from orders;\nupdate orders set status = 'paid';\nselect * from customers";
 
 impl Example {
     pub(crate) fn parse(text: &str) -> Option<Self> {
@@ -76,6 +83,7 @@ impl Example {
             "unverified" => Self::Unverified,
             "plain" => Self::Plain,
             "loading" => Self::Loading,
+            "query" => Self::Query,
             _ => return None,
         })
     }
@@ -113,6 +121,8 @@ struct Link {
     view: Entity<ForwardView>,
     _observer: Option<Subscription>,
 }
+
+impl EventEmitter<QueryRequest> for ExploreView {}
 
 pub(super) struct ExploreView {
     runtime: Handle,
@@ -248,7 +258,9 @@ impl ExploreView {
             Example::ForwardFailed => {
                 return self.fail(Fail::ForwardFailed("Port 15432 is in use".into()), cx);
             }
-            Example::Connected | Example::Unverified | Example::Plain => fake::Shape::Connected,
+            Example::Connected | Example::Unverified | Example::Plain | Example::Query => {
+                fake::Shape::Connected
+            }
             Example::Refused => fake::Shape::Refused,
             Example::TimedOut => fake::Shape::TimedOut,
             Example::NotReadOnly => fake::Shape::NotReadOnly,
@@ -269,6 +281,9 @@ impl ExploreView {
                 };
                 self.connect.resolve(self.epoch, Ok(Ok(connected)));
                 self.connected(cx);
+                if example == Example::Query {
+                    self.open_query_with(Some(EXAMPLE_QUERY.to_owned()), cx);
+                }
             }
             Err(error) => self.fail(Fail::of_connect(error), cx),
         }
@@ -465,6 +480,37 @@ impl ExploreView {
         self.link = Some(Link {
             _observer: None,
             view,
+        });
+    }
+
+    /// The connected session as the Query tab asks for it; `None` while the
+    /// tab is not connected.
+    pub(super) fn live(&self) -> Option<Live> {
+        if self.phase != Phase::Connected {
+            return None;
+        }
+        let connected = self.connect.data()?.as_ref().ok()?;
+        Some(Live {
+            session: connected.session.clone(),
+            who: connected.who.clone(),
+            route: self.route.clone(),
+            encryption: connected.encryption,
+        })
+    }
+
+    /// Opens this database's Query tab in the dock. The request follows this
+    /// tab: reconnecting is followed, and closing the tab ends it.
+    pub(super) fn open_query(&mut self, cx: &mut Context<Self>) {
+        self.open_query_with(None, cx);
+    }
+
+    fn open_query_with(&mut self, start: Option<String>, cx: &mut Context<Self>) {
+        let this = cx.weak_entity();
+        cx.emit(QueryRequest {
+            start,
+            key: self.database.identity.uid.clone(),
+            title: self.database.identity.name.clone(),
+            live: std::rc::Rc::new(move |cx| this.upgrade()?.read(cx).live()),
         });
     }
 

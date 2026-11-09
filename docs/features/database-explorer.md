@@ -1,8 +1,8 @@
 # Database explorer
 
-Code: `freshkube-db` (`crates/freshkube-db/src/`) is the session, with no GPUI and nothing of desktop: `postgres.rs` (the read-only Postgres session), `readonly.rs` (the statement check), `limits.rs` (timeouts and row cap), `wire.rs` (the `tokio-postgres` connection under it), `session.rs` (the `Session` trait and its types), `credentials.rs` (the in-memory password) and `fake.rs` (the example `shop` database and a recording fake server). `freshkube-core`'s `databases/explore.rs` picks the pod and reads the login. `freshkube-desktop/src/screens/databases/explore/` is the tab: `mod.rs` (the connection), `browser.rs` (schemas and tables), `data.rs` (a table's rows and the record Inspector), `view.rs` and `fail.rs` (the connect step's states). Design and slices: [#948](https://github.com/skel84/freshkube/issues/948). Tests: the unit tests in each `freshkube-db` module, core's `databases::explore::tests` and desktop's `explore/tests.rs`.
+Code: `freshkube-db` (`crates/freshkube-db/src/`) is the session, with no GPUI and nothing of desktop: `postgres.rs` (the read-only Postgres session), `readonly.rs` (the statement check), `limits.rs` (timeouts and row cap), `wire.rs` (the `tokio-postgres` connection under it), `session.rs` (the `Session` trait and its types), `credentials.rs` (the in-memory password) and `fake.rs` (the example `shop` database and a recording fake server), `statements.rs` (where the statements of an editor's text are). `freshkube-core`'s `databases/explore.rs` picks the pod and reads the login. `freshkube-desktop/src/screens/databases/explore/` is the tab: `mod.rs` (the connection), `browser.rs` (schemas and tables), `data.rs` (a table's rows and the record Inspector), `view.rs` and `fail.rs` (the connect step's states). The Query tab is `freshkube-desktop/src/desktop/dock/query/`: `mod.rs` (runs, Cancel), `results.rs` (a result per statement), `history.rs` and `view.rs`; `screens/databases/query_link.rs` is what the explorer hands the dock. Design and slices: [#948](https://github.com/skel84/freshkube/issues/948). Tests: the unit tests in each `freshkube-db` module, core's `databases::explore::tests` and desktop's `explore/tests.rs`.
 
-This is slice E1: PostgreSQL by CloudNativePG, read-only, through a port forward. The query tab (E2), Teleport (E3), the `databases:` block of Team setup (E4), MySQL and MariaDB (E5) and writes (E7) are later; until E4 the row cap (200) and the timeouts are built in.
+This is slices E1 and E2: PostgreSQL by CloudNativePG, read-only, through a port forward, with the explorer and the Query dock tab. Teleport (E3), the `databases:` block of Team setup (E4), MySQL and MariaDB (E5) and writes (E7) are later; until E4 the row cap (200) and the timeouts are built in.
 
 ## Opening it
 
@@ -41,13 +41,31 @@ The strip shows *Read-only session*, what protects the connection, who the sessi
 
 The browser sits beside the rows from 900 dp of page width and above them below it; the failure states scroll. The schema browser is the shared table: each schema is a group row, opened or closed by a click on it (its detail says "closed" or counts its tables); the first (`public`, else the first) opens on its own and the others read their tables only when opened. Rows carry the kind, the planner's row estimate (`–` before the table is analysed) and the total size. Choosing a table reads its columns and its first rows; a row opens its record in the Inspector (column, type, key and nullability, value; `NULL` as such).
 
+## The Query tab
+
+**Query** in the explorer's strip opens a dock tab for that database, one per database, beside the logs and shells. It uses the explorer's session (`QueryRequest::live`): no second forward and no second Secret read. If the explorer is closed or not connected the tab says *Connection closed*, keeps its editor and history, and runs nothing; Query again from the explorer once it is connected. The tab is saved nowhere and its Maximize is the dock's.
+
+The strip says *Read-only session*, how the connection is protected, who the session is and the pod, and carries the **protection level of the tab's cluster** (the dock's `Origin::level`, followed live, held to Read-only when it is gone or unknown). Writes are E7 and are not here.
+
+**What a run covers.** The selection, if it holds anything; else the statement at the cursor (`freshkube_db::statements`: statements end at a `;` outside quotes, identifiers, dollar quotes and comments, and a piece that is only comments is no statement; the cursor just after a `;` still belongs to its statement). A selection of several statements runs them in turn, each in its own read-only request, one result tab per statement, and stops at the first that fails, is refused or is cancelled; the rest read *Not run*. Command-Enter runs, Command-Shift-Enter shows the plan, Escape cancels while a statement runs.
+
+**Read-only is still the session's.** Each statement is `BEGIN READ ONLY`, the server's single-statement check, the statement, `ROLLBACK`, as in E1. A statement that would write is sent and refused by the database (SQLSTATE 25006) and shown as *Refused: this session is read-only*, with a note that nothing was changed and it was not tried again; it is never retried, and no `COMMIT` is ever sent. `SET`, `RESET`, `BEGIN`, `COMMIT` and several statements in one request are *Not sent*, with the words that explain it.
+
+**Caps.** A statement that returns rows (`SELECT`, `WITH`, `VALUES`, `TABLE`) is read through a `NO SCROLL` cursor and fetches the row cap plus one (200 + 1), so a large result never reaches memory; the strip says *first 200 rows (row cap)*. `SHOW` and `EXPLAIN` are small and are cut at the cap. The statement, lock and connect timeouts are E1's, and a statement the server has not answered 40 s in is cancelled from here too.
+
+**Cancel** stops the running statement on the server: `tokio-postgres`'s cancel request, a second short connection to the same forward with the session's TLS plan. It carries only the backend's process id and key, never a login or a password, so Cancel reads no Secret (a test against a recording socket proves what the cancel connection sends). Cancel does not take the session's lock, which the running statement holds. A cancel that arrives while the statement still waits behind an explorer read keeps it from starting. Closing the tab cancels what runs. The server's *canceling statement due to user request* is told from its timeout by its message.
+
+**The plan** is `EXPLAIN (FORMAT TEXT)` on the first statement of the run, never `ANALYZE`, which would execute it; a statement that is already an `EXPLAIN` runs as it is. It opens as a result tab of its own, as the server's lines.
+
+**History** lists what ran, newest first, at most 100 (text, local time, outcome), and clicking an entry puts it in the editor. It lives in memory for the tab's life: not saved, not in the audit log, a deep link or Search, and the login Secret is not in it. Closing the tab drops it; Clear empties it.
+
 ## Lifetime
 
 The connection is user-started and belongs to its tab ([STATE_LIFETIMES.md](../STATE_LIFETIMES.md#database-explorer)). Reads (pick, connect, schemas, tables, columns, rows) are `Loader`s: a Tokio job plus a delivery task, dropped when the tab hides or connects again, landing only for the epoch they were asked in. A hidden tab reads nothing; showing it resumes what was cut short. The connected session is kept while hidden.
 
 ## Example data
 
-`--fixture` uses `freshkube_db::fake` and no forward or Secret. `FRESHKUBE_DB_EXPLORE` (AGENTS.md) opens the first PostgreSQL database in the explorer and shapes how the connection ends. The example `shop` database has the schemas `public` and `audit`; `orders` has 250 rows (more than the cap), `customers` 12, `products` none.
+`--fixture` uses `freshkube_db::fake` and no forward or Secret. `FRESHKUBE_DB_EXPLORE` (AGENTS.md) opens the first PostgreSQL database in the explorer and shapes how the connection ends; `query` also opens the Query tab with three example statements run: the rows of `orders` (capped), an `update` the session refuses, and a statement that did not run after it. In the example, `pg_sleep` never answers until Cancel, and any write is refused. The example `shop` database has the schemas `public` and `audit`; `orders` has 250 rows (more than the cap), `customers` 12, `products` none.
 
 ## Dependency
 
