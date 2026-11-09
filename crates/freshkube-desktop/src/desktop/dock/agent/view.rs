@@ -833,7 +833,11 @@ impl Render for AgentView {
                     .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
                         // Up, away from the end: the tab stops following at
                         // once, before the next frame could pull it back.
-                        if event.delta.pixel_delta(px(1.)).y > px(0.) {
+                        // Only a body that can scroll is left: a short answer
+                        // that grows afterwards is still followed.
+                        if event.delta.pixel_delta(px(1.)).y > px(0.)
+                            && this.body_scroll.max_offset().y > px(0.)
+                        {
                             this.pinned = false;
                             return;
                         }

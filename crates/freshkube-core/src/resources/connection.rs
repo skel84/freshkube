@@ -22,6 +22,21 @@ fn server_address(url: &http::Uri) -> String {
     }
 }
 
+/// The server's version, as the first proof that it answers. A server that
+/// refuses, or that never answers within `limit`, is named by its address.
+async fn server_version(
+    client: &Client,
+    name: &str,
+    server: &str,
+    limit: Duration,
+) -> Result<String, Failure> {
+    let version = tokio::time::timeout(limit, client.apiserver_version())
+        .await
+        .map_err(|_| with_server(Failure::timeout(&format!("Connecting to '{name}'")), server))?
+        .map_err(|error| with_server(Failure::from_kube(error), server))?;
+    Ok(version.git_version)
+}
+
 /// Names the address an unreachable or timed-out server was tried at.
 fn with_server(failure: Failure, server: &str) -> Failure {
     match failure.kind {
@@ -91,14 +106,11 @@ pub async fn connect(sources: Vec<PathBuf>, name: String) -> Result<Connection, 
     })
     .await
     .map_err(|_| Failure::new(FailureKind::Other, "The connection worker stopped"))??;
-    let version = tokio::time::timeout(CONNECT_TIMEOUT, client.apiserver_version())
-        .await
-        .map_err(|_| Failure::timeout(&format!("Connecting to '{name}'")))?
-        .map_err(|error| with_server(Failure::from_kube(error), &server))?;
+    let version = server_version(&client, &name, &server, CONNECT_TIMEOUT).await?;
     Ok(Connection {
         context,
         client,
-        server_version: version.git_version,
+        server_version: version,
     })
 }
 
@@ -125,6 +137,32 @@ mod server_tests {
         for secret in ["admin", "hunter2", "s3cr3t", "token", "/base"] {
             assert!(!failure.message.contains(secret), "{secret}");
         }
+    }
+
+    /// A server that accepts the connection and never answers, as one that
+    /// drops packets does to the client: the timeout names its address.
+    #[tokio::test]
+    async fn a_server_that_never_answers_is_named_when_the_wait_ends() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let _held = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok(connection) = listener.accept().await {
+                held.push(connection);
+            }
+        });
+        let config = kube::Config::new(format!("http://{address}").parse().unwrap());
+        let server = server_address(&config.cluster_url);
+        let client = Client::try_from(config).unwrap();
+        let failure = server_version(&client, "lab", &server, Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Timeout);
+        assert_eq!(
+            failure.message,
+            format!("Connecting to 'lab' timed out (tried {address})")
+        );
     }
 
     #[test]

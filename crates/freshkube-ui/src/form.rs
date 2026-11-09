@@ -278,17 +278,16 @@ pub fn invalid(input: Input, cx: &App) -> Input {
 pub struct SavedIn(SharedString, Option<SharedString>);
 
 impl SavedIn {
+    /// Saved in `name`, the file whose refusal this line reports.
     pub fn file(name: impl Into<SharedString>) -> Self {
         let name = name.into();
-        // "monitoring.json; the token in …" and "freshkube.yaml · sources"
-        // are saved in the file their first words name.
-        let file = name
-            .split([';', '·'])
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        Self(format!("Saved in {name}").into(), Some(file.into()))
+        Self(format!("Saved in {name}").into(), Some(name))
+    }
+
+    /// Adds to the line what else is saved, with its own separator
+    /// (`"; the token in …"`); the file stays the one named first.
+    pub fn and(self, rest: impl AsRef<str>) -> Self {
+        Self(format!("{}{}", self.0, rest.as_ref()).into(), self.1)
     }
 
     pub fn and_credential(self, what: impl Into<SharedString>) -> Self {
@@ -309,8 +308,8 @@ impl SavedIn {
     }
 }
 
-/// The files whose saves are refused now, with why. A window-wide global, so
-/// every section that says where it saves reads one answer, and one app's
+/// The files whose saves are refused now, with why. An app global, so every
+/// section that says where it saves reads one answer, and one test app's
 /// refusal never shows in another.
 #[derive(Default)]
 struct RefusedSaves(std::collections::HashMap<SharedString, SharedString>);
@@ -320,11 +319,7 @@ impl gpui_kit::Global for RefusedSaves {}
 /// Says that saves to `file` are refused for `why` (`None`: they are not),
 /// so each "Saved in …" line of that file says so.
 pub fn refuse_saves(file: &str, why: Option<String>, cx: &mut App) {
-    let mut refused = cx
-        .try_global::<RefusedSaves>()
-        .map_or_else(RefusedSaves::default, |current| {
-            RefusedSaves(current.0.clone())
-        });
+    let refused = cx.default_global::<RefusedSaves>();
     let changed = match why {
         Some(why) => {
             let why: SharedString = why.into();
@@ -333,7 +328,6 @@ pub fn refuse_saves(file: &str, why: Option<String>, cx: &mut App) {
         None => refused.0.remove(file).is_some(),
     };
     if changed {
-        cx.set_global(refused);
         cx.refresh_windows();
     }
 }
@@ -1072,8 +1066,10 @@ mod tests {
             let lines = [
                 SavedIn::file("preferences.json"),
                 SavedIn::file("monitoring.json").and_credential("the token"),
-                SavedIn::file("monitoring.json; the token in a store"),
-                SavedIn::file("freshkube.yaml · sources"),
+                SavedIn::file("monitoring.json").and("; the token in a store"),
+                SavedIn::file("freshkube.yaml").and(" · sources"),
+                // Coroot's, with the key in the store.
+                SavedIn::file("freshkube.yaml").and(", the key in keys.json"),
             ];
             let words = |cx: &App| -> Vec<String> {
                 lines.iter().map(|line| saved_in_text(line, cx).to_string()).collect()
@@ -1093,6 +1089,7 @@ mod tests {
                 );
             }
             assert_eq!(refused[3], "Saved in freshkube.yaml · sources");
+            assert_eq!(refused[4], "Saved in freshkube.yaml, the key in keys.json");
             // A session-only line has no file to refuse.
             assert_eq!(
                 saved_in_text(&SavedIn::session(), cx),
@@ -1100,6 +1097,13 @@ mod tests {
             );
             refuse_saves("monitoring.json", None, cx);
             assert!(words(cx)[1].starts_with("Saved in monitoring.json"));
+            // freshkube.yaml refused: every form of its line says so,
+            // Coroot's with the key in the store included.
+            refuse_saves("freshkube.yaml", Some("freshkube.yaml isn't used".into()), cx);
+            let yaml = words(cx);
+            for line in &yaml[3..] {
+                assert_eq!(line, "Changes aren't saved: freshkube.yaml isn't used");
+            }
         });
     }
 }

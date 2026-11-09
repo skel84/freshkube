@@ -495,6 +495,11 @@ fn following_never_opens_a_dialog_or_moves_focus_onto_a_button(cx: &mut TestAppC
             .unwrap()
     };
     let before = focused(cx);
+    let dock_had = cx
+        .update_window(tab.handle, |_, window, cx| {
+            tab.dock.read(cx).has_focus(window, cx)
+        })
+        .unwrap();
     tab.read(
         1,
         view("pods", Some(&at.namespace), None, ViewTab::Details),
@@ -533,6 +538,16 @@ fn following_never_opens_a_dialog_or_moves_focus_onto_a_button(cx: &mut TestAppC
         );
         assert!(focused(cx) == before, "read {number} moved the focus");
     }
+    // Whether the dock holds the keyboard is what it was: a followed log tab
+    // opens without it.
+    assert_eq!(
+        cx.update_window(tab.handle, |_, window, cx| {
+            tab.dock.read(cx).has_focus(window, cx)
+        })
+        .unwrap(),
+        dock_had,
+        "the log tab opened without the keyboard"
+    );
     assert!(tab.following(cx));
 }
 

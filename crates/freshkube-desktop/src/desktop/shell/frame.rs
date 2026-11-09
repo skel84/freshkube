@@ -381,11 +381,14 @@ pub(in crate::desktop) fn status_text(
                 this.tooltip(move |window, cx| {
                     let whole = whole.clone();
                     let tooltip_id = tooltip_id.clone();
+                    // Wide, but never wider than the window.
+                    let width = ui::dp_px(480., window)
+                        .min(window.viewport_size().width - ui::dp_px(32., window));
                     Tooltip::element(move |_, _| {
                         div()
                             .id(tooltip_id.clone())
                             .test_support()
-                            .max_w(dp(480.))
+                            .max_w(width)
                             .whitespace_normal()
                             .aria_label(whole.clone())
                             .child(whole.clone())
