@@ -1,5 +1,5 @@
 //! Invented Gateway API objects in the example cluster: the HTTPRoutes,
-//! Gateways and GatewayClasses of core's routes example (always its `All`
+//! Gateways and GatewayClasses of core's routes example (always its `Gateways`
 //! shape, so every route a pane opens is in the answer the pane reads), so a
 //! Routes row opens a real example object on its Trace tab.
 use super::*;
@@ -41,7 +41,7 @@ fn key(plural: &str) -> String {
 }
 
 fn objects(plural: &str) -> Vec<Value> {
-    let world = world(Shape::All);
+    let world = world(Shape::Gateways);
     match plural {
         "httproutes" => world.routes,
         "gateways" => world.gateways,
