@@ -6,13 +6,10 @@
 //! A fact that was not read is Unknown, never "right".
 use super::chain::{Chain, issuance_chain};
 use super::facts::{CertificateFacts, IngressFacts};
-use super::names::covers;
 use super::names::uncovered;
 use super::read::{CertsRead, Manager};
 use super::secret::{SecretOutcome, SecretRequest, TlsFacts};
-use crate::resources::traffic::routes::{
-    GatewayFacts, RouteEntry, StepId, StepVerdict, hosts_overlap, listeners_for,
-};
+use crate::resources::traffic::routes::{GatewayFacts, RouteEntry, hosts_overlap};
 use std::collections::BTreeMap;
 
 /// Expiry under this many days reads Expiring.
@@ -245,6 +242,24 @@ impl CertEntry {
     }
 
     fn judge(&self, now: i64) -> (CertState, String) {
+        // A renewal that failed while the certificate still serves is
+        // Failing, whatever step of the retry broke: it is not yet not valid.
+        if let Some(chain) = &self.chain
+            && chain.has_warning()
+            && self.not_after.is_none_or(|end| end > now)
+            && let Some(warn) = chain
+                .steps
+                .iter()
+                .find(|s| s.verdict == super::chain::Verdict::Warn)
+        {
+            let reason = match chain.stopped_at() {
+                Some(step) if step.verdict != super::chain::Verdict::Warn => {
+                    format!("{}; {}", warn.says, chain.line())
+                }
+                _ => warn.says.clone(),
+            };
+            return (CertState::Failing, reason);
+        }
         if let Some(chain) = &self.chain
             && chain.is_broken()
         {
@@ -292,18 +307,6 @@ impl CertEntry {
             return (
                 CertState::WrongName,
                 format!("does not name {}", self.wrong.join(", ")),
-            );
-        }
-        if let Some(chain) = &self.chain
-            && chain.has_warning()
-        {
-            return (
-                CertState::Failing,
-                chain
-                    .steps
-                    .iter()
-                    .find(|s| s.verdict == super::chain::Verdict::Warn)
-                    .map_or_else(String::new, |s| s.says.clone()),
             );
         }
         if let Some(chain) = &self.chain
@@ -545,21 +548,14 @@ fn listener_servings<'a>(
                     {
                         continue;
                     }
-                    let fits = listeners_for(gateway, parent, route)
-                        .iter()
-                        .any(|l| l.name == listener.name);
-                    // A route the trace refused at the namespace step is not
-                    // served by the listener.
-                    let refused = entry
+                    // The listeners the trace found the route may attach to:
+                    // those that fit it and do not refuse its namespace.
+                    let admitted = entry
                         .trace
                         .parents
                         .iter()
-                        .filter(|t| &t.parent == parent)
-                        .flat_map(|t| &t.steps)
-                        .any(|step| {
-                            step.id == StepId::Namespace && step.verdict == StepVerdict::Fail
-                        });
-                    if !fits || refused {
+                        .any(|t| &t.parent == parent && t.admitted.contains(&listener.name));
+                    if !admitted {
                         continue;
                     }
                     attached = true;
@@ -570,8 +566,13 @@ fn listener_servings<'a>(
                             for host in &route.hostnames {
                                 match own {
                                     None => add(host),
-                                    Some(own) if covers(own, host) => add(host),
-                                    Some(own) if hosts_overlap(own, host) => add(own),
+                                    // The Gateway API reads a wildcard as a suffix of
+                                    // any depth; serve whichever host is narrower.
+                                    Some(own) if hosts_overlap(own, host) => {
+                                        let route_wider = host.starts_with('*')
+                                            && (!own.starts_with('*') || host.len() <= own.len());
+                                        add(if route_wider { own } else { host })
+                                    }
                                     Some(_) => {}
                                 }
                             }

@@ -476,6 +476,22 @@ pub(super) fn listener_step(
     (step.quoting(asks, serves), usable)
 }
 
+/// The names of the listeners, of those given, that do not refuse the
+/// route's namespace: the ones the route may attach to (an unknown answer
+/// counts as not refused).
+pub(super) fn admitted_listeners(
+    gateway: &GatewayFacts,
+    listeners: &[Listener],
+    route: &RouteFacts,
+    inputs: &Inputs,
+) -> Vec<String> {
+    listeners
+        .iter()
+        .filter(|l| !matches!(allows(gateway, l, route, inputs).0, Allow::No(_)))
+        .map(|l| l.name.clone())
+        .collect()
+}
+
 /// Whether one listener lets the route's namespace attach.
 enum Allow {
     Yes(String),

@@ -1487,3 +1487,99 @@ async fn a_failed_acme_discovery_is_unknown_never_not_acme() {
     );
     assert_ne!(chain.steps[2].verdict, Verdict::NotUsed);
 }
+
+#[tokio::test]
+async fn a_route_host_deeper_than_a_wildcard_listener_is_served_as_itself_and_reads_wrong() {
+    // The Gateway API reads `*.example.com` as a suffix of any depth, so the
+    // routes attach; a certificate for `*.example.com` covers one label only.
+    let listeners = json!([listener("wild", "*.example.com", "wild-tls")]);
+    let routes = vec![route_json(
+        "deep",
+        &["api.eu.example.com", "*.eu.example.com", "shop.example.com"],
+    )];
+    let (client, _) =
+        crate::fake_api::client(gateway_cluster(list(vec![gateway_json(listeners)]), routes));
+    let mut view = CertsView::new(&read_certificates(&client).await, 0);
+    assert_eq!(
+        view.entry("infra/wild-tls").unwrap().hosts(),
+        ["api.eu.example.com", "*.eu.example.com", "shop.example.com"]
+    );
+    view.apply_secret(
+        "infra/wild-tls",
+        SecretOutcome::Read(TlsFacts {
+            subject: "CN=*.example.com".into(),
+            names: vec!["*.example.com".into()],
+            issuer: "CN=CA".into(),
+            not_before: 0,
+            not_after: i64::MAX / 2,
+        }),
+        0,
+    );
+    let e = view.entry("infra/wild-tls").unwrap();
+    assert_eq!(e.state, CertState::WrongName);
+    assert_eq!(e.wrong, ["api.eu.example.com", "*.eu.example.com"]);
+}
+
+#[tokio::test]
+async fn a_listener_that_refuses_the_namespace_is_given_none_of_the_routes_hosts() {
+    let internal = json!({"name": "internal", "port": 443, "protocol": "HTTPS",
+        "tls": {"mode": "Terminate", "certificateRefs": [{"name": "internal-tls"}]},
+        "allowedRoutes": {"namespaces": {"from": "Same"}}});
+    let public = json!({"name": "public", "port": 8443, "protocol": "HTTPS",
+        "tls": {"mode": "Terminate", "certificateRefs": [{"name": "public-tls"}]},
+        "allowedRoutes": {"namespaces": {"from": "All"}}});
+    // The route's Namespace step passes through `public`; `internal` refuses
+    // its namespace and must not be judged by its hosts.
+    let (client, _) = crate::fake_api::client(gateway_cluster(
+        list(vec![gateway_json(json!([internal, public]))]),
+        vec![route_json("web", &["api.example.com"])],
+    ));
+    let view = CertsView::new(&read_certificates(&client).await, 0);
+    assert!(view.entry("infra/internal-tls").unwrap().hosts().is_empty());
+    assert_eq!(
+        view.entry("infra/public-tls").unwrap().hosts(),
+        ["api.example.com"]
+    );
+}
+
+#[test]
+fn a_failed_retry_under_a_certificate_that_still_serves_is_failing_not_not_valid() {
+    let now = 1_000_000;
+    // The failed request of revision 4 stays after a failed renewal.
+    let mut cert = certificate(false, Some(Tri::True));
+    cert.revision = Some(3);
+    cert.last_failure = Some(now - 3_600);
+    cert.not_after = Some(now + 20 * DAY);
+    cert.names = vec!["a.example.com".into()];
+    let mut failed = request(vec![cond(
+        "Ready",
+        Tri::False,
+        "Failed",
+        "the issuer refused it",
+    )]);
+    failed.revision = Some(4);
+    let chain = issuance_chain(&cert, &reads(vec![failed], vec![], vec![]));
+    assert_eq!(chain.steps[0].verdict, Verdict::Warn);
+    assert_eq!(chain.steps[1].verdict, Verdict::Broken);
+    let mut e = entry(
+        Some(&["a.example.com"]),
+        &["a.example.com"],
+        cert.not_after,
+        now,
+    );
+    e.chain = Some(chain);
+    e.managed = Some(cert.clone());
+    e.assess(now);
+    assert_eq!(e.state, CertState::Failing);
+    assert!(
+        e.reason.contains("the last attempt to renew it failed"),
+        "{}",
+        e.reason
+    );
+    assert!(e.reason.contains("the issuer refused it"), "{}", e.reason);
+    // Once it has expired, it is not valid after all.
+    cert.not_after = Some(now - 1);
+    e.managed = Some(cert);
+    e.assess(now);
+    assert_eq!(e.state, CertState::Broken);
+}
