@@ -198,6 +198,9 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
                     | Page::Resources
                     | Page::Databases
                     | Page::Routes
+                    | Page::Gateways
+                    | Page::GatewayClasses
+                    | Page::Topology
                     | Page::Access
                     | Page::Health
                     | Page::Nodes

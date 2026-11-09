@@ -1,0 +1,1 @@
+- **Diagnostics:** every diagnostic check is now tested with its sources down, where it must say unknown, and on a healthy fixture, where it must not fail, so a new check can't show a false failure unnoticed.

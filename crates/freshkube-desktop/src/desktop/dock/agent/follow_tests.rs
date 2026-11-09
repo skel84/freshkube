@@ -924,6 +924,9 @@ fn a_view_can_name_only_plain_places() {
             | LinkPage::Health
             | LinkPage::Databases
             | LinkPage::Routes
+            | LinkPage::Gateways
+            | LinkPage::GatewayClasses
+            | LinkPage::Topology
             | LinkPage::Access
             | LinkPage::Resources
             | LinkPage::Etcd

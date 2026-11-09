@@ -5,6 +5,7 @@
 //! cluster's, so the fixture proves the interpretation as well as the page.
 use super::facts::*;
 use super::read::{ApiState, RouteEntry, RoutesRead};
+use super::topology::{WorkloadRead, WorkloadRef};
 use super::trace::{BackendRead, Inputs, Listing, trace_route};
 use crate::failure::{Failure, FailureKind};
 use crate::resources::traffic::{Published, ServiceFacts, ServiceReading};
@@ -46,10 +47,20 @@ pub enum Shape {
     Refused,
     /// The route list stopped at its limit of 500.
     Cut,
+    /// The Gateway and GatewayClass pages' example (N2b): a Gateway in each
+    /// state, hostnames two Gateways both name, a class nobody claims and a
+    /// Gateway whose class does not exist.
+    Gateways,
+    /// The Gateway API is installed and holds no Gateway, class or route.
+    Empty,
+    /// The Gateway list is refused while the routes are read.
+    GatewaysRefused,
+    /// Every verdict, with the pods behind each backend refused.
+    WorkloadsRefused,
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 15] = [
+    pub const NAMES: [&'static str; 19] = [
         "all",
         "serving",
         "partly",
@@ -65,6 +76,10 @@ impl Shape {
         "mixed-bundle",
         "refused",
         "cut",
+        "gateways",
+        "empty",
+        "gateways-refused",
+        "workloads-refused",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -84,6 +99,10 @@ impl Shape {
             "mixed-bundle" => Self::MixedBundle,
             "refused" => Self::Refused,
             "cut" => Self::Cut,
+            "gateways" => Self::Gateways,
+            "empty" => Self::Empty,
+            "gateways-refused" => Self::GatewaysRefused,
+            "workloads-refused" => Self::WorkloadsRefused,
             _ => return None,
         })
     }
@@ -91,7 +110,7 @@ impl Shape {
     /// The routes this shape shows, by name.
     fn names(self) -> &'static [&'static str] {
         match self {
-            Self::All | Self::MixedBundle => &[
+            Self::All | Self::MixedBundle | Self::Gateways | Self::WorkloadsRefused => &[
                 "web",
                 "https-redirect",
                 "pay-status",
@@ -108,7 +127,9 @@ impl Shape {
                 "mesh-cart",
                 "multi-listener",
             ],
-            Self::Serving | Self::Cut => &["web", "https-redirect", "pay-status"],
+            Self::Serving | Self::Cut | Self::GatewaysRefused => {
+                &["web", "https-redirect", "pay-status"]
+            }
             Self::Partly => &["cart-split", "web"],
             Self::CrossNamespace => &["checkout", "pay-status"],
             Self::Listener => &["status", "docs", "multi-listener", "web"],
@@ -117,7 +138,7 @@ impl Shape {
             Self::NoBackend => &["empty", "ghost", "web"],
             Self::Stale => &["stale", "web"],
             Self::Mesh => &["mesh-cart", "web"],
-            Self::NotInstalled | Self::Incomplete | Self::Refused => &[],
+            Self::NotInstalled | Self::Incomplete | Self::Refused | Self::Empty => &[],
         }
     }
 }
@@ -330,11 +351,20 @@ pub fn world(shape: Shape) -> World {
     let https = json!([{"name": "https", "port": 443, "protocol": "HTTPS", "hostname": "*.example.com",
         "tls": {"mode": "Terminate", "certificateRefs": [{"name": "edge-tls"}]},
         "allowedRoutes": {"namespaces": {"from": "All"}}}]);
-    let internal = json!([{"name": "web", "port": 8080, "protocol": "HTTP", "hostname": "*.internal.example.com",
-        "allowedRoutes": {"namespaces": {"from": "Same"}}}]);
-    let mut unaccepted = programmed(true, listener_ok("web"));
-    unaccepted["listeners"] = json!([{"name": "web", "attachedRoutes": 0,
-        "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]}]);
+    // Two listeners, one the controller did not accept: partly serving. (A
+    // Gateway whose only listener is rejected serves nothing and is Failed.)
+    let internal = json!([
+        {"name": "web", "port": 8080, "protocol": "HTTP", "hostname": "*.internal.example.com",
+            "allowedRoutes": {"namespaces": {"from": "Same"}}},
+        {"name": "admin", "port": 8081, "protocol": "HTTP", "hostname": "admin.internal.example.com",
+            "allowedRoutes": {"namespaces": {"from": "Same"}}},
+    ]);
+    let mut unaccepted = programmed(true, listener_ok("admin"));
+    unaccepted["listeners"] = json!([
+        {"name": "web", "attachedRoutes": 0,
+            "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]},
+        listener_ok("admin"),
+    ]);
     let mut shared_status = programmed(true, listener_ok("http"));
     shared_status["listeners"] = json!([listener_ok("http"), listener_ok("https")]);
     let shared = json!([
@@ -368,17 +398,83 @@ pub fn world(shape: Shape) -> World {
             programmed(true, listener_ok("https")),
         ),
     ];
+    let mut classes = vec![
+        class("example", CONTROLLER, Some(("True", "Accepted"))),
+        class(
+            "legacy",
+            "legacy.io/gateway",
+            Some(("False", "InvalidParameters")),
+        ),
+    ];
+    let mut gateways = gateways;
+    if shape == Shape::Empty {
+        return World {
+            routes: Vec::new(),
+            gateways: Vec::new(),
+            classes: Vec::new(),
+            grants: Vec::new(),
+        };
+    }
+    if shape == Shape::Gateways {
+        let named = |host: &str| {
+            json!([{"name": "https", "port": 443, "protocol": "HTTPS", "hostname": host,
+                "tls": {"mode": "Terminate", "certificateRefs": [{"name": "shop-tls"}]},
+                "allowedRoutes": {"namespaces": {"from": "Same"}}}])
+        };
+        let mut pending = json!({"conditions": [
+            cond("Accepted", "True", "Accepted", 2), cond("Programmed", "Unknown", "Pending", 2)]});
+        pending["listeners"] = json!([]);
+        classes.push(class("silent", "silent.io/gateway", None));
+        classes.push(class(
+            "waiting",
+            "waiting.io/gateway",
+            Some(("Unknown", "Pending")),
+        ));
+        gateways.extend([
+            gateway(
+                "infra",
+                "pending",
+                "example",
+                named("pending.example.com"),
+                pending,
+            ),
+            // The controller writes no status at all.
+            gateway(
+                "infra",
+                "silent",
+                "silent",
+                named("silent.example.com"),
+                json!({}),
+            ),
+            // Two Gateways name one host.
+            gateway(
+                "infra",
+                "blue",
+                "example",
+                named("shop.example.com"),
+                programmed(true, listener_ok("https")),
+            ),
+            gateway(
+                "infra",
+                "green",
+                "example",
+                named("shop.example.com"),
+                programmed(true, listener_ok("https")),
+            ),
+            // A class that does not exist.
+            gateway(
+                "infra",
+                "stray",
+                "gone",
+                named("stray.example.com"),
+                json!({}),
+            ),
+        ]);
+    }
     World {
         routes: shape.names().iter().map(|name| route(name)).collect(),
         gateways,
-        classes: vec![
-            class("example", CONTROLLER, Some(("True", "Accepted"))),
-            class(
-                "legacy",
-                "legacy.io/gateway",
-                Some(("False", "InvalidParameters")),
-            ),
-        ],
+        classes,
         grants: vec![grant()],
     }
 }
@@ -406,14 +502,21 @@ pub fn read(shape: Shape) -> Result<RoutesRead, Failure> {
     let listing = |objects: &[Value], parse: fn(&Value) -> Option<_>| {
         Listing::new(objects.iter().filter_map(parse).collect(), false)
     };
-    let gateways = Ok(Listing::new(
-        world
-            .gateways
-            .iter()
-            .filter_map(GatewayFacts::parse)
-            .collect(),
-        false,
-    ));
+    let gateways = if shape == Shape::GatewaysRefused {
+        Err(Failure::new(
+            FailureKind::Forbidden,
+            "gateways.gateway.networking.k8s.io is forbidden for the invented viewer",
+        ))
+    } else {
+        Ok(Listing::new(
+            world
+                .gateways
+                .iter()
+                .filter_map(GatewayFacts::parse)
+                .collect(),
+            false,
+        ))
+    };
     let classes = Ok(listing(&world.classes, ClassFacts::parse));
     let grants = Ok(Listing::new(
         world.grants.iter().filter_map(GrantFacts::parse).collect(),
@@ -467,9 +570,60 @@ pub fn read(shape: Shape) -> Result<RoutesRead, Failure> {
             "httproutes",
             true,
         ))
-        .with_routes(routes);
+        .with_routes(routes)
+        .with_gateway_kinds(
+            crate::resources::ResourceKind::new(GATEWAY_GROUP, "v1", "Gateway", "gateways", true),
+            crate::resources::ResourceKind::new(
+                GATEWAY_GROUP,
+                "v1",
+                "GatewayClass",
+                "gatewayclasses",
+                false,
+            ),
+        )
+        .with_gateways(gateways, classes)
+        .with_services(backends);
     if shape == Shape::Cut {
         read.set_cut(super::read::ROUTE_LIMIT);
     }
     Ok(read)
+}
+
+/// The workloads behind the example's backend Services, as the Topology page
+/// reads them: a Deployment for `cart`, a StatefulSet for `ledger` and no pod
+/// at all for `canary`. `WorkloadsRefused` refuses every one.
+pub fn workloads(shape: Shape) -> WorkloadRead {
+    let refused = || {
+        Failure::new(
+            FailureKind::Forbidden,
+            "pods is forbidden for the invented viewer",
+        )
+    };
+    let workload = |kind: &str, namespace: &str, name: &str| WorkloadRef {
+        kind: kind.to_owned(),
+        namespace: namespace.to_owned(),
+        name: name.to_owned(),
+        uid: format!("{kind}-{namespace}-{name}"),
+    };
+    let answer = |namespace: &str, name: &str, list: Vec<WorkloadRef>| {
+        (
+            (namespace.to_owned(), name.to_owned()),
+            if shape == Shape::WorkloadsRefused {
+                Err(refused())
+            } else {
+                Ok(list)
+            },
+        )
+    };
+    [
+        answer("shop", "cart", vec![workload("Deployment", "shop", "cart")]),
+        answer("shop", "canary", Vec::new()),
+        answer(
+            "payments",
+            "ledger",
+            vec![workload("StatefulSet", "payments", "ledger")],
+        ),
+    ]
+    .into_iter()
+    .collect()
 }

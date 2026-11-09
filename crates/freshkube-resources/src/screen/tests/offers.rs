@@ -161,7 +161,7 @@ fn an_allowed_action_is_on_and_says_nothing(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn safety_g19_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppContext) {
+fn safety_g20_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppContext) {
     let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
     let rows = cx.read(|cx| {
         let screen = screen.read(cx);
@@ -206,7 +206,7 @@ fn safety_g19_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn safety_g19_a_hidden_page_asks_no_review(cx: &mut TestAppContext) {
+fn safety_g20_a_hidden_page_asks_no_review(cx: &mut TestAppContext) {
     let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
     cx.update_window(handle, |_, window, cx| {
         screen.update(cx, |screen, cx| screen.set_visible(false, window, cx));
