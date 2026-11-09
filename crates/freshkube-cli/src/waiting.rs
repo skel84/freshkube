@@ -204,7 +204,16 @@ fn state_findings(app: &App) -> Findings {
 }
 
 fn problem_report(problem: &Problem, apps_key: &str) -> Report {
+    // The same keys as an answer has, with nothing found.
     let mut json = Map::new();
+    if apps_key == "apps" {
+        json.insert("observed_at".into(), Value::Null);
+        json.insert("undated".into(), json!([]));
+        json.insert("sign_in".into(), json!([]));
+        json.insert("github".into(), json!("anonymous"));
+        json.insert("older_than".into(), Value::Null);
+        json.insert("overdue".into(), json!([]));
+    }
     json.insert(apps_key.into(), json!([]));
     json.insert("notes".into(), json!([]));
     json.insert("problems".into(), json!([problem.json()]));
