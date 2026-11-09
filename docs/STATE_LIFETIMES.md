@@ -250,8 +250,9 @@ own and no owner changes:
 
 A wake does nothing when nothing is connected (a Kubernetes-only entry with
 no context chosen or tried, no overview read yet, a load or an error on screen),
-and a second wake within 60 s of the first (by the executor's clock) is the same
-one: an NTP step after waking relists nothing again.
+and a gap under 60 s soon after the last wake (by the executor's clock) is the same
+wake: an NTP step after waking relists nothing again. A gap of 60 s or more is a sleep
+of its own, since the executor's clock stood still through it.
 
 The status bar says "Reconnecting to <context>…" from the wake until a read has
 answered: a summary publication in which some watched source is current, or every

@@ -131,6 +131,22 @@ fn a_second_gap_soon_after_the_first_is_the_same_wake(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_second_long_sleep_soon_after_the_first_is_its_own_wake(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let wall = watch(cx, handle, &view);
+    tick(cx, &wall, Duration::ZERO);
+    let before = generation(cx, handle, &view);
+    tick(cx, &wall, Duration::from_secs(600));
+    // The app is used for half a minute, then the lid closes for ten
+    // minutes: the executor's clock moved only about that half minute.
+    for _ in 0..5 {
+        tick(cx, &wall, Duration::ZERO);
+    }
+    tick(cx, &wall, Duration::from_secs(600));
+    assert_eq!(generation(cx, handle, &view), before + 2);
+}
+
+#[gpui_kit::test]
 fn a_wake_with_nothing_read_yet_says_nothing_and_reads_nothing(cx: &mut TestAppContext) {
     use crate::{DebugOptions, GpuiOptions};
     let mut debug = DebugOptions::default();

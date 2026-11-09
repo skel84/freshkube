@@ -15,9 +15,10 @@ use freshkube_core::wake::{GapDetector, TICK};
 /// only stops a read that never answers from holding the words forever.
 pub(super) const RECONNECTING_LIMIT: Duration = Duration::from_secs(45);
 
-/// A wake this soon after the last (by the executor's clock) is the same
-/// one: an NTP step right after waking, or a clock that keeps stepping,
-/// relists nothing again.
+/// A gap shorter than this, soon after the last wake (by the executor's
+/// clock), is the same wake: an NTP step right after waking, or a clock
+/// that keeps stepping, relists nothing again. A gap this long or longer is
+/// always a sleep of its own.
 pub(super) const WAKE_DEBOUNCE: Duration = Duration::from_secs(60);
 
 impl Pilot {
@@ -49,7 +50,14 @@ impl Pilot {
                 let now = cx.background_executor().now();
                 let slept = detector
                     .observe(now.duration_since(origin), wall())
-                    .filter(|_| last_wake.is_none_or(|at| now.duration_since(at) >= WAKE_DEBOUNCE));
+                    // Only a short gap can be the same wake again (an NTP step
+                    // right after waking). A long one is a real sleep, and
+                    // the executor's clock, which stood still through it,
+                    // cannot say how long ago the last wake was.
+                    .filter(|slept| {
+                        *slept >= WAKE_DEBOUNCE
+                            || last_wake.is_none_or(|at| now.duration_since(at) >= WAKE_DEBOUNCE)
+                    });
                 if slept.is_some() {
                     last_wake = Some(now);
                 }
