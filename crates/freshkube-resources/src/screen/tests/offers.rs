@@ -370,6 +370,26 @@ fn safety_g21_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_s
     assert_eq!(reviewed(&recorder), ["web-4"]);
 }
 
+/// What the holding fake counts: the answers it sent, and the requests whose
+/// wait was given up (their future dropped, as a stopped job's is).
+#[derive(Clone, Default)]
+struct Held {
+    answered: Arc<std::sync::atomic::AtomicUsize>,
+    abandoned: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// Counts a request given up on when its future is dropped before the
+/// answer was sent.
+struct GivenUp(Arc<std::sync::atomic::AtomicUsize>, bool);
+
+impl Drop for GivenUp {
+    fn drop(&mut self) {
+        if !self.1 {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
+
 /// A fake cluster that takes every access review and holds its answer until
 /// the test lets some go; every request is recorded as it arrives.
 fn holding_cluster(
@@ -378,16 +398,22 @@ fn holding_cluster(
     kube::Client,
     freshkube_core::fake_api::Recorder,
     Arc<tokio::sync::Semaphore>,
+    Held,
 ) {
     use freshkube_core::fake_api::{self, Recorder};
     use http::Request;
     use kube::client::Body;
     let recorder = Recorder::default();
     let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    let (log, held) = (recorder.clone(), gate.clone());
+    let counts = Held::default();
+    let (log, held, sent) = (recorder.clone(), gate.clone(), counts.clone());
     let service = tower::service_fn(move |request: Request<Body>| {
-        let (log, held) = (log.clone(), held.clone());
+        let (log, held, sent) = (log.clone(), held.clone(), sent.clone());
+        let given_up = GivenUp(sent.abandoned.clone(), false);
         async move {
+            // The future owns the whole guard (a closure would capture only
+            // the field it names), so dropping the future counts.
+            let mut given_up = given_up;
             // As the shared fake does: the body is read and recorded with
             // the request, the moment it arrives.
             let (parts, body) = request.into_parts();
@@ -401,6 +427,9 @@ fn holding_cluster(
             );
             let answer = if recorded.path.ends_with("selfsubjectaccessreviews") {
                 held.acquire().await.unwrap().forget();
+                given_up.1 = true;
+                sent.answered
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 fake_api::json(
                     201,
                     serde_json::json!({"apiVersion":"authorization.k8s.io/v1",
@@ -408,6 +437,8 @@ fn holding_cluster(
                         "status":{"allowed": true, "reason": ""}}),
                 )
             } else {
+                // Any other request is answered at once: not given up.
+                given_up.1 = true;
                 fake_api::unknown(&recorded)
             };
             Ok::<_, std::convert::Infallible>(fake_api::response(answer))
@@ -417,7 +448,7 @@ fn holding_cluster(
         let _entered = runtime.enter();
         kube::Client::new(service, "default")
     };
-    (client, recorder, gate)
+    (client, recorder, gate, counts)
 }
 
 /// The desk bound to `client` as a live cluster, and the page that wants.
@@ -456,7 +487,7 @@ fn safety_g21_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new
     cx: &mut TestAppContext,
 ) {
     let (runtime, screen, _handle) = mount(cx, Some("homelab"));
-    let (client, recorder, gate) = holding_cluster(&runtime);
+    let (client, recorder, gate, _counts) = holding_cluster(&runtime);
     let (offers, owner) = live_desk(cx, &screen, client);
     // Six questions are wanted: four go out, and their answers are held.
     want_rows(cx, &offers, owner, 0..6);
@@ -464,7 +495,11 @@ fn safety_g21_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new
     freshkube_ui::real_io::until_io(cx, "four reviews to reach the cluster", |_| {
         reviewed(&recorder).len() == 4
     });
-    assert_eq!(reviewed(&recorder), ["web-0", "web-1", "web-2", "web-3"]);
+    // The four go out together, so the order they reach the cluster is not
+    // the test's to assert.
+    let mut first = reviewed(&recorder);
+    first.sort();
+    assert_eq!(first, ["web-0", "web-1", "web-2", "web-3"]);
     // The selection moves on while they are outstanding. Nothing more goes
     // out behind the four.
     want_rows(cx, &offers, owner, 9..10);
@@ -477,30 +512,42 @@ fn safety_g21_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new
         reviewed(&recorder).len() == 5
     });
     cx.run_until_parked();
-    assert_eq!(
-        reviewed(&recorder),
-        ["web-0", "web-1", "web-2", "web-3", "web-9"]
-    );
+    let all = reviewed(&recorder);
+    assert_eq!(all.len(), 5, "{all:?}");
+    let mut first = all[..4].to_vec();
+    first.sort();
+    assert_eq!(first, ["web-0", "web-1", "web-2", "web-3"]);
+    assert_eq!(all[4], "web-9", "only the new row follows: {all:?}");
 }
 
 #[gpui_kit::test]
 fn safety_g21_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands(cx: &mut TestAppContext) {
     use freshkube_core::access::Offer;
     let (runtime, screen, _handle) = mount(cx, Some("homelab"));
-    let (client, recorder, gate) = holding_cluster(&runtime);
+    let (client, recorder, gate, counts) = holding_cluster(&runtime);
     let (offers, owner) = live_desk(cx, &screen, client);
     want_rows(cx, &offers, owner, 0..6);
     settle(cx);
     freshkube_ui::real_io::until_io(cx, "four reviews to reach the cluster", |_| {
         reviewed(&recorder).len() == 4
     });
-    // The page hides with four in flight and two queued.
+    // The page hides with four in flight and two queued: the four requests
+    // are given up, which the fake sees as its held futures being dropped.
     cx.update(|cx| offers.update(cx, |offers, _| offers.stop(owner)));
+    freshkube_ui::real_io::until_io(cx, "the four held requests to be given up", |_| {
+        counts.abandoned.load(std::sync::atomic::Ordering::SeqCst) == 4
+    });
     gate.add_permits(100);
     settle(cx);
     cx.run_until_parked();
-    // Nothing more was sent, and no answer landed for the four that were.
+    // Nothing more was sent, none of the four was ever answered, and none
+    // landed.
     assert_eq!(reviewed(&recorder).len(), 4);
+    assert_eq!(
+        counts.answered.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a stopped review is never answered"
+    );
     let known = cx.read(|cx| {
         offers
             .read(cx)
