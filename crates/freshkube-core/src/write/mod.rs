@@ -8,6 +8,7 @@
 mod access;
 mod action;
 mod audit;
+pub mod delete;
 mod dialog;
 mod diff;
 pub mod edit_yaml;
@@ -28,7 +29,7 @@ pub mod testing;
 pub use access::{Access, review as review_access};
 pub use action::{
     ActionDescription, Change, Depends, Destination, Inverse, InverseFrom, ObjectChange,
-    Observation, Preview, Target,
+    Observation, Preview, Propagation, Target,
 };
 pub use audit::{
     AuditObject, AuditRequest, AuditStore, KEEP as AUDIT_KEEP, Phase, RESULT_LIMIT, ROTATE_AT,

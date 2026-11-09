@@ -303,3 +303,35 @@ fn a_gitops_managed_cronjob_says_the_job_is_made_beside_it(cx: &mut TestAppConte
         "{sentence}"
     );
 }
+
+/// #983: example data's Roll back diff compares before and after, as a live
+/// one does: the image it changes reads "~", not "+".
+#[gpui_kit::test]
+fn an_example_roll_back_diff_reads_changed_for_a_changed_field(cx: &mut TestAppContext) {
+    let h = harness_on(cx, Protection::Guarded, Cluster::with_history);
+    let cell = cx.update(level_cell);
+    let who = Who {
+        entry: "prod-fra".into(),
+        context: "ctx-a".into(),
+        protection: Protection::Guarded,
+        actor: "tester".into(),
+    };
+    let audit = AuditStore::new(h._dir.path().join("example-audit"));
+    let runner = Arc::new(
+        Runner::example(h.cluster.client.clone(), audit, who)
+            .with_example_objects(vec![h.cluster.object(fake::DEPLOYMENT)])
+            .following(cell),
+    );
+    let request = WriteRequest {
+        runner,
+        runtime: h.runtime.handle().clone(),
+        action: rollback_to(&h, 1),
+        undo: None,
+    };
+    cx.update_window(h.handle, |_, window, cx| super::start(request, window, cx))
+        .unwrap();
+    h.drive(cx, Duration::from_millis(10));
+    let line = h.label(cx, "write-diff-spec.template.spec.containers[0].image");
+    assert!(line.starts_with("~ "), "{line}");
+    assert!(h.cluster.writes().is_empty());
+}

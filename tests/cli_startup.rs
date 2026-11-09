@@ -95,3 +95,56 @@ fn a_command_on_a_dead_server_exits_3_and_writes_no_log_or_preferences() {
     assert!(!text.contains("tok-not-for-output"));
     assert_eq!(left_behind(home.path()), Vec::<String>::new());
 }
+
+#[test]
+fn the_delivery_commands_with_no_cluster_are_usage_errors_that_leave_nothing_behind() {
+    for args in [
+        &["changes", "storefront"][..],
+        &["waiting-to-ship"][..],
+        &["get", "application", "storefront"][..],
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let output = freshkube(home.path(), args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("choose a cluster"), "{stderr}");
+        assert_eq!(left_behind(home.path()), Vec::<String>::new());
+    }
+}
+
+#[test]
+fn the_delivery_commands_on_a_dead_server_exit_3_and_write_nothing() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let kubeconfig = elsewhere.path().join("config");
+    std::fs::write(
+        &kubeconfig,
+        "apiVersion: v1\nkind: Config\nclusters:\n- name: dead\n  cluster: {server: 'http://127.0.0.1:1'}\n\
+         contexts:\n- name: c\n  context: {cluster: dead, user: u}\nusers:\n- name: u\n  user: {token: tok-not-for-output}\n",
+    )
+    .unwrap();
+    for command in [
+        &["changes", "storefront"][..],
+        &["waiting-to-ship"][..],
+        &["get", "application", "storefront"][..],
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let mut args = command.to_vec();
+        args.extend([
+            "--kubeconfig",
+            kubeconfig.to_str().unwrap(),
+            "--kube-context",
+            "c",
+        ]);
+        let output = freshkube(home.path(), &args);
+        assert_eq!(output.status.code(), Some(3), "{command:?}: {output:?}");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(text.contains('?'), "{text}");
+        assert!(!text.contains("tok-not-for-output"));
+        assert_eq!(left_behind(home.path()), Vec::<String>::new());
+    }
+}

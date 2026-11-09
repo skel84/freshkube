@@ -643,16 +643,22 @@ impl Render for DetailPane {
             _ => self.details(detail, cx),
         };
         let notice = self.notice(detail, cx);
-        let feedback = self.feedback.clone().map(|feedback| {
-            div()
-                .id("detail-feedback")
-                .test_support()
-                .role(Role::Status)
-                .aria_label(feedback.clone())
-                .text_size(dp(12.))
-                .text_color(palette(cx).muted)
-                .child(feedback)
-        });
+        // The editor says its own feedback (and the locked fields) in its own
+        // notes; the strip would say it a second time.
+        let feedback = self
+            .feedback
+            .clone()
+            .filter(|_| !self.is_editing())
+            .map(|feedback| {
+                div()
+                    .id("detail-feedback")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label(feedback.clone())
+                    .text_size(dp(12.))
+                    .text_color(palette(cx).muted)
+                    .child(feedback)
+            });
         let frame =
             if self.embedded_node {
                 // In the node's inspector, which draws the heading and tabs.

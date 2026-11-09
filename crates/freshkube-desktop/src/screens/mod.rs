@@ -9,6 +9,7 @@ mod access;
 mod databases;
 mod diagnostics;
 mod etcd;
+mod gateways;
 mod lifecycle;
 mod loader;
 mod network;
@@ -18,6 +19,7 @@ mod processes;
 mod routes;
 mod security;
 mod storage;
+mod topology;
 mod workloads;
 
 pub(crate) use access::AccessScreen;
@@ -27,6 +29,7 @@ pub(crate) use databases::{
 };
 pub(crate) use diagnostics::DiagnosticsScreen;
 pub(crate) use etcd::EtcdScreen;
+pub(crate) use gateways::{GatewaysScreen, Mode as GatewaysMode};
 pub(crate) use lifecycle::LifecycleScreen;
 pub(crate) use loader::Loader;
 pub(crate) use network::NetworkScreen;
@@ -36,6 +39,7 @@ pub(crate) use processes::ProcessesScreen;
 pub(crate) use routes::RoutesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
+pub(crate) use topology::TopologyScreen;
 pub(crate) use workloads::{Summary as HealthSummary, WorkloadData, WorkloadsScreen};
 
 use std::{rc::Rc, sync::Arc};

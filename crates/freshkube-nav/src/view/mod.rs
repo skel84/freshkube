@@ -146,6 +146,9 @@ pub enum LinkPage {
     Health,
     Databases,
     Routes,
+    Gateways,
+    GatewayClasses,
+    Topology,
     Access,
     Resources,
     Etcd,
@@ -158,12 +161,15 @@ pub enum LinkPage {
 }
 
 impl LinkPage {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 17] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
         Self::Databases,
         Self::Routes,
+        Self::Gateways,
+        Self::GatewayClasses,
+        Self::Topology,
         Self::Access,
         Self::Resources,
         Self::Etcd,
@@ -183,6 +189,9 @@ impl LinkPage {
             Self::Health => "health",
             Self::Databases => "databases",
             Self::Routes => "routes",
+            Self::Gateways => "gateways",
+            Self::GatewayClasses => "gateway-classes",
+            Self::Topology => "topology",
             Self::Access => "access",
             Self::Resources => "resources",
             Self::Etcd => "etcd",
