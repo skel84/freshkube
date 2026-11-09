@@ -228,3 +228,90 @@ fn a_notice_queued_after_launch_is_told_when_the_queue_wakes(cx: &mut TestAppCon
     cx.run_until_parked();
     assert_eq!(notices(cx, handle), 2, "a later notice is told too");
 }
+
+/// In a narrow window at a large text size the kept copy's name sits on its
+/// own line and breaks only between its parts, after a `-` or a `.`: every
+/// part is drawn whole and inside the window.
+#[gpui_kit::test]
+fn the_kept_copys_name_breaks_only_between_its_parts(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    cx.update(|cx| crash::set_session(session(dir.path(), None), cx));
+    let (_runtime, handle, _view) = mount(cx, GpuiOptions::fixture(), 760., 560.);
+    let name = "preferences.corrupt-20261024T101500Z.json";
+    assert_eq!(
+        crash::name_parts(name),
+        ["preferences.", "corrupt-", "20261024T101500Z.", "json"]
+    );
+    for text_size in [18., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            crash::tell_notices(vec![corrupt(dir.path())], window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let size = window.viewport_size();
+            let mut rows = Vec::new();
+            for ix in 0..4usize {
+                let part = window.find(("settings-notice-copy-part", ix));
+                let bounds = part.bounds();
+                assert!(
+                    bounds.left() >= gpui_kit::px(0.) && bounds.right() <= size.width,
+                    "part {ix} at {text_size}: {bounds:?} in {size:?}"
+                );
+                // One line: a part is never itself wrapped.
+                assert!(
+                    bounds.size.height < gpui_kit::px(text_size * 2.),
+                    "part {ix} at {text_size} is wrapped: {bounds:?}"
+                );
+                rows.push(bounds.top());
+            }
+            // The parts follow each other, so rows only go down.
+            assert!(rows.windows(2).all(|pair| pair[0] <= pair[1]), "{rows:?}");
+            // At the larger size the name is wider than the toast, so it
+            // really does wrap.
+            if text_size >= 20. {
+                assert!(rows.last() > rows.first(), "{rows:?}");
+            }
+        })
+        .unwrap();
+    }
+}
+
+/// A file from a newer Freshkube is never written, so each section that says
+/// where it saves says that its changes aren't, and why, as soon as the
+/// notice is told.
+#[gpui_kit::test]
+fn a_newer_settings_file_makes_its_sections_say_changes_are_not_saved(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, handle) = open(cx, session(dir.path(), None), None);
+    let line = |cx: &mut TestAppContext, file: &'static str| {
+        cx.update(|cx| {
+            freshkube_ui::form::saved_in_text(&freshkube_ui::form::SavedIn::file(file), cx)
+                .to_string()
+        })
+    };
+    assert_eq!(line(cx, "preferences.json"), "Saved in preferences.json");
+    let newer = |file: &str| freshkube_prefs::Notice {
+        file: dir.path().join(file),
+        why: freshkube_prefs::Why::Newer { version: 2 },
+    };
+    cx.update_window(handle, |_, window, cx| {
+        crash::tell_notices(
+            vec![newer("preferences.json"), newer("follows.json")],
+            window,
+            cx,
+        )
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for file in ["preferences.json", "follows.json"] {
+        assert_eq!(
+            line(cx, file),
+            format!("Changes aren't saved: {file} was written by a newer Freshkube (version 2)")
+        );
+    }
+    assert_eq!(line(cx, "monitoring.json"), "Saved in monitoring.json");
+}

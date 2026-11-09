@@ -97,12 +97,19 @@ fn edit_opens_an_editor_marks_changed_lines_and_review_hands_core_s_description_
         label(cx, handle, "detail-edit-count").as_deref(),
         Some("No changes yet")
     );
-    let locked = label(cx, handle, "detail-edit-locked").unwrap();
+    // One line until opened.
+    assert!(
+        label(cx, handle, "detail-edit-locked")
+            .unwrap()
+            .contains("Locked")
+    );
+    assert!(label(cx, handle, "detail-edit-locked-list").is_none());
+    press(cx, handle, "detail-edit-locked");
+    let locked = label(cx, handle, "detail-edit-locked-list").unwrap();
     assert!(
         locked.contains("status") && locked.contains("managedFields"),
         "{locked}"
     );
-    assert!(label(cx, handle, "detail-edit-secret").is_none());
     let text = editor_text(cx, &pane);
     assert!(!text.contains("managedFields:"), "{text}");
 
@@ -207,7 +214,40 @@ fn a_secret_is_edited_without_its_values(cx: &mut TestAppContext) {
     let (secret, _) = target("secrets", |_, name| name == "ledger-database");
     on_yaml(cx, &pane, handle, &secret);
     press(cx, handle, "detail-edit");
-    assert!(label(cx, handle, "detail-edit-secret").is_some());
     let text = editor_text(cx, &pane);
-    assert!(text.contains("‹not read›"), "{text}");
+    assert!(
+        !text.contains("\ndata:") && !text.contains("‹not read›"),
+        "no placeholder to edit: {text}"
+    );
+    let block = label(cx, handle, "detail-edit-locked-values").unwrap();
+    assert!(
+        block.contains("only its metadata can be edited")
+            && block.contains("data: ‹not read›; stringData: ‹not read›"),
+        "{block}"
+    );
+}
+
+/// At 760x560 with text 20 the locked list is one line, so the editor keeps
+/// most of the pane (#983).
+#[gpui_kit::test]
+fn the_editor_keeps_most_of_a_short_pane_at_text_20(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    cx.update(|cx| crate::text_size::install(None, cx));
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.simulate_window_resize(handle, gpui_kit::size(px(760.), px(480.)));
+    let (secret, _) = target("secrets", |_, name| name == "ledger-database");
+    on_yaml(cx, &pane, handle, &secret);
+    press(cx, handle, "detail-edit");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let inspector = window.find("detail-inspector").bounds();
+        let editor = window.find("detail-edit-editor").bounds();
+        // Closed, the locked fields take no line of their own.
+        assert!(window.try_find("detail-edit-locked-list").is_none());
+        assert!(
+            editor.size.height * 2. >= inspector.size.height,
+            "the editor has less than half the pane: {editor:?} of {inspector:?}"
+        );
+    })
+    .unwrap();
 }

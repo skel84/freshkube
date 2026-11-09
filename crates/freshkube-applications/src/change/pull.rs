@@ -45,6 +45,10 @@ pub(super) struct Card {
 #[derive(Clone)]
 pub(super) struct Line {
     pub text: SharedString,
+    /// The same without its secondary parts (reviews, checks), for a short
+    /// window where the banner must fit whole (#981). What can't be read, or
+    /// is old, stays: it is not secondary.
+    pub short: SharedString,
     pub tone: Tone,
 }
 
@@ -265,13 +269,16 @@ impl ChangePage {
             return;
         };
         let name = format!("Pull request #{}", summary.number);
-        let (rest, tone) = match (self.pull.read.data(), self.pull.read.error()) {
+        // `rest` is every part after the state, `kept` the ones that stay in
+        // a short window.
+        let (rest, kept, tone) = match (self.pull.read.data(), self.pull.read.error()) {
             (Some(detail), error) => {
                 let mut parts = vec![
                     detail.summary.state.label().to_owned(),
                     reviews_words(detail),
                     checks_words(detail),
                 ];
+                let mut kept = vec![parts[0].clone()];
                 // The checks are the head commit's; say so when that is not
                 // the commit the change deploys.
                 if let (Some(head), Some(deployed)) = (
@@ -284,25 +291,36 @@ impl ChangePage {
                 let tone = match (&detail.stale, error) {
                     (Some(stale), _) => {
                         // Why is the banner's to say; the line says only that it is old.
-                        parts.push(stale.read_words());
+                        let words = stale.read_words();
+                        parts.push(words.clone());
+                        kept.push(words);
                         Tone::Warn
                     }
                     (None, Some(error)) => {
-                        parts.push(format!("Couldn't read again: {error}"));
+                        let words = format!("Couldn't read again: {error}");
+                        parts.push(words.clone());
+                        kept.push(words);
                         Tone::Warn
                     }
                     (None, None) => Tone::Info,
                 };
-                (parts.join(" · "), tone)
+                (parts.join(" · "), kept.join(" · "), tone)
             }
-            (None, Some(error)) => (error.to_owned(), Tone::Warn),
-            (None, None) if self.pull.read.is_loading() => {
-                ("reading GitHub…".to_owned(), Tone::Info)
-            }
-            (None, None) => (summary.state.label().to_owned(), Tone::Info),
+            (None, Some(error)) => (error.to_owned(), error.to_owned(), Tone::Warn),
+            (None, None) if self.pull.read.is_loading() => (
+                "reading GitHub…".to_owned(),
+                "reading GitHub…".to_owned(),
+                Tone::Info,
+            ),
+            (None, None) => (
+                summary.state.label().to_owned(),
+                summary.state.label().to_owned(),
+                Tone::Info,
+            ),
         };
         self.pull.line = Some(Line {
             text: format!("{name} · {rest}").into(),
+            short: format!("{name} · {kept}").into(),
             tone,
         });
         cx.notify();

@@ -99,6 +99,7 @@ pub fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument>
                 })?;
             serde_yaml::to_string(&object).ok()?
         }
+        _ if super::netpol::holds(&identity.resource, ix) => super::netpol::document(&row, ix)?,
         "pods" => pod_yaml(&row, ix, created, now),
         "deployments.apps" => deployment_yaml(&row, ix, created),
         "cronjobs.batch" => super::everyday::cronjob_yaml(&row, ix, created),

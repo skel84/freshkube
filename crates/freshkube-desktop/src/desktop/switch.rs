@@ -808,6 +808,9 @@ impl Pilot {
         else {
             return;
         };
+        // A destructive action counting down was confirmed on the cluster
+        // the window left: it sends nothing.
+        crate::write_flow::cancel_countdowns(cx);
         let applied = self.applied.clone();
         let left = std::mem::take(&mut self.switch.active_definition);
         let revision = self.current_revision();
