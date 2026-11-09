@@ -180,6 +180,7 @@ Behaviour that does not belong in the rules lives in one doc per feature, each s
 - [docs/features/deep-links.md](features/deep-links.md): Copy link, the `freshkube://open` link, how it is matched to a cluster and opened, and the outcomes it can end in.
 - [docs/features/resources.md](features/resources.md): the Resources page, the dock's logs, shells and ports, and a pod's cause card.
 - [docs/features/traffic.md](features/traffic.md): the Routes page and an HTTPRoute's trace, step by step, and the ReferenceGrant proposed to copy.
+- [docs/features/network-policy.md](features/network-policy.md): NetworkPolicy read per policy, which policies apply to a pod, and the allow decision (allowed, denied, can't tell).
 - [docs/features/nodes.md](features/nodes.md): the Nodes table, its node pane and their keys.
 - [docs/features/tabs.md](features/tabs.md): the view tabs under the header, their keys, link gestures, saving and frozen rows.
 - [docs/features/shell.md](features/shell.md): the app frame, the Overview and Attention, and the Kubernetes summary session.

@@ -709,6 +709,16 @@ impl ResourcesScreen {
             .update(cx, |detail, _| detail.set_services_shape(shape));
     }
 
+    /// What the example NetworkPolicy reads answer.
+    pub fn set_netpol_shape(
+        &mut self,
+        shape: crate::example::netpol::Shape,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |detail, _| detail.set_netpol_shape(shape));
+    }
+
     /// What an example HTTPRoute's trace answers.
     pub fn set_routes_shape(
         &mut self,
