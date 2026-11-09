@@ -3,6 +3,7 @@
 //! answers. Configuration (a Service's spec) and status (its slices) are
 //! separate evidence, a refused read is unknown and never zero, and the chain
 //! is a list of steps that later slices put routes and gateways in front of.
+pub mod certs;
 mod chain;
 mod endpoints;
 pub mod netpol;

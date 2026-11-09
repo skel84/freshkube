@@ -209,6 +209,17 @@ struct Miss {
     owner: Owner,
 }
 
+/// The listeners a route's parent reference fits (the trace's own choice),
+/// for the Certificates page, which asks which hosts a listener serves. A
+/// route that fits none gives none.
+pub fn listeners_for<'a>(
+    gateway: &'a GatewayFacts,
+    parent: &ParentRef,
+    route: &RouteFacts,
+) -> Vec<&'a Listener> {
+    fitting(gateway, parent, route).unwrap_or_default()
+}
+
 /// The listeners that fit the route by name, port, protocol, kind and
 /// hostname, in the Gateway's order. The namespace is the next step's.
 fn fitting<'a>(

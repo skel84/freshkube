@@ -420,6 +420,7 @@ mod backend;
 mod parent;
 
 use backend::branches;
+pub use parent::listeners_for;
 pub(super) use parent::{Standing, class_check, class_step, gateway_step, standing};
 use parent::{listener_step, namespace_step};
 
