@@ -1,0 +1,1 @@
+- **Waking from sleep:** after the machine sleeps, the status bar now says "Reconnecting…" and the cluster reads start again instead of sitting on old data until the next refresh, and Talos connections send HTTP/2 keepalive pings and give read-only calls a 30-second deadline, so a connection that died in sleep is noticed.

@@ -161,7 +161,7 @@ impl TalosClient {
     /// Get version information from all configured nodes
     pub async fn version(&self) -> Result<Vec<VersionInfo>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.version(request).await?;
         self.decode_version(response.into_inner())
@@ -239,7 +239,7 @@ impl TalosClient {
     /// Returns NTP server info, local and remote times, and sync status.
     pub async fn time(&self) -> Result<Vec<NodeTimeInfo>, TalosError> {
         let mut client = self.time_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.time(request).await?;
         let inner = response.into_inner();
@@ -292,7 +292,7 @@ impl TalosClient {
     /// Get list of services from all configured nodes
     pub async fn services(&self) -> Result<Vec<NodeServices>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.service_list(request).await?;
         self.decode_services(response.into_inner())
@@ -377,7 +377,7 @@ impl TalosClient {
     /// Get memory information from all configured nodes
     pub async fn memory(&self) -> Result<Vec<NodeMemory>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.memory(request).await?;
         let inner = response.into_inner();
@@ -410,7 +410,7 @@ impl TalosClient {
     /// Get load average from all configured nodes
     pub async fn load_avg(&self) -> Result<Vec<NodeLoadAvg>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.load_avg(request).await?;
         let inner = response.into_inner();
@@ -438,7 +438,7 @@ impl TalosClient {
     /// Get CPU information from all configured nodes
     pub async fn cpu_info(&self) -> Result<Vec<NodeCpuInfo>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.cpu_info(request).await?;
         let inner = response.into_inner();
@@ -476,7 +476,7 @@ impl TalosClient {
     /// Get system statistics (CPU usage, process counts) from all configured nodes
     pub async fn system_stat(&self) -> Result<Vec<NodeSystemStat>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.system_stat(request).await?;
         let inner = response.into_inner();
@@ -550,7 +550,7 @@ impl TalosClient {
     pub async fn etcd_members(&self) -> Result<Vec<EtcdMemberInfo>, TalosError> {
         let mut client = self.machine_client();
         // Don't use with_nodes() - etcd only runs on control plane
-        let request = Request::new(EtcdMemberListRequest { query_local: false });
+        let request = with_read_deadline(Request::new(EtcdMemberListRequest { query_local: false }));
 
         let response = client.etcd_member_list(request).await?;
         let inner = response.into_inner();
@@ -581,7 +581,7 @@ impl TalosClient {
     ) -> Result<Vec<EtcdMemberStatus>, TalosError> {
         let mut client = self.machine_client();
 
-        let request = with_listed_nodes(Request::new(()), nodes);
+        let request = with_read_deadline(with_listed_nodes(Request::new(()), nodes));
 
         let response = client.etcd_status(request).await?;
         let inner = response.into_inner();
@@ -615,7 +615,7 @@ impl TalosClient {
     pub async fn etcd_alarms(&self) -> Result<Vec<EtcdAlarm>, TalosError> {
         let mut client = self.machine_client();
         // Don't use with_nodes() - etcd only runs on control plane
-        let request = Request::new(());
+        let request = with_read_deadline(Request::new(()));
 
         let response = client.etcd_alarm_list(request).await?;
         let inner = response.into_inner();
@@ -641,7 +641,7 @@ impl TalosClient {
     /// Get processes from all configured nodes
     pub async fn processes(&self) -> Result<Vec<NodeProcesses>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.processes(request).await?;
         let inner = response.into_inner();
@@ -679,7 +679,7 @@ impl TalosClient {
     /// Get network device statistics from all configured nodes
     pub async fn network_device_stats(&self) -> Result<Vec<NodeNetworkStats>, TalosError> {
         let mut client = self.machine_client();
-        let request = self.with_nodes(Request::new(()));
+        let request = with_read_deadline(self.with_nodes(Request::new(())));
 
         let response = client.network_device_stats(request).await?;
         let inner = response.into_inner();
@@ -711,7 +711,7 @@ impl TalosClient {
 
         // Must explicitly enable TCP protocols and host network
         // Enable pid feature to get process info for each connection
-        let request = self.with_nodes(Request::new(NetstatRequest {
+        let request = with_read_deadline(self.with_nodes(Request::new(NetstatRequest {
             filter: filter.to_proto(),
             feature: Some(netstat_request::Feature { pid: true }),
             l4proto: Some(netstat_request::L4proto {
@@ -729,7 +729,7 @@ impl TalosClient {
                 netns: vec![],
                 allnetns: false,
             }),
-        }));
+        })));
 
         let response = client.netstat(request).await?;
         let inner = response.into_inner();
@@ -1238,6 +1238,19 @@ impl TalosClient {
         }
         Ok(())
     }
+}
+
+/// How long a read-only unary call may take before the caller gives up and
+/// the server is told to (`grpc-timeout`). Streams (logs, packet capture,
+/// file reads) and changes (reboot, apply configuration) carry none: a
+/// channel-wide timeout would end a follow, and a change that outlasts it
+/// would report a failure for work still running.
+pub const READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Gives a read-only unary `request` its [`READ_DEADLINE`].
+fn with_read_deadline<T>(mut request: Request<T>) -> Request<T> {
+    request.set_timeout(READ_DEADLINE);
+    request
 }
 
 /// Target each listed node through the "nodes" header, by host and without

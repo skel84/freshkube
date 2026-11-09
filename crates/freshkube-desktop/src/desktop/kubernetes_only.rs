@@ -675,6 +675,8 @@ impl Pilot {
             (glyph(Tone::Crit), format!("No kubeconfig loaded: {error}"))
         } else if self.config_loading {
             (spinner(), "Reading the kubeconfig…".to_owned())
+        } else if self.chrome.reconnecting.is_some() {
+            (spinner(), format!("Reconnecting to {context}…"))
         } else {
             match connection {
                 KubeConnection::Idle

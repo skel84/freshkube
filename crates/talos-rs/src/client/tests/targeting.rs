@@ -378,3 +378,18 @@ async fn test_metadata_preserves_node_names_without_ports() {
     assert!(nodes_values.contains(&"node2"));
     assert!(!nodes_values.iter().any(|v| v.contains(':')));
 }
+
+#[test]
+fn a_read_carries_a_deadline_and_a_plain_request_none() {
+    let client = create_test_client(vec!["10.0.0.1".to_string()]);
+    let read = with_read_deadline(client.with_nodes(Request::new(())));
+    // The server is told, in the `grpc-timeout` header: 30 seconds.
+    assert_eq!(
+        read.metadata().get("grpc-timeout").map(|v| v.to_str().unwrap()),
+        Some("30000000u")
+    );
+    // Targeting is untouched, and a request that is not a read has none.
+    assert!(read.metadata().get("node").is_some());
+    let plain = client.with_nodes(Request::new(()));
+    assert!(plain.metadata().get("grpc-timeout").is_none());
+}

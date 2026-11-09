@@ -330,6 +330,7 @@ impl Pilot {
             .active_mut()
             .kubernetes_summary
             .apply(&request, Ok(publication.summary.clone()));
+        self.reconnected(cx);
         if self.switch.restored_taken.take().is_some() {
             self.switch
                 .age_label

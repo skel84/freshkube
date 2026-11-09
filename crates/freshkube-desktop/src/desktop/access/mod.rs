@@ -15,6 +15,7 @@ impl Pilot {
         {
             return;
         }
+        self.reconnected(cx);
         match result {
             Ok(collected) => {
                 let changed = self
