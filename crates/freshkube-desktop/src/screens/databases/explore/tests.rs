@@ -657,7 +657,7 @@ async fn each_teleport_state_is_shown_with_its_command(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-async fn teleport_connects_read_only_and_never_claims_a_verified_certificate(
+async fn teleport_connects_read_only_and_says_it_is_a_tunnel_not_unencrypted(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, page, window) = open(cx, Example::Teleport).await;
@@ -670,7 +670,7 @@ async fn teleport_connects_read_only_and_never_claims_a_verified_certificate(
         );
         assert_eq!(
             window.find("explore-encryption").label(),
-            Some("Encrypted, certificate not verified")
+            Some("Through Teleport (tsh tunnel)")
         );
         let who = window
             .find("explore-who")
@@ -683,17 +683,17 @@ async fn teleport_connects_read_only_and_never_claims_a_verified_certificate(
             .label()
             .unwrap_or_default()
             .to_owned();
-        assert!(route.contains("orders-db-prod-eu"), "{route}");
+        assert!(route.contains("orders-db-ro"), "{route}");
     })
     .unwrap();
 }
 
-/// A fake `tsh` that signs in, lists `orders-db-prod-eu` and "listens" on a
+/// A fake `tsh` that signs in, lists `orders-db-ro` and "listens" on a
 /// loopback port nothing serves.
 #[cfg(unix)]
 fn fake_tsh(dir: &std::path::Path) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
-    let script = "#!/bin/sh\n[ \"$1\" = --warmup ] && exit 0\ncase \"$2\" in\n  status) echo '{\"active\":{}}' ;;\n  db) echo '[{\"metadata\":{\"name\":\"orders-db-prod-eu\"}}]' ;;\n  proxy) echo \"$$\" > \"$(dirname \"$0\")/pid\"; echo 'tunnel on 127.0.0.1:9.'; exec sleep 300 ;;\nesac\n";
+    let script = "#!/bin/sh\n[ \"$1\" = --warmup ] && exit 0\ncase \"$2\" in\n  status) echo '{\"active\":{}}' ;;\n  db) echo '[{\"metadata\":{\"name\":\"orders-db-ro\"}}]' ;;\n  proxy) echo \"$$\" > \"$(dirname \"$0\")/pid\"; echo 'tunnel on 127.0.0.1:9.'; exec sleep 300 ;;\nesac\n";
     let path = dir.join("tsh");
     std::fs::write(&path, script).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -797,6 +797,15 @@ async fn safety_g19_closing_the_tab_kills_the_teleport_child(cx: &mut TestAppCon
     cx.run_until_parked();
     assert!(cx.read(|cx| page.read(cx).explorers.is_empty()));
     runtime.block_on(gone(pid));
+}
+
+#[test]
+fn only_a_plain_leg_reads_as_the_tunnel_and_a_checked_certificate_is_never_claimed() {
+    use freshkube_db::wire::Encryption::*;
+    assert_eq!(super::through_tunnel(Plain), Tunnel);
+    assert_eq!(super::through_tunnel(Unverified), Unverified);
+    // No CA exists on this route, so the plan never produces Verified.
+    assert_eq!(Tunnel.label(), "through Teleport (tsh tunnel)");
 }
 
 #[test]

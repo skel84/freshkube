@@ -4,15 +4,16 @@ use std::fs;
 fn access(tsh: Option<PathBuf>) -> TeleportAccess {
     TeleportAccess {
         proxy: "teleport.example.com".into(),
-        name_pattern: "{name}-prod-eu".into(),
+        name_pattern: "{name}-ro".into(),
         db_user: "reader".into(),
         database: "shop".into(),
         tsh,
     }
 }
 
-const READY: &str = "echo 'Started authenticated tunnel for the PostgreSQL database \"orders-db-prod-eu\" in cluster \"teleport.example.com\" on 127.0.0.1:41234.'\nexec sleep 300";
-const LISTED: &str = "echo '[{\"metadata\":{\"name\":\"orders-db-prod-eu\"}},{\"metadata\":{\"name\":\"billing-prod-eu\"}}]'";
+const READY: &str = "echo 'Started authenticated tunnel for the PostgreSQL database \"orders-db-ro\" in cluster \"teleport.example.com\" on 127.0.0.1:41234.'\nexec sleep 300";
+const LISTED: &str =
+    "echo '[{\"metadata\":{\"name\":\"orders-db-ro\"}},{\"metadata\":{\"name\":\"billing-ro\"}}]'";
 
 /// A fake `tsh` in `dir`. It logs each call's subcommand to `calls`, then
 /// answers `status`, `db ls` and `proxy db` the way the three bodies say.
@@ -62,13 +63,14 @@ async fn start(dir: &Path, status: &str, list: &str, proxy: &str) -> Result<Prox
 #[test]
 fn the_name_pattern_names_the_database() {
     let a = access(None);
-    assert_eq!(a.database_name("orders-db").unwrap(), "orders-db-prod-eu");
+    assert_eq!(a.database_name("orders-db").unwrap(), "orders-db-ro");
     assert!(a.validate().is_ok());
 }
 
 #[test]
 fn settings_that_could_be_options_or_hold_spaces_are_refused() {
-    let cases: [(fn(&mut TeleportAccess), bool); 8] = [
+    type Change = fn(&mut TeleportAccess);
+    let cases: [(Change, bool); 8] = [
         (|a: &mut TeleportAccess| a.proxy = "-evil".into(), false),
         (|a: &mut TeleportAccess| a.proxy = "a b".into(), false),
         (
@@ -106,14 +108,9 @@ fn settings_that_could_be_options_or_hold_spaces_are_refused() {
 #[test]
 fn safety_g19_the_childs_arguments_hold_no_secret() {
     let a = access(None);
-    let all: Vec<String> = [
-        a.status_args(),
-        a.list_args(),
-        a.proxy_args("orders-db-prod-eu"),
-    ]
-    .concat();
+    let all: Vec<String> = [a.status_args(), a.list_args(), a.proxy_args("orders-db-ro")].concat();
     assert_eq!(
-        a.proxy_args("orders-db-prod-eu"),
+        a.proxy_args("orders-db-ro"),
         [
             "--proxy=teleport.example.com",
             "proxy",
@@ -121,7 +118,7 @@ fn safety_g19_the_childs_arguments_hold_no_secret() {
             "--tunnel",
             "--db-user=reader",
             "--db-name=shop",
-            "orders-db-prod-eu"
+            "orders-db-ro"
         ]
     );
     for arg in &all {
@@ -177,7 +174,7 @@ fn each_state_has_a_command_to_run() {
 
 #[test]
 fn the_announced_address_is_read_and_only_loopback_is_used() {
-    let line = "Started authenticated tunnel for the PostgreSQL database \"orders-db-prod-eu\" in cluster \"teleport.example.com:443\" on 127.0.0.1:41234.";
+    let line = "Started authenticated tunnel for the PostgreSQL database \"orders-db-ro\" in cluster \"teleport.example.com:443\" on 127.0.0.1:41234.";
     assert!(matches!(
         parse_listen(line),
         Some(Listen::Loopback(_, 41234))
@@ -250,7 +247,7 @@ async fn a_proxy_that_is_ready_listens_on_loopback() {
     let mut proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
     assert_eq!(proxy.port(), 41234);
     assert!(proxy.address().is_loopback());
-    assert_eq!(proxy.name(), "orders-db-prod-eu");
+    assert_eq!(proxy.name(), "orders-db-ro");
     assert!(proxy.running());
     // It was asked for with the checks first, and never with a login.
     assert_eq!(
@@ -335,12 +332,12 @@ async fn an_expired_session_reads_as_not_signed_in() {
 #[tokio::test]
 async fn a_database_not_under_the_pattern_is_not_found_and_no_proxy_starts() {
     let dir = tempfile_dir("notfound");
-    let list = "echo '[{\"metadata\":{\"name\":\"billing-prod-eu\"}}]'";
+    let list = "echo '[{\"metadata\":{\"name\":\"billing-ro\"}}]'";
     let error = start(&dir, SIGNED_IN, list, READY).await.unwrap_err();
     match error {
         TeleportError::NotFound { name, pattern, .. } => {
-            assert_eq!(name, "orders-db-prod-eu");
-            assert_eq!(pattern, "{name}-prod-eu");
+            assert_eq!(name, "orders-db-ro");
+            assert_eq!(pattern, "{name}-ro");
         }
         other => panic!("{other:?}"),
     }

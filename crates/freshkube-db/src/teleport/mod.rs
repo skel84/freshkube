@@ -59,7 +59,7 @@ pub struct TeleportAccess {
     /// The Teleport proxy, `host` or `host:port`.
     pub proxy: String,
     /// How a Teleport database is named from the Cluster's name; `{name}` is
-    /// replaced, as in `{name}-prod-eu`.
+    /// replaced, as in `{name}-ro`.
     pub name_pattern: String,
     /// The database user Teleport signs the session in as.
     pub db_user: String,

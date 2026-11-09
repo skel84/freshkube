@@ -126,7 +126,7 @@ impl ExploreView {
             )
             .children(self.encryption().map(|encryption| {
                 let tone = match encryption {
-                    Encryption::Verified => ui::Tone::Good,
+                    Encryption::Verified | Encryption::Tunnel => ui::Tone::Good,
                     Encryption::Unverified | Encryption::Plain => ui::Tone::Warn,
                 };
                 let label = capitalised(encryption.label());

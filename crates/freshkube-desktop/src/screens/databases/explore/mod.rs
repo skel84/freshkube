@@ -77,7 +77,7 @@ pub(crate) enum Example {
 pub(crate) fn example_teleport() -> TeleportAccess {
     TeleportAccess {
         proxy: "teleport.example.com".into(),
-        name_pattern: "{name}-prod-eu".into(),
+        name_pattern: "{name}-ro".into(),
         db_user: "reader".into(),
         database: "shop".into(),
         tsh: None,
@@ -140,6 +140,10 @@ struct Connected {
     route: Option<SharedString>,
     /// The Teleport child, owned by this connection: dropping the last
     /// handle, with the tab, kills it.
+    #[allow(
+        dead_code,
+        reason = "held only so dropping the connection kills the child"
+    )]
     proxy: Option<Arc<Proxy>>,
 }
 
@@ -364,7 +368,7 @@ impl ExploreView {
                 let connected = Connected {
                     session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
                     who: "reader · Teleport · example".into(),
-                    encryption: Encryption::Unverified,
+                    encryption: Encryption::Tunnel,
                     route: Some(route.into()),
                     proxy: None,
                 };
@@ -687,10 +691,21 @@ async fn connect_teleport(access: TeleportAccess, cluster: String) -> Result<Con
     Ok(Connected {
         session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
         who: format!("{} · Teleport", access.db_user).into(),
-        encryption,
+        encryption: through_tunnel(encryption),
         route: Some(route.into()),
         proxy: Some(Arc::new(proxy)),
     })
+}
+
+/// Over `tsh`'s tunnel a server that offers no TLS is not exposed: the leg is
+/// loopback and `tsh` carries it over its own mutual TLS, so say that, not
+/// "not encrypted". A server that does offer TLS keeps its own words: it is
+/// encrypted, and its certificate is not checked.
+fn through_tunnel(seen: Encryption) -> Encryption {
+    match seen {
+        Encryption::Plain => Encryption::Tunnel,
+        other => other,
+    }
 }
 
 fn end_words(end: &ForwardEnd) -> String {
