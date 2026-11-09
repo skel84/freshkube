@@ -332,6 +332,7 @@ impl Topology {
         let mut builder = Builder::default();
         let mut notes = Vec::new();
         let mut left_out = 0;
+        let mut routes_left = 0;
         for entry in &gateways {
             if builder.nodes.len() >= MAX_BOXES {
                 left_out += 1;
@@ -377,6 +378,12 @@ impl Topology {
             }
             builder.node(gateway);
             for attached in &entry.routes {
+                // The cap holds inside a Gateway too; a route's own boxes are
+                // drawn whole.
+                if builder.nodes.len() >= MAX_BOXES {
+                    routes_left += 1;
+                    continue;
+                }
                 let Some(route) = read.routes.iter().find(|r| {
                     r.facts.namespace == attached.namespace && r.facts.name == attached.name
                 }) else {
@@ -535,6 +542,16 @@ impl Topology {
                 "The workloads behind {unread} {} could not be read, so {} read Unknown",
                 if unread == 1 { "Service" } else { "Services" },
                 if unread == 1 { "it" } else { "they" },
+            ));
+        }
+        if routes_left > 0 {
+            notes.push(format!(
+                "{routes_left} {} not drawn: a topology draws at most {MAX_BOXES} boxes",
+                if routes_left == 1 {
+                    "route is"
+                } else {
+                    "routes are"
+                },
             ));
         }
         if left_out > 0 {

@@ -381,3 +381,43 @@ fn a_topology_draws_at_most_the_box_cap_and_counts_the_gateways_it_leaves_out() 
         assert!(topology.node(&call.from).is_some() && topology.node(&call.to).is_some());
     }
 }
+
+#[test]
+fn one_gateway_with_hundreds_of_routes_still_stays_under_the_box_cap() {
+    use freshkube_core::resources::traffic::routes::{
+        MAX_BOXES, RouteEntry, RouteFacts, Topology, example, trace_route,
+    };
+    let _ = trace_route;
+    let mut read = example::read(Shape::All).unwrap();
+    // Four hundred more routes on `infra/edge`, copied from `web`.
+    let template = read
+        .routes
+        .iter()
+        .find(|r| r.facts.name == "web")
+        .unwrap()
+        .clone();
+    for n in 0..400 {
+        let mut facts: RouteFacts = template.facts.clone();
+        facts.name = format!("bulk{n}");
+        read.routes
+            .push(RouteEntry::new(facts, template.trace.clone()));
+    }
+    let topology = Topology::new(&read, &example::workloads(Shape::All)).unwrap();
+    // The cap, plus the one route whose boxes were being drawn.
+    assert!(
+        topology.nodes.len() <= MAX_BOXES + 6,
+        "{}",
+        topology.nodes.len()
+    );
+    assert!(
+        topology
+            .notes
+            .iter()
+            .any(|n| n.contains("routes are not drawn")),
+        "{:?}",
+        topology.notes
+    );
+    for call in &topology.edges {
+        assert!(topology.node(&call.from).is_some() && topology.node(&call.to).is_some());
+    }
+}

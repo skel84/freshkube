@@ -215,6 +215,8 @@ pub struct ClassEntry {
     /// False when the Gateway list was refused: which Gateways use the class
     /// is then not known, which is not the same as none.
     pub gateways_known: bool,
+    /// The Gateway list was cut, so none here means none among those read.
+    pub gateways_cut: bool,
 }
 
 /// What the Gateway pages draw from one read.
@@ -386,6 +388,7 @@ fn contested_hosts(gateways: &[GatewayFacts]) -> BTreeMap<String, Vec<Contested>
 fn class_entries(
     classes: &Result<Listing<ClassFacts>, Failure>,
     gateways: &Result<Vec<GatewayEntry>, Failure>,
+    gateways_cut: bool,
 ) -> Vec<ClassEntry> {
     let uses = |name: &str| -> Vec<(String, GatewayState)> {
         gateways
@@ -424,6 +427,7 @@ fn class_entries(
                 stale: step.stale,
                 gateways: uses(&class.name),
                 gateways_known: gateways.is_ok(),
+                gateways_cut,
             }
         })
         .collect::<Vec<_>>();
@@ -453,6 +457,7 @@ fn class_entries(
             stale: false,
             gateways: uses(name),
             gateways_known: gateways.is_ok(),
+            gateways_cut,
         }));
     }
     entries.sort_by(|a, b| (a.state, &a.name).cmp(&(b.state, &b.name)));
@@ -559,7 +564,11 @@ impl GatewaysView {
             entries
         });
         let classes = match &read.classes {
-            Ok(_) => Ok(class_entries(&read.classes, &gateways)),
+            Ok(_) => Ok(class_entries(
+                &read.classes,
+                &gateways,
+                read.gateways.as_ref().is_ok_and(|l| l.cut),
+            )),
             Err(failure) => Err(failure.clone()),
         };
         Self {

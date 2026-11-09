@@ -51,6 +51,8 @@ pub(crate) struct ClassDetail {
     pub gateways_more: usize,
     /// False when the Gateway list was refused.
     pub gateways_known: bool,
+    /// The Gateway list was cut.
+    pub gateways_cut: bool,
 }
 
 /// What a row's Inspector draws, as strings made once per read.
@@ -150,6 +152,7 @@ fn class_detail(entry: &ClassEntry) -> ClassDetail {
             .collect(),
         gateways_more: more(entry.gateways.len()),
         gateways_known: entry.gateways_known,
+        gateways_cut: entry.gateways_cut,
     }
 }
 
@@ -346,6 +349,8 @@ fn class_row(entry: &ClassEntry) -> (Row, usize) {
     let users = match entry.gateways.len() {
         // A refused Gateway list leaves the count unknown, not zero.
         0 if !entry.gateways_known => "unknown (Gateways not read)".to_owned(),
+        // A cut list can only say none among those read.
+        0 if entry.gateways_cut => "none among those read".to_owned(),
         0 => "no Gateways".to_owned(),
         n => plural(n, "Gateway", "Gateways"),
     };

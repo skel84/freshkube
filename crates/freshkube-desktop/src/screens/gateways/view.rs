@@ -278,8 +278,10 @@ impl GatewaysScreen {
         if gateways.is_empty() {
             gateways.push(self.line(
                 format!("{id}-no-gateways"),
-                if detail.gateways_known {
+                if detail.gateways_known && !detail.gateways_cut {
                     "No Gateway uses this class.".into()
+                } else if detail.gateways_known {
+                    "None among the Gateways read; the list was cut, so others may use it.".into()
                 } else {
                     "The Gateways could not be read, so which of them use this class is not known."
                         .into()

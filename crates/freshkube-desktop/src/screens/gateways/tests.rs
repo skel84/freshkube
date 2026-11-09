@@ -899,3 +899,18 @@ fn the_status_column_does_not_repeat_the_state_it_sits_beside() {
         silent.cells[1]
     );
 }
+
+#[test]
+fn a_cut_gateway_list_makes_none_mean_none_among_those_read() {
+    let mut read = example::read(Shape::Gateways).unwrap();
+    read.gateways = read.gateways.map(|mut list| {
+        list.cut = true;
+        list
+    });
+    let display = Display::new(Mode::Classes, Some(&read));
+    let waiting = display.rows.iter().find(|r| r.name == "waiting").unwrap();
+    assert_eq!(waiting.cells[3], "none among those read");
+    // A class that does have Gateways still counts them.
+    let legacy = display.rows.iter().find(|r| r.name == "legacy").unwrap();
+    assert_eq!(legacy.cells[3], "1 Gateway");
+}
