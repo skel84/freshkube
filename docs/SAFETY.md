@@ -157,8 +157,19 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g18_a_context_change_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 - `safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 19. Every diagnostic check says unknown with its source down, and reports no failure on a healthy fixture
+
+- `safety_g19_every_check_with_its_sources_down_says_unknown_and_never_fails` (`crates/freshkube-core/src/diagnostic_runner/harness_tests.rs`)
+- `safety_g19_each_source_down_alone_changes_a_check_only_to_unknown` (`crates/freshkube-core/src/diagnostic_runner/harness_tests.rs`)
+- `safety_g19_every_check_on_a_healthy_fixture_reports_no_failure` (`crates/freshkube-core/src/diagnostic_runner/harness_tests.rs`)
+- `safety_g19_every_check_id_in_the_builders_is_produced_by_the_harness` (`crates/freshkube-core/src/diagnostic_runner/harness_tests.rs`)
+- `safety_g19_a_known_gap_names_an_issue_and_still_fails` (`crates/freshkube-core/src/diagnostic_runner/harness_tests.rs`)
+
+An unreachable source is unknown, not a failure, and a healthy node shows no failure. The harness runs every check `DiagnosticSnapshot::evaluate` makes from a snapshot, and builds the snapshots through what the collector decides without I/O (CNI provider from file reads, addon presence, service health), so it does not reach what the collector reads from a live API ([DIAGNOSTICS.md](DIAGNOSTICS.md#the-harness)). A new check is run by it without an edit. The first and second tests are the source-down case, the third the healthy case; the fourth fails when a check id is written that no scenario reaches; the fifth keeps each known gap tied to an issue and fails once it stops failing.
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).
+- Guarantee 19 has one known gap, #1005: when Talos's CNI file reads fail with text that holds "not found", `is_missing_file_error` reads them as missing files, the provider becomes none, and the `cni` check fails with the node never reached. It is listed in `KNOWN_GAPS` in the harness; the harness fails while it is listed and no longer fails, so the fix removes it.
