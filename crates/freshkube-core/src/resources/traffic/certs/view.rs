@@ -6,10 +6,13 @@
 //! A fact that was not read is Unknown, never "right".
 use super::chain::{Chain, issuance_chain};
 use super::facts::{CertificateFacts, IngressFacts};
+use super::names::covers;
 use super::names::uncovered;
 use super::read::{CertsRead, Manager};
 use super::secret::{SecretOutcome, SecretRequest, TlsFacts};
-use crate::resources::traffic::routes::{GatewayFacts, RouteFacts, listeners_for};
+use crate::resources::traffic::routes::{
+    GatewayFacts, RouteEntry, StepId, StepVerdict, hosts_overlap, listeners_for,
+};
 use std::collections::BTreeMap;
 
 /// Expiry under this many days reads Expiring.
@@ -60,6 +63,8 @@ pub enum CertState {
     Broken,
     /// The certificate doesn't name a host that is served under it.
     WrongName,
+    /// Valid still, but its last renewal attempt failed.
+    Failing,
     /// Being issued; nothing is wrong yet.
     Issuing,
     /// Expires in under 14 days.
@@ -71,9 +76,10 @@ pub enum CertState {
 
 impl CertState {
     /// Worst first, which is the order the page groups in.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Broken,
         Self::WrongName,
+        Self::Failing,
         Self::Issuing,
         Self::Expiring,
         Self::Unknown,
@@ -84,11 +90,30 @@ impl CertState {
         match self {
             Self::Broken => "Not valid",
             Self::WrongName => "Wrong name",
+            Self::Failing => "Renewal failing",
             Self::Issuing => "Issuing",
             Self::Expiring => "Expiring",
             Self::Unknown => "Unknown",
             Self::Healthy => "Valid",
         }
+    }
+}
+
+/// How long is left in words, whole days rounded down, and "under a day"
+/// below one. `left` is seconds to `notAfter`; zero or less is expired.
+pub fn expiry_words(left: i64) -> String {
+    if left <= 0 {
+        let ago = -left;
+        return match ago / DAY {
+            0 => "expired under a day ago".into(),
+            1 => "expired 1 day ago".into(),
+            days => format!("expired {days} days ago"),
+        };
+    }
+    match left / DAY {
+        0 => "in under a day".into(),
+        1 => "in 1 day".into(),
+        days => format!("in {days} days"),
     }
 }
 
@@ -124,6 +149,11 @@ pub struct CertEntry {
     pub reason: String,
     /// Whole days left, negative once expired.
     pub days_left: Option<i64>,
+    /// Seconds to `notAfter`, negative once expired.
+    pub left_secs: Option<i64>,
+    /// Why the Secret may not be read: Certificates that may keep it could
+    /// not all be read.
+    pub withheld: Option<String>,
 }
 
 impl CertEntry {
@@ -157,14 +187,16 @@ impl CertEntry {
     /// Certificate's status answers (the Secret is never read then), and
     /// none once it has been read.
     pub fn secret_request(&self) -> Option<SecretRequest> {
-        (self.managed.is_none()).then(|| SecretRequest {
+        self.can_read_secret().then(|| SecretRequest {
             namespace: self.namespace.clone(),
             name: self.secret.clone(),
         })
     }
 
     pub fn can_read_secret(&self) -> bool {
-        self.managed.is_none() && self.secret_state == SecretState::NotRead
+        self.managed.is_none()
+            && self.withheld.is_none()
+            && self.secret_state == SecretState::NotRead
     }
 
     fn facts(&mut self, now: i64) {
@@ -195,7 +227,8 @@ impl CertEntry {
             self.not_before = Some(*not_before);
             self.not_after = Some(*not_after);
         }
-        self.days_left = self.not_after.map(|end| (end - now).div_euclid(DAY));
+        self.left_secs = self.not_after.map(|end| end - now);
+        self.days_left = self.left_secs.map(|left| left.div_euclid(DAY));
     }
 
     /// Works out the state from what is known. Pure: the page calls it again
@@ -262,6 +295,18 @@ impl CertEntry {
             );
         }
         if let Some(chain) = &self.chain
+            && chain.has_warning()
+        {
+            return (
+                CertState::Failing,
+                chain
+                    .steps
+                    .iter()
+                    .find(|s| s.verdict == super::chain::Verdict::Warn)
+                    .map_or_else(String::new, |s| s.says.clone()),
+            );
+        }
+        if let Some(chain) = &self.chain
             && !chain.is_finished()
         {
             return (CertState::Issuing, chain.line());
@@ -272,9 +317,8 @@ impl CertEntry {
             return (
                 CertState::Expiring,
                 format!(
-                    "expires in {} day{}",
-                    days,
-                    if days == 1 { "" } else { "s" }
+                    "expires {}",
+                    expiry_words(self.left_secs.unwrap_or_default())
                 ),
             );
         }
@@ -287,10 +331,13 @@ impl CertEntry {
                 "cert-manager has not issued it yet, so it has no expiry".into(),
             );
         }
-        (
-            CertState::Unknown,
-            "Secret not read; Read Secret shows its names and expiry".into(),
-        )
+        match &self.withheld {
+            Some(why) => (CertState::Unknown, why.clone()),
+            None => (
+                CertState::Unknown,
+                "Secret not read; Read Secret shows its names and expiry".into(),
+            ),
+        }
     }
 }
 
@@ -313,11 +360,26 @@ impl CertsView {
         let mut notes = read.notes.clone();
         match &read.gateway {
             Ok(gateway) => {
-                if let Ok(gateways) = &gateway.gateways {
-                    listener_servings(
-                        &gateways.items,
-                        gateway.routes.iter().map(|r| &r.facts),
-                        &mut serving,
+                match &gateway.gateways {
+                    Ok(gateways) => {
+                        listener_servings(&gateways.items, gateway.routes.iter(), &mut serving);
+                        if gateways.cut {
+                            notes.push(
+                                "Gateways were cut at their limit; more listener certificates may exist"
+                                    .into(),
+                            );
+                        }
+                    }
+                    Err(failure) => notes.push(format!(
+                        "Gateways could not be read ({}: {}); listener certificates are not shown",
+                        failure.kind.label(),
+                        failure.message
+                    )),
+                }
+                if gateway.routes_cut {
+                    notes.push(
+                        "Routes were cut at their limit; more hosts may be served under a listener's certificate than were judged"
+                            .into(),
                     );
                 }
             }
@@ -352,6 +414,23 @@ impl CertsView {
         }
         keys.sort();
         let issuance = &read.issuance;
+        // Without every Certificate, a Secret that has none here may still be
+        // one cert-manager keeps: it is not offered for reading.
+        let withheld: Option<String> = match (&read.manager, &read.certificates) {
+            (Manager::Unknown(_) | Manager::Incomplete { .. }, _) => Some(
+                "Whether cert-manager keeps this Secret is not known, so it is not offered for reading"
+                    .into(),
+            ),
+            (_, Err(_)) => Some(
+                "The Certificates could not be read, so whether cert-manager keeps this Secret is not known and it is not offered for reading"
+                    .into(),
+            ),
+            (_, Ok(list)) if list.cut => Some(
+                "The Certificates were cut at their limit, so whether cert-manager keeps this Secret is not known and it is not offered for reading"
+                    .into(),
+            ),
+            _ => None,
+        };
         let entries = keys
             .into_iter()
             .map(|key| {
@@ -372,6 +451,8 @@ impl CertsView {
                     state: CertState::Unknown,
                     reason: String::new(),
                     days_left: None,
+                    left_secs: None,
+                    withheld: withheld.clone().filter(|_| cert.is_none()),
                 };
                 entry.assess(now);
                 entry
@@ -437,7 +518,7 @@ impl CertsView {
 
 fn listener_servings<'a>(
     gateways: &[GatewayFacts],
-    routes: impl Iterator<Item = &'a RouteFacts> + Clone,
+    routes: impl Iterator<Item = &'a RouteEntry> + Clone,
     out: &mut BTreeMap<SecretKey, Vec<Serving>>,
 ) {
     for gateway in gateways {
@@ -445,8 +526,10 @@ fn listener_servings<'a>(
             if listener.certificate_refs.is_empty() {
                 continue;
             }
-            // The hosts the listener serves: its routes' hostnames, which
-            // are the listener's own where a route names none.
+            // The hosts the listener serves: of each attached route, the
+            // hostnames that overlap the listener's own, narrowed to the
+            // listener's where the route's is wider; a route naming no host
+            // serves the listener's.
             let mut hosts: Vec<String> = Vec::new();
             let mut add = |host: &str| {
                 if !hosts.iter().any(|h| h == host) {
@@ -454,7 +537,8 @@ fn listener_servings<'a>(
                 }
             };
             let mut attached = false;
-            for route in routes.clone() {
+            for entry in routes.clone() {
+                let route = &entry.facts;
                 for parent in route.parents.iter().filter(|p| p.is_gateway()) {
                     if parent.namespace_or(&route.namespace) != gateway.namespace
                         || parent.name != gateway.name
@@ -464,17 +548,34 @@ fn listener_servings<'a>(
                     let fits = listeners_for(gateway, parent, route)
                         .iter()
                         .any(|l| l.name == listener.name);
-                    if !fits {
+                    // A route the trace refused at the namespace step is not
+                    // served by the listener.
+                    let refused = entry
+                        .trace
+                        .parents
+                        .iter()
+                        .filter(|t| &t.parent == parent)
+                        .flat_map(|t| &t.steps)
+                        .any(|step| {
+                            step.id == StepId::Namespace && step.verdict == StepVerdict::Fail
+                        });
+                    if !fits || refused {
                         continue;
                     }
                     attached = true;
-                    if route.hostnames.is_empty()
-                        && let Some(host) = &listener.hostname
-                    {
-                        add(host);
-                    }
-                    for host in &route.hostnames {
-                        add(host);
+                    match (&listener.hostname, route.hostnames.is_empty()) {
+                        (Some(own), true) => add(own),
+                        (None, true) => {}
+                        (own, false) => {
+                            for host in &route.hostnames {
+                                match own {
+                                    None => add(host),
+                                    Some(own) if covers(own, host) => add(host),
+                                    Some(own) if hosts_overlap(own, host) => add(own),
+                                    Some(_) => {}
+                                }
+                            }
+                        }
                     }
                 }
             }

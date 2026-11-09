@@ -35,7 +35,7 @@ pub use topology::{
 pub use trace::{
     BackendRead, Branch, BranchKind, BranchVerdict, Cause, Inputs, Listing, NamespaceLabels,
     OtherController, Owner, ParentTrace, RouteTrace, RouteVerdict, StepId, StepVerdict, Summary,
-    TraceStep, listeners_for, trace_route,
+    TraceStep, hosts_overlap, listeners_for, trace_route,
 };
 
 #[cfg(test)]

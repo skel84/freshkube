@@ -369,10 +369,6 @@ fn the_page_draws_groups_and_selecting_a_row_fills_the_inspector(cx: &mut TestAp
     .unwrap();
 }
 
-fn ledger(page: &Entity<CertificatesScreen>, cx: &gpui_kit::App) -> Vec<String> {
-    page.read(cx).secret_requests.clone()
-}
-
 fn entry_of(page: &Entity<CertificatesScreen>, key: &str, cx: &gpui_kit::App) -> CertEntry {
     page.read(cx)
         .view
@@ -381,52 +377,6 @@ fn entry_of(page: &Entity<CertificatesScreen>, key: &str, cx: &gpui_kit::App) ->
         .entry(key)
         .unwrap()
         .clone()
-}
-
-#[gpui_kit::test]
-fn safety_g21_nothing_reads_a_secret_until_the_control_is_pressed(cx: &mut TestAppContext) {
-    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
-    cx.update_window(window.into(), |_, window, cx| {
-        window.render_frame(cx);
-        // Showing, drawing, selecting every row and refreshing read no Secret.
-        let keys: Vec<String> = page
-            .read(cx)
-            .display
-            .rows
-            .iter()
-            .map(|r| r.key.to_string())
-            .collect();
-        for key in &keys {
-            let id = row_id(&page, key, cx);
-            window.click(id, cx);
-            window.render_frame(cx);
-        }
-        page.update(cx, |page, cx| page.refresh(window, cx));
-        window.render_frame(cx);
-        assert!(ledger(&page, cx).is_empty(), "{:?}", ledger(&page, cx));
-        // The Secret of a cert-manager Certificate has no control: pressing
-        // it, by button or key, asks for nothing.
-        let id = row_id(&page, "infra/edge-tls", cx);
-        window.click(id, cx);
-        window.render_frame(cx);
-        window.click("certificates-detail-read", cx);
-        window.press("r", cx);
-        window.click("certificates-read-secret", cx);
-        assert!(ledger(&page, cx).is_empty(), "{:?}", ledger(&page, cx));
-        // The other is read once, when it is asked for.
-        let id = row_id(&page, "prod-eu/legacy-tls", cx);
-        window.click(id, cx);
-        window.render_frame(cx);
-        assert!(ledger(&page, cx).is_empty());
-        window.click("certificates-read-secret", cx);
-        window.render_frame(cx);
-        assert_eq!(ledger(&page, cx), ["prod-eu/legacy-tls"]);
-        // A second press has nothing to read: it was read already.
-        window.press("r", cx);
-        window.click("certificates-detail-read", cx);
-        assert_eq!(ledger(&page, cx), ["prod-eu/legacy-tls"]);
-    })
-    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -843,7 +793,249 @@ fn a_link_selects_a_row_even_before_the_read_lands(cx: &mut TestAppContext) {
             Some("infra/edge-tls".into())
         );
         window.find("certificates-detail");
-        assert!(ledger(&page, cx).is_empty(), "a link reads nothing");
     })
     .unwrap();
+}
+
+// ---- on a live source: what is asked of the cluster ----
+
+/// A cluster that hands out one client.
+struct Fake(kube::Client);
+
+impl freshkube_core::cluster_source::KubeClientSource for Fake {
+    fn client(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>>
+    {
+        let client = self.0.clone();
+        Box::pin(async move { Ok(client) })
+    }
+}
+
+fn live(client: kube::Client) -> ClusterAccess {
+    ClusterAccess::Live(std::sync::Arc::new(Fake(client)))
+}
+
+fn mount_live(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    access: ClusterAccess,
+    visible: bool,
+) -> (Entity<CertificatesScreen>, WindowHandle<Root>) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        crate::theme::install(cx)
+    });
+    let mut page = None;
+    let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = CertificatesScreen::new(runtime.handle().clone(), window, cx);
+            view.set_page_source(
+                PageSource {
+                    kube: Some(ClusterSource {
+                        id: "invented-live".into(),
+                        context: "invented-certificates-context".into(),
+                        access,
+                    }),
+                    ..PageSource::default()
+                },
+                window,
+                cx,
+            );
+            view.set_visible(visible, window, cx);
+            view.activate(window, cx);
+            view
+        });
+        page = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    (page.unwrap(), window)
+}
+
+fn json_list(items: serde_json::Value) -> (u16, String) {
+    (
+        200,
+        serde_json::json!({"metadata": {}, "items": items}).to_string(),
+    )
+}
+
+/// cert-manager with one Certificate keeping `shop-tls`, and an Ingress each
+/// for it and for `legacy-tls`, which nothing keeps.
+fn certificates_api(request: &freshkube_core::fake_api::Recorded) -> Option<(u16, String)> {
+    use serde_json::json;
+    let ok = |body: serde_json::Value| (200, body.to_string());
+    match request.path.as_str() {
+        "/apis" => Some(ok(json!({"groups": [{"name": "cert-manager.io",
+            "versions": [{"groupVersion": "cert-manager.io/v1", "version": "v1"}],
+            "preferredVersion": {"groupVersion": "cert-manager.io/v1", "version": "v1"}}]}))),
+        "/apis/cert-manager.io/v1" => Some(ok(json!({"resources": [
+            {"name": "certificates", "kind": "Certificate", "namespaced": true, "verbs": ["get", "list", "watch"]},
+            {"name": "certificaterequests", "kind": "CertificateRequest", "namespaced": true, "verbs": ["get", "list", "watch"]}]}))),
+        "/apis/cert-manager.io/v1/certificates" => Some(json_list(json!([{
+            "metadata": {"name": "shop", "namespace": "shop", "uid": "cert-1"},
+            "spec": {"secretName": "shop-tls", "dnsNames": ["shop.example.com"]},
+            "status": {"conditions": [{"type": "Ready", "status": "True"}],
+                "notBefore": "2026-10-01T00:00:00Z", "notAfter": "2099-01-01T00:00:00Z"}}]))),
+        "/apis/networking.k8s.io/v1/ingresses" => Some(json_list(json!([
+            {"metadata": {"name": "web", "namespace": "shop"},
+                "spec": {"tls": [{"hosts": ["shop.example.com"], "secretName": "shop-tls"}]}},
+            {"metadata": {"name": "old", "namespace": "shop"},
+                "spec": {"tls": [{"hosts": ["old.example.com"], "secretName": "legacy-tls"}]}}]))),
+        "/api/v1/namespaces/shop/secrets/legacy-tls" => Some(ok(json!({
+            "metadata": {"name": "legacy-tls", "namespace": "shop"}, "type": "kubernetes.io/tls",
+            "data": {"tls.crt": "eA==", "tls.key": "UFJJVkFURS1LRVk="}}))),
+        _ => None,
+    }
+}
+
+fn secrets_in(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .filter(|l| l.contains("secrets"))
+        .cloned()
+        .collect()
+}
+
+#[gpui_kit::test]
+async fn safety_g21_nothing_reads_a_secret_until_the_control_is_pressed(cx: &mut TestAppContext) {
+    use freshkube_ui::real_io::RealIo;
+    cx.executor().allow_parking();
+    let runtime = runtime();
+    let _entered = runtime.enter();
+    let (client, recorder) = freshkube_core::fake_api::client(certificates_api);
+    let (page, window) = mount_live(cx, &runtime, live(client), true);
+    cx.wait_for_io(window.into(), |_, cx| page.read(cx).loader.data().is_some())
+        .await;
+    // Showing, drawing, selecting every row, refreshing and a link from a
+    // trace read no Secret, and send nothing but GETs.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let keys: Vec<String> = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .map(|r| r.key.to_string())
+            .collect();
+        assert_eq!(keys, ["shop/legacy-tls", "shop/shop-tls"]);
+        for key in &keys {
+            let id = row_id(&page, key, cx);
+            window.click(id, cx);
+            window.render_frame(cx);
+        }
+        page.update(cx, |page, cx| page.select("shop", "legacy-tls", cx));
+        page.update(cx, |page, cx| page.refresh(window, cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, cx| !page.read(cx).loader.is_loading())
+        .await;
+    assert!(
+        secrets_in(&recorder.lines()).is_empty(),
+        "{:?}",
+        recorder.lines()
+    );
+    recorder.assert_all("the Certificates page only reads", |r| {
+        r.method == http::Method::GET
+    });
+    // The Secret a Certificate answers for has no control: button and key ask nothing.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let id = row_id(&page, "shop/shop-tls", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.click("certificates-detail-read", cx);
+        window.click("certificates-read-secret", cx);
+        window.press("r", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(
+        secrets_in(&recorder.lines()).is_empty(),
+        "{:?}",
+        recorder.lines()
+    );
+    // The other is read when it is asked for: one GET of that name.
+    let before = recorder.lines().len();
+    cx.update_window(window.into(), |_, window, cx| {
+        let id = row_id(&page, "shop/legacy-tls", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        assert_eq!(recorder.lines().len(), before, "selecting asks nothing");
+        window.click("certificates-read-secret", cx);
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, _| {
+        !secrets_in(&recorder.lines()).is_empty()
+    })
+    .await;
+    cx.run_until_parked();
+    assert_eq!(
+        &recorder.lines()[before..],
+        ["GET /api/v1/namespaces/shop/secrets/legacy-tls"]
+    );
+    // And once: the Secret was read, so a second press has nothing to read.
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.press("r", cx);
+        window.click("certificates-detail-read", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(recorder.lines().len(), before + 1, "{:?}", recorder.lines());
+    // The key is nowhere on the page.
+    cx.update_window(window.into(), |_, _, cx| {
+        let shown = format!("{:?}", page.read(cx).view);
+        assert!(
+            !shown.contains("PRIVATE-KEY") && !shown.contains("UFJJVkFURS1LRVk="),
+            "{shown}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn a_hidden_page_asks_the_cluster_nothing(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let runtime = runtime();
+    let _entered = runtime.enter();
+    let (client, recorder) = freshkube_core::fake_api::client(certificates_api);
+    let (page, window) = mount_live(cx, &runtime, live(client), false);
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.refresh(window, cx);
+            page.activate(window, cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(recorder.lines().is_empty(), "{:?}", recorder.lines());
+    assert!(!cx.read(|cx| page.read(cx).loader.is_loading()));
+}
+
+#[gpui_kit::test]
+async fn hiding_the_page_drops_the_read_in_flight(cx: &mut TestAppContext) {
+    use freshkube_ui::real_io::RealIo;
+    cx.executor().allow_parking();
+    let runtime = runtime();
+    let _entered = runtime.enter();
+    let held = freshkube_core::fake_api::held();
+    let (page, window) = mount_live(cx, &runtime, live(held.client.clone()), true);
+    cx.wait_for_io(window.into(), |_, _| !held.recorder.lines().is_empty())
+        .await;
+    assert!(cx.read(|cx| page.read(cx).loader.is_loading()));
+    assert_eq!(held.abandoned(), 0);
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| page.set_visible(false, window, cx))
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, _| held.abandoned() > 0)
+        .await;
+    assert!(!cx.read(|cx| page.read(cx).loader.is_loading()));
+    held.recorder
+        .assert_all("the Certificates page only reads", |r| {
+            r.method == http::Method::GET
+        });
 }

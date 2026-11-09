@@ -197,7 +197,7 @@ fn no_request_yet_is_in_progress_at_the_request() {
     assert!(
         chain.steps[1]
             .says
-            .contains("has not made a CertificateRequest")
+            .contains("has not made the CertificateRequest for revision 1 yet")
     );
     assert_eq!(chain.stopped_at().unwrap().kind, StepKind::Request);
 }
@@ -407,10 +407,9 @@ fn only_the_requests_of_this_certificate_and_its_latest_revision_count() {
     new.uid = "req-2".into();
     let mut o = order("pending", "");
     o.owners = vec!["req-2".into()];
-    let chain = issuance_chain(
-        &certificate(true, Some(Tri::False)),
-        &reads(vec![other, old, new], vec![o], vec![]),
-    );
+    let mut cert = certificate(true, Some(Tri::False));
+    cert.revision = Some(1);
+    let chain = issuance_chain(&cert, &reads(vec![other, old, new], vec![o], vec![]));
     assert_eq!(chain.steps[1].object.as_deref(), Some("shop-2"));
     assert_eq!(chain.steps[1].verdict, Verdict::Waiting);
     assert_eq!(chain.steps[2].verdict, Verdict::Waiting);
@@ -440,6 +439,8 @@ fn entry(names: Option<&[&str]>, hosts: &[&str], not_after: Option<i64>, now: i6
         state: CertState::Unknown,
         reason: String::new(),
         days_left: None,
+        left_secs: None,
+        withheld: None,
     };
     if let Some(names) = names {
         let mut cert = certificate(false, Some(Tri::True));
@@ -488,7 +489,7 @@ fn expiry_under_fourteen_days_reads_expiring_and_fourteen_does_not() {
     assert_eq!(at(13, 23).days_left, Some(13));
     assert_eq!(at(14, 0).state, CertState::Healthy);
     assert_eq!(at(0, 5).state, CertState::Expiring);
-    assert_eq!(at(0, 5).reason, "expires in 0 days");
+    assert_eq!(at(0, 5).reason, "expires in under a day");
     assert_eq!(at(1, 1).reason, "expires in 1 day");
     let expired = entry(
         Some(&["a.example.com"]),
@@ -902,6 +903,7 @@ async fn the_chain_lists_are_read_only_when_a_certificate_is_not_issued() {
         }
         "/apis/cert-manager.io/v1/certificaterequests" => Some(list(vec![json!({
             "metadata": {"name": "shop-1", "namespace": "shop", "uid": "req-1",
+                "annotations": {"cert-manager.io/certificate-revision": "1"},
                 "ownerReferences": [{"uid": "cert-1"}]},
             "status": {"conditions": [{"type": "Denied", "status": "True", "reason": "Policy", "message": "no"}]}})])),
         "/apis/acme.cert-manager.io/v1/orders" | "/apis/acme.cert-manager.io/v1/challenges" => {
@@ -1131,4 +1133,357 @@ fn routes_read() -> crate::resources::traffic::routes::RoutesRead {
         crate::resources::traffic::routes::example::Shape::All,
     )
     .unwrap()
+}
+
+#[test]
+fn an_older_signed_request_is_not_this_issuances_and_a_missing_one_waits_for_its_revision() {
+    // Renewing at revision 3: the old, signed request 3 must not be read as
+    // "signed", and request 4 has not been made yet.
+    let mut cert = certificate(true, Some(Tri::True));
+    cert.revision = Some(3);
+    let mut old = request(vec![cond("Ready", Tri::True, "Issued", "signed")]);
+    old.revision = Some(3);
+    let chain = issuance_chain(&cert, &reads(vec![old], vec![], vec![]));
+    assert_eq!(chain.steps[1].verdict, Verdict::Waiting);
+    assert!(
+        chain.steps[1].says.contains("for revision 4 yet"),
+        "{}",
+        chain.steps[1].says
+    );
+    assert!(!chain.is_finished());
+    // A request with no revision annotation is nobody's.
+    let mut bare = request(vec![approved(), pending()]);
+    bare.revision = None;
+    let chain = issuance_chain(
+        &certificate(true, Some(Tri::False)),
+        &reads(vec![bare], vec![], vec![]),
+    );
+    assert_eq!(chain.steps[1].verdict, Verdict::Waiting);
+    assert!(chain.steps[1].says.contains("for revision 1 yet"));
+}
+
+#[test]
+fn a_failing_renewal_is_not_valid_news_while_the_certificate_still_serves() {
+    let now = 1_000_000;
+    // Ready stays True through a failed renewal; lastFailureTime is set and
+    // Issuing is False.
+    let mut cert = certificate(false, Some(Tri::True));
+    cert.last_failure = Some(now - 3_600);
+    cert.not_after = Some(now + 20 * DAY);
+    cert.names = vec!["a.example.com".into()];
+    assert!(!is_issued(&cert), "a failed attempt is not issued");
+    let chain = issuance_chain(&cert, &reads(vec![], vec![], vec![]));
+    assert_eq!(chain.steps[0].verdict, Verdict::Warn);
+    assert!(
+        chain.steps[0]
+            .says
+            .contains("the last attempt to renew it failed at 1970-01-12 ")
+    );
+    assert!(chain.has_warning() && !chain.is_broken());
+    let mut e = entry(
+        Some(&["a.example.com"]),
+        &["a.example.com"],
+        cert.not_after,
+        now,
+    );
+    e.managed = Some(cert);
+    e.chain = e
+        .managed
+        .as_ref()
+        .map(|c| issuance_chain(c, &reads(vec![], vec![], vec![])));
+    e.assess(now);
+    assert_eq!(e.state, CertState::Failing);
+    assert!(e.reason.contains("failed at"), "{}", e.reason);
+    // The lists are read for it.
+    let busy = [certificate(false, Some(Tri::True))];
+    assert!(busy.iter().all(is_issued));
+}
+
+#[test]
+fn expiry_is_worded_from_the_seconds_left_at_the_edges() {
+    assert_eq!(expiry_words(0), "expired under a day ago");
+    assert_eq!(expiry_words(-1), "expired under a day ago");
+    assert_eq!(expiry_words(-DAY + 1), "expired under a day ago");
+    assert_eq!(expiry_words(-DAY), "expired 1 day ago");
+    assert_eq!(expiry_words(-3 * DAY), "expired 3 days ago");
+    assert_eq!(expiry_words(1), "in under a day");
+    assert_eq!(expiry_words(DAY - 1), "in under a day");
+    assert_eq!(expiry_words(DAY), "in 1 day");
+    assert_eq!(expiry_words(14 * DAY), "in 14 days");
+    let now = 1_000_000;
+    let e = entry(Some(&["a.example.com"]), &["a.example.com"], Some(now), now);
+    assert_eq!(e.state, CertState::Broken);
+    assert_eq!(e.reason, "expired");
+    let e = entry(
+        Some(&["a.example.com"]),
+        &["a.example.com"],
+        Some(now + 5),
+        now,
+    );
+    assert_eq!(e.reason, "expires in under a day");
+}
+
+#[test]
+fn secret_request_is_none_once_the_secret_was_read() {
+    let now = 1_000_000;
+    let mut e = entry(None, &["shop.example.com"], None, now);
+    assert!(e.secret_request().is_some());
+    e.secret_state = SecretState::Read(SecretOutcome::NotFound);
+    assert!(e.secret_request().is_none());
+}
+
+#[test]
+fn a_secret_is_not_offered_when_the_certificates_that_may_keep_it_were_not_all_read() {
+    let ingresses = Ok(Listing::new(
+        vec![IngressFacts {
+            namespace: "shop".into(),
+            name: "web".into(),
+            uid: String::new(),
+            tls: vec![IngressTls {
+                hosts: vec!["shop.example.com".into()],
+                secret: Some("shop-tls".into()),
+            }],
+            hosts: vec![],
+        }],
+        false,
+    ));
+    let refused = Failure::new(FailureKind::Forbidden, "certificates is forbidden");
+    let cases = [
+        CertsRead::new(Manager::Ready { acme: true })
+            .with_ingresses(ingresses.clone())
+            .with_certificates(Err(refused.clone()), Issuance::skipped()),
+        CertsRead::new(Manager::Ready { acme: true })
+            .with_ingresses(ingresses.clone())
+            .with_certificates(Ok(Listing::new(vec![], true)), Issuance::skipped()),
+        CertsRead::new(Manager::Unknown(refused)).with_ingresses(ingresses.clone()),
+        CertsRead::new(Manager::Incomplete {
+            missing: vec!["Certificate"],
+        })
+        .with_ingresses(ingresses.clone()),
+    ];
+    for read in cases {
+        let view = CertsView::new(&read, 0);
+        let e = view.entry("shop/shop-tls").unwrap();
+        assert!(
+            !e.can_read_secret() && e.secret_request().is_none(),
+            "{:?}",
+            read.manager
+        );
+        assert_eq!(e.state, CertState::Unknown);
+        assert!(e.reason.contains("not offered for reading"), "{}", e.reason);
+    }
+    // Read in full, with nothing keeping it, it is offered.
+    let read = CertsRead::new(Manager::NotInstalled).with_ingresses(ingresses);
+    assert!(
+        CertsView::new(&read, 0)
+            .entry("shop/shop-tls")
+            .unwrap()
+            .can_read_secret()
+    );
+}
+
+fn gateway_json(listeners: Value) -> Value {
+    json!({"metadata": {"name": "edge", "namespace": "infra", "generation": 1},
+        "spec": {"gatewayClassName": "example", "listeners": listeners}})
+}
+
+fn listener(name: &str, host: &str, secret: &str) -> Value {
+    json!({"name": name, "port": 443, "protocol": "HTTPS", "hostname": host,
+        "tls": {"mode": "Terminate", "certificateRefs": [{"name": secret}]},
+        "allowedRoutes": {"namespaces": {"from": "All"}}})
+}
+
+fn route_json(name: &str, hosts: &[&str]) -> Value {
+    json!({"metadata": {"name": name, "namespace": "shop", "generation": 1},
+        "spec": {"parentRefs": [{"name": "edge", "namespace": "infra"}],
+            "hostnames": hosts, "rules": [{"backendRefs": []}]}})
+}
+
+fn gateway_cluster(
+    gateways: (u16, String),
+    routes: Vec<Value>,
+) -> impl Fn(&crate::fake_api::Recorded) -> Option<(u16, String)> {
+    move |request| match request.path.as_str() {
+        GROUPS => Some(groups(&["gateway.networking.k8s.io"])),
+        "/apis/gateway.networking.k8s.io/v1" => Some(resources(&[
+            ("httproutes", "HTTPRoute"),
+            ("gateways", "Gateway"),
+            ("gatewayclasses", "GatewayClass"),
+        ])),
+        "/apis/gateway.networking.k8s.io/v1/gateways" => Some(gateways.clone()),
+        "/apis/gateway.networking.k8s.io/v1/httproutes" => Some(list(routes.clone())),
+        "/apis/gateway.networking.k8s.io/v1/gatewayclasses" => Some(list(vec![])),
+        "/apis/networking.k8s.io/v1/ingresses" => Some(list(vec![])),
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn a_route_with_hosts_on_two_listeners_does_not_make_either_certificate_wrong() {
+    let listeners = json!([
+        listener("shop", "shop.example.com", "shop-tls"),
+        listener("docs", "docs.example.org", "docs-tls"),
+        listener("wild", "*.example.net", "wild-tls"),
+    ]);
+    let routes = vec![
+        // No sectionName: it fits every listener it overlaps.
+        route_json("both", &["shop.example.com", "docs.example.org"]),
+        // Overlaps the wildcard by one host only.
+        route_json("mixed", &["a.example.net", "elsewhere.example.io"]),
+    ];
+    let (client, _) =
+        crate::fake_api::client(gateway_cluster(list(vec![gateway_json(listeners)]), routes));
+    let view = CertsView::new(&read_certificates(&client).await, 0);
+    let hosts = |key: &str| view.entry(key).unwrap().hosts();
+    assert_eq!(hosts("infra/shop-tls"), ["shop.example.com"]);
+    assert_eq!(hosts("infra/docs-tls"), ["docs.example.org"]);
+    assert_eq!(hosts("infra/wild-tls"), ["a.example.net"]);
+    // Secrets nobody has read: nothing is judged wrong from the hosts alone.
+    assert!(view.entries.iter().all(|e| e.wrong.is_empty()));
+    // With the names read, a certificate that names its own host is fine.
+    let mut view = view;
+    let outcome = |name: &str| {
+        SecretOutcome::Read(TlsFacts {
+            subject: format!("CN={name}"),
+            names: vec![name.into()],
+            issuer: "CN=CA".into(),
+            not_before: 0,
+            not_after: i64::MAX / 2,
+        })
+    };
+    view.apply_secret("infra/shop-tls", outcome("shop.example.com"), 0);
+    view.apply_secret("infra/docs-tls", outcome("docs.example.org"), 0);
+    assert_eq!(
+        view.entry("infra/shop-tls").unwrap().state,
+        CertState::Healthy
+    );
+    assert_eq!(
+        view.entry("infra/docs-tls").unwrap().state,
+        CertState::Healthy
+    );
+}
+
+#[tokio::test]
+async fn a_listener_the_trace_refused_at_the_namespace_step_serves_no_host_of_that_route() {
+    let mut denied = listener("shop", "shop.example.com", "shop-tls");
+    denied["allowedRoutes"] = json!({"namespaces": {"from": "Same"}});
+    let (client, _) = crate::fake_api::client(gateway_cluster(
+        list(vec![gateway_json(json!([denied]))]),
+        vec![route_json("web", &["shop.example.com"])],
+    ));
+    let view = CertsView::new(&read_certificates(&client).await, 0);
+    // Only the listener's own host remains: the route is not served by it.
+    let e = view.entry("infra/shop-tls").unwrap();
+    assert_eq!(e.hosts(), ["shop.example.com"]);
+    assert_eq!(e.servings.len(), 1);
+}
+
+#[tokio::test]
+async fn refused_and_cut_gateway_and_route_lists_are_said_never_a_silent_gap() {
+    let forbidden = (
+        403,
+        json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 403,
+            "reason": "Forbidden", "message": "gateways is forbidden"})
+        .to_string(),
+    );
+    let (client, _) = crate::fake_api::client(gateway_cluster(forbidden, vec![]));
+    let read = read_certificates(&client).await;
+    let view = CertsView::new(&read, 0);
+    assert!(view.entries.is_empty());
+    assert!(
+        view.notes
+            .iter()
+            .any(|n| n.contains("Gateways could not be read")
+                && n.contains("listener certificates are not shown")),
+        "{:?}",
+        view.notes
+    );
+    // A cut Gateway list and a cut route list each say so.
+    let mut read = CertsRead::new(Manager::NotInstalled);
+    let mut routes = crate::resources::traffic::routes::RoutesRead::new(
+        crate::resources::traffic::routes::ApiState::Ready { mixed: None },
+    );
+    routes.gateways = Ok(Listing::new(vec![], true));
+    routes.routes_cut = true;
+    read = read.with_gateway(Ok(routes));
+    let view = CertsView::new(&read, 0);
+    assert!(
+        view.notes.iter().any(|n| n.contains("Gateways were cut")),
+        "{:?}",
+        view.notes
+    );
+    assert!(
+        view.notes.iter().any(|n| n.contains("Routes were cut")),
+        "{:?}",
+        view.notes
+    );
+}
+
+#[test]
+fn the_example_with_gateways_refused_reads_the_routes_and_says_what_is_missing() {
+    let view = example(example::Shape::GatewaysRefused);
+    assert!(
+        view.notes
+            .iter()
+            .any(|n| n.contains("Gateways could not be read")),
+        "{:?}",
+        view.notes
+    );
+    // The rest still answers: Ingress and cert-manager rows are there, and no
+    // listener serves anything.
+    assert!(!view.entries.is_empty());
+    assert!(view.entries.iter().all(|e| {
+        e.servings
+            .iter()
+            .all(|s| matches!(s.via, Via::Ingress { .. }))
+    }));
+    assert!(
+        view.entry("infra/edge-tls")
+            .is_some_and(|e| e.servings.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn a_failed_acme_discovery_is_unknown_never_not_acme() {
+    let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
+        GROUPS => Some(groups(&["cert-manager.io", "acme.cert-manager.io"])),
+        "/apis/cert-manager.io/v1" => Some(resources(&[
+            ("certificates", "Certificate"),
+            ("certificaterequests", "CertificateRequest"),
+        ])),
+        // The ACME group's kinds can't be read.
+        "/apis/acme.cert-manager.io/v1" => Some((
+            403,
+            json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "code": 403,
+                "reason": "Forbidden", "message": "forbidden"})
+            .to_string(),
+        )),
+        "/apis/cert-manager.io/v1/certificates" => {
+            let mut c = ready_certificate("shop-tls");
+            c["status"]["conditions"] = json!([{"type": "Ready", "status": "False"}, {"type": "Issuing", "status": "True"}]);
+            Some(list(vec![c]))
+        }
+        "/apis/cert-manager.io/v1/certificaterequests" => Some(list(vec![json!({
+            "metadata": {"name": "shop-1", "namespace": "shop", "uid": "req-1",
+                "annotations": {"cert-manager.io/certificate-revision": "1"},
+                "ownerReferences": [{"uid": "cert-1"}]},
+            "status": {"conditions": [{"type": "Approved", "status": "True"}, {"type": "Ready", "status": "False", "reason": "Pending"}]}})])),
+        "/apis/networking.k8s.io/v1/ingresses" => Some(list(vec![])),
+        _ => None,
+    });
+    let read = read_certificates(&client).await;
+    let view = CertsView::new(&read, 1_800_000_000);
+    let chain = view.entry("shop/shop-tls").unwrap().chain.clone().unwrap();
+    assert_eq!(
+        chain.steps[2].verdict,
+        Verdict::Unknown,
+        "{:?}",
+        chain.steps
+    );
+    assert!(
+        chain.steps[2].says.contains("Forbidden"),
+        "{}",
+        chain.steps[2].says
+    );
+    assert_ne!(chain.steps[2].verdict, Verdict::NotUsed);
 }

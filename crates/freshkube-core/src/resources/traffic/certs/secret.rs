@@ -2,8 +2,8 @@
 //! for a Secret no cert-manager Certificate answers for, and it is a reveal
 //! path with a narrow mouth: the Secret is read by name, `tls.crt` is parsed
 //! here, and what leaves is [`TlsFacts`], which has no field for `tls.key`,
-//! for the raw bytes or for any other key. Every byte of the Secret is wiped
-//! before this returns. Safety guarantee 21.
+//! for the raw bytes or for any other key. The decoded values of the Secret
+//! are wiped before this returns. Safety guarantee 21.
 use crate::failure::{Failure, FailureKind};
 use k8s_openapi::api::core::v1::Secret;
 use kube::{Api, Client};

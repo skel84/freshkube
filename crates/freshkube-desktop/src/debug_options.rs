@@ -155,7 +155,8 @@ pub struct DebugOptions {
     pub(crate) routes: RoutesShape,
     /// `FRESHKUBE_CERTS`: what the Certificates page's example shows (`all`,
     /// `healthy`, `expiring`, `wrong-name`, `stuck-order`, `stuck-challenge`,
-    /// `not-installed`, `secret-unread`, `secret-refused`, `empty`, `refused`);
+    /// `not-installed`, `secret-unread`, `secret-refused`, `empty`, `refused`,
+    /// `gateways-refused`);
     /// anything else is `all`.
     pub(crate) certs: CertsShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check

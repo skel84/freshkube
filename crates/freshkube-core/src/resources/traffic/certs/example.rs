@@ -39,10 +39,13 @@ pub enum Shape {
     Empty,
     /// The lists are refused.
     Refused,
+    /// The routes are read but the Gateway list is refused, so no listener's
+    /// certificate is known.
+    GatewaysRefused,
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 11] = [
+    pub const NAMES: [&'static str; 12] = [
         "all",
         "healthy",
         "expiring",
@@ -54,6 +57,7 @@ impl Shape {
         "secret-refused",
         "empty",
         "refused",
+        "gateways-refused",
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
@@ -69,6 +73,7 @@ impl Shape {
             "secret-refused" => Self::SecretRefused,
             "empty" => Self::Empty,
             "refused" => Self::Refused,
+            "gateways-refused" => Self::GatewaysRefused,
             _ => return None,
         })
     }
@@ -401,10 +406,10 @@ pub fn read(shape: Shape, now: i64) -> CertsRead {
     let gateway = if shape == Shape::Refused {
         Err(forbidden("gateways.gateway.networking.k8s.io"))
     } else {
-        routes::example::read(if shape == Shape::Empty {
-            routes::example::Shape::Empty
-        } else {
-            routes::example::Shape::All
+        routes::example::read(match shape {
+            Shape::Empty => routes::example::Shape::Empty,
+            Shape::GatewaysRefused => routes::example::Shape::GatewaysRefused,
+            _ => routes::example::Shape::All,
         })
     };
     if shape == Shape::NotInstalled {

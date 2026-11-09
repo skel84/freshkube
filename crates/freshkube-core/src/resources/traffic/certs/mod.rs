@@ -28,7 +28,9 @@ pub use read::{
     Manager, read_certificates,
 };
 pub use secret::{SecretOutcome, SecretRequest, TlsFacts, facts_from_secret, read_tls_secret};
-pub use view::{CertEntry, CertState, CertsView, EXPIRING_DAYS, SecretState, Serving, Via};
+pub use view::{
+    CertEntry, CertState, CertsView, EXPIRING_DAYS, SecretState, Serving, Via, expiry_words,
+};
 
 #[cfg(test)]
 mod tests;

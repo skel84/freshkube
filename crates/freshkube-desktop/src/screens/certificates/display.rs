@@ -103,7 +103,7 @@ pub(super) struct Display {
 pub(super) fn tone(state: CertState) -> ui::Tone {
     match state {
         CertState::Broken => ui::Tone::Crit,
-        CertState::WrongName | CertState::Expiring => ui::Tone::Warn,
+        CertState::WrongName | CertState::Failing | CertState::Expiring => ui::Tone::Warn,
         CertState::Issuing => ui::Tone::Waiting,
         // Unknown is never green.
         CertState::Unknown => ui::Tone::Unknown,
@@ -115,6 +115,7 @@ fn slug(state: CertState) -> &'static str {
     match state {
         CertState::Broken => "not-valid",
         CertState::WrongName => "wrong-name",
+        CertState::Failing => "renewal-failing",
         CertState::Issuing => "issuing",
         CertState::Expiring => "expiring",
         CertState::Unknown => "unknown",
@@ -127,6 +128,7 @@ fn attention_words(state: CertState) -> &'static str {
     match state {
         CertState::Broken => "not valid",
         CertState::WrongName => "wrong name",
+        CertState::Failing => "renewal failing",
         CertState::Issuing => "issuing",
         CertState::Expiring => "expiring",
         CertState::Unknown => "unknown",
@@ -138,6 +140,7 @@ fn chain_tone(verdict: Verdict) -> ui::Tone {
     match verdict {
         Verdict::Done => ui::Tone::Good,
         Verdict::Waiting => ui::Tone::Waiting,
+        Verdict::Warn => ui::Tone::Warn,
         Verdict::Broken => ui::Tone::Crit,
         Verdict::Unknown => ui::Tone::Unknown,
         Verdict::NotReached | Verdict::NotUsed => ui::Tone::Outline,
@@ -158,17 +161,6 @@ fn date(at: i64) -> String {
         .map_or_else(|| "?".into(), |t| t.format("%Y-%m-%d").to_string())
 }
 
-/// How long is left, in words, rounded down to whole days.
-fn expires(days: i64) -> String {
-    match days {
-        d if d < -1 => format!("expired {} days ago", -d),
-        -1 => "expired yesterday".into(),
-        0 => "in under a day".into(),
-        1 => "in 1 day".into(),
-        d => format!("in {d} days"),
-    }
-}
-
 fn entry_row(entry: &CertEntry) -> Row {
     let key = entry.key();
     let state_words = entry.state.label();
@@ -177,8 +169,8 @@ fn entry_row(entry: &CertEntry) -> Row {
     } else {
         format!("{state_words} — {}", entry.reason)
     };
-    let expiry = match (entry.not_after, entry.days_left) {
-        (Some(_), Some(days)) => expires(days),
+    let expiry = match entry.left_secs {
+        Some(left) if entry.not_after.is_some() => certs::expiry_words(left),
         _ => "—".to_owned(),
     };
     let serves = if entry.servings.is_empty() {
@@ -224,7 +216,12 @@ fn entry_row(entry: &CertEntry) -> Row {
     if let Some(end) = entry.not_after {
         fields.push(Field {
             label: "Expires",
-            value: format!("{} ({})", date(end), expires(entry.days_left.unwrap_or(0))).into(),
+            value: format!(
+                "{} ({})",
+                date(end),
+                certs::expiry_words(entry.left_secs.unwrap_or(0))
+            )
+            .into(),
         });
     }
     if let Some(start) = entry.not_before {
@@ -247,6 +244,9 @@ fn entry_row(entry: &CertEntry) -> Row {
     }
     let names_note = match (&entry.names, &entry.secret_state) {
         (Some(names), _) => Ok(names.clone()),
+        (None, SecretState::NotRead) if entry.withheld.is_some() => {
+            Err(entry.withheld.clone().unwrap_or_default())
+        }
         (None, SecretState::NotRead) if entry.managed.is_none() => Err(
             "Not known: the Secret has not been read. Read Secret fetches it once and keeps only the certificate's names, issuer and dates; its key is never kept."
                 .to_owned(),

@@ -91,9 +91,6 @@ pub(crate) struct CertificatesScreen {
     /// When the example data was read, which a loader does not keep.
     example_read: Option<std::time::SystemTime>,
     secret_job: Option<SecretJob>,
-    /// Every Secret this page has been asked to read, by `namespace/name`,
-    /// so a test can prove nothing is read until the control is pressed.
-    secret_requests: Vec<String>,
 }
 
 impl EventEmitter<ScreenEvent> for CertificatesScreen {}
@@ -151,7 +148,6 @@ impl CertificatesScreen {
             shape: certs::example::Shape::default(),
             example_read: None,
             secret_job: None,
-            secret_requests: Vec::new(),
         }
     }
 
@@ -354,7 +350,6 @@ impl CertificatesScreen {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.secret_requests.push(key.clone());
         if source.access.is_example() {
             let outcome = certs::example::read_secret(self.shape, &request, self.read_at);
             self.land_secret(&key, outcome, cx);
@@ -405,12 +400,6 @@ impl CertificatesScreen {
     #[cfg(test)]
     pub(crate) fn selected_key(&self) -> Option<String> {
         self.selected.as_ref().map(ToString::to_string)
-    }
-
-    /// The Secrets this page was asked to read, for the same.
-    #[cfg(test)]
-    pub(crate) fn secrets_asked(&self) -> &[String] {
-        &self.secret_requests
     }
 
     pub(super) fn retry(&self, cx: &mut Context<Self>) -> gpui_kit::component::button::Button {

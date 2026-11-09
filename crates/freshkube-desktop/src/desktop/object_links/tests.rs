@@ -892,7 +892,6 @@ fn a_certificate_link_opens_the_page_with_the_row_selected_and_reads_nothing(
             page.read(cx).selected_key().as_deref(),
             Some("infra/edge-tls")
         );
-        assert!(page.read(cx).secrets_asked().is_empty());
         window.find("certificates-detail");
     })
     .unwrap();

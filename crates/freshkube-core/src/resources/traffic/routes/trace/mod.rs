@@ -371,7 +371,7 @@ pub(super) fn blame(reason: &str) -> Owner {
 }
 
 /// Wildcards as the API writes them: `*.example.com` covers any label below.
-fn hosts_overlap(a: &str, b: &str) -> bool {
+pub fn hosts_overlap(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }

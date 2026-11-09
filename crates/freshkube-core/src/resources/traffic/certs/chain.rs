@@ -41,6 +41,8 @@ pub enum Verdict {
     Done,
     /// In progress, and cert-manager says nothing is wrong yet.
     Waiting,
+    /// Working, with something to know: a renewal's last attempt failed.
+    Warn,
     /// Failed, or stuck with a reason cert-manager gave.
     Broken,
     /// Not readable: refused, cut, not served.
@@ -57,6 +59,7 @@ impl Verdict {
         match self {
             Self::Done => "Done",
             Self::Waiting => "In progress",
+            Self::Warn => "Last attempt failed",
             Self::Broken => "Stopped",
             Self::Unknown => "Can't tell",
             Self::NotReached => "Not reached",
@@ -109,6 +112,12 @@ impl Chain {
                     .rev()
                     .find(|s| s.verdict == Verdict::Waiting)
             })
+    }
+
+    /// A step says something is wrong while the certificate still serves: a
+    /// renewal whose last attempt failed.
+    pub fn has_warning(&self) -> bool {
+        self.steps.iter().any(|s| s.verdict == Verdict::Warn)
     }
 
     pub fn is_broken(&self) -> bool {
@@ -164,16 +173,19 @@ impl Issuance {
     }
 }
 
-/// A Certificate that is Ready and not being renewed has nothing in flight.
+/// A Certificate that is Ready, not being renewed and with no failed attempt
+/// since has nothing in flight. cert-manager keeps `Ready=True` through a
+/// failing renewal and writes `lastFailureTime`, so that is not issued.
 pub fn is_issued(cert: &CertificateFacts) -> bool {
     cert.ready.as_ref().is_some_and(|c| c.status == Tri::True)
         && !cert.issuing.as_ref().is_some_and(|c| c.status == Tri::True)
+        && cert.last_failure.is_none()
 }
 
 pub fn issuance_chain(cert: &CertificateFacts, reads: &Issuance) -> Chain {
     let mut steps = Vec::new();
     let first = certificate_step(cert);
-    let go = first.verdict == Verdict::Done && !is_issued(cert);
+    let go = matches!(first.verdict, Verdict::Done | Verdict::Warn) && !is_issued(cert);
     let issued = is_issued(cert);
     steps.push(first);
     if !go {
@@ -233,6 +245,13 @@ fn says(cond: &Cond) -> String {
     cond.says()
 }
 
+fn time(at: i64) -> String {
+    chrono::DateTime::from_timestamp(at, 0).map_or_else(
+        || "an unknown time".into(),
+        |t| t.format("%Y-%m-%d %H:%M UTC").to_string(),
+    )
+}
+
 fn certificate_step(cert: &CertificateFacts) -> Step {
     let step =
         |verdict, says: String| Step::new(StepKind::Certificate, verdict, says).of(&cert.name);
@@ -246,6 +265,14 @@ fn certificate_step(cert: &CertificateFacts) -> Step {
         return step(Verdict::Done, words);
     }
     match ready {
+        Some(ready) if ready.status == Tri::True && cert.last_failure.is_some() => step(
+            Verdict::Warn,
+            format!(
+                "{}; the last attempt to renew it failed at {}",
+                says(ready),
+                time(cert.last_failure.unwrap_or_default())
+            ),
+        ),
         Some(ready) if ready.status == Tri::True => step(Verdict::Done, says(ready)),
         Some(ready) if ready.status == Tri::False => step(Verdict::Broken, says(ready)),
         Some(ready) => step(Verdict::Unknown, says(ready)),
@@ -272,15 +299,14 @@ fn request_step(cert: &CertificateFacts, lookup: &Lookup<RequestFacts>) -> (Step
         }
         Lookup::Read(Ok(list)) => list,
     };
+    // The request of the revision being issued: the one after the last
+    // issued. An older request, signed or not, is not this issuance's.
+    let wanted = cert.revision.unwrap_or(0) + 1;
     let owned = list
         .items
         .iter()
-        .filter(|r| r.owners.contains(&cert.uid))
-        .max_by(|a, b| {
-            a.revision
-                .cmp(&b.revision)
-                .then_with(|| a.name.cmp(&b.name))
-        });
+        .filter(|r| r.owners.contains(&cert.uid) && r.revision == Some(wanted))
+        .max_by(|a, b| a.name.cmp(&b.name));
     let Some(request) = owned else {
         return if list.cut {
             unknown("the CertificateRequest list was cut, so the request may be past it".into())
@@ -289,7 +315,9 @@ fn request_step(cert: &CertificateFacts, lookup: &Lookup<RequestFacts>) -> (Step
                 Step::new(
                     kind,
                     Verdict::Waiting,
-                    "cert-manager has not made a CertificateRequest yet",
+                    format!(
+                        "cert-manager has not made the CertificateRequest for revision {wanted} yet"
+                    ),
                 ),
                 None,
             )

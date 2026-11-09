@@ -120,8 +120,9 @@ impl CertsRead {
 struct Kinds {
     certificate: ResourceKind,
     request: ResourceKind,
-    order: Option<ResourceKind>,
-    challenge: Option<ResourceKind>,
+    /// Orders and Challenges: none when the ACME group is not served (an
+    /// issuer that isn't ACME), and the failure when it could not be read.
+    acme: Result<Option<(ResourceKind, ResourceKind)>, Failure>,
 }
 
 async fn discover(client: &kube::Client) -> (Manager, Option<Kinds>) {
@@ -151,22 +152,20 @@ async fn discover(client: &kube::Client) -> (Manager, Option<Kinds>) {
     let (Some(certificate), Some(request)) = (certificate, request) else {
         return (Manager::Incomplete { missing }, None);
     };
-    let (mut order, mut challenge) = (None, None);
-    if let Some(acme) = groups.iter().find(|g| g.name == ACME_GROUP)
-        && let Ok(kinds) = list_group_kinds(client, acme).await
-    {
-        order = find(&kinds.kinds, "Order");
-        challenge = find(&kinds.kinds, "Challenge");
-    }
+    let acme = match groups.iter().find(|g| g.name == ACME_GROUP) {
+        None => Ok(None),
+        Some(group) => list_group_kinds(client, group)
+            .await
+            .map(|kinds| find(&kinds.kinds, "Order").zip(find(&kinds.kinds, "Challenge"))),
+    };
     (
         Manager::Ready {
-            acme: order.is_some() && challenge.is_some(),
+            acme: matches!(acme, Ok(Some(_))),
         },
         Some(Kinds {
             certificate,
             request,
-            order,
-            challenge,
+            acme,
         }),
     )
 }
@@ -230,17 +229,19 @@ pub async fn read_certificates(client: &kube::Client) -> CertsRead {
             let requests = Lookup::Read(
                 list_as(client, &kinds.request, ISSUANCE_LIMIT, RequestFacts::parse).await,
             );
-            let orders = match &kinds.order {
-                Some(kind) => {
-                    Lookup::Read(list_as(client, kind, ISSUANCE_LIMIT, OrderFacts::parse).await)
-                }
-                None => Lookup::NotServed,
-            };
-            let challenges = match &kinds.challenge {
-                Some(kind) => {
-                    Lookup::Read(list_as(client, kind, ISSUANCE_LIMIT, ChallengeFacts::parse).await)
-                }
-                None => Lookup::NotServed,
+            let (orders, challenges) = match &kinds.acme {
+                Ok(Some((order, challenge))) => (
+                    Lookup::Read(list_as(client, order, ISSUANCE_LIMIT, OrderFacts::parse).await),
+                    Lookup::Read(
+                        list_as(client, challenge, ISSUANCE_LIMIT, ChallengeFacts::parse).await,
+                    ),
+                ),
+                Ok(None) => (Lookup::NotServed, Lookup::NotServed),
+                // A refused discovery is not "not ACME": Unknown, with why.
+                Err(failure) => (
+                    Lookup::Read(Err(failure.clone())),
+                    Lookup::Read(Err(failure.clone())),
+                ),
             };
             Issuance {
                 requests,
