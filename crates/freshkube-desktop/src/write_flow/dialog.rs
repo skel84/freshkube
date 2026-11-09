@@ -48,11 +48,20 @@ pub(super) fn open(
         let actions = actions(&flow, cx);
         // Escape must not dismiss a destructive action in its cancel window
         // and leave it running: only its Cancel ends that.
-        freshkube_ui::dialog::frame(dialog, 520., title, flow.clone(), actions, window)
-            .keyboard(!countdown)
-            // The cancel window ends only by its own Cancel or the send: the
-            // ✕ would close the dialog and leave the write running.
-            .close_button(!countdown)
+        let scroll = flow.read(cx).scroll.clone();
+        freshkube_ui::dialog::frame_scrolled(
+            dialog,
+            520.,
+            title,
+            flow.clone(),
+            actions,
+            &scroll,
+            window,
+        )
+        .keyboard(!countdown)
+        // The cancel window ends only by its own Cancel or the send: the
+        // ✕ would close the dialog and leave the write running.
+        .close_button(!countdown)
     });
     // The typed name is the first thing a protected dialog wants.
 }

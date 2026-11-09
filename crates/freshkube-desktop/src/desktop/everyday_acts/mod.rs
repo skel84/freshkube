@@ -157,7 +157,8 @@ impl Pilot {
             } else {
                 subject
             };
-            let runner = super::write_runner::example_runner(&runtime, who, cell);
+            let runner =
+                super::write_runner::example_runner_of(&runtime, who, cell, vec![object.clone()]);
             self.begin_everyday(runner, subject, act.act, &act.identity, window, cx);
             return;
         }

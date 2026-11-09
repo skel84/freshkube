@@ -184,7 +184,11 @@ impl ChangePage {
         // The placeholder for the pull request card: a plain banner, in the
         // shared look, until the card is designed.
         let pull = self.pull.line().map(|line| {
-            ui::banner(line.tone, None, line.text.clone(), None, cx)
+            // Whole where there is room; in a short window without its
+            // secondary parts, so it wraps in a line or two and is never
+            // cut by the capped block. The label keeps all of it.
+            let shown = if short { &line.short } else { &line.text };
+            ui::banner(line.tone, None, shown.clone(), None, cx)
                 .id("change-pull")
                 .aria_label(line.text.clone())
                 .test_support()
@@ -193,12 +197,19 @@ impl ChangePage {
         if refresh.is_none() && missing.is_none() && pull.is_none() {
             return None;
         }
+        let banners = usize::from(refresh.is_some())
+            + usize::from(missing.is_some())
+            + usize::from(pull.is_some());
+        // A lone banner is never capped (#981): it fits whole in a line or
+        // two, so there is nothing to scroll and nothing to cut; several
+        // share the capped block.
+        let capped = short && banners > 1;
         let children = [v_flex()
             .gap(dp(page::PANE_PADDING_Y))
             .children(refresh.into_iter().chain(missing).chain(pull))];
         // A short window caps the block, so the banners leave the trail
         // its room; any other shows every banner whole.
-        let notes = if short {
+        let notes = if capped {
             page::capped_notes(
                 "change-notes",
                 self.notes_cap(window),
@@ -215,7 +226,7 @@ impl ChangePage {
         .min_w_0()
         .px(dp(page::PANE_PADDING))
         .py(dp(page::PANE_PADDING_Y))
-        .when(short, |this| {
+        .when(capped, |this| {
             let scroll = self.notes_scroll.clone();
             this.on_scroll_wheel(move |event, window, cx| {
                 // The block keeps the wheel until it reaches its end
@@ -238,7 +249,7 @@ impl ChangePage {
         Some(
             v_flex()
                 .child(notes)
-                .when(short, |this| {
+                .when(capped, |this| {
                     this.child(
                         div()
                             .flex_none()

@@ -95,6 +95,48 @@ pub fn diff(before: &Value, after: &Value) -> Vec<FieldChange> {
     changes
 }
 
+/// `patch` laid over `base` as a merge patch is: objects merge key by key,
+/// anything else (an array, a scalar) replaces. What example data's dry run
+/// answers with.
+pub fn overlay(base: &Value, patch: &Value) -> Value {
+    match (base, patch) {
+        (Value::Object(old), Value::Object(new)) => {
+            let mut out = old.clone();
+            for (key, value) in new {
+                let merged = match old.get(key) {
+                    Some(was) => overlay(was, value),
+                    None => value.clone(),
+                };
+                out.insert(key.clone(), merged);
+            }
+            Value::Object(out)
+        }
+        // A list whose items are named (containers, ports, env) merges by
+        // name, as server-side apply does; any other list is replaced.
+        (Value::Array(old), Value::Array(new)) if named(old) && named(new) => {
+            let mut out = old.clone();
+            for item in new {
+                match out
+                    .iter()
+                    .position(|was| was.get("name") == item.get("name"))
+                {
+                    Some(at) => out[at] = overlay(&out[at], item),
+                    None => out.push(item.clone()),
+                }
+            }
+            Value::Array(out)
+        }
+        (_, other) => other.clone(),
+    }
+}
+
+fn named(items: &[Value]) -> bool {
+    !items.is_empty()
+        && items
+            .iter()
+            .all(|item| item.get("name").is_some_and(Value::is_string))
+}
+
 /// The diff of one object's write. A Secret is read as metadata only, so its
 /// diff is its metadata's and, for the keys the write names under `data` and
 /// `stringData`, those key names as changed: what each held before is not
@@ -128,6 +170,27 @@ pub fn diff_for(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_overlay_merges_objects_and_named_lists_and_replaces_the_rest() {
+        let base = json!({"spec": {"replicas": 2, "args": ["a"], "containers": [
+            {"name": "web", "image": "a:1", "ports": [80]}, {"name": "side", "image": "b:1"}]}});
+        let patch = json!({"spec": {"replicas": 5, "args": ["b", "c"],
+            "containers": [{"name": "web", "image": "a:2"}]}});
+        let after = overlay(&base, &patch);
+        assert_eq!(
+            after,
+            json!({"spec": {"replicas": 5, "args": ["b", "c"], "containers": [
+                {"name": "web", "image": "a:2", "ports": [80]}, {"name": "side", "image": "b:1"}]}})
+        );
+        let kinds: Vec<_> = diff(&base, &after)
+            .into_iter()
+            .map(|change| (change.path, change.kind))
+            .collect();
+        assert!(kinds.contains(&("spec.replicas".into(), ChangeKind::Changed)));
+        assert!(kinds.contains(&("spec.args[1]".into(), ChangeKind::Added)));
+        assert!(kinds.contains(&("spec.containers[0].image".into(), ChangeKind::Changed)));
+    }
 
     #[test]
     fn safety_g13_a_secrets_diff_holds_its_metadata_and_the_key_names_it_writes_and_nothing_of_its_values()

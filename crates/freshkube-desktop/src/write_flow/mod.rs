@@ -119,6 +119,9 @@ pub(crate) struct WriteFlow {
     /// earlier one that arrives late is not taken for this one's.
     dialog_epoch: std::rc::Rc<std::cell::Cell<u64>>,
     check: Option<(OwnedJob, Task<()>)>,
+    /// The dialog body's scroll, kept between draws so its scrollbar and
+    /// position stay.
+    scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -138,6 +141,7 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
         dialog_open: false,
         dialog_epoch: Default::default(),
         check: None,
+        scroll: ScrollHandle::new(),
         _subscriptions: vec![],
     });
     if asks.confirm || asks.blocked.is_some() {
@@ -167,6 +171,7 @@ pub(crate) fn start_prepared(
         dialog_open: false,
         dialog_epoch: Default::default(),
         check: None,
+        scroll: ScrollHandle::new(),
         _subscriptions: vec![],
     });
     flow.update(cx, |flow, cx| {

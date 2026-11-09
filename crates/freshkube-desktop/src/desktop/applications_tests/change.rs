@@ -2313,6 +2313,51 @@ fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut Test
     }
 }
 
+/// #981: at 760x560 with text 20 the pull request banner drops its secondary
+/// parts and wraps: it is never cut by the block, which shows no scroll thumb
+/// of its own, and its label still says everything.
+#[gpui_kit::test]
+fn the_pull_request_banner_fits_whole_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = on_stage_of(cx, 760., 560., Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let banner = window.find("change-pull");
+        let at = banner.bounds();
+        assert!(
+            at.is_contained_within(&notes),
+            "the banner {at:?} is cut by {notes:?}"
+        );
+        let words = banner.label().unwrap_or_default().to_owned();
+        assert!(words.starts_with("Pull request #"), "{words}");
+        assert!(
+            words.matches('·').count() >= 2,
+            "the label says it all: {words}"
+        );
+        // The block is the banner's own height plus its padding: nothing is
+        // left to scroll to.
+        assert!(
+            notes.bottom() - at.bottom() <= freshkube_ui::ui::dp_px(24., window),
+            "{notes:?} taller than its banner {at:?}"
+        );
+    })
+    .unwrap();
+}
+
 /// #887: with room to spare, every banner shows whole and nothing scrolls.
 #[gpui_kit::test]
 fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {

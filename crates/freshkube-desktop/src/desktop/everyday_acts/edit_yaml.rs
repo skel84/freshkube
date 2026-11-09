@@ -28,7 +28,11 @@ impl Pilot {
         let cell = entry_level_cell(&at.entry, who.protection, cx);
         if matches!(act.source.access, ClusterAccess::Example(_)) {
             release(&act.identity, cx);
-            let runner = super::write_runner::example_runner(&runtime, who, cell);
+            let now = chrono::Utc::now().timestamp();
+            let objects = crate::resources::example::object_json(&act.identity, now)
+                .into_iter()
+                .collect();
+            let runner = super::write_runner::example_runner_of(&runtime, who, cell, objects);
             start(
                 runner,
                 runtime,
