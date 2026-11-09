@@ -211,6 +211,11 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
             window.render_frame(cx);
             assert_eq!(view.read(cx).navigation.page, page);
             assert!(window.find("needs-talosconfig").visible(), "{page:?}");
+            assert_eq!(
+                window.find("needs-talosconfig").label(),
+                Some("This page is for Talos Linux nodes\nThis window opened with a kubeconfig only. Choose a talosconfig in Settings › Connection to read these nodes. You can keep browsing Kubernetes without it."),
+                "{page:?}"
+            );
         }
         view.update(cx, |view, cx| view.navigate(Page::Databases, window, cx));
         window.render_frame(cx);

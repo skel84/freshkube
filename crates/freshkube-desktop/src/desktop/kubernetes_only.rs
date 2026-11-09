@@ -25,7 +25,7 @@ const READ_DEADLINE: Duration = Duration::from_secs(10);
 /// The access bounds connecting itself; this only catches a stuck worker.
 const CONNECT_DEADLINE: Duration = Duration::from_secs(40);
 
-const NEEDS_TALOS_TITLE: &str = "This page is for Talos Linux nodes.";
+const NEEDS_TALOS_TITLE: &str = "This page is for Talos Linux nodes";
 const NEEDS_TALOS_DESCRIPTION: &str = "This window opened with a kubeconfig only. Choose a talosconfig in Settings › Connection to read these nodes. You can keep browsing Kubernetes without it.";
 
 pub(super) struct KubernetesOnly {
@@ -754,6 +754,7 @@ impl Pilot {
                 )
                 .id("needs-talosconfig")
                 .test_support()
+                .aria_label(format!("{NEEDS_TALOS_TITLE}\n{NEEDS_TALOS_DESCRIPTION}"))
                 .role(Role::Status),
             )
             .into_any_element()
@@ -827,18 +828,6 @@ mod tests {
     use crate::resources::direct::DirectAccess;
     use freshkube_core::resources::discover_contexts;
     use gpui_kit::{AppContext, TestAppContext};
-
-    #[test]
-    fn talos_page_explains_what_it_is_for_and_how_to_connect() {
-        assert_eq!(
-            super::NEEDS_TALOS_TITLE,
-            "This page is for Talos Linux nodes."
-        );
-        assert_eq!(
-            super::NEEDS_TALOS_DESCRIPTION,
-            "This window opened with a kubeconfig only. Choose a talosconfig in Settings › Connection to read these nodes. You can keep browsing Kubernetes without it."
-        );
-    }
 
     #[gpui_kit::test]
     fn direct_reload_preserves_unchanged_access_but_replaces_same_path_configuration(

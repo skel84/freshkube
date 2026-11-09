@@ -725,7 +725,7 @@ fn core_alert(alert: &LifecycleAlert, view: &LifecycleView, rows: &[NodeRow]) ->
                     unavailable_reason(&view.snapshot.talos_discovery),
                 ),
                 (
-                    "Kubernetes roster",
+                    "Kubernetes nodes",
                     unavailable_reason(&view.snapshot.kubernetes_roster),
                 ),
             ] {
@@ -829,7 +829,7 @@ fn unavailable_sources(view: &LifecycleView, rows: &[NodeRow]) -> Vec<String> {
     let mut out = Vec::new();
     note(&mut out, "Cluster identity", &snapshot.identity);
     note(&mut out, "Talos discovery", &snapshot.talos_discovery);
-    note(&mut out, "Kubernetes roster", &snapshot.kubernetes_roster);
+    note(&mut out, "Kubernetes nodes", &snapshot.kubernetes_roster);
     note(&mut out, "Kubelet versions", &view.kubelets);
     note(&mut out, "etcd pre-operation", &snapshot.etcd_pre_operation);
     let silent: Vec<&str> = rows

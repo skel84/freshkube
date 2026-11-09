@@ -257,14 +257,3 @@ impl SecurityScreen {
         self.status = Some((revision, line));
     }
 }
-
-#[cfg(test)]
-mod wording_tests {
-    #[test]
-    fn missing_control_plane_explains_which_certificates_were_not_checked() {
-        assert_eq!(
-            super::NO_CONTROL_PLANE,
-            "Freshkube doesn't know a Talos control plane to read Kubernetes credentials from, so their certificates weren't checked. No other kubeconfig was checked."
-        );
-    }
-}

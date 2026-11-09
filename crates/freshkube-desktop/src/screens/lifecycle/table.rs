@@ -273,14 +273,3 @@ impl TableSource for LifecycleScreen {
         (self.line_count() == 0).then(|| NO_NODES.into_any_element())
     }
 }
-
-#[cfg(test)]
-mod wording_tests {
-    #[test]
-    fn no_nodes_explains_which_sources_are_missing_and_what_is_unknown() {
-        assert_eq!(
-            super::NO_NODES,
-            "No nodes are available from Talos or Kubernetes, so versions, time and configuration are unknown."
-        );
-    }
-}

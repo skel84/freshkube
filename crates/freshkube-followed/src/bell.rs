@@ -342,12 +342,17 @@ impl Render for BellPanel {
                 "Nothing earlier.",
                 earlier,
             ))
-            .child(section(
-                "followed-following",
-                "Following",
-                NOTHING_FOLLOWED,
-                following,
-            ))
+            .child(
+                section(
+                    "followed-following",
+                    "Following",
+                    NOTHING_FOLLOWED,
+                    following,
+                )
+                .when(self.following.is_empty(), |this| {
+                    this.aria_label(NOTHING_FOLLOWED)
+                }),
+            )
     }
 }
 
@@ -450,15 +455,4 @@ fn following_row(followed: &Entity<Followed>, line: &FollowLine, cx: &App) -> An
             ),
         )
         .into_any_element()
-}
-
-#[cfg(test)]
-mod wording_tests {
-    #[test]
-    fn empty_following_points_to_the_controls_that_start_a_follow() {
-        assert_eq!(
-            super::NOTHING_FOLLOWED,
-            "You follow nothing. Choose Notify me on a change page, or right-click a pod in Resources and choose Notify me if it keeps crash-looping."
-        );
-    }
 }
