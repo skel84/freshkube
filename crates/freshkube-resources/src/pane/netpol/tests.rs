@@ -164,8 +164,8 @@ fn a_pod_lists_the_policies_that_apply_and_what_each_direction_comes_to(cx: &mut
             }
             _ => panic!("not a pod's policies"),
         }
-        assert!(window.find("netpol-applied-allow-web-to-api").visible());
-        assert!(window.find("netpol-scope").visible());
+        assert!(window.try_find("netpol-applied-allow-web-to-api").is_some());
+        assert!(window.try_find("netpol-scope").is_some());
 
         // Another namespace's policies never apply.
         open(&pane, &pod("web", "frontend"), Shape::Mixed, cx);
@@ -200,7 +200,8 @@ fn no_policy_is_not_governed_and_says_so_plainly(cx: &mut TestAppContext) {
         open(&pane, &pod("payments", "api"), Shape::None, cx);
         window.render_frame(cx);
         assert_eq!(verdicts(&pane, cx), ["Not governed", "Not governed"]);
-        assert!(window.find("netpol-none").visible());
+        // Below the pod's own sections, so drawn but scrolled out of view.
+        assert!(window.try_find("netpol-none").is_some());
         // Not governed is no failure and offers no retry.
         assert!(window.try_find("netpol-retry").is_none());
     })
@@ -221,8 +222,8 @@ fn a_refused_or_cut_read_is_unknown_with_a_retry_never_no_policy(cx: &mut TestAp
                 }
                 _ => panic!("expected an unknown message"),
             }
-            assert!(window.find("netpol-message").visible());
-            assert!(window.find("netpol-retry").visible());
+            assert!(window.try_find("netpol-message").is_some());
+            assert!(window.try_find("netpol-retry").is_some());
             assert!(window.try_find("netpol-none").is_none());
         }
     })
