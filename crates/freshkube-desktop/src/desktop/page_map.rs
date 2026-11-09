@@ -135,7 +135,8 @@ impl Pages {
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         resources.update(cx, |screen, cx| {
             screen.set_services_shape(options.debug.services, cx);
-            screen.set_routes_shape(options.debug.routes, cx)
+            screen.set_routes_shape(options.debug.routes, cx);
+            screen.set_netpol_shape(options.debug.netpol, cx)
         });
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), options.debug.agent, cx));
         // Its height and whether it shows are laid out by the shell.

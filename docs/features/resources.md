@@ -75,3 +75,5 @@ A dock tab (`desktop/dock/`) captures its cluster (`Origin`) when it starts: a l
 Tests: `freshkube-core/src/resources/traffic/tests.rs` (each state, the fallback, the requests a fake API records) and `pane/traffic/tests.rs` (each shape, refused, the workload chain, a stale or hidden answer).
 
 An HTTPRoute's pane has a third tab, Trace, and the compact trace in its Overview ([traffic.md](traffic.md), #949 N2a).
+
+A NetworkPolicy's, a Pod's and a workload's Overview also show the Network policy block ([network-policy.md](network-policy.md), #949 N5).
