@@ -700,3 +700,47 @@ fn a_tall_diff_is_never_cut_scrolls_and_shows_its_scrollbar(cx: &mut TestAppCont
     })
     .unwrap();
 }
+
+/// A dialog shown again because the level got stricter starts at its top,
+/// where the typed name is, not where the last one was scrolled to.
+#[gpui_kit::test]
+fn a_dialog_shown_again_starts_scrolled_to_its_top(cx: &mut TestAppContext) {
+    use freshkube_core::write::Change;
+    let h = harness_sized(cx, Protection::Guarded, 560., Cluster::new);
+    cx.update(|cx| {
+        crate::text_size::install(None, cx);
+        crate::text_size::set(20., cx);
+    });
+    cx.simulate_window_resize(h.handle, size(px(760.), px(560.)));
+    let mut action = fake::set_image("registry.example/web:2");
+    action.changes[0].change = Change::MergePatch(serde_json::json!({"spec": {
+        "replicas": 7, "minReadySeconds": 5, "revisionHistoryLimit": 4,
+        "progressDeadlineSeconds": 90, "paused": true,
+        "template": {"metadata": {"labels": {"a": "1", "b": "2", "c": "3"}}}}}));
+    let flow = h.begin(cx, action);
+    cx.update_window(h.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.scroll(
+            "app-dialog-body",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-2000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(flow.read(cx).scroll.offset().y < px(0.));
+    })
+    .unwrap();
+    cx.update(|cx| set_protection(Protection::Protected, cx));
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(2));
+    cx.update_window(h.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(flow.read(cx).scroll.offset().y, px(0.));
+        let body = window.find("app-dialog-body").bounds();
+        let prompt = window.find("write-type-prompt").bounds();
+        assert!(
+            prompt.top() >= body.top() && prompt.bottom() <= body.bottom(),
+            "{prompt:?} out of {body:?}"
+        );
+    })
+    .unwrap();
+}

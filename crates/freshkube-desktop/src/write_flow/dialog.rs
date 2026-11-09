@@ -22,11 +22,15 @@ use gpui_kit::component::WindowExt;
 pub(super) fn open(
     flow: &Entity<WriteFlow>,
     epoch: std::rc::Rc<std::cell::Cell<u64>>,
+    scroll: &ScrollHandle,
     window: &mut Window,
     cx: &mut App,
 ) {
     let mine = epoch.get() + 1;
     epoch.set(mine);
+    // A dialog shown again (the level got stricter) starts at its top, where
+    // the typed name is, not where the last one was scrolled to.
+    scroll.set_offset(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(0.)));
     let weak = flow.downgrade();
     // However the dialog goes, the flow is told: Cancel, Close and Escape
     // pop it without asking the flow.
@@ -36,6 +40,7 @@ pub(super) fn open(
         }
     });
     let flow = flow.clone();
+    let scroll = scroll.clone();
     window.open_dialog(cx, move |dialog, window, cx| {
         let _kept = &dismissed;
         let (title, countdown) = {
@@ -48,7 +53,6 @@ pub(super) fn open(
         let actions = actions(&flow, cx);
         // Escape must not dismiss a destructive action in its cancel window
         // and leave it running: only its Cancel ends that.
-        let scroll = flow.read(cx).scroll.clone();
         freshkube_ui::dialog::frame_scrolled(
             dialog,
             520.,

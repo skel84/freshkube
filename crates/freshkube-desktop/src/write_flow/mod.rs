@@ -145,8 +145,11 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
         _subscriptions: vec![],
     });
     if asks.confirm || asks.blocked.is_some() {
-        let epoch = flow.read(cx).dialog_epoch.clone();
-        dialog::open(&flow, epoch, window, cx);
+        let (epoch, scroll) = {
+            let flow = flow.read(cx);
+            (flow.dialog_epoch.clone(), flow.scroll.clone())
+        };
+        dialog::open(&flow, epoch, &scroll, window, cx);
         flow.update(cx, |flow, _| flow.dialog_open = true);
     }
     flow.update(cx, |flow, cx| flow.check(window, cx));
@@ -269,7 +272,13 @@ impl WriteFlow {
         if !self.dialog_open {
             // Nothing was asked, but there is something to say: a refusal.
             self.dialog_open = true;
-            dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
+            dialog::open(
+                &cx.entity(),
+                self.dialog_epoch.clone(),
+                &self.scroll,
+                window,
+                cx,
+            );
         }
         cx.notify();
     }
@@ -393,7 +402,13 @@ impl WriteFlow {
                 self.stage = Stage::Shown(Dialog::Refused { text });
                 if !self.dialog_open {
                     self.dialog_open = true;
-                    dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
+                    dialog::open(
+                        &cx.entity(),
+                        self.dialog_epoch.clone(),
+                        &self.scroll,
+                        window,
+                        cx,
+                    );
                 }
                 cx.notify();
                 return;
@@ -480,7 +495,13 @@ impl WriteFlow {
             self.check(window, cx);
             if !self.dialog_open {
                 self.dialog_open = true;
-                dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
+                dialog::open(
+                    &cx.entity(),
+                    self.dialog_epoch.clone(),
+                    &self.scroll,
+                    window,
+                    cx,
+                );
             }
             return;
         }

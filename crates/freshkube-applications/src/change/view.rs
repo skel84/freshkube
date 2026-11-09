@@ -200,10 +200,12 @@ impl ChangePage {
         let banners = usize::from(refresh.is_some())
             + usize::from(missing.is_some())
             + usize::from(pull.is_some());
-        // A lone banner is never capped (#981): it fits whole in a line or
-        // two, so there is nothing to scroll and nothing to cut; several
-        // share the capped block.
-        let capped = short && banners > 1;
+        // A lone pull request banner is never capped (#981): it fits whole in
+        // a line or two, so there is nothing to scroll and nothing to cut.
+        // Any other banner, which can be long, and several together share the
+        // capped block.
+        let lone_pull = banners == 1 && pull.is_some();
+        let capped = short && !lone_pull;
         let children = [v_flex()
             .gap(dp(page::PANE_PADDING_Y))
             .children(refresh.into_iter().chain(missing).chain(pull))];

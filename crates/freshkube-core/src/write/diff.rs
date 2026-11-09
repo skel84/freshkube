@@ -95,37 +95,61 @@ pub fn diff(before: &Value, after: &Value) -> Vec<FieldChange> {
     changes
 }
 
-/// `patch` laid over `base` as a merge patch is: objects merge key by key,
-/// anything else (an array, a scalar) replaces. What example data's dry run
-/// answers with.
-pub fn overlay(base: &Value, patch: &Value) -> Value {
+/// How a change is laid over the object it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Laid {
+    /// A JSON merge patch (RFC 7386): objects merge key by key, a `null`
+    /// removes its key, and anything else, a list included, replaces.
+    Merge,
+    /// Server-side apply: objects merge key by key, a list whose items are
+    /// named (containers, ports, env) merges by name, and any other list
+    /// replaces.
+    Apply,
+}
+
+/// `patch` laid over `base` the way the server would, for example data's dry
+/// run: what a live dry run's reply is compared with.
+pub fn overlay(base: &Value, patch: &Value, how: Laid) -> Value {
     match (base, patch) {
         (Value::Object(old), Value::Object(new)) => {
             let mut out = old.clone();
             for (key, value) in new {
+                if how == Laid::Merge && value.is_null() {
+                    out.remove(key);
+                    continue;
+                }
                 let merged = match old.get(key) {
-                    Some(was) => overlay(was, value),
+                    Some(was) => overlay(was, value, how),
+                    // A new object arrives without the nulls it holds.
+                    None if how == Laid::Merge => {
+                        overlay(&Value::Object(Default::default()), value, how)
+                    }
                     None => value.clone(),
                 };
                 out.insert(key.clone(), merged);
             }
             Value::Object(out)
         }
-        // A list whose items are named (containers, ports, env) merges by
-        // name, as server-side apply does; any other list is replaced.
-        (Value::Array(old), Value::Array(new)) if named(old) && named(new) => {
+        (Value::Array(old), Value::Array(new))
+            if how == Laid::Apply && named(old) && named(new) =>
+        {
             let mut out = old.clone();
             for item in new {
                 match out
                     .iter()
                     .position(|was| was.get("name") == item.get("name"))
                 {
-                    Some(at) => out[at] = overlay(&out[at], item),
+                    Some(at) => out[at] = overlay(&out[at], item, how),
                     None => out.push(item.clone()),
                 }
             }
             Value::Array(out)
         }
+        (_, Value::Object(new)) if how == Laid::Merge => overlay(
+            &Value::Object(Default::default()),
+            &Value::Object(new.clone()),
+            how,
+        ),
         (_, other) => other.clone(),
     }
 }
@@ -172,24 +196,47 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn an_overlay_merges_objects_and_named_lists_and_replaces_the_rest() {
-        let base = json!({"spec": {"replicas": 2, "args": ["a"], "containers": [
+    fn an_overlay_follows_the_kind_of_change_it_lays() {
+        let base = json!({"spec": {"replicas": 2, "args": ["a"], "paused": true, "containers": [
             {"name": "web", "image": "a:1", "ports": [80]}, {"name": "side", "image": "b:1"}]}});
-        let patch = json!({"spec": {"replicas": 5, "args": ["b", "c"],
+        let patch = json!({"spec": {"replicas": 5, "args": ["b", "c"], "paused": null,
             "containers": [{"name": "web", "image": "a:2"}]}});
-        let after = overlay(&base, &patch);
-        assert_eq!(
-            after,
-            json!({"spec": {"replicas": 5, "args": ["b", "c"], "containers": [
-                {"name": "web", "image": "a:2", "ports": [80]}, {"name": "side", "image": "b:1"}]}})
+        let kinds = |after: &Value| -> Vec<_> {
+            diff(&base, after)
+                .into_iter()
+                .map(|change| (change.path, change.kind))
+                .collect()
+        };
+        // Server-side apply: named lists merge by name; nothing is removed.
+        let applied = overlay(&base, &patch, Laid::Apply);
+        assert_eq!(applied["spec"]["containers"][0]["ports"], json!([80]));
+        assert_eq!(applied["spec"]["containers"][1]["name"], "side");
+        let seen = kinds(&applied);
+        assert!(seen.contains(&("spec.replicas".into(), ChangeKind::Changed)));
+        assert!(seen.contains(&("spec.args[1]".into(), ChangeKind::Added)));
+        assert!(seen.contains(&("spec.containers[0].image".into(), ChangeKind::Changed)));
+        // A merge patch: a null removes its key and a list replaces, so the
+        // removed key and the removed container both read Removed.
+        let merged = overlay(&base, &patch, Laid::Merge);
+        assert!(merged["spec"].get("paused").is_none(), "{merged}");
+        assert_eq!(merged["spec"]["containers"].as_array().unwrap().len(), 1);
+        let seen = kinds(&merged);
+        assert!(
+            seen.contains(&("spec.paused".into(), ChangeKind::Removed)),
+            "{seen:?}"
         );
-        let kinds: Vec<_> = diff(&base, &after)
-            .into_iter()
-            .map(|change| (change.path, change.kind))
-            .collect();
-        assert!(kinds.contains(&("spec.replicas".into(), ChangeKind::Changed)));
-        assert!(kinds.contains(&("spec.args[1]".into(), ChangeKind::Added)));
-        assert!(kinds.contains(&("spec.containers[0].image".into(), ChangeKind::Changed)));
+        assert!(
+            seen.contains(&("spec.containers[1].image".into(), ChangeKind::Removed)),
+            "{seen:?}"
+        );
+        assert!(
+            seen.contains(&("spec.containers[0].ports[0]".into(), ChangeKind::Removed)),
+            "{seen:?}"
+        );
+        assert!(seen.contains(&("spec.replicas".into(), ChangeKind::Changed)));
+        // A null inside a new object is dropped, not kept.
+        let fresh = overlay(&json!({}), &json!({"a": {"b": null, "c": 1}}), Laid::Merge);
+        assert_eq!(fresh, json!({"a": {"c": 1}}));
     }
 
     #[test]

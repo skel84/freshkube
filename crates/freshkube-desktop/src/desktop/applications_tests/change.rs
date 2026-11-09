@@ -2358,6 +2358,54 @@ fn the_pull_request_banner_fits_whole_at_760_by_560_and_text_20(cx: &mut TestApp
     .unwrap();
 }
 
+/// #981: only a lone pull request banner is left uncapped. A lone banner of
+/// another kind, here a long refresh failure with no pull request to show,
+/// stays in the capped block, which scrolls instead of growing.
+#[gpui_kit::test]
+fn a_lone_banner_that_is_not_the_pull_request_stays_capped(cx: &mut TestAppContext) {
+    let why = "connection refused by core-fra.example.test:6443 ".repeat(8);
+    let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::ImageOnly);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        change(&view, cx)
+            .unwrap()
+            .update(cx, |page, cx| page.fail_read(&why, window, cx));
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(freshkube_ui::page::is_short(window));
+        assert!(window.try_find("change-pull").is_none());
+        let notes = window.find("change-notes").bounds();
+        let banner = window.find("change-stale").bounds();
+        assert!(
+            banner.bottom() > notes.bottom(),
+            "the banner {banner:?} grew the block {notes:?} instead of scrolling in it"
+        );
+        let top = banner.top();
+        window.scroll(
+            "change-notes",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-30.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(
+            window.find("change-stale").bounds().top() < top,
+            "the block scrolled"
+        );
+    })
+    .unwrap();
+}
+
 /// #887: with room to spare, every banner shows whole and nothing scrolls.
 #[gpui_kit::test]
 fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {

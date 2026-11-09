@@ -537,7 +537,7 @@ async fn the_audit_records_what_the_person_changed_not_every_field_the_body_repe
 
 #[tokio::test(start_paused = true)]
 async fn safety_g13_an_edit_of_a_secret_never_sends_data_or_string_data_whatever_the_text_holds() {
-    let (cluster, _dir) = (Cluster::new(), tmp());
+    let (cluster, dir) = (Cluster::new(), tmp());
     let session = open(&cluster, &fake::db()).await;
     // The editor's text has no placeholder to type into.
     let text = session.editable_text();
@@ -559,8 +559,7 @@ async fn safety_g13_an_edit_of_a_secret_never_sends_data_or_string_data_whatever
     );
     assert!(typed.contains("stringData"), "{typed}");
     let action = session.describe(&typed).unwrap();
-    let change = &action.changes[0].change;
-    let (body, edited) = match change {
+    let (body, edited) = match &action.changes[0].change {
         crate::write::action::Change::Edit { body, edited } => (body, edited),
         other => panic!("{other:?}"),
     };
@@ -573,6 +572,28 @@ async fn safety_g13_an_edit_of_a_secret_never_sends_data_or_string_data_whatever
             .iter()
             .all(|path| !path.starts_with("data") && !path.starts_with("stringData")),
         "{edited:?}"
+    );
+    // Sent for real, every write on the wire, the dry run and the apply,
+    // carries neither key, and the Secret's data is untouched.
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let prepared = ready(&runner, action).await;
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert!(finished.succeeded());
+    let writes: Vec<_> = cluster
+        .recorder
+        .requests()
+        .into_iter()
+        .filter(|r| r.method != http::Method::GET && r.path == fake::SECRET)
+        .collect();
+    assert!(writes.len() >= 2, "a dry run and an apply: {writes:?}");
+    for request in &writes {
+        for key in ["\"data\"", "\"stringData\"", "bmV3", "abc"] {
+            assert!(!request.body.contains(key), "{key} sent: {request:?}");
+        }
+    }
+    assert_eq!(
+        cluster.object(fake::SECRET)["data"]["password"],
+        "aHVudGVyMg=="
     );
     // Not editing it at all is nothing to send, as before.
     assert_eq!(

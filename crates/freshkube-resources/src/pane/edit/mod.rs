@@ -63,8 +63,10 @@ struct Editing {
     marks: TextDecorationCollection,
     /// The text the editor started from.
     original: String,
-    /// The locked fields, as the strip under the toolbar lists them.
+    /// The locked fields, as the list under the toolbar opens to show them.
     locked: String,
+    /// How many there are, for the toolbar's disclosure.
+    locked_count: usize,
     /// A Secret's `data` and `stringData`, as the locked block's lines.
     locked_values: Vec<String>,
     /// Whether the locked list is open or one line.
@@ -77,6 +79,7 @@ struct Editing {
 pub(super) struct EditView {
     state: Entity<EditorState>,
     locked: String,
+    locked_count: usize,
     locked_values: Vec<String>,
     locked_open: bool,
     changed: usize,
@@ -114,6 +117,7 @@ impl DetailPane {
         Some(EditView {
             state: editing.state.clone(),
             locked: editing.locked.clone(),
+            locked_count: editing.locked_count,
             locked_values: editing.locked_values.clone(),
             locked_open: editing.locked_open,
             changed: editing.changed,
@@ -274,6 +278,7 @@ impl DetailPane {
         window.focus(&state.read(cx).focus_handle(cx).clone(), cx);
         Editing {
             locked: session.locked().join(", "),
+            locked_count: session.locked().len(),
             locked_values: session.locked_values(),
             locked_open: false,
             session: Arc::new(session),
@@ -479,21 +484,18 @@ impl DetailPane {
 
     /// The disclosure in the toolbar that opens the list of locked fields.
     fn locked_toggle(&self, view: &EditView, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let open = view.locked_open;
-        let count = view.locked.split(", ").count();
-        let line = format!("{} Locked ({count})", if open { "▾" } else { "▸" });
-        div()
-            .id("detail-edit-locked")
-            .test_support()
-            .aria_label(line.clone())
-            .flex_none()
-            .px(dp(4.))
-            .text_size(dp(12.))
-            .text_color(p.muted)
-            .cursor_pointer()
+        let label = format!(
+            "{} Locked ({})",
+            if view.locked_open { "▾" } else { "▸" },
+            view.locked_count
+        );
+        Button::new("detail-edit-locked")
+            .ghost()
+            .xsmall()
+            .label(label.clone())
+            .accessibility_label(label)
+            .tooltip("Fields an edit can't change")
             .on_click(cx.listener(|pane, _, _, cx| pane.toggle_locked(cx)))
-            .child(line)
             .into_any_element()
     }
 

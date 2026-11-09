@@ -238,16 +238,18 @@ impl Runner {
                 && at("/metadata/namespace").unwrap_or_default()
                     == target.namespace.as_deref().unwrap_or_default()
         });
+        let laid = |before: &serde_json::Value, body, how| {
+            let after = super::diff::overlay(before, body, how);
+            super::diff::diff_for(target, &change.change, before, &after)
+        };
         match (held, &change.change) {
+            (Some(before), super::action::Change::MergePatch(body)) => {
+                laid(before, body, super::diff::Laid::Merge)
+            }
             (
                 Some(before),
-                super::action::Change::Apply(body)
-                | super::action::Change::MergePatch(body)
-                | super::action::Change::Edit { body, .. },
-            ) => {
-                let after = super::diff::overlay(before, body);
-                super::diff::diff_for(target, &change.change, before, &after)
-            }
+                super::action::Change::Apply(body) | super::action::Change::Edit { body, .. },
+            ) => laid(before, body, super::diff::Laid::Apply),
             _ => change
                 .change
                 .field_paths()
