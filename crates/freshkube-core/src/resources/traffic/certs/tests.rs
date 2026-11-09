@@ -1583,3 +1583,25 @@ fn a_failed_retry_under_a_certificate_that_still_serves_is_failing_not_not_valid
     e.assess(now);
     assert_eq!(e.state, CertState::Broken);
 }
+
+#[test]
+fn a_wrong_name_outranks_a_failing_renewal() {
+    let now = 1_000_000;
+    let mut cert = certificate(false, Some(Tri::True));
+    cert.last_failure = Some(now - 3_600);
+    cert.not_after = Some(now + 20 * DAY);
+    cert.names = vec!["a.example.com".into()];
+    let chain = issuance_chain(&cert, &reads(vec![], vec![], vec![]));
+    // The Certificate renews and fails, and serves a host it does not name.
+    let mut e = entry(
+        Some(&["a.example.com"]),
+        &["a.example.com", "b.example.com"],
+        cert.not_after,
+        now,
+    );
+    e.chain = Some(chain);
+    e.managed = Some(cert);
+    e.assess(now);
+    assert_eq!(e.state, CertState::WrongName);
+    assert_eq!(e.reason, "does not name b.example.com");
+}

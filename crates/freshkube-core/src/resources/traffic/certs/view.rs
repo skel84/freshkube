@@ -244,23 +244,24 @@ impl CertEntry {
     fn judge(&self, now: i64) -> (CertState, String) {
         // A renewal that failed while the certificate still serves is
         // Failing, whatever step of the retry broke: it is not yet not valid.
-        if let Some(chain) = &self.chain
-            && chain.has_warning()
-            && self.not_after.is_none_or(|end| end > now)
-            && let Some(warn) = chain
+        // It only keeps the chain's break from reading Not valid; a wrong
+        // name is the worse state and is checked first.
+        let failing = self.chain.as_ref().and_then(|chain| {
+            let warn = chain
                 .steps
                 .iter()
-                .find(|s| s.verdict == super::chain::Verdict::Warn)
-        {
-            let reason = match chain.stopped_at() {
-                Some(step) if step.verdict != super::chain::Verdict::Warn => {
-                    format!("{}; {}", warn.says, chain.line())
-                }
-                _ => warn.says.clone(),
-            };
-            return (CertState::Failing, reason);
-        }
-        if let Some(chain) = &self.chain
+                .find(|s| s.verdict == super::chain::Verdict::Warn)?;
+            self.not_after
+                .is_none_or(|end| end > now)
+                .then(|| match chain.stopped_at() {
+                    Some(step) if step.verdict != super::chain::Verdict::Warn => {
+                        format!("{}; {}", warn.says, chain.line())
+                    }
+                    _ => warn.says.clone(),
+                })
+        });
+        if failing.is_none()
+            && let Some(chain) = &self.chain
             && chain.is_broken()
         {
             return (CertState::Broken, chain.line());
@@ -308,6 +309,9 @@ impl CertEntry {
                 CertState::WrongName,
                 format!("does not name {}", self.wrong.join(", ")),
             );
+        }
+        if let Some(reason) = failing {
+            return (CertState::Failing, reason);
         }
         if let Some(chain) = &self.chain
             && !chain.is_finished()
