@@ -194,15 +194,7 @@ impl Runner {
             if self.example {
                 diffs.push(ObjectDiff {
                     object: change.target.label(),
-                    changes: change
-                        .change
-                        .field_paths()
-                        .into_iter()
-                        .map(|path| FieldChange {
-                            path,
-                            kind: super::diff::ChangeKind::Added,
-                        })
-                        .collect(),
+                    changes: self.example_diff(change),
                 });
                 inverses.push(None);
                 continue;
@@ -232,6 +224,42 @@ impl Runner {
             own: self.level.get(),
             inverses,
         }))
+    }
+
+    /// The diff of example data: the change laid over the example object it
+    /// names, compared as a live one is; the fields it names, all Added, when
+    /// no such object is held.
+    fn example_diff(&self, change: &ObjectChange) -> Vec<FieldChange> {
+        let target = &change.target;
+        let held = self.example_objects.iter().find(|object| {
+            let at = |pointer: &str| object.pointer(pointer).and_then(|v| v.as_str());
+            at("/kind") == Some(target.kind.as_str())
+                && at("/metadata/name") == Some(target.name.as_str())
+                && at("/metadata/namespace").unwrap_or_default()
+                    == target.namespace.as_deref().unwrap_or_default()
+        });
+        let laid = |before: &serde_json::Value, body, how| {
+            let after = super::diff::overlay(before, body, how);
+            super::diff::diff_for(target, &change.change, before, &after)
+        };
+        match (held, &change.change) {
+            (Some(before), super::action::Change::MergePatch(body)) => {
+                laid(before, body, super::diff::Laid::Merge)
+            }
+            (
+                Some(before),
+                super::action::Change::Apply(body) | super::action::Change::Edit { body, .. },
+            ) => laid(before, body, super::diff::Laid::Apply),
+            _ => change
+                .change
+                .field_paths()
+                .into_iter()
+                .map(|path| FieldChange {
+                    path,
+                    kind: super::diff::ChangeKind::Added,
+                })
+                .collect(),
+        }
     }
 
     async fn check_object(

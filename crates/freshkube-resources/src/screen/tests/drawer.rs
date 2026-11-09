@@ -197,8 +197,18 @@ fn the_measured_width_settles_without_input(cx: &mut TestAppContext) {
     cx.simulate_window_resize(handle, size(px(800.), px(880.)));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        // The list measured its new width and asked for a frame.
-        assert_eq!(window.simulate_next_frame(cx), 1, "no frame asked for");
+        // The list measured its new width and asked for a frame (the toolbar,
+        // folding its buttons to the narrower width, asks for one or two
+        // more), and the frames stop within a few draws.
+        assert!(window.simulate_next_frame(cx) >= 1, "no frame asked for");
+        window.render_frame(cx);
+        for _ in 0..4 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+            window.render_frame(cx);
+        }
+        assert_eq!(window.simulate_next_frame(cx), 0, "the frames stopped");
         window.render_frame(cx);
         assert!(
             left(window) >= freshkube_ui::drawer::LIST_KEEPS - 1.,

@@ -11,6 +11,10 @@ pub enum Command {
     Check(CheckArgs),
     /// List a kind, or read one object, with the columns the Resources page shows
     Get(GetArgs),
+    /// An application's changes, as the Changes list shows them
+    Changes(ChangesArgs),
+    /// What is built or deployed somewhere but not yet in the last Stage
+    WaitingToShip(WaitingArgs),
 }
 
 impl Command {
@@ -18,6 +22,8 @@ impl Command {
         match self {
             Command::Check(args) => &args.cluster,
             Command::Get(args) => &args.cluster,
+            Command::Changes(args) => &args.cluster,
+            Command::WaitingToShip(args) => &args.cluster,
         }
     }
 
@@ -25,6 +31,8 @@ impl Command {
         match self {
             Command::Check(_) => "check",
             Command::Get(_) => "get",
+            Command::Changes(_) => "changes",
+            Command::WaitingToShip(_) => "waiting-to-ship",
         }
     }
 }
@@ -121,4 +129,31 @@ pub struct GetArgs {
     /// Refused for every kind: a Secret's key is a value
     #[arg(long, hide = true)]
     pub key: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ChangesArgs {
+    #[command(flatten)]
+    pub cluster: ClusterArgs,
+
+    /// The application: its Kargo project
+    pub app: String,
+
+    /// Only the changes this Stage runs, and only its column
+    #[arg(long)]
+    pub stage: Option<String>,
+
+    /// Only changes made within this span, such as 2d, 12h or 90m
+    #[arg(long)]
+    pub since: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct WaitingArgs {
+    #[command(flatten)]
+    pub cluster: ClusterArgs,
+
+    /// Exit 1 when any Freight has waited this long or longer, such as 2d
+    #[arg(long)]
+    pub older_than: Option<String>,
 }

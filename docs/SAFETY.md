@@ -125,6 +125,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g13_a_new_version_is_never_reviewed_with_the_old_body` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_a_secret_whose_values_freshkube_owns_is_not_edited` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_an_edit_after_an_edit_keeps_what_the_first_one_set` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
+- `safety_g13_an_edit_of_a_secret_never_sends_data_or_string_data_whatever_the_text_holds` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_an_edit_never_sends_status_managed_fields_or_the_servers_own_fields` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_read_only_sends_an_edit_nothing_not_even_the_dry_run` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
 - `safety_g13_the_reply_to_a_secrets_write_is_dropped_of_its_values_whoever_asked` (`crates/freshkube-core/src/write/tests/edit_yaml.rs`)
@@ -144,6 +145,18 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g16_renew_writes_only_the_status_conditions_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g16_renew_after_the_conditions_moved_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 
+### 17. Delete sends nothing under `read-only`, and deletes only the object the person saw
+
+- `safety_g17_delete_sends_nothing_on_read_only_and_not_for_an_object_that_moved` (`crates/freshkube-core/src/write/tests/delete.rs`)
+- `safety_g17_a_read_only_cluster_makes_no_request_for_delete` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
+### 18. A destructive action sends nothing during its countdown or after Cancel, a level change, a switch of cluster or context, or leaving the page
+
+- `safety_g18_nothing_is_sent_during_the_countdown_or_after_cancel` (`crates/freshkube-core/src/write/tests/delete.rs`)
+- `safety_g18_switching_cluster_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g18_a_context_change_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
 ### 19. Every diagnostic check says unknown with its source down, and reports no failure on a healthy fixture
 
 - `safety_g19_every_check_with_its_sources_down_says_unknown_and_never_fails` (`crates/freshkube-core/src/diagnostic_runner/harness_tests.rs`)
@@ -153,8 +166,6 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g19_a_known_gap_names_an_issue_and_still_fails` (`crates/freshkube-core/src/diagnostic_runner/harness_tests.rs`)
 
 An unreachable source is unknown, not a failure, and a healthy node shows no failure. The harness runs every check `DiagnosticSnapshot::evaluate` makes from a snapshot, and builds the snapshots through what the collector decides without I/O (CNI provider from file reads, addon presence, service health), so it does not reach what the collector reads from a live API ([DIAGNOSTICS.md](DIAGNOSTICS.md#the-harness)). A new check is run by it without an edit. The first and second tests are the source-down case, the third the healthy case; the fourth fails when a check id is written that no scenario reaches; the fifth keeps each known gap tied to an issue and fails once it stops failing.
-
-Guarantee numbers 17 and 18 are kept for Delete (#857); the suite script doesn't need numbers without gaps.
 
 ## Known gaps
 

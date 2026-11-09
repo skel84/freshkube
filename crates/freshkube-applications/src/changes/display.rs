@@ -471,6 +471,7 @@ mod tests {
         let changes = Changes {
             rows: Vec::new(),
             notes: vec![freshkube_delivery::changes::Note {
+                github: false,
                 gap: Gap::NotServed,
                 project: None,
                 text: "Kargo projects aren't installed on core-fra".into(),

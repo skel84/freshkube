@@ -274,11 +274,20 @@ pub fn invalid(input: Input, cx: &App) -> Input {
 }
 
 /// Where a group's values are saved; it holds no paths or secret values.
-pub struct SavedIn(SharedString);
+/// Its file is the one whose refusal it reports.
+pub struct SavedIn(SharedString, Option<SharedString>);
 
 impl SavedIn {
+    /// Saved in `name`, the file whose refusal this line reports.
     pub fn file(name: impl Into<SharedString>) -> Self {
-        Self(format!("Saved in {}", name.into()).into())
+        let name = name.into();
+        Self(format!("Saved in {name}").into(), Some(name))
+    }
+
+    /// Adds to the line what else is saved, with its own separator
+    /// (`"; the token in …"`); the file stays the one named first.
+    pub fn and(self, rest: impl AsRef<str>) -> Self {
+        Self(format!("{}{}", self.0, rest.as_ref()).into(), self.1)
     }
 
     pub fn and_credential(self, what: impl Into<SharedString>) -> Self {
@@ -290,21 +299,66 @@ impl SavedIn {
                 platform::credential_store()
             )
             .into(),
+            self.1,
         )
     }
 
     pub fn session() -> Self {
-        Self("Not saved; resets at launch".into())
+        Self("Not saved; resets at launch".into(), None)
     }
 }
 
+/// The files whose saves are refused now, with why. An app global, so every
+/// section that says where it saves reads one answer, and one test app's
+/// refusal never shows in another.
+#[derive(Default)]
+struct RefusedSaves(std::collections::HashMap<SharedString, SharedString>);
+
+impl gpui_kit::Global for RefusedSaves {}
+
+/// Says that saves to `file` are refused for `why` (`None`: they are not),
+/// so each "Saved in …" line of that file says so.
+pub fn refuse_saves(file: &str, why: Option<String>, cx: &mut App) {
+    let refused = cx.default_global::<RefusedSaves>();
+    let changed = match why {
+        Some(why) => {
+            let why: SharedString = why.into();
+            refused.0.insert(file.to_owned().into(), why.clone()) != Some(why)
+        }
+        None => refused.0.remove(file).is_some(),
+    };
+    if changed {
+        cx.refresh_windows();
+    }
+}
+
+/// What a "Saved in …" line says: where the values are saved, or, when that
+/// file's saves are refused, that changes aren't saved and why.
+pub fn saved_in_text(saved: &SavedIn, cx: &App) -> SharedString {
+    match refusal(saved, cx) {
+        Some(why) => format!("Changes aren't saved: {why}").into(),
+        None => saved.0.clone(),
+    }
+}
+
+fn refusal<'a>(saved: &SavedIn, cx: &'a App) -> Option<&'a SharedString> {
+    let file = saved.1.as_ref()?;
+    cx.try_global::<RefusedSaves>()?.0.get(file)
+}
+
 pub fn saved_in(id: impl Into<ElementId>, saved: &SavedIn, cx: &App) -> impl IntoElement {
+    let p = palette(cx);
+    let color = if refusal(saved, cx).is_some() {
+        p.warn_ink
+    } else {
+        p.muted
+    };
     div()
         .id(id)
         .test_support()
         .text_size(dp(12.))
-        .text_color(palette(cx).muted)
-        .child(saved.0.clone())
+        .text_color(color)
+        .child(saved_in_text(saved, cx))
 }
 
 /// A secret is either kept in a store or being replaced in a
@@ -1002,5 +1056,54 @@ mod tests {
             )
         );
         assert_eq!(&*SavedIn::session().0, "Not saved; resets at launch");
+    }
+
+    #[gpui_kit::test]
+    fn a_refused_file_says_its_changes_are_not_saved_in_every_form_of_the_line(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let lines = [
+                SavedIn::file("preferences.json"),
+                SavedIn::file("monitoring.json").and_credential("the token"),
+                SavedIn::file("monitoring.json").and("; the token in a store"),
+                SavedIn::file("freshkube.yaml").and(" · sources"),
+                // Coroot's, with the key in the store.
+                SavedIn::file("freshkube.yaml").and(", the key in keys.json"),
+            ];
+            let words = |cx: &App| -> Vec<String> {
+                lines.iter().map(|line| saved_in_text(line, cx).to_string()).collect()
+            };
+            assert!(words(cx).iter().all(|line| line.starts_with("Saved in ")));
+            refuse_saves(
+                "monitoring.json",
+                Some("monitoring.json was written by a newer Freshkube (version 2)".into()),
+                cx,
+            );
+            let refused = words(cx);
+            assert_eq!(refused[0], "Saved in preferences.json");
+            for line in &refused[1..3] {
+                assert_eq!(
+                    line,
+                    "Changes aren't saved: monitoring.json was written by a newer Freshkube (version 2)"
+                );
+            }
+            assert_eq!(refused[3], "Saved in freshkube.yaml · sources");
+            assert_eq!(refused[4], "Saved in freshkube.yaml, the key in keys.json");
+            // A session-only line has no file to refuse.
+            assert_eq!(
+                saved_in_text(&SavedIn::session(), cx),
+                "Not saved; resets at launch"
+            );
+            refuse_saves("monitoring.json", None, cx);
+            assert!(words(cx)[1].starts_with("Saved in monitoring.json"));
+            // freshkube.yaml refused: every form of its line says so,
+            // Coroot's with the key in the store included.
+            refuse_saves("freshkube.yaml", Some("freshkube.yaml isn't used".into()), cx);
+            let yaml = words(cx);
+            for line in &yaml[3..] {
+                assert_eq!(line, "Changes aren't saved: freshkube.yaml isn't used");
+            }
+        });
     }
 }

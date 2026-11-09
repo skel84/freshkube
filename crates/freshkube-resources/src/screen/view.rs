@@ -324,6 +324,9 @@ impl ResourcesScreen {
             .on_action(
                 cx.listener(|view, _: &RunNowSelected, _, cx| view.run_act(Everyday::RunNow, cx)),
             )
+            .on_action(
+                cx.listener(|view, _: &DeleteSelected, _, cx| view.run_act(Everyday::Delete, cx)),
+            )
             .on_action(cx.listener(|view, _: &NextTab, _, cx| view.step_tab(1, cx)))
             .on_action(cx.listener(|view, _: &PreviousTab, _, cx| view.step_tab(-1, cx)))
             .flex_1()

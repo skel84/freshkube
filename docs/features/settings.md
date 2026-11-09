@@ -43,6 +43,8 @@ Workspace sections are table pages: Clusters and Delivery sources hold the selec
 | Argo CD destinations | The dialog: `Saved in freshkube.yaml` |
 | Delivery sources | Routing: `Saved in freshkube.yaml · sources` |
 
+A section's "Saved in …" line changes when that file's saves are refused: it reads `Changes aren't saved: ` and why (`preferences.json was written by a newer Freshkube (version 2)`, or `freshkube.yaml`'s own problem). `freshkube_ui::form::refuse_saves` sets it, from `crash::tell_notices` for a file of a newer Freshkube and from the setup file's refusal for `freshkube.yaml`, so every section that names the file says it. Proved by `desktop/crash_tests.rs` (`a_newer_settings_file_makes_its_sections_say_changes_are_not_saved`) and `freshkube-ui`'s `form.rs` tests. A kept copy's name in the settings-file toast sits on its own line as a wrapping row of parts that end at a `-` or `.` (`crash::name_parts`), so it breaks only between them, never inside a word (`the_kept_copys_name_breaks_only_between_its_parts`).
+
 ## The shared form rules
 
 `freshkube_ui::form` draws a section's groups; the page owns the drafts, the checks and the saving.

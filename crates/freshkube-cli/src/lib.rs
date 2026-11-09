@@ -1,4 +1,5 @@
-//! The read commands of the `freshkube` binary: `check` and `get`.
+//! The read commands of the `freshkube` binary: `check`, `get`, `changes` and
+//! `waiting-to-ship`.
 //!
 //! They never start the window. They read through the same core functions
 //! the pages call (`list_table` for the lists, the status tones of the
@@ -7,13 +8,17 @@
 //! talosconfig context is never used. [docs/features/cli.md] has the rules.
 
 mod args;
+mod changes;
 mod check;
 mod cluster;
+mod delivery;
 mod exit;
 mod get;
+mod notes;
 mod read;
+mod waiting;
 
-pub use args::{CheckArgs, ClusterArgs, Command, FailOn, GetArgs};
+pub use args::{ChangesArgs, CheckArgs, ClusterArgs, Command, FailOn, GetArgs, WaitingArgs};
 pub use cluster::{Connector, Kubeconfig, Request, Stop, Target, resolve};
 pub use exit::{FAILED, Findings, OK, REFUSED, SIGN_IN, UNKNOWN, USAGE};
 
@@ -50,9 +55,13 @@ pub async fn execute(
     let args = command.cluster();
     // The options that need no cluster come first, so a usage error is
     // reported before anything is contacted.
-    if let Command::Get(get_args) = command
-        && let Err(stop) = get::wanted(get_args)
-    {
+    let early = match command {
+        Command::Get(get_args) => get::early(get_args),
+        Command::Changes(changes_args) => changes::wanted(changes_args).map(|_| ()),
+        Command::WaitingToShip(waiting_args) => waiting::wanted(waiting_args).map(|_| ()),
+        Command::Check(_) => Ok(()),
+    };
+    if let Err(stop) = early {
         return stopped(stop, stderr);
     }
     let target = match resolve(args, env.default_setup.as_deref())
@@ -64,6 +73,8 @@ pub async fn execute(
     let report = match command {
         Command::Check(check_args) => check::run(check_args, &target).await,
         Command::Get(get_args) => get::run(get_args, &target).await,
+        Command::Changes(changes_args) => changes::run(changes_args, &target).await,
+        Command::WaitingToShip(waiting_args) => waiting::run(waiting_args, &target).await,
     };
     let report = match report {
         Ok(report) => report,
