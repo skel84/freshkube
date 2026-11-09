@@ -498,7 +498,8 @@ async fn a_live_read_with_no_github_asks_nothing_and_says_so() {
         waiting
             .notes
             .iter()
-            .any(|note| note.text.contains("Pull requests aren't read"))
+            .any(|note| note.text.contains("Pull requests aren't read") && note.github),
+        "a note about GitHub says so, by a field and not by its words"
     );
     assert!(
         app(&waiting, "shop-api")
@@ -515,6 +516,7 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
     let waiting = derive(&unserved);
     assert!(waiting.apps.is_empty());
     assert_eq!(waiting.notes[0].gap, Gap::NotServed);
+    assert!(!waiting.notes[0].github, "Kargo's own gap is not GitHub's");
 }
 
 /// A reader that counts the projects it is answering at once, each

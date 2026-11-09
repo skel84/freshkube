@@ -644,3 +644,103 @@ fn an_undo_asked_again_under_a_stricter_level_keeps_its_guard(cx: &mut TestAppCo
     assert_eq!(h.cluster.writes().len(), 1);
     assert_eq!(h.replicas(), 5);
 }
+
+/// #983: at 760x560 with text 20 a dialog with several diff rows draws every
+/// row whole, scrolls to reach the last, and shows that it scrolls.
+#[gpui_kit::test]
+fn a_tall_diff_is_never_cut_scrolls_and_shows_its_scrollbar(cx: &mut TestAppContext) {
+    use freshkube_core::write::Change;
+    let h = harness_sized(cx, Protection::Guarded, 560., Cluster::new);
+    cx.update(|cx| {
+        crate::text_size::install(None, cx);
+        crate::text_size::set(20., cx);
+    });
+    cx.simulate_window_resize(h.handle, size(px(760.), px(560.)));
+    let mut action = fake::set_image("registry.example/web:2");
+    action.changes[0].change = Change::MergePatch(serde_json::json!({"spec": {
+        "replicas": 7, "minReadySeconds": 5, "revisionHistoryLimit": 4,
+        "progressDeadlineSeconds": 90, "paused": true, "strategy": {"type": "Recreate"},
+        "template": {"metadata": {"labels": {"a": "1", "b": "2", "c": "3"}}, "spec": {"containers": [{"name": "web", "image": "registry.example/web:2"}]}}}}));
+    let flow = h.begin(cx, action);
+    cx.update_window(h.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let body = window.find("app-dialog-body").bounds();
+        let first = window.find("write-diff-spec.minReadySeconds").bounds();
+        // The first row is whole: its text's descenders are inside the body.
+        assert!(
+            first.top() >= body.top() && first.size.height >= crate::ui::dp_px(12., window),
+            "{first:?} in {body:?}"
+        );
+        // More follows than shows, and the scrollbar says so.
+        let last = window
+            .find("write-diff-spec.template.spec.containers[0].image")
+            .bounds();
+        assert!(
+            last.bottom() > body.bottom(),
+            "the diff fits: {last:?} in {body:?}"
+        );
+        // Scrolling reaches the last row, whole.
+        // The body's scroll is the one the scrollbar follows.
+        let scroll = flow.read(cx).scroll.clone();
+        assert!(scroll.max_offset().y > px(0.), "nothing to scroll");
+        window.scroll(
+            "app-dialog-body",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-2000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let body = window.find("app-dialog-body").bounds();
+        let last = window
+            .find("write-diff-spec.template.spec.containers[0].image")
+            .bounds();
+        assert!(
+            last.top() >= body.top() && last.bottom() <= body.bottom(),
+            "{last:?} still cut by {body:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// A dialog shown again because the level got stricter starts at its top,
+/// where the typed name is, not where the last one was scrolled to.
+#[gpui_kit::test]
+fn a_dialog_shown_again_starts_scrolled_to_its_top(cx: &mut TestAppContext) {
+    use freshkube_core::write::Change;
+    let h = harness_sized(cx, Protection::Guarded, 560., Cluster::new);
+    cx.update(|cx| {
+        crate::text_size::install(None, cx);
+        crate::text_size::set(20., cx);
+    });
+    cx.simulate_window_resize(h.handle, size(px(760.), px(560.)));
+    let mut action = fake::set_image("registry.example/web:2");
+    action.changes[0].change = Change::MergePatch(serde_json::json!({"spec": {
+        "replicas": 7, "minReadySeconds": 5, "revisionHistoryLimit": 4,
+        "progressDeadlineSeconds": 90, "paused": true,
+        "template": {"metadata": {"labels": {"a": "1", "b": "2", "c": "3"}}}}}));
+    let flow = h.begin(cx, action);
+    cx.update_window(h.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.scroll(
+            "app-dialog-body",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-2000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(flow.read(cx).scroll.offset().y < px(0.));
+    })
+    .unwrap();
+    cx.update(|cx| set_protection(Protection::Protected, cx));
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(2));
+    cx.update_window(h.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(flow.read(cx).scroll.offset().y, px(0.));
+        let body = window.find("app-dialog-body").bounds();
+        let prompt = window.find("write-type-prompt").bounds();
+        assert!(
+            prompt.top() >= body.top() && prompt.bottom() <= body.bottom(),
+            "{prompt:?} out of {body:?}"
+        );
+    })
+    .unwrap();
+}

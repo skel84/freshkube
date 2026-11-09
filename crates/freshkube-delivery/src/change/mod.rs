@@ -454,6 +454,8 @@ pub struct Missing {
     /// The key of the hop the missing piece would join, when one hop is
     /// known: a chain hangs it there. `None` when it belongs to no one hop.
     pub after: Option<String>,
+    /// Whether it is about GitHub, whose look-ups are optional.
+    pub github: bool,
 }
 
 impl Missing {
@@ -462,7 +464,14 @@ impl Missing {
             gap,
             text: text.into(),
             after: None,
+            github: false,
         }
+    }
+
+    /// Marked as about GitHub.
+    pub fn from_github(mut self) -> Self {
+        self.github = true;
+        self
     }
 
     /// Hung from the hop `key` names.
