@@ -3,7 +3,11 @@
 //! [`TokioPostgres`] is the real one. The session's rules (read-only, timeouts,
 //! caps) live above this line in `postgres.rs`, so a fake wire in `fake.rs`
 //! tests them without a server.
-use crate::{credentials::Password, limits::Limits, session::ConnectError};
+use crate::{
+    credentials::Password,
+    limits::Limits,
+    session::{Canceller, ConnectError},
+};
 use async_trait::async_trait;
 use dbflux_core::DbError;
 use rustls::{
@@ -38,6 +42,9 @@ pub trait Wire: Send {
     /// Has the server parse `sql` and refuse it unless it is exactly one
     /// statement. Our own splitter is a first line; this is the server's word.
     async fn single_statement(&mut self, sql: &str) -> Result<(), DbError>;
+
+    /// A handle that stops the statement now running, usable without `&mut`.
+    fn canceller(&self) -> Arc<dyn Canceller>;
 }
 
 pub struct Target<'a> {
@@ -82,6 +89,24 @@ impl Encryption {
 pub struct TokioPostgres {
     client: Client,
     connection: tokio::task::JoinHandle<()>,
+    cancel: Arc<TokioCanceller>,
+}
+
+/// Cancels through the protocol's cancel request: a second connection to the
+/// same address (the forward), with the same TLS plan as the session.
+struct TokioCanceller {
+    token: tokio_postgres::CancelToken,
+    connector: MakeRustlsConnect,
+}
+
+#[async_trait]
+impl Canceller for TokioCanceller {
+    async fn cancel(&self) -> Result<(), String> {
+        self.token
+            .cancel_query(self.connector.clone())
+            .await
+            .map_err(|e| e.to_string())
+    }
 }
 
 impl TokioPostgres {
@@ -97,6 +122,7 @@ impl TokioPostgres {
     ) -> Result<(Self, Encryption), ConnectError> {
         let verifying = tls.ca_pem.is_some();
         let connector = make_connector(tls)?;
+        let cancel_with = connector.clone();
         let mut config = Config::new();
         config
             // The host is what TLS checks; the address is where to go.
@@ -118,7 +144,15 @@ impl TokioPostgres {
         let connection = tokio::spawn(async move {
             let _ = connection.await;
         });
-        let this = Self { client, connection };
+        let cancel = Arc::new(TokioCanceller {
+            token: client.cancel_token(),
+            connector: cancel_with,
+        });
+        let this = Self {
+            client,
+            connection,
+            cancel,
+        };
         let encrypted = this.encrypted().await;
         let encryption = match (encrypted, verifying) {
             (false, _) => Encryption::Plain,
@@ -254,8 +288,18 @@ pub(crate) fn to_db_error(error: &tokio_postgres::Error) -> DbError {
         return DbError::connection_failed(error.to_string());
     };
     let code = db.code();
-    if *code == SqlState::QUERY_CANCELED || *code == SqlState::LOCK_NOT_AVAILABLE {
+    if *code == SqlState::QUERY_CANCELED {
+        // The same code answers the timeout and Cancel; the message says which.
+        if db.message().contains("user request") {
+            DbError::Cancelled
+        } else {
+            DbError::Timeout
+        }
+    } else if *code == SqlState::LOCK_NOT_AVAILABLE {
         DbError::Timeout
+    } else if *code == SqlState::READ_ONLY_SQL_TRANSACTION {
+        // Only a read-only transaction answers this: the session did its job.
+        DbError::permission_denied(db.message())
     } else if *code == SqlState::INSUFFICIENT_PRIVILEGE {
         DbError::permission_denied(db.message())
     } else if *code == SqlState::UNDEFINED_TABLE || *code == SqlState::UNDEFINED_COLUMN {
@@ -277,6 +321,10 @@ pub(crate) fn to_db_error(error: &tokio_postgres::Error) -> DbError {
 )]
 #[async_trait]
 impl Wire for TokioPostgres {
+    fn canceller(&self) -> Arc<dyn Canceller> {
+        self.cancel.clone()
+    }
+
     async fn single_statement(&mut self, sql: &str) -> Result<(), DbError> {
         // The extended protocol allows one statement per Parse.
         self.client
@@ -362,5 +410,56 @@ mod tests {
             make_connector(&plan),
             Err(ConnectError::Untrusted(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn the_cancel_request_carries_no_login_and_no_password() {
+        let server = crate::fake::FakeServer::start().await;
+        let password = Password::new("hunter2");
+        let plan = TlsPlan {
+            server_name: "orders-db-ro.staging.svc".into(),
+            ca_pem: None,
+        };
+        let (wire, _) = TokioPostgres::connect(
+            Target {
+                address: "127.0.0.1".parse().unwrap(),
+                port: server.port(),
+                user: "shop_reader",
+                database: "shop",
+            },
+            &password,
+            &Limits::default(),
+            &plan,
+        )
+        .await
+        .map_err(|e| e.to_string())
+        .expect("the fake server accepts the login");
+        let before = server.connections().len();
+        wire.canceller().cancel().await.unwrap();
+        // The cancel was its own connection, and it said only what a cancel
+        // request says: the process id and the key, nothing of who asks. The
+        // server reads it a moment after the client's request returns.
+        let expected = crate::fake::FakeServer::cancel_packet();
+        let found = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let all = server.connections();
+                if let Some(found) = all.iter().skip(before).find(|c| c.ends_with(&expected)) {
+                    return found.clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        let cancel = found.expect("the server received a cancel request");
+        assert_eq!(server.cancels(), 1);
+        // Besides the SSL request, the connection is the cancel packet alone.
+        assert!(cancel.len() <= 8 + expected.len(), "{cancel:?}");
+        let text = String::from_utf8_lossy(&cancel);
+        for secret in ["hunter2", "shop_reader", "user", "password"] {
+            assert!(
+                !text.contains(secret),
+                "{secret} reached the cancel: {text}"
+            );
+        }
     }
 }

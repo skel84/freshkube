@@ -161,7 +161,7 @@ fn offers_saying(
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g20_a_cached_allowed_answer_does_not_skip_the_preflight_review() {
+async fn safety_g21_a_cached_allowed_answer_does_not_skip_the_preflight_review() {
     let action = fake::scale(3);
     let offers = offers_saying(&action, crate::access::Verdict::Allowed);
     assert_eq!(

@@ -3,6 +3,7 @@
 mod coroot_tests;
 mod display;
 mod explore;
+pub(crate) mod query_link;
 mod table;
 #[cfg(test)]
 mod tests;
@@ -104,6 +105,7 @@ pub(crate) struct DatabasesScreen {
 impl EventEmitter<ScreenEvent> for DatabasesScreen {}
 impl EventEmitter<ResourceLink> for DatabasesScreen {}
 impl EventEmitter<ObservabilityLink> for DatabasesScreen {}
+impl EventEmitter<query_link::QueryRequest> for DatabasesScreen {}
 impl DatabasesScreen {
     pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
@@ -479,6 +481,12 @@ impl DatabasesScreen {
             let runtime = self.runtime.clone();
             let view =
                 cx.new(|cx| explore::ExploreView::new(runtime, source, database, example, cx));
+            // The explorer's Query button reaches the dock through the page.
+            // Detached: it lasts as long as the explorer does.
+            cx.subscribe(&view, |_, _, request: &query_link::QueryRequest, cx| {
+                cx.emit(request.clone())
+            })
+            .detach();
             self.explorers.push(view);
         }
         self.activate_explorer(Some(uid), cx);
@@ -690,13 +698,21 @@ impl ScreenPanel for DatabasesScreen {
         cx: &mut App,
     ) -> Vec<Subscription> {
         let on_link = on_event.clone();
+        let on_link_obs = on_event.clone();
         vec![
             window.subscribe(this, cx, move |_, link: &ResourceLink, window, cx| {
                 on_link(&link.clone().into(), window, cx)
             }),
             window.subscribe(this, cx, move |_, link: &ObservabilityLink, window, cx| {
-                on_event(&link.clone().into(), window, cx)
+                on_link_obs(&link.clone().into(), window, cx)
             }),
+            window.subscribe(
+                this,
+                cx,
+                move |_, request: &query_link::QueryRequest, window, cx| {
+                    on_event(&request.clone().into(), window, cx)
+                },
+            ),
         ]
     }
 }
