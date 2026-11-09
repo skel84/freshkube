@@ -89,10 +89,33 @@ DiagnosticCheck::unknown("etcd", "Etcd")  // When data unavailable
 - [ ] Can this check produce false positives?
 - [ ] Is the failure mode graceful?
 
+## The harness
+
+`DiagnosticSnapshot::evaluate` makes every check, from evidence alone, so the harness
+(`freshkube-core`'s `diagnostic_runner/harness_tests.rs`, safety guarantee 17 in
+[SAFETY.md](SAFETY.md#17-every-diagnostic-check-says-unknown-with-its-source-down-and-reports-no-failure-on-a-healthy-fixture))
+runs `evaluate` in two cases and you add no entry for a new check:
+
+- **Source down:** every source of the snapshot unavailable, for each CNI provider and
+  for control-plane and worker nodes. Every check must say unknown, offer no fix, and not
+  panic. Then each source down alone over a healthy snapshot may change a check only to
+  unknown.
+- **Healthy:** a healthy snapshot for the same providers and roles gives no failing check.
+
+A check added to an existing builder runs in both with no edit. The snapshots are built
+with struct literals that name every field, so a new source field doesn't compile until
+the harness gives it a healthy and a down value. A test also scans `evaluate.rs` for the
+check ids written as literals and fails when a scenario makes none of one; add a scenario
+that reaches it. A check that fails a case today is listed in `KNOWN_GAPS` with its
+issue, and is never silently skipped. The `ONE_DOWN` table of single sources is the only
+list kept by hand, and the all-down case covers what it leaves out.
+
 ## Before Merging
 
 1. **No false positives:** Create error condition, fix it, verify check shows healthy
-2. **Graceful degradation:** Disconnect API, verify no crashes
+   (`cargo test -p freshkube-core --lib safety_g17` runs the healthy case)
+2. **Graceful degradation:** Disconnect API, verify no crashes (the harness's
+   source-down case does this for every check)
 3. **Stale log immunity:** Ensure old log messages don't affect current state
 4. **Zero warnings:** `cargo clippy --workspace --all-targets -- -D warnings` should pass clean
 5. **Formatting:** `cargo fmt --all -- --check` should pass

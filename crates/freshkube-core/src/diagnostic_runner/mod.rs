@@ -27,6 +27,9 @@ use talos_rs::{ApplyMode, TalosClient};
 mod evaluate;
 use evaluate::*;
 
+#[cfg(test)]
+mod harness_tests;
+
 /// Result of querying one source of diagnostic state.
 ///
 /// An unavailable source is intentionally distinct from a negative result. For

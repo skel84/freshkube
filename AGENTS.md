@@ -116,7 +116,7 @@ The app's binaries parse all of these knobs once into `DebugOptions` (`crates/fr
 
 ## Cluster safety
 
-- **The safety suite is the named list of what must never break** ([docs/SAFETY.md](docs/SAFETY.md)): sixteen guarantees, each proved by tests named `safety_gNN_…` and run together with `cargo test --workspace --locked safety_g`, as their own CI step. A change that adds a write, exec, forward or reveal path adds its guarantee to the suite in the same change, and proves the test fails with its guard removed.
+- **The safety suite is the named list of what must never break** ([docs/SAFETY.md](docs/SAFETY.md)): seventeen guarantees, each proved by tests named `safety_gNN_…` and run together with `cargo test --workspace --locked safety_g`, as their own CI step. A change that adds a write, exec, forward or reveal path adds its guarantee to the suite in the same change, and proves the test fails with its guard removed.
 - **An agent's checks stay read-only.** A check against a real cluster lists, watches and reads; it never creates, changes or deletes resources, except an action the maintainer names, on an object the maintainer names as disposable. The app's write model below is for the people who use the app. It does not widen what an agent may do: a cluster's `open` or `guarded` level is not permission for an agent.
 - **The app's writes follow the write model** ([docs/WRITE_MODEL.md](docs/WRITE_MODEL.md)):
   - Every cluster entry has a protection level in `freshkube.yaml`: `read-only`, `protected`, `guarded` or `open`. An entry with none is `guarded`. A person sets a level; it is never inferred from a context's name.
@@ -236,7 +236,7 @@ Diagnostic checks follow these rules; [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 - Degrade gracefully: when a data source is unavailable, show unknown (`DiagnosticCheck::unknown`), don't crash.
 - No false positives: a diagnostic showing failure for a healthy system is worse than showing unknown.
 - Find the source of truth first, use the `DiagnosticCheck` constructors (`pass`, `fail`, `warn`, `unknown`) and provide an actionable fix where possible. Implement `HasHealth` for health enums in core; desktop maps it to a tag's tone and icon with `ui::health_tone`.
-- Before merging a check: create its error condition, fix it and see the check show healthy; disconnect the API and see no crash; make sure old log messages don't affect the current state.
+- Before merging a check: create its error condition, fix it and see the check show healthy; disconnect the API and see no crash (the harness's `safety_g17` tests run every check with its sources down and on a healthy fixture, with no list to edit, [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md#the-harness)); make sure old log messages don't affect the current state.
 - The COSI State API is internal and not exposed through port 50000: don't implement a COSI gRPC client (it fails with `PermissionDenied`); run `talosctl get` as a subprocess.
 
 ## Adding a screen
