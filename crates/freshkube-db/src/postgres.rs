@@ -37,9 +37,26 @@ impl<W: Wire> Postgres<W> {
                 .await
                 .map_err(not_read_only)?;
             match held.rows.first().and_then(|r| r.first()) {
+                Some(Some(v)) if v == "on" => {}
+                other => {
+                    return Err(ConnectError::NotReadOnly(format!(
+                        "The server reports default_transaction_read_only = {}",
+                        other.and_then(|v| v.as_deref()).unwrap_or("nothing")
+                    )));
+                }
+            }
+            // Our own checks read `'\'` as a backslash; a server that reads it
+            // as an escape would disagree with them about where a string ends.
+            // The SET above overrides a role's or a database's setting, and
+            // this is its answer.
+            let strings = wire
+                .simple("SHOW standard_conforming_strings")
+                .await
+                .map_err(not_read_only)?;
+            match strings.rows.first().and_then(|r| r.first()) {
                 Some(Some(v)) if v == "on" => Ok(()),
                 other => Err(ConnectError::NotReadOnly(format!(
-                    "The server reports default_transaction_read_only = {}",
+                    "The server reports standard_conforming_strings = {}",
                     other.and_then(|v| v.as_deref()).unwrap_or("nothing")
                 ))),
             }
@@ -407,6 +424,7 @@ mod tests {
                 "SET lock_timeout = '2000ms'",
                 "SET idle_in_transaction_session_timeout = '45000ms'",
                 "SHOW default_transaction_read_only",
+                "SHOW standard_conforming_strings",
             ]
         );
     }
@@ -805,5 +823,27 @@ mod tests {
             .unwrap_err();
         assert_eq!(error, QueryError::Cancelled);
         assert_eq!(server.cancels(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_server_that_reads_backslashes_as_escapes_is_not_used() {
+        let wire = FakeWire::with_backslash_escapes();
+        let error = Postgres::open(wire.clone(), Limits::default())
+            .await
+            .err()
+            .expect("refused");
+        assert!(matches!(error, ConnectError::NotReadOnly(_)), "{error:?}");
+        assert!(error.to_string().contains("standard_conforming_strings"));
+        // It was asked for first, then checked.
+        let sent = wire.sent();
+        let set = sent
+            .iter()
+            .position(|s| s == "SET standard_conforming_strings = on")
+            .unwrap();
+        let shown = sent
+            .iter()
+            .position(|s| s == "SHOW standard_conforming_strings")
+            .unwrap();
+        assert!(set < shown, "{sent:?}");
     }
 }

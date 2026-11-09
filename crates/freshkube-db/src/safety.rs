@@ -49,6 +49,13 @@ async fn safety_g20_a_server_that_does_not_hold_read_only_is_never_used() {
         .err()
         .expect("refused");
     assert!(matches!(error, ConnectError::NotReadOnly(_)), "{error:?}");
+    // Nor one that would read a backslash in a string as an escape, which
+    // would put the checks' idea of a string at odds with the server's.
+    let error = Postgres::open(FakeWire::with_backslash_escapes(), Limits::default())
+        .await
+        .err()
+        .expect("refused");
+    assert!(matches!(error, ConnectError::NotReadOnly(_)), "{error:?}");
     // The setting was asked for at connect, before anything else.
     assert_eq!(
         wire.sent().first().unwrap(),

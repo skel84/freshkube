@@ -63,6 +63,8 @@ pub struct FakeWire {
     /// What `SHOW default_transaction_read_only` answers; a server that
     /// ignores the setting says `off`.
     read_only_setting: Arc<Mutex<String>>,
+    /// What `SHOW standard_conforming_strings` answers.
+    strings_setting: Arc<Mutex<String>>,
     /// Texts the fake server's parser takes for several statements.
     multi: Arc<Mutex<Vec<String>>>,
     /// Inside `BEGIN READ ONLY`, until the next `ROLLBACK`.
@@ -79,6 +81,15 @@ impl FakeWire {
     pub fn new() -> Self {
         let wire = Self::default();
         *wire.read_only_setting.lock().unwrap() = "on".into();
+        *wire.strings_setting.lock().unwrap() = "on".into();
+        wire
+    }
+
+    /// A server that reads a backslash in `'…'` as an escape, whatever the
+    /// session asked for.
+    pub fn with_backslash_escapes() -> Self {
+        let wire = Self::new();
+        *wire.strings_setting.lock().unwrap() = "off".into();
         wire
     }
 
@@ -274,6 +285,13 @@ impl Wire for FakeWire {
             }
             self.applied.lock().unwrap().push(sql.to_string());
             return Ok(Rows::default());
+        }
+        if sql.starts_with("SHOW standard_conforming_strings") {
+            let value = self.strings_setting.lock().unwrap().clone();
+            return Ok(text_rows(
+                &["standard_conforming_strings"],
+                &[&[Some(&value)]],
+            ));
         }
         if sql.starts_with("SHOW default_transaction_read_only") {
             let value = self.read_only_setting.lock().unwrap().clone();
@@ -668,6 +686,8 @@ fn error(code: &str, text: &str) -> Vec<u8> {
 fn answer(sql: &str) -> Vec<u8> {
     let mut out = if sql.starts_with("SHOW default_transaction_read_only") {
         rows(&["default_transaction_read_only"], &[&["on"]])
+    } else if sql.starts_with("SHOW standard_conforming_strings") {
+        rows(&["standard_conforming_strings"], &[&["on"]])
     } else if sql.contains("pg_stat_ssl") {
         rows(&["ssl"], &[&["f"]])
     } else if sql.starts_with("FETCH") {

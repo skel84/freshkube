@@ -380,6 +380,10 @@ pub(crate) fn skip_quoted(chars: &[char], start: usize, quote: char) -> usize {
 
 /// End of a `$tag$ ... $tag$` string starting at `start`, if one starts there.
 pub(crate) fn skip_dollar(chars: &[char], start: usize) -> Option<usize> {
+    // A tag is an identifier: `$1$` is not one (`$1` is a parameter).
+    if chars.get(start + 1).is_some_and(|c| c.is_ascii_digit()) {
+        return None;
+    }
     let mut j = start + 1;
     while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
         j += 1;
@@ -658,5 +662,25 @@ mod tests {
             ),
             Err(Refusal::Function("ts_rewrite"))
         );
+    }
+
+    #[test]
+    fn a_dollar_tag_cannot_start_with_a_digit() {
+        // `$1$` is the parameter `$1` and a `$`: not a quote, so what follows
+        // is text the server reads, and the call after it is a call.
+        assert_eq!(
+            check_statement("select $1$, 'a', pg_terminate_backend(1), $1$"),
+            Err(Refusal::Function("pg_terminate_backend"))
+        );
+        assert_eq!(
+            check_statement("select $1$ u&\"x\" $1$"),
+            Err(Refusal::UnicodeEscape)
+        );
+        // A tag that starts with a letter or an underscore still quotes: the
+        // `U&"` scan skips what is inside.
+        assert_eq!(check_statement("select $a1$ u&\"x\" $a1$"), Ok(()));
+        assert_eq!(check_statement("select $_$ u&\"x\" $_$"), Ok(()));
+        let chars: Vec<char> = "$1$ x $1$".chars().collect();
+        assert_eq!(skip_dollar(&chars, 0), None);
     }
 }
