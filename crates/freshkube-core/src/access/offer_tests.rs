@@ -30,7 +30,7 @@ fn nothing_is_asked_until_who_you_are_is_known() {
     offers.reset("access-1");
     let now = Instant::now();
     let patch = q("patch", "deployments", "shop", "web");
-    assert!(offers.wants(&[patch.clone()], now).is_empty());
+    assert!(offers.wants(std::slice::from_ref(&patch), now).is_empty());
     offers.set_person(None);
     assert_eq!(offers.wants(&[patch], now).len(), 1);
 }
@@ -78,7 +78,7 @@ fn an_action_is_allowed_only_when_every_question_is() {
 fn a_new_identity_drops_every_answer_and_ignores_one_still_on_its_way() {
     let (mut offers, now) = ready();
     let patch = q("patch", "deployments", "shop", "web");
-    let tickets = offers.wants(&[patch.clone()], now);
+    let tickets = offers.wants(std::slice::from_ref(&patch), now);
     assert!(
         !offers.reset("access-1"),
         "the same identity changes nothing"
@@ -96,7 +96,7 @@ fn a_new_identity_drops_every_answer_and_ignores_one_still_on_its_way() {
 fn another_person_on_the_same_access_drops_every_answer() {
     let (mut offers, now) = ready();
     let patch = q("patch", "deployments", "shop", "web");
-    let tickets = offers.wants(&[patch.clone()], now);
+    let tickets = offers.wants(std::slice::from_ref(&patch), now);
     offers.land(&tickets[0], Verdict::Refused, now);
     assert!(!offers.set_person(Some("alice".into())), "the same person");
     assert!(offers.offer(&[patch.clone()], now).refusal().is_some());
@@ -111,7 +111,7 @@ fn another_person_on_the_same_access_drops_every_answer() {
 fn answers_expire_after_a_bounded_time_and_are_asked_again() {
     let (mut offers, now) = ready();
     let patch = q("patch", "deployments", "shop", "web");
-    let tickets = offers.wants(&[patch.clone()], now);
+    let tickets = offers.wants(std::slice::from_ref(&patch), now);
     offers.land(&tickets[0], Verdict::Refused, now);
     let before = now + OFFER_TTL - Duration::from_secs(1);
     assert!(offers.offer(&[patch.clone()], before).refusal().is_some());
