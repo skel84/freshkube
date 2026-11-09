@@ -90,7 +90,7 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
                 .find("overview-status")
                 .label()
                 .unwrap()
-                .contains("Stale")
+                .contains("Showing cluster data as last seen")
         );
         assert!(window.find("retry").visible());
         assert!(window.find("tile-services").visible());

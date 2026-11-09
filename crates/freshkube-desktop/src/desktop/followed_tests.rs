@@ -107,6 +107,26 @@ fn the_bell_counts_what_is_followed_and_lists_new_earlier_and_following(cx: &mut
     // Closing the bell makes what was new earlier.
     cx.update(|cx| f.followed.update(cx, |followed, cx| followed.mark_seen(cx)));
     assert!(cx.read(|cx| f.followed.read(cx).inbox().new.is_empty()));
+    let remaining: Vec<_> = cx.read(|cx| {
+        f.followed
+            .read(cx)
+            .items()
+            .iter()
+            .map(|item| item.follow.id)
+            .collect()
+    });
+    for id in remaining {
+        click(cx, f.handle, &format!("following-{id}-stop"));
+    }
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("followed-following").visible());
+        assert_eq!(
+            window.find("followed-following").label(),
+            Some("You follow nothing. Choose Notify me on a change page, or right-click a pod in Resources and choose Notify me if it keeps crash-looping.")
+        );
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

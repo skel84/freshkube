@@ -299,7 +299,7 @@ Screen 04. These sections come first, for pods only; the generic summary follows
 - **Sidebar:** Control plane is replaced by the one-line hint; its "Add a talosconfig" link opens Settings. ⌘6–⌘9 do nothing.
 - **The app starts on Overview,** not Resources. Overview has the Nodes, Workloads, Pods and Events cards (screen 06), and Needs attention holds only Kubernetes subjects.
 - Nodes, the node pane's Kubernetes tabs, Health and search all work.
-- The "Needs a talosconfig" empty state stays for any Talos view reached some other way.
+- The "This page is for Talos Linux nodes" empty state stays for any Talos view reached some other way.
 
 ### Keys
 
