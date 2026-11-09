@@ -20,6 +20,7 @@ mod edit_yaml;
 mod example;
 mod identity;
 mod levels;
+mod offer;
 mod outcome;
 mod rollback;
 mod run_now;

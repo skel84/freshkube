@@ -7,10 +7,12 @@
 //! page hides and say whether to read again when it shows: a loader as its
 //! [`OnShow`] says, a watch whenever hiding stopped it.
 mod loader;
+mod offers;
 mod visibility;
 mod watch;
 
 pub use loader::Loader;
+pub use offers::{OfferChanged, OfferDesk, existing as existing_offer_desk, shared as offer_desk};
 pub use visibility::OnShow;
 pub use watch::{Pace, Watch};
 

@@ -9,6 +9,7 @@
 use super::detail::{ActionLine, Leads};
 use super::*;
 use freshkube_core::workspace::{Chosen, Entry, Part};
+use freshkube_core::write::AccessQuestion;
 use freshkube_delivery::acts::Slot;
 
 /// Which action a button asks for: delivery's, which also decides what each
@@ -54,9 +55,117 @@ impl ChangePage {
         }
     }
 
+    /// The Stage the selected hop shows, if it shows one.
+    fn selected_stage(&self) -> Option<&Stage> {
+        match self.change.hop(self.selected.as_ref()?)?.shows {
+            Shows::Stage(ix) => self.change.stages.get(ix),
+            Shows::Hop(_) => None,
+        }
+    }
+
+    /// What the gate asks before each of the selected Stage's actions: core's
+    /// description of each action says it. Only where the reviews are made on
+    /// the cluster the page reads: Kargo's cluster is the open one, or the
+    /// example. A Kargo on another workspace entry's cluster is reached with
+    /// that entry's own connection, so it is not asked here, and its actions
+    /// stay on offer for the gate to decide.
+    fn stage_questions(&self) -> Vec<(ActKind, Vec<AccessQuestion>)> {
+        if !matches!(self.kargo_at(), Ok(KargoAt::Open | KargoAt::Example)) {
+            return Vec::new();
+        }
+        let Some(stage) = self.selected_stage() else {
+            return Vec::new();
+        };
+        let Some(acts) = &stage.acts else {
+            return Vec::new();
+        };
+        [
+            ActKind::RefreshStage,
+            ActKind::RefreshWarehouse,
+            ActKind::Reverify,
+            ActKind::Promote,
+            ActKind::Abort,
+        ]
+        .into_iter()
+        .filter_map(|kind| {
+            let action = freshkube_delivery::acts::describe(kind, acts, &self.change, None, "", "")?;
+            Some((kind, action.access_questions()))
+        })
+        .collect()
+    }
+
+    /// Asks whether the selected Stage's actions may be offered, for what
+    /// isn't known: only the selection's, never every Stage's. Called when
+    /// the selection or the change changes, never while drawing.
+    pub(super) fn want_stage_offers(&mut self, cx: &mut Context<Self>) {
+        let Some(desk) = self.offers.clone() else {
+            return;
+        };
+        let questions = self.stage_questions();
+        if self.visible && !questions.is_empty() {
+            let all: Vec<AccessQuestion> = questions
+                .iter()
+                .flat_map(|(_, asked)| asked.iter().cloned())
+                .collect();
+            desk.update(cx, |desk, cx| desk.want(&all, cx));
+        }
+        let offers: Vec<_> = questions
+            .iter()
+            .map(|(kind, asked)| (*kind, desk.read(cx).offer(asked, cx)))
+            .collect();
+        if offers != self.stage_offers {
+            self.stage_offers = offers;
+            self.detail = self.derive_detail();
+        }
+    }
+
+    /// An answer landed: the selected Stage's buttons are derived again if
+    /// what they say changed.
+    pub(super) fn offers_landed(&mut self, cx: &mut Context<Self>) {
+        let before = self.stage_offers.clone();
+        let Some(desk) = self.offers.clone() else {
+            return;
+        };
+        let questions = self.stage_questions();
+        self.stage_offers = questions
+            .iter()
+            .map(|(kind, asked)| (*kind, desk.read(cx).offer(asked, cx)))
+            .collect();
+        if self.stage_offers != before {
+            self.detail = self.derive_detail();
+            cx.notify();
+        }
+    }
+
     /// The buttons for a Stage's actions, each greyed out with why where it
     /// can't be offered.
     pub(super) fn stage_actions(&self, stage: &Stage) -> Vec<ActionLine> {
+        self.with_offers(self.stage_buttons(stage))
+    }
+
+    /// What the cluster said, on top of what the page knows: a refused
+    /// action is greyed out with its reason (any reason the page already had
+    /// outranks it), and one whose review didn't answer says so and stays on.
+    fn with_offers(&self, mut buttons: Vec<ActionLine>) -> Vec<ActionLine> {
+        for button in &mut buttons {
+            let Some(Leads::Act(kind, _)) = &button.leads else {
+                continue;
+            };
+            let Some((_, offer)) = self.stage_offers.iter().find(|(asked, _)| asked == kind) else {
+                continue;
+            };
+            if let Some(reason) = offer.refusal() {
+                button.why = Some(reason.to_owned().into());
+                button.leads = None;
+            } else if let Some(note) = offer.note() {
+                let tooltip = button.tooltip.take().unwrap_or_default();
+                button.tooltip = Some(format!("{tooltip} {note}.").trim().to_owned().into());
+            }
+        }
+        buttons
+    }
+
+    fn stage_buttons(&self, stage: &Stage) -> Vec<ActionLine> {
         let name = &stage.name;
         let line = |label: String, tooltip: &str, kind, why: Option<SharedString>| ActionLine {
             label: label.into(),

@@ -53,6 +53,8 @@ freshkube-core = { workspace = true, features = ["testing"] }
 # The example tests read Argo CD's workloads (`ARGOCD_WORKLOADS`).
 freshkube-delivery = { workspace = true, features = ["testing"] }
 # The page tests settle the header and measure the frame (`layout_check`).
+# The offer desk records what it asks (`asked`), to prove what it never does.
+freshkube-reads = { workspace = true, features = ["testing"] }
 freshkube-ui = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 http.workspace = true

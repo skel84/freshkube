@@ -11,6 +11,8 @@ mod marks;
 
 use std::sync::Arc;
 
+use freshkube_core::access::Offer;
+use freshkube_core::write::AccessQuestion;
 use freshkube_core::write::edit_yaml::EditSession;
 use freshkube_core::write::everyday::Row;
 use gpui_kit::component::{
@@ -87,6 +89,56 @@ pub(super) struct EditView {
 }
 
 impl DetailPane {
+    /// The row the open object is, as core names what an edit is about.
+    fn edit_row(&self) -> Option<Row> {
+        let target = &self.detail.as_ref()?.target;
+        let (kind, identity) = (&target.kind, &target.identity);
+        Some(Row {
+            group: kind.group.clone(),
+            version: kind.version.clone(),
+            kind: kind.kind.clone(),
+            resource: kind.plural.clone(),
+            namespace: Some(identity.namespace.clone()).filter(|ns| !ns.is_empty()),
+            name: identity.name.clone(),
+            uid: identity.uid.clone(),
+        })
+    }
+
+    /// What an edit of the open object needs, which core declares.
+    fn edit_needs(&self) -> Vec<AccessQuestion> {
+        if self.embedded_node {
+            return Vec::new();
+        }
+        self.edit_row()
+            .map(|row| freshkube_core::write::edit_yaml::needs(&row))
+            .unwrap_or_default()
+    }
+
+    /// Asks the cluster whether Edit may be offered for the open object, if
+    /// it isn't known. Called when an object opens, never while drawing.
+    pub(crate) fn want_edit(&mut self, cx: &mut Context<Self>) {
+        let needs = self.edit_needs();
+        if !self.active || needs.is_empty() {
+            return;
+        }
+        self.offers
+            .update(cx, |offers, cx| offers.want(&needs, cx));
+    }
+
+    /// What the cluster said of Edit on the open object.
+    fn edit_offer(&self, cx: &App) -> Offer {
+        let needs = self.edit_needs();
+        if needs.is_empty() {
+            return Offer::Pending;
+        }
+        self.offers.read(cx).offer(&needs, cx)
+    }
+
+    /// Why the cluster says Edit is not allowed, when it did.
+    fn access_refusal(&self, cx: &App) -> Option<String> {
+        self.edit_offer(cx).refusal().map(str::to_owned)
+    }
+
     /// Why Edit is off, or `None`: the shell sets it from the cluster's level,
     /// as it does for the list's actions.
     pub fn set_write_block(&mut self, block: Option<&'static str>, cx: &mut Context<Self>) {
@@ -173,21 +225,15 @@ impl DetailPane {
         };
         if self.embedded_node
             || self.write_block.is_some()
+            || self.access_refusal(cx).is_some()
             || self.edit.is_some()
             || detail.read == DocumentRead::Deleted
         {
             return;
         }
         let identity = detail.target.identity.clone();
-        let kind = &detail.target.kind;
-        let row = Row {
-            group: kind.group.clone(),
-            version: kind.version.clone(),
-            kind: kind.kind.clone(),
-            resource: kind.plural.clone(),
-            namespace: Some(identity.namespace.clone()).filter(|ns| !ns.is_empty()),
-            name: identity.name.clone(),
-            uid: identity.uid.clone(),
+        let Some(row) = self.edit_row() else {
+            return;
         };
         self.feedback = None;
         if let ClusterAccess::Example(_) = access {
@@ -380,15 +426,20 @@ impl DetailPane {
                 }) => Some(why.to_string()),
                 _ => None,
             });
-        let tooltip = reason
-            .clone()
-            .unwrap_or_else(|| "Edit this object's YAML".to_owned());
+        // The level's reason wins over the cluster's.
+        let offer = self.edit_offer(cx);
+        let refusal = offer.refusal().map(str::to_owned);
+        let reason = reason.or_else(|| refusal.clone());
+        let tooltip = reason.clone().unwrap_or_else(|| match offer.note() {
+            Some(note) => format!("Edit this object's YAML. {note}"),
+            None => "Edit this object's YAML".to_owned(),
+        });
         Some(
             Button::new("detail-edit")
                 .outline()
                 .xsmall()
                 .label(if reading { "Opening…" } else { "Edit" })
-                .disabled(self.write_block.is_some() || reading)
+                .disabled(self.write_block.is_some() || refusal.is_some() || reading)
                 .tooltip(tooltip)
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.end_edit();

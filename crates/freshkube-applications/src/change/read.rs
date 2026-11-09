@@ -211,6 +211,7 @@ impl ChangePage {
         });
         if let Some(change) = self.loader.data().filter(|_| answered).cloned() {
             self.show(change);
+            self.want_stage_offers(cx);
             self.offer_follows(cx);
             self.read_pull(false, cx);
             if let Some(stage) = self.stage.take() {
@@ -245,6 +246,7 @@ impl ChangePage {
         }
         self.pull_visible(true, cx);
         self.want_coroot(true, cx);
+        self.want_stage_offers(cx);
         self.read_outcome(false, cx);
     }
 

@@ -1121,3 +1121,106 @@ fn safety_g10_a_read_only_cluster_refuses_review_and_starts_nothing(cx: &mut Tes
     })
     .unwrap();
 }
+
+// ---- #854: what the cluster says before an operation is offered ----
+
+/// The app's offer desk, bound to example data that answers `shape`.
+fn offers_answering(cx: &mut TestAppContext, shape: freshkube_core::access::example::Shape) {
+    cx.update(|cx| {
+        let desk = freshkube_reads::existing_offer_desk(cx).expect("the screen made the desk");
+        let source = crate::resources::ClusterSource {
+            id: "example-access".into(),
+            context: "prod-fra".into(),
+            access: crate::resources::ClusterAccess::EXAMPLE,
+        };
+        desk.update(cx, |desk, cx| {
+            desk.set_example(shape);
+            desk.bind(Some(&source), cx);
+        });
+    });
+}
+
+#[gpui_kit::test]
+fn a_plan_the_cluster_refuses_says_why_and_cannot_be_reviewed(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    offers_answering(cx, freshkube_core::access::example::Shape::ActionsRefused);
+    // The plan changes: the nodes picked are asked about.
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.activate(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    render(cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let blocked = window.find("ops-blocked").label().unwrap().to_owned();
+        assert!(
+            blocked.contains("Needs patch on nodes cluster-wide"),
+            "{blocked}"
+        );
+        // Shown, not hidden: Review is there, and opens nothing.
+        window.click("ops-review", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("confirm-dialog").is_none());
+    })
+    .unwrap();
+    // A drain also needs to evict; the first no is the one said.
+    set_operation(cx, handle, &screen, OperationKind::Cordon);
+    cx.run_until_parked();
+    render(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        let blocked = window.find("ops-blocked").label().unwrap().to_owned();
+        assert!(blocked.contains("Needs patch on nodes"), "{blocked}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_plan_whose_review_did_not_answer_is_not_blocked_by_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    offers_answering(cx, freshkube_core::access::example::Shape::Failed);
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.activate(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    render(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("ops-blocked").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn only_the_nodes_in_the_plan_are_asked_about(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    offers_answering(cx, freshkube_core::access::example::Shape::Full);
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.activate(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let asked = |cx: &mut TestAppContext| -> Vec<String> {
+        cx.read(|cx| {
+            freshkube_reads::existing_offer_desk(cx)
+                .unwrap()
+                .read(cx)
+                .asked()
+                .iter()
+                .filter(|question| question.resource == "nodes")
+                .filter_map(|question| question.name.clone())
+                .collect()
+        })
+    };
+    assert_eq!(asked(cx), ["talos-cp-fra1-01"]);
+    // Another node joins the plan, and only then is it asked about.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row(1), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(asked(cx), ["talos-cp-fra1-01", "talos-cp-fra1-02"]);
+}

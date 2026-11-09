@@ -157,6 +157,12 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g18_a_context_change_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 - `safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 19. What is offered asks reviews only for the selection's actions and only while shown, and an answer never stands in for the gate
+
+- `safety_g19_only_the_selected_rows_actions_are_asked_about` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g19_a_hidden_page_asks_no_review` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g19_a_cached_allowed_answer_does_not_skip_the_preflight_review` (`crates/freshkube-core/src/write/tests/offer.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

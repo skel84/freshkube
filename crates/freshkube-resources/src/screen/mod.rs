@@ -256,6 +256,9 @@ pub struct ResourcesScreen {
     usage_state: UsageState,
     /// Why writes are not allowed on this cluster, set by the shell.
     write_block: Option<&'static str>,
+    /// The app's reviews of what the person may do (#854): an action the
+    /// cluster says no to is shown disabled with the reason. It only guides.
+    offers: Entity<freshkube_reads::OfferDesk>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -327,7 +330,10 @@ impl ResourcesScreen {
             )
             .searchable(true)
         });
+        let offers = freshkube_reads::offer_desk(&runtime, cx);
         let subscriptions = vec![
+            // An answer lands: an action may now read as refused.
+            cx.observe(&offers, |_, _, cx| cx.notify()),
             // Every change to the rows notifies the screen; the flash hears
             // of it before the next frame draws, so a fade never paints on
             // a row's old line.
@@ -458,6 +464,7 @@ impl ResourcesScreen {
             usage: Watch::default(),
             usage_state: UsageState::default(),
             write_block: None,
+            offers,
             _subscriptions: subscriptions,
         }
     }
@@ -641,6 +648,11 @@ impl ResourcesScreen {
         let same = self.source.as_ref().map(|source| &source.id)
             == source.as_ref().map(|source| &source.id);
         self.source = source;
+        if !self.embedded {
+            let source = self.source.clone();
+            self.offers
+                .update(cx, |offers, cx| offers.bind(source.as_ref(), cx));
+        }
         if same {
             if let Some(source) = &self.source {
                 let access = source.access.clone();
@@ -742,6 +754,7 @@ impl ResourcesScreen {
         self.usage.set_visible(visible);
         if visible {
             self.namespace_read.set_visible(true, OnShow::Never, cx);
+            self.want_offers(cx);
             self.restart(window, cx);
             self.tick = Some(cx.spawn(async move |this, cx| {
                 loop {
@@ -767,6 +780,8 @@ impl ResourcesScreen {
             return;
         }
         self.namespaces_for = None;
+        // Answers that have expired are asked again for the selection.
+        self.want_offers(cx);
         self.restart(window, cx);
         self.detail.update(cx, |detail, cx| detail.refresh(cx));
     }
@@ -1286,6 +1301,7 @@ impl ResourcesScreen {
         self.restore = None;
         self.show_identity(identity);
         self.scroll_to_selection(ScrollStrategy::Nearest);
+        self.want_offers(cx);
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -1385,6 +1401,7 @@ impl ResourcesScreen {
         self.restore = None;
         self.projection.select(&self.store, Some(next));
         self.scroll_to_selection(ScrollStrategy::Nearest);
+        self.want_offers(cx);
         // An open drawer follows the selection; a closed one stays closed
         // until Enter or a click.
         if self.detail.read(cx).target_identity().is_some()

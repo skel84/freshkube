@@ -194,6 +194,59 @@ fn a_cluster_that_refuses_writes_leaves_edit_off(cx: &mut TestAppContext) {
     assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
 }
 
+/// Binds the app's offer desk to example data answering `shape`.
+fn offers_answering(cx: &mut TestAppContext, shape: freshkube_core::access::example::Shape) {
+    cx.update(|cx| {
+        let desk = freshkube_reads::existing_offer_desk(cx).expect("the pane made the desk");
+        let source = crate::screen::ClusterSource {
+            id: example::connection(CONTEXT),
+            context: CONTEXT.into(),
+            access: ClusterAccess::EXAMPLE,
+        };
+        desk.update(cx, |desk, cx| {
+            desk.set_example(shape);
+            desk.bind(Some(&source), cx);
+        });
+    });
+}
+
+#[gpui_kit::test]
+fn a_cluster_that_refuses_the_edit_leaves_it_off_with_the_reason(cx: &mut TestAppContext) {
+    use freshkube_core::access::example::Shape;
+    let (_runtime, pane, handle, _) = mount(cx);
+    offers_answering(cx, Shape::ActionsRefused);
+    let (pod, _) = running_pod();
+    let space = pod.identity.namespace.clone();
+    assert!(!matches!(space.as_str(), "shop" | "payments"), "{space}");
+    on_yaml(cx, &pane, handle, &pod);
+    let refusal = pane.read_with(cx, |pane, cx| pane.access_refusal(cx));
+    assert_eq!(refusal, Some(format!("Needs patch on pods in {space}")));
+    // Shown, not hidden, and it opens no editor.
+    assert!(label(cx, handle, "detail-edit").is_some());
+    press(cx, handle, "detail-edit");
+    assert!(label(cx, handle, "detail-edit-view").is_none());
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
+    // The level's reason is the one shown when both apply.
+    pane.update(cx, |pane, cx| {
+        pane.set_write_block(Some("This cluster is read-only."), cx)
+    });
+    press(cx, handle, "detail-edit");
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
+}
+
+#[gpui_kit::test]
+fn an_edit_whose_review_did_not_answer_stays_on(cx: &mut TestAppContext) {
+    use freshkube_core::access::{Offer, example::Shape};
+    let (_runtime, pane, handle, _) = mount(cx);
+    offers_answering(cx, Shape::Failed);
+    let (pod, _) = running_pod();
+    on_yaml(cx, &pane, handle, &pod);
+    let offer = pane.read_with(cx, |pane, cx| pane.edit_offer(cx));
+    assert_eq!(offer, Offer::Unchecked);
+    press(cx, handle, "detail-edit");
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_some()));
+}
+
 #[gpui_kit::test]
 fn another_object_drops_the_edit(cx: &mut TestAppContext) {
     let (_runtime, pane, handle, _) = mount(cx);
