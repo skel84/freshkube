@@ -95,6 +95,9 @@ and files are added in sorted order.
 This workflow is apart from `ci.yml`, so a failure here never stops a macOS
 release while these platforms are preview.
 
+The macOS bundles get the same launch in `ci.yml`'s bundle job, where it does
+stop a release ([MACOS_PACKAGING.md](MACOS_PACKAGING.md#first-frame)).
+
 ## Releases
 
 A `v*` tag's [Release](../.github/workflows/release.yml) workflow, after

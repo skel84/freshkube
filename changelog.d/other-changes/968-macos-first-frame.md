@@ -1,0 +1,1 @@
+- **Release checks:** each macOS bundle is now opened to its first window, on a clean runner, before a release can be drafted; a bundle that signs or loads wrongly stops the release.

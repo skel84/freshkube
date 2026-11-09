@@ -59,3 +59,34 @@ jobs:
           # A release promotes these exact files, so keep them as long as GitHub allows.
           retention-days: 90
           compression-level: 0
+
+  # The downloaded archive, on a machine that never built it, must open a
+  # window: the bundle's own executable with --fixture and an empty HOME, until
+  # FRESHKUBE_FIRST_FRAME prints the first frame (scripts/first-frame.py). It
+  # catches a bundle that links, signs or loads resources wrongly, which
+  # `--version` in package-macos.py cannot. A failure fails the CI run, and
+  # release.yml promotes only a successful one.
+  first-frame:
+    name: First frame (${{ matrix.target }})
+    needs: package
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@v4
+        with:
+          name: freshkube-${{ matrix.target }}
+          path: dist
+      - name: Start it
+        run: python3 scripts/first-frame.py dist/*.zip
