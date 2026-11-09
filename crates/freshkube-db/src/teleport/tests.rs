@@ -180,26 +180,32 @@ fn each_state_has_a_command_to_run() {
 }
 
 #[test]
-fn the_announced_address_is_read_and_only_loopback_is_used() {
+fn only_the_started_line_gives_the_address_and_only_loopback_is_used() {
     let line = "Started authenticated tunnel for the PostgreSQL database \"orders-db-ro\" in cluster \"teleport.example.com:443\" on 127.0.0.1:41234.";
+    assert!(matches!(ready_line(line), Some(Listen::Loopback(_, 41234))));
     assert!(matches!(
-        parse_listen(line),
-        Some(Listen::Loopback(_, 41234))
-    ));
-    assert!(matches!(
-        parse_listen("listening on [::1]:5000"),
+        ready_line("Started tunnel on [::1]:5000"),
         Some(Listen::Loopback(_, 5000))
     ));
     assert!(matches!(
-        parse_listen("on localhost:6000"),
+        ready_line("Started tunnel on localhost:6000."),
         Some(Listen::Loopback(_, 6000))
     ));
     assert!(matches!(
-        parse_listen("on 0.0.0.0:7000"),
+        ready_line("Started tunnel on 0.0.0.0:7000."),
         Some(Listen::Exposed(_))
     ));
-    assert!(parse_listen("proxy teleport.example.com:443 ok").is_none());
-    assert!(parse_listen("nothing here").is_none());
+    // Anything that doesn't start with "Started" is not the ready line, even
+    // when it names a loopback or other address.
+    for other in [
+        "WARN could not reach teleport.example.com:443 on 127.0.0.1:5432",
+        "listening on 127.0.0.1:5432",
+        "Started tunnel for cluster teleport.example.com:443",
+        "Started tunnel on not-an-address:9",
+        "nothing here",
+    ] {
+        assert!(ready_line(other).is_none(), "{other}");
+    }
 }
 
 #[test]
@@ -210,6 +216,7 @@ token=abc123 password: hunter2 Authorization: Bearer abcdefghijklmnop1234567890X
 -----BEGIN CERTIFICATE-----\nMIIBsecretbytes\n-----END CERTIFICATE-----\n\
 login at https://alice:pw@teleport.example.com/x and key /var/lib/x/id.key\n\
 eyJhbGciOiJIUzI1NiJ9.payload.signature\n\
+open https://teleport.example.com/web/x?token=abc123 or http://127.0.0.1:63131/nonce9f8e7d6c\n\
 access to db denied for user reader";
     let shown = redact(text, &["/home/alice"]);
     for secret in [
@@ -222,6 +229,8 @@ access to db denied for user reader";
         "/home/alice",
         "id.key",
         "eyJh",
+        "nonce9f8e7d6c",
+        "web/x",
     ] {
         assert!(!shown.contains(secret), "{secret} in {shown}");
     }
@@ -250,7 +259,8 @@ async fn tsh_that_is_not_installed_is_its_own_state() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_proxy_that_is_ready_listens_on_loopback() {
-    let dir = tempfile_dir("ready");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let mut proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
     assert_eq!(proxy.port(), 41234);
     assert!(proxy.address().is_loopback());
@@ -267,7 +277,8 @@ async fn a_proxy_that_is_ready_listens_on_loopback() {
 #[cfg(unix)]
 #[tokio::test]
 async fn safety_g21_the_child_gets_only_the_environment_tsh_needs() {
-    let dir = tempfile_dir("env");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let _proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
     let env = fs::read_to_string(dir.join("env")).unwrap();
     for line in env.lines() {
@@ -285,7 +296,8 @@ async fn safety_g21_the_child_gets_only_the_environment_tsh_needs() {
 #[cfg(unix)]
 #[tokio::test]
 async fn safety_g21_the_child_dies_with_its_proxy() {
-    let dir = tempfile_dir("dies");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let proxy = start(&dir, SIGNED_IN, LISTED, READY).await.unwrap();
     let pid = proxy.pid().unwrap();
     assert!(alive(pid));
@@ -307,7 +319,8 @@ async fn wait_gone(pid: u32) {
 #[cfg(unix)]
 #[tokio::test]
 async fn safety_g21_not_signed_in_is_told_without_running_a_login() {
-    let dir = tempfile_dir("login");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let status = "echo 'ERROR: Not logged in.' >&2; exit 1";
     let error = start(&dir, status, LISTED, READY).await.unwrap_err();
     assert_eq!(
@@ -326,7 +339,8 @@ async fn safety_g21_not_signed_in_is_told_without_running_a_login() {
 #[cfg(unix)]
 #[tokio::test]
 async fn an_expired_session_reads_as_not_signed_in() {
-    let dir = tempfile_dir("expired");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let status = "echo '{\"active\":null}'";
     let error = start(&dir, status, LISTED, READY).await.unwrap_err();
     assert!(
@@ -338,7 +352,8 @@ async fn an_expired_session_reads_as_not_signed_in() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_database_not_under_the_pattern_is_not_found_and_no_proxy_starts() {
-    let dir = tempfile_dir("notfound");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let list = "echo '[{\"metadata\":{\"name\":\"billing-ro\"}}]'";
     let error = start(&dir, SIGNED_IN, list, READY).await.unwrap_err();
     match error {
@@ -354,7 +369,8 @@ async fn a_database_not_under_the_pattern_is_not_found_and_no_proxy_starts() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_role_the_proxy_refuses_is_its_own_state() {
-    let dir = tempfile_dir("role");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let proxy =
         "echo 'ERROR: access to db denied. User reader does not have permissions.' >&2; exit 1";
     let error = start(&dir, SIGNED_IN, LISTED, proxy).await.unwrap_err();
@@ -364,7 +380,8 @@ async fn a_role_the_proxy_refuses_is_its_own_state() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_proxy_that_fails_shows_redacted_stderr_and_the_command() {
-    let dir = tempfile_dir("failed");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let proxy =
         "echo 'ERROR: listen failed, token=sekrit key /home/alice/.tsh/keys/x.pem' >&2; exit 1";
     let error = start(&dir, SIGNED_IN, LISTED, proxy).await.unwrap_err();
@@ -382,9 +399,10 @@ async fn a_proxy_that_fails_shows_redacted_stderr_and_the_command() {
 #[cfg(unix)]
 #[tokio::test]
 async fn safety_g21_a_proxy_that_listens_beyond_loopback_is_killed() {
-    let dir = tempfile_dir("exposed");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let proxy = format!(
-        "echo $$ > '{}'; echo 'tunnel on 0.0.0.0:41234'; exec sleep 300",
+        "echo $$ > '{}'; echo 'Started authenticated tunnel for the PostgreSQL database \"orders-db-ro\" on 0.0.0.0:41234.'; exec sleep 300",
         dir.join("pid").display()
     );
     let error = start(&dir, SIGNED_IN, LISTED, &proxy).await.unwrap_err();
@@ -398,7 +416,8 @@ async fn safety_g21_a_proxy_that_listens_beyond_loopback_is_killed() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_proxy_that_never_listens_is_killed_at_the_deadline() {
-    let dir = tempfile_dir("silent");
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
     let body = format!("echo $$ > '{}'; exec sleep 300", dir.join("pid").display());
     let tsh = fake_tsh(&dir, SIGNED_IN, LISTED, &body);
     let started =
@@ -420,9 +439,46 @@ fn recorded_pid(dir: &Path) -> u32 {
 }
 
 #[cfg(unix)]
-fn tempfile_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("freshkube-tsh-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+#[tokio::test]
+async fn a_warning_before_the_ready_line_is_not_taken_for_the_address() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let proxy = format!(
+        "echo 'WARN could not reach teleport.example.com:443 on 127.0.0.1:5432'; echo 'WARN other 0.0.0.0:80' >&2; {READY}"
+    );
+    let proxy = start(&dir, SIGNED_IN, LISTED, &proxy).await.unwrap();
+    assert_eq!(proxy.port(), 41234);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_ready_line_on_stderr_alone_is_not_the_address() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().to_path_buf();
+    let tsh = fake_tsh(
+        &dir,
+        SIGNED_IN,
+        LISTED,
+        "echo 'Started tunnel on 127.0.0.1:41234.' >&2; exec sleep 300",
+    );
+    let started =
+        Proxy::start_within(&access(Some(tsh)), "orders-db", Duration::from_millis(500)).await;
+    assert!(started.is_err());
+}
+
+#[tokio::test]
+async fn a_line_without_a_newline_is_cut_as_it_is_read() {
+    let tail = Tail::default();
+    let stream = std::io::Cursor::new(vec![b'x'; 200_000]);
+    watch(stream, tail.clone(), None).await.unwrap();
+    let tail = tail.lock().unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].len(), MAX_LINE_BYTES);
+}
+
+#[tokio::test]
+async fn a_checks_output_is_kept_only_to_its_cap() {
+    let big = std::io::Cursor::new(vec![b'y'; MAX_OUTPUT as usize * 2 + 5]);
+    assert_eq!(capture(Some(big)).await.len(), MAX_OUTPUT as usize);
+    assert!(capture(None::<std::io::Cursor<Vec<u8>>>).await.is_empty());
 }

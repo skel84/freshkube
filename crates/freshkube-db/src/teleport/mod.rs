@@ -14,6 +14,8 @@
 //!   address that isn't loopback ends the child.
 //! - **Owned by one tab:** a [`Proxy`] kills its child when dropped, so closing
 //!   the tab, connecting again or quitting the app leaves no process behind.
+//!   After a crash or a force quit, where nothing is dropped, a watcher shell
+//!   ends the child's process group (macOS and Linux; not yet on Windows).
 //! - **Stderr** is redacted ([`redact`]) and bounded before anyone shows it.
 mod redact;
 #[cfg(test)]
@@ -29,7 +31,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    io::{AsyncRead, AsyncReadExt},
     process::{Child, Command},
     sync::mpsc,
     task::JoinHandle,
@@ -253,16 +255,38 @@ struct Ran {
     stderr: String,
 }
 
+/// The most of a check's output that is kept; the rest is read and dropped.
+const MAX_OUTPUT: u64 = 1 << 20;
+
+/// Reads a pipe to its end, keeping the first `MAX_OUTPUT` bytes and
+/// dropping the rest, so a child that writes a lot neither fills memory nor
+/// blocks on a full pipe.
+async fn capture<R: AsyncRead + Unpin>(stream: Option<R>) -> Vec<u8> {
+    let Some(mut stream) = stream else {
+        return Vec::new();
+    };
+    let mut kept = Vec::new();
+    let _ = (&mut stream).take(MAX_OUTPUT).read_to_end(&mut kept).await;
+    let _ = tokio::io::copy(&mut stream, &mut tokio::io::sink()).await;
+    kept
+}
+
 async fn run(tsh: &Path, args: &[String]) -> Result<Ran, TeleportError> {
-    let child = command(tsh).args(args).spawn().map_err(spawn_error)?;
-    let output = tokio::time::timeout(CHECK_TIMEOUT, child.wait_with_output())
+    let mut child = command(tsh).args(args).spawn().map_err(spawn_error)?;
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    let work = async {
+        let (status, out, err) = tokio::join!(child.wait(), capture(stdout), capture(stderr));
+        (status, out, err)
+    };
+    // On a timeout the future is dropped with `child`, which kills it.
+    let (status, out, err) = tokio::time::timeout(CHECK_TIMEOUT, work)
         .await
-        .map_err(|_| failed("tsh did not answer in time", ""))?
-        .map_err(|e| failed(&e.to_string(), ""))?;
+        .map_err(|_| failed("tsh did not answer in time", ""))?;
+    let status = status.map_err(|e| failed(&e.to_string(), ""))?;
     Ok(Ran {
-        ok: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        ok: status.success(),
+        stdout: String::from_utf8_lossy(&out).into_owned(),
+        stderr: String::from_utf8_lossy(&err).into_owned(),
     })
 }
 
@@ -389,45 +413,49 @@ enum Listen {
     Exposed(String),
 }
 
-fn parse_listen(line: &str) -> Option<Listen> {
-    for word in line.split_whitespace() {
-        let word =
-            word.trim_matches(|c: char| matches!(c, '"' | '\'' | ',' | ';' | '(' | ')' | '.'));
-        // A trailing sentence dot was trimmed above; keep the port's digits.
-        let Some((host, port)) = word.rsplit_once(':') else {
-            continue;
-        };
-        let Ok(port) = port.trim_end_matches('.').parse::<u16>() else {
-            continue;
-        };
-        let host = host.trim_matches(['[', ']']);
-        if host == "localhost" {
-            return Some(Listen::Loopback(Ipv4Addr::LOCALHOST.into(), port));
-        }
-        if let Ok(ip) = host.parse::<IpAddr>() {
-            return Some(if ip.is_loopback() {
-                Listen::Loopback(ip, port)
-            } else {
-                Listen::Exposed(ip.to_string())
-            });
-        }
+/// The address in `tsh`'s ready line: `Started authenticated tunnel for the
+/// PostgreSQL database "…" in cluster "…" on 127.0.0.1:62351.` Only a line
+/// that starts with `Started` counts, and only the text after its last ` on `
+/// is read, so a warning or a cluster name written as `host:port` is never
+/// taken for the address.
+fn ready_line(line: &str) -> Option<Listen> {
+    let line = line.trim();
+    if !line.starts_with("Started") {
+        return None;
     }
-    None
+    let (_, address) = line.rsplit_once(" on ")?;
+    let address = address.trim().trim_end_matches('.');
+    let (host, port) = address.rsplit_once(':')?;
+    let port: u16 = port.parse().ok()?;
+    let host = host.trim_matches(['[', ']']);
+    if host == "localhost" {
+        return Some(Listen::Loopback(Ipv4Addr::LOCALHOST.into(), port));
+    }
+    let ip: IpAddr = host.parse().ok()?;
+    Some(if ip.is_loopback() {
+        Listen::Loopback(ip, port)
+    } else {
+        Listen::Exposed(ip.to_string())
+    })
 }
 
 type Tail = Arc<Mutex<VecDeque<String>>>;
 const TAIL_LINES: usize = 40;
 
+/// The longest line kept; the rest of a longer one is dropped as it is read.
+const MAX_LINE_BYTES: usize = 1024;
+
 fn watch<R: AsyncRead + Unpin + Send + 'static>(
-    stream: R,
+    mut stream: R,
     tail: Tail,
-    ready: mpsc::UnboundedSender<Listen>,
+    ready: Option<mpsc::UnboundedSender<Listen>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stream).lines();
-        // Keep reading after the ready line so a full pipe never stalls `tsh`.
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(listen) = parse_listen(&line) {
+        let push = |line: &[u8]| {
+            let line = String::from_utf8_lossy(line).into_owned();
+            if let Some(ready) = &ready
+                && let Some(listen) = ready_line(&line)
+            {
                 let _ = ready.send(listen);
             }
             let mut tail = tail.lock().unwrap_or_else(|e| e.into_inner());
@@ -435,8 +463,64 @@ fn watch<R: AsyncRead + Unpin + Send + 'static>(
                 tail.pop_front();
             }
             tail.push_back(line);
+        };
+        // Keep reading after the ready line so a full pipe never stalls
+        // `tsh`; a line is cut at `MAX_LINE_BYTES` as it is read, so a child
+        // that never writes a newline can't grow memory.
+        let (mut line, mut chunk) = (Vec::new(), [0u8; 4096]);
+        while let Ok(n) = stream.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            for &byte in &chunk[..n] {
+                if byte == b'\n' {
+                    push(&line);
+                    line.clear();
+                } else if line.len() < MAX_LINE_BYTES {
+                    line.push(byte);
+                }
+            }
+        }
+        if !line.is_empty() {
+            push(&line);
         }
     })
+}
+
+/// Ends the child's process group if Freshkube dies without dropping the
+/// [`Proxy`] (a crash, a force quit, `kill -9`): a small shell, in a group of
+/// its own, waits for this process to be gone and then terminates the group,
+/// and exits when either is gone. Best effort: the group ends within a few
+/// seconds of the parent's death. Its failure to start leaves only `Drop`.
+#[cfg(unix)]
+fn watch_parent(group: u32) {
+    use std::os::unix::process::CommandExt;
+    const WATCHER: &str = r#"
+parent=$1; group=$2
+alive() { kill -s 0 -- "$1" 2>/dev/null; }
+while alive "$parent" && alive "-$group"; do sleep 1; done
+if alive "-$group"; then
+  kill -s TERM -- "-$group" 2>/dev/null
+  sleep 2
+  kill -s KILL -- "-$group" 2>/dev/null
+fi
+"#;
+    let _ = std::process::Command::new("/bin/sh")
+        .args(["-c", WATCHER, "freshkube-tsh-watch"])
+        .arg(std::process::id().to_string())
+        .arg(group.to_string())
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(|mut watcher| {
+            // Reaped when it exits, so it never lingers as a zombie.
+            std::thread::spawn(move || {
+                let _ = watcher.wait();
+            });
+        });
 }
 
 /// A running `tsh proxy db --tunnel`. Dropping it kills the child.
@@ -486,18 +570,24 @@ impl Proxy {
         ready_within: Duration,
     ) -> Result<Self, TeleportError> {
         let again = access.proxy_command(name);
-        let mut child = command(tsh)
-            .args(access.proxy_args(name))
-            .spawn()
-            .map_err(spawn_error)?;
+        let mut proxy = command(tsh);
+        proxy.args(access.proxy_args(name));
+        // Its own process group, so the parent-death watcher can end it.
+        #[cfg(unix)]
+        proxy.process_group(0);
+        let mut child = proxy.spawn().map_err(spawn_error)?;
+        #[cfg(unix)]
+        if let Some(pid) = child.id() {
+            watch_parent(pid);
+        }
         let tail = Tail::default();
         let (send, mut ready) = mpsc::unbounded_channel();
         let mut readers = Vec::new();
         if let Some(out) = child.stdout.take() {
-            readers.push(watch(out, tail.clone(), send.clone()));
+            readers.push(watch(out, tail.clone(), Some(send.clone())));
         }
         if let Some(err) = child.stderr.take() {
-            readers.push(watch(err, tail.clone(), send.clone()));
+            readers.push(watch(err, tail.clone(), None));
         }
         drop(send);
         let stop = |readers: &[JoinHandle<()>]| readers.iter().for_each(JoinHandle::abort);

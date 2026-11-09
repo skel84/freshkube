@@ -88,6 +88,20 @@ fn is_plain(lower: &str) -> bool {
 
 fn redact_word(word: &str) -> String {
     let bare = word.trim_matches(|c: char| matches!(c, '"' | '\'' | ',' | ';' | '(' | ')' | '.'));
+    // A URL keeps its scheme and host, never its path or query (a token may
+    // be in either); a login in the authority drops all of it.
+    if let Some((scheme, rest)) = bare.split_once("://") {
+        let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let (authority, tail) = rest.split_at(end);
+        if authority.contains('@') {
+            return "<url>".into();
+        }
+        return if tail.is_empty() {
+            bare.to_owned()
+        } else {
+            format!("{scheme}://{authority}/…")
+        };
+    }
     // key=value and key:value where the key names a secret.
     if let Some((key, value)) = bare.split_once(['=', ':'])
         && !value.is_empty()
@@ -97,10 +111,6 @@ fn redact_word(word: &str) -> String {
         if SECRET_WORDS.iter().any(|w| key.contains(w)) {
             return format!("{}=<redacted>", key.trim_matches('-'));
         }
-    }
-    // A URL that carries a login.
-    if bare.contains("://") && bare.contains('@') {
-        return "<url>".into();
     }
     if is_path(bare) {
         return "<path>".into();

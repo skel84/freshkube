@@ -69,7 +69,7 @@ pub(crate) enum Example {
     /// As `Query`, with the application's own user as the login, so the
     /// strip warns that the session is not a reader.
     QueryAppUser,
-    /// Through Teleport, connected over TLS whose certificate can't be checked.
+    /// Through Teleport, connected: the strip reads "Through Teleport (tsh tunnel)".
     Teleport,
     /// Teleport's states (E3), each with the command to run.
     TeleportNoTsh,
@@ -202,6 +202,8 @@ pub(super) struct ExploreView {
     data: Entity<DataView>,
     _browser: Subscription,
     _release: Subscription,
+    /// Quitting drops the connection, and the Teleport child with it.
+    _quit: Subscription,
 }
 
 impl ExploreView {
@@ -222,6 +224,12 @@ impl ExploreView {
             cx.notify();
         });
         let release = cx.on_release(|this, cx| this.release_forward(cx));
+        let quit = cx.on_app_quit(|this, _| {
+            // The app is ending: nothing else will drop the connection, so
+            // drop it here, which kills the Teleport child it holds.
+            this.connect.reset();
+            async {}
+        });
         Self {
             runtime,
             source,
@@ -241,6 +249,7 @@ impl ExploreView {
             data,
             _browser: subscription,
             _release: release,
+            _quit: quit,
         }
     }
 
@@ -559,7 +568,8 @@ impl ExploreView {
         let cluster = self.database.identity.name.clone();
         let runtime = self.runtime.clone();
         let epoch = self.epoch;
-        reading::read(
+        reading::read_within(
+            reading::TELEPORT_DEADLINE,
             self,
             |this: &mut Self| &mut this.connect,
             epoch,
@@ -727,14 +737,13 @@ async fn connect_teleport(access: TeleportAccess, cluster: String) -> Result<Con
     let proxy = Proxy::start(&access, &cluster)
         .await
         .map_err(Fail::Teleport)?;
-    // The certificate the server shows can't be checked against the cluster's
-    // CA here (there is none on this route), so it is named, never verified.
+    // There is no cluster CA on this route; the leg is loopback to `tsh`.
     let tls = TlsPlan {
         server_name: proxy.name().to_owned(),
         ca_pem: None,
     };
     let limits = Limits::default();
-    let (wire, encryption) = TokioPostgres::connect(
+    let (wire, _seen) = TokioPostgres::connect(
         Target {
             address: proxy.address(),
             port: proxy.port(),
@@ -754,22 +763,15 @@ async fn connect_teleport(access: TeleportAccess, cluster: String) -> Result<Con
     Ok(Connected {
         session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
         who: format!("{} · Teleport", access.db_user).into(),
-        encryption: through_tunnel(encryption),
+        // What Freshkube's own leg is, not what `pg_stat_ssl` says: behind
+        // Teleport that backend's client is Teleport's database agent, whose
+        // hop to Postgres is Teleport's to secure. Ours is loopback to `tsh`,
+        // and `tsh` carries it over its own mutual TLS.
+        encryption: Encryption::Tunnel,
         route: Some(route.into()),
         proxy: Some(Arc::new(proxy)),
         app_user: false,
     })
-}
-
-/// Over `tsh`'s tunnel a server that offers no TLS is not exposed: the leg is
-/// loopback and `tsh` carries it over its own mutual TLS, so say that, not
-/// "not encrypted". A server that does offer TLS keeps its own words: it is
-/// encrypted, and its certificate is not checked.
-fn through_tunnel(seen: Encryption) -> Encryption {
-    match seen {
-        Encryption::Plain => Encryption::Tunnel,
-        other => other,
-    }
 }
 
 fn end_words(end: &ForwardEnd) -> String {

@@ -182,6 +182,7 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 ### 21. A Teleport child belongs to one explorer tab, runs only from Explore on loopback, never signs in for anyone, and carries no secret
 
 - `safety_g21_closing_the_tab_kills_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
+- `safety_g21_quitting_the_app_ends_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
 - `safety_g21_the_child_dies_with_its_proxy` (`crates/freshkube-db/src/teleport/tests.rs`)
 - `safety_g21_a_proxy_that_listens_beyond_loopback_is_killed` (`crates/freshkube-db/src/teleport/tests.rs`)
 - `safety_g21_not_signed_in_is_told_without_running_a_login` (`crates/freshkube-db/src/teleport/tests.rs`)
