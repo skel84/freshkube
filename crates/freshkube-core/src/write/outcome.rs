@@ -64,6 +64,16 @@ pub enum Observed {
     Diverged {
         why: &'static str,
     },
+    /// A delete was accepted and the name was seen again under a new UID: the
+    /// object was deleted and something made another.
+    Recreated,
+    /// A delete was accepted and the object is still there, Terminating,
+    /// held by these finalizers (none named when the list is empty: it is
+    /// waiting for what it owns, or for the garbage collector).
+    Terminating {
+        finalizers: Vec<String>,
+        waited: Duration,
+    },
 }
 
 impl Observed {
@@ -76,6 +86,7 @@ enum Look {
     Reached,
     Waiting,
     Diverged(&'static str),
+    Recreated,
 }
 
 async fn look(
@@ -98,7 +109,7 @@ async fn look(
     let uid = object["metadata"]["uid"].as_str().unwrap_or_default();
     if !target.uid.is_empty() && uid != target.uid {
         return match observation {
-            Observation::Gone => Look::Reached,
+            Observation::Gone => Look::Recreated,
             _ => Look::Diverged("The object was deleted and created again."),
         };
     }
@@ -202,6 +213,19 @@ async fn controlled_with(
     })
 }
 
+/// The finalizers an object carries, by name.
+pub(super) fn finalizers_of(object: &Value) -> Vec<String> {
+    object
+        .pointer("/metadata/finalizers")
+        .and_then(Value::as_array)
+        .map(|all| {
+            all.iter()
+                .filter_map(|one| one.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// An absent count reads as 0, as the API omits a count at zero.
 pub(super) fn absent_is_zero(object: &Value, pointer: &str, value: &Value) -> bool {
     value == &Value::from(0) && matches!(object.pointer(pointer), None | Some(Value::Null))
@@ -224,14 +248,35 @@ pub async fn observe(
         };
     }
     let started = Instant::now();
+    // What a delete is last seen held by: the same object, with a deletion
+    // time, so it is Terminating.
+    let mut terminating: Option<Vec<String>> = None;
     loop {
-        match look(client, observation, target, get(client, target).await).await {
+        let now = get(client, target).await;
+        if matches!(observation, Observation::Gone) {
+            match &now {
+                Ok(object) if object["metadata"]["uid"].as_str() == Some(target.uid.as_str()) => {
+                    terminating = object
+                        .pointer("/metadata/deletionTimestamp")
+                        .is_some()
+                        .then(|| finalizers_of(object));
+                }
+                // A failed read says nothing new; keep what was last seen.
+                Err(Refusal::Changed(_)) | Ok(_) => terminating = None,
+                Err(_) => {}
+            }
+        }
+        match look(client, observation, target, now).await {
             Look::Reached => return Observed::Reached,
+            Look::Recreated => return Observed::Recreated,
             Look::Diverged(why) => return Observed::Diverged { why },
             Look::Waiting => {}
         }
         let waited = started.elapsed();
         if waited >= watching.wait {
+            if let Some(finalizers) = terminating {
+                return Observed::Terminating { finalizers, waited };
+            }
             return Observed::NotObserved {
                 waited,
                 why: "The cluster did not reach the new state in time.",

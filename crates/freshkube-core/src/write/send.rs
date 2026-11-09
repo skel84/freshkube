@@ -5,12 +5,15 @@
 
 use kube::{
     Api,
-    api::{DeleteParams, DynamicObject, Patch, PatchParams, PostParams, Preconditions},
+    api::{
+        DeleteParams, DynamicObject, Patch, PatchParams, PostParams, Preconditions,
+        PropagationPolicy,
+    },
 };
 use serde_json::{Value, json};
 
 use super::{
-    action::{Change, Target},
+    action::{Change, Propagation, Target},
     audit::scrub,
 };
 
@@ -184,9 +187,14 @@ pub async fn send(
                 Err(error) => Err(classify(error)),
             };
         }
-        Change::Delete => {
+        Change::Delete(propagation) => {
             let params = DeleteParams {
                 dry_run,
+                propagation_policy: Some(match propagation {
+                    Propagation::Background => PropagationPolicy::Background,
+                    Propagation::Foreground => PropagationPolicy::Foreground,
+                    Propagation::Orphan => PropagationPolicy::Orphan,
+                }),
                 preconditions: Some(Preconditions {
                     uid: Some(target.uid.clone()),
                     resource_version: Some(target.resource_version.clone()),

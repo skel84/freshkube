@@ -79,10 +79,11 @@ impl Dock {
         NavigationFile::global(cx).set_dock(&saved, cx);
     }
 
-    /// Whether a tab is saved: not an Agent tab, and not the log tab that
-    /// following owns.
+    /// Whether a tab is saved: not an Agent or Query tab (a session never
+    /// comes back on its own, and a query's history is the tab's alone), and
+    /// not the log tab that following owns.
     fn is_saved(&self, tab: &DockTab) -> bool {
-        !tab.is_agent() && Some(tab.id) != self.follow_tab
+        !tab.is_agent() && !tab.is_query() && Some(tab.id) != self.follow_tab
     }
 
     /// The dock as it saves: its state and tabs by name.
@@ -119,7 +120,9 @@ impl Dock {
                                 view.shows_all(),
                             )
                         }
-                        (None, TabKind::Workload(_) | TabKind::Agent(_)) => (None, false, false),
+                        (None, TabKind::Workload(_) | TabKind::Agent(_) | TabKind::Query(_)) => {
+                            (None, false, false)
+                        }
                     };
                     let shell = tab.is_shell();
                     SavedTab {

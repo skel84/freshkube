@@ -158,18 +158,23 @@ impl Pilot {
                     .text_color(p.accent),
             )
             .child(div().min_w_0().truncate().child(line))
-            .child(
-                Button::new("operation-cancel")
-                    .ghost()
-                    .xsmall()
-                    .label("Cancel")
-                    .disabled(cancelling)
-                    .tooltip("Stop before the next step; a step already sent still completes")
-                    .on_click(|_, _, cx| {
-                        Operations::global(cx)
-                            .update(cx, |operations, cx| operations.request_cancel(cx))
-                    }),
-            )
+            // Not while a destructive countdown is up: its dialog has the
+            // Cancel, and a link behind the modal that cannot be clicked
+            // would only mislead.
+            .when(!crate::write_flow::countdown_running(cx), |this| {
+                this.child(
+                    Button::new("operation-cancel")
+                        .ghost()
+                        .xsmall()
+                        .label("Cancel")
+                        .disabled(cancelling)
+                        .tooltip("Stop before the next step; a step already sent still completes")
+                        .on_click(|_, _, cx| {
+                            Operations::global(cx)
+                                .update(cx, |operations, cx| operations.request_cancel(cx))
+                        }),
+                )
+            })
             .into_any_element()
     }
 
@@ -373,7 +378,29 @@ pub(in crate::desktop) fn status_text(
             if glyph_only {
                 this.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
             } else {
-                this.child(div().min_w_0().truncate().child(text))
+                // The line is cut at the bar's width; the tooltip holds all
+                // of it, a connection failure's reason and fix included, at
+                // the text size in use.
+                let whole = text.clone();
+                let tooltip_id = SharedString::from(format!("{id}-whole"));
+                this.tooltip(move |window, cx| {
+                    let whole = whole.clone();
+                    let tooltip_id = tooltip_id.clone();
+                    // Wide, but never wider than the window.
+                    let width = ui::dp_px(480., window)
+                        .min(window.viewport_size().width - ui::dp_px(32., window));
+                    Tooltip::element(move |_, _| {
+                        div()
+                            .id(tooltip_id.clone())
+                            .test_support()
+                            .max_w(width)
+                            .whitespace_normal()
+                            .aria_label(whole.clone())
+                            .child(whole.clone())
+                    })
+                    .build(window, cx)
+                })
+                .child(div().min_w_0().truncate().child(text))
             }
         })
         .into_any_element()

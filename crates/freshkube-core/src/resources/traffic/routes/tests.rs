@@ -372,6 +372,47 @@ fn a_stale_gateway_verdict_is_a_warning_and_the_trace_goes_on() {
 }
 
 #[test]
+fn a_stale_class_verdict_is_a_warning_and_the_trace_goes_on() {
+    // Accepted for generation 1 of a class that is now at generation 4.
+    let mut class = accepted_class();
+    class["metadata"]["generation"] = json!(4);
+    let trace = World::with(gateway_json(json!({})), class).trace(healthy_route());
+    assert!(trace.stale);
+    let step = step(&trace, StepId::Class);
+    assert_eq!(step.verdict, StepVerdict::Warn);
+    assert!(
+        step.stale && step.reason.contains("generation 1, now 4"),
+        "{}",
+        step.reason
+    );
+    assert_eq!(trace.verdict, RouteVerdict::Serving);
+}
+
+#[test]
+fn a_refusal_written_for_an_older_generation_marks_the_trace_stale() {
+    // A class refusal and a Gateway refusal, each older than its object.
+    let mut class =
+        class_json(json!({"conditions": [cond("Accepted", "False", "InvalidParameters", 1)]}));
+    class["metadata"]["generation"] = json!(3);
+    let trace = World::with(gateway_json(json!({})), class).trace(healthy_route());
+    stops(&trace, StepId::Class);
+    assert!(trace.stale && step(&trace, StepId::Class).stale);
+    let mut gateway = gateway_json(json!({"status": {"conditions": [
+        cond("Accepted", "True", "Accepted", 2), cond("Programmed", "False", "Invalid", 1)]}}));
+    gateway["metadata"]["generation"] = json!(2);
+    let trace = World::with(gateway, accepted_class()).trace(healthy_route());
+    stops(&trace, StepId::Gateway);
+    assert!(trace.stale && step(&trace, StepId::Gateway).stale);
+    // A current refusal is not marked.
+    let current = World::with(
+        gateway_json(json!({})),
+        class_json(json!({"conditions": [cond("Accepted", "False", "InvalidParameters", 1)]})),
+    )
+    .trace(healthy_route());
+    assert!(!current.stale);
+}
+
+#[test]
 fn a_stale_route_verdict_is_a_warning_too() {
     let mut route = healthy_route();
     route["metadata"]["generation"] = json!(9);

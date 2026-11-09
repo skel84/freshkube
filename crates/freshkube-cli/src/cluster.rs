@@ -30,6 +30,10 @@ pub struct Request {
     pub sources: Vec<PathBuf>,
     /// The context to read, named by the person.
     pub context: String,
+    /// The setup file the entry came from: where delivery's parts, the
+    /// destinations and the supply chain's settings are read. None for
+    /// `--kubeconfig`, which reads the workspace of one.
+    pub setup: Option<setup::Setup>,
 }
 
 /// A cluster ready to read.
@@ -38,6 +42,14 @@ pub struct Target {
     pub entry: Option<String>,
     pub context: String,
     pub source: ClusterSource,
+    /// What the request's setup file said; see [`Request::setup`].
+    pub setup: Option<setup::Setup>,
+    /// Whether `--allow-login` was given, which every entry a delivery read
+    /// connects to is held to as well.
+    pub allow_login: bool,
+    /// The GitHub client the delivery commands read pull requests through;
+    /// none means the anonymous one. Tests hand a fake's.
+    pub github: Option<freshkube_delivery::github::Handle>,
 }
 
 /// Turns a resolved request into something to read. The real one builds a
@@ -55,6 +67,7 @@ pub fn resolve(args: &ClusterArgs, default_setup: Option<&Path>) -> Result<Reque
             entry: None,
             sources: kubeconfig_sources(Some(kubeconfig)),
             context: context.clone(),
+            setup: None,
         });
     }
     let file = args.setup.as_deref().or(default_setup);
@@ -67,7 +80,7 @@ pub fn resolve(args: &ClusterArgs, default_setup: Option<&Path>) -> Result<Reque
         )));
     };
     let workspace = match &entries {
-        Ok(found) => found,
+        Ok(found) => &found.workspace,
         Err(why) => return Err(Stop::Usage(format!("can't read the setup file: {why}"))),
     };
     let Some(entry) = workspace.clusters.iter().find(|entry| &entry.id == wanted) else {
@@ -80,24 +93,25 @@ pub fn resolve(args: &ClusterArgs, default_setup: Option<&Path>) -> Result<Reque
         entry: Some(entry.id.clone()),
         sources: kubeconfig_sources(workspace.kubeconfig.as_deref()),
         context: entry.context.clone(),
+        setup: entries.ok(),
     })
 }
 
-type Entries = Result<freshkube_core::workspace::Workspace, String>;
+type Entries = Result<setup::Setup, String>;
 
 fn read_entries(file: Option<&Path>) -> Entries {
     let file = file.ok_or_else(|| "there is no setup file location".to_owned())?;
     let bytes = read_bounded_regular_file(file, MAX_BYTES)
         .map_err(|error| format!("{}: {error}", file.display()))?;
     let setup = setup::parse(&bytes).map_err(|invalid| format!("{}: {invalid}", file.display()))?;
-    Ok(setup.workspace)
+    Ok(setup)
 }
 
 fn list_entries(entries: &Entries) -> String {
     match entries {
-        Ok(workspace) if !workspace.clusters.is_empty() => {
+        Ok(setup) if !setup.workspace.clusters.is_empty() => {
             let mut text = String::from("Cluster entries:");
-            for entry in &workspace.clusters {
+            for entry in &setup.workspace.clusters {
                 text.push_str(&format!("\n  {}  ({})", entry.id, entry.role.label()));
             }
             text
@@ -105,6 +119,25 @@ fn list_entries(entries: &Entries) -> String {
         Ok(_) => "The setup file has no cluster entries.".to_owned(),
         Err(why) => format!("No cluster entries could be listed: {why}"),
     }
+}
+
+/// Whether the named context's user signs in with a credential plugin.
+fn plugin_signs_in(config: &kube::config::Kubeconfig, context: &str) -> bool {
+    let user = config
+        .contexts
+        .iter()
+        .find(|named| named.name == context)
+        .and_then(|named| named.context.as_ref()?.user.as_ref())
+        .and_then(|user| config.auth_infos.iter().find(|auth| &auth.name == user));
+    user.and_then(|named| named.auth_info.as_ref())
+        .is_some_and(|auth| auth.exec.is_some())
+}
+
+/// Whether `context` of the kubeconfig files signs in with a credential
+/// plugin, which a delivery read of another entry must not run unasked.
+pub(crate) fn context_signs_in(sources: &[PathBuf], context: &str) -> bool {
+    let (_, merged) = load_kubeconfigs(sources);
+    merged.is_some_and(|config| plugin_signs_in(&config, context))
 }
 
 /// The real connector: a context of the kubeconfig files, by name.
@@ -136,14 +169,9 @@ impl Connector for Kubeconfig {
                 }
             )));
         };
-        let user = merged.as_ref().and_then(|config| {
-            let named = config.contexts.iter().find(|c| c.name == context.name)?;
-            let user = named.context.as_ref()?.user.as_ref()?;
-            config.auth_infos.iter().find(|auth| &auth.name == user)
-        });
-        let signs_in = user
-            .and_then(|named| named.auth_info.as_ref())
-            .is_some_and(|auth| auth.exec.is_some());
+        let signs_in = merged
+            .as_ref()
+            .is_some_and(|config| plugin_signs_in(config, &context.name));
         if signs_in && !allow_login {
             return Err(Stop::SignIn(format!(
                 "context \"{}\" signs in with a credential plugin, which may open a browser. \
@@ -164,6 +192,9 @@ impl Connector for Kubeconfig {
         Ok(Target {
             entry: request.entry.clone(),
             context: request.context.clone(),
+            setup: request.setup.clone(),
+            allow_login,
+            github: None,
             source: ClusterSource {
                 id: access.id(),
                 context: request.context.clone(),

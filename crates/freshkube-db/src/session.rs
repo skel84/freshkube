@@ -1,6 +1,7 @@
 //! The reads a screen makes of a database, whatever the engine.
 use async_trait::async_trait;
 use dbflux_core::{DbError, Value};
+use std::{sync::Arc, time::Duration};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TableKind {
@@ -69,6 +70,76 @@ pub enum ConnectError {
     NotReadOnly(String),
 }
 
+/// What one statement of the query tab returned.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<Value>>,
+    /// The statement returned more rows than `row_cap`; these are the first.
+    pub capped: bool,
+    pub row_cap: usize,
+    pub elapsed: Duration,
+}
+
+/// A statement's plan, one line per row, as the server printed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub lines: Vec<String>,
+    /// More lines than [`MAX_PLAN_LINES`]; these are the first.
+    pub capped: bool,
+}
+
+pub const MAX_PLAN_LINES: usize = 2000;
+
+/// Why a statement of the query tab did not return rows. Each is a state of
+/// its result tab; none is retried by itself.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum QueryError {
+    /// Freshkube did not send it: a `SET`, a `BEGIN`, several statements.
+    #[error("{0}")]
+    NotSent(String),
+    /// The database refused it because the session is read-only.
+    #[error("{0}")]
+    Refused(String),
+    #[error("The statement ran past the time limit and was stopped")]
+    TimedOut,
+    /// Stopped by Cancel.
+    #[error("Cancelled")]
+    Cancelled,
+    /// The database's own error: a syntax error, a missing table.
+    #[error("{0}")]
+    Failed(String),
+    /// The connection is gone.
+    #[error("The connection was lost: {0}")]
+    Lost(String),
+}
+
+impl From<DbError> for QueryError {
+    fn from(error: DbError) -> Self {
+        match error {
+            DbError::Timeout => Self::TimedOut,
+            DbError::Cancelled => Self::Cancelled,
+            DbError::ConnectionFailed(e) => Self::Lost(e.to_string()),
+            DbError::PermissionDenied(e) if e.to_string().contains("read-only") => {
+                Self::Refused(e.to_string())
+            }
+            other => Self::Failed(other.to_string()),
+        }
+    }
+}
+
+#[allow(
+    clippy::double_must_use,
+    reason = "the async_trait expansion marks its boxed futures must_use"
+)]
+/// Stops the statement a session is running. It does not need the session,
+/// which a running statement holds; it reaches the server another way.
+#[async_trait]
+pub trait Canceller: Send + Sync {
+    /// Asks the server to stop whatever the session is running now.
+    async fn cancel(&self) -> Result<(), String>;
+}
+
 /// A catalog listing cut at a bound, so a huge database can't fill memory.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Listed<T> {
@@ -99,4 +170,12 @@ pub trait Session: Send {
     async fn columns(&mut self, schema: &str, table: &str) -> Result<Vec<ColumnEntry>, DbError>;
     /// The first rows of a table, at most the session's row cap.
     async fn table_rows(&mut self, schema: &str, table: &str) -> Result<TablePage, DbError>;
+    /// One statement of the query tab, in its own read-only transaction that
+    /// is rolled back; at most the row cap of rows. A statement that would
+    /// write is sent and refused by the database, never retried.
+    async fn run(&mut self, sql: &str) -> Result<QueryResult, QueryError>;
+    /// The statement's plan (`EXPLAIN`, never `ANALYZE`, which would run it).
+    async fn explain(&mut self, sql: &str) -> Result<Plan, QueryError>;
+    /// A handle that cancels the running statement, usable while it runs.
+    fn canceller(&self) -> Arc<dyn Canceller>;
 }

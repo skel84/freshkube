@@ -397,6 +397,7 @@ impl Dock {
             TabKind::Workload(view) => view.clone().into_any_element(),
             TabKind::Shell(view) => view.clone().into_any_element(),
             TabKind::Agent(view) => view.clone().into_any_element(),
+            TabKind::Query(view) => view.clone().into_any_element(),
         };
         Some(
             v_flex()

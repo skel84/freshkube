@@ -390,6 +390,7 @@ pub struct ListenerStatus {
 pub struct GatewayFacts {
     pub namespace: String,
     pub name: String,
+    pub uid: String,
     pub generation: i64,
     pub class: String,
     pub listeners: Vec<Listener>,
@@ -405,6 +406,7 @@ impl GatewayFacts {
         Some(Self {
             namespace: text(&meta["namespace"]),
             name: opt(&meta["name"])?,
+            uid: text(&meta["uid"]),
             generation: meta["generation"].as_i64().unwrap_or(0),
             class: text(&object["spec"]["gatewayClassName"]),
             listeners: object["spec"]["listeners"]
@@ -475,6 +477,8 @@ impl GatewayFacts {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClassFacts {
     pub name: String,
+    pub uid: String,
+    pub generation: i64,
     pub controller: String,
     pub conditions: Vec<Cond>,
 }
@@ -483,6 +487,8 @@ impl ClassFacts {
     pub fn parse(object: &Value) -> Option<Self> {
         Some(Self {
             name: opt(&object["metadata"]["name"])?,
+            uid: text(&object["metadata"]["uid"]),
+            generation: object["metadata"]["generation"].as_i64().unwrap_or(0),
             controller: text(&object["spec"]["controllerName"]),
             conditions: conditions(&object["status"]["conditions"]),
         })

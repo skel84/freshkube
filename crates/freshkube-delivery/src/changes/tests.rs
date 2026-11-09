@@ -350,6 +350,7 @@ fn a_project_lists_its_newest_freight_and_counts_the_rest() {
     assert_eq!(
         changes.notes,
         [Note {
+            github: false,
             gap: Gap::Capped,
             project: Some("shop-api".into()),
             text: "shop-api lists its 50 newest Freight; 5 older aren't listed".into(),
@@ -901,6 +902,7 @@ async fn kargos_entry_unreached_is_a_note_in_its_name() {
     assert_eq!(
         changes.notes,
         [Note {
+            github: false,
             gap: Gap::Unreadable,
             project: None,
             text: "Couldn't reach cicd-b: connection refused".into(),
