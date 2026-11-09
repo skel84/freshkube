@@ -10,7 +10,7 @@
 //! - [`default_dirs`] and [`find_program`], for `gh`, which is never on
 //!   `PATH` unless the person put it there: the usual install directories
 //!   first, then every directory of `PATH`.
-//! - [`resolve`], for a kubeconfig's exec command: an absolute path, a path
+//! - [`config_from_kubeconfig`], for a kubeconfig's exec command: an absolute path, a path
 //!   with a directory in it and a user with no `exec` are left as written;
 //!   a bare name is looked for in `/opt/homebrew/bin`, `/usr/local/bin`,
 //!   `~/.local/bin`, the directories of the login shell's `PATH`, then the
@@ -20,8 +20,9 @@
 //! The login shell's `PATH` is read once per process ([`warm_up`] starts it at
 //! launch on its own thread): `$SHELL -l -c` prints `PATH` between markers,
 //! never interactively, with no input, from `/`, in a process group of its
-//! own, a short deadline, and the whole group killed when the read is over. Only that one value is kept; nothing else the shell prints
-//! is read or logged. Failures name the context, the program and the places,
+//! own, a short deadline, and the whole group killed when the read is over.
+//! Only that one value is kept; nothing else the shell prints is read or
+//! logged. Failures name the context, the program and the places,
 //! never its arguments, environment or output, which can carry tokens.
 
 use std::ffi::OsStr;
@@ -379,7 +380,7 @@ fn not_found(context: Option<&str>, program: &str, dirs: &[PathBuf], login_read:
         "Install it in one of those places, add its directory to your shell's PATH, \
          or give its absolute path as the command in the kubeconfig"
     } else {
-        "The login shell's PATH could not be read within 3 s, so it was not searched. \
+        "The login shell's PATH could not be read, so it was not searched. \
          Install it in one of those places, or give its absolute path as the command \
          in the kubeconfig"
     };
@@ -695,7 +696,7 @@ mod tests {
         let foreground = fake_shell(
             &root.path().join("fg"),
             &format!(
-                "printf '%s' '{MARK_START}/fg/bin{MARK_END}'\nsleep 31 &\necho $! > {}\nwait",
+                "sleep 31 &\necho $! > {}\nprintf '%s' '{MARK_START}/fg/bin{MARK_END}'\nwait",
                 pid_file.display()
             ),
         );
@@ -706,23 +707,30 @@ mod tests {
         );
         assert!(started.elapsed() < Duration::from_secs(10));
         // The group is gone: the sleep the profile started was killed too.
-        std::thread::sleep(Duration::from_millis(300));
-        if let Ok(pid) = std::fs::read_to_string(&pid_file) {
+        // The pid was written before the markers, so the file is there.
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let pid = pid.trim();
+        let running = || {
             let alive = std::process::Command::new("kill")
-                .args(["-0", pid.trim()])
+                .args(["-0", pid])
                 .stderr(std::process::Stdio::null())
                 .status()
                 .unwrap()
                 .success();
-            // A killed child can stay a zombie until reaped by init; only a
-            // running one is a failure.
-            let state =
-                std::fs::read_to_string(format!("/proc/{}/stat", pid.trim())).unwrap_or_default();
-            assert!(
-                !alive || state.contains(") Z"),
-                "the profile's own command was killed with the group"
-            );
+            // A killed child can stay a zombie until init reaps it.
+            let zombie = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .unwrap_or_default()
+                .contains(") Z");
+            alive && !zombie
+        };
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while running() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(50));
         }
+        assert!(
+            !running(),
+            "the profile's own command was killed with the group"
+        );
     }
 
     #[test]
@@ -744,7 +752,7 @@ mod tests {
         let read = not_found(Some("dev"), "fake-login", &dirs, true);
         assert!(read.contains("add its directory to your shell's PATH"));
         let unread = not_found(Some("dev"), "fake-login", &dirs, false);
-        assert!(unread.contains("could not be read within 3 s"));
+        assert!(unread.contains("could not be read, so it was not searched"));
         assert!(!unread.contains("add its directory to your shell's PATH"));
         assert!(unread.contains("absolute path"));
         assert!(unread.contains("'fake-login'") && unread.contains("/opt/homebrew/bin"));
