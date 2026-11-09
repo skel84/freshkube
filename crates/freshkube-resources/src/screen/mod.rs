@@ -1171,6 +1171,8 @@ impl ResourcesScreen {
         self.hide_detail(cx);
         self.projection.select(&self.store, None);
         self.restore = None;
+        // The row just left is no longer wanted.
+        self.want_offers(cx);
     }
 
     /// Closes the pane, keeping the row it showed selected, so Enter

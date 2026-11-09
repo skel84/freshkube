@@ -184,6 +184,8 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g21_only_the_selected_rows_actions_are_asked_about` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
 - `safety_g21_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
 - `safety_g21_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g21_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g21_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
 - `safety_g21_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
 ## Known gaps

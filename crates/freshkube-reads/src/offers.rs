@@ -214,8 +214,11 @@ impl OfferDesk {
             }
         }
         self.settled = false;
+        // An empty call only forgets what was wanted: it asks nothing, not
+        // even who you are.
         if let Some(source) = self.source.clone()
             && !self.who_started
+            && !self.queue.is_empty()
         {
             self.who_started = true;
             self.read_who(source, cx);

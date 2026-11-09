@@ -93,20 +93,23 @@ impl ResourcesScreen {
     /// last one wanted. Called when the selection changes or the page shows,
     /// and never while drawing. The answers only guide; the gate asks afresh.
     pub(super) fn want_offers(&mut self, cx: &mut Context<Self>) {
-        if !self.visible || self.embedded || self.projection.selected().is_none() {
+        if !self.visible || self.embedded {
             return;
         }
-        let mut questions: Vec<AccessQuestion> = self
-            .kind_acts()
-            .into_iter()
-            .flat_map(|act| self.act_needs(act))
-            .collect();
-        questions.extend(self.detail.read(cx).edit_needs());
-        if !questions.is_empty() {
-            let owner = cx.entity_id();
-            self.offers
-                .update(cx, |offers, cx| offers.want(owner, &questions, cx));
+        // With nothing selected the call is empty, and still replaces what
+        // the row just left wanted, so it is not asked about.
+        let mut questions: Vec<AccessQuestion> = Vec::new();
+        if self.projection.selected().is_some() {
+            questions = self
+                .kind_acts()
+                .into_iter()
+                .flat_map(|act| self.act_needs(act))
+                .collect();
+            questions.extend(self.detail.read(cx).edit_needs());
         }
+        let owner = cx.entity_id();
+        self.offers
+            .update(cx, |offers, cx| offers.want(owner, &questions, cx));
         self.derive_offers(cx);
     }
 

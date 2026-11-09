@@ -248,6 +248,17 @@ fn safety_g21_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks
         "only the first row and the one it stopped on: {names:?}"
     );
     assert!(names.contains(&first) && names.contains(&stops.unwrap()));
+    // Escape before the selection rests: the row just left is not asked about.
+    let before = asked_names(cx).len();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("down", cx);
+        window.press("escape", cx);
+    })
+    .unwrap();
+    assert!(cx.read(|cx| screen.read(cx).projection.selected().is_none()));
+    settle(cx);
+    assert_eq!(asked_names(cx).len(), before);
     // Moving on and hiding before the selection rests asks nothing more.
     let before = asked_names(cx).len();
     cx.update_window(handle, |_, window, cx| {
@@ -354,7 +365,146 @@ fn safety_g21_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_s
         })
     });
     settle(cx);
-    std::thread::sleep(Duration::from_millis(200));
+    // Nothing is left to send it: the pause and the jobs were dropped.
     cx.run_until_parked();
     assert_eq!(reviewed(&recorder), ["web-4"]);
+}
+
+/// A fake cluster that takes every access review and holds its answer until
+/// the test lets some go; every request is recorded as it arrives.
+fn holding_cluster(
+    runtime: &tokio::runtime::Runtime,
+) -> (
+    kube::Client,
+    freshkube_core::fake_api::Recorder,
+    Arc<tokio::sync::Semaphore>,
+) {
+    use freshkube_core::fake_api::{self, Recorder};
+    use http::Request;
+    use kube::client::Body;
+    let recorder = Recorder::default();
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let (log, held) = (recorder.clone(), gate.clone());
+    let service = tower::service_fn(move |request: Request<Body>| {
+        let (log, held) = (log.clone(), held.clone());
+        async move {
+            // As the shared fake does: the body is read and recorded with
+            // the request, the moment it arrives.
+            let (parts, body) = request.into_parts();
+            let bytes = http_body_util::BodyExt::collect(body)
+                .await
+                .map(|collected| collected.to_bytes())
+                .unwrap_or_default();
+            let recorded = log.record_with_body(
+                &Request::from_parts(parts, ()),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            );
+            let answer = if recorded.path.ends_with("selfsubjectaccessreviews") {
+                held.acquire().await.unwrap().forget();
+                fake_api::json(
+                    201,
+                    serde_json::json!({"apiVersion":"authorization.k8s.io/v1",
+                        "kind":"SelfSubjectAccessReview",
+                        "status":{"allowed": true, "reason": ""}}),
+                )
+            } else {
+                fake_api::unknown(&recorded)
+            };
+            Ok::<_, std::convert::Infallible>(fake_api::response(answer))
+        }
+    });
+    let client = {
+        let _entered = runtime.enter();
+        kube::Client::new(service, "default")
+    };
+    (client, recorder, gate)
+}
+
+/// The desk bound to `client` as a live cluster, and the page that wants.
+fn live_desk(
+    cx: &mut TestAppContext,
+    screen: &Entity<ResourcesScreen>,
+    client: kube::Client,
+) -> (Entity<OfferDesk>, gpui_kit::EntityId) {
+    cx.executor().allow_parking();
+    let source = ClusterSource {
+        id: "live-offers".into(),
+        context: "ctx-a".into(),
+        access: ClusterAccess::Live(Arc::new(Fake(client))),
+    };
+    let owner = cx.read(|_| screen.entity_id());
+    let offers = cx.update(|cx| {
+        let offers = desk(cx);
+        offers.update(cx, |offers, cx| offers.bind(Some(&source), cx));
+        offers
+    });
+    (offers, owner)
+}
+
+fn want_rows(
+    cx: &mut TestAppContext,
+    offers: &Entity<OfferDesk>,
+    owner: gpui_kit::EntityId,
+    rows: std::ops::Range<usize>,
+) {
+    let questions: Vec<_> = rows.map(|ix| question(&format!("web-{ix}"))).collect();
+    cx.update(|cx| offers.update(cx, |offers, cx| offers.want(owner, &questions, cx)));
+}
+
+#[gpui_kit::test]
+fn safety_g21_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row(
+    cx: &mut TestAppContext,
+) {
+    let (runtime, screen, _handle) = mount(cx, Some("homelab"));
+    let (client, recorder, gate) = holding_cluster(&runtime);
+    let (offers, owner) = live_desk(cx, &screen, client);
+    // Six questions are wanted: four go out, and their answers are held.
+    want_rows(cx, &offers, owner, 0..6);
+    settle(cx);
+    freshkube_ui::real_io::until_io(cx, "four reviews to reach the cluster", |_| {
+        reviewed(&recorder).len() == 4
+    });
+    assert_eq!(reviewed(&recorder), ["web-0", "web-1", "web-2", "web-3"]);
+    // The selection moves on while they are outstanding. Nothing more goes
+    // out behind the four.
+    want_rows(cx, &offers, owner, 9..10);
+    settle(cx);
+    assert_eq!(reviewed(&recorder).len(), 4);
+    // The answers come back: the new row alone is asked, and the two rows
+    // that were queued behind the four never are.
+    gate.add_permits(100);
+    freshkube_ui::real_io::until_io(cx, "the new row's review", |_| {
+        reviewed(&recorder).len() == 5
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        reviewed(&recorder),
+        ["web-0", "web-1", "web-2", "web-3", "web-9"]
+    );
+}
+
+#[gpui_kit::test]
+fn safety_g21_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands(cx: &mut TestAppContext) {
+    use freshkube_core::access::Offer;
+    let (runtime, screen, _handle) = mount(cx, Some("homelab"));
+    let (client, recorder, gate) = holding_cluster(&runtime);
+    let (offers, owner) = live_desk(cx, &screen, client);
+    want_rows(cx, &offers, owner, 0..6);
+    settle(cx);
+    freshkube_ui::real_io::until_io(cx, "four reviews to reach the cluster", |_| {
+        reviewed(&recorder).len() == 4
+    });
+    // The page hides with four in flight and two queued.
+    cx.update(|cx| offers.update(cx, |offers, _| offers.stop(owner)));
+    gate.add_permits(100);
+    settle(cx);
+    cx.run_until_parked();
+    // Nothing more was sent, and no answer landed for the four that were.
+    assert_eq!(reviewed(&recorder).len(), 4);
+    let known = cx.read(|cx| {
+        offers
+            .read(cx)
+            .offer(&[question("web-0"), question("web-1")], cx)
+    });
+    assert_eq!(known, Offer::Pending);
 }

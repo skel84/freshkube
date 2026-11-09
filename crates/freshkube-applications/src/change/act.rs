@@ -103,7 +103,9 @@ impl ChangePage {
             return;
         };
         let questions = self.stage_questions();
-        if self.visible && !questions.is_empty() {
+        if self.visible {
+            // Also when nothing is asked of the selection (a hop with no
+            // Stage): the call replaces what the last selection wanted.
             let all: Vec<AccessQuestion> = questions
                 .iter()
                 .flat_map(|(_, asked)| asked.iter().cloned())
