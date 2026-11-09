@@ -5,12 +5,11 @@
 //! all, or the reads refused or cut.
 use super::*;
 use freshkube_core::resources::traffic::netpol::{
-    Applying, PolicyFacts, PolicyReading, SelectedPods, applying, selector_matches,
+    Applying, PodsOf, PolicyFacts, PolicyReading, SelectedPods, applying, selector_matches,
 };
 use freshkube_core::resources::{Failure, FailureKind};
 use k8s_openapi::api::networking::v1::NetworkPolicy;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 
 /// The position, in a UID, of the first example policy.
 const FIRST: usize = 0xc000;
@@ -34,6 +33,9 @@ pub enum Shape {
     NamespaceSelector,
     /// No policy at all: nothing is governed.
     None,
+    /// The pods share the node's network, so the plugin decides for them:
+    /// every verdict reads Unknown.
+    HostNetwork,
     /// The reads are refused.
     Refused,
     /// The policy list stopped at its limit.
@@ -41,7 +43,7 @@ pub enum Shape {
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 9] = [
+    pub const NAMES: [&'static str; 10] = [
         "mixed",
         "default-deny",
         "open",
@@ -49,6 +51,7 @@ impl Shape {
         "ip-block",
         "namespace-selector",
         "none",
+        "host-network",
         "refused",
         "cut",
     ];
@@ -62,6 +65,7 @@ impl Shape {
             "ip-block" => Self::IpBlock,
             "namespace-selector" => Self::NamespaceSelector,
             "none" => Self::None,
+            "host-network" => Self::HostNetwork,
             "refused" => Self::Refused,
             "cut" => Self::Cut,
             _ => return None,
@@ -71,7 +75,7 @@ impl Shape {
     /// The policies, by name, this shape lets the panes see.
     fn keeps(self, name: &str) -> bool {
         match self {
-            Self::Mixed | Self::Refused | Self::Cut => true,
+            Self::Mixed | Self::HostNetwork | Self::Refused | Self::Cut => true,
             Self::DefaultDeny => name == "default-deny-all",
             Self::Open => name == "open-frontend",
             Self::Restricts => matches!(name, "allow-web-to-api" | "allow-dns"),
@@ -243,13 +247,9 @@ fn refused() -> Failure {
     )
 }
 
-/// What the Pod and workload panes read: the policies of `namespace` that
-/// apply to pods with `labels`.
-pub fn read_applying(
-    shape: Shape,
-    namespace: &str,
-    labels: &BTreeMap<String, String>,
-) -> Result<Applying, Failure> {
+/// What the Pod and workload panes read: the policies of the pods' namespace
+/// that apply to them.
+pub fn read_applying(shape: Shape, pods: &PodsOf) -> Result<Applying, Failure> {
     match shape {
         Shape::Refused => Err(refused()),
         Shape::Cut => Err(Failure::new(
@@ -262,22 +262,27 @@ pub fn read_applying(
                 .filter(|object| shape.keeps(name_of(object).1))
                 .map(facts)
                 .collect::<Vec<_>>();
-            Ok(applying(&kept, namespace, labels))
+            // This shape makes the example pods host-network, as a node
+            // exporter's are.
+            Ok(applying(
+                &kept,
+                &PodsOf {
+                    host_network: pods.host_network || shape == Shape::HostNetwork,
+                    ..*pods
+                },
+            ))
         }
     }
 }
 
-/// What a policy's own pane reads, from the object it shows: its pods are
-/// the example pods of its namespace, counted by its selector.
+/// What a policy's own pane reads: the policy as shown, and its pods, the
+/// example pods of its namespace counted by its selector.
 pub fn read_policy(
-    yaml: &str,
+    facts: PolicyFacts,
     shape: Shape,
     context: &str,
     now: i64,
 ) -> Result<PolicyReading, Failure> {
-    let policy: NetworkPolicy = serde_yaml::from_str(yaml)
-        .map_err(|_| Failure::new(FailureKind::Other, "Example policy unreadable"))?;
-    let facts = PolicyFacts::from_policy(&policy);
     let pods = match shape {
         Shape::Refused => Err(Failure::new(
             FailureKind::Forbidden,
@@ -291,6 +296,7 @@ pub fn read_policy(
                 selected: 0,
                 unknown: 0,
                 total: rows.len(),
+                host_network: 0,
                 cut: shape == Shape::Cut,
             };
             for row in &rows {

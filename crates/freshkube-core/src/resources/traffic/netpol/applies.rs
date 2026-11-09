@@ -3,7 +3,7 @@
 //! a pod is governed in a direction when any policy that selects it governs
 //! it, and what is allowed is the union of their rules.
 use super::facts::{Direction, DirectionVerdict, PolicyFacts};
-use super::select::{Match, selector_matches};
+use super::select::{Match, selector_matches, selector_matches_template};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +21,9 @@ pub struct Applying {
     pub policies: Vec<Applied>,
     pub ingress: DirectionVerdict,
     pub egress: DirectionVerdict,
+    /// The pods share the node's network, so both verdicts are Unknown: the
+    /// network plugin decides whether NetworkPolicy applies to them.
+    pub host_network: bool,
 }
 
 impl Applying {
@@ -62,18 +65,41 @@ fn combined(applying: &[(&PolicyFacts, Match)], direction: Direction) -> Directi
     }
 }
 
-/// The policies of `namespace` against a pod with `labels` in it.
-pub fn applying(
-    policies: &[PolicyFacts],
-    namespace: &str,
-    labels: &BTreeMap<String, String>,
-) -> Applying {
+/// The pods a view asks about: a Pod, or the pods a workload's template makes.
+#[derive(Clone, Copy, Debug)]
+pub struct PodsOf<'a> {
+    pub namespace: &'a str,
+    pub labels: &'a BTreeMap<String, String>,
+    /// `labels` are a workload template's, which lack the labels its
+    /// controller adds to each pod.
+    pub template: bool,
+    pub host_network: bool,
+}
+
+/// The policies of the namespace against the pods. Host-network pods get an
+/// Unknown verdict both ways, whatever the policies say.
+pub fn applying(policies: &[PolicyFacts], pods: &PodsOf) -> Applying {
     let selected = policies
         .iter()
-        .filter(|policy| policy.namespace == namespace)
-        .map(|policy| (policy, selector_matches(&policy.pod_selector, labels)))
+        .filter(|policy| policy.namespace == pods.namespace)
+        .map(|policy| {
+            let m = if pods.template {
+                selector_matches_template(&policy.pod_selector, pods.labels)
+            } else {
+                selector_matches(&policy.pod_selector, pods.labels)
+            };
+            (policy, m)
+        })
         .filter(|(_, m)| *m != Match::No)
         .collect::<Vec<_>>();
+    let (ingress, egress) = if pods.host_network {
+        (DirectionVerdict::Unknown, DirectionVerdict::Unknown)
+    } else {
+        (
+            combined(&selected, Direction::Ingress),
+            combined(&selected, Direction::Egress),
+        )
+    };
     Applying {
         policies: selected
             .iter()
@@ -84,7 +110,8 @@ pub fn applying(
                 uncertain: *m == Match::Unknown,
             })
             .collect(),
-        ingress: combined(&selected, Direction::Ingress),
-        egress: combined(&selected, Direction::Egress),
+        ingress,
+        egress,
+        host_network: pods.host_network,
     }
 }

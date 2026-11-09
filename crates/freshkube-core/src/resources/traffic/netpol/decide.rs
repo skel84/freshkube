@@ -38,6 +38,9 @@ pub struct Subject {
     pub labels: BTreeMap<String, String>,
     /// Container ports with names; `None` when not read.
     pub named_ports: Option<Vec<NamedPort>>,
+    /// The pod uses the node's network, where whether NetworkPolicy applies
+    /// is the plugin's to say.
+    pub host_network: bool,
 }
 
 /// The other side.
@@ -48,6 +51,7 @@ pub enum Remote {
         labels: BTreeMap<String, String>,
         ip: Option<IpAddr>,
         named_ports: Option<Vec<NamedPort>>,
+        host_network: bool,
     },
     External {
         ip: Option<IpAddr>,
@@ -211,19 +215,40 @@ fn rule_matches(rule: &Rule, q: &Query) -> Match {
     peers.and(ports)
 }
 
+/// Said when either end shares the node's network.
+pub const HOST_NETWORK_NOTE: &str =
+    "a host-network pod: whether NetworkPolicy applies depends on the network plugin";
+
 /// One direction on one pod: does `subject`'s policies let `remote` through on
-/// `number`/`protocol`? `namespaces` is `None` when the namespace list was
-/// refused or cut. A named port resolves on the destination pod: the subject
-/// for ingress, the remote pod for egress.
+/// `number`/`protocol`? `policies` and `namespaces` are `None` when their
+/// list was refused or cut, which is can't tell. A named port resolves on the
+/// destination pod: the subject for ingress, the remote pod for egress.
 pub fn decide(
     direction: Direction,
-    policies: &[PolicyFacts],
+    policies: Option<&[PolicyFacts]>,
     subject: &Subject,
     remote: &Remote,
     number: i32,
     protocol: &str,
     namespaces: Option<&[NamespaceLabels]>,
 ) -> Decision {
+    let Some(policies) = policies else {
+        return unread("the namespace's policies");
+    };
+    if subject.host_network
+        || matches!(
+            remote,
+            Remote::Pod {
+                host_network: true,
+                ..
+            }
+        )
+    {
+        return Decision {
+            answer: Answer::CantTell,
+            reason: HOST_NETWORK_NOTE.into(),
+        };
+    }
     let (destination, destination_is_pod) = match (direction, remote) {
         (Direction::Ingress, _) => (subject.named_ports.as_deref(), true),
         (Direction::Egress, Remote::Pod { named_ports, .. }) => (named_ports.as_deref(), true),
@@ -303,40 +328,36 @@ pub fn can_reach(
     protocol: &str,
     namespaces: Option<&[NamespaceLabels]>,
 ) -> Decision {
-    let egress = match policies_from {
-        None => unread("the source namespace's policies"),
-        Some(policies) => decide(
-            Direction::Egress,
-            policies,
-            from,
-            &Remote::Pod {
-                namespace: to.namespace.clone(),
-                labels: to.labels.clone(),
-                ip: to_ip,
-                named_ports: to.named_ports.clone(),
-            },
-            number,
-            protocol,
-            namespaces,
-        ),
-    };
-    let ingress = match policies_to {
-        None => unread("the destination namespace's policies"),
-        Some(policies) => decide(
-            Direction::Ingress,
-            policies,
-            to,
-            &Remote::Pod {
-                namespace: from.namespace.clone(),
-                labels: from.labels.clone(),
-                ip: from_ip,
-                named_ports: from.named_ports.clone(),
-            },
-            number,
-            protocol,
-            namespaces,
-        ),
-    };
+    let egress = decide(
+        Direction::Egress,
+        policies_from,
+        from,
+        &Remote::Pod {
+            namespace: to.namespace.clone(),
+            labels: to.labels.clone(),
+            ip: to_ip,
+            named_ports: to.named_ports.clone(),
+            host_network: to.host_network,
+        },
+        number,
+        protocol,
+        namespaces,
+    );
+    let ingress = decide(
+        Direction::Ingress,
+        policies_to,
+        to,
+        &Remote::Pod {
+            namespace: from.namespace.clone(),
+            labels: from.labels.clone(),
+            ip: from_ip,
+            named_ports: from.named_ports.clone(),
+            host_network: from.host_network,
+        },
+        number,
+        protocol,
+        namespaces,
+    );
     let reason = |side: &str, d: &Decision| format!("{side}: {}", d.reason);
     match (egress.answer, ingress.answer) {
         (Answer::Denied, _) => Decision {

@@ -22,15 +22,20 @@ Each direction of a policy gets one verdict:
 
 Peers are spelled out: AND within an entry (a `namespaceSelector` with a `podSelector`), OR across entries ("; or"). A `podSelector` alone means the policy's own namespace, an empty `namespaceSelector` every namespace, an `ipBlock` keeps its `except`, and an entry with none of the three is shown as invalid and never judged. Ports read as `TCP 80`, `TCP 8000-8100`, `TCP port http` (a name, resolved on the destination pod) or `any UDP port`.
 
-A policy's pane also says how many pods in its namespace it selects, "at least" when the pod list was cut at 500, and how many it could not judge.
+A policy's pane builds the policy from the document it already shows, so its verdicts can't disagree with the YAML beside them; only the pod list is read. It says how many running pods in the namespace the policy selects, "at least" when the pod list was cut at 500, and how many it could not judge. Finished pods (Succeeded, Failed) are left out of the read, and host-network pods are not counted but named, since the network plugin decides for them.
 
 ## Which policies apply to a pod
 
 A Pod's Details, and a workload's (through its pod template's labels), list the policies of the namespace that select the pods and say what each direction comes to with them together. Policies only add: a direction is governed when any selecting policy governs it, and what is allowed is the union of their rules. No policy selecting the pods reads "Not governed", which is Kubernetes' default and not a claim about the network plugin. A policy whose selector can't be evaluated may or may not apply, so the direction reads Unknown unless another policy already opens it. A refused or cut policy list is Unknown for the whole block, never "no policy".
 
+Two kinds of pod can't be judged from the policies alone, and read Unknown rather than a verdict:
+
+- **Host-network pods** (`hostNetwork: true`, in the pod spec or the workload's template). Kubernetes leaves whether NetworkPolicy applies to them to the network plugin, so a default deny in the namespace says nothing about, say, a node exporter. Both directions read Unknown with "a host-network pod: whether NetworkPolicy applies depends on the network plugin", the policies that select it are still listed, and there is no Retry, since reading again changes nothing. In the decision, either end on the host network is can't tell.
+- **A workload's template lacks the labels its controller adds** to each pod (`pod-template-hash`, `controller-revision-hash`, `statefulset.kubernetes.io/pod-name`, `apps.kubernetes.io/pod-index`, `pod-template-generation`, and a Job's `controller-uid` and `job-name`). A selector term on one of them is Unknown when judged against the template, never a yes or a no, so a per-replica policy doesn't read "Not governed" and a `DoesNotExist` on one isn't a false yes. A Pod's own labels carry them and are judged as they are.
+
 ## The allow decision
 
-`netpol::decide` and `netpol::can_reach` answer for core NetworkPolicy only, with three answers, and never "reachable":
+`netpol::decide` and `netpol::can_reach` answer for core NetworkPolicy only (the policy lists are `Option`s, `None` for a list that was refused or cut, which is can't tell), with three answers, and never "reachable":
 
 - **Allowed by policy:** no policy governs the direction of the pod, or a rule allows it (the policy is named).
 - **Denied by policy:** a policy governs it and no rule allows it.
@@ -46,4 +51,4 @@ One job per document read of an open NetworkPolicy, Pod or workload, owned by th
 
 ## Example data
 
-`FRESHKUBE_NETPOL` (AGENTS.md's knob table): `mixed` (the default) the whole set, `default-deny`, `open`, `restricts`, `ip-block`, `namespace-selector`, `none` (no policy: nothing is governed), `refused` and `cut`. Open `FRESHKUBE_KIND=networkpolicies.networking.k8s.io` for a policy, `pods` or `deployments.apps` for the Pod and workload block; `payments/api` is selected by a default deny and a restriction, `web/frontend` by an open policy.
+`FRESHKUBE_NETPOL` (AGENTS.md's knob table): `mixed` (the default) the whole set, `default-deny`, `open`, `restricts`, `ip-block`, `namespace-selector`, `none` (no policy: nothing is governed), `host-network` (the example pods on the node's network, all Unknown), `refused` and `cut`. Open `FRESHKUBE_KIND=networkpolicies.networking.k8s.io` for a policy, `pods` or `deployments.apps` for the Pod and workload block; `payments/api` is selected by a default deny and a restriction, `web/frontend` by an open policy.

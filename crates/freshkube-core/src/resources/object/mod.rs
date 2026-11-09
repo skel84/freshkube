@@ -69,6 +69,10 @@ pub struct Overview {
     /// Present for a kind that runs pods: the labels its pod template gives
     /// them, which the Services that select them are matched against.
     pub template_labels: Option<Vec<(String, String)>>,
+    /// A Pod, or a kind that runs pods, whose pods share the node's network
+    /// (`hostNetwork: true`, in the pod spec or its template). Whether
+    /// NetworkPolicy applies to them is the network plugin's to say.
+    pub host_network: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,6 +173,7 @@ pub(crate) fn document(kind: &ResourceKind, mut object: Value) -> Result<ObjectD
     overview.ports = declared_ports(kind, &object);
     overview.selector = runs_pods(kind).then(|| workload_selector(&object));
     overview.template_labels = runs_pods(kind).then(|| template_labels(&object));
+    overview.host_network = host_network(&object);
     let yaml = serde_yaml::to_string(&object)
         .map_err(|error| Failure::new(FailureKind::Other, error.to_string()))?;
     let metadata = object.get("metadata");
@@ -383,11 +388,25 @@ fn overview(object: &Value) -> Overview {
         ports: None,
         selector: None,
         template_labels: None,
+        host_network: false,
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+/// Whether the pod, or the pods the template makes, use the node's network.
+fn host_network(object: &Value) -> bool {
+    let spec = object.get("spec");
+    [
+        spec,
+        spec.and_then(|spec| spec.get("template"))
+            .and_then(|template| template.get("spec")),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|spec| spec.get("hostNetwork").and_then(Value::as_bool) == Some(true))
+}
 
 /// The labels a workload's pod template puts on its pods.
 fn template_labels(object: &Value) -> Vec<(String, String)> {

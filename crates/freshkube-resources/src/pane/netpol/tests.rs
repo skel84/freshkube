@@ -106,7 +106,7 @@ fn a_restricting_policy_spells_out_its_peers_and_ports(cx: &mut TestAppContext) 
         match &pane.read(cx).netpol.body {
             Some(Body::Policy { directions, .. }) => {
                 assert_eq!(directions[0].rules.len(), 1);
-                let rule = directions[0].rules[0].to_string();
+                let rule = directions[0].rules[0].text.to_string();
                 assert!(
                     rule.starts_with("from pods app=frontend in namespaces"),
                     "{rule}"
@@ -134,7 +134,7 @@ fn open_and_ip_block_policies_read_as_what_they_are(cx: &mut TestAppContext) {
         assert_eq!(verdicts(&pane, cx), ["Not governed", "Restricts"]);
         match &pane.read(cx).netpol.body {
             Some(Body::Policy { directions, .. }) => {
-                let rule = directions[1].rules[0].to_string();
+                let rule = directions[1].rules[0].text.to_string();
                 assert_eq!(
                     rule,
                     "to IP range 10.0.0.0/8 except 10.1.0.0/16 on TCP 8000-8100"
@@ -326,4 +326,49 @@ fn the_section_and_its_rows_stay_inside_the_pane(cx: &mut TestAppContext) {
         }
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn host_network_pods_read_unknown_both_ways_with_the_reason_and_no_retry(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    cx.update_window(handle, |_, window, cx| {
+        open(&pane, &pod("payments", "api"), Shape::HostNetwork, cx);
+        window.render_frame(cx);
+        let lines = directions(&pane, cx);
+        assert!(
+            lines
+                .iter()
+                .all(|d| d.1 == Tone::Unknown && d.2 == "Unknown")
+        );
+        match &pane.read(cx).netpol.body {
+            Some(Body::Applying { host_network, .. }) => {
+                assert!(host_network.as_ref().unwrap().contains("host-network pod"));
+            }
+            _ => panic!("not a pod's policies"),
+        }
+        assert!(window.try_find("netpol-host-network").is_some());
+        // Reading again changes nothing, so there is nothing to retry.
+        assert!(window.try_find("netpol-retry").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_pass_looking_line_carries_the_scope_in_its_label(cx: &mut TestAppContext) {
+    let (_runtime, pane, _handle, _) = mount(cx);
+    cx.update(|cx| {
+        open(&pane, &pod("web", "frontend"), Shape::Mixed, cx);
+        match &pane.read(cx).netpol.body {
+            Some(Body::Applying { directions, .. }) => {
+                for line in directions {
+                    assert!(
+                        line.aria.contains("Only Kubernetes NetworkPolicy"),
+                        "{}",
+                        line.aria
+                    );
+                }
+            }
+            _ => panic!("not a pod's policies"),
+        }
+    });
 }

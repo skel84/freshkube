@@ -13,17 +13,21 @@ mod read;
 mod select;
 mod words;
 
-pub use applies::{Applied, Applying, applying};
-pub use decide::{Answer, Decision, NamedPort, Remote, Subject, can_reach, decide};
+pub use applies::{Applied, Applying, PodsOf, applying};
+pub use decide::{
+    Answer, Decision, HOST_NETWORK_NOTE, NamedPort, Remote, Subject, can_reach, decide,
+};
 pub use facts::{
     Direction, DirectionVerdict, NamespaceScope, Peer, PolicyFacts, PortRef, PortSpec, Rule,
 };
 pub use read::{
     NAMESPACE_LIMIT, NamespaceLabels, NamespacesRead, POD_LIMIT, POLICY_LIMIT, PoliciesRead,
     PolicyReading, SelectedPods, count_selected, read_applying, read_namespaces, read_policies,
-    read_policy_by_name, read_selected_pods,
+    read_selected_pods,
 };
-pub use select::{Match, selector_matches, selector_text};
+pub use select::{
+    CONTROLLER_LABELS, Match, selector_matches, selector_matches_template, selector_text,
+};
 
 /// Said wherever a verdict could be read as "traffic passes".
 pub const SCOPE_NOTE: &str = "Only Kubernetes NetworkPolicy is read. The cluster's network plugin may enforce more, or may not enforce NetworkPolicy at all.";

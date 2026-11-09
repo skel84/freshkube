@@ -1,6 +1,6 @@
 //! The reads behind the NetworkPolicy views: lists and gets only, each
 //! bounded. None writes and none reads a Secret.
-use super::applies::{Applying, applying};
+use super::applies::{Applying, PodsOf, applying};
 use super::facts::PolicyFacts;
 use super::select::{Match, selector_matches};
 use crate::failure::{Failure, FailureKind};
@@ -76,49 +76,70 @@ pub async fn read_namespaces(client: &Client) -> Result<NamespacesRead, Failure>
     })
 }
 
-/// How many pods in the policy's namespace a policy selects.
+/// How many pods in the policy's namespace a policy selects. Finished pods
+/// (Succeeded, Failed) are left out, and host-network pods are counted apart:
+/// whether NetworkPolicy applies to them is the network plugin's to say.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectedPods {
     pub selected: usize,
     /// Pods whose labels the selector could not be judged on.
     pub unknown: usize,
+    /// Pods looked at: running, not host-network.
     pub total: usize,
+    /// Host-network pods, not counted in the others.
+    pub host_network: usize,
     /// The pod list stopped at its limit, so the count is at least this.
     pub cut: bool,
 }
 
 pub fn count_selected(policy: &PolicyFacts, pods: &[Pod], cut: bool) -> SelectedPods {
-    let mut selected = 0;
-    let mut unknown = 0;
+    let mut counted = SelectedPods {
+        selected: 0,
+        unknown: 0,
+        total: 0,
+        host_network: 0,
+        cut,
+    };
     for pod in pods {
+        let phase = pod.status.as_ref().and_then(|s| s.phase.as_deref());
+        if matches!(phase, Some("Succeeded" | "Failed")) {
+            continue;
+        }
+        if pod.spec.as_ref().and_then(|s| s.host_network) == Some(true) {
+            counted.host_network += 1;
+            continue;
+        }
+        counted.total += 1;
         let labels = pod.metadata.labels.clone().unwrap_or_default();
         match selector_matches(&policy.pod_selector, &labels) {
-            Match::Yes => selected += 1,
-            Match::Unknown => unknown += 1,
+            Match::Yes => counted.selected += 1,
+            Match::Unknown => counted.unknown += 1,
             Match::No => {}
         }
     }
-    SelectedPods {
-        selected,
-        unknown,
-        total: pods.len(),
-        cut,
-    }
+    counted
 }
 
+/// The namespace's pods that haven't finished, counted by the policy's selector.
 pub async fn read_selected_pods(
     client: &Client,
     policy: &PolicyFacts,
 ) -> Result<SelectedPods, Failure> {
     let list = Api::<Pod>::namespaced(client.clone(), &policy.namespace)
-        .list(&ListParams::default().limit(POD_LIMIT))
+        .list(
+            &ListParams::default()
+                .fields("status.phase!=Succeeded,status.phase!=Failed")
+                .limit(POD_LIMIT),
+        )
         .await
         .map_err(Failure::from_kube)?;
     Ok(count_selected(policy, &list.items, is_cut(&list)))
 }
 
-/// One policy as read: itself and the pods it selects. A refused pod list
-/// leaves the count unknown and leaves the policy as read.
+/// One policy as shown: the object on screen, and the pods it selects. The
+/// policy is the document the pane already holds, not a second read of it, so
+/// it can't disagree with the YAML beside it; a refused pod list leaves the
+/// count unknown and leaves the policy as shown.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct PolicyReading {
@@ -132,34 +153,16 @@ impl PolicyReading {
     }
 }
 
-pub async fn read_policy_by_name(
-    client: &Client,
-    namespace: &str,
-    name: &str,
-) -> Result<PolicyReading, Failure> {
-    let policy = Api::<NetworkPolicy>::namespaced(client.clone(), namespace)
-        .get(name)
-        .await
-        .map_err(Failure::from_kube)?;
-    let policy = PolicyFacts::from_policy(&policy);
-    let pods = read_selected_pods(client, &policy).await;
-    Ok(PolicyReading { policy, pods })
-}
-
 /// The policies that apply to a pod, or to the pods a workload's template
 /// makes, with each direction's combined verdict. A refused or cut policy
 /// list is an error: "no policy" is never inferred from it.
-pub async fn read_applying(
-    client: &Client,
-    namespace: &str,
-    labels: &BTreeMap<String, String>,
-) -> Result<Applying, Failure> {
-    let read = read_policies(client, namespace).await?;
+pub async fn read_applying(client: &Client, pods: &PodsOf<'_>) -> Result<Applying, Failure> {
+    let read = read_policies(client, pods.namespace).await?;
     if read.cut {
         return Err(Failure::new(
             FailureKind::Other,
             format!("NetworkPolicy list cut at {POLICY_LIMIT}"),
         ));
     }
-    Ok(applying(&read.policies, namespace, labels))
+    Ok(applying(&read.policies, pods))
 }

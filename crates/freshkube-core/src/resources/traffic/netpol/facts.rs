@@ -173,6 +173,18 @@ fn egress_rule(r: &NetworkPolicyEgressRule) -> Rule {
 }
 
 impl PolicyFacts {
+    /// A policy from its YAML, as a pane's document holds it.
+    pub fn from_yaml(yaml: &str) -> Result<Self, crate::failure::Failure> {
+        serde_yaml::from_str::<NetworkPolicy>(yaml)
+            .map(|policy| Self::from_policy(&policy))
+            .map_err(|error| {
+                crate::failure::Failure::new(
+                    crate::failure::FailureKind::Other,
+                    format!("the policy could not be read: {error}"),
+                )
+            })
+    }
+
     pub fn from_policy(policy: &NetworkPolicy) -> Self {
         let spec = policy.spec.clone().unwrap_or_default();
         let types = spec.policy_types.clone().unwrap_or_default();

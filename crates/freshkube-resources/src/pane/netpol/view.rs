@@ -12,7 +12,7 @@ impl DetailPane {
         let scope = view.scope?;
         let title = match scope {
             Scope::Policy => "Network policy",
-            Scope::Pods => "Network policies",
+            Scope::Pod | Scope::Workload => "Network policies",
         };
         let p = palette(cx);
         let direction = |line: &DirectionLine, cx: &App| {
@@ -20,7 +20,7 @@ impl DetailPane {
                 .id(line.id.clone())
                 .test_support()
                 .role(Role::Status)
-                .aria_label(format!("{}: {}", line.direction, line.verdict))
+                .aria_label(line.aria.clone())
                 .gap_1()
                 .child(
                     h_flex()
@@ -29,14 +29,14 @@ impl DetailPane {
                         .child(ui::tag(line.tone, None, line.direction, cx))
                         .child(div().min_w_0().child(line.verdict)),
                 )
-                .children(line.rules.iter().enumerate().map(|(ix, rule)| {
+                .children(line.rules.iter().map(|rule| {
                     div()
-                        .id(SharedString::from(format!("{}-rule-{ix}", line.id)))
+                        .id(rule.id.clone())
                         .test_support()
                         .pl(dp(8.))
                         .text_size(dp(12.))
                         .text_color(palette(cx).muted)
-                        .child(rule.clone())
+                        .child(rule.text.clone())
                 }))
         };
         let note = |id: &'static str, text: &'static str| {
@@ -82,9 +82,18 @@ impl DetailPane {
             Some(Body::Applying {
                 directions,
                 policies,
+                host_network,
                 ..
             }) => v_flex()
                 .gap_2()
+                .children(host_network.clone().map(|text| {
+                    h_flex()
+                        .id("netpol-host-network")
+                        .test_support()
+                        .gap_2()
+                        .child(ui::tag(Tone::Unknown, None, "Host network", cx))
+                        .child(div().min_w_0().child(text))
+                }))
                 .children(directions.iter().map(|line| direction(line, cx)))
                 .when(policies.is_empty(), |this| {
                     this.child(note(

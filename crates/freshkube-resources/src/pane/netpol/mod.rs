@@ -8,7 +8,8 @@
 use super::*;
 use crate::ui::Tone;
 use freshkube_core::resources::traffic::netpol::{
-    self, Applying, Direction, DirectionVerdict, PolicyReading, SCOPE_NOTE,
+    self, Applying, Direction, DirectionVerdict, HOST_NETWORK_NOTE, PodsOf, PolicyFacts,
+    PolicyReading, SCOPE_NOTE,
 };
 use std::collections::BTreeMap;
 
@@ -19,8 +20,10 @@ mod view;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
     Policy,
-    /// A Pod or a workload: the policies that apply to its pods.
-    Pods,
+    /// A Pod: the policies that apply to it.
+    Pod,
+    /// A workload: the policies that apply to the pods its template makes.
+    Workload,
 }
 
 enum Loaded {
@@ -28,13 +31,49 @@ enum Loaded {
     Applying(Result<Applying, Failure>),
 }
 
+struct RuleLine {
+    id: SharedString,
+    text: SharedString,
+}
+
 struct DirectionLine {
     id: SharedString,
+    /// Built with the answer, not in render; a line that reads like a pass
+    /// carries the NetworkPolicy-only qualifier.
+    aria: SharedString,
     direction: &'static str,
     tone: Tone,
     verdict: &'static str,
     /// One line per rule, in words (AND within an entry, OR across entries).
+    rules: Vec<RuleLine>,
+}
+
+fn direction_line(
+    direction: Direction,
+    verdict: DirectionVerdict,
     rules: Vec<SharedString>,
+) -> DirectionLine {
+    let id = format!("netpol-{}", direction.label().to_lowercase());
+    DirectionLine {
+        aria: if verdict == DirectionVerdict::Unknown {
+            format!("{}: {}", direction.label(), verdict.label())
+        } else {
+            format!("{}: {}. {SCOPE_NOTE}", direction.label(), verdict.label())
+        }
+        .into(),
+        direction: direction.label(),
+        tone: tone(verdict),
+        verdict: verdict.label(),
+        rules: rules
+            .into_iter()
+            .enumerate()
+            .map(|(ix, text)| RuleLine {
+                id: format!("{id}-rule-{ix}").into(),
+                text,
+            })
+            .collect(),
+        id: id.into(),
+    }
 }
 
 struct AppliedLine {
@@ -57,6 +96,8 @@ enum Body {
         policies: Vec<AppliedLine>,
         /// Policies whose selector could not be judged.
         uncertain: bool,
+        /// Why every verdict is Unknown, for host-network pods.
+        host_network: Option<SharedString>,
     },
     Message {
         tone: Tone,
@@ -114,11 +155,17 @@ impl NetpolView {
                 directions,
                 ..
             }) => *pods_tone == Tone::Unknown || directions.iter().any(|d| d.tone == Tone::Unknown),
+            // A host-network pod is Unknown by nature: a retry reads the same.
             Some(Body::Applying {
                 directions,
                 uncertain,
+                host_network,
                 ..
-            }) => *uncertain || directions.iter().any(|d| d.tone == Tone::Unknown),
+            }) => {
+                *uncertain
+                    || (host_network.is_none()
+                        && directions.iter().any(|d| d.tone == Tone::Unknown))
+            }
             None => false,
         }
     }
@@ -135,7 +182,7 @@ impl NetpolView {
                     Err(failure) => (failure_text("Selected pods", failure), Tone::Unknown),
                     Ok(count) => {
                         let mut text = format!(
-                            "Selects {}{} of {} pod{} here",
+                            "Selects {}{} of {} running pod{} here",
                             if count.cut { "at least " } else { "" },
                             count.selected,
                             count.total,
@@ -146,6 +193,13 @@ impl NetpolView {
                         }
                         if count.unknown > 0 {
                             text.push_str(&format!("; {} could not be judged", count.unknown));
+                        }
+                        if count.host_network > 0 {
+                            text.push_str(&format!(
+                                "; {} host-network pod{} not counted, since the network plugin decides for those",
+                                count.host_network,
+                                if count.host_network == 1 { " is" } else { "s are" },
+                            ));
                         }
                         (
                             text.into(),
@@ -165,27 +219,23 @@ impl NetpolView {
                         .into_iter()
                         .map(|direction| {
                             let verdict = policy.verdict(direction);
-                            DirectionLine {
-                                id: format!("netpol-{}", direction.label().to_lowercase()).into(),
-                                direction: direction.label(),
-                                tone: tone(verdict),
-                                verdict: verdict.label(),
-                                rules: if verdict == DirectionVerdict::NotGoverned {
+                            let peers = match direction {
+                                Direction::Ingress => "from",
+                                Direction::Egress => "to",
+                            };
+                            direction_line(
+                                direction,
+                                verdict,
+                                if verdict == DirectionVerdict::NotGoverned {
                                     Vec::new()
                                 } else {
                                     policy
                                         .rules(direction)
                                         .iter()
-                                        .map(|rule| {
-                                            rule.describe(match direction {
-                                                Direction::Ingress => "from",
-                                                Direction::Egress => "to",
-                                            })
-                                            .into()
-                                        })
+                                        .map(|rule| rule.describe(peers).into())
                                         .collect()
                                 },
-                            }
+                            )
                         })
                         .collect(),
                 }
@@ -203,17 +253,13 @@ impl NetpolView {
                 directions: Direction::ALL
                     .into_iter()
                     .map(|direction| {
-                        let verdict = applying.verdict(direction);
-                        DirectionLine {
-                            id: format!("netpol-{}", direction.label().to_lowercase()).into(),
-                            direction: direction.label(),
-                            tone: tone(verdict),
-                            verdict: verdict.label(),
-                            rules: Vec::new(),
-                        }
+                        direction_line(direction, applying.verdict(direction), Vec::new())
                     })
                     .collect(),
                 uncertain: applying.policies.iter().any(|p| p.uncertain),
+                host_network: applying
+                    .host_network
+                    .then(|| SharedString::from(format!("Unknown: {HOST_NETWORK_NOTE}"))),
                 policies: applying
                     .policies
                     .iter()
@@ -257,15 +303,16 @@ impl DetailPane {
                 (Scope::Policy, BTreeMap::new())
             } else if document.kind == "Pod" && document.api_version == "v1" {
                 (
-                    Scope::Pods,
+                    Scope::Pod,
                     document.overview.labels.iter().cloned().collect(),
                 )
             } else if let Some(template) = &document.overview.template_labels {
-                (Scope::Pods, template.iter().cloned().collect())
+                (Scope::Workload, template.iter().cloned().collect())
             } else {
                 self.netpol.reset();
                 return;
             };
+        let host_network = document.overview.host_network;
         if self.netpol.scope != Some(scope) {
             self.netpol.reset();
         }
@@ -278,22 +325,28 @@ impl DetailPane {
         };
         let identity = self.detail.as_ref().unwrap().target.identity.clone();
         let seq = self.netpol.seq;
-        let (namespace, name) = (identity.namespace.clone(), identity.name.clone());
+        let namespace = identity.namespace.clone();
+        // The policy on screen is the document the pane holds, so it can't
+        // disagree with its YAML; only the pod list is read.
+        let facts = (scope == Scope::Policy).then(|| PolicyFacts::from_yaml(&document.yaml));
         if let ClusterAccess::Example(_) = access {
             let shape = self.netpol.shape;
             let context = identity
                 .connection
                 .strip_prefix("example:")
                 .unwrap_or("prod-fra");
-            let loaded = match scope {
-                Scope::Policy => Loaded::Policy(Box::new(crate::example::netpol::read_policy(
-                    &document.yaml,
+            let loaded = match facts {
+                Some(facts) => Loaded::Policy(Box::new(facts.and_then(|facts| {
+                    crate::example::netpol::read_policy(facts, shape, context, live::now())
+                }))),
+                None => Loaded::Applying(crate::example::netpol::read_applying(
                     shape,
-                    context,
-                    live::now(),
-                ))),
-                Scope::Pods => Loaded::Applying(crate::example::netpol::read_applying(
-                    shape, &namespace, &labels,
+                    &PodsOf {
+                        namespace: &namespace,
+                        labels: &labels,
+                        template: scope == Scope::Workload,
+                        host_network,
+                    },
                 )),
             };
             self.finish_netpol(&identity, seq, loaded, cx);
@@ -305,13 +358,24 @@ impl DetailPane {
             "Network policy read timed out".to_owned(),
             async move {
                 let client = access.client().await.map_err(|failure| failure.message)?;
-                Ok(match scope {
-                    Scope::Policy => Loaded::Policy(Box::new(
-                        netpol::read_policy_by_name(&client, &namespace, &name).await,
-                    )),
-                    Scope::Pods => {
-                        Loaded::Applying(netpol::read_applying(&client, &namespace, &labels).await)
+                Ok(match facts {
+                    Some(Err(failure)) => Loaded::Policy(Box::new(Err(failure))),
+                    Some(Ok(facts)) => {
+                        let pods = netpol::read_selected_pods(&client, &facts).await;
+                        Loaded::Policy(Box::new(Ok(PolicyReading::new(facts, pods))))
                     }
+                    None => Loaded::Applying(
+                        netpol::read_applying(
+                            &client,
+                            &PodsOf {
+                                namespace: &namespace,
+                                labels: &labels,
+                                template: scope == Scope::Workload,
+                                host_network,
+                            },
+                        )
+                        .await,
+                    ),
                 })
             },
         );
@@ -324,7 +388,7 @@ impl DetailPane {
                     let failure = Failure::new(FailureKind::Timeout, message);
                     match scope {
                         Scope::Policy => Loaded::Policy(Box::new(Err(failure))),
-                        Scope::Pods => Loaded::Applying(Err(failure)),
+                        _ => Loaded::Applying(Err(failure)),
                     }
                 });
                 pane.finish_netpol(&identity, seq, loaded, cx);

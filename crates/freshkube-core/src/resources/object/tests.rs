@@ -135,6 +135,19 @@ fn written_objects_read_like_served_ones() {
 }
 
 #[test]
+fn a_pod_or_workload_on_the_host_network_says_so() {
+    let pod = "apiVersion: v1\nkind: Pod\nmetadata:\n  name: exporter\n  uid: p-1\nspec:\n  hostNetwork: true\n  containers: []\n";
+    let document = object_from_yaml(&builtin("pods").unwrap(), pod).unwrap();
+    assert!(document.overview.host_network);
+    let daemon = "apiVersion: apps/v1\nkind: DaemonSet\nmetadata:\n  name: exporter\n  uid: d-1\nspec:\n  template:\n    spec:\n      hostNetwork: true\n      containers: []\n";
+    let document = object_from_yaml(&builtin("daemonsets.apps").unwrap(), daemon).unwrap();
+    assert!(document.overview.host_network);
+    let plain = "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web\n  uid: p-2\nspec:\n  hostNetwork: false\n  containers: []\n";
+    let document = object_from_yaml(&builtin("pods").unwrap(), plain).unwrap();
+    assert!(!document.overview.host_network);
+}
+
+#[test]
 fn a_forwardable_kind_lists_its_declared_ports() {
     let yaml = "apiVersion: v1\nkind: Service\nmetadata:\n  name: web\n  uid: s-1\nspec:\n  ports:\n  - name: http\n    port: 80\n    targetPort: http\n";
     let document = object_from_yaml(&builtin("services").unwrap(), yaml).unwrap();

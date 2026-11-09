@@ -142,7 +142,8 @@ pub struct DebugOptions {
     pub(crate) services: ServicesShape,
     /// `FRESHKUBE_NETPOL`: what the NetworkPolicy, Pod and workload panes'
     /// example network policy reads answer (`mixed`, `default-deny`, `open`,
-    /// `restricts`, `ip-block`, `namespace-selector`, `none`, `refused`, `cut`);
+    /// `restricts`, `ip-block`, `namespace-selector`, `none`, `host-network`, `refused`,
+    /// `cut`);
     /// anything else is `mixed`.
     pub(crate) netpol: NetpolShape,
     /// `FRESHKUBE_ROUTES`: what the Routes page's example and an example

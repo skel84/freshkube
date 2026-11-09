@@ -26,6 +26,18 @@ fn labels(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
+fn app(policies: &[PolicyFacts], namespace: &str, labels: &BTreeMap<String, String>) -> Applying {
+    applying(
+        policies,
+        &PodsOf {
+            namespace,
+            labels,
+            template: false,
+            host_network: false,
+        },
+    )
+}
+
 fn subject(namespace: &str, pairs: &[(&str, &str)]) -> Subject {
     Subject {
         namespace: namespace.into(),
@@ -35,6 +47,7 @@ fn subject(namespace: &str, pairs: &[(&str, &str)]) -> Subject {
             number: 8080,
             protocol: "TCP".into(),
         }]),
+        host_network: false,
     }
 }
 
@@ -48,6 +61,7 @@ fn pod_remote(namespace: &str, pairs: &[(&str, &str)], ip: Option<&str>) -> Remo
             number: 8080,
             protocol: "TCP".into(),
         }]),
+        host_network: false,
     }
 }
 
@@ -80,7 +94,7 @@ fn namespaces() -> Vec<NamespaceLabels> {
 fn ingress(policies: &[PolicyFacts], remote: &Remote, port: i32) -> Answer {
     decide(
         Direction::Ingress,
-        policies,
+        Some(policies),
         &subject("shop", &[("app", "api")]),
         remote,
         port,
@@ -93,7 +107,7 @@ fn ingress(policies: &[PolicyFacts], remote: &Remote, port: i32) -> Answer {
 fn egress(policies: &[PolicyFacts], remote: &Remote, port: i32) -> Answer {
     decide(
         Direction::Egress,
-        policies,
+        Some(policies),
         &subject("shop", &[("app", "api")]),
         remote,
         port,
@@ -302,12 +316,12 @@ fn nothing_selecting_a_pod_is_not_governed() {
         "other",
         json!({"podSelector": {"matchLabels": {"app": "db"}}}),
     )];
-    let a = applying(&policies, "shop", &labels(&[("app", "api")]));
+    let a = app(&policies, "shop", &labels(&[("app", "api")]));
     assert!(a.policies.is_empty());
     assert_eq!(a.ingress, DirectionVerdict::NotGoverned);
     assert_eq!(a.egress, DirectionVerdict::NotGoverned);
     assert_eq!(
-        applying(&[], "shop", &labels(&[])).ingress,
+        app(&[], "shop", &labels(&[])).ingress,
         DirectionVerdict::NotGoverned
     );
 }
@@ -318,16 +332,12 @@ fn a_default_deny_policy_denies_what_it_selects_and_only_there() {
         "default-deny",
         json!({"podSelector": {}, "policyTypes": ["Ingress", "Egress"]}),
     )];
-    let a = applying(&policies, "shop", &labels(&[("app", "api")]));
+    let a = app(&policies, "shop", &labels(&[("app", "api")]));
     assert_eq!(a.ingress, DirectionVerdict::DeniesAll);
     assert_eq!(a.egress, DirectionVerdict::DeniesAll);
     assert_eq!(a.policies.len(), 1);
     // Another namespace's policy never applies.
-    assert!(
-        applying(&policies, "payments", &labels(&[]))
-            .policies
-            .is_empty()
-    );
+    assert!(app(&policies, "payments", &labels(&[])).policies.is_empty());
 }
 
 #[test]
@@ -343,20 +353,20 @@ fn policies_add_up() {
     );
     let l = labels(&[("app", "api")]);
     assert_eq!(
-        applying(std::slice::from_ref(&deny), "shop", &l).ingress,
+        app(std::slice::from_ref(&deny), "shop", &l).ingress,
         DirectionVerdict::DeniesAll
     );
     assert_eq!(
-        applying(&[deny.clone(), allow.clone()], "shop", &l).ingress,
+        app(&[deny.clone(), allow.clone()], "shop", &l).ingress,
         DirectionVerdict::Restricts
     );
     assert_eq!(
-        applying(&[deny.clone(), allow.clone(), open], "shop", &l).ingress,
+        app(&[deny.clone(), allow.clone(), open], "shop", &l).ingress,
         DirectionVerdict::OpensToAll
     );
     // Egress isn't governed by any of them.
     assert_eq!(
-        applying(&[deny, allow], "shop", &l).egress,
+        app(&[deny, allow], "shop", &l).egress,
         DirectionVerdict::NotGoverned
     );
 }
@@ -367,7 +377,7 @@ fn an_unjudgeable_selector_makes_the_verdict_unknown() {
         "bad",
         json!({"podSelector": {"matchExpressions": [{"key": "app", "operator": "Weird"}]}}),
     );
-    let a = applying(&[bad], "shop", &labels(&[("app", "api")]));
+    let a = app(&[bad], "shop", &labels(&[("app", "api")]));
     assert_eq!(a.ingress, DirectionVerdict::Unknown);
     assert!(a.policies[0].uncertain);
     // But a definite open rule is still open.
@@ -377,7 +387,7 @@ fn an_unjudgeable_selector_makes_the_verdict_unknown() {
         json!({"podSelector": {"matchExpressions": [{"key": "app", "operator": "Weird"}]}}),
     );
     assert_eq!(
-        applying(&[bad, open], "shop", &labels(&[])).ingress,
+        app(&[bad, open], "shop", &labels(&[])).ingress,
         DirectionVerdict::OpensToAll
     );
 }
@@ -388,7 +398,7 @@ fn an_unjudgeable_selector_makes_the_verdict_unknown() {
 fn no_policy_allows_with_its_reason() {
     let d = decide(
         Direction::Ingress,
-        &[],
+        Some(&[]),
         &subject("shop", &[]),
         &external("203.0.113.9"),
         80,
@@ -562,18 +572,26 @@ fn namespace_and_pod_selector_in_one_entry_are_anded() {
 
 #[test]
 fn a_namespace_that_could_not_be_read_is_cant_tell() {
-    let policies = vec![policy(
+    let policies = [policy(
         "p",
         json!({"podSelector": {}, "ingress": [{"from": [{"namespaceSelector": {"matchLabels": {"team": "ops"}}}]}]}),
     )];
     let s = subject("shop", &[]);
     let remote = pod_remote("monitoring", &[], None);
-    let d = decide(Direction::Ingress, &policies, &s, &remote, 80, "TCP", None);
+    let d = decide(
+        Direction::Ingress,
+        Some(&policies[..]),
+        &s,
+        &remote,
+        80,
+        "TCP",
+        None,
+    );
     assert_eq!(d.answer, Answer::CantTell);
     // A namespace missing from the list is also unknown, not a no.
     let d = decide(
         Direction::Ingress,
-        &policies,
+        Some(&policies[..]),
         &s,
         &pod_remote("ghost", &[], None),
         80,
@@ -582,12 +600,21 @@ fn a_namespace_that_could_not_be_read_is_cant_tell() {
     );
     assert_eq!(d.answer, Answer::CantTell);
     // A definite allow by another rule is still allowed.
-    let both = vec![
+    let both = [
         policies[0].clone(),
         policy("open", json!({"podSelector": {}, "ingress": [{}]})),
     ];
     assert_eq!(
-        decide(Direction::Ingress, &both, &s, &remote, 80, "TCP", None).answer,
+        decide(
+            Direction::Ingress,
+            Some(&both[..]),
+            &s,
+            &remote,
+            80,
+            "TCP",
+            None
+        )
+        .answer,
         Answer::Allowed
     );
 }
@@ -637,7 +664,7 @@ fn ip_blocks_honour_except_and_family() {
 
 #[test]
 fn an_ip_block_with_no_address_or_a_bad_cidr_is_cant_tell() {
-    let policies = vec![policy(
+    let policies = [policy(
         "p",
         json!({"podSelector": {}, "ingress": [{"from": [{"ipBlock": {"cidr": "10.0.0.0/8"}}]}]}),
     )];
@@ -645,7 +672,7 @@ fn an_ip_block_with_no_address_or_a_bad_cidr_is_cant_tell() {
     // A pod whose IP wasn't read.
     let d = decide(
         Direction::Ingress,
-        &policies,
+        Some(&policies[..]),
         &s,
         &pod_remote("shop", &[], None),
         80,
@@ -695,7 +722,7 @@ fn ports_by_number_range_and_protocol() {
     let udp = |port, protocol| {
         decide(
             Direction::Ingress,
-            &policies,
+            Some(&policies[..]),
             &subject("shop", &[]),
             &any,
             port,
@@ -711,14 +738,14 @@ fn ports_by_number_range_and_protocol() {
 
 #[test]
 fn a_port_with_no_number_allows_every_port_of_its_protocol() {
-    let policies = vec![policy(
+    let policies = [policy(
         "p",
         json!({"podSelector": {}, "ingress": [{"ports": [{"protocol": "UDP"}]}]}),
     )];
     let d = |protocol| {
         decide(
             Direction::Ingress,
-            &policies,
+            Some(&policies[..]),
             &subject("shop", &[]),
             &external("1.2.3.4"),
             5353,
@@ -753,7 +780,7 @@ fn named_ports_resolve_on_the_destination_pod() {
     assert_eq!(
         decide(
             Direction::Ingress,
-            &policies,
+            Some(&policies[..]),
             &unread,
             &any,
             8080,
@@ -893,6 +920,15 @@ fn selected_pods_are_counted_by_the_policys_selector() {
 
 // ---- reads against a fake API
 
+fn pods_of(labels: &BTreeMap<String, String>) -> PodsOf<'_> {
+    PodsOf {
+        namespace: "shop",
+        labels,
+        template: false,
+        host_network: false,
+    }
+}
+
 fn status(code: u16) -> (u16, String) {
     (code, json!({"kind":"Status","apiVersion":"v1","status":"Failure","code":code,"reason":"x","message":"no"}).to_string())
 }
@@ -915,52 +951,63 @@ fn only_gets(recorder: &crate::fake_api::Recorder) {
 }
 
 #[tokio::test]
-async fn reading_a_policy_lists_pods_and_only_gets() {
+async fn a_policys_pods_are_listed_without_finished_ones_and_only_gets() {
     let (client, recorder) = crate::fake_api::client(|request| match request.path.as_str() {
-        "/apis/networking.k8s.io/v1/namespaces/shop/networkpolicies/default-deny" => {
-            Some(ok(json!({
-                "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
-                "metadata": {"name": "default-deny", "namespace": "shop"},
-                "spec": {"podSelector": {}},
-            })))
-        }
         "/api/v1/namespaces/shop/pods" => Some(ok(json!({
             "apiVersion": "v1", "kind": "PodList", "metadata": {},
             "items": [
                 {"metadata": {"name": "a", "namespace": "shop"}},
                 {"metadata": {"name": "b", "namespace": "shop"}},
+                {"metadata": {"name": "net", "namespace": "shop"}, "spec": {"hostNetwork": true, "containers": []}},
+                {"metadata": {"name": "done", "namespace": "shop"}, "status": {"phase": "Succeeded"}},
             ],
         }))),
         _ => Some(status(500)),
     });
-    let reading = read_policy_by_name(&client, "shop", "default-deny")
-        .await
-        .unwrap();
+    let policy = policy("default-deny", json!({"podSelector": {}}));
+    let counted = read_selected_pods(&client, &policy).await.unwrap();
+    // The finished pod is left out and the host-network one counted apart.
     assert_eq!(
-        reading.policy.verdict(Direction::Ingress),
-        DirectionVerdict::DeniesAll
+        (counted.selected, counted.total, counted.host_network),
+        (2, 2, 1)
     );
-    assert_eq!(reading.pods.unwrap().selected, 2);
+    let requests = recorder.requests();
+    assert!(
+        requests[0].query.contains("fieldSelector"),
+        "{}",
+        requests[0].query
+    );
+    assert!(requests[0].query.contains("status.phase"));
     only_gets(&recorder);
 }
 
 #[tokio::test]
 async fn a_refused_pod_list_leaves_the_count_unknown_not_zero() {
-    let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
-        "/apis/networking.k8s.io/v1/namespaces/shop/networkpolicies/p" => Some(ok(json!({
-            "apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
-            "metadata": {"name": "p", "namespace": "shop"}, "spec": {"podSelector": {}},
-        }))),
-        _ => Some(status(403)),
-    });
-    let reading = read_policy_by_name(&client, "shop", "p").await.unwrap();
-    assert_eq!(reading.pods.unwrap_err().kind, FailureKind::Forbidden);
+    let (client, _) = crate::fake_api::client(|_| Some(status(403)));
+    let policy = policy("p", json!({"podSelector": {}}));
+    assert_eq!(
+        read_selected_pods(&client, &policy).await.unwrap_err().kind,
+        FailureKind::Forbidden
+    );
+}
+
+#[test]
+fn a_policy_is_read_from_the_yaml_on_screen() {
+    let facts = PolicyFacts::from_yaml(
+        "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: deny\n  namespace: shop\nspec:\n  podSelector: {}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        facts.verdict(Direction::Ingress),
+        DirectionVerdict::DeniesAll
+    );
+    assert!(PolicyFacts::from_yaml("spec: [").is_err());
 }
 
 #[tokio::test]
 async fn a_refused_policy_list_is_an_error_never_no_policy() {
     let (client, recorder) = crate::fake_api::client(|_| Some(status(403)));
-    let err = read_applying(&client, "shop", &BTreeMap::new())
+    let err = read_applying(&client, &pods_of(&BTreeMap::new()))
         .await
         .unwrap_err();
     assert_eq!(err.kind, FailureKind::Forbidden);
@@ -975,7 +1022,7 @@ async fn a_cut_policy_list_is_an_error() {
             "metadata": {"continue": "more"}, "items": [],
         })))
     });
-    let err = read_applying(&client, "shop", &BTreeMap::new())
+    let err = read_applying(&client, &pods_of(&BTreeMap::new()))
         .await
         .unwrap_err();
     assert!(err.message.contains("cut"));
@@ -990,7 +1037,7 @@ async fn applying_reads_one_namespace_and_reports_the_verdicts() {
         }))),
         _ => Some(status(500)),
     });
-    let a = read_applying(&client, "shop", &labels(&[("app", "api")]))
+    let a = read_applying(&client, &pods_of(&labels(&[("app", "api")])))
         .await
         .unwrap();
     assert_eq!(a.ingress, DirectionVerdict::DeniesAll);
@@ -1012,4 +1059,203 @@ async fn namespaces_are_read_for_selectors_and_a_cut_is_reported() {
     assert!(read.cut);
     assert_eq!(read.namespaces[0].labels["env"], "prod");
     only_gets(&recorder);
+}
+
+// ---- host-network pods, controller labels, unread policy lists
+
+fn host_subject() -> Subject {
+    Subject {
+        host_network: true,
+        ..subject("shop", &[("app", "node-exporter")])
+    }
+}
+
+#[test]
+fn a_host_network_pod_is_unknown_never_denied() {
+    let deny = vec![policy("deny", json!({"podSelector": {}}))];
+    let l = labels(&[("app", "node-exporter")]);
+    let a = applying(
+        &deny,
+        &PodsOf {
+            namespace: "shop",
+            labels: &l,
+            template: false,
+            host_network: true,
+        },
+    );
+    assert_eq!(a.ingress, DirectionVerdict::Unknown);
+    assert_eq!(a.egress, DirectionVerdict::Unknown);
+    assert!(a.host_network);
+    // The policies that select it are still listed.
+    assert_eq!(a.policies.len(), 1);
+    // The same policies deny a pod on the pod network.
+    assert_eq!(app(&deny, "shop", &l).ingress, DirectionVerdict::DeniesAll);
+}
+
+#[test]
+fn either_end_on_the_host_network_is_cant_tell() {
+    let deny = [policy("deny", json!({"podSelector": {}}))];
+    let open = [policy("open", json!({"podSelector": {}, "ingress": [{}]}))];
+    let any = pod_remote("shop", &[], None);
+    let d = decide(
+        Direction::Ingress,
+        Some(&deny[..]),
+        &host_subject(),
+        &any,
+        80,
+        "TCP",
+        None,
+    );
+    assert_eq!(d.answer, Answer::CantTell);
+    assert_eq!(d.reason, HOST_NETWORK_NOTE);
+    // Even a rule that would allow it.
+    let d = decide(
+        Direction::Ingress,
+        Some(&open[..]),
+        &host_subject(),
+        &any,
+        80,
+        "TCP",
+        None,
+    );
+    assert_eq!(d.answer, Answer::CantTell);
+    // The remote being the host-network pod.
+    let host_remote = Remote::Pod {
+        namespace: "shop".into(),
+        labels: BTreeMap::new(),
+        ip: None,
+        named_ports: None,
+        host_network: true,
+    };
+    let d = decide(
+        Direction::Ingress,
+        Some(&open[..]),
+        &subject("shop", &[]),
+        &host_remote,
+        80,
+        "TCP",
+        None,
+    );
+    assert_eq!(d.answer, Answer::CantTell);
+    // can_reach: a host-network end on either side.
+    let plain = subject("shop", &[("app", "api")]);
+    for (from, to) in [(&host_subject(), &plain), (&plain, &host_subject())] {
+        let d = can_reach(Some(&[]), Some(&[]), from, None, to, None, 80, "TCP", None);
+        assert_eq!(d.answer, Answer::CantTell);
+    }
+}
+
+#[test]
+fn a_policy_list_that_was_not_read_in_full_is_cant_tell() {
+    let d = decide(
+        Direction::Ingress,
+        None,
+        &subject("shop", &[]),
+        &external("1.2.3.4"),
+        80,
+        "TCP",
+        None,
+    );
+    assert_eq!(d.answer, Answer::CantTell);
+}
+
+fn template_applying(policies: &[PolicyFacts], pairs: &[(&str, &str)]) -> Applying {
+    let l = labels(pairs);
+    applying(
+        policies,
+        &PodsOf {
+            namespace: "shop",
+            labels: &l,
+            template: true,
+            host_network: false,
+        },
+    )
+}
+
+#[test]
+fn a_template_cant_answer_for_labels_its_controller_adds() {
+    let template = [("app", "api")];
+    // A per-replica policy on a StatefulSet pod name or a hash.
+    for key in CONTROLLER_LABELS {
+        let by_label = vec![policy(
+            "one",
+            json!({"podSelector": {"matchLabels": {key: "x"}}}),
+        )];
+        let a = template_applying(&by_label, &template);
+        assert_eq!(a.ingress, DirectionVerdict::Unknown, "{key}");
+        assert!(a.policies[0].uncertain, "{key}");
+        // DoesNotExist can't be a yes from labels the template lacks.
+        let absent = vec![policy(
+            "none",
+            json!({"podSelector": {"matchExpressions": [{"key": key, "operator": "DoesNotExist"}]}}),
+        )];
+        assert_eq!(
+            template_applying(&absent, &template).ingress,
+            DirectionVerdict::Unknown,
+            "{key}"
+        );
+    }
+    // Ordinary labels are still judged, and a pod's own labels are too.
+    let plain = vec![policy(
+        "p",
+        json!({"podSelector": {"matchLabels": {"app": "api"}}}),
+    )];
+    assert_eq!(
+        template_applying(&plain, &template).ingress,
+        DirectionVerdict::DeniesAll
+    );
+    let hash = vec![policy(
+        "h",
+        json!({"podSelector": {"matchLabels": {"pod-template-hash": "abc"}}}),
+    )];
+    assert_eq!(
+        app(
+            &hash,
+            "shop",
+            &labels(&[("app", "api"), ("pod-template-hash", "abc")])
+        )
+        .ingress,
+        DirectionVerdict::DeniesAll
+    );
+    // A definite No on another term still wins.
+    let both = vec![policy(
+        "b",
+        json!({"podSelector": {"matchLabels": {"app": "db", "pod-template-hash": "x"}}}),
+    )];
+    assert_eq!(
+        template_applying(&both, &template).ingress,
+        DirectionVerdict::NotGoverned
+    );
+}
+
+#[test]
+fn counting_leaves_out_finished_and_host_network_pods() {
+    let pod = |name: &str, extra: Value| -> Pod {
+        let mut pod = json!({"metadata": {"name": name, "namespace": "shop"}});
+        merge(&mut pod, extra);
+        serde_json::from_value(pod).unwrap()
+    };
+    let p = policy("p", json!({"podSelector": {}}));
+    let pods = vec![
+        pod("a", json!({})),
+        pod("done", json!({"status": {"phase": "Succeeded"}})),
+        pod("failed", json!({"status": {"phase": "Failed"}})),
+        pod(
+            "net",
+            json!({"spec": {"hostNetwork": true, "containers": []}}),
+        ),
+    ];
+    let c = count_selected(&p, &pods, false);
+    assert_eq!((c.selected, c.total, c.host_network), (1, 1, 1));
+}
+
+fn merge(into: &mut Value, with: Value) {
+    match (into, with) {
+        (Value::Object(into), Value::Object(with)) => {
+            for (key, value) in with {
+                merge(into.entry(key).or_insert(Value::Null), value);
+            }
+        }
+        (into, with) => *into = with,
+    }
 }
