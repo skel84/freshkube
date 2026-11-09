@@ -125,6 +125,8 @@ struct Fake {
     recorder: Recorder,
     opened: Mutex<Vec<Request>>,
     logins: Mutex<Vec<bool>>,
+    /// The GitHub the delivery commands read through, when a test has one.
+    github: Mutex<Option<freshkube_delivery::github::Handle>>,
 }
 
 impl Fake {
@@ -136,15 +138,21 @@ impl Fake {
             recorder,
             opened: Mutex::default(),
             logins: Mutex::default(),
+            github: Mutex::default(),
         })
     }
 
     fn unreachable() -> Arc<Self> {
+        Self::failing(Failure::new(FailureKind::Unreachable, "connection refused"))
+    }
+
+    fn failing(failure: Failure) -> Arc<Self> {
         Arc::new(Self {
-            client: Err(Failure::new(FailureKind::Unreachable, "connection refused")),
+            client: Err(failure),
             recorder: Recorder::default(),
             opened: Mutex::default(),
             logins: Mutex::default(),
+            github: Mutex::default(),
         })
     }
 }
@@ -165,6 +173,8 @@ impl Connector for Arc<Fake> {
         Ok(Target {
             entry: request.entry.clone(),
             context: request.context.clone(),
+            setup: request.setup.clone(),
+            github: self.github.lock().unwrap().clone(),
             source: ClusterSource {
                 id: "fake".into(),
                 context: request.context.clone(),
@@ -682,6 +692,7 @@ fn the_kubeconfig_connector_opens_the_named_context_never_the_current_one() {
         entry: None,
         sources: vec![file],
         context: "chosen".into(),
+        setup: None,
     };
     let target = Kubeconfig.open(&request, false).expect("opened");
     assert_eq!(target.context, "chosen");
@@ -990,6 +1001,7 @@ fn allow_login_waits_five_minutes_for_a_sign_in_and_other_contexts_do_not() {
             entry: None,
             sources: vec![file.clone()],
             context: context.into(),
+            setup: None,
         };
         match Kubeconfig
             .open(&request, allow_login)
@@ -1011,6 +1023,7 @@ fn allow_login_waits_five_minutes_for_a_sign_in_and_other_contexts_do_not() {
             entry: None,
             sources: vec![file.clone()],
             context: "signs-in".into(),
+            setup: None,
         },
         false,
     ) {
@@ -1019,3 +1032,5 @@ fn allow_login_waits_five_minutes_for_a_sign_in_and_other_contexts_do_not() {
     };
     assert!(message.contains("needs no browser"), "{message}");
 }
+
+mod delivery_reads;

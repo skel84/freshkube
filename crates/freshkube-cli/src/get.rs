@@ -19,6 +19,45 @@ pub struct Wanted {
     pub wide: bool,
 }
 
+/// The words that name an application rather than a kind: `get application
+/// <app>` shows its Stages.
+const APPLICATION: [&str; 4] = ["application", "applications", "app", "apps"];
+
+/// The application a `get` asks for, when it asks for one.
+pub fn application_of(args: &GetArgs) -> Result<Option<String>, Stop> {
+    let (word, name) = match args.kind.split_once('/') {
+        Some((word, name)) if args.name.is_none() => (word, Some(name.to_owned())),
+        _ => (args.kind.as_str(), args.name.clone()),
+    };
+    if !APPLICATION.contains(&word) {
+        return Ok(None);
+    }
+    if args.show_values || args.reveal || args.decode || args.key.is_some() {
+        return Err(Stop::Usage(
+            "that option reads values, which this command never does".into(),
+        ));
+    }
+    if let Some(other) = args.output.as_deref().filter(|output| *output != "table") {
+        return Err(Stop::Usage(format!(
+            "-o {other} is not offered for an application; use --json for JSON."
+        )));
+    }
+    match name.filter(|name| !name.is_empty()) {
+        Some(name) => Ok(Some(name)),
+        None => Err(Stop::Usage(
+            "name the application: `freshkube get application <app>`".into(),
+        )),
+    }
+}
+
+/// The usage errors of `get`, whichever it asks for.
+pub fn early(args: &GetArgs) -> Result<(), Stop> {
+    match application_of(args)? {
+        Some(_) => Ok(()),
+        None => wanted(args).map(|_| ()),
+    }
+}
+
 pub fn wanted(args: &GetArgs) -> Result<Wanted, Stop> {
     let (kind_text, name) = match args.kind.split_once('/') {
         Some((kind, name)) if args.name.is_none() => (kind, Some(name.to_owned())),
@@ -65,6 +104,9 @@ pub fn wanted(args: &GetArgs) -> Result<Wanted, Stop> {
 }
 
 pub async fn run(args: &GetArgs, target: &Target) -> Result<Report, Stop> {
+    if let Some(name) = application_of(args)? {
+        return crate::waiting::application(args, &name, target).await;
+    }
     let Wanted { kind, name, wide } = wanted(args)?;
     let namespace = args.namespace.as_deref().filter(|_| kind.namespaced);
     let selector = name.as_ref().map(|name| format!("metadata.name={name}"));

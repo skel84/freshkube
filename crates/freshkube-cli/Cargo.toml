@@ -5,10 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 publish = false
-description = "The read commands of the freshkube binary: check and get, with JSON output and exit codes"
+description = "The read commands of the freshkube binary: check, get, changes and waiting-to-ship, with JSON output and exit codes"
 
 [dependencies]
 freshkube-core.workspace = true
+freshkube-delivery.workspace = true
+chrono.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -16,6 +18,7 @@ futures.workspace = true
 
 [dev-dependencies]
 freshkube-core = { workspace = true, features = ["testing"] }
+freshkube-delivery = { workspace = true, features = ["testing"] }
 tempfile = "3"
 kube.workspace = true
 clap.workspace = true
