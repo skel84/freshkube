@@ -1,6 +1,7 @@
 //! Prepared rows, groups and sentences for the Gateways and GatewayClasses
 //! pages; render does no collection work.
 use super::*;
+use crate::resources::route_trace::verdict_tone;
 use freshkube_core::resources::traffic::routes::{
     ClassEntry, ClassState, GatewayEntry, GatewayState, GatewaysView, RoutesRead,
 };
@@ -10,10 +11,135 @@ pub(crate) struct Field {
     pub value: SharedString,
 }
 
-/// What a row opens and the Inspector draws.
+/// The most listeners, routes or Gateways the Inspector lists; the rest are
+/// counted.
+pub(crate) const DETAIL_LINES: usize = 50;
+
+/// One listener's lines, prepared when the read lands.
+pub(crate) struct ListenerBlock {
+    pub lines: Vec<String>,
+}
+
+pub(crate) struct RouteBlock {
+    pub tone: ui::Tone,
+    pub state: &'static str,
+    pub text: String,
+}
+
+pub(crate) struct GatewayDetail {
+    pub state: &'static str,
+    pub reason: String,
+    /// Whose problem it is, in words.
+    pub owner: Option<&'static str>,
+    /// What the controller reports, kept apart.
+    pub says: Option<String>,
+    pub listeners: Vec<ListenerBlock>,
+    pub listeners_more: usize,
+    pub routes_title: String,
+    pub routes: Vec<RouteBlock>,
+    pub routes_more: usize,
+    pub contested: Vec<String>,
+}
+
+pub(crate) struct ClassDetail {
+    pub state: &'static str,
+    pub reason: String,
+    pub says: Option<String>,
+    /// `(key, state, tone)`.
+    pub gateways: Vec<(String, &'static str, ui::Tone)>,
+    pub gateways_more: usize,
+}
+
+/// What a row's Inspector draws, as strings made once per read.
 pub(crate) enum Detail {
-    Gateway(Box<GatewayEntry>),
-    Class(Box<ClassEntry>),
+    Gateway(Box<GatewayDetail>),
+    Class(Box<ClassDetail>),
+}
+
+fn owner_words(
+    owner: Option<freshkube_core::resources::traffic::routes::Owner>,
+) -> Option<&'static str> {
+    use freshkube_core::resources::traffic::routes::Owner;
+    owner.map(|owner| match owner {
+        Owner::Platform => "the platform's",
+        Owner::Yours => "yours",
+        Owner::Controller => "the controller's",
+        Owner::ThisMachine => "this machine's",
+    })
+}
+
+fn more(total: usize) -> usize {
+    total.saturating_sub(DETAIL_LINES)
+}
+
+fn gateway_detail(entry: &GatewayEntry) -> GatewayDetail {
+    GatewayDetail {
+        state: entry.state.label(),
+        reason: entry.reason.clone(),
+        owner: owner_words(entry.owner),
+        says: entry.says.clone(),
+        listeners: entry
+            .listeners
+            .iter()
+            .take(DETAIL_LINES)
+            .map(|l| {
+                let host = l.hostname.as_deref().unwrap_or("any host");
+                let attached = match l.attached {
+                    Some(n) => format!("{n} attached"),
+                    None => "no status from the controller".to_owned(),
+                };
+                let mut lines = vec![
+                    format!("{} · {}/{} · {host}", l.name, l.port, l.protocol),
+                    format!("allows {}", l.allows),
+                    format!("{} · {attached}", l.state.label()),
+                ];
+                if let Some(says) = &l.says {
+                    lines.push(format!("controller: {says}"));
+                }
+                if !l.certificates.is_empty() {
+                    lines.push(format!(
+                        "certificate {} (by name only)",
+                        l.certificates.join(", ")
+                    ));
+                }
+                ListenerBlock { lines }
+            })
+            .collect(),
+        listeners_more: more(entry.listeners.len()),
+        routes_title: format!("Routes · {}", entry.routes_line()),
+        routes: entry
+            .routes
+            .iter()
+            .take(DETAIL_LINES)
+            .map(|r| RouteBlock {
+                tone: verdict_tone(r.verdict),
+                state: r.verdict.label(),
+                text: format!("{}/{} — {}", r.namespace, r.name, r.line),
+            })
+            .collect(),
+        routes_more: more(entry.routes.len()),
+        contested: entry
+            .contested
+            .iter()
+            .take(DETAIL_LINES)
+            .map(|c| format!("{} is also named by {}", c.host, c.also.join(", ")))
+            .collect(),
+    }
+}
+
+fn class_detail(entry: &ClassEntry) -> ClassDetail {
+    ClassDetail {
+        state: entry.state.label(),
+        reason: entry.reason.clone(),
+        says: entry.says.clone(),
+        gateways: entry
+            .gateways
+            .iter()
+            .take(DETAIL_LINES)
+            .map(|(key, state)| (key.clone(), state.label(), gateway_tone(*state)))
+            .collect(),
+        gateways_more: more(entry.gateways.len()),
+    }
 }
 
 pub(crate) struct Row {
@@ -29,6 +155,8 @@ pub(crate) struct Row {
     pub group: usize,
     pub namespace: String,
     pub name: String,
+    /// The object's UID, for a link on a live cluster.
+    pub uid: String,
     /// There is an object to open.
     pub openable: bool,
     /// Everything the filter matches, lowercased.
@@ -164,6 +292,7 @@ fn gateway_row(entry: &GatewayEntry) -> (Row, usize) {
         group,
         namespace: facts.namespace.clone(),
         name: facts.name.clone(),
+        uid: facts.uid.clone(),
         openable: entry.state != GatewayState::Missing,
         search,
         fields: vec![
@@ -180,7 +309,7 @@ fn gateway_row(entry: &GatewayEntry) -> (Row, usize) {
                 value: address.into(),
             },
         ],
-        detail: Detail::Gateway(Box::new(entry.clone())),
+        detail: Detail::Gateway(Box::new(gateway_detail(entry))),
     };
     (row, group)
 }
@@ -227,6 +356,7 @@ fn class_row(entry: &ClassEntry) -> (Row, usize) {
         group,
         namespace: String::new(),
         name: entry.name.clone(),
+        uid: entry.uid.clone(),
         openable: entry.state != ClassState::Missing,
         search,
         fields: vec![
@@ -239,7 +369,7 @@ fn class_row(entry: &ClassEntry) -> (Row, usize) {
                 value: controller.into(),
             },
         ],
-        detail: Detail::Class(Box::new(entry.clone())),
+        detail: Detail::Class(Box::new(class_detail(entry))),
     };
     (row, group)
 }

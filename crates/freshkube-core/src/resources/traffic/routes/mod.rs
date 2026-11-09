@@ -27,11 +27,11 @@ pub use read::{
     NAMESPACE_LIMIT, ROUTE_LIMIT, RouteEntry, RoutesRead, discover, read_routes,
 };
 pub use topology::{
-    Edge, Health, Node, NodeKind, Target, Topology, WORKLOAD_LIMIT, WORKLOAD_NAMESPACES,
+    Edge, Health, ListCuts, Node, NodeKind, Target, Topology, WORKLOAD_LIMIT, WORKLOAD_NAMESPACES,
     WorkloadRead, WorkloadRef, read_workloads, resolve_workloads,
 };
 pub use trace::{
-    BackendRead, Branch, BranchKind, BranchVerdict, Inputs, Listing, NamespaceLabels,
+    BackendRead, Branch, BranchKind, BranchVerdict, Cause, Inputs, Listing, NamespaceLabels,
     OtherController, Owner, ParentTrace, RouteTrace, RouteVerdict, StepId, StepVerdict, Summary,
     TraceStep, trace_route,
 };

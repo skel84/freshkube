@@ -694,3 +694,91 @@ fn the_networking_column_lists_the_gateway_pages_under_traffic(cx: &mut TestAppC
         }
     }
 }
+
+#[test]
+fn the_inspector_lines_are_made_with_the_read_and_capped_at_fifty() {
+    use super::display::DETAIL_LINES;
+    let mut read = example::read(Shape::Serving).unwrap();
+    let listeners = (0..DETAIL_LINES + 7)
+        .map(|n| {
+            serde_json::json!({"name": format!("l{n}"), "port": 1000 + n, "protocol": "HTTP",
+                "hostname": format!("h{n}.example.com"),
+                "allowedRoutes": {"namespaces": {"from": "All"}}})
+        })
+        .collect::<Vec<_>>();
+    let big = freshkube_core::resources::traffic::routes::GatewayFacts::parse(&serde_json::json!({
+        "metadata": {"name": "big", "namespace": "infra", "generation": 1, "uid": "gw-big"},
+        "spec": {"gatewayClassName": "example", "listeners": listeners},
+    }))
+    .unwrap();
+    read.gateways.as_mut().unwrap().items.push(big);
+    let display = Display::new(Mode::Gateways, Some(&read));
+    let row = display.rows.iter().find(|r| r.name == "big").unwrap();
+    let Detail::Gateway(detail) = &row.detail else {
+        panic!("a Gateway's detail");
+    };
+    assert_eq!(detail.listeners.len(), DETAIL_LINES);
+    assert_eq!(detail.listeners_more, 7);
+    // Routes and class members are capped the same way.
+    let classes = Display::new(Mode::Classes, Some(&read));
+    assert!(
+        classes
+            .rows
+            .iter()
+            .all(|r| matches!(&r.detail, Detail::Class(c) if c.gateways.len() <= DETAIL_LINES))
+    );
+}
+
+#[gpui_kit::test]
+fn the_inspector_says_how_many_more_there_are(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Mode::Gateways, Shape::Gateways, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| {
+            page.sync();
+            if let Some(Detail::Gateway(detail)) = page
+                .display
+                .rows
+                .iter_mut()
+                .find(|r| r.key == "infra/edge")
+                .map(|r| &mut r.detail)
+            {
+                detail.routes_more = 3;
+            }
+            page.choose("infra/edge".into(), cx);
+        });
+        window.render_frame(cx);
+        let id = row_id(&page, "edge", cx);
+        let _ = id;
+        window.find("gateways-row-infra-edge-routes-more");
+    })
+    .unwrap();
+}
+
+#[test]
+fn rows_carry_the_uid_a_live_link_needs() {
+    let display = display_of(Mode::Gateways, Shape::Gateways);
+    let uid = |key: &str| {
+        display
+            .rows
+            .iter()
+            .find(|r| r.key == key)
+            .unwrap()
+            .uid
+            .clone()
+    };
+    assert_eq!(uid("infra/edge"), "gw-infra-edge");
+    assert_eq!(uid("infra/retired"), "");
+    let classes = display_of(Mode::Classes, Shape::Gateways);
+    let class = |key: &str| {
+        classes
+            .rows
+            .iter()
+            .find(|r| r.key == key)
+            .unwrap()
+            .uid
+            .clone()
+    };
+    assert_eq!(class("legacy"), "gc-legacy");
+    assert_eq!(class("gone"), "");
+}

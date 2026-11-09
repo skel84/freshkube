@@ -78,6 +78,17 @@ impl Owner {
     }
 }
 
+/// Why a step is Unknown, where the difference matters to a reader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cause {
+    /// The controller writes no status, or reports no address.
+    Blind,
+    /// The controller has not got to it yet.
+    Pending,
+    /// A read was refused or cut, so nothing can be said.
+    Unreadable,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TraceStep {
@@ -95,6 +106,8 @@ pub struct TraceStep {
     pub controller: Option<String>,
     /// The verdict was written for an older generation than the object has.
     pub stale: bool,
+    /// Why an Unknown step is Unknown.
+    pub cause: Option<Cause>,
 }
 
 impl TraceStep {
@@ -108,7 +121,13 @@ impl TraceStep {
             reason: reason.into(),
             controller: None,
             stale: false,
+            cause: None,
         }
+    }
+
+    fn because(mut self, cause: Cause) -> Self {
+        self.cause = Some(cause);
+        self
     }
 
     fn pass(id: StepId, reason: impl Into<String>) -> Self {
@@ -401,7 +420,8 @@ mod backend;
 mod parent;
 
 use backend::branches;
-use parent::{class_step, gateway_step, listener_step, namespace_step};
+pub(super) use parent::{Standing, class_step, gateway_step, standing};
+use parent::{listener_step, namespace_step};
 
 /// A parent's verdict from its shared steps and branches.
 fn parent_verdict(steps: &[TraceStep], branches: &[Branch]) -> RouteVerdict {
@@ -504,7 +524,7 @@ fn trace_parent(
             };
         }
     };
-    chain.run(StepId::Class, || class_step(gateway, inputs));
+    chain.run(StepId::Class, || class_step(gateway, inputs.classes));
     chain.run(StepId::Gateway, || gateway_step(gateway));
     let mut fitting = Vec::new();
     chain.run(StepId::Listener, || {

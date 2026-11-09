@@ -1,7 +1,5 @@
 use super::*;
-use crate::resources::route_trace::verdict_tone;
-use display::{Detail, Row};
-use freshkube_core::resources::traffic::routes::{ClassEntry, GatewayEntry, Owner};
+use display::{ClassDetail, Detail, GatewayDetail, Row};
 use freshkube_ui::{
     inspector::{self, Inspector},
     page::{self, PageHeader},
@@ -16,15 +14,6 @@ use gpui_kit::component::{
     input::Input,
     v_flex,
 };
-
-fn owner_words(owner: Option<Owner>) -> Option<&'static str> {
-    owner.map(|owner| match owner {
-        Owner::Platform => "the platform's",
-        Owner::Yours => "yours",
-        Owner::Controller => "the controller's",
-        Owner::ThisMachine => "this machine's",
-    })
-}
 
 impl GatewaysScreen {
     fn header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -105,10 +94,13 @@ impl GatewaysScreen {
             .into_any_element()
     }
 
-    fn gateway_sections(
+    fn status_lines(
         &self,
         row: &Row,
-        entry: &GatewayEntry,
+        state: &'static str,
+        reason: &str,
+        owner: Option<&'static str>,
+        says: Option<&String>,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let id = &row.id;
@@ -121,11 +113,11 @@ impl GatewaysScreen {
                     row.state,
                     cx,
                 ))
-                .child(div().child(entry.state.label()))
+                .child(div().child(state))
                 .into_any_element(),
-            self.line(format!("{id}-reason"), entry.reason.clone(), false, cx),
+            self.line(format!("{id}-reason"), reason.to_owned(), false, cx),
         ];
-        if let Some(whose) = owner_words(entry.owner) {
+        if let Some(whose) = owner {
             status.push(
                 ui::named_field("Whose problem".into(), div().child(whose), cx).into_any_element(),
             );
@@ -141,7 +133,7 @@ impl GatewaysScreen {
             );
         }
         // What the controller reports stays on a line of its own.
-        if let Some(says) = &entry.says {
+        if let Some(says) = says {
             status.push(
                 ui::named_field(
                     "Controller reports".into(),
@@ -151,61 +143,60 @@ impl GatewaysScreen {
                 .into_any_element(),
             );
         }
+        status
+    }
+
+    fn more_line(&self, id: &str, count: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
+        (count > 0).then(|| self.line(format!("{id}-more"), format!("and {count} more"), true, cx))
+    }
+
+    fn gateway_sections(
+        &self,
+        row: &Row,
+        detail: &GatewayDetail,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let id = &row.id;
+        let status = self.status_lines(
+            row,
+            detail.state,
+            &detail.reason,
+            detail.owner,
+            detail.says.as_ref(),
+            cx,
+        );
         let mut sections = vec![self.section("status", "Status", status, cx)];
-        let listeners = entry
+        let muted = palette(cx).muted;
+        let mut listeners = detail
             .listeners
             .iter()
             .enumerate()
-            .map(|(ix, l)| {
-                let host = l.hostname.as_deref().unwrap_or("any host");
-                let attached = match l.attached {
-                    Some(n) => format!("{n} attached"),
-                    None => "no status from the controller".to_owned(),
-                };
-                let mut words = vec![
-                    format!("{} · {}/{} · {host}", l.name, l.port, l.protocol),
-                    format!("allows {}", l.allows),
-                    format!("{} · {attached}", l.state.label()),
-                ];
-                if let Some(says) = &l.says {
-                    words.push(format!("controller: {says}"));
-                }
-                if !l.certificates.is_empty() {
-                    words.push(format!(
-                        "certificate {} (by name only)",
-                        l.certificates.join(", ")
-                    ));
-                }
+            .map(|(ix, block)| {
                 v_flex()
                     .id(SharedString::from(format!("{id}-listener-{ix}")))
                     .test_support()
                     .gap(dp(1.))
-                    .children(words.into_iter().enumerate().map(|(n, w)| {
+                    .children(block.lines.iter().enumerate().map(|(n, w)| {
                         div()
                             .whitespace_normal()
                             .min_w_0()
-                            .when(n > 0, |this| this.text_color(palette(cx).muted))
-                            .child(w)
+                            .when(n > 0, |this| this.text_color(muted))
+                            .child(w.clone())
                     }))
                     .into_any_element()
             })
             .collect::<Vec<_>>();
         if listeners.is_empty() {
-            sections.push(self.section(
-                "listeners",
-                "Listeners",
-                vec![self.line(
-                    format!("{id}-no-listeners"),
-                    "None declared.".into(),
-                    true,
-                    cx,
-                )],
+            listeners.push(self.line(
+                format!("{id}-no-listeners"),
+                "None declared.".into(),
+                true,
                 cx,
             ));
-        } else {
-            sections.push(self.section("listeners", "Listeners", listeners, cx));
         }
-        let routes = entry
+        listeners.extend(self.more_line(&format!("{id}-listeners"), detail.listeners_more, cx));
+        sections.push(self.section("listeners", "Listeners", listeners, cx));
+        let mut routes = detail
             .routes
             .iter()
             .enumerate()
@@ -217,51 +208,31 @@ impl GatewaysScreen {
                     .items_start()
                     .child(ui::status_mark(
                         format!("{id}-route-{ix}-state"),
-                        verdict_tone(r.verdict),
-                        r.verdict.label(),
+                        r.tone,
+                        r.state,
                         cx,
                     ))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .whitespace_normal()
-                            .child(format!("{}/{} — {}", r.namespace, r.name, r.line)),
-                    )
+                    .child(div().min_w_0().whitespace_normal().child(r.text.clone()))
                     .into_any_element()
             })
             .collect::<Vec<_>>();
-        sections.push(if routes.is_empty() {
-            self.section(
-                "routes",
-                "Routes",
-                vec![self.line(
-                    format!("{id}-no-routes"),
-                    "No route names this Gateway.".into(),
-                    true,
-                    cx,
-                )],
+        if routes.is_empty() {
+            routes.push(self.line(
+                format!("{id}-no-routes"),
+                "No route names this Gateway.".into(),
+                true,
                 cx,
-            )
-        } else {
-            self.section(
-                "routes",
-                &format!("Routes · {}", entry.routes_line()),
-                routes,
-                cx,
-            )
-        });
-        if !entry.contested.is_empty() {
-            let lines = entry
+            ));
+        }
+        routes.extend(self.more_line(&format!("{id}-routes"), detail.routes_more, cx));
+        sections.push(self.section("routes", &detail.routes_title, routes, cx));
+        if !detail.contested.is_empty() {
+            let lines = detail
                 .contested
                 .iter()
                 .enumerate()
-                .map(|(ix, c)| {
-                    self.line(
-                        format!("{id}-contested-{ix}"),
-                        format!("{} is also named by {}", c.host, c.also.join(", ")),
-                        false,
-                        cx,
-                    )
+                .map(|(ix, words)| {
+                    self.line(format!("{id}-contested-{ix}"), words.clone(), false, cx)
                 })
                 .collect();
             sections.push(self.section("contested", "Contested hostnames", lines, cx));
@@ -272,79 +243,49 @@ impl GatewaysScreen {
     fn class_sections(
         &self,
         row: &Row,
-        entry: &ClassEntry,
+        detail: &ClassDetail,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let id = &row.id;
-        let mut status = vec![
-            h_flex()
-                .gap(dp(6.))
-                .child(ui::status_mark(
-                    format!("{id}-detail-state"),
-                    row.tone,
-                    row.state,
-                    cx,
-                ))
-                .child(div().child(entry.state.label()))
-                .into_any_element(),
-            self.line(format!("{id}-reason"), entry.reason.clone(), false, cx),
-        ];
-        for field in &row.fields {
-            status.push(
-                ui::named_field(
-                    field.label.into(),
-                    div().whitespace_normal().child(field.value.clone()),
-                    cx,
-                )
-                .into_any_element(),
-            );
-        }
-        if let Some(says) = &entry.says {
-            status.push(
-                ui::named_field(
-                    "Controller reports".into(),
-                    div().whitespace_normal().child(says.clone()),
-                    cx,
-                )
-                .into_any_element(),
-            );
-        }
-        let gateways = entry
+        let status = self.status_lines(
+            row,
+            detail.state,
+            &detail.reason,
+            None,
+            detail.says.as_ref(),
+            cx,
+        );
+        let mut gateways = detail
             .gateways
             .iter()
             .enumerate()
-            .map(|(ix, (key, state))| {
+            .map(|(ix, (key, state, tone))| {
                 h_flex()
                     .id(SharedString::from(format!("{id}-gateway-{ix}")))
                     .test_support()
                     .gap(dp(6.))
                     .child(ui::status_mark(
                         format!("{id}-gateway-{ix}-state"),
-                        display::gateway_tone(*state),
-                        state.label(),
+                        *tone,
+                        *state,
                         cx,
                     ))
-                    .child(div().child(format!("{key} · {}", state.label())))
+                    .child(div().child(format!("{key} · {state}")))
                     .into_any_element()
             })
             .collect::<Vec<_>>();
+        if gateways.is_empty() {
+            gateways.push(self.line(
+                format!("{id}-no-gateways"),
+                "No Gateway uses this class.".into(),
+                true,
+                cx,
+            ));
+        }
+        gateways.extend(self.more_line(&format!("{id}-gateways"), detail.gateways_more, cx));
         vec![
             self.section("status", "Status", status, cx),
-            if gateways.is_empty() {
-                self.section(
-                    "gateways",
-                    "Gateways",
-                    vec![self.line(
-                        format!("{id}-no-gateways"),
-                        "No Gateway uses this class.".into(),
-                        true,
-                        cx,
-                    )],
-                    cx,
-                )
-            } else {
-                self.section("gateways", "Gateways", gateways, cx)
-            },
+            self.section("gateways", "Gateways", gateways, cx),
         ]
     }
 

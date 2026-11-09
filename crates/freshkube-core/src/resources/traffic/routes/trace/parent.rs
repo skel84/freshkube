@@ -8,10 +8,23 @@ fn generation_note(cond: &Cond, now: i64) -> Option<String> {
         .map(|seen| format!("stale: written for generation {seen}, now {now}"))
 }
 
-pub(super) fn class_step(gateway: &GatewayFacts, inputs: &Inputs) -> TraceStep {
+/// Marks a step stale when the condition that decided it was written for an
+/// older generation than the object has.
+fn stale_if(mut step: TraceStep, cond: &Cond, generation: i64) -> TraceStep {
+    if cond.generation.is_some_and(|seen| seen < generation) {
+        step.stale = true;
+    }
+    step
+}
+
+/// Step 1, for a Gateway's class: also what the Gateway pages read.
+pub(in crate::resources::traffic::routes) fn class_step(
+    gateway: &GatewayFacts,
+    classes: &Result<Listing<ClassFacts>, Failure>,
+) -> TraceStep {
     let id = StepId::Class;
     let asks = format!("Gateway {} uses class {}", gateway.name, gateway.class);
-    let classes = match inputs.classes {
+    let classes = match classes {
         Ok(classes) => classes,
         Err(failure) => {
             return TraceStep::unknown(
@@ -23,6 +36,7 @@ pub(super) fn class_step(gateway: &GatewayFacts, inputs: &Inputs) -> TraceStep {
                     failure.message
                 ),
             )
+            .because(Cause::Unreadable)
             .quoting(asks, "unknown");
         }
     };
@@ -33,6 +47,7 @@ pub(super) fn class_step(gateway: &GatewayFacts, inputs: &Inputs) -> TraceStep {
                 Owner::Platform,
                 "the GatewayClass list was cut; the class may exist",
             )
+            .because(Cause::Unreadable)
             .quoting(asks, "unknown");
         }
         return TraceStep::fail(
@@ -49,30 +64,44 @@ pub(super) fn class_step(gateway: &GatewayFacts, inputs: &Inputs) -> TraceStep {
             Owner::Controller,
             "blind: the class has no status, so no controller has claimed it",
         )
+        .because(Cause::Blind)
         .quoting(asks, serves),
-        Some(cond) if cond.status == Tri::True => {
+        Some(cond) if cond.status == Tri::True => stale_if(
             TraceStep::pass(id, format!("claimed by {}", class.controller))
                 .quoting(asks, serves)
-                .reported(Some(cond.says()))
-        }
-        Some(cond) if cond.status == Tri::False => TraceStep::fail(
-            id,
-            Owner::Platform,
-            format!("{} did not accept the class", class.controller),
-        )
-        .quoting(asks, serves)
-        .reported(Some(cond.says())),
-        Some(cond) => TraceStep::unknown(
-            id,
-            Owner::Controller,
-            "pending: the class is not accepted yet",
-        )
-        .quoting(asks, serves)
-        .reported(Some(cond.says())),
+                .reported(Some(cond.says())),
+            cond,
+            class.generation,
+        ),
+        Some(cond) if cond.status == Tri::False => stale_if(
+            TraceStep::fail(
+                id,
+                Owner::Platform,
+                format!("{} did not accept the class", class.controller),
+            )
+            .quoting(asks, serves)
+            .reported(Some(cond.says())),
+            cond,
+            class.generation,
+        ),
+        Some(cond) => stale_if(
+            TraceStep::unknown(
+                id,
+                Owner::Controller,
+                "pending: the class is not accepted yet",
+            )
+            .because(Cause::Pending)
+            .quoting(asks, serves)
+            .reported(Some(cond.says())),
+            cond,
+            class.generation,
+        ),
     }
 }
 
-pub(super) fn gateway_step(gateway: &GatewayFacts) -> TraceStep {
+/// Step 2: the Gateway is accepted and programmed and has an address. Also
+/// what the Gateway pages read.
+pub(in crate::resources::traffic::routes) fn gateway_step(gateway: &GatewayFacts) -> TraceStep {
     let id = StepId::Gateway;
     let asks = format!("Gateway {}/{}", gateway.namespace, gateway.name);
     if gateway.conditions.is_empty() {
@@ -81,6 +110,7 @@ pub(super) fn gateway_step(gateway: &GatewayFacts) -> TraceStep {
             Owner::Controller,
             "blind: the controller writes no status for this Gateway",
         )
+        .because(Cause::Blind)
         .quoting(asks, "no status");
     }
     let accepted = find(&gateway.conditions, "Accepted");
@@ -91,9 +121,13 @@ pub(super) fn gateway_step(gateway: &GatewayFacts) -> TraceStep {
         format!("address {}", gateway.addresses.join(", "))
     };
     if let Some(cond) = accepted.filter(|c| c.status == Tri::False) {
-        return TraceStep::fail(id, blame(&cond.reason), "the Gateway is not accepted")
-            .quoting(asks, serves)
-            .reported(Some(cond.says()));
+        return stale_if(
+            TraceStep::fail(id, blame(&cond.reason), "the Gateway is not accepted")
+                .quoting(asks, serves)
+                .reported(Some(cond.says())),
+            cond,
+            gateway.generation,
+        );
     }
     let Some(programmed) = programmed else {
         return TraceStep::unknown(
@@ -101,26 +135,41 @@ pub(super) fn gateway_step(gateway: &GatewayFacts) -> TraceStep {
             Owner::Controller,
             "pending: the controller has not reported Programmed",
         )
+        .because(Cause::Pending)
         .quoting(asks, serves);
     };
     match programmed.status {
-        Tri::False => TraceStep::fail(
-            id,
-            blame(&programmed.reason),
-            "the Gateway is not programmed",
-        )
-        .quoting(asks, serves)
-        .reported(Some(programmed.says())),
-        Tri::Unknown => TraceStep::unknown(id, Owner::Controller, "pending: not programmed yet")
+        Tri::False => stale_if(
+            TraceStep::fail(
+                id,
+                blame(&programmed.reason),
+                "the Gateway is not programmed",
+            )
             .quoting(asks, serves)
             .reported(Some(programmed.says())),
-        Tri::True if gateway.addresses.is_empty() => TraceStep::unknown(
-            id,
-            Owner::Platform,
-            "blind: programmed, but no address is reported",
-        )
-        .quoting(asks, serves)
-        .reported(Some(programmed.says())),
+            programmed,
+            gateway.generation,
+        ),
+        Tri::Unknown => stale_if(
+            TraceStep::unknown(id, Owner::Controller, "pending: not programmed yet")
+                .because(Cause::Pending)
+                .quoting(asks, serves)
+                .reported(Some(programmed.says())),
+            programmed,
+            gateway.generation,
+        ),
+        Tri::True if gateway.addresses.is_empty() => stale_if(
+            TraceStep::unknown(
+                id,
+                Owner::Platform,
+                "blind: programmed, but no address is reported",
+            )
+            .because(Cause::Blind)
+            .quoting(asks, serves)
+            .reported(Some(programmed.says())),
+            programmed,
+            gateway.generation,
+        ),
         Tri::True => {
             let note = generation_note(programmed, gateway.generation);
             let mut step = TraceStep::pass(id, "programmed with an address")
@@ -235,7 +284,7 @@ fn describe_listener(l: &Listener) -> String {
 }
 
 /// What the controller reports of one listener.
-enum Standing<'a> {
+pub(in crate::resources::traffic::routes) enum Standing<'a> {
     /// Nothing wrong reported, with its `Accepted` line when it wrote one.
     Good(Option<&'a Cond>),
     /// The Gateway has a status, but nothing for this listener.
@@ -244,7 +293,10 @@ enum Standing<'a> {
     Bad(&'a Cond),
 }
 
-fn standing<'a>(gateway: &'a GatewayFacts, listener: &Listener) -> Standing<'a> {
+pub(in crate::resources::traffic::routes) fn standing<'a>(
+    gateway: &'a GatewayFacts,
+    listener: &Listener,
+) -> Standing<'a> {
     let reported = gateway
         .listener_status
         .iter()

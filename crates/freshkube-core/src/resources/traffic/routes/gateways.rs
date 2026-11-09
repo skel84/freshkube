@@ -11,7 +11,10 @@
 //! controller reports are separate lines.
 use super::facts::*;
 use super::read::RoutesRead;
-use super::trace::{Listing, Owner, RouteVerdict, blame};
+use super::trace::{
+    Cause, Listing, Owner, RouteVerdict, Standing, StepVerdict, blame, class_step, gateway_step,
+    standing,
+};
 use crate::failure::Failure;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -84,6 +87,8 @@ pub struct ListenerRow {
     pub state: ListenerState,
     /// The condition that says it is not ready, as the controller wrote it.
     pub says: Option<String>,
+    /// Whose problem a rejected listener is.
+    pub owner: Option<Owner>,
     /// `tls.certificateRefs` by name; no Secret is read.
     pub certificates: Vec<String>,
 }
@@ -195,6 +200,8 @@ impl ClassState {
 #[non_exhaustive]
 pub struct ClassEntry {
     pub name: String,
+    /// The class's UID, for a link; empty for a class that does not exist.
+    pub uid: String,
     /// None for a class the Gateways name and the cluster lacks.
     pub controller: Option<String>,
     pub state: ClassState,
@@ -224,148 +231,30 @@ struct Assessed {
     stale: bool,
 }
 
-impl Assessed {
-    fn new(state: GatewayState, owner: Owner, reason: impl Into<String>) -> Self {
-        Self {
-            state,
-            reason: reason.into(),
-            owner: Some(owner),
-            says: None,
-            stale: false,
-        }
-    }
-
-    fn says(mut self, says: Option<String>) -> Self {
-        self.says = says;
-        self
-    }
-}
-
-fn unreadable(what: &str, failure: &Failure) -> String {
-    format!(
-        "{what} unreadable ({}: {})",
-        failure.kind.label(),
-        failure.message
-    )
-}
-
-/// How the controller's own reading of a Gateway and its class reads.
+/// How the controller's own reading of a Gateway and its class reads: the
+/// trace's first two steps, so the Gateway pages and the route trace judge
+/// them as one.
 fn assess(gateway: &GatewayFacts, classes: &Result<Listing<ClassFacts>, Failure>) -> Assessed {
-    let list = match classes {
-        Ok(list) => list,
-        Err(failure) => {
-            return Assessed::new(
-                GatewayState::Unknown,
-                Owner::Platform,
-                unreadable("GatewayClasses", failure),
-            );
-        }
+    let steps = [class_step(gateway, classes), gateway_step(gateway)];
+    let deciding = steps
+        .iter()
+        .find(|step| !matches!(step.verdict, StepVerdict::Pass))
+        .unwrap_or(&steps[1]);
+    let state = match (deciding.verdict, deciding.cause) {
+        (StepVerdict::Fail, _) => GatewayState::Failed,
+        (StepVerdict::Unknown, Some(Cause::Blind)) => GatewayState::Blind,
+        (StepVerdict::Unknown, Some(Cause::Pending)) => GatewayState::Pending,
+        (StepVerdict::Unknown, _) => GatewayState::Unknown,
+        // A warning is a pass with something to know: a stale verdict.
+        (StepVerdict::Warn | StepVerdict::Pass, _) => GatewayState::Serving,
+        (_, _) => GatewayState::Unknown,
     };
-    let Some(class) = list.items.iter().find(|c| c.name == gateway.class) else {
-        return if list.cut {
-            Assessed::new(
-                GatewayState::Unknown,
-                Owner::Platform,
-                "the GatewayClass list was cut; the class may exist",
-            )
-        } else {
-            Assessed::new(
-                GatewayState::Failed,
-                Owner::Platform,
-                format!("GatewayClass {} does not exist", gateway.class),
-            )
-        };
-    };
-    match find(&class.conditions, "Accepted") {
-        None => {
-            return Assessed::new(
-                GatewayState::Blind,
-                Owner::Controller,
-                format!(
-                    "blind: class {} has no status, so no controller has claimed it",
-                    class.name
-                ),
-            );
-        }
-        Some(cond) if cond.status == Tri::False => {
-            return Assessed::new(
-                GatewayState::Failed,
-                Owner::Platform,
-                format!("{} did not accept class {}", class.controller, class.name),
-            )
-            .says(Some(cond.says()));
-        }
-        Some(cond) if cond.status == Tri::Unknown => {
-            return Assessed::new(
-                GatewayState::Pending,
-                Owner::Controller,
-                format!("pending: class {} is not accepted yet", class.name),
-            )
-            .says(Some(cond.says()));
-        }
-        Some(_) => {}
-    }
-    if gateway.conditions.is_empty() {
-        return Assessed::new(
-            GatewayState::Blind,
-            Owner::Controller,
-            "blind: the controller writes no status for this Gateway",
-        );
-    }
-    if let Some(cond) = find(&gateway.conditions, "Accepted").filter(|c| c.status == Tri::False) {
-        return Assessed::new(
-            GatewayState::Failed,
-            blame(&cond.reason),
-            "the Gateway is not accepted",
-        )
-        .says(Some(cond.says()));
-    }
-    let Some(programmed) = find(&gateway.conditions, "Programmed") else {
-        return Assessed::new(
-            GatewayState::Pending,
-            Owner::Controller,
-            "pending: the controller has not reported Programmed",
-        );
-    };
-    match programmed.status {
-        Tri::False => Assessed::new(
-            GatewayState::Failed,
-            blame(&programmed.reason),
-            "the Gateway is not programmed",
-        )
-        .says(Some(programmed.says())),
-        Tri::Unknown => Assessed::new(
-            GatewayState::Pending,
-            Owner::Controller,
-            "pending: not programmed yet",
-        )
-        .says(Some(programmed.says())),
-        Tri::True if gateway.addresses.is_empty() => Assessed::new(
-            GatewayState::Blind,
-            Owner::Platform,
-            "blind: programmed, but no address is reported",
-        )
-        .says(Some(programmed.says())),
-        Tri::True => {
-            let stale = programmed
-                .generation
-                .filter(|seen| *seen < gateway.generation);
-            let mut assessed = Assessed {
-                state: GatewayState::Serving,
-                reason: "programmed with an address".into(),
-                owner: None,
-                says: Some(programmed.says()),
-                stale: stale.is_some(),
-            };
-            if let Some(seen) = stale {
-                assessed.reason = format!(
-                    "stale: written for generation {seen}, now {}",
-                    gateway.generation
-                );
-                assessed.owner = Some(Owner::Controller);
-            }
-            assessed
-        }
+    Assessed {
+        state,
+        reason: deciding.reason.clone(),
+        owner: deciding.owner,
+        says: deciding.controller.clone(),
+        stale: deciding.stale,
     }
 }
 
@@ -375,21 +264,16 @@ fn listener_rows(gateway: &GatewayFacts) -> Vec<ListenerRow> {
         .iter()
         .map(|l| {
             let status = gateway.listener_status.iter().find(|s| s.name == l.name);
-            let bad = status.and_then(|s| {
-                s.conditions
-                    .iter()
-                    .find(|c| c.status == Tri::False && c.kind != "Conflicted")
-                    .or_else(|| {
-                        s.conditions
-                            .iter()
-                            .find(|c| c.kind == "Conflicted" && c.status == Tri::True)
-                    })
-            });
-            let state = match status {
-                None => ListenerState::Unknown,
-                Some(_) if bad.is_some() => ListenerState::Failed,
-                Some(s) if s.conditions.is_empty() => ListenerState::Unknown,
-                Some(_) => ListenerState::Ready,
+            // The route trace's own judgement of a listener, so the two pages
+            // cannot disagree: only a condition that says the listener is not
+            // working rejects it.
+            let (state, bad) = match standing(gateway, l) {
+                Standing::Bad(cond) => (ListenerState::Failed, Some(cond)),
+                Standing::Silent => (ListenerState::Unknown, None),
+                Standing::Good(_) if status.is_some_and(|s| !s.conditions.is_empty()) => {
+                    (ListenerState::Ready, None)
+                }
+                Standing::Good(_) => (ListenerState::Unknown, None),
             };
             ListenerRow {
                 name: l.name.clone(),
@@ -406,6 +290,7 @@ fn listener_rows(gateway: &GatewayFacts) -> Vec<ListenerRow> {
                 attached: status.map(|s| s.attached),
                 state,
                 says: bad.map(Cond::says),
+                owner: bad.map(|cond| blame(&cond.reason)),
                 certificates: l.certificates.clone(),
             }
         })
@@ -535,6 +420,7 @@ fn class_entries(
             };
             ClassEntry {
                 name: class.name.clone(),
+                uid: class.uid.clone(),
                 controller: Some(class.controller.clone()),
                 state,
                 reason,
@@ -561,6 +447,7 @@ fn class_entries(
             .collect::<BTreeSet<_>>();
         entries.extend(wanted.into_iter().map(|name| ClassEntry {
             name: name.to_owned(),
+            uid: String::new(),
             controller: None,
             state: ClassState::Missing,
             reason: format!("no GatewayClass {name} exists, though Gateways name it"),
@@ -590,17 +477,41 @@ impl GatewaysView {
                         .iter()
                         .filter(|l| l.state == ListenerState::Failed)
                         .count();
+                    let mut owner = assessed.owner;
                     if state == GatewayState::Serving && failing > 0 {
-                        state = GatewayState::Partly;
-                        reason = format!("{failing} of {} listeners not accepted", listeners.len());
+                        let first = listeners
+                            .iter()
+                            .find(|l| l.state == ListenerState::Failed)
+                            .expect("a failing listener");
+                        let says = first.says.as_deref().unwrap_or("not accepted");
+                        owner = first.owner;
+                        if failing == listeners.len() {
+                            // Nothing is served: that is a failure, not part of one.
+                            state = GatewayState::Failed;
+                            reason = if failing == 1 {
+                                format!(
+                                    "its only listener, {}, is not accepted: {says}",
+                                    first.name
+                                )
+                            } else {
+                                format!(
+                                    "none of its {failing} listeners is accepted; {} says: {says}",
+                                    first.name
+                                )
+                            };
+                        } else {
+                            state = GatewayState::Partly;
+                            reason = format!(
+                                "{failing} of {} listeners not accepted; {} says: {says}",
+                                listeners.len(),
+                                first.name
+                            );
+                        }
                     }
                     GatewayEntry {
                         state,
                         reason,
-                        owner: assessed.owner.or(match state {
-                            GatewayState::Partly => Some(Owner::Platform),
-                            _ => None,
-                        }),
+                        owner,
                         says: assessed.says,
                         stale: assessed.stale,
                         contested: contested
@@ -621,6 +532,7 @@ impl GatewaysView {
                         facts: GatewayFacts {
                             namespace: namespace.clone(),
                             name: name.clone(),
+                            uid: String::new(),
                             generation: 0,
                             class: String::new(),
                             listeners: Vec::new(),

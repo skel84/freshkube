@@ -351,11 +351,20 @@ pub fn world(shape: Shape) -> World {
     let https = json!([{"name": "https", "port": 443, "protocol": "HTTPS", "hostname": "*.example.com",
         "tls": {"mode": "Terminate", "certificateRefs": [{"name": "edge-tls"}]},
         "allowedRoutes": {"namespaces": {"from": "All"}}}]);
-    let internal = json!([{"name": "web", "port": 8080, "protocol": "HTTP", "hostname": "*.internal.example.com",
-        "allowedRoutes": {"namespaces": {"from": "Same"}}}]);
-    let mut unaccepted = programmed(true, listener_ok("web"));
-    unaccepted["listeners"] = json!([{"name": "web", "attachedRoutes": 0,
-        "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]}]);
+    // Two listeners, one the controller did not accept: partly serving. (A
+    // Gateway whose only listener is rejected serves nothing and is Failed.)
+    let internal = json!([
+        {"name": "web", "port": 8080, "protocol": "HTTP", "hostname": "*.internal.example.com",
+            "allowedRoutes": {"namespaces": {"from": "Same"}}},
+        {"name": "admin", "port": 8081, "protocol": "HTTP", "hostname": "admin.internal.example.com",
+            "allowedRoutes": {"namespaces": {"from": "Same"}}},
+    ]);
+    let mut unaccepted = programmed(true, listener_ok("admin"));
+    unaccepted["listeners"] = json!([
+        {"name": "web", "attachedRoutes": 0,
+            "conditions": [cond("Accepted", "False", "PortUnavailable", 2)]},
+        listener_ok("admin"),
+    ]);
     let mut shared_status = programmed(true, listener_ok("http"));
     shared_status["listeners"] = json!([listener_ok("http"), listener_ok("https")]);
     let shared = json!([
@@ -594,6 +603,7 @@ pub fn workloads(shape: Shape) -> WorkloadRead {
         kind: kind.to_owned(),
         namespace: namespace.to_owned(),
         name: name.to_owned(),
+        uid: format!("{kind}-{namespace}-{name}"),
     };
     let answer = |namespace: &str, name: &str, list: Vec<WorkloadRef>| {
         (

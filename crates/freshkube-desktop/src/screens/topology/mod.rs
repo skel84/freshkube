@@ -57,6 +57,12 @@ pub(crate) struct TopologyScreen {
     loader: Loader<TopologyRead, String>,
     /// The topology of the read the graph was prepared from.
     topology: Option<Result<Topology, Failure>>,
+    /// What the page says about the read, made when it lands: the notes of
+    /// what was left out, the status bar's counts.
+    notices: Vec<String>,
+    summary: Option<String>,
+    broken: usize,
+    unknown: usize,
     prepared: u64,
     graph: GraphState<String>,
     split: InspectorSplit,
@@ -111,6 +117,10 @@ impl TopologyScreen {
             visible: false,
             loader: Loader::default(),
             topology: None,
+            notices: Vec::new(),
+            summary: None,
+            broken: 0,
+            unknown: 0,
             prepared: u64::MAX,
             graph,
             split: freshkube_ui::graph::inspector_split(PREFIX, cx),
@@ -195,11 +205,25 @@ impl TopologyScreen {
             .data()
             .filter(|data| data.read.api.problem().is_none())
             .map(|data| Topology::new(&data.read, &data.workloads));
+        self.notices = self.read_notices();
+        self.summary = None;
+        self.broken = 0;
+        self.unknown = 0;
         let Some(Ok(topology)) = &self.topology else {
             self.graph.clear();
             self.selected = None;
             return;
         };
+        let count = |kind| topology.nodes.iter().filter(|n| n.kind == kind).count();
+        self.summary = Some(format!(
+            "{} Gateways · {} routes · {} backends",
+            count(NodeKind::Gateway),
+            count(NodeKind::Route),
+            count(NodeKind::Backend)
+        ));
+        let calls = |health| topology.edges.iter().filter(|e| e.health == health).count();
+        self.broken = calls(Health::Bad);
+        self.unknown = calls(Health::Unknown);
         let nodes = topology
             .nodes
             .iter()
@@ -299,10 +323,17 @@ impl TopologyScreen {
                 freshkube_core::resources::ResourceKind::new(group, "v1", other, plural, true)
             }
         };
+        // A cluster's link carries the UID, so it won't open an object that
+        // replaced this one; the example cluster's objects have identities
+        // of their own, so its links name the object.
+        let example = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.access.is_example());
         let object = crate::resources::model::ObjectRef {
             namespace: target.namespace,
             name: target.name,
-            uid: String::new(),
+            uid: if example { String::new() } else { target.uid },
             connection: self.source.as_ref().map(|source| source.id.clone()),
         };
         cx.emit(ResourceLink::Object(
@@ -334,7 +365,9 @@ impl TopologyScreen {
             .render(window, cx)
     }
 
-    fn notices(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The read's notes, the mixed bundle and what the topology left out,
+    /// in words.
+    fn read_notices(&self) -> Vec<String> {
         let Some(data) = self.loader.data() else {
             return Vec::new();
         };
@@ -348,7 +381,11 @@ impl TopologyScreen {
             words.extend(topology.notes.iter().cloned());
         }
         words
-            .into_iter()
+    }
+
+    fn notices(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        self.notices
+            .iter()
             .enumerate()
             .map(|(ix, words)| {
                 ui::warning_banner(
@@ -358,7 +395,7 @@ impl TopologyScreen {
                     cx,
                 )
                 .id(SharedString::from(format!("topology-notice-{ix}")))
-                .aria_label(words)
+                .aria_label(words.clone())
                 .test_support()
                 .into_any_element()
             })
@@ -663,29 +700,13 @@ impl ScreenPanel for TopologyScreen {
             }
             (_, None) => parts.push(Part::new("All namespaces")),
         }
-        if let Some(topology) = self.topology() {
-            let count = |kind| topology.nodes.iter().filter(|n| n.kind == kind).count();
-            parts.push(Part::new(format!(
-                "{} Gateways · {} routes · {} backends",
-                count(NodeKind::Gateway),
-                count(NodeKind::Route),
-                count(NodeKind::Backend)
-            )));
-            let bad = topology
-                .edges
-                .iter()
-                .filter(|e| e.health == Health::Bad)
-                .count();
-            if bad > 0 {
-                parts.push(Part::new(format!("{bad} broken")).tone(Tone::Crit));
+        if let Some(summary) = &self.summary {
+            parts.push(Part::new(summary.clone()));
+            if self.broken > 0 {
+                parts.push(Part::new(format!("{} broken", self.broken)).tone(Tone::Crit));
             }
-            let unknown = topology
-                .edges
-                .iter()
-                .filter(|e| e.health == Health::Unknown)
-                .count();
-            if unknown > 0 {
-                parts.push(Part::new(format!("{unknown} unknown")).tone(Tone::Unknown));
+            if self.unknown > 0 {
+                parts.push(Part::new(format!("{} unknown", self.unknown)).tone(Tone::Unknown));
             }
         }
         if self.loader.is_loading() {

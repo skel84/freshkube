@@ -58,6 +58,9 @@ pub struct Target {
     pub kind: &'static str,
     pub namespace: String,
     pub name: String,
+    /// The object's UID, when the read had one: a link carrying it won't
+    /// open an object that replaced this one. Empty when none is known.
+    pub uid: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,6 +106,8 @@ pub struct WorkloadRef {
     pub kind: String,
     pub namespace: String,
     pub name: String,
+    /// The controlling owner's UID, as the pod's owner reference names it.
+    pub uid: String,
 }
 
 /// The workloads behind each backend Service, by `(namespace, name)`. A
@@ -149,18 +154,42 @@ fn gateway_health(state: GatewayState) -> Health {
     }
 }
 
+/// Worse first.
+fn rank(health: Health) -> u8 {
+    match health {
+        Health::Bad => 0,
+        Health::Warn => 1,
+        Health::Unknown => 2,
+        Health::Neutral => 3,
+        Health::Good => 4,
+    }
+}
+
 #[derive(Default)]
 struct Builder {
     nodes: Vec<Node>,
-    index: BTreeSet<String>,
+    index: BTreeMap<String, usize>,
     edges: Vec<Edge>,
     edge_index: BTreeMap<(String, String), usize>,
 }
 
 impl Builder {
+    /// A box; one that several routes reach keeps the worse health and is
+    /// dashed if any of them says it is.
     fn node(&mut self, node: Node) {
-        if self.index.insert(node.key.clone()) {
-            self.nodes.push(node);
+        match self.index.get(&node.key) {
+            Some(&ix) => {
+                let have = &mut self.nodes[ix];
+                have.ghost |= node.ghost;
+                if rank(node.health) < rank(have.health) {
+                    have.health = node.health;
+                    have.words = node.words;
+                }
+            }
+            None => {
+                self.index.insert(node.key.clone(), self.nodes.len());
+                self.nodes.push(node);
+            }
         }
     }
 
@@ -169,13 +198,6 @@ impl Builder {
         let key = (edge.from.clone(), edge.to.clone());
         match self.edge_index.get(&key) {
             Some(&ix) => {
-                let rank = |h: Health| match h {
-                    Health::Bad => 0,
-                    Health::Warn => 1,
-                    Health::Unknown => 2,
-                    Health::Neutral => 3,
-                    Health::Good => 4,
-                };
                 if rank(edge.health) < rank(self.edges[ix].health) {
                     self.edges[ix] = edge;
                 }
@@ -202,6 +224,7 @@ fn gateway_node(entry: &GatewayEntry) -> Node {
             kind: "Gateway",
             namespace: facts.namespace.clone(),
             name: facts.name.clone(),
+            uid: facts.uid.clone(),
         }),
     }
 }
@@ -269,6 +292,7 @@ fn workload_nodes(
                         kind,
                         namespace: workload.namespace.clone(),
                         name: workload.name.clone(),
+                        uid: workload.uid.clone(),
                     }),
                 });
                 builder.edge(Edge {
@@ -369,6 +393,7 @@ impl Topology {
                         kind: "HTTPRoute",
                         namespace: attached.namespace.clone(),
                         name: attached.name.clone(),
+                        uid: route.facts.uid.clone(),
                     }),
                 });
                 let listener = route
@@ -418,6 +443,11 @@ impl Topology {
                                     kind: "Service",
                                     namespace: namespace.clone(),
                                     name: name.clone(),
+                                    uid: match read.services.get(&(namespace.clone(), name.clone()))
+                                    {
+                                        Some(Ok(Some(reading))) => reading.facts.uid.clone(),
+                                        _ => String::new(),
+                                    },
                                 }),
                             )
                         }
@@ -488,6 +518,18 @@ impl Topology {
                 if mesh == 1 { "it" } else { "them" },
             ));
         }
+        let unread = read
+            .services
+            .keys()
+            .filter(|key| matches!(workloads.get(*key), Some(Err(_))))
+            .count();
+        if unread > 0 {
+            notes.push(format!(
+                "The workloads behind {unread} {} could not be read, so {} read Unknown",
+                if unread == 1 { "Service" } else { "Services" },
+                if unread == 1 { "it" } else { "they" },
+            ));
+        }
         if view.gateways_cut {
             notes.push("Gateways were cut at their limit; more may exist".into());
         }
@@ -512,8 +554,8 @@ impl Topology {
     }
 }
 
-/// A pod's controlling owner as `(kind, name)`.
-fn controller(object: &Value) -> Option<(String, String)> {
+/// An object's controlling owner as `(kind, name, uid)`.
+fn controller(object: &Value) -> Option<(String, String, String)> {
     object["metadata"]["ownerReferences"]
         .as_array()?
         .iter()
@@ -522,46 +564,81 @@ fn controller(object: &Value) -> Option<(String, String)> {
             Some((
                 owner["kind"].as_str()?.to_owned(),
                 owner["name"].as_str()?.to_owned(),
+                owner["uid"].as_str().unwrap_or_default().to_owned(),
             ))
         })
 }
 
+/// Whether the pods or the ReplicaSets of a namespace were cut at their limit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ListCuts {
+    pub pods: bool,
+    pub replica_sets: bool,
+}
+
 /// Resolves pod names to workloads from the pods and ReplicaSets of one
-/// namespace. A pod this list doesn't have is a `Pod` of its own, so nothing
-/// is dropped; a ReplicaSet with no owner stays a ReplicaSet.
+/// namespace. A pod nothing controls is a `Pod` of its own and a ReplicaSet
+/// with no owner stays a ReplicaSet. A pod, or a ReplicaSet, that a list cut
+/// at its limit doesn't have is not known: the answer is an error, never a
+/// bare `Pod` box that would pass for the truth.
 pub fn resolve_workloads(
     namespace: &str,
     pod_names: &[String],
     pods: &[Value],
     replica_sets: &[Value],
-) -> Vec<WorkloadRef> {
-    let owners: BTreeMap<&str, Option<(String, String)>> = pods
+    cut: ListCuts,
+) -> Result<Vec<WorkloadRef>, Failure> {
+    type Owner = Option<(String, String, String)>;
+    let owners: BTreeMap<&str, (Owner, String)> = pods
         .iter()
-        .filter_map(|pod| Some((pod["metadata"]["name"].as_str()?, controller(pod))))
+        .filter_map(|pod| {
+            Some((
+                pod["metadata"]["name"].as_str()?,
+                (
+                    controller(pod),
+                    pod["metadata"]["uid"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
+            ))
+        })
         .collect();
-    let sets: BTreeMap<&str, Option<(String, String)>> = replica_sets
+    let sets: BTreeMap<&str, Owner> = replica_sets
         .iter()
         .filter_map(|set| Some((set["metadata"]["name"].as_str()?, controller(set))))
         .collect();
-    let found: BTreeSet<WorkloadRef> = pod_names
-        .iter()
-        .map(|pod| {
-            let (kind, name) = match owners.get(pod.as_str()) {
-                Some(Some((kind, name))) => (kind.clone(), name.clone()),
-                _ => ("Pod".to_owned(), pod.clone()),
-            };
-            let (kind, name) = match (kind.as_str(), sets.get(name.as_str())) {
-                ("ReplicaSet", Some(Some((kind, name)))) => (kind.clone(), name.clone()),
-                _ => (kind, name),
-            };
-            WorkloadRef {
-                kind,
-                namespace: namespace.to_owned(),
-                name,
+    let unknown = |what: &str, name: &str, limit: &str| {
+        Failure::new(
+            FailureKind::Other,
+            format!(
+                "the {limit} list was cut at {WORKLOAD_LIMIT} and {what} {name} is not in it, so its workload is not known"
+            ),
+        )
+    };
+    let mut found = BTreeSet::new();
+    for pod in pod_names {
+        let (kind, name, uid) = match owners.get(pod.as_str()) {
+            None if cut.pods => return Err(unknown("pod", pod, "pod")),
+            None => ("Pod".to_owned(), pod.clone(), String::new()),
+            Some((Some(owner), _)) => owner.clone(),
+            Some((None, uid)) => ("Pod".to_owned(), pod.clone(), uid.clone()),
+        };
+        let (kind, name, uid) = match (kind.as_str(), sets.get(name.as_str())) {
+            ("ReplicaSet", None) if cut.replica_sets => {
+                return Err(unknown("ReplicaSet", &name, "ReplicaSet"));
             }
-        })
-        .collect();
-    found.into_iter().collect()
+            ("ReplicaSet", Some(Some(owner))) => owner.clone(),
+            _ => (kind, name, uid),
+        };
+        found.insert(WorkloadRef {
+            kind,
+            namespace: namespace.to_owned(),
+            name,
+            uid,
+        });
+    }
+    Ok(found.into_iter().collect())
 }
 
 async fn list_items(client: &kube::Client, path: String) -> Result<(Vec<Value>, bool), Failure> {
@@ -633,13 +710,56 @@ pub async fn read_workloads(client: &kube::Client, read: &RoutesRead) -> Workloa
     for (namespace, pods, sets) in futures::future::join_all(reads).await {
         for (name, pod_names) in &by_namespace[&namespace] {
             let answer = match (&pods, &sets) {
-                (Ok((pods, _)), Ok((sets, _))) => {
-                    Ok(resolve_workloads(&namespace, pod_names, pods, sets))
-                }
+                (Ok((pods, pods_cut)), Ok((sets, sets_cut))) => resolve_workloads(
+                    &namespace,
+                    pod_names,
+                    pods,
+                    sets,
+                    ListCuts {
+                        pods: *pods_cut,
+                        replica_sets: *sets_cut,
+                    },
+                ),
                 (Err(failure), _) | (_, Err(failure)) => Err(failure.clone()),
             };
             result.insert((namespace.clone(), name.clone()), answer);
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(health: Health, ghost: bool, words: &str) -> Node {
+        Node {
+            key: "service:shop/cart".into(),
+            kind: NodeKind::Backend,
+            label: "cart".into(),
+            detail: String::new(),
+            health,
+            ghost,
+            words: words.into(),
+            target: None,
+        }
+    }
+
+    #[test]
+    fn a_box_several_routes_reach_keeps_the_worse_health_and_any_dashed_flag() {
+        let mut builder = Builder::default();
+        builder.node(node(Health::Good, false, "serving"));
+        builder.node(node(Health::Bad, true, "broken for the second route"));
+        builder.node(node(Health::Warn, false, "warning"));
+        assert_eq!(builder.nodes.len(), 1);
+        let kept = &builder.nodes[0];
+        assert_eq!(kept.health, Health::Bad);
+        assert!(kept.ghost);
+        assert_eq!(kept.words, "broken for the second route");
+        // The other way round, the first being the worse.
+        let mut builder = Builder::default();
+        builder.node(node(Health::Unknown, false, "unknown"));
+        builder.node(node(Health::Good, false, "serving"));
+        assert_eq!(builder.nodes[0].health, Health::Unknown);
+    }
 }

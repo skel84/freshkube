@@ -431,10 +431,11 @@ fn a_refused_gateway_list_is_no_topology() {
 }
 
 fn pod(name: &str, owner: Option<(&str, &str)>) -> Value {
-    let mut pod = json!({"metadata": {"name": name, "namespace": "shop"}});
+    let mut pod =
+        json!({"metadata": {"name": name, "namespace": "shop", "uid": format!("uid-{name}")}});
     if let Some((kind, owner)) = owner {
-        pod["metadata"]["ownerReferences"] =
-            json!([{"kind": kind, "name": owner, "controller": true}]);
+        pod["metadata"]["ownerReferences"] = json!([{"kind": kind, "name": owner,
+            "uid": format!("uid-{owner}"), "controller": true}]);
     }
     pod
 }
@@ -461,11 +462,15 @@ fn pods_resolve_to_the_workload_that_controls_them() {
         "unlisted",
     ]
     .map(String::from);
-    let found = resolve_workloads("shop", &names, &pods, &sets);
+    let found = resolve_workloads("shop", &names, &pods, &sets, ListCuts::default()).unwrap();
     let words = found
         .iter()
         .map(|w| format!("{}/{}", w.kind, w.name))
         .collect::<Vec<_>>();
+    // The owner's UID travels with it, and a loose pod's is its own.
+    let uid = |name: &str| found.iter().find(|w| w.name == name).unwrap().uid.clone();
+    assert_eq!(uid("cart"), "uid-cart");
+    assert_eq!(uid("loose"), "uid-loose");
     assert_eq!(
         words,
         [
@@ -567,4 +572,239 @@ async fn namespaces_past_the_cap_read_unknown_and_are_not_listed() {
         .filter(|l| l.contains("/pods?"))
         .count();
     assert_eq!(pod_lists, WORKLOAD_NAMESPACES);
+}
+
+#[test]
+fn a_pod_a_cut_list_does_not_have_is_unknown_and_never_a_bare_pod_box() {
+    let pods = [pod("cart-a", Some(("ReplicaSet", "cart-7d9")))];
+    let sets = [pod("cart-7d9", Some(("Deployment", "cart")))];
+    let names = ["cart-a", "cart-b"].map(String::from);
+    // Uncut, a pod the list lacks is a Pod of its own.
+    let found = resolve_workloads("shop", &names, &pods, &sets, ListCuts::default()).unwrap();
+    assert!(found.iter().any(|w| w.kind == "Pod" && w.name == "cart-b"));
+    // Cut, it is not known.
+    let cut = ListCuts {
+        pods: true,
+        replica_sets: false,
+    };
+    let error = resolve_workloads("shop", &names, &pods, &sets, cut).unwrap_err();
+    assert!(
+        error.message.contains("pod list was cut"),
+        "{}",
+        error.message
+    );
+    assert!(error.message.contains("cart-b"), "{}", error.message);
+    // A ReplicaSet the cut list lacks is not known either.
+    let cut = ListCuts {
+        pods: false,
+        replica_sets: true,
+    };
+    let names = ["cart-a".to_owned()];
+    let error = resolve_workloads("shop", &names, &pods, &[], cut).unwrap_err();
+    assert!(
+        error.message.contains("ReplicaSet list was cut"),
+        "{}",
+        error.message
+    );
+    // Cut lists that hold everything asked for are fine.
+    let cut = ListCuts {
+        pods: true,
+        replica_sets: true,
+    };
+    assert!(resolve_workloads("shop", &["cart-a".to_owned()], &pods, &sets, cut).is_ok());
+}
+
+fn listener_gateway(listeners: Value, status_listeners: Value) -> GatewayFacts {
+    GatewayFacts::parse(&json!({
+        "metadata": {"name": "edge2", "namespace": "infra", "generation": 2, "uid": "gw-uid"},
+        "spec": {"gatewayClassName": "example", "listeners": listeners},
+        "status": {"conditions": [
+            {"type": "Accepted", "status": "True", "observedGeneration": 2},
+            {"type": "Programmed", "status": "True", "observedGeneration": 2}],
+            "addresses": [{"value": "203.0.113.30"}],
+            "listeners": status_listeners},
+    }))
+    .unwrap()
+}
+
+fn with_gateway(gateway: GatewayFacts) -> GatewaysView {
+    let mut read = read(Shape::Serving);
+    read.gateways.as_mut().unwrap().items.push(gateway);
+    GatewaysView::new(&read)
+}
+
+fn condition(kind: &str, status: &str, reason: &str) -> Value {
+    json!({"type": kind, "status": status, "reason": reason, "observedGeneration": 2})
+}
+
+fn https(name: &str) -> Value {
+    json!({"name": name, "port": 443, "protocol": "HTTPS", "hostname": format!("{name}.example.com"),
+        "allowedRoutes": {"namespaces": {"from": "All"}}})
+}
+
+#[test]
+fn a_false_condition_where_true_is_the_problem_does_not_reject_a_listener() {
+    // `Detached` and `OverlappingTLSConfig` are False when all is well.
+    let view = with_gateway(listener_gateway(
+        json!([https("a")]),
+        json!([{"name": "a", "attachedRoutes": 1, "conditions": [
+            condition("Accepted", "True", "Accepted"),
+            condition("Programmed", "True", "Programmed"),
+            condition("Detached", "False", "Attached"),
+            condition("OverlappingTLSConfig", "False", "NoOverlap")]}]),
+    ));
+    let gateway = entry(&view, "infra/edge2");
+    assert_eq!(gateway.listeners[0].state, ListenerState::Ready);
+    assert_eq!(gateway.state, GatewayState::Serving);
+    // A Conflicted that is True is a rejection, as the trace judges it.
+    let view = with_gateway(listener_gateway(
+        json!([https("a")]),
+        json!([{"name": "a", "attachedRoutes": 0, "conditions": [
+            condition("Accepted", "True", "Accepted"),
+            condition("Conflicted", "True", "HostnameConflict")]}]),
+    ));
+    assert_eq!(
+        entry(&view, "infra/edge2").listeners[0].state,
+        ListenerState::Failed
+    );
+}
+
+#[test]
+fn a_gateway_whose_only_listener_is_rejected_serves_nothing_and_reads_failed() {
+    let rejected = |name: &str| {
+        json!({"name": name, "attachedRoutes": 0, "conditions": [
+            condition("Accepted", "True", "Accepted"),
+            condition("ResolvedRefs", "False", "InvalidCertificateRef")]})
+    };
+    let view = with_gateway(listener_gateway(
+        json!([https("a")]),
+        json!([rejected("a")]),
+    ));
+    let gateway = entry(&view, "infra/edge2");
+    assert_eq!(gateway.state, GatewayState::Failed);
+    assert!(
+        gateway.reason.contains("only listener, a"),
+        "{}",
+        gateway.reason
+    );
+    assert!(
+        gateway.reason.contains("InvalidCertificateRef"),
+        "{}",
+        gateway.reason
+    );
+    // The certificate is the author's to fix.
+    assert_eq!(gateway.owner, Some(Owner::Yours));
+    // Every listener rejected is still Failed.
+    let view = with_gateway(listener_gateway(
+        json!([https("a"), https("b")]),
+        json!([rejected("a"), rejected("b")]),
+    ));
+    let gateway = entry(&view, "infra/edge2");
+    assert_eq!(gateway.state, GatewayState::Failed);
+    assert!(
+        gateway.reason.contains("none of its 2 listeners"),
+        "{}",
+        gateway.reason
+    );
+    // One of two is Partly serving, with the reason named.
+    let ok = json!({"name": "b", "attachedRoutes": 1, "conditions": [
+        condition("Accepted", "True", "Accepted"), condition("Programmed", "True", "Programmed")]});
+    let view = with_gateway(listener_gateway(
+        json!([https("a"), https("b")]),
+        json!([rejected("a"), ok]),
+    ));
+    let gateway = entry(&view, "infra/edge2");
+    assert_eq!(gateway.state, GatewayState::Partly);
+    assert!(gateway.reason.contains("1 of 2"), "{}", gateway.reason);
+}
+
+#[test]
+fn the_state_is_the_traces_own_judgement_of_the_class_and_the_gateway() {
+    use super::trace::{StepVerdict, class_step, gateway_step};
+    let read = read(Shape::Gateways);
+    let view = GatewaysView::new(&read);
+    for facts in &read.gateways.as_ref().unwrap().items {
+        let entry = entry(&view, &format!("{}/{}", facts.namespace, facts.name));
+        let class = class_step(facts, &read.classes);
+        let gateway = gateway_step(facts);
+        let deciding = [&class, &gateway]
+            .into_iter()
+            .find(|s| s.verdict != StepVerdict::Pass)
+            .unwrap_or(&gateway);
+        // A listener the controller rejected is the one thing the Gateway
+        // pages add: it turns a passing Gateway into Partly serving or Failed.
+        let listeners_decide = deciding.verdict != StepVerdict::Fail
+            && deciding.verdict != StepVerdict::Unknown
+            && entry.failing_listeners() > 0;
+        if !listeners_decide {
+            assert_eq!(entry.reason, deciding.reason, "{}", entry.key());
+        }
+        assert_eq!(entry.says, deciding.controller, "{}", entry.key());
+        assert_eq!(entry.stale, deciding.stale, "{}", entry.key());
+    }
+}
+
+#[test]
+fn the_stale_mark_follows_the_condition_that_decided_the_state() {
+    // A refusal written for generation 1 of a Gateway now at generation 2.
+    let gateway = GatewayFacts::parse(&json!({
+        "metadata": {"name": "old", "namespace": "infra", "generation": 2},
+        "spec": {"gatewayClassName": "example", "listeners": []},
+        "status": {"conditions": [
+            {"type": "Accepted", "status": "True", "observedGeneration": 2},
+            {"type": "Programmed", "status": "False", "reason": "Invalid", "observedGeneration": 1}]},
+    }))
+    .unwrap();
+    let view = with_gateway(gateway);
+    let old = entry(&view, "infra/old");
+    assert_eq!(old.state, GatewayState::Failed);
+    assert!(old.stale);
+    // A current one is not marked.
+    assert!(!entry(&view, "infra/edge").stale);
+}
+
+#[test]
+fn objects_carry_their_uids_for_links() {
+    let read = read(Shape::Gateways);
+    let view = GatewaysView::new(&read);
+    assert_eq!(entry(&view, "infra/edge").facts.uid, "gw-infra-edge");
+    assert!(entry(&view, "infra/retired").facts.uid.is_empty());
+    let classes = read.classes.as_ref().unwrap();
+    assert_eq!(
+        classes
+            .items
+            .iter()
+            .find(|c| c.name == "legacy")
+            .unwrap()
+            .uid,
+        "gc-legacy"
+    );
+    let topology = topology(Shape::All);
+    let uid = |key: &str| {
+        topology
+            .node(key)
+            .unwrap()
+            .target
+            .as_ref()
+            .unwrap()
+            .uid
+            .clone()
+    };
+    assert_eq!(uid("gateway:infra/edge"), "gw-infra-edge");
+    assert_eq!(uid("route:shop/web"), "route-shop-web");
+    assert_eq!(uid("service:shop/cart"), "svc-cart");
+    assert_eq!(uid("workload:Deployment/shop/cart"), "Deployment-shop-cart");
+}
+
+#[test]
+fn workloads_that_could_not_be_read_are_counted_in_a_note() {
+    let topology = topology(Shape::WorkloadsRefused);
+    assert!(
+        topology
+            .notes
+            .iter()
+            .any(|n| n.contains("could not be read")),
+        "{:?}",
+        topology.notes
+    );
 }

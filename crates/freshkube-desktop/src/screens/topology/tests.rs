@@ -303,3 +303,29 @@ fn a_held_read_keeps_the_loading_state_until_it_answers(cx: &mut TestAppContext)
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_page_says_what_it_holds_from_what_was_prepared_with_the_read(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let page = page.read(cx);
+        assert!(
+            page.summary
+                .as_deref()
+                .is_some_and(|s| s.contains("Gateways"))
+        );
+        assert!(page.broken > 0);
+        assert!(page.notices.iter().any(|n| n.contains("mesh route")));
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_link_carries_the_uid_of_a_live_cluster_and_none_of_the_examples() {
+    use freshkube_core::resources::traffic::routes::{Topology, example};
+    let read = example::read(Shape::All).unwrap();
+    let topology = Topology::new(&read, &example::workloads(Shape::All)).unwrap();
+    let node = topology.node("gateway:infra/edge").unwrap();
+    assert_eq!(node.target.as_ref().unwrap().uid, "gw-infra-edge");
+}

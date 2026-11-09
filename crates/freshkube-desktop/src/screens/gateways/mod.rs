@@ -309,12 +309,21 @@ impl GatewaysScreen {
                     )
                 }),
         };
-        // A link names the object and no UID: Resources finds it again, and
-        // the example cluster lists its objects under identities of its own.
+        // A cluster's link carries the object's UID, which keeps it from
+        // opening one that replaced this; the example cluster lists its
+        // objects under identities of its own, so its links name the object.
+        let example = self
+            .source
+            .as_ref()
+            .is_some_and(|source| source.access.is_example());
         let object = crate::resources::model::ObjectRef {
             namespace: row.namespace.clone(),
             name: row.name.clone(),
-            uid: String::new(),
+            uid: if example {
+                String::new()
+            } else {
+                row.uid.clone()
+            },
             connection: self.source.as_ref().map(|source| source.id.clone()),
         };
         cx.emit(ResourceLink::Object(
