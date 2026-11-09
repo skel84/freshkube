@@ -75,6 +75,12 @@ const JOB: Owned = Owned {
     kind: "Job",
     plural: "jobs",
 };
+const CLAIM: Owned = Owned {
+    group: "",
+    version: "v1",
+    kind: "PersistentVolumeClaim",
+    plural: "persistentvolumeclaims",
+};
 const ENDPOINT_SLICE: Owned = Owned {
     group: "discovery.k8s.io",
     version: "v1",
@@ -87,7 +93,10 @@ const ENDPOINT_SLICE: Owned = Owned {
 pub(crate) fn owned_kinds(group: &str, kind: &str, namespaced: bool) -> &'static [Owned] {
     match (group, kind) {
         ("apps", "Deployment") => &[REPLICASET],
-        ("apps", "ReplicaSet" | "StatefulSet" | "DaemonSet") | ("batch", "Job") => &[POD],
+        // A StatefulSet's claims are collected with it when its retention
+        // policy says `whenDeleted: Delete`: data nobody was shown.
+        ("apps", "StatefulSet") => &[POD, CLAIM],
+        ("apps", "ReplicaSet" | "DaemonSet") | ("batch", "Job") => &[POD],
         ("batch", "CronJob") => &[JOB],
         ("", "Service") => &[ENDPOINT_SLICE],
         // A Pod owns no other objects.
@@ -95,6 +104,21 @@ pub(crate) fn owned_kinds(group: &str, kind: &str, namespaced: bool) -> &'static
         _ if namespaced => &[POD, REPLICASET, JOB],
         _ => &[],
     }
+}
+
+/// True for the kinds whose dependents are known, so that looking at
+/// [`owned_kinds`] covers what they own. For any other kind (a custom
+/// resource may own a StatefulSet, Services or claims) the kinds looked at are
+/// only the common ones, and the preview says the rest were not looked at.
+pub(crate) fn complete(group: &str, kind: &str) -> bool {
+    matches!(
+        (group, kind),
+        (
+            "apps",
+            "Deployment" | "ReplicaSet" | "StatefulSet" | "DaemonSet"
+        ) | ("batch", "Job" | "CronJob")
+            | ("", "Service" | "Pod")
+    )
 }
 
 /// What looking for the objects of one kind found.
@@ -149,10 +173,13 @@ impl Dependents {
         }
     }
 
-    /// True when something is owned, or it is not known.
+    /// True when something is owned, or it is not known: a list cut at one
+    /// page may hold more than it showed.
     fn may_own(&self) -> bool {
         match &self.found {
-            Found::Read { total, .. } => *total > 0,
+            Found::Read {
+                total, at_least, ..
+            } => *total > 0 || *at_least,
             Found::Unknown(_) => true,
         }
     }
@@ -187,6 +214,8 @@ pub struct Impact {
     target: Target,
     object: Value,
     dependents: Vec<Dependents>,
+    /// Whether `dependents` covers everything this kind may own.
+    complete: bool,
 }
 
 impl Impact {
@@ -209,6 +238,7 @@ impl Impact {
             },
             object: object.clone(),
             dependents,
+            complete: complete(&row.group, &row.kind),
         })
     }
 
@@ -235,11 +265,17 @@ impl Impact {
     /// owns nothing has one effect, so only the default is offered; when it
     /// owns something, or that is not known, all three, because they differ.
     pub fn choices(&self) -> Vec<Propagation> {
-        if self.dependents.iter().any(Dependents::may_own) {
+        if self.may_own() {
             Propagation::ALL.to_vec()
         } else {
             vec![Propagation::Background]
         }
+    }
+
+    /// Whether it may own something: it does, a list was cut or unread, or the
+    /// kind may own kinds that were not looked at.
+    fn may_own(&self) -> bool {
+        !self.complete || self.dependents.iter().any(Dependents::may_own)
     }
 
     /// The finalizers it carries.
@@ -260,15 +296,25 @@ impl Impact {
                     if *at_least { "+" } else { "" },
                     dependents.kind
                 )),
+                Found::Read { at_least: true, .. } => {
+                    parts.push(format!("{} unknown (list cut at {PAGE})", dependents.kind))
+                }
                 Found::Read { .. } => {}
                 Found::Unknown(_) => parts.push(format!("{} unknown", dependents.kind)),
             }
         }
-        if parts.is_empty() {
-            "nothing".to_owned()
-        } else {
-            parts.join(", ")
+        if !self.complete {
+            if parts.is_empty() {
+                let looked: Vec<&str> = self.dependents.iter().map(|d| d.kind).collect();
+                if !looked.is_empty() {
+                    parts.push(format!("none found among {}", looked.join(", ")));
+                }
+            }
+            parts.push("other kinds not looked at".to_owned());
+        } else if parts.is_empty() {
+            parts.push("nothing".to_owned());
         }
+        parts.join(", ")
     }
 
     fn controller(&self) -> Option<(String, String)> {
@@ -297,22 +343,26 @@ impl Impact {
 
     fn owned_lines(&self) -> Vec<String> {
         let mut lines = vec![];
-        if self.dependents.is_empty() {
-            lines.push(match self.target.kind.as_str() {
-                "Pod" => "A Pod owns no other objects.".to_owned(),
-                _ => "Not looked up: it isn't a kind with a namespace to look in.".to_owned(),
-            });
+        if self.dependents.is_empty() && self.complete {
+            lines.push("A Pod owns no other objects.".to_owned());
         }
         for dependents in &self.dependents {
             let kind = dependents.kind;
             match &dependents.found {
                 Found::Unknown(why) => lines.push(format!("{kind}: unknown ({why})")),
-                Found::Read { total: 0, at_least, .. } => lines.push(if *at_least {
-                    format!("No {kind} in the first {PAGE} read; the list was longer, so there may be some")
-                } else {
-                    format!("No {kind} owned by it")
-                }),
-                Found::Read { names, total, at_least } => {
+                Found::Read {
+                    total: 0,
+                    at_least: true,
+                    ..
+                } => lines.push(format!(
+                    "{kind}: unknown (the list was cut at {PAGE}, so there may be some)"
+                )),
+                Found::Read { total: 0, .. } => lines.push(format!("No {kind} owned by it")),
+                Found::Read {
+                    names,
+                    total,
+                    at_least,
+                } => {
                     let more = if *at_least { "at least " } else { "" };
                     lines.push(format!("{more}{total} {kind} owned by it:"));
                     lines.extend(names.iter().map(|name| format!("{kind}/{name}")));
@@ -321,6 +371,17 @@ impl Impact {
                     }
                 }
             }
+        }
+        if !self.complete {
+            lines.push(if self.dependents.is_empty() {
+                "Other kinds were not looked at, so it may own more.".to_owned()
+            } else {
+                let looked: Vec<&str> = self.dependents.iter().map(|d| d.kind).collect();
+                format!(
+                    "Looked at: {}. Other kinds were not looked at, so it may own more.",
+                    looked.join(", ")
+                )
+            });
         }
         if self.target.kind == "Deployment" && self.dependents.iter().any(Dependents::may_own) {
             lines.push("Their Pods are owned by them, one level further down.".to_owned());
@@ -331,9 +392,15 @@ impl Impact {
     fn comes_back_lines(&self) -> Vec<String> {
         let mut lines = vec![];
         if let Some((kind, name)) = self.controller() {
-            lines.push(format!(
-                "{kind}/{name} controls it and will usually make it again."
-            ));
+            let remakes = matches!(
+                kind.as_str(),
+                "ReplicaSet" | "StatefulSet" | "DaemonSet" | "Deployment" | "ReplicationController"
+            );
+            lines.push(if remakes {
+                format!("{kind}/{name} controls it and will make a new one.")
+            } else {
+                format!("It is controlled by {kind}/{name}.")
+            });
         }
         match self.gitops() {
             Some(GitOps::ArgoCd) => lines.push(
@@ -386,7 +453,7 @@ pub fn delete(impact: &Impact, propagation: Propagation) -> Result<ActionDescrip
     // The sentence is also the audit line's summary: the policy and counts
     // are in it, and never the contents of an object.
     let sentence = format!(
-        "Delete {} with {} propagation; it owns {}. This can't be undone. {}{tool}",
+        "Delete {} with {} propagation; owns: {}. This can't be undone. {}{tool}",
         impact.label(),
         propagation.label(),
         impact.counts_text(),

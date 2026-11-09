@@ -385,7 +385,7 @@ async fn whether_it_comes_back_names_its_controller_and_the_gitops_tool() {
     let action = delete::delete(&impact, Propagation::Background).unwrap();
     assert_eq!(
         lines_of(&action, "Will it come back"),
-        ["ReplicaSet/web-a1 controls it and will usually make it again."]
+        ["ReplicaSet/web-a1 controls it and will make a new one."]
     );
     // Nothing owns the claim: it stays deleted.
     let impact = impact_of(&cluster, fake::CLAIM).await;
@@ -405,9 +405,11 @@ async fn whether_it_comes_back_names_its_controller_and_the_gitops_tool() {
 #[tokio::test(start_paused = true)]
 async fn finalizers_are_named_and_only_the_default_policy_is_offered_when_nothing_is_owned() {
     let cluster = Cluster::with_owned();
+    // A Pod owns nothing, so there is nothing for a policy to decide.
+    let pod = impact_of(&cluster, fake::POD).await;
+    assert_eq!(pod.choices(), [Propagation::Background]);
+    assert!(delete::delete(&pod, Propagation::Orphan).is_err());
     let impact = impact_of(&cluster, fake::CLAIM).await;
-    assert_eq!(impact.choices(), [Propagation::Background]);
-    assert!(delete::delete(&impact, Propagation::Orphan).is_err());
     let action = delete::delete(&impact, Propagation::Background).unwrap();
     let lines = lines_of(&action, "Finalizers");
     assert!(
@@ -551,8 +553,106 @@ async fn the_audit_records_the_policy_and_the_counts_and_never_a_name_or_content
     for record in &records {
         let sentence = &record.request.sentence;
         assert!(sentence.contains("Orphan propagation"), "{sentence}");
-        assert!(sentence.contains("it owns 1 Pod."), "{sentence}");
+        assert!(sentence.contains("owns: 1 Pod."), "{sentence}");
         // Counts only: the owned Pod's name is not in the line.
         assert!(!sentence.contains("web-a1-x1"), "{sentence}");
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_list_cut_at_a_page_is_unknown_and_offers_every_policy() {
+    // A Service whose first page of EndpointSlices holds none of its own:
+    // the rest were not read, so it is not "owns nothing".
+    let service = json!({"apiVersion": "v1", "kind": "Service",
+        "metadata": {"name": "web", "namespace": "shop", "uid": "uid-svc",
+            "resourceVersion": "5"}});
+    let path = "/api/v1/namespaces/shop/services/web";
+    let cluster = Cluster::with(vec![(path.to_owned(), service)]);
+    cluster.cut_lists();
+    let impact = impact_of(&cluster, path).await;
+    assert_eq!(impact.choices(), Propagation::ALL);
+    let action = delete::delete(&impact, Propagation::Background).unwrap();
+    assert!(
+        action
+            .sentence
+            .contains("EndpointSlice unknown (list cut at 500)"),
+        "{}",
+        action.sentence
+    );
+    assert!(!action.sentence.contains("nothing"), "{}", action.sentence);
+    let owns = lines_of(&action, "What it owns");
+    assert!(owns[0].starts_with("EndpointSlice: unknown"), "{owns:?}");
+    assert!(!owns.join(" ").contains("No EndpointSlice"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_kind_whose_dependents_are_not_all_looked_at_never_says_it_owns_nothing() {
+    // Scenario: a custom resource may own a StatefulSet, Services or claims.
+    let cluster = Cluster::with_owned();
+    let impact = impact_of(&cluster, fake::SECRET).await;
+    assert_eq!(impact.choices(), Propagation::ALL);
+    let action = delete::delete(&impact, Propagation::Background).unwrap();
+    assert!(
+        action
+            .sentence
+            .contains("none found among Pod, ReplicaSet, Job, other kinds not looked at"),
+        "{}",
+        action.sentence
+    );
+    assert!(!action.sentence.contains("nothing"), "{}", action.sentence);
+    let owns = lines_of(&action, "What it owns");
+    assert!(owns.last().unwrap().contains("not looked at"), "{owns:?}");
+    // The same for example data, which lists nothing at all.
+    let row = row_of(&cluster, fake::SECRET);
+    let object = cluster.object(fake::SECRET);
+    let impact = Impact::new(&row, &object, vec![]).unwrap();
+    assert_eq!(impact.choices(), Propagation::ALL);
+    let action = delete::delete(&impact, Propagation::Background).unwrap();
+    assert!(!action.sentence.contains("nothing"), "{}", action.sentence);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_statefulsets_claims_are_looked_at() {
+    // Scenario: whenDeleted: Delete makes the garbage collector take its
+    // claims with it: data the person must be shown.
+    let sts = json!({"apiVersion": "apps/v1", "kind": "StatefulSet",
+        "metadata": {"name": "db", "namespace": "shop", "uid": "uid-sts", "resourceVersion": "5"},
+        "spec": {"persistentVolumeClaimRetentionPolicy": {"whenDeleted": "Delete"}}});
+    let claim = json!({"apiVersion": "v1", "kind": "PersistentVolumeClaim",
+        "metadata": {"name": "data-db-0", "namespace": "shop", "uid": "uid-c", "resourceVersion": "6",
+            "ownerReferences": [{"kind": "StatefulSet", "name": "db", "uid": "uid-sts"}]}});
+    let path = "/apis/apps/v1/namespaces/shop/statefulsets/db";
+    let cluster = Cluster::with(vec![
+        (path.to_owned(), sts),
+        (
+            "/api/v1/namespaces/shop/persistentvolumeclaims/data-db-0".to_owned(),
+            claim,
+        ),
+    ]);
+    let impact = impact_of(&cluster, path).await;
+    assert_eq!(impact.choices(), Propagation::ALL);
+    let action = delete::delete(&impact, Propagation::Background).unwrap();
+    let owns = lines_of(&action, "What it owns");
+    assert!(
+        owns.contains(&"PersistentVolumeClaim/data-db-0".to_owned()),
+        "{owns:?}"
+    );
+    assert!(
+        action.sentence.contains("1 PersistentVolumeClaim"),
+        "{}",
+        action.sentence
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn lists_that_never_answer_end_at_the_deadline_as_unknown() {
+    let cluster = Cluster::with_owned();
+    let row = row_of(&cluster, fake::DEPLOYMENT);
+    cluster.hang_lists();
+    let started = tokio::time::Instant::now();
+    let impact = Impact::read(&cluster.client, &row).await.unwrap();
+    assert!(started.elapsed() <= delete::DEADLINE + Duration::from_secs(1));
+    assert!(matches!(impact.dependents()[0].found, Found::Unknown(_)));
+    assert_eq!(impact.choices(), Propagation::ALL);
+    // The object's own read is under the deadline too.
 }

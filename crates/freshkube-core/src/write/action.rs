@@ -55,7 +55,6 @@ impl Target {
     }
 }
 
-/// What is sent for one object.
 /// What a delete does to the objects the deleted one owns (its
 /// `ownerReferences` dependents): the API's `propagationPolicy`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -110,6 +109,7 @@ impl Propagation {
     }
 }
 
+/// What is sent for one object.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     /// Server-side apply of this object, with field manager `freshkube` and

@@ -1167,7 +1167,7 @@ fn protected_asks_for_the_objects_name_before_the_countdown(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
-fn a_read_only_cluster_makes_no_request_for_delete(cx: &mut TestAppContext) {
+fn safety_g17_a_read_only_cluster_makes_no_request_for_delete(cx: &mut TestAppContext) {
     let w = world_on(cx, "stage-fra", Cluster::with_owned);
     w.press_pod(cx);
     w.press_replicaset(cx);
@@ -1199,6 +1199,9 @@ fn a_finalizer_leaves_it_terminating_and_the_toast_names_it(cx: &mut TestAppCont
         "uid-claim",
     );
     w.drive(cx, Duration::from_millis(500));
+    // A claim's kind may own kinds that were not looked at: the policy is asked.
+    w.click(cx, "delete-review");
+    w.drive(cx, Duration::from_millis(500));
     w.click(cx, "write-confirm");
     w.drive(cx, Duration::from_secs(45));
     let toast = w.label(cx, "write-toast-status");
@@ -1228,7 +1231,9 @@ fn the_example_shows_the_impact_and_sends_nothing(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn switching_cluster_during_the_countdown_cancels_it_and_sends_nothing(cx: &mut TestAppContext) {
+fn safety_g18_switching_cluster_during_the_countdown_cancels_it_and_sends_nothing(
+    cx: &mut TestAppContext,
+) {
     let w = world_on(cx, "core-fra", Cluster::with_owned);
     w.press_pod(cx);
     w.drive(cx, Duration::from_millis(500));
@@ -1246,7 +1251,9 @@ fn switching_cluster_during_the_countdown_cancels_it_and_sends_nothing(cx: &mut 
 }
 
 #[gpui_kit::test]
-fn a_context_change_during_the_countdown_cancels_it_and_sends_nothing(cx: &mut TestAppContext) {
+fn safety_g18_a_context_change_during_the_countdown_cancels_it_and_sends_nothing(
+    cx: &mut TestAppContext,
+) {
     let w = world_on(cx, "core-fra", Cluster::with_owned);
     w.press_pod(cx);
     w.drive(cx, Duration::from_millis(500));
@@ -1262,4 +1269,32 @@ fn a_context_change_during_the_countdown_cancels_it_and_sends_nothing(cx: &mut T
     w.drive(cx, Duration::from_secs(8));
     assert!(w.real_deletes().is_empty());
     assert!(w.cluster.exists(fake::POD));
+}
+
+#[gpui_kit::test]
+fn safety_g18_leaving_the_page_during_the_countdown_cancels_it_and_sends_nothing(
+    cx: &mut TestAppContext,
+) {
+    for via_link in [false, true] {
+        let w = world_on(cx, "core-fra", Cluster::with_owned);
+        w.press_pod(cx);
+        w.drive(cx, Duration::from_millis(500));
+        w.click(cx, "write-confirm");
+        w.drive(cx, Duration::from_millis(1500));
+        assert!(w.present(cx, "write-countdown"));
+        cx.update_window(w.handle, |_, window, cx| {
+            w.view.update(cx, |pilot, cx| {
+                if via_link {
+                    let view = freshkube_nav::ViewState::page(freshkube_nav::LinkPage::Resources);
+                    pilot.apply_view(&view, window, cx);
+                } else {
+                    pilot.navigate(crate::desktop::Page::Nodes, window, cx);
+                }
+            })
+        })
+        .unwrap();
+        w.drive(cx, Duration::from_secs(8));
+        assert!(w.real_deletes().is_empty(), "link: {via_link}");
+        assert!(w.cluster.exists(fake::POD));
+    }
 }

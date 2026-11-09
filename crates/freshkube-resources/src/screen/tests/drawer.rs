@@ -208,6 +208,8 @@ fn the_measured_width_settles_without_input(cx: &mut TestAppContext) {
             }
             window.render_frame(cx);
         }
+        assert_eq!(window.simulate_next_frame(cx), 0, "the frames stopped");
+        window.render_frame(cx);
         assert!(
             left(window) >= freshkube_ui::drawer::LIST_KEEPS - 1.,
             "{}",

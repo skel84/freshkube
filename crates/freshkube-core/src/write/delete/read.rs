@@ -25,8 +25,10 @@ impl Impact {
             resource_version: String::new(),
             subresource: None,
         };
-        let object = get(client, &target)
+        let started = Instant::now();
+        let object = tokio::time::timeout(DEADLINE, get(client, &target))
             .await
+            .map_err(|_| format!("{} did not answer in time.", target.label()))?
             .map_err(|refusal| match refusal {
                 Refusal::Changed(what) => format!("{}: {}", target.label(), what.text()),
                 Refusal::Denied(why) => {
@@ -40,7 +42,7 @@ impl Impact {
                 target.label()
             ));
         }
-        let dependents = find_dependents(client, row, &object).await;
+        let dependents = find_dependents(client, row, &object, started).await;
         Self::new(row, &object, dependents)
             .ok_or_else(|| format!("{} has no identity to delete.", target.label()))
     }
@@ -48,7 +50,12 @@ impl Impact {
 
 /// What the lists of the possible dependents' kinds say. A list that is
 /// refused, fails or runs past the deadline is unknown for its kind.
-async fn find_dependents(client: &kube::Client, row: &Row, object: &Value) -> Vec<Dependents> {
+async fn find_dependents(
+    client: &kube::Client,
+    row: &Row,
+    object: &Value,
+    started: Instant,
+) -> Vec<Dependents> {
     let uid = object["metadata"]["uid"].as_str().unwrap_or_default();
     let kinds: &[Owned] = owned_kinds(&row.group, &row.kind, row.namespace.is_some());
     let Some(namespace) = row.namespace.as_deref() else {
@@ -59,7 +66,6 @@ async fn find_dependents(client: &kube::Client, row: &Row, object: &Value) -> Ve
             "not looked up for an object with no namespace",
         )];
     };
-    let started = Instant::now();
     let mut found = vec![];
     for owned in kinds.iter().take(MOST_LISTS) {
         let left = DEADLINE.saturating_sub(started.elapsed());
@@ -75,7 +81,8 @@ async fn find_dependents(client: &kube::Client, row: &Row, object: &Value) -> Ve
             plural: owned.plural.into(),
         };
         let api: Api<DynamicObject> = Api::namespaced_with(client.clone(), namespace, &resource);
-        let list = tokio::time::timeout(left, api.list(&ListParams::default().limit(PAGE))).await;
+        let list =
+            tokio::time::timeout(left, api.list_metadata(&ListParams::default().limit(PAGE))).await;
         found.push(match list {
             Err(_) => Dependents::unknown(owned.kind, "no answer in time"),
             Ok(Err(kube::Error::Api(response))) if response.code == 403 => {

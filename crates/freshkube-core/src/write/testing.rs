@@ -62,6 +62,10 @@ struct State {
     recreate_on_delete: Vec<String>,
     /// An answer for every read of a collection.
     fail_lists: Option<u16>,
+    /// Every list is cut at its page: the reply carries a continue token.
+    cut_lists: bool,
+    /// A read of a collection never gets an answer.
+    hang_lists: bool,
 }
 
 /// The fake cluster, its recorder and a client over it.
@@ -320,6 +324,15 @@ impl Cluster {
                 let request = Request::from_parts(parts, ());
                 let recorded =
                     log.record_with_body(&request, String::from_utf8_lossy(&bytes).into_owned());
+                let hangs = {
+                    let state = shared.lock().unwrap();
+                    state.hang_lists
+                        && recorded.method == http::Method::GET
+                        && !state.objects.contains_key(&recorded.path)
+                };
+                if hangs {
+                    std::future::pending::<()>().await;
+                }
                 let (answer, silent) = answer(&mut shared.lock().unwrap(), &recorded);
                 if silent {
                     return Err(io::Error::new(
@@ -408,6 +421,16 @@ impl Cluster {
             .unwrap()
             .recreate_on_delete
             .push(path.to_owned());
+    }
+
+    /// Every list answers with a continue token, as one longer than a page.
+    pub fn cut_lists(&self) {
+        self.state.lock().unwrap().cut_lists = true;
+    }
+
+    /// A read of a collection is never answered.
+    pub fn hang_lists(&self) {
+        self.state.lock().unwrap().hang_lists = true;
     }
 
     /// Every read of a collection is answered with this code.
@@ -516,14 +539,19 @@ fn answer(state: &mut State, request: &Recorded) -> ((u16, String), bool) {
             .map(|(_, object)| object)
             .collect();
         // A collection nothing is in is an empty list, as a server answers.
-        let collection = ["pods", "jobs", "endpointslices"]
+        let collection = ["pods", "jobs", "endpointslices", "persistentvolumeclaims"]
             .iter()
             .any(|plural| path.ends_with(&format!("/{plural}")));
         if !items.is_empty() || collection {
             return (
                 fake_api::json(
                     200,
-                    json!({"apiVersion": "v1", "kind": "List", "metadata": {"resourceVersion": "1"},
+                    json!({"apiVersion": "v1", "kind": "List",
+                           "metadata": if state.cut_lists {
+                               json!({"resourceVersion": "1", "continue": "more"})
+                           } else {
+                               json!({"resourceVersion": "1"})
+                           },
                            "items": items}),
                 ),
                 false,
