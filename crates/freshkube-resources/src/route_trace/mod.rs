@@ -20,8 +20,19 @@ mod tests;
 /// Where a link from the trace goes, through the normal object entry point.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TraceLink {
-    Gateway { namespace: String, name: String },
-    Service { namespace: String, name: String },
+    Gateway {
+        namespace: String,
+        name: String,
+    },
+    Service {
+        namespace: String,
+        name: String,
+    },
+    /// The Secret a listener serves, on the Certificates page (N4).
+    Certificate {
+        namespace: String,
+        name: String,
+    },
 }
 
 /// The tone a verdict is drawn in. Unknown is never green.
@@ -99,6 +110,8 @@ pub(crate) struct ParentRow {
     pub steps: Vec<StepRow>,
     pub branches: Vec<BranchRow>,
     pub gateway: Option<TraceLink>,
+    /// The certificates the chosen listener serves.
+    pub certificates: Vec<TraceLink>,
 }
 
 pub(crate) struct ProposalRow {
@@ -297,6 +310,14 @@ fn parent_row(prefix: &str, ix: usize, parent: &ParentTrace, route_namespace: &s
             namespace: parent.parent.namespace_or(route_namespace).to_owned(),
             name: parent.parent.name.clone(),
         }),
+        certificates: parent
+            .certificates
+            .iter()
+            .map(|(namespace, name)| TraceLink::Certificate {
+                namespace: namespace.clone(),
+                name: name.clone(),
+            })
+            .collect(),
         id: id.into(),
     }
 }

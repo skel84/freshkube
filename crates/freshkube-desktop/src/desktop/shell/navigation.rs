@@ -178,6 +178,7 @@ impl Navigation {
             | Page::Gateways
             | Page::GatewayClasses
             | Page::Topology
+            | Page::Certificates
             | Page::Access => 5,
             Page::Resources => 5,
             Page::Etcd => 6,

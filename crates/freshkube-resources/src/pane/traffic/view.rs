@@ -296,6 +296,11 @@ impl DetailPane {
                 object(namespace, name),
                 Tab::Overview,
             ),
+            TraceLink::Certificate { namespace, name } => ResourceLink::Certificate {
+                namespace: namespace.clone(),
+                name: name.clone(),
+                connection: connection.clone(),
+            },
             TraceLink::Gateway { namespace, name } => ResourceLink::Owner {
                 api_version: format!("{}/{}", routes::GATEWAY_GROUP, detail.target.kind.version),
                 kind: "Gateway".to_owned(),

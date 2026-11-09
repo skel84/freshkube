@@ -20,9 +20,10 @@ use crate::{
     monitoring::page::MonitoringPage,
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
-        AccessScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen, GatewaysMode, GatewaysScreen,
-        LifecycleScreen, NetworkScreen, OperationsScreen, ProcessesScreen, RoutesScreen,
-        ScreenHandle, ScreenPanel, SecurityScreen, StorageScreen, TopologyScreen, WorkloadsScreen,
+        AccessScreen, CertificatesScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen,
+        GatewaysMode, GatewaysScreen, LifecycleScreen, NetworkScreen, OperationsScreen,
+        ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel, SecurityScreen, StorageScreen,
+        TopologyScreen, WorkloadsScreen,
     },
 };
 
@@ -38,6 +39,7 @@ pub(super) struct Pages {
     pub(super) node_workspace: Entity<nodes::Nodes>,
     pub(super) health: Entity<WorkloadsScreen>,
     pub(super) lifecycle: Entity<LifecycleScreen>,
+    pub(super) certificates: Entity<CertificatesScreen>,
     pub(super) databases: Entity<DatabasesScreen>,
     pub(super) resources: Entity<ResourcesScreen>,
     pub(super) dock: Entity<dock::Dock>,
@@ -98,6 +100,10 @@ impl Pages {
                 cx.new(|cx| TopologyScreen::new(runtime.clone(), window, cx).with_example(shape)),
             )
         };
+        let certificates = {
+            let shape = options.debug.certs;
+            cx.new(|cx| CertificatesScreen::new(runtime.clone(), window, cx).with_example(shape))
+        };
         let access = {
             let shape = options.debug.access.clone();
             cx.new(|cx| AccessScreen::new(runtime.clone(), window, cx).with_example(&shape))
@@ -112,6 +118,7 @@ impl Pages {
                     PageId::Gateways => ScreenHandle::new(gateways.clone()),
                     PageId::GatewayClasses => ScreenHandle::new(gateway_classes.clone()),
                     PageId::Topology => ScreenHandle::new(topology.clone()),
+                    PageId::Certificates => ScreenHandle::new(certificates.clone()),
                     PageId::Access => ScreenHandle::new(access.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
@@ -240,6 +247,7 @@ impl Pages {
             node_workspace,
             health,
             lifecycle,
+            certificates,
             databases,
             resources,
             dock,

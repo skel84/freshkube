@@ -70,6 +70,16 @@ pub enum CertState {
 }
 
 impl CertState {
+    /// Worst first, which is the order the page groups in.
+    pub const ALL: [Self; 6] = [
+        Self::Broken,
+        Self::WrongName,
+        Self::Issuing,
+        Self::Expiring,
+        Self::Unknown,
+        Self::Healthy,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Broken => "Not valid",
@@ -385,6 +395,16 @@ impl CertsView {
         {
             entry.secret_state = SecretState::Read(outcome);
             entry.assess(now);
+        }
+    }
+
+    /// Forgets every Secret read, so each entry reads as not yet read.
+    pub fn forget_secrets(&mut self, now: i64) {
+        for entry in &mut self.entries {
+            if entry.secret_state != SecretState::NotRead {
+                entry.secret_state = SecretState::NotRead;
+                entry.assess(now);
+            }
         }
     }
 

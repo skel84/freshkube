@@ -294,6 +294,9 @@ pub struct ParentTrace {
     pub verdict: RouteVerdict,
     /// Other controllers' verdicts on this parent, not part of this one.
     pub others: Vec<OtherController>,
+    /// `(namespace, name)` of the Secrets the listener the trace chose
+    /// serves, by name alone: the Certificates page (N4) says what they are.
+    pub certificates: Vec<(String, String)>,
 }
 
 /// The one line a Routes row reads: where it stops and why.
@@ -465,6 +468,7 @@ fn trace_parent(
             branches: Vec::new(),
             verdict: RouteVerdict::Mesh,
             others: Vec::new(),
+            certificates: Vec::new(),
         };
     }
     let gateway_namespace = parent.namespace_or(&route.namespace);
@@ -522,6 +526,7 @@ fn trace_parent(
                 branches: Vec::new(),
                 verdict,
                 others: Vec::new(),
+                certificates: Vec::new(),
             };
         }
     };
@@ -543,6 +548,23 @@ fn trace_parent(
         Vec::new()
     };
     let verdict = parent_verdict(&chain.steps, &branches);
+    let certificates = fitting
+        .first()
+        .map(|listener| {
+            listener
+                .certificate_refs
+                .iter()
+                .map(|(namespace, name)| {
+                    (
+                        namespace
+                            .clone()
+                            .unwrap_or_else(|| gateway.namespace.clone()),
+                        name.clone(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     ParentTrace {
         parent: parent.clone(),
         label,
@@ -551,6 +573,7 @@ fn trace_parent(
         branches,
         verdict,
         others: Vec::new(),
+        certificates,
     }
 }
 

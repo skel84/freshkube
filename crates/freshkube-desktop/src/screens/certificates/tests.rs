@@ -1,0 +1,849 @@
+use super::display::{Display, Entry};
+use super::{CertificatesScreen, PageSource, ScreenPanel};
+use crate::desktop::layout_check;
+use freshkube_core::{
+    cluster_source::{ClusterAccess, ClusterSource},
+    resources::traffic::certs::{
+        self, CertEntry, CertState, CertsRead, CertsView, Manager, example::Shape,
+    },
+};
+use gpui_kit::component::Root;
+use gpui_kit::test::TestWindowExt;
+use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
+
+const NOW: i64 = 1_800_000_000;
+
+fn source(id: &str) -> PageSource {
+    PageSource {
+        kube: Some(ClusterSource {
+            id: id.into(),
+            context: "invented-certificates-context".into(),
+            access: ClusterAccess::EXAMPLE,
+        }),
+        ..PageSource::default()
+    }
+}
+
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+fn mount(
+    cx: &mut TestAppContext,
+    shape: Shape,
+    width: f32,
+    height: f32,
+) -> (
+    tokio::runtime::Runtime,
+    Entity<CertificatesScreen>,
+    WindowHandle<Root>,
+) {
+    let runtime = runtime();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        crate::theme::install(cx)
+    });
+    let mut page = None;
+    let window = cx.open_window(size(px(width), px(height)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view =
+                CertificatesScreen::new(runtime.handle().clone(), window, cx).with_example(shape);
+            view.set_page_source(source("invented-certificates"), window, cx);
+            view.set_visible(true, window, cx);
+            view.activate(window, cx);
+            view
+        });
+        page = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    (runtime, page.unwrap(), window)
+}
+
+fn view_of(shape: Shape) -> CertsView {
+    CertsView::new(&certs::example::read(shape, NOW), NOW)
+}
+
+fn display_of(shape: Shape) -> Display {
+    Display::new(Some(&view_of(shape)))
+}
+
+fn row_id(
+    page: &Entity<CertificatesScreen>,
+    key: &str,
+    cx: &gpui_kit::App,
+) -> gpui_kit::SharedString {
+    page.read(cx)
+        .display
+        .rows
+        .iter()
+        .find(|row| row.key == key)
+        .unwrap_or_else(|| panic!("no row {key}"))
+        .id
+        .clone()
+}
+
+fn groups(display: &Display) -> Vec<&'static str> {
+    display.groups.iter().map(|g| g.label).collect()
+}
+
+#[test]
+fn certificates_are_grouped_worst_first_with_a_header_before_exactly_its_rows() {
+    let display = display_of(Shape::All);
+    assert_eq!(
+        groups(&display),
+        ["Not valid", "Wrong name", "Expiring", "Unknown", "Valid"]
+    );
+    let mut seen = Vec::new();
+    for entry in &display.lines {
+        match entry {
+            Entry::Group(ix) => seen.push((display.groups[*ix].label, 0)),
+            Entry::Row(ix) => {
+                let (label, count) = seen.last_mut().expect("a group header first");
+                assert_eq!(display.rows[*ix].state, *label);
+                *count += 1;
+            }
+        }
+    }
+    for (label, count) in seen {
+        let group = display.groups.iter().find(|g| g.label == label).unwrap();
+        assert_eq!(group.count, count, "{label}");
+    }
+    assert_eq!(display.summary, "8 certificates");
+    let words = display
+        .attention
+        .iter()
+        .map(|(count, words, tone)| format!("{count} {words} {tone:?}"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        words,
+        [
+            "2 not valid Crit",
+            "1 wrong name Warn",
+            "1 expiring Warn",
+            "2 unknown Unknown"
+        ]
+    );
+}
+
+#[test]
+fn a_healthy_cluster_gets_a_flat_list() {
+    let display = display_of(Shape::Healthy);
+    assert_eq!(groups(&display), ["Valid"]);
+    assert!(
+        display
+            .lines
+            .iter()
+            .all(|line| matches!(line, Entry::Row(_)))
+    );
+    assert!(display.attention.is_empty());
+}
+
+#[test]
+fn each_row_reads_its_state_its_expiry_and_who_serves_it() {
+    let display = display_of(Shape::All);
+    let row = |key: &str| display.rows.iter().find(|r| r.key == key).unwrap();
+    let edge = row("infra/edge-tls");
+    assert_eq!(edge.cells[1], "Valid");
+    assert_eq!(edge.cells[2], "in 60 days");
+    assert!(
+        edge.cells[3].contains("Gateway infra/edge"),
+        "{}",
+        edge.cells[3]
+    );
+    assert_eq!(edge.cells[4], "cert-manager");
+    assert_eq!(edge.tone, crate::ui::Tone::Good);
+    let soon = row("staging/edge-tls");
+    assert_eq!(soon.cells[1], "Expiring — expires in 6 days");
+    assert_eq!(soon.cells[2], "in 6 days");
+    assert_eq!(soon.tone, crate::ui::Tone::Warn);
+    let wrong = row("shop/shop-tls");
+    assert_eq!(
+        wrong.cells[1],
+        "Wrong name — does not name www.shop.example.com"
+    );
+    assert!(wrong.cells[3].contains("Ingress shop/web"));
+    let order = row("payments/pay-tls");
+    assert!(
+        order.cells[1].starts_with("Not valid — stopped at Order"),
+        "{}",
+        order.cells[1]
+    );
+    assert_eq!(
+        order.cells[2], "—",
+        "nothing was issued, so there is no expiry"
+    );
+    assert_eq!(order.tone, crate::ui::Tone::Crit);
+    let challenge = row("cart/cart-tls");
+    assert!(challenge.cells[1].starts_with("Not valid — stopped at Challenge"));
+    let unread = row("prod-eu/legacy-tls");
+    assert!(
+        unread.cells[1].starts_with("Unknown — Secret not read"),
+        "{}",
+        unread.cells[1]
+    );
+    assert_eq!(unread.cells[4], "Secret, not read");
+    assert_ne!(unread.tone, crate::ui::Tone::Good, "unknown is never green");
+    assert!(unread.can_read);
+    assert!(
+        !edge.can_read,
+        "a Certificate answers for it: no Secret to read"
+    );
+    let unused = row("prod-eu/unused-tls");
+    assert_eq!(unused.cells[3], "nothing yet");
+}
+
+#[test]
+fn the_filter_matches_what_the_row_says_and_hides_empty_groups() {
+    let mut display = display_of(Shape::All);
+    let shown = |display: &Display| {
+        display
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                Entry::Row(ix) => Some(display.rows[*ix].key.to_string()),
+                Entry::Group(_) => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    display.set_filter("www.shop");
+    assert_eq!(shown(&display), ["shop/shop-tls"]);
+    assert_eq!(display.lines.len(), 2, "one group header and its row");
+    display.set_filter("  CHALLENGE ");
+    assert_eq!(shown(&display), ["cart/cart-tls"]);
+    display.set_filter("Ingress shop/web");
+    assert_eq!(shown(&display), ["shop/shop-tls"]);
+    display.set_filter("example-ca");
+    assert!(shown(&display).len() >= 5, "the issuer is matched too");
+    display.set_filter("no such certificate");
+    assert!(display.lines.is_empty() && display.filtered_out());
+    display.set_filter("");
+    assert!(!display.filtered_out());
+}
+
+#[test]
+fn cert_manager_missing_is_said_on_the_page_and_never_as_no_certificates() {
+    let none = Display::new(Some(&CertsView::new(
+        &CertsRead::new(Manager::NotInstalled),
+        NOW,
+    )));
+    assert!(none.rows.is_empty() && none.error.is_none());
+    assert!(
+        none.empty.contains("cert-manager is not installed"),
+        "{}",
+        none.empty
+    );
+    assert!(!none.empty.to_lowercase().contains("has none"));
+    assert_eq!(none.notices.len(), 1);
+    assert_eq!(none.notices[0].0, "cert-manager");
+    // With Secrets to show, the banner says it and the rows wait to be read.
+    let display = display_of(Shape::NotInstalled);
+    assert!(display.notices.iter().any(|(title, words)| {
+        *title == "cert-manager" && words.contains("cert-manager is not installed")
+    }));
+    assert!(!display.rows.is_empty());
+    assert!(
+        display
+            .rows
+            .iter()
+            .all(|r| r.can_read && r.state == "Unknown")
+    );
+    // An installed cert-manager with nothing to show is the plain empty.
+    let empty = display_of(Shape::Empty);
+    assert!(empty.notices.is_empty());
+    assert!(empty.empty.contains("cert-manager has none"));
+}
+
+#[test]
+fn refused_lists_are_an_error_naming_them_and_never_an_empty_list() {
+    let display = display_of(Shape::Refused);
+    assert!(display.rows.is_empty());
+    let error = display.error.expect("an error, not an empty table");
+    assert!(error.contains("Forbidden"), "{error}");
+    assert!(error.contains("Gateways could not be read"), "{error}");
+    assert!(error.contains("Ingresses could not be read"), "{error}");
+}
+
+#[test]
+fn a_certificate_nothing_asks_the_secret_of_has_the_facts_of_its_status() {
+    let display = display_of(Shape::All);
+    let row = display
+        .rows
+        .iter()
+        .find(|r| r.key == "infra/edge-tls")
+        .unwrap();
+    assert!(row.detail.source.contains("The Secret was not read"));
+    assert!(
+        row.detail
+            .names
+            .as_ref()
+            .unwrap()
+            .contains(&"*.example.com".to_owned())
+    );
+    assert_eq!(row.detail.chain.len(), 4);
+    let order = display
+        .rows
+        .iter()
+        .find(|r| r.key == "payments/pay-tls")
+        .unwrap();
+    let states: Vec<_> = order.detail.chain.iter().map(|s| s.state).collect();
+    assert_eq!(states, ["Done", "In progress", "Stopped", "Not reached"]);
+    let unread = display
+        .rows
+        .iter()
+        .find(|r| r.key == "prod-eu/legacy-tls")
+        .unwrap();
+    assert!(unread.detail.chain.is_empty());
+    assert!(unread.detail.names.is_err());
+}
+
+#[test]
+fn the_inspector_lines_are_made_with_the_read_and_capped_at_fifty() {
+    use super::display::DETAIL_LINES;
+    let mut view = view_of(Shape::All);
+    let entry = view
+        .entries
+        .iter_mut()
+        .find(|e| e.key() == "prod-eu/legacy-tls")
+        .unwrap();
+    entry.servings[0].hosts = (0..DETAIL_LINES + 9)
+        .map(|n| format!("h{n}.example.com"))
+        .collect();
+    let names: Vec<String> = (0..DETAIL_LINES + 7)
+        .map(|n| format!("n{n}.example.com"))
+        .collect();
+    entry.secret_state = certs::SecretState::Read(certs::SecretOutcome::Read(certs::TlsFacts {
+        subject: "CN=a".into(),
+        names,
+        issuer: "CN=b".into(),
+        not_before: NOW - 10,
+        not_after: NOW + 90 * 86_400,
+    }));
+    entry.assess(NOW);
+    let display = Display::new(Some(&view));
+    let row = display
+        .rows
+        .iter()
+        .find(|r| r.key == "prod-eu/legacy-tls")
+        .unwrap();
+    assert_eq!(row.detail.names.as_ref().unwrap().len(), DETAIL_LINES);
+    assert_eq!(row.detail.names_more, 7);
+    assert_eq!(row.detail.wrong.len(), DETAIL_LINES);
+    assert_eq!(row.detail.wrong_more, 9);
+}
+
+#[gpui_kit::test]
+fn the_page_draws_groups_and_selecting_a_row_fills_the_inspector(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.find("certificates-title");
+        for slug in ["not-valid", "wrong-name", "expiring", "unknown", "valid"] {
+            window.find(format!("certificates-group-{slug}"));
+        }
+        let id = row_id(&page, "payments/pay-tls", cx);
+        window.click(id.clone(), cx);
+        window.render_frame(cx);
+        for part in ["status", "names", "served", "chain"] {
+            window.find(format!("certificates-detail-{part}"));
+        }
+        for ix in 0..4 {
+            window.find(format!("{id}-chain-{ix}"));
+        }
+        window.find(format!("{id}-reason"));
+        // A host the certificate doesn't name is its own section.
+        let id = row_id(&page, "shop/shop-tls", cx);
+        window.click(id.clone(), cx);
+        window.render_frame(cx);
+        window.find("certificates-detail-wrong");
+        window.find(format!("{id}-wrong-0"));
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).selected.is_none());
+    })
+    .unwrap();
+}
+
+fn ledger(page: &Entity<CertificatesScreen>, cx: &gpui_kit::App) -> Vec<String> {
+    page.read(cx).secret_requests.clone()
+}
+
+fn entry_of(page: &Entity<CertificatesScreen>, key: &str, cx: &gpui_kit::App) -> CertEntry {
+    page.read(cx)
+        .view
+        .as_ref()
+        .unwrap()
+        .entry(key)
+        .unwrap()
+        .clone()
+}
+
+#[gpui_kit::test]
+fn safety_g21_nothing_reads_a_secret_until_the_control_is_pressed(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // Showing, drawing, selecting every row and refreshing read no Secret.
+        let keys: Vec<String> = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .map(|r| r.key.to_string())
+            .collect();
+        for key in &keys {
+            let id = row_id(&page, key, cx);
+            window.click(id, cx);
+            window.render_frame(cx);
+        }
+        page.update(cx, |page, cx| page.refresh(window, cx));
+        window.render_frame(cx);
+        assert!(ledger(&page, cx).is_empty(), "{:?}", ledger(&page, cx));
+        // The Secret of a cert-manager Certificate has no control: pressing
+        // it, by button or key, asks for nothing.
+        let id = row_id(&page, "infra/edge-tls", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.click("certificates-detail-read", cx);
+        window.press("r", cx);
+        window.click("certificates-read-secret", cx);
+        assert!(ledger(&page, cx).is_empty(), "{:?}", ledger(&page, cx));
+        // The other is read once, when it is asked for.
+        let id = row_id(&page, "prod-eu/legacy-tls", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        assert!(ledger(&page, cx).is_empty());
+        window.click("certificates-read-secret", cx);
+        window.render_frame(cx);
+        assert_eq!(ledger(&page, cx), ["prod-eu/legacy-tls"]);
+        // A second press has nothing to read: it was read already.
+        window.press("r", cx);
+        window.click("certificates-detail-read", cx);
+        assert_eq!(ledger(&page, cx), ["prod-eu/legacy-tls"]);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn reading_a_secret_fills_the_row_in_place_and_the_key_is_nowhere_on_the_page(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let id = row_id(&page, "prod-eu/legacy-tls", cx);
+        window.click(id.clone(), cx);
+        window.render_frame(cx);
+        assert_eq!(
+            entry_of(&page, "prod-eu/legacy-tls", cx).state,
+            CertState::Unknown
+        );
+        window.press("r", cx);
+        window.render_frame(cx);
+        let entry = entry_of(&page, "prod-eu/legacy-tls", cx);
+        assert_eq!(entry.state, CertState::Healthy);
+        assert_eq!(entry.subject.as_deref(), Some("CN=legacy.example.com"));
+        let row = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|r| r.key == "prod-eu/legacy-tls")
+            .unwrap()
+            .cells[2]
+            .to_string();
+        assert_eq!(row, "in 200 days");
+        // The expired one reads Not valid.
+        let id = row_id(&page, "prod-eu/internal-tls", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.press("r", cx);
+        window.render_frame(cx);
+        let entry = entry_of(&page, "prod-eu/internal-tls", cx);
+        assert_eq!(entry.state, CertState::Broken);
+        assert_eq!(entry.reason, "expired");
+        let row = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|r| r.key == "prod-eu/internal-tls")
+            .unwrap()
+            .cells[2]
+            .to_string();
+        assert_eq!(row, "expired 3 days ago");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_refused_secret_read_leaves_the_row_unknown_with_the_reason(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::SecretRefused, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let key = page.read(cx).display.rows[0].key.to_string();
+        let id = row_id(&page, &key, cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.press("r", cx);
+        window.render_frame(cx);
+        let entry = entry_of(&page, &key, cx);
+        assert_eq!(entry.state, CertState::Unknown);
+        assert!(entry.reason.contains("Forbidden"), "{}", entry.reason);
+        assert!(entry.names.is_none() && entry.not_after.is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn what_was_read_of_a_secret_is_forgotten_with_the_page_a_new_read_and_a_new_source(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    let read = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+        window.render_frame(cx);
+        let id = row_id(&page, "prod-eu/legacy-tls", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.press("r", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            entry_of(&page, "prod-eu/legacy-tls", cx).state,
+            CertState::Healthy
+        );
+    };
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        // Hidden: gone, and readable again when shown.
+        read(window, cx);
+        page.update(cx, |page, cx| page.set_visible(false, window, cx));
+        assert_eq!(
+            entry_of(&page, "prod-eu/legacy-tls", cx).state,
+            CertState::Unknown
+        );
+        page.update(cx, |page, cx| page.set_visible(true, window, cx));
+        window.render_frame(cx);
+        // A new read.
+        read(window, cx);
+        page.update(cx, |page, cx| page.refresh(window, cx));
+        window.render_frame(cx);
+        assert_eq!(
+            entry_of(&page, "prod-eu/legacy-tls", cx).state,
+            CertState::Unknown
+        );
+        // Another person on the same context: the access identity changes.
+        read(window, cx);
+        page.update(cx, |page, cx| {
+            page.set_page_source(source("invented-other-person"), window, cx)
+        });
+        assert!(page.read(cx).view.is_none());
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.activate(window, cx));
+        window.render_frame(cx);
+        assert_eq!(
+            entry_of(&page, "prod-eu/legacy-tls", cx).state,
+            CertState::Unknown
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn open_emits_the_certificate_link_and_a_secret_alone_opens_nothing(cx: &mut TestAppContext) {
+    use crate::resources::{ResourceLink, Tab};
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    let links = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let seen = links.clone();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&page, move |_, link: &ResourceLink, _| {
+            seen.borrow_mut().push(link.clone())
+        })
+    });
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.choose("shop/shop-tls".into(), cx));
+        window.render_frame(cx);
+        window.click("certificates-detail-open", cx);
+        // A Secret no Certificate keeps has nothing to open.
+        page.update(cx, |page, cx| page.choose("prod-eu/legacy-tls".into(), cx));
+        window.render_frame(cx);
+        window.click("certificates-detail-open", cx);
+        window.click("certificates-open", cx);
+        window.press("enter", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let links = links.borrow();
+    assert_eq!(links.len(), 1, "{links:?}");
+    match &links[0] {
+        ResourceLink::Object(kind, object, tab) => {
+            assert_eq!(kind.kind, "Certificate");
+            assert_eq!(
+                (object.namespace.as_str(), object.name.as_str()),
+                ("shop", "shop")
+            );
+            assert_eq!(*tab, Tab::Overview);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[gpui_kit::test]
+fn a_refused_read_is_an_error_with_retry_never_an_empty_list(cx: &mut TestAppContext) {
+    let (_runtime, _page, window) = mount(cx, Shape::Refused, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let state = window.find("certificates-state");
+        assert!(state.label().is_some() || state.bounds().size.height > px(0.));
+        window.find("certificates-retry");
+        assert!(window.try_find("certificates-list").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn empty_and_not_installed_read_plainly(cx: &mut TestAppContext) {
+    let (_runtime, _page, window) = mount(cx, Shape::Empty, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let state = window.find("certificates-empty-state");
+        assert!(
+            state
+                .label()
+                .is_some_and(|l| l.contains("cert-manager has none"))
+                || state.visible()
+        );
+        assert!(window.try_find("certificates-notice-0").is_none());
+    })
+    .unwrap();
+    let (_runtime, _page, window) = mount(cx, Shape::NotInstalled, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let notice = window.find("certificates-notice-0");
+        assert!(
+            notice
+                .label()
+                .is_some_and(|l| l.contains("cert-manager is not installed"))
+                || notice.visible()
+        );
+        window.find("certificates-list");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn table_and_inspector_follow_shared_layout_at_wide_narrow_and_large_text(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, page, window) = mount(cx, Shape::All, width, height);
+        for text in [13., 20.] {
+            cx.update_window(window.into(), |_, window, cx| {
+                crate::text_size::set(text, cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(window.into(), |_, window, cx| {
+                layout_check::settle_header(window, cx);
+                window.render_frame(cx);
+                layout_check::assert_table_page(
+                    window,
+                    cx,
+                    &layout_check::TablePage {
+                        page: "certificates-page",
+                        title: "certificates-title",
+                        title_text: "Certificates",
+                        table: "certificates-table-scroll",
+                        list: "certificates-list",
+                    },
+                );
+                let id = row_id(&page, "payments/pay-tls", cx);
+                window.click(id, cx);
+                window.render_frame(cx);
+                layout_check::assert_inspector(
+                    window,
+                    cx,
+                    "certificates-split",
+                    "certificates-table",
+                    "certificates-detail",
+                    "certificates-detail-title",
+                );
+                let heading = window.find("certificates-detail-title").bounds();
+                let inspector = window.find("certificates-detail").bounds();
+                assert!(
+                    heading.size.width > inspector.size.width / 2.,
+                    "heading collapsed: {heading:?} in {inspector:?}"
+                );
+                window.press("escape", cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn escape_passes_on_only_when_no_inspector_is_selected(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let id = row_id(&page, "shop/shop-tls", cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).selected.is_some());
+        window.press("escape", cx);
+        assert!(page.read(cx).selected.is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_held_read_keeps_the_loading_rows_until_it_answers(cx: &mut TestAppContext) {
+    let hold = freshkube_core::cluster_source::Hold {
+        routes: true,
+        ..Default::default()
+    };
+    let runtime = runtime();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        crate::theme::install(cx)
+    });
+    let mut page = None;
+    let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = CertificatesScreen::new(runtime.handle().clone(), window, cx);
+            view.set_page_source(
+                PageSource {
+                    kube: Some(ClusterSource {
+                        id: "invented-held".into(),
+                        context: "invented".into(),
+                        access: ClusterAccess::Example(hold),
+                    }),
+                    ..PageSource::default()
+                },
+                window,
+                cx,
+            );
+            view.set_visible(true, window, cx);
+            view.activate(window, cx);
+            view
+        });
+        page = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    let page = page.unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(page.read(cx).loader.is_loading());
+        window.find("certificates-list");
+        assert_eq!(page.read(cx).display.columns.0.len(), 6);
+        let loading = window.find("certificates-loading").bounds();
+        assert!(loading.size.height > px(20.), "{loading:?}");
+        assert!(window.try_find("certificates-state").is_none());
+        assert!(window.try_find("certificates-retry").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_failed_refresh_keeps_the_last_read_under_a_banner(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let rows = page.read(cx).display.rows.len();
+        assert!(rows > 0);
+        page.update(cx, |page, cx| {
+            let id = page.identity().unwrap();
+            let request = page.loader.start(id);
+            page.loader
+                .land(&request, Err("Forbidden: invented refusal".into()), cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert_eq!(page.read(cx).display.rows.len(), rows);
+        assert!(window.find("certificates-stale").visible());
+        assert!(window.try_find("certificates-retry").is_none());
+        let segment = page.update(cx, |page, cx| page.status(cx)).unwrap();
+        assert!(format!("{segment:?}").contains("last read retained"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_status_bar_counts_by_state_and_says_when_example_data_was_read(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let segment = page.update(cx, |page, cx| page.status(cx)).unwrap();
+        let text = format!("{segment:?}");
+        assert!(text.contains("Example data · "), "{text}");
+        assert!(text.contains("2 not valid"), "{text}");
+        assert!(text.contains("1 wrong name"), "{text}");
+        assert!(text.contains("8 certificates"), "{text}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_toolbar_buttons_are_icons_in_a_narrow_page_and_words_in_a_wide_one(cx: &mut TestAppContext) {
+    let width_of = |cx: &mut TestAppContext, width: f32| {
+        let (_runtime, _page, window) = mount(cx, Shape::All, width, 880.);
+        let mut button = None;
+        cx.update_window(window.into(), |_, window, cx| {
+            layout_check::settle_header(window, cx);
+            window.render_frame(cx);
+            let read = window.find("certificates-read-secret");
+            button = Some((read.bounds().size.width, read.label().map(str::to_owned)));
+        })
+        .unwrap();
+        button.unwrap()
+    };
+    let (narrow, label) = width_of(cx, 760.);
+    assert!(narrow < px(48.), "{narrow:?}");
+    assert_eq!(label.as_deref(), Some("Read Secret"));
+    let (wide, _) = width_of(cx, 1280.);
+    assert!(wide > px(64.), "{wide:?}");
+}
+
+#[gpui_kit::test]
+fn a_link_selects_a_row_even_before_the_read_lands(cx: &mut TestAppContext) {
+    let runtime = runtime();
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.set_reduce_motion(true);
+        crate::theme::install(cx)
+    });
+    let mut page = None;
+    let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
+        let view = cx.new(|cx| {
+            let mut view = CertificatesScreen::new(runtime.handle().clone(), window, cx)
+                .with_example(Shape::All);
+            view.set_page_source(source("invented-link"), window, cx);
+            view
+        });
+        page = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let page = page.unwrap();
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.select("infra", "edge-tls", cx);
+            page.set_visible(true, window, cx);
+            page.activate(window, cx);
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            page.read(cx).selected.as_ref().map(|key| key.to_string()),
+            Some("infra/edge-tls".into())
+        );
+        window.find("certificates-detail");
+        assert!(ledger(&page, cx).is_empty(), "a link reads nothing");
+    })
+    .unwrap();
+}
