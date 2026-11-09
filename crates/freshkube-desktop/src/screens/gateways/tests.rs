@@ -782,3 +782,53 @@ fn rows_carry_the_uid_a_live_link_needs() {
     assert_eq!(class("legacy"), "gc-legacy");
     assert_eq!(class("gone"), "");
 }
+
+#[test]
+fn contested_hosts_and_class_members_are_capped_with_a_count_and_their_lines_prepared() {
+    use super::display::DETAIL_LINES;
+    let mut read = example::read(Shape::Serving).unwrap();
+    // One Gateway names sixty hosts that sixty other Gateways name too.
+    let hosts = |n: usize| {
+        (0..n)
+            .map(|h| {
+                serde_json::json!({"name": format!("l{h}"), "port": 1000 + h, "protocol": "HTTP",
+                    "hostname": format!("h{h}.example.com")})
+            })
+            .collect::<Vec<_>>()
+    };
+    let make = |name: &str, n: usize| {
+        freshkube_core::resources::traffic::routes::GatewayFacts::parse(&serde_json::json!({
+            "metadata": {"name": name, "namespace": "many", "generation": 1},
+            "spec": {"gatewayClassName": "example", "listeners": hosts(n)},
+        }))
+        .unwrap()
+    };
+    let items = &mut read.gateways.as_mut().unwrap().items;
+    items.push(make("wide", DETAIL_LINES + 4));
+    items.push(make("twin", DETAIL_LINES + 4));
+    // More Gateways of one class than the Inspector lists.
+    for n in 0..DETAIL_LINES {
+        items.push(make(&format!("g{n}"), 1));
+    }
+    let display = Display::new(Mode::Gateways, Some(&read));
+    let row = display.rows.iter().find(|r| r.name == "wide").unwrap();
+    let Detail::Gateway(detail) = &row.detail else {
+        panic!("a Gateway's detail");
+    };
+    assert_eq!(detail.contested.len(), DETAIL_LINES);
+    assert_eq!(detail.contested_more, 4);
+    // A class member's line is made with the read, not while drawing.
+    let classes = Display::new(Mode::Classes, Some(&read));
+    let example = classes.rows.iter().find(|r| r.name == "example").unwrap();
+    let Detail::Class(detail) = &example.detail else {
+        panic!("a class's detail");
+    };
+    assert!(detail.gateways.len() <= DETAIL_LINES);
+    assert!(
+        detail
+            .gateways
+            .iter()
+            .all(|(line, state, _)| line.ends_with(&format!(" · {state}")))
+    );
+    assert!(detail.gateways_more > 0);
+}

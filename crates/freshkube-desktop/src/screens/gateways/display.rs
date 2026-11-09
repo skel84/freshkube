@@ -39,13 +39,14 @@ pub(crate) struct GatewayDetail {
     pub routes: Vec<RouteBlock>,
     pub routes_more: usize,
     pub contested: Vec<String>,
+    pub contested_more: usize,
 }
 
 pub(crate) struct ClassDetail {
     pub state: &'static str,
     pub reason: String,
     pub says: Option<String>,
-    /// `(key, state, tone)`.
+    /// `(line, state, tone)`: the line is `key · state`.
     pub gateways: Vec<(String, &'static str, ui::Tone)>,
     pub gateways_more: usize,
 }
@@ -124,6 +125,7 @@ fn gateway_detail(entry: &GatewayEntry) -> GatewayDetail {
             .take(DETAIL_LINES)
             .map(|c| format!("{} is also named by {}", c.host, c.also.join(", ")))
             .collect(),
+        contested_more: more(entry.contested.len()),
     }
 }
 
@@ -136,7 +138,13 @@ fn class_detail(entry: &ClassEntry) -> ClassDetail {
             .gateways
             .iter()
             .take(DETAIL_LINES)
-            .map(|(key, state)| (key.clone(), state.label(), gateway_tone(*state)))
+            .map(|(key, state)| {
+                (
+                    format!("{key} · {}", state.label()),
+                    state.label(),
+                    gateway_tone(*state),
+                )
+            })
             .collect(),
         gateways_more: more(entry.gateways.len()),
     }

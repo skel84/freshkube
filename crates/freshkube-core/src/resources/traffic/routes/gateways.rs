@@ -12,8 +12,8 @@
 use super::facts::*;
 use super::read::RoutesRead;
 use super::trace::{
-    Cause, Listing, Owner, RouteVerdict, Standing, StepVerdict, blame, class_step, gateway_step,
-    standing,
+    Cause, Listing, Owner, RouteVerdict, Standing, StepVerdict, blame, class_check, class_step,
+    gateway_step, standing,
 };
 use crate::failure::Failure;
 use std::collections::{BTreeMap, BTreeSet};
@@ -208,6 +208,8 @@ pub struct ClassEntry {
     pub reason: String,
     /// What the controller reports, kept apart from the reason.
     pub says: Option<String>,
+    /// The verdict was written for an older generation than the class has.
+    pub stale: bool,
     /// The Gateways of this class, with how each reads.
     pub gateways: Vec<(String, GatewayState)>,
 }
@@ -376,7 +378,8 @@ fn contested_hosts(gateways: &[GatewayFacts]) -> BTreeMap<String, Vec<Contested>
 }
 
 fn class_entries(
-    classes: &Listing<ClassFacts>,
+    list: &Listing<ClassFacts>,
+    classes: &Result<Listing<ClassFacts>, Failure>,
     gateways: &Result<Vec<GatewayEntry>, Failure>,
 ) -> Vec<ClassEntry> {
     let uses = |name: &str| -> Vec<(String, GatewayState)> {
@@ -390,41 +393,33 @@ fn class_entries(
             })
             .unwrap_or_default()
     };
+    let classes_read = classes;
+    let classes = list;
     let mut entries = classes
         .items
         .iter()
         .map(|class| {
-            let (state, reason, says) = match find(&class.conditions, "Accepted") {
-                None => (
-                    ClassState::Blind,
-                    "blind: the class has no status, so no controller has claimed it".to_owned(),
-                    None,
-                ),
-                Some(cond) => match cond.status {
-                    Tri::True => (
-                        ClassState::Claimed,
-                        format!("claimed by {}", class.controller),
-                        Some(cond.says()),
-                    ),
-                    Tri::False => (
-                        ClassState::Refused,
-                        format!("{} did not accept the class", class.controller),
-                        Some(cond.says()),
-                    ),
-                    Tri::Unknown => (
-                        ClassState::Pending,
-                        "pending: the class is not accepted yet".to_owned(),
-                        Some(cond.says()),
-                    ),
-                },
+            // The trace's own judgement of the class, so the pages agree.
+            let step = class_check(
+                &class.name,
+                format!("GatewayClass {}", class.name),
+                classes_read,
+            );
+            let state = match (step.verdict, step.cause) {
+                (StepVerdict::Fail, _) => ClassState::Refused,
+                (StepVerdict::Unknown, Some(Cause::Pending)) => ClassState::Pending,
+                (StepVerdict::Unknown, _) => ClassState::Blind,
+                (StepVerdict::Pass | StepVerdict::Warn, _) => ClassState::Claimed,
+                (_, _) => ClassState::Blind,
             };
             ClassEntry {
                 name: class.name.clone(),
                 uid: class.uid.clone(),
                 controller: Some(class.controller.clone()),
                 state,
-                reason,
-                says,
+                reason: step.reason,
+                says: step.controller,
+                stale: step.stale,
                 gateways: uses(&class.name),
             }
         })
@@ -452,6 +447,7 @@ fn class_entries(
             state: ClassState::Missing,
             reason: format!("no GatewayClass {name} exists, though Gateways name it"),
             says: None,
+            stale: false,
             gateways: uses(name),
         }));
     }
@@ -559,7 +555,7 @@ impl GatewaysView {
             entries
         });
         let classes = match &read.classes {
-            Ok(list) => Ok(class_entries(list, &gateways)),
+            Ok(list) => Ok(class_entries(list, &read.classes, &gateways)),
             Err(failure) => Err(failure.clone()),
         };
         Self {

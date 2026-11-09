@@ -227,14 +227,15 @@ impl GatewaysScreen {
         routes.extend(self.more_line(&format!("{id}-routes"), detail.routes_more, cx));
         sections.push(self.section("routes", &detail.routes_title, routes, cx));
         if !detail.contested.is_empty() {
-            let lines = detail
+            let mut lines = detail
                 .contested
                 .iter()
                 .enumerate()
                 .map(|(ix, words)| {
                     self.line(format!("{id}-contested-{ix}"), words.clone(), false, cx)
                 })
-                .collect();
+                .collect::<Vec<_>>();
+            lines.extend(self.more_line(&format!("{id}-contested"), detail.contested_more, cx));
             sections.push(self.section("contested", "Contested hostnames", lines, cx));
         }
         sections
@@ -259,7 +260,7 @@ impl GatewaysScreen {
             .gateways
             .iter()
             .enumerate()
-            .map(|(ix, (key, state, tone))| {
+            .map(|(ix, (line, state, tone))| {
                 h_flex()
                     .id(SharedString::from(format!("{id}-gateway-{ix}")))
                     .test_support()
@@ -270,7 +271,7 @@ impl GatewaysScreen {
                         *state,
                         cx,
                     ))
-                    .child(div().child(format!("{key} · {state}")))
+                    .child(div().child(line.clone()))
                     .into_any_element()
             })
             .collect::<Vec<_>>();

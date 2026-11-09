@@ -420,7 +420,7 @@ mod backend;
 mod parent;
 
 use backend::branches;
-pub(super) use parent::{Standing, class_step, gateway_step, standing};
+pub(super) use parent::{Standing, class_check, class_step, gateway_step, standing};
 use parent::{listener_step, namespace_step};
 
 /// A parent's verdict from its shared steps and branches.

@@ -22,8 +22,18 @@ pub(in crate::resources::traffic::routes) fn class_step(
     gateway: &GatewayFacts,
     classes: &Result<Listing<ClassFacts>, Failure>,
 ) -> TraceStep {
-    let id = StepId::Class;
     let asks = format!("Gateway {} uses class {}", gateway.name, gateway.class);
+    class_check(&gateway.class, asks, classes)
+}
+
+/// The class named `class`, judged as step 1 judges it. The GatewayClass page
+/// asks it of every class, so the page and the trace read a class alike.
+pub(in crate::resources::traffic::routes) fn class_check(
+    wanted: &str,
+    asks: String,
+    classes: &Result<Listing<ClassFacts>, Failure>,
+) -> TraceStep {
+    let id = StepId::Class;
     let classes = match classes {
         Ok(classes) => classes,
         Err(failure) => {
@@ -40,7 +50,7 @@ pub(in crate::resources::traffic::routes) fn class_step(
             .quoting(asks, "unknown");
         }
     };
-    let Some(class) = classes.items.iter().find(|c| c.name == gateway.class) else {
+    let Some(class) = classes.items.iter().find(|c| c.name == wanted) else {
         if classes.cut {
             return TraceStep::unknown(
                 id,
@@ -53,7 +63,7 @@ pub(in crate::resources::traffic::routes) fn class_step(
         return TraceStep::fail(
             id,
             Owner::Platform,
-            format!("GatewayClass {} does not exist", gateway.class),
+            format!("GatewayClass {wanted} does not exist"),
         )
         .quoting(asks, "no such class");
     };
@@ -66,13 +76,20 @@ pub(in crate::resources::traffic::routes) fn class_step(
         )
         .because(Cause::Blind)
         .quoting(asks, serves),
-        Some(cond) if cond.status == Tri::True => stale_if(
-            TraceStep::pass(id, format!("claimed by {}", class.controller))
+        Some(cond) if cond.status == Tri::True => {
+            let mut step = TraceStep::pass(id, format!("claimed by {}", class.controller))
                 .quoting(asks, serves)
-                .reported(Some(cond.says())),
-            cond,
-            class.generation,
-        ),
+                .reported(Some(cond.says()));
+            // A pass written for an older generation is a warning, as the
+            // Gateway's Programmed is: it goes on, and says it is stale.
+            if let Some(note) = generation_note(cond, class.generation) {
+                step.verdict = StepVerdict::Warn;
+                step.stale = true;
+                step.reason = note;
+                step.owner = Some(Owner::Controller);
+            }
+            step
+        }
         Some(cond) if cond.status == Tri::False => stale_if(
             TraceStep::fail(
                 id,

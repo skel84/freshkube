@@ -26,6 +26,8 @@ Steps 1 to 4 are the parent's; 5 to 7 are run per backend, so a weighted split i
 
 Each step carries what the route **asks for** and what the gateway **serves**, a reason, whose problem it is (Platform, Yours, Controller; This machine is for a later probe), and the **controller's own words** on a separate line. Configuration and status are never merged: a step can pass on configuration and fail on what the controller reports, and then it is the Controller's.
 
+A verdict written for an older generation than the object has marks the row stale whichever condition it is, on the class or the Gateway: a pass becomes a warning (the trace goes on), and a refusal or an Unknown stays what it is with the stale mark. The Gateway and GatewayClass pages judge the same class and Gateway steps, so they show the same mark.
+
 **What the controller already said wins over what is inferred.** A Fail worked out from configuration alone (no listener fits, the namespace is not allowed, no ReferenceGrant is found) never overrules the route's own controller reporting `Accepted=True` (or `ResolvedRefs=True`) for the route's current generation. It reads Unknown, owned by the Controller, with both sides quoted, and proposes no grant. A verdict older than the route does not count as current.
 
 **Unknown is never green and never "not serving".** A refused, unserved or cut read makes only the steps that need it Unknown, with its reason. A Gateway or class with no status is *blind*, a Gateway not programmed yet is *pending*, a Programmed Gateway with no address is *blind* too, and a failed one is *broken*: three different words. A verdict older than the object's generation (`observedGeneration`) is a stale warning, not a failure.

@@ -808,3 +808,64 @@ fn workloads_that_could_not_be_read_are_counted_in_a_note() {
         topology.notes
     );
 }
+
+#[test]
+fn a_stale_class_reads_the_same_on_the_class_page_and_the_gateway_page() {
+    let mut read = read(Shape::Serving);
+    // The class was accepted for generation 1 and is now at generation 4.
+    if let Ok(list) = read.classes.as_mut() {
+        list.items
+            .iter_mut()
+            .find(|c| c.name == "example")
+            .unwrap()
+            .generation = 4;
+    }
+    let view = GatewaysView::new(&read);
+    let class = view
+        .classes
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|c| c.name == "example")
+        .unwrap();
+    assert_eq!(class.state, ClassState::Claimed);
+    assert!(
+        class.stale && class.reason.contains("stale"),
+        "{}",
+        class.reason
+    );
+    let edge = entry(&view, "infra/edge");
+    assert_eq!(edge.state, GatewayState::Serving);
+    assert!(
+        edge.stale && edge.reason.contains("generation 1, now 4"),
+        "{}",
+        edge.reason
+    );
+}
+
+#[test]
+fn every_class_reads_as_the_trace_judges_it() {
+    use super::trace::{StepVerdict, class_check};
+    let read = read(Shape::Gateways);
+    let view = GatewaysView::new(&read);
+    for class in &read.classes.as_ref().unwrap().items {
+        let step = class_check(&class.name, String::new(), &read.classes);
+        let entry = view
+            .classes
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|c| c.name == class.name)
+            .unwrap();
+        assert_eq!(entry.reason, step.reason, "{}", class.name);
+        assert_eq!(entry.says, step.controller, "{}", class.name);
+        assert_eq!(entry.stale, step.stale, "{}", class.name);
+        let claimed = matches!(step.verdict, StepVerdict::Pass | StepVerdict::Warn);
+        assert_eq!(
+            entry.state == ClassState::Claimed,
+            claimed,
+            "{}",
+            class.name
+        );
+    }
+}
