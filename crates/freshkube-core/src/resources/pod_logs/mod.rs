@@ -371,6 +371,8 @@ impl Follower {
         if !container.started() {
             return self.wait_for(None).await;
         }
+        // Heard from before the log opens, so a wake while it opens counts.
+        let mut wakes = crate::wake::Wakes::new();
         let params = LogParams {
             container: Some(self.request.container.clone()),
             follow: true,
@@ -400,12 +402,17 @@ impl Follower {
         if self.sink.send(PodLogUpdate::Streaming).await.is_err() {
             return false;
         }
-        let Some(read) = pump(reader, &mut self.position, &self.sink).await else {
+        let Some(read) = pump(reader, &mut self.position, &self.sink, Some(&mut wakes)).await
+        else {
             return false;
         };
         if read.lines > 0 {
             self.failures = 0;
             self.backoff = MIN_BACKOFF;
+        }
+        // A wake is no failure: open the log again from the last line.
+        if read.woke {
+            return true;
         }
         self.closed(&container, read.error).await
     }
@@ -561,7 +568,7 @@ async fn read_previous(api: &Api<Pod>, request: &LogRequest, sink: &mpsc::Sender
         return;
     }
     let mut position = LogPosition::default();
-    let Some(read) = pump(reader, &mut position, sink).await else {
+    let Some(read) = pump(reader, &mut position, sink, None).await else {
         return;
     };
     let update = match read.error {
@@ -577,14 +584,21 @@ struct Read {
     lines: usize,
     /// Why it closed, when it broke rather than ended.
     error: Option<Failure>,
+    /// The machine woke while it was open: its connection is not to be
+    /// trusted, and it is opened again from the position at once.
+    woke: bool,
 }
 
 /// Sends each new line of `reader` to `sink`, skipping lines at or before
 /// `position`, and advances it. `None` when `sink` closed.
+///
+/// With `wakes`, a wake ends the read where it stands (`Read::woke`): the
+/// position holds the last whole line, so reading on from it repeats none.
 async fn pump(
     reader: impl AsyncBufRead,
     position: &mut LogPosition,
     sink: &mpsc::Sender<PodLogUpdate>,
+    mut wakes: Option<&mut crate::wake::Wakes>,
 ) -> Option<Read> {
     let mut reader = pin!(reader);
     let resumed_from = *position;
@@ -592,12 +606,33 @@ async fn pump(
     let mut lines = 0;
     let mut line = Vec::new();
     loop {
-        match next_line(reader.as_mut(), &mut line).await {
-            Ok(false) => return Some(Read { lines, error: None }),
+        let next = tokio::select! {
+            next = next_line(reader.as_mut(), &mut line) => next,
+            () = async {
+                match wakes.as_deref_mut() {
+                    Some(wakes) => wakes.woke().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                return Some(Read { lines, error: None, woke: true });
+            }
+        };
+        match next {
+            Ok(false) => {
+                return Some(Read {
+                    lines,
+                    error: None,
+                    woke: false,
+                });
+            }
             Ok(true) => {}
             Err(error) => {
                 let error = Some(Failure::new(FailureKind::Unreachable, error.to_string()));
-                return Some(Read { lines, error });
+                return Some(Read {
+                    lines,
+                    error,
+                    woke: false,
+                });
             }
         }
         let text = String::from_utf8_lossy(&line).into_owned();

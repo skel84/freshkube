@@ -133,7 +133,10 @@ pub async fn watch_pod(access: ClusterAccess, namespace: String, name: String, t
             };
             let api: Api<Pod> = Api::namespaced(client, &namespace);
             let config = watcher::Config::default().fields(&format!("metadata.name={name}"));
-            let mut stream = pin!(watcher(api, config));
+            let mut stream = pin!(freshkube_core::wake::restarting(move || watcher(
+                api.clone(),
+                config.clone()
+            )));
             let mut healthy = false;
             loop {
                 let Some(item) = stream.next().await else {
@@ -182,7 +185,10 @@ pub async fn watch_project(access: ClusterAccess, project: String, tx: Sender<Se
                 "stages",
             );
             let api: Api<DynamicObject> = Api::namespaced_with(client, &project, &resource);
-            let mut stream = pin!(watcher(api, watcher::Config::default()));
+            let mut stream = pin!(freshkube_core::wake::restarting(move || watcher(
+                api.clone(),
+                watcher::Config::default()
+            )));
             let mut stages: BTreeMap<String, StageSeen> = BTreeMap::new();
             let mut listing: BTreeMap<String, StageSeen> = BTreeMap::new();
             let mut healthy = false;

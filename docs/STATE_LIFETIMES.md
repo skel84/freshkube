@@ -230,8 +230,12 @@ No native hook is used; Windows' monotonic clock keeps running in sleep, so a
 wake there goes unseen. The decision is a function of two readings, tested on
 the executor's clock with a wall clock a test sets.
 
-A wake does what a Refresh the person asked for does (`Pilot::refresh_now`),
-and nothing more. It starts no read of its own and no owner changes:
+The shell [announces](../crates/freshkube-core/src/wake.rs) the wake
+(`freshkube_core::wake::announce`) and each live stream holds a `Wakes` made when
+it opened, so only a stream that exists hears it: nothing that was stopped starts
+again, and nothing reads that wasn't already reading. A wake also does what a
+Refresh the person asked for does (`Pilot::refresh_now`). It starts no read of its
+own and no owner changes:
 
 | Read | On a wake |
 | --- | --- |
@@ -239,7 +243,10 @@ and nothing more. It starts no read of its own and no owner changes:
 | Session alert read | Read again, as the summary's relist does. |
 | Talos overview | Read again, unless one is already running. |
 | The shown page | Refreshed through `ScreenPanel::refresh`; a hidden page stays stopped. |
-| Dock log tabs, followed items, forwards | Unchanged in this step (the next ones resume their own streams). |
+| Resources list watch | The open watch ends and a new one starts at once from the last resourceVersion: no list, no backoff, nothing repeated; if the version expired the server says 410 and the usual relist follows. Rows already batched are sent first. |
+| Dock log tabs (pods) | The open log ends where it stands and opens again from the last whole line's time, skipping the lines of that second already shown (`LogPosition`); it is no failure, so no "Reconnecting" row and no backoff. |
+| Followed items, workload pods, object events, a forward's pods and target watches | The watcher is made again, so it lists first and replaces what it held, as it does after a 410. Followed reducers hold state, not events, so a repeated list tells nothing twice. |
+| Talos log streams, forwards' own connections | Not reconnected by the wake: HTTP/2 pings find a dead connection in about 30 s, and each source's retry takes it from there. |
 
 The status bar says "Reconnecting to <context>…" from the wake until the next
 summary publication or overview answer lands (`Chrome.reconnecting`; it gives

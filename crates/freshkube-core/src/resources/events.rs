@@ -166,7 +166,10 @@ pub async fn watch_object_events(
     let config = watcher::Config::default().fields(&scope.field_selector);
     let mut backoff = MIN_BACKOFF;
     loop {
-        let mut stream = pin!(watcher(api.clone(), config.clone()));
+        let mut stream = pin!(crate::wake::restarting(|| watcher(
+            api.clone(),
+            config.clone()
+        )));
         let mut listed = Vec::new();
         let failure = loop {
             let Some(item) = stream.next().await else {

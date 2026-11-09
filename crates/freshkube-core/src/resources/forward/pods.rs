@@ -130,7 +130,10 @@ impl PodWatches {
 async fn follow(api: Api<Pod>, config: watcher::Config, sink: watch::Sender<PodSnapshot>) {
     let mut backoff = MIN_BACKOFF;
     loop {
-        let mut stream = pin!(watcher(api.clone(), config.clone()));
+        let mut stream = pin!(crate::wake::restarting(|| watcher(
+            api.clone(),
+            config.clone()
+        )));
         let mut pods: BTreeMap<String, PodInfo> = BTreeMap::new();
         let mut listing = BTreeMap::new();
         let failure = loop {

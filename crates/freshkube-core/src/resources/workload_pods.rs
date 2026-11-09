@@ -123,7 +123,10 @@ pub async fn follow_pods(
     let mut backoff = MIN_BACKOFF;
     let mut pods: BTreeMap<String, WorkloadPod> = BTreeMap::new();
     loop {
-        let mut stream = pin!(watcher(api.clone(), config.clone()));
+        let mut stream = pin!(crate::wake::restarting(|| watcher(
+            api.clone(),
+            config.clone()
+        )));
         let mut listing = BTreeMap::new();
         let failure = loop {
             let Some(item) = stream.next().await else {

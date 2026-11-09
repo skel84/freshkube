@@ -67,6 +67,11 @@ impl Pilot {
         {
             self.chrome.wakes += 1;
         }
+        // Every open stream starts over where it was. A test's wake stays
+        // in its test: the signal is process-wide, and the others' streams
+        // are none of its business.
+        #[cfg(not(test))]
+        freshkube_core::wake::announce();
         self.chrome.reconnecting = Some(Duration::ZERO);
         self.refresh_now(window, cx);
         cx.notify();
