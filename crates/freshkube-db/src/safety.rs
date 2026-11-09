@@ -127,6 +127,11 @@ async fn safety_g20_a_plan_never_analyzes() {
             "{sql}"
         );
     }
+    // A statement that is already a plan is never wrapped or sent by Plan.
+    assert!(matches!(
+        session.explain("explain select 1").await,
+        Err(QueryError::NotSent(_))
+    ));
     let sent = wire.sent();
     assert!(
         !sent
