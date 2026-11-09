@@ -179,6 +179,16 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g20_a_plan_never_analyzes` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_every_request_ends_rolled_back_with_its_locks_let_go_and_nothing_is_committed` (`crates/freshkube-db/src/safety.rs`)
 
+### 21. A TLS Secret is read only on request, `tls.key` never leaves core, and no Secret is read where a Certificate's status answers
+
+The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.md](features/traffic.md#certificates-n4)). It lists and gets objects, and reads no Secret to draw its rows: where a cert-manager Certificate keeps the Secret, its names and expiry come from that Certificate's status, and core makes no request for the Secret at all. Any other Secret is read by one GET of its name, only when the person presses Read Secret, and only the parsed facts of `tls.crt` leave core (subject, names, issuer, not-before, not-after); the result type has no field for `tls.key`, for the PEM or for any other key, and every value is wiped before it returns. The facts stay in the page's memory and go with the read, a hidden page, or a change of source. A refused read is Unknown, never "wrong".
+
+- `safety_g21_tls_key_never_leaves_core` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g21_the_page_read_asks_for_no_secret_and_a_managed_secret_is_never_requested` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g21_a_secret_is_read_only_by_name_and_with_one_get` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g21_a_refused_or_missing_secret_is_unknown_or_not_found_never_wrong` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g21_nothing_reads_a_secret_until_the_control_is_pressed` (`crates/freshkube-desktop/src/screens/certificates/tests.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

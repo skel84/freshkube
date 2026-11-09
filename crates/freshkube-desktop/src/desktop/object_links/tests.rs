@@ -850,3 +850,50 @@ fn an_owner_read_for_a_link_from_another_cluster_starts_nothing(cx: &mut TestApp
     })
     .unwrap();
 }
+
+/// A route's trace links to the certificate that serves its host: the link
+/// navigates and selects, reads nothing, and a link made in another cluster is
+/// refused, never opened on this one.
+#[gpui_kit::test]
+fn a_certificate_link_opens_the_page_with_the_row_selected_and_reads_nothing(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let link = |connection: Option<String>| crate::resources::ResourceLink::Certificate {
+        namespace: "infra".into(),
+        name: "edge-tls".into(),
+        connection,
+    };
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.resource_link(link(Some(example::connection("staging-eu"))), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Another cluster's link is refused: the page did not move.
+    assert_ne!(
+        cx.read(|cx| pilot.read(cx).navigation.page),
+        Page::Certificates
+    );
+    cx.update_window(handle, |_, window, cx| {
+        let connection = pilot.read(cx).source().kube.unwrap().id;
+        pilot.update(cx, |pilot, cx| {
+            pilot.resource_link(link(Some(connection)), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(pilot.read(cx).navigation.page, Page::Certificates);
+        let page = pilot.read(cx).pages.certificates.clone();
+        assert_eq!(
+            page.read(cx).selected_key().as_deref(),
+            Some("infra/edge-tls")
+        );
+        assert!(page.read(cx).secrets_asked().is_empty());
+        window.find("certificates-detail");
+    })
+    .unwrap();
+}

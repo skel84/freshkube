@@ -401,6 +401,18 @@ impl CertificatesScreen {
         cx.notify();
     }
 
+    /// The selected row's key, for tests of a link into the page.
+    #[cfg(test)]
+    pub(crate) fn selected_key(&self) -> Option<String> {
+        self.selected.as_ref().map(ToString::to_string)
+    }
+
+    /// The Secrets this page was asked to read, for the same.
+    #[cfg(test)]
+    pub(crate) fn secrets_asked(&self) -> &[String] {
+        &self.secret_requests
+    }
+
     pub(super) fn retry(&self, cx: &mut Context<Self>) -> gpui_kit::component::button::Button {
         use gpui_kit::component::button::Button;
         Button::new("certificates-retry")
