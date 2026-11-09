@@ -86,7 +86,7 @@ pub(super) fn attach(change: &mut Change, evidence: &Evidence) {
                     if let Some(stale) = &summary.stale {
                         change
                             .missing
-                            .push(Missing::new(Gap::Unreadable, stale.sentence()));
+                            .push(Missing::new(Gap::Unreadable, stale.sentence()).from_github());
                     }
                     change.origin.pull_request.get_or_insert(summary.number);
                     change.origin.pull = Some(summary);
@@ -99,7 +99,9 @@ pub(super) fn attach(change: &mut Change, evidence: &Evidence) {
                     Source::Unreadable(why) => (Gap::Unreadable, why),
                     Source::Read(_) | Source::Capped(..) => return,
                 };
-                change.missing.push(Missing::new(gap, why.clone()));
+                change
+                    .missing
+                    .push(Missing::new(gap, why.clone()).from_github());
             }
         },
     }

@@ -15,7 +15,7 @@ freshkube-observability      → core, delivery, graph, logs, monitoring, prefs,
 freshkube-delivery           → core, talos-rs
 freshkube-followed           → core, delivery, prefs, reads, ui
 freshkube-agent              → core, nav, prefs
-freshkube-cli                → core
+freshkube-cli                → core, delivery
 freshkube-monitoring         → core, prefs, probe, reads, ui, talos-rs
 freshkube-logs               → core, probe, ui
 freshkube-terminal           → probe, ui
@@ -175,7 +175,7 @@ Every log view is `LogView<S: LogSource>` from `freshkube-logs` (`crates/freshku
 
 Behaviour that does not belong in the rules lives in one doc per feature, each starting with its module paths and the modules whose tests prove it (#587).
 
-- [docs/features/cli.md](features/cli.md): the `check` and `get` commands, their cluster choice, exit codes and JSON.
+- [docs/features/cli.md](features/cli.md): the `check`, `get`, `changes` and `waiting-to-ship` commands, their cluster choice, exit codes and JSON.
 - [docs/features/applications.md](features/applications.md): the Applications area, the Changes list and the change page.
 - [docs/features/deep-links.md](features/deep-links.md): Copy link, the `freshkube://open` link, how it is matched to a cluster and opened, and the outcomes it can end in.
 - [docs/features/resources.md](features/resources.md): the Resources page, the dock's logs, shells and ports, and a pod's cause card.
