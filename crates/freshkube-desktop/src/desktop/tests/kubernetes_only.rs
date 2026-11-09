@@ -198,6 +198,9 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
                     | Page::Resources
                     | Page::Databases
                     | Page::Routes
+                    | Page::Gateways
+                    | Page::GatewayClasses
+                    | Page::Topology
                     | Page::Access
                     | Page::Health
                     | Page::Nodes
@@ -211,6 +214,11 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
             window.render_frame(cx);
             assert_eq!(view.read(cx).navigation.page, page);
             assert!(window.find("needs-talosconfig").visible(), "{page:?}");
+            assert_eq!(
+                window.find("needs-talosconfig").label(),
+                Some("This page is for Talos Linux nodes\nThis window opened with a kubeconfig only. Choose a talosconfig in Settings › Connection to read these nodes. You can keep browsing Kubernetes without it."),
+                "{page:?}"
+            );
         }
         view.update(cx, |view, cx| view.navigate(Page::Databases, window, cx));
         window.render_frame(cx);
@@ -483,10 +491,20 @@ fn mount_kubernetes_only(
     kubeconfig: std::path::PathBuf,
     context: Option<&str>,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    mount_kubernetes_only_sized(cx, kubeconfig, context, 1280., 860.)
+}
+
+fn mount_kubernetes_only_sized(
+    cx: &mut TestAppContext,
+    kubeconfig: std::path::PathBuf,
+    context: Option<&str>,
+    width: f32,
+    height: f32,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     // Reading and connecting run on Tokio and wake GPUI from there.
     cx.executor().allow_parking();
     let options = GpuiOptions::kubernetes_only(Some(kubeconfig), context.map(Into::into), 100);
-    mount(cx, options, 1280., 860.)
+    mount(cx, options, width, height)
 }
 
 fn retry_after_kubeconfig_edit(
@@ -689,4 +707,53 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
         )
     });
     server.abort();
+}
+
+/// The status bar cuts a long failure at its width; hovering the segment
+/// shows all of it, the reason and the fix, as one wrapped text.
+#[gpui_kit::test]
+fn the_whole_connection_failure_is_in_the_status_bars_tooltip(cx: &mut TestAppContext) {
+    // The narrow window at the largest text size is where the line is cut
+    // and where a wide tooltip would leave the window.
+    for (width, height, text_size, name) in [
+        (1280., 860., 13., "whole"),
+        (760., 560., 20., "whole-small"),
+    ] {
+        let (_runtime, handle, _view) =
+            mount_kubernetes_only_sized(cx, kubeconfig_file(name), None, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text_size, cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+        wait_until(cx, handle, "lab to refuse", |window, _| {
+            kubernetes_status(window).starts_with("Couldn't connect to lab: ")
+        });
+        let line = cx
+            .update_window(handle, |_, window, _| kubernetes_status(window))
+            .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.hover("kubernetes-status", cx);
+        })
+        .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(600));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let tooltip = window.find("kubernetes-status-whole");
+            assert!(tooltip.visible());
+            assert_eq!(tooltip.label(), Some(line.as_str()));
+            let bounds = tooltip.bounds();
+            let size = window.viewport_size();
+            assert!(
+                bounds.left() >= gpui_kit::px(0.)
+                    && bounds.right() <= size.width
+                    && bounds.bottom() <= size.height,
+                "{width}x{height} at {text_size}: {bounds:?} in {size:?}"
+            );
+        })
+        .unwrap();
+    }
 }

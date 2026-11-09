@@ -15,6 +15,7 @@
 mod agent;
 mod feed;
 mod follow;
+mod query;
 mod saved;
 #[cfg(test)]
 mod tests;
@@ -42,6 +43,7 @@ pub(crate) use agent::AgentHost;
 pub(crate) use agent::FollowStrip;
 use agent::{AgentEvent, AgentView};
 use feed::Feed;
+pub(crate) use query::QueryView;
 
 /// The dock's key context, on its root in every state that draws it.
 pub(crate) const CONTEXT: &str = "Dock";
@@ -153,6 +155,19 @@ impl TabKey {
         }
     }
 
+    /// A Query tab's key: one per database, by its UID.
+    fn query(origin: &Origin, request: &crate::screens::QueryRequest) -> Self {
+        Self {
+            connection: origin.source.id.clone(),
+            resource: "query".into(),
+            namespace: String::new(),
+            name: request.title.clone(),
+            uid: request.key.clone(),
+            wildcard: false,
+            container: String::new(),
+        }
+    }
+
     /// A shell tab's key: its pod and container.
     fn shell(identity: &ResourceIdentity, container: &str) -> Self {
         Self {
@@ -180,6 +195,8 @@ pub(crate) enum TabKind {
     Shell(Entity<ShellView>),
     /// The agent: user-started like a log tab, saved nowhere.
     Agent(Entity<AgentView>),
+    /// A database's query editor on the explorer's session: saved nowhere.
+    Query(Entity<QueryView>),
 }
 
 /// The cluster a tab belongs to, captured when the tab starts (#878): its
@@ -272,6 +289,7 @@ impl DockTab {
             TabKind::Workload(view) => view.read(cx).least_height(),
             TabKind::Shell(view) => view.read(cx).least_height(),
             TabKind::Agent(view) => view.read(cx).least_height(),
+            TabKind::Query(view) => view.read(cx).least_height(),
         }
     }
 
@@ -289,6 +307,7 @@ impl DockTab {
                 window.focus(&focus, cx);
             }
             TabKind::Agent(view) => view.update(cx, |view, cx| view.focus_input(window, cx)),
+            TabKind::Query(view) => view.update(cx, |view, cx| view.focus_editor(window, cx)),
         }
         true
     }
@@ -298,7 +317,7 @@ impl DockTab {
             TabKind::Pod(view) => view.update(cx, |view, cx| view.set_visible(visible, cx)),
             TabKind::Workload(view) => view.update(cx, |view, cx| view.set_visible(visible, cx)),
             // A session runs whether its tab shows or not.
-            TabKind::Shell(_) | TabKind::Agent(_) => {}
+            TabKind::Shell(_) | TabKind::Agent(_) | TabKind::Query(_) => {}
         }
     }
 
@@ -308,7 +327,7 @@ impl DockTab {
             TabKind::Workload(view) => view.update(cx, |view, _| view.set_access(access.clone())),
             TabKind::Shell(view) => view.update(cx, |view, _| view.set_access(access.clone())),
             // A session keeps the access it started with.
-            TabKind::Agent(_) => {}
+            TabKind::Agent(_) | TabKind::Query(_) => {}
         }
     }
 
@@ -338,6 +357,10 @@ impl DockTab {
         matches!(self.kind, TabKind::Agent(_))
     }
 
+    fn is_query(&self) -> bool {
+        matches!(self.kind, TabKind::Query(_))
+    }
+
     /// The pod of a shell running in this tab.
     fn running_shell(&self, cx: &App) -> Option<SharedString> {
         match &self.kind {
@@ -352,6 +375,7 @@ impl DockTab {
             TabKind::Workload(view) => view.entity_id(),
             TabKind::Shell(view) => view.entity_id(),
             TabKind::Agent(view) => view.entity_id(),
+            TabKind::Query(view) => view.entity_id(),
         }
     }
 }
@@ -755,6 +779,67 @@ impl Dock {
         self.select(id, true, window, cx);
     }
 
+    /// Opens the Query tab of a database on the explorer's session, or selects
+    /// the one it has. It reads nothing until the person runs a statement.
+    pub(crate) fn open_query(
+        &mut self,
+        request: crate::screens::QueryRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(origin) = self.current_origin() else {
+            return;
+        };
+        let key = TabKey::query(&origin, &request);
+        let found = self
+            .tabs
+            .iter()
+            .find(|tab| tab.is_query() && tab.key.shows(&key))
+            .map(|tab| tab.id);
+        if let Some(id) = found {
+            self.select(id, true, window, cx);
+            return;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let mark = match origin.level(cx) {
+            OwnLevel::Known(level) => crate::desktop::shell::context::mark(level),
+            OwnLevel::EntryGone | OwnLevel::Unknown => freshkube_ui::level::Mark::ReadOnly,
+        };
+        let runtime = self.runtime.clone();
+        let base = format!("Query {}", request.title);
+        let target = DetailTarget {
+            identity: ResourceIdentity {
+                connection: origin.source.id.clone(),
+                resource: "query".into(),
+                namespace: String::new(),
+                name: request.title.clone(),
+                uid: request.key.clone(),
+            },
+            kind: builtin("namespaces").expect("namespaces is a built-in kind"),
+        };
+        let start = request.start.clone();
+        let view = cx.new(|cx| QueryView::new(runtime, request, mark, window, cx));
+        if let Some(start) = start {
+            view.update(cx, |view, cx| view.start_example(start, window, cx));
+        }
+        self.push_tab(
+            id,
+            origin,
+            key,
+            target,
+            base,
+            TabKind::Query(view),
+            None,
+            Vec::new(),
+            cx,
+        );
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == id) {
+            tab.started = true;
+        }
+        self.select(id, true, window, cx);
+    }
+
     /// Makes room for `request`'s shell tab and opens it: the oldest shell
     /// tab that runs nothing closes without asking; when every one runs,
     /// the oldest asks "End the shell in ⟨pod⟩?" first.
@@ -960,7 +1045,7 @@ impl Dock {
                 }
             }),
             // Started by the person's first question, never by selecting.
-            TabKind::Agent(_) => return,
+            TabKind::Agent(_) | TabKind::Query(_) => return,
         }
         self.start_feed(id, access, cx);
     }
@@ -1130,6 +1215,8 @@ impl Dock {
                 // The endpoint's port closes, its token ends and the agent
                 // and its group go with the tab.
                 TabKind::Agent(view) => view.update(cx, |view, cx| view.end(cx)),
+                // What runs is cancelled and the history goes with the tab.
+                TabKind::Query(view) => view.update(cx, |view, cx| view.end(cx)),
                 TabKind::Pod(_) | TabKind::Workload(_) => {}
             }
         }
@@ -1316,11 +1403,14 @@ impl Dock {
             } else {
                 None
             };
+            let mark = match level {
+                OwnLevel::Known(level) => crate::desktop::shell::context::mark(level),
+                OwnLevel::EntryGone | OwnLevel::Unknown => freshkube_ui::level::Mark::ReadOnly,
+            };
             if let TabKind::Agent(view) = &tab.kind {
-                let mark = match level {
-                    OwnLevel::Known(level) => crate::desktop::shell::context::mark(level),
-                    OwnLevel::EntryGone | OwnLevel::Unknown => freshkube_ui::level::Mark::ReadOnly,
-                };
+                view.update(cx, |view, cx| view.set_level(mark, cx));
+            }
+            if let TabKind::Query(view) = &tab.kind {
                 view.update(cx, |view, cx| view.set_level(mark, cx));
             }
             let badge = Badge {
@@ -1423,6 +1513,7 @@ impl Dock {
         let logs = self.log_tabs();
         let shells = self.shell_tabs();
         let agents = self.tabs.iter().filter(|tab| tab.is_agent()).count();
+        let queries = self.tabs.iter().filter(|tab| tab.is_query()).count();
         let count = |count: usize, one: &str, many: &str| match count {
             0 => None,
             1 => Some(format!("1 {one}")),
@@ -1432,6 +1523,7 @@ impl Dock {
             count(logs, "log", "logs"),
             count(shells, "shell", "shells"),
             count(agents, "agent", "agents"),
+            count(queries, "query", "queries"),
         ]
         .into_iter()
         .flatten()
@@ -1475,7 +1567,9 @@ impl Dock {
     pub(crate) fn selected_container(&self, cx: &App) -> Option<String> {
         match &self.selected_tab()?.kind {
             TabKind::Pod(view) => view.read(cx).selected_container().map(str::to_owned),
-            TabKind::Workload(_) | TabKind::Shell(_) | TabKind::Agent(_) => None,
+            TabKind::Workload(_) | TabKind::Shell(_) | TabKind::Agent(_) | TabKind::Query(_) => {
+                None
+            }
         }
     }
 }

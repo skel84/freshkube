@@ -13,7 +13,7 @@ pub(super) fn extra_objects(context: &str, key: &str, now: i64) -> Vec<serde_jso
         }).collect(),
         "persistentvolumeclaims" => vec![
             json!({"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":meta("report-data","batch"),"spec":{"storageClassName":"fast","accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"10Gi"}}},"status":{"phase":"Pending"}}),
-            json!({"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":meta("ledger-data","payments"),"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"volumeName":"ledger-volume"},"status":{"phase":"Bound"}})
+            json!({"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":held(meta("ledger-data","payments")),"spec":{"accessModes":["ReadWriteOnce"],"resources":{"requests":{"storage":"20Gi"}},"volumeName":"ledger-volume"},"status":{"phase":"Bound"}})
         ],
         "persistentvolumes" => (0..3).map(|ix| json!({"apiVersion":"v1","kind":"PersistentVolume","metadata":meta(&format!("volume-{ix}"),""),"spec":{"capacity":{"storage":"20Gi"},"accessModes":["ReadWriteOnce"],"hostPath":{"path":format!("/var/example/{ix}")}},"status":{"phase":if ix==0 {"Bound"} else {"Available"}}})).collect(),
         "events" => {
@@ -31,6 +31,13 @@ pub(super) fn extra_objects(context: &str, key: &str, now: i64) -> Vec<serde_jso
         }
         _=>Vec::new(),
     }
+}
+
+/// A bound claim carries the protection finalizer, so deleting it can be
+/// Terminating.
+fn held(mut metadata: serde_json::Value) -> serde_json::Value {
+    metadata["finalizers"] = serde_json::json!(["kubernetes.io/pvc-protection"]);
+    metadata
 }
 
 pub(super) fn extra_rows(

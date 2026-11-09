@@ -229,6 +229,25 @@ impl Finished {
             Headline::Diverged => {
                 "Accepted, but the object is no longer the one that was written.".to_owned()
             }
+            Headline::Recreated => "Deleted, and then recreated: an object with the same name and a new UID exists now. Something makes it again.".to_owned(),
+            Headline::Terminating => {
+                let (finalizers, waited) = self
+                    .objects
+                    .iter()
+                    .find_map(|o| match &o.step {
+                        Step::Accepted {
+                            observed: Observed::Terminating { finalizers, waited },
+                            ..
+                        } => Some((finalizers.clone(), waited.as_secs())),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                if finalizers.is_empty() {
+                    format!("Accepted. It is still Terminating after {waited} s, shutting down or waiting for what it owns to go; check the object.")
+                } else {
+                    format!("Accepted. It is still Terminating after {waited} s, held by {}; it goes when they are removed.", finalizers.join(", "))
+                }
+            }
             Headline::Unknown => "No answer from the cluster. It is not known whether it accepted the write; check the object. Nothing was sent again.".to_owned(),
             Headline::Partial => {
                 let parts: Vec<String> = self

@@ -1337,17 +1337,22 @@ impl Pilot {
     }
 
     fn status<T, I: Clone + Eq, E>(snapshot: &Snapshot<T, I, E>) -> String {
-        let refreshed = snapshot
-            .last_successful()
-            .map(|time| {
-                let time: chrono::DateTime<chrono::Local> = time.into();
-                format!("Last success {}", time.format("%H:%M:%S"))
-            })
+        let read_at = snapshot.last_successful().map(|time| {
+            let time: chrono::DateTime<chrono::Local> = time.into();
+            time.format("%H:%M:%S").to_string()
+        });
+        if !snapshot.is_loading() && snapshot.is_stale() {
+            let state = freshkube_ui::read_state::ReadState::Stale {
+                what: "cluster data".into(),
+                at: read_at.unwrap_or_else(|| "an unknown time".into()),
+            };
+            return format!("{} · {}", state.title(), state.description());
+        }
+        let refreshed = read_at
+            .map(|time| format!("Last success {time}"))
             .unwrap_or_else(|| "No successful refresh".into());
         let state = if snapshot.is_loading() {
             "Loading"
-        } else if snapshot.is_stale() {
-            "Stale · previous data retained"
         } else if snapshot.data().is_some() {
             "Current snapshot"
         } else {
@@ -1385,5 +1390,22 @@ impl Pilot {
                 cx.notify();
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod wording_tests {
+    #[test]
+    fn stale_status_names_the_kept_data_its_time_and_the_failed_read() {
+        let taken = chrono::Local::now();
+        let mut snapshot = crate::state::Snapshot::<(), &str, String>::default();
+        snapshot.restore("example-cluster", (), taken.into(), "read failed".into());
+        assert_eq!(
+            super::Pilot::status(&snapshot),
+            format!(
+                "Showing cluster data as last seen · Read at {}; the latest read failed.",
+                taken.format("%H:%M:%S")
+            )
+        );
     }
 }

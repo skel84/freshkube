@@ -27,6 +27,9 @@ use talos_rs::{ApplyMode, TalosClient};
 mod evaluate;
 use evaluate::*;
 
+#[cfg(test)]
+mod harness_tests;
+
 /// Result of querying one source of diagnostic state.
 ///
 /// An unavailable source is intentionally distinct from a negative result. For
@@ -1372,14 +1375,30 @@ async fn collect_cni_info(client: &Client) -> Result<CniInfo, Failure> {
     Ok(cni_info)
 }
 
+/// The Talos files the CNI detection reads, in the order it reads them.
+const FLANNEL_SUBNET_PATH: &str = "/run/flannel/subnet.env";
+const BR_NETFILTER_PATH: &str = "/proc/sys/net/bridge/bridge-nf-call-iptables";
+const CILIUM_CONFIG_PATH: &str = "/etc/cni/net.d/05-cilium.conflist";
+const CALICO_CONFIG_PATH: &str = "/etc/cni/net.d/10-calico.conflist";
+const CNI_DIRECTORY_PATH: &str = "/etc/cni/net.d";
+
 async fn populate_flannel_file_evidence(client: &TalosClient, evidence: &mut CniFileEvidence) {
-    let (subnet, content) = probe_file(client, "/run/flannel/subnet.env").await;
+    let subnet = probe_file(client, FLANNEL_SUBNET_PATH).await;
+    let bridge = probe_file(client, BR_NETFILTER_PATH).await;
+    apply_flannel_reads(evidence, subnet, bridge);
+}
+
+/// What the two Flannel reads say, with no I/O.
+fn apply_flannel_reads(
+    evidence: &mut CniFileEvidence,
+    subnet: (FileProbe, Option<String>),
+    bridge: (FileProbe, Option<String>),
+) {
+    let (subnet, content) = subnet;
     evidence.flannel_subnet = subnet;
     evidence.flannel_subnet_valid = content
         .map(|content| content.contains("FLANNEL_NETWORK=") && content.contains("FLANNEL_SUBNET="));
-    evidence.br_netfilter = probe_file(client, "/proc/sys/net/bridge/bridge-nf-call-iptables")
-        .await
-        .0;
+    evidence.br_netfilter = bridge.0;
 }
 
 async fn detect_cni_from_files(
@@ -1387,28 +1406,34 @@ async fn detect_cni_from_files(
     evidence: &mut CniFileEvidence,
 ) -> SourceState<CniType> {
     populate_flannel_file_evidence(client, evidence).await;
+    // Each read is made only if the ones before it found nothing.
+    if evidence.flannel_subnet != FileProbe::Present {
+        evidence.cilium_config = probe_file(client, CILIUM_CONFIG_PATH).await.0;
+        if evidence.cilium_config != FileProbe::Present {
+            evidence.calico_config = probe_file(client, CALICO_CONFIG_PATH).await.0;
+            if evidence.calico_config != FileProbe::Present {
+                let (directory, content) = probe_file(client, CNI_DIRECTORY_PATH).await;
+                evidence.cni_directory = directory;
+                evidence.generic_config_present =
+                    content.as_ref().map(|content| !content.trim().is_empty());
+            }
+        }
+    }
+    cni_type_from_files(evidence)
+}
+
+/// The provider the file evidence names, in the order the reads are made,
+/// with no I/O.
+fn cni_type_from_files(evidence: &CniFileEvidence) -> SourceState<CniType> {
     if evidence.flannel_subnet == FileProbe::Present {
         return SourceState::Available(CniType::Flannel);
     }
-
-    evidence.cilium_config = probe_file(client, "/etc/cni/net.d/05-cilium.conflist")
-        .await
-        .0;
     if evidence.cilium_config == FileProbe::Present {
         return SourceState::Available(CniType::Cilium);
     }
-
-    evidence.calico_config = probe_file(client, "/etc/cni/net.d/10-calico.conflist")
-        .await
-        .0;
     if evidence.calico_config == FileProbe::Present {
         return SourceState::Available(CniType::Calico);
     }
-
-    let (directory, content) = probe_file(client, "/etc/cni/net.d").await;
-    evidence.cni_directory = directory;
-    evidence.generic_config_present = content.as_ref().map(|content| !content.trim().is_empty());
-
     if evidence.generic_config_present == Some(true) {
         return SourceState::Available(CniType::Unknown);
     }
@@ -1440,7 +1465,15 @@ async fn detect_cni_from_files(
 }
 
 async fn probe_file(client: &TalosClient, path: &str) -> (FileProbe, Option<String>) {
-    match client.read_file(path).await {
+    file_probe(path, client.read_file(path).await)
+}
+
+/// What one file read says, with no I/O.
+fn file_probe(
+    path: &str,
+    read: Result<String, talos_rs::TalosError>,
+) -> (FileProbe, Option<String>) {
+    match read {
         Ok(content) => (FileProbe::Present, Some(content)),
         Err(error) if is_missing_file_error(&error) => (FileProbe::Missing, None),
         Err(error) => (

@@ -40,6 +40,7 @@ mod cross_links;
 mod edit;
 mod events;
 mod external_secrets;
+mod netpol;
 mod overview;
 mod ports;
 #[cfg(test)]
@@ -171,6 +172,7 @@ pub struct DetailPane {
     summary: Option<Summary>,
     external: external_secrets::ExternalView,
     traffic: traffic::TrafficView,
+    netpol: netpol::NetpolView,
     node_facts: std::sync::Arc<Vec<crate::NodeFacts>>,
     cross_links: cross_links::CrossLinks,
     pod_links: Option<freshkube_core::resources::PodLinks>,
@@ -309,6 +311,7 @@ impl DetailPane {
             summary: None,
             external: Default::default(),
             traffic: Default::default(),
+            netpol: Default::default(),
             node_facts: Default::default(),
             cross_links: Default::default(),
             pod_links: None,
@@ -431,6 +434,7 @@ impl DetailPane {
         self.summary = None;
         self.external.reset();
         self.traffic.reset();
+        self.netpol.reset();
         self.cross_links = Default::default();
         self.pod_links = None;
         self.event_lines.clear();
@@ -464,6 +468,7 @@ impl DetailPane {
         self.summary = None;
         self.external.reset();
         self.traffic.reset();
+        self.netpol.reset();
         self.cross_links = Default::default();
         self.pod_links = None;
         self.event_lines.clear();
@@ -515,6 +520,7 @@ impl DetailPane {
             // Nothing read now could bring it back.
             self.external.stop();
             self.traffic.stop();
+            self.netpol.stop();
             self.read_job = None;
             self.timer = None;
             self.reveal_jobs.clear();
@@ -526,6 +532,7 @@ impl DetailPane {
     fn stop_reads(&mut self) {
         self.external.stop();
         self.traffic.stop();
+        self.netpol.stop();
         self.read_job = None;
         self.events_job = None;
         self.timer = None;
@@ -630,6 +637,7 @@ impl DetailPane {
         if detail.read == DocumentRead::Deleted {
             self.external.stop();
             self.traffic.stop();
+            self.netpol.stop();
         }
         if detail.reveal_epoch != epoch {
             self.reveal_jobs.clear();
@@ -668,6 +676,7 @@ impl DetailPane {
         self.start_links(cx);
         self.start_external_stores(cx);
         self.start_traffic(cx);
+        self.start_netpol(cx);
         self.matches = view.find(&self.query);
         self.current = match self.current {
             Some(current) if current < self.matches.len() => Some(current),

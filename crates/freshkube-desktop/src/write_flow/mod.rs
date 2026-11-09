@@ -64,6 +64,27 @@ pub(crate) fn retain(flow: Entity<WriteFlow>, cx: &mut App) {
     cx.default_global::<Flows>().0 = open;
 }
 
+/// True while a destructive action counts down in its dialog. The dialog's
+/// own Cancel is the way to stop it: the status bar's link is behind the
+/// modal and cannot be reached, so it is not shown.
+pub(crate) fn countdown_running(cx: &App) -> bool {
+    cx.try_global::<Flows>().is_some_and(|flows| {
+        flows
+            .0
+            .iter()
+            .any(|flow| matches!(flow.read(cx).stage, Stage::Countdown { .. }))
+    })
+}
+
+/// Ends every destructive countdown that is running, with nothing sent: a
+/// switch of cluster or context changes what the person confirmed.
+pub(crate) fn cancel_countdowns(cx: &mut App) {
+    let flows = cx.default_global::<Flows>().0.clone();
+    for flow in flows {
+        flow.update(cx, |flow, cx| flow.cancel_countdown(cx));
+    }
+}
+
 /// What a page hands over.
 pub(crate) struct WriteRequest {
     pub(crate) runner: Arc<Runner>,
@@ -119,6 +140,9 @@ pub(crate) struct WriteFlow {
     /// earlier one that arrives late is not taken for this one's.
     dialog_epoch: std::rc::Rc<std::cell::Cell<u64>>,
     check: Option<(OwnedJob, Task<()>)>,
+    /// The dialog body's scroll, kept between draws so its scrollbar and
+    /// position stay.
+    scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -138,11 +162,15 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
         dialog_open: false,
         dialog_epoch: Default::default(),
         check: None,
+        scroll: ScrollHandle::new(),
         _subscriptions: vec![],
     });
     if asks.confirm || asks.blocked.is_some() {
-        let epoch = flow.read(cx).dialog_epoch.clone();
-        dialog::open(&flow, epoch, window, cx);
+        let (epoch, scroll) = {
+            let flow = flow.read(cx);
+            (flow.dialog_epoch.clone(), flow.scroll.clone())
+        };
+        dialog::open(&flow, epoch, &scroll, window, cx);
         flow.update(cx, |flow, _| flow.dialog_open = true);
     }
     flow.update(cx, |flow, cx| flow.check(window, cx));
@@ -167,6 +195,7 @@ pub(crate) fn start_prepared(
         dialog_open: false,
         dialog_epoch: Default::default(),
         check: None,
+        scroll: ScrollHandle::new(),
         _subscriptions: vec![],
     });
     flow.update(cx, |flow, cx| {
@@ -264,7 +293,13 @@ impl WriteFlow {
         if !self.dialog_open {
             // Nothing was asked, but there is something to say: a refusal.
             self.dialog_open = true;
-            dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
+            dialog::open(
+                &cx.entity(),
+                self.dialog_epoch.clone(),
+                &self.scroll,
+                window,
+                cx,
+            );
         }
         cx.notify();
     }
@@ -388,7 +423,13 @@ impl WriteFlow {
                 self.stage = Stage::Shown(Dialog::Refused { text });
                 if !self.dialog_open {
                     self.dialog_open = true;
-                    dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
+                    dialog::open(
+                        &cx.entity(),
+                        self.dialog_epoch.clone(),
+                        &self.scroll,
+                        window,
+                        cx,
+                    );
                 }
                 cx.notify();
                 return;
@@ -475,7 +516,13 @@ impl WriteFlow {
             self.check(window, cx);
             if !self.dialog_open {
                 self.dialog_open = true;
-                dialog::open(&cx.entity(), self.dialog_epoch.clone(), window, cx);
+                dialog::open(
+                    &cx.entity(),
+                    self.dialog_epoch.clone(),
+                    &self.scroll,
+                    window,
+                    cx,
+                );
             }
             return;
         }
