@@ -24,6 +24,9 @@ pub(crate) struct Live {
     pub(crate) encryption: Encryption,
 }
 
+/// Finds the explorer's session now.
+pub(crate) type LiveFn = Rc<dyn Fn(&App) -> Option<Live>>;
+
 /// Open the Query tab of one database.
 #[derive(Clone)]
 pub(crate) struct QueryRequest {
@@ -33,7 +36,7 @@ pub(crate) struct QueryRequest {
     pub(crate) title: String,
     /// The explorer's session now, `None` while it isn't connected or once
     /// its tab is closed.
-    pub(crate) live: Rc<dyn Fn(&App) -> Option<Live>>,
+    pub(crate) live: LiveFn,
     /// Example data only (`FRESHKUBE_DB_EXPLORE=query`): statements the tab
     /// opens with, selected and run.
     pub(crate) start: Option<String>,
