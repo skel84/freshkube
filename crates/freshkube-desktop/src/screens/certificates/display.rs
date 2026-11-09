@@ -372,7 +372,7 @@ impl Display {
             display.notices.push(("Read coverage", note.clone().into()));
         }
         let mut entries: Vec<&CertEntry> = view.entries.iter().collect();
-        entries.sort_by(|a, b| (a.state, a.key()).cmp(&(b.state, b.key())));
+        entries.sort_by_key(|a| (a.state, a.key()));
         let rows: Vec<Row> = entries.into_iter().map(entry_row).collect();
         if rows.is_empty() && !view.notes.is_empty() {
             // Everything that could name a certificate was refused.

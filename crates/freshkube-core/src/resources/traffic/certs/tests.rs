@@ -647,8 +647,10 @@ fn a_key_that_is_not_a_certificate_is_unparseable_and_never_quoted() {
         };
         assert!(!why.contains("QUJD") && !why.contains(KEY_MARKER), "{why}");
     }
-    let mut plain = Secret::default();
-    plain.type_ = Some("Opaque".into());
+    let plain = Secret {
+        type_: Some("Opaque".into()),
+        ..Secret::default()
+    };
     assert_eq!(
         facts_from_secret(plain),
         SecretOutcome::NotTls {
@@ -1099,4 +1101,34 @@ fn listener_hosts_come_from_the_routes_attached_to_it() {
         .collect();
     assert_eq!(keys, ["infra/edge-tls"]);
     assert!(view.for_listener("infra/edge", "http").is_empty());
+}
+
+#[test]
+fn a_routes_trace_names_the_secrets_of_the_listener_it_chose() {
+    let read = routes_read();
+    let certificates = |name: &str| {
+        read.routes
+            .iter()
+            .find(|entry| entry.facts.name == name)
+            .unwrap()
+            .trace
+            .parents[0]
+            .certificates
+            .clone()
+    };
+    // The HTTPS listener of infra/edge names edge-tls, in the Gateway's namespace.
+    assert_eq!(
+        certificates("web"),
+        [("infra".to_owned(), "edge-tls".to_owned())]
+    );
+    // A plain HTTP listener has none, and neither has a Service parent.
+    assert!(certificates("status").is_empty());
+    assert!(certificates("mesh-cart").is_empty());
+}
+
+fn routes_read() -> crate::resources::traffic::routes::RoutesRead {
+    crate::resources::traffic::routes::example::read(
+        crate::resources::traffic::routes::example::Shape::All,
+    )
+    .unwrap()
 }

@@ -468,10 +468,10 @@ fn listener_servings<'a>(
                         continue;
                     }
                     attached = true;
-                    if route.hostnames.is_empty() {
-                        if let Some(host) = &listener.hostname {
-                            add(host);
-                        }
+                    if route.hostnames.is_empty()
+                        && let Some(host) = &listener.hostname
+                    {
+                        add(host);
                     }
                     for host in &route.hostnames {
                         add(host);

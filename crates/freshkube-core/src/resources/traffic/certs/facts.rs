@@ -20,7 +20,7 @@ fn strings(value: &Value) -> Vec<String> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|s| opt(s))
+        .filter_map(opt)
         .collect()
 }
 
