@@ -25,6 +25,9 @@ pub enum Refusal {
     Function(&'static str),
     /// `EXPLAIN ANALYZE` runs the statement it explains.
     Analyze,
+    /// `U&"…"`: an identifier written with Unicode escapes can spell a
+    /// function's name without the name appearing in the text.
+    UnicodeEscape,
 }
 
 impl Refusal {
@@ -41,7 +44,7 @@ impl Refusal {
             Self::Several => "One statement at a time.".into(),
             Self::Empty => "Nothing to run.".into(),
             Self::Maintenance(word) => format!(
-                "{} {}. It is maintenance on the database, so it is not sent.",
+                "{} {}, which a read-only transaction does not stop, so it is not sent.",
                 word.to_uppercase(),
                 maintenance_why(word)
             ),
@@ -49,6 +52,10 @@ impl Refusal {
                 "{name}() {}, which a read-only transaction does not stop, so it is not sent.",
                 function_why(name)
             ),
+            Self::UnicodeEscape => {
+                "A Unicode-escaped identifier (U&\"…\") can spell the name of a function that is not sent, so it is not sent."
+                    .into()
+            }
             Self::Analyze => {
                 "EXPLAIN ANALYZE runs the statement it explains, so it is not sent. Plan shows the plan without running it."
                     .into()
@@ -63,6 +70,8 @@ fn maintenance_why(word: &str) -> &'static str {
         "cluster" => "rewrites a table under an exclusive lock",
         "vacuum" => "rewrites and locks tables and uses the server's disk and CPU",
         "checkpoint" => "forces a write-heavy checkpoint on the server",
+        "do" => "runs a block of code that can build and run other statements",
+        "copy" => "can write a file on the server or run a program there",
         _ => "reads whole tables to refresh statistics and takes locks",
     }
 }
@@ -75,22 +84,28 @@ fn function_why(name: &str) -> &'static str {
         "set_config" => "can turn this session's settings, such as read-only, off",
         "lo_import" | "lo_export" => "reads or writes files on the server",
         "dblink" => "opens connections that are not read-only",
+        "query_to_xml" | "query_to_xmlschema" | "query_to_xml_and_xmlschema" | "ts_stat" => {
+            "runs a statement given as text, which this check cannot read"
+        }
         _ => "holds locks that block the application",
     }
 }
 
-/// The first words refused because they are maintenance.
-pub(crate) const MAINTENANCE: [&str; 6] = [
+/// The first words refused: maintenance, and statements that run text built
+/// at run time or reach the server's files.
+pub(crate) const MAINTENANCE: [&str; 8] = [
     "reindex",
     "cluster",
     "vacuum",
     "analyze",
     "analyse",
     "checkpoint",
+    "do",
+    "copy",
 ];
 
 /// Functions refused by name, whole word, anywhere in a statement.
-pub(crate) const FUNCTIONS: [&str; 16] = [
+pub(crate) const FUNCTIONS: [&str; 20] = [
     "pg_terminate_backend",
     "pg_cancel_backend",
     "pg_reload_conf",
@@ -107,6 +122,12 @@ pub(crate) const FUNCTIONS: [&str; 16] = [
     "pg_try_advisory_xact_lock_shared",
     "lo_import",
     "lo_export",
+    // These run the text of a statement given as a string, so they can run
+    // what the list would refuse by name.
+    "query_to_xml",
+    "query_to_xmlschema",
+    "query_to_xml_and_xmlschema",
+    "ts_stat",
 ];
 
 /// Checks one request. `Ok` means only that it is a single statement that does
@@ -117,7 +138,8 @@ pub fn check_statement(sql: &str) -> Result<(), Refusal> {
         [] => Err(Refusal::Empty),
         [one] => first_word_refusal(one)
             .and_then(|()| explain_analyze(one))
-            .and_then(|()| refused_function(one)),
+            .and_then(|()| refused_function(one))
+            .and_then(|()| unicode_escaped_identifier(one)),
         _ => Err(Refusal::Several),
     }
 }
@@ -166,24 +188,70 @@ fn explain_analyze(statement: &str) -> Result<(), Refusal> {
         .get("explain".len()..)
         .unwrap_or("")
         .trim_start();
-    let options = if let Some(list) = after.strip_prefix('(') {
-        list.split(')').next().unwrap_or("")
+    let is_analyze = |w: &str| matches!(w.to_ascii_lowercase().as_str(), "analyze" | "analyse");
+    let found = if let Some(list) = after.strip_prefix('(') {
+        words(list.split(')').next().unwrap_or("")).any(|w| is_analyze(&w))
     } else {
-        // Bare options end at the first word that is not one of them.
-        let end = after
+        // Bare options end at the first word that is not one of them; words
+        // are split on any whitespace, however many and whichever kind.
+        after
             .split_whitespace()
-            .take_while(|w| {
-                matches!(
-                    w.to_ascii_lowercase().as_str(),
-                    "analyze" | "analyse" | "verbose"
-                )
-            })
-            .map(|w| w.len() + 1)
-            .sum::<usize>();
-        &after[..end.min(after.len())]
+            .take_while(|w| is_analyze(w) || w.eq_ignore_ascii_case("verbose"))
+            .any(is_analyze)
     };
-    let found = words(options).any(|w| w == "analyze" || w == "analyse");
     if found { Err(Refusal::Analyze) } else { Ok(()) }
+}
+
+/// `U&"…"` outside string literals. Text in single quotes, E-strings and
+/// dollar quotes is skipped (a `U&"` there is only text); a double-quoted
+/// identifier is skipped as a whole. A `u` that ends a longer word (`fooU&"x"`
+/// is `fooU & "x"`) is not the prefix.
+fn unicode_escaped_identifier(statement: &str) -> Result<(), Refusal> {
+    let chars: Vec<char> = statement.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\'' => {
+                let escapes = i > 0
+                    && matches!(chars[i - 1], 'e' | 'E')
+                    && !(i > 1 && prev_is_ident(&chars, i - 1));
+                i = if escapes {
+                    skip_estring(&chars, i)
+                } else {
+                    skip_quoted(&chars, i, '\'')
+                };
+            }
+            '"' => i = skip_quoted(&chars, i, '"'),
+            '$' if !prev_is_ident(&chars, i) => match skip_dollar(&chars, i) {
+                Some(end) => i = end,
+                None => i += 1,
+            },
+            'u' | 'U'
+                if chars.get(i + 1) == Some(&'&')
+                    && chars.get(i + 2) == Some(&'"')
+                    && !prev_is_ident(&chars, i) =>
+            {
+                return Err(Refusal::UnicodeEscape);
+            }
+            _ => i += 1,
+        }
+    }
+    Ok(())
+}
+
+/// End of an E'…' string: a backslash escapes the next character.
+fn skip_estring(chars: &[char], start: usize) -> usize {
+    let mut i = start + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            '\'' if chars.get(i + 1) == Some(&'\'') => i += 2,
+            '\'' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    chars.len()
 }
 
 /// Lowercased identifier words of `text`: runs of letters, digits, `_` and `$`.
@@ -410,7 +478,7 @@ mod tests {
                 format!("select 1 where exists (select {name}(2))"),
                 format!("select pg_catalog.{name}(1)"),
                 format!("select \"{name}\"(1)"),
-                format!("do $$ begin perform {name}(1); end $$"),
+                format!("select (select {name}(1))"),
             ] {
                 assert_eq!(check_statement(&sql), Err(Refusal::Function(name)), "{sql}");
             }
@@ -468,6 +536,83 @@ mod tests {
             "explain select analyze from t",
         ] {
             assert_eq!(check_statement(sql), Ok(()), "{sql}");
+        }
+    }
+
+    #[test]
+    fn statements_that_run_text_built_at_run_time_or_reach_files_are_refused_by_first_word() {
+        for (sql, word) in [
+            (
+                "do $$ begin execute 'select pg_cancel' || '_backend(1)'; end $$",
+                "do",
+            ),
+            ("DO LANGUAGE plpgsql $$ begin null; end $$", "do"),
+            ("copy orders to '/tmp/orders.csv'", "copy"),
+            ("COPY (select 1) TO PROGRAM 'id'", "copy"),
+        ] {
+            assert_eq!(
+                check_statement(sql),
+                Err(Refusal::Maintenance(word)),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn functions_that_run_a_statement_given_as_text_are_refused() {
+        for sql in [
+            "select query_to_xml('select pg_term'||'inate_backend(1)', true, false, '')",
+            "select QUERY_TO_XMLSCHEMA('select 1', true, false, '')",
+            "select query_to_xml_and_xmlschema('select 1', true, false, '')",
+            "select * from ts_stat('select to_tsvector(''x'')')",
+        ] {
+            assert!(
+                matches!(check_statement(sql), Err(Refusal::Function(_))),
+                "{sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_unicode_escaped_identifier_is_refused_outside_strings_only() {
+        for sql in [
+            "select U&\"pg_terminate_backen\\0064\"(pid) from pg_stat_activity",
+            "select u&\"x\" from t",
+            "select 1 where (u&\"y\") is null",
+            // After a string that only looks like it ends the text.
+            "select E'\\'', u&\"x\"",
+        ] {
+            assert_eq!(check_statement(sql), Err(Refusal::UnicodeEscape), "{sql}");
+        }
+        for sql in [
+            "select 'U&\"x\"'",
+            "select $$u&\"x\"$$",
+            "select fooU&\"x\" from t",
+            "select \"U&\" from t",
+            "select U&'d\\0061t\\+000061'",
+        ] {
+            assert_eq!(check_statement(sql), Ok(()), "{sql}");
+        }
+    }
+
+    #[test]
+    fn explain_options_are_read_across_any_whitespace_without_panicking() {
+        for sql in [
+            "explain verbose   analyze select 1",
+            "explain   analyze   select 1",
+            "explain\tverbose\n  analyze select 1",
+            "explain\u{a0}analyze select 1",
+            "explain verbose\u{a0}\u{a0}analyse select 1",
+            "explain\u{a0}(analyze) select 1",
+        ] {
+            assert_eq!(check_statement(sql), Err(Refusal::Analyze), "{sql:?}");
+        }
+        for sql in [
+            "explain\u{a0}select 1",
+            "explain verbose\u{a0}select analyze from t",
+            "explain\u{2003}\u{2003}select 1",
+        ] {
+            assert_eq!(check_statement(sql), Ok(()), "{sql:?}");
         }
     }
 }

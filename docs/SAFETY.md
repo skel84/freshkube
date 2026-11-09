@@ -152,6 +152,7 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g20_a_server_that_does_not_hold_read_only_is_never_used` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_statements_that_leave_the_transaction_or_change_the_session_are_not_sent` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_maintenance_and_functions_that_act_on_the_server_are_not_sent` (`crates/freshkube-db/src/safety.rs`)
+- `safety_g20_sql_built_at_run_time_or_spelled_in_escapes_is_not_sent` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_a_plan_never_analyzes` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_every_request_ends_rolled_back_with_its_locks_let_go_and_nothing_is_committed` (`crates/freshkube-db/src/safety.rs`)
 

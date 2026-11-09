@@ -104,6 +104,29 @@ async fn safety_g20_maintenance_and_functions_that_act_on_the_server_are_not_sen
 }
 
 #[tokio::test]
+async fn safety_g20_sql_built_at_run_time_or_spelled_in_escapes_is_not_sent() {
+    let wire = FakeWire::new();
+    let mut session = open(&wire).await;
+    let before = wire.sent();
+    for sql in [
+        // A block that builds the name of a refused function when it runs.
+        "do $$ begin execute 'select pg_cancel' || '_backend(1)'; end $$",
+        // Functions that run the text they are given.
+        "select query_to_xml('select pg_term'||'inate_backend(1)', true, false, '')",
+        "select * from ts_stat('select to_tsvector(''x'')')",
+        // A name spelled with Unicode escapes.
+        "select U&\"pg_terminate_backen\\0064\"(pid) from pg_stat_activity",
+        // Files and programs on the server.
+        "copy orders to '/tmp/orders.csv'",
+        "COPY (select 1) TO PROGRAM 'id'",
+    ] {
+        let error = session.run(sql).await.unwrap_err();
+        assert!(matches!(error, QueryError::NotSent(_)), "{sql}: {error:?}");
+    }
+    assert_eq!(wire.sent(), before);
+}
+
+#[tokio::test]
 async fn safety_g20_a_plan_never_analyzes() {
     let wire = FakeWire::new();
     wire.answer(
