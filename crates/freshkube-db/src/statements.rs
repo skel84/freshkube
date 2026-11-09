@@ -7,7 +7,7 @@
 //! not a statement. This only finds statements. Whether one may run is the
 //! session's to decide, and the server's one-statement check is what
 //! enforces it ([`crate::postgres`]).
-use crate::readonly::{prev_is_ident, skip_dollar, skip_quoted};
+use crate::readonly::{prev_is_ident, quoted_end, skip_dollar};
 use std::ops::Range;
 
 /// One statement: its text range, without the `;` that ends it, and the
@@ -46,7 +46,7 @@ pub fn statements(text: &str) -> Vec<Statement> {
         match c {
             '\'' | '"' => {
                 content = true;
-                i = skip_quoted(&chars, i, c);
+                i = quoted_end(&chars, i);
             }
             '-' if chars.get(i + 1) == Some(&'-') => {
                 while i < chars.len() && chars[i] != '\n' {
@@ -178,5 +178,17 @@ mod tests {
         assert_eq!(&sql[part[0].clone()], "1");
         // A blank selection counts as none.
         assert_eq!(to_run(sql, 9..10, 0).len(), 1);
+    }
+
+    #[test]
+    fn an_e_string_with_an_escaped_quote_keeps_its_semicolon_inside() {
+        // `E'\''` is one quote, so the `;` after it is still inside the string.
+        let sql = "select E'\\';x'; select 2";
+        assert_eq!(texts(sql), vec!["select E'\\';x'", "select 2"]);
+        // A standard string ends at its quote, whatever precedes it.
+        assert_eq!(
+            texts("select '\\'; select 2"),
+            vec!["select '\\'", "select 2"]
+        );
     }
 }

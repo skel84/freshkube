@@ -84,9 +84,11 @@ fn function_why(name: &str) -> &'static str {
         "set_config" => "can turn this session's settings, such as read-only, off",
         "lo_import" | "lo_export" => "reads or writes files on the server",
         "dblink" => "opens connections that are not read-only",
-        "query_to_xml" | "query_to_xmlschema" | "query_to_xml_and_xmlschema" | "ts_stat" => {
-            "runs a statement given as text, which this check cannot read"
-        }
+        "query_to_xml"
+        | "query_to_xmlschema"
+        | "query_to_xml_and_xmlschema"
+        | "ts_stat"
+        | "ts_rewrite" => "runs a statement given as text, which this check cannot read",
         _ => "holds locks that block the application",
     }
 }
@@ -105,7 +107,7 @@ pub(crate) const MAINTENANCE: [&str; 8] = [
 ];
 
 /// Functions refused by name, whole word, anywhere in a statement.
-pub(crate) const FUNCTIONS: [&str; 20] = [
+pub(crate) const FUNCTIONS: [&str; 21] = [
     "pg_terminate_backend",
     "pg_cancel_backend",
     "pg_reload_conf",
@@ -128,6 +130,7 @@ pub(crate) const FUNCTIONS: [&str; 20] = [
     "query_to_xmlschema",
     "query_to_xml_and_xmlschema",
     "ts_stat",
+    "ts_rewrite",
 ];
 
 /// Checks one request. `Ok` means only that it is a single statement that does
@@ -212,17 +215,7 @@ fn unicode_escaped_identifier(statement: &str) -> Result<(), Refusal> {
     while i < chars.len() {
         let c = chars[i];
         match c {
-            '\'' => {
-                let escapes = i > 0
-                    && matches!(chars[i - 1], 'e' | 'E')
-                    && !(i > 1 && prev_is_ident(&chars, i - 1));
-                i = if escapes {
-                    skip_estring(&chars, i)
-                } else {
-                    skip_quoted(&chars, i, '\'')
-                };
-            }
-            '"' => i = skip_quoted(&chars, i, '"'),
+            '\'' | '"' => i = quoted_end(&chars, i),
             '$' if !prev_is_ident(&chars, i) => match skip_dollar(&chars, i) {
                 Some(end) => i = end,
                 None => i += 1,
@@ -238,6 +231,24 @@ fn unicode_escaped_identifier(statement: &str) -> Result<(), Refusal> {
         }
     }
     Ok(())
+}
+
+/// End (exclusive) of the quoted run starting at `start`, which is a `'` or a
+/// `"`. After a standalone `e` or `E` a single quote opens an E-string, where
+/// a backslash escapes the next character (`E'\''` is one quote); otherwise
+/// only a doubled quote does. Every scan of a statement's text uses this one
+/// rule, so they agree on where a string ends.
+pub(crate) fn quoted_end(chars: &[char], start: usize) -> usize {
+    let quote = chars[start];
+    let e_string = quote == '\''
+        && start > 0
+        && matches!(chars[start - 1], 'e' | 'E')
+        && !(start > 1 && prev_is_ident(chars, start - 1));
+    if e_string {
+        skip_estring(chars, start)
+    } else {
+        skip_quoted(chars, start, quote)
+    }
 }
 
 /// End of an E'…' string: a backslash escapes the next character.
@@ -287,7 +298,7 @@ fn split(sql: &str) -> Vec<String> {
         let c = chars[i];
         match c {
             '\'' | '"' => {
-                let end = skip_quoted(&chars, i, c);
+                let end = quoted_end(&chars, i);
                 current.extend(&chars[i..end]);
                 i = end;
                 continue;
@@ -614,5 +625,38 @@ mod tests {
         ] {
             assert_eq!(check_statement(sql), Ok(()), "{sql:?}");
         }
+    }
+
+    #[test]
+    fn an_e_string_with_an_escaped_quote_does_not_hide_the_rest_of_the_statement() {
+        // The server reads `E'\''` as one quote; reading it as an empty string
+        // plus a quote would hide the call between the two `--`-like pieces.
+        let sql = "select E'\\'', 'x--', pg_terminate_backend(1), U&\"x\"\nfrom pg_stat_activity";
+        assert_eq!(
+            check_statement(sql),
+            Err(Refusal::Function("pg_terminate_backend"))
+        );
+        // The same text with a standard string keeps its meaning: a backslash
+        // is plain there, and the quote ends the string.
+        assert_eq!(check_statement("select '\\', 1"), Ok(()));
+        // Only a standalone `e` makes an E-string.
+        assert_eq!(check_statement("select name'\\' from t"), Ok(()));
+        // A semicolon inside an E-string does not end the statement.
+        assert_eq!(check_statement("select E'a\\';b'"), Ok(()));
+        // And a `--` inside one is not a comment.
+        assert_eq!(
+            check_statement("select E'\\'--', pg_notify('a','b')"),
+            Err(Refusal::Function("pg_notify"))
+        );
+    }
+
+    #[test]
+    fn ts_rewrite_runs_a_statement_given_as_text_and_is_refused() {
+        assert_eq!(
+            check_statement(
+                "select ts_rewrite('a'::tsquery, 'select pg_term'||'inate_backend(1)')"
+            ),
+            Err(Refusal::Function("ts_rewrite"))
+        );
     }
 }

@@ -114,6 +114,9 @@ async fn safety_g20_sql_built_at_run_time_or_spelled_in_escapes_is_not_sent() {
         // Functions that run the text they are given.
         "select query_to_xml('select pg_term'||'inate_backend(1)', true, false, '')",
         "select * from ts_stat('select to_tsvector(''x'')')",
+        // An E-string whose escaped quote used to hide the call from the check.
+        "select E'\\'', 'x--', pg_terminate_backend(1), U&\"x\"\nfrom pg_stat_activity",
+        "select ts_rewrite('a'::tsquery, 'select pg_term'||'inate_backend(1)')",
         // A name spelled with Unicode escapes.
         "select U&\"pg_terminate_backen\\0064\"(pid) from pg_stat_activity",
         // Files and programs on the server.
