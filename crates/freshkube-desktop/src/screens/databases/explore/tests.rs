@@ -2,7 +2,7 @@
 //! schema browser, and a capped table. The example session is
 //! `freshkube_db::fake`; no forward, Secret or socket is used.
 use super::super::tests::mount;
-use super::{Connected, Example, Fail, Phase};
+use super::{Example, Fail, Phase};
 use crate::screens::ScreenPanel;
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::test::TestWindowExt;
@@ -1004,7 +1004,7 @@ async fn safety_g21_closing_the_tab_kills_the_teleport_child(cx: &mut TestAppCon
     // The tab owns the connection that holds the proxy.
     cx.update(|cx| {
         explorer(&page, cx).update(cx, |view, _| {
-            let mut connected: Connected = view.connect.data().unwrap().clone().unwrap();
+            let mut connected: super::Connected = view.connect.data().unwrap().clone().unwrap();
             connected.proxy = Some(std::sync::Arc::new(proxy));
             view.connect.resolve(view.epoch, Ok(Ok(connected)));
         })

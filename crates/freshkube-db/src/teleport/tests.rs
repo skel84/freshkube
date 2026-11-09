@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(unix)]
 use std::fs;
 
 fn access(tsh: Option<PathBuf>) -> TeleportAccess {
@@ -11,7 +12,9 @@ fn access(tsh: Option<PathBuf>) -> TeleportAccess {
     }
 }
 
+#[cfg(unix)]
 const READY: &str = "echo 'Started authenticated tunnel for the PostgreSQL database \"orders-db-ro\" in cluster \"teleport.example.com\" on 127.0.0.1:41234.'\nexec sleep 300";
+#[cfg(unix)]
 const LISTED: &str =
     "echo '[{\"metadata\":{\"name\":\"orders-db-ro\"}},{\"metadata\":{\"name\":\"billing-ro\"}}]'";
 
@@ -40,12 +43,15 @@ fn fake_tsh(dir: &Path, status: &str, list: &str, proxy: &str) -> PathBuf {
     path
 }
 
+#[cfg(unix)]
 const SIGNED_IN: &str = "echo '{\"active\":{\"username\":\"alice\"}}'";
 
+#[cfg(unix)]
 fn calls(dir: &Path) -> String {
     fs::read_to_string(dir.join("calls")).unwrap_or_default()
 }
 
+#[cfg(unix)]
 fn alive(pid: u32) -> bool {
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
@@ -55,6 +61,7 @@ fn alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(unix)]
 async fn start(dir: &Path, status: &str, list: &str, proxy: &str) -> Result<Proxy, TeleportError> {
     let tsh = fake_tsh(dir, status, list, proxy);
     Proxy::start_within(&access(Some(tsh)), "orders-db", Duration::from_secs(5)).await
