@@ -38,9 +38,12 @@ const PLACES: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 
 /// How long the login shell may take to print its `PATH`.
 const LOGIN_SHELL_DEADLINE: Duration = Duration::from_secs(3);
+#[cfg(unix)]
 /// The most of its output read: a `PATH` is far shorter.
 const LOGIN_SHELL_MOST_BYTES: u64 = 64 * 1024;
+#[cfg(unix)]
 const MARK_START: &str = "__FRESHKUBE_PATH_START__";
+#[cfg(unix)]
 const MARK_END: &str = "__FRESHKUBE_PATH_END__";
 
 /// What reading the login shell's `PATH` gave: `None` when it could not be
@@ -140,6 +143,7 @@ fn read_login_path(_shell: &Path, _deadline: Duration) -> Option<Vec<PathBuf>> {
     None
 }
 
+#[cfg(unix)]
 /// The directories between the markers, or `None` when both are not there;
 /// what a shell's startup files print around them is ignored. Only absolute
 /// directories count.
