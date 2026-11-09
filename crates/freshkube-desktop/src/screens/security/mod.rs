@@ -181,17 +181,6 @@ impl ScreenPanel for SecurityScreen {
     }
 }
 
-#[cfg(test)]
-mod wording_tests {
-    #[test]
-    fn missing_control_plane_explains_which_certificates_were_not_checked() {
-        assert_eq!(
-            super::NO_CONTROL_PLANE,
-            "Freshkube doesn't know a Talos control plane to read Kubernetes credentials from, so their certificates weren't checked. No other kubeconfig was checked."
-        );
-    }
-}
-
 impl SecurityScreen {
     /// Whether the first answer is still to come: the table shows its
     /// loading rows.
@@ -266,5 +255,16 @@ impl SecurityScreen {
             parts.into_iter().map(Part::new),
         );
         self.status = Some((revision, line));
+    }
+}
+
+#[cfg(test)]
+mod wording_tests {
+    #[test]
+    fn missing_control_plane_explains_which_certificates_were_not_checked() {
+        assert_eq!(
+            super::NO_CONTROL_PLANE,
+            "Freshkube doesn't know a Talos control plane to read Kubernetes credentials from, so their certificates weren't checked. No other kubeconfig was checked."
+        );
     }
 }

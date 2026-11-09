@@ -977,17 +977,6 @@ use example::example;
 #[path = "tests.rs"]
 mod ui_tests;
 
-#[cfg(test)]
-mod wording_tests {
-    #[test]
-    fn pending_nodes_names_the_read_and_cluster() {
-        assert_eq!(
-            super::pending_nodes("example-cluster").description(),
-            "Freshkube hasn't finished reading Kubernetes nodes in example-cluster."
-        );
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 struct LifecycleDisplay {
     rows: Vec<NodeRow>,
@@ -1077,5 +1066,16 @@ impl LifecycleView {
             etcd.label, etcd.detail
         );
         self
+    }
+}
+
+#[cfg(test)]
+mod wording_tests {
+    #[test]
+    fn pending_nodes_names_the_read_and_cluster() {
+        assert_eq!(
+            super::pending_nodes("example-cluster").description(),
+            "Freshkube hasn't finished reading Kubernetes nodes in example-cluster."
+        );
     }
 }
