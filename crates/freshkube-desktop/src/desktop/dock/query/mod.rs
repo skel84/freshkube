@@ -35,6 +35,8 @@ actions!(
     [
         /// Command-Enter: runs the selection, else the statement at the cursor.
         RunQuery,
+        /// Command-Option-Enter: runs every statement in the editor.
+        RunAllQuery,
         /// Command-Shift-Enter: the plan of that statement.
         ExplainQuery,
         /// Escape while a statement runs.
@@ -93,6 +95,8 @@ pub(crate) struct QueryView {
     least: Pixels,
     /// The plan list's scroll, kept so a plan stays where it was read.
     plan_scroll: UniformListScrollHandle,
+    /// The result tabs' scroll, which keeps the selected tab in view.
+    results_scroll: ScrollHandle,
     _editor: Subscription,
 }
 
@@ -106,7 +110,14 @@ impl QueryView {
     ) -> Self {
         cx.bind_keys([
             KeyBinding::new("secondary-enter", RunQuery, Some(CONTEXT)),
+            // The editor binds Command-Enter itself, to a new line, in its own
+            // "Input" context; a binding on that context under this tab's,
+            // added after it, is the one that wins while the editor has focus.
+            KeyBinding::new("secondary-enter", RunQuery, Some("Query > Input")),
+            KeyBinding::new("secondary-alt-enter", RunAllQuery, Some(CONTEXT)),
+            KeyBinding::new("secondary-alt-enter", RunAllQuery, Some("Query > Input")),
             KeyBinding::new("secondary-shift-enter", ExplainQuery, Some(CONTEXT)),
+            KeyBinding::new("secondary-shift-enter", ExplainQuery, Some("Query > Input")),
             KeyBinding::new("escape", CancelQuery, Some(CONTEXT)),
         ]);
         let editor = cx.new(|cx| {
@@ -134,6 +145,7 @@ impl QueryView {
             focus: cx.focus_handle(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             plan_scroll: UniformListScrollHandle::new(),
+            results_scroll: ScrollHandle::new(),
             _editor: subscription,
         }
     }
@@ -190,6 +202,16 @@ impl QueryView {
     /// Run: the selection's statements, else the one at the cursor.
     pub(super) fn run(&mut self, cx: &mut Context<Self>) {
         let texts = self.statements_to_run(cx);
+        self.start(texts, false, cx);
+    }
+
+    /// Run all: every statement in the editor, whatever is selected.
+    pub(super) fn run_all(&mut self, cx: &mut Context<Self>) {
+        let text = self.editor.read(cx).value();
+        let texts = statements::statements(&text)
+            .into_iter()
+            .map(|s| text[s.range].to_owned())
+            .collect();
         self.start(texts, false, cx);
     }
 
@@ -384,6 +406,7 @@ impl QueryView {
     /// Selects result `ix` and shows it.
     pub(super) fn show(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected = ix.min(self.items.len().saturating_sub(1));
+        self.results_scroll.scroll_to_item(self.selected);
         let rows = match self.items.get(self.selected).map(|item| &item.state) {
             Some(State::Rows(rows)) => Some(rows.clone()),
             _ => None,

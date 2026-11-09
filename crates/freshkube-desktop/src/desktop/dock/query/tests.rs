@@ -23,6 +23,10 @@ struct Harness {
 }
 
 fn mount(cx: &mut TestAppContext, level: Mark) -> Harness {
+    mount_sized(cx, level, 1100., 700.)
+}
+
+fn mount_sized(cx: &mut TestAppContext, level: Mark, width: f32, height: f32) -> Harness {
     cx.executor().allow_parking();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
@@ -57,7 +61,7 @@ fn mount(cx: &mut TestAppContext, level: Mark) -> Harness {
     };
     let handle = runtime.handle().clone();
     let mut view = None;
-    let window = cx.open_window(size(px(1100.), px(700.)), |window, cx| {
+    let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let made = cx.new(|cx| QueryView::new(handle, request, level, window, cx));
         view = Some(made.clone());
         Root::new(made, window, cx)
@@ -313,8 +317,11 @@ async fn a_closed_explorer_says_the_connection_closed_and_keeps_the_editor(
     h.type_text("select 1", 3, 0..0, cx);
     *h.live.borrow_mut() = None;
     h.click("query-run", cx);
-    let note = h.label("query-note", cx).unwrap();
+    let note = h.label("query-notice", cx).unwrap();
     assert!(note.contains("Connection closed"), "{note}");
+    // And the strip no longer calls it a read-only session.
+    assert!(h.present("query-closed", cx));
+    assert!(!h.present("query-read-only", cx));
     assert_eq!(h.view.read_with(cx, |v, cx| v.text(cx)), "select 1");
     assert!(h.view.read_with(cx, |v, _| v.items.is_empty()));
 }
@@ -325,7 +332,7 @@ async fn nothing_to_run_says_so(cx: &mut TestAppContext) {
     h.type_text("  -- only a comment", 3, 0..0, cx);
     h.click("query-run", cx);
     assert!(
-        h.label("query-note", cx)
+        h.label("query-notice", cx)
             .unwrap()
             .contains("Nothing to run")
     );
@@ -571,6 +578,230 @@ async fn the_strip_says_when_the_session_is_the_applications_user(cx: &mut TestA
                 .unwrap()
                 .contains("application user")
         );
+    })
+    .unwrap();
+}
+
+/// Presses `key` with the keyboard in the editor, as a person typing does.
+fn press_in_editor(h: &Harness, key: &str, cx: &mut TestAppContext) {
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        h.view.update(cx, |v, cx| v.focus_editor(window, cx));
+        window.render_frame(cx);
+        window.press(key, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+async fn command_enter_runs_while_the_editor_has_the_keyboard_and_does_not_add_a_line(
+    cx: &mut TestAppContext,
+) {
+    let h = mount(cx, Mark::Guarded);
+    h.type_text("select 1", 3, 0..0, cx);
+    press_in_editor(&h, "secondary-enter", cx);
+    h.finished(cx).await;
+    h.view.read_with(cx, |v, cx| {
+        assert_eq!(v.items.len(), 1);
+        // The editor's own binding for the key is a new line; it did not run.
+        assert_eq!(v.text(cx), "select 1");
+    });
+    // Command-Option-Enter runs every statement; Command-Shift-Enter plans.
+    h.type_text("select 1; select 2; select 3", 3, 0..0, cx);
+    press_in_editor(&h, "secondary-alt-enter", cx);
+    cx.wait_for_io(h.window.into(), |_, cx| {
+        let v = h.view.read(cx);
+        !v.running() && v.items.len() == 3
+    })
+    .await;
+    press_in_editor(&h, "secondary-shift-enter", cx);
+    cx.wait_for_io(h.window.into(), |_, cx| {
+        let v = h.view.read(cx);
+        !v.running() && v.items.len() == 1 && v.items[0].label.contains("Plan")
+    })
+    .await;
+}
+
+#[gpui_kit::test]
+async fn run_all_runs_every_statement_where_run_runs_one(cx: &mut TestAppContext) {
+    let h = mount(cx, Mark::Guarded);
+    let text = "select 1; select 2; select 3";
+    h.type_text(text, 3, 0..0, cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    assert_eq!(h.view.read_with(cx, |v, _| v.items.len()), 1);
+    h.click("query-run-all", cx);
+    cx.wait_for_io(h.window.into(), |_, cx| {
+        let v = h.view.read(cx);
+        !v.running() && v.items.len() == 3
+    })
+    .await;
+}
+
+#[gpui_kit::test]
+async fn closing_the_explorer_after_a_run_says_so_above_the_results_and_in_the_strip(
+    cx: &mut TestAppContext,
+) {
+    let h = mount(cx, Mark::Guarded);
+    h.type_text("select 1", 3, 0..0, cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    *h.live.borrow_mut() = None;
+    h.click("query-run", cx);
+    // The earlier result stays; the words are in a banner over it, and the
+    // strip no longer says there is a read-only session.
+    assert!(
+        h.label("query-notice", cx)
+            .unwrap()
+            .contains("Connection closed")
+    );
+    assert!(h.present("query-closed", cx));
+    assert!(!h.present("query-read-only", cx));
+    assert!(!h.present("query-who", cx));
+    assert_eq!(h.view.read_with(cx, |v, _| v.items.len()), 1);
+}
+
+#[gpui_kit::test]
+async fn a_run_of_fifty_statements_can_all_be_reached_one_result_at_a_time(
+    cx: &mut TestAppContext,
+) {
+    let h = mount(cx, Mark::Guarded);
+    let text = "select 1; ".repeat(60);
+    h.type_text(&text, 0, 0..text.len(), cx);
+    h.click("query-run", cx);
+    cx.wait_for_io(h.window.into(), |_, cx| {
+        let v = h.view.read(cx);
+        !v.running() && v.items.len() == 51
+    })
+    .await;
+    // The last tab shows after the run; Previous steps back, Next forward.
+    assert_eq!(
+        h.label("query-result-position", cx).unwrap(),
+        "Result 50 of 51"
+    );
+    h.click("query-result-next", cx);
+    assert_eq!(
+        h.label("query-result-position", cx).unwrap(),
+        "Result 51 of 51"
+    );
+    assert!(h.present("query-state-too-many", cx));
+    h.click("query-result-prev", cx);
+    h.click("query-result-prev", cx);
+    assert_eq!(
+        h.label("query-result-position", cx).unwrap(),
+        "Result 49 of 51"
+    );
+    // A single result has no stepping.
+    h.type_text("select 1", 3, 0..0, cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    assert!(!h.present("query-result-next", cx));
+}
+
+#[gpui_kit::test]
+async fn the_buttons_stay_where_they_are_whatever_the_status_beside_them_says(
+    cx: &mut TestAppContext,
+) {
+    let h = mount(cx, Mark::Guarded);
+    let spots = |h: &Harness, cx: &mut TestAppContext| {
+        cx.update_window(h.window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            [
+                "query-run",
+                "query-run-all",
+                "query-plan",
+                "query-cancel",
+                "query-history-toggle",
+            ]
+            .map(|id| window.find(id).bounds().origin)
+        })
+        .unwrap()
+    };
+    let before = spots(&h, cx);
+    // Running, with its own status.
+    h.type_text("select pg_sleep(60)", 3, 0..0, cx);
+    h.click("query-run", cx);
+    cx.wait_for_io(h.window.into(), |_, cx| h.view.read(cx).cancellable())
+        .await;
+    assert_eq!(spots(&h, cx), before);
+    h.click("query-cancel", cx);
+    h.finished(cx).await;
+    assert_eq!(spots(&h, cx), before);
+    // A long status: the capped rows' words.
+    h.type_text("select * from orders", 3, 0..0, cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    assert!(h.label("query-summary", cx).unwrap().contains("row cap"));
+    assert_eq!(spots(&h, cx), before);
+}
+
+#[gpui_kit::test]
+async fn a_small_window_at_a_large_text_size_scrolls_instead_of_cutting_off_and_history_does_not_overlap(
+    cx: &mut TestAppContext,
+) {
+    let h = mount_sized(cx, Mark::Guarded, 760., 560.);
+    // Text size 20, as the app applies it: the window's rem size, which
+    // every dp is a share of.
+    cx.update(|cx| crate::text_size::install(None, cx));
+    cx.update_window(h.window.into(), |_, _, cx| crate::text_size::set(20., cx))
+        .unwrap();
+    h.type_text(
+        "select * from orders; update orders set status = 'x'",
+        0,
+        0..52,
+        cx,
+    );
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let viewport = window.viewport_size();
+        // The content is taller than the cell, so the tab scrolls: after a
+        // scroll down the strip has gone up out of view...
+        assert_eq!(
+            window.find("query-strip").bounds().origin.y,
+            gpui_kit::px(0.)
+        );
+        window.scroll(
+            "query",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-4000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(
+            window.find("query-strip").bounds().origin.y < gpui_kit::px(0.),
+            "the tab did not scroll"
+        );
+        // ...and, scrolled, the refusal is in view and whole.
+        let refusal = window.find("query-state-refused").bounds();
+        assert!(
+            refusal.top() >= gpui_kit::px(0.) && refusal.bottom() <= viewport.height,
+            "{refusal:?} in {viewport:?}"
+        );
+    })
+    .unwrap();
+    // History, narrow, takes the results' place and sits below the strip and
+    // editor; neither is covered, and the editor keeps its height.
+    h.click("query-history-toggle", cx);
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.scroll(
+            "query",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(4000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let strip = window.find("query-strip").bounds();
+        let editor = window.find("query-editor").bounds();
+        let history = window.find("query-history").bounds();
+        assert!(
+            history.top() >= editor.bottom(),
+            "{history:?} over {editor:?}"
+        );
+        assert!(editor.top() >= strip.bottom(), "{editor:?} over {strip:?}");
+        assert!(editor.size.height > gpui_kit::px(100.), "{editor:?}");
+        assert!(window.try_find("query-results").is_none());
     })
     .unwrap();
 }

@@ -497,10 +497,19 @@ impl Session for FakeSession {
         let table = from_table(sql).unwrap_or_else(|| "orders".into());
         let rows = if table == "orders" { ORDERS } else { 12 };
         Ok(Plan {
-            lines: vec![
-                format!("Seq Scan on {table}  (cost=0.00..5.50 rows={rows} width=64)"),
-                "  Filter: (status = 'paid'::text)".into(),
-            ],
+            lines: {
+                let mut lines = vec![format!(
+                    "Seq Scan on {table}  (cost=0.00..5.50 rows={rows} width=64)"
+                )];
+                // The filter is the statement's own `where`, so the example's
+                // plan reads as the plan of what was asked.
+                let lower = sql.to_ascii_lowercase();
+                if let Some(at) = lower.find(" where ") {
+                    let clause = sql[at + " where ".len()..].trim().trim_end_matches(';');
+                    lines.push(format!("  Filter: ({clause})"));
+                }
+                lines
+            },
             capped: false,
         })
     }

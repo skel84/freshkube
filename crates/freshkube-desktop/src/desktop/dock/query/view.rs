@@ -1,7 +1,7 @@
 //! The Query tab drawn: the strip, the editor, a tab per result, the selected
 //! result, and the history beside them.
 use super::results::{self, State};
-use super::{CONTEXT, CancelQuery, ExplainQuery, QueryView, RunQuery};
+use super::{CONTEXT, CancelQuery, ExplainQuery, QueryView, RunAllQuery, RunQuery};
 use crate::ui::{self, dp};
 use freshkube_db::wire::Encryption;
 use freshkube_ui::{level, page, palette::palette};
@@ -24,31 +24,48 @@ const HISTORY_WIDTH: f32 = 300.;
 const APP_USER: &str = "This session is the application's own user, not a read-only reader. The database's read-only transaction keeps it from writing; a reader role is the real fix (E4).";
 
 impl QueryView {
-    fn render_strip(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The strip: what the session is on one row, which wraps and changes only
+    /// with the connection, and the actions on a row of their own that never
+    /// moves, however long the status beside them is.
+    fn render_strip(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        v_flex()
+            .id("query-strip")
+            .test_support()
+            .flex_none()
+            .w_full()
+            .border_b_1()
+            .border_color(p.line)
+            .child(self.render_marks(narrow, cx))
+            .child(self.render_actions(cx))
+            .into_any_element()
+    }
+
+    fn render_marks(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let live = self.live(cx);
-        let running = self.running();
-        let summary = self.summary();
         h_flex()
-            .id("query-strip")
+            .id("query-marks")
             .test_support()
             .flex_wrap()
             .gap_x(dp(8.))
             .gap_y(dp(2.))
             .px(dp(page::PANE_PADDING))
             .py(dp(3.))
-            .min_h(dp(34.))
-            .flex_none()
+            .min_h(dp(30.))
             .items_center()
-            .border_b_1()
-            .border_color(p.line)
             .text_size(dp(12.))
-            .child(
-                ui::tag(ui::Tone::Good, None, "Read-only session", cx)
+            .child(match &live {
+                Some(_) => ui::tag(ui::Tone::Good, None, "Read-only session", cx)
                     .id("query-read-only")
                     .aria_label("Read-only session")
                     .test_support(),
-            )
+                // There is no session to call read-only.
+                None => ui::tag(ui::Tone::Warn, None, "Connection closed", cx)
+                    .id("query-closed")
+                    .aria_label(super::CLOSED)
+                    .test_support(),
+            })
             .children(live.as_ref().filter(|live| live.app_user).map(|_| {
                 ui::tag(ui::Tone::Warn, None, "Application user", cx)
                     .id("query-app-user")
@@ -89,8 +106,10 @@ impl QueryView {
                     .aria_label(label)
                     .test_support()
             }))
+            // The pod and port give way first when the tab is narrow.
             .children(
                 live.as_ref()
+                    .filter(|_| !narrow)
                     .and_then(|live| live.route.clone())
                     .map(|route| {
                         div()
@@ -102,16 +121,22 @@ impl QueryView {
                             .child(route)
                     }),
             )
-            .child(div().flex_1())
-            .children(summary.map(|summary| {
-                div()
-                    .id("query-summary")
-                    .aria_label(summary.clone())
-                    .test_support()
-                    .text_color(p.muted)
-                    .truncate()
-                    .child(summary)
-            }))
+            .into_any_element()
+    }
+
+    fn render_actions(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let running = self.running();
+        let summary = self.summary();
+        h_flex()
+            .id("query-actions")
+            .test_support()
+            .gap(dp(4.))
+            .px(dp(page::PANE_PADDING))
+            .py(dp(3.))
+            .min_h(dp(34.))
+            .items_center()
+            .text_size(dp(12.))
             .child(
                 Button::new("query-run")
                     .small()
@@ -121,6 +146,18 @@ impl QueryView {
                     .tooltip("Run the selection, else the statement at the cursor (Command-Enter)")
                     .disabled(running)
                     .on_click(cx.listener(|this, _, _, cx| this.run(cx))),
+            )
+            .child(
+                Button::new("query-run-all")
+                    .ghost()
+                    .small()
+                    .h(dp(ui::CONTROL_HEIGHT))
+                    .label("Run all")
+                    .tooltip(
+                        "Run every statement in the editor, one after another (Command-Option-Enter)",
+                    )
+                    .disabled(running)
+                    .on_click(cx.listener(|this, _, _, cx| this.run_all(cx))),
             )
             .child(
                 Button::new("query-plan")
@@ -151,6 +188,25 @@ impl QueryView {
                     .selected(self.show_history)
                     .tooltip("The statements this tab ran; kept only while the tab is open")
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_history(cx))),
+            )
+            // The status takes what is left and is cut, so it never pushes the
+            // buttons about.
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .justify_end()
+                    .children(summary.map(|summary| {
+                        div()
+                            .id("query-summary")
+                            .aria_label(summary.clone())
+                            .test_support()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(p.muted)
+                            .child(summary)
+                    })),
             )
             .into_any_element()
     }
@@ -187,28 +243,83 @@ impl QueryView {
             return None;
         }
         let p = palette(cx);
+        let count = self.items.len();
+        let selected = self.selected;
+        let step = |id: &'static str, icon: IconName, to: Option<usize>, cx: &mut Context<Self>| {
+            Button::new(id)
+                .ghost()
+                .small()
+                .h(dp(ui::CONTROL_HEIGHT))
+                .icon(icon)
+                .accessibility_label(if id.ends_with("prev") {
+                    "Previous result"
+                } else {
+                    "Next result"
+                })
+                .disabled(to.is_none())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(to) = to {
+                        this.show(to, cx)
+                    }
+                }))
+        };
+        let previous = selected.checked_sub(1);
+        let next = (selected + 1 < count).then_some(selected + 1);
         Some(
             h_flex()
                 .id("query-results")
                 .test_support()
                 .flex_none()
+                .items_center()
                 .gap(dp(4.))
                 .px(dp(page::PANE_PADDING))
                 .py(dp(3.))
-                .overflow_x_hidden()
                 .border_b_1()
                 .border_color(p.line)
-                .children(self.items.iter().enumerate().map(|(ix, item)| {
-                    let label = item.label.clone();
-                    Button::new(SharedString::from(format!("query-result-{}", ix + 1)))
-                        .ghost()
-                        .small()
-                        .h(dp(ui::CONTROL_HEIGHT))
-                        .label(label.clone())
-                        .accessibility_label(label)
-                        .selected(ix == self.selected)
-                        .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
-                }))
+                .when(count > 1, |this| {
+                    this.child(step(
+                        "query-result-prev",
+                        IconName::ChevronLeft,
+                        previous,
+                        cx,
+                    ))
+                })
+                // The tabs scroll sideways, and the selected one is kept in
+                // view, so a run of fifty statements can all be reached.
+                .child(
+                    h_flex()
+                        .id("query-result-tabs")
+                        .flex_1()
+                        .min_w_0()
+                        .gap(dp(4.))
+                        .overflow_x_scroll()
+                        .track_scroll(&self.results_scroll)
+                        .children(self.items.iter().enumerate().map(|(ix, item)| {
+                            let label = item.label.clone();
+                            Button::new(SharedString::from(format!("query-result-{}", ix + 1)))
+                                .ghost()
+                                .small()
+                                .h(dp(ui::CONTROL_HEIGHT))
+                                .flex_none()
+                                .label(label.clone())
+                                .accessibility_label(label)
+                                .selected(ix == selected)
+                                .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
+                        })),
+                )
+                .when(count > 1, |this| {
+                    this.child(step("query-result-next", IconName::ChevronRight, next, cx))
+                        .child(
+                            div()
+                                .id("query-result-position")
+                                .aria_label(format!("Result {} of {count}", selected + 1))
+                                .test_support()
+                                .flex_none()
+                                .text_size(dp(12.))
+                                .text_color(p.muted)
+                                .child(format!("{} of {count}", selected + 1)),
+                        )
+                })
                 .into_any_element(),
         )
     }
@@ -228,17 +339,12 @@ impl QueryView {
                 .into_any_element()
         };
         let Some(item) = self.items.get(self.selected) else {
-            let words = self.notice.clone().map_or_else(
-                || {
-                    if self.live(cx).is_none() {
-                        super::CLOSED.to_string()
-                    } else {
-                        "Run a statement with Command-Enter. It runs read-only: the database refuses a write."
-                            .to_string()
-                    }
-                },
-                |n| n.to_string(),
-            );
+            let words = if self.live(cx).is_none() {
+                super::CLOSED.to_string()
+            } else {
+                "Run a statement with Command-Enter. It runs read-only: the database refuses a write."
+                    .to_string()
+            };
             return div()
                 .id("query-note")
                 .aria_label(words.clone())
@@ -332,7 +438,9 @@ impl QueryView {
         }
     }
 
-    fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The history panel: beside the results, or, when `side` is false, the
+    /// width of the tab in their place.
+    fn render_history(&self, side: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let body = if self.history.is_empty() {
             div()
@@ -385,13 +493,16 @@ impl QueryView {
         v_flex()
             .id("query-history")
             .test_support()
-            .flex_none()
-            .w(dp(HISTORY_WIDTH))
-            .h_full()
-            .min_h_0()
-            .border_l_1()
-            .border_color(p.line)
             .text_size(dp(12.))
+            .border_color(p.line)
+            .when(side, |this| {
+                this.flex_none()
+                    .w(dp(HISTORY_WIDTH))
+                    .h_full()
+                    .min_h_0()
+                    .border_l_1()
+            })
+            .when(!side, |this| this.flex_1().w_full().min_h_0())
             .child(
                 h_flex()
                     .px(dp(page::PANE_PADDING))
@@ -416,10 +527,18 @@ impl QueryView {
     }
 }
 
+/// The width, in dp, below which History takes the results' place instead of
+/// sitting beside them, and the pod and port are left off the strip.
+const NARROW: f32 = 1000.;
+/// The least height of the tab's content, in dp; a shorter cell scrolls it.
+const LEAST_CONTENT: f32 = 380.;
+
 impl Render for QueryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.least = ui::dp_px(super::LEAST_HEIGHT, window);
         let p = palette(cx);
+        let width = window.viewport_size().width / ui::dp_px(1., window);
+        let narrow = width < NARROW;
         let editor = div()
             .id("query-editor")
             .test_support()
@@ -428,21 +547,54 @@ impl Render for QueryView {
             .border_b_1()
             .border_color(p.line)
             .child(Editor::new(&self.editor).h_full().bordered(false));
+        // Narrow, History is shown where the results are, not squeezed beside.
+        let history_here = self.show_history && narrow;
+        let banner = self.notice.clone().map(|notice| {
+            div()
+                .id("query-notice")
+                .aria_label(notice.clone())
+                .test_support()
+                .flex_none()
+                .px(dp(page::PANE_PADDING))
+                .py(dp(4.))
+                .border_b_1()
+                .border_color(p.line)
+                .text_size(dp(12.))
+                .text_color(p.warn)
+                .child(notice)
+        });
         let main = v_flex()
             .flex_1()
             .h_full()
             .min_w_0()
             .min_h_0()
-            .child(self.render_strip(cx))
+            .overflow_hidden()
+            .child(self.render_strip(narrow, cx))
             .child(editor)
-            .children(self.render_results_strip(cx))
-            .child(v_flex().flex_1().min_h_0().child(self.render_result(cx)));
-        h_flex()
+            .children(banner)
+            .when(!history_here, |this| {
+                this.children(self.render_results_strip(cx))
+                    .child(v_flex().flex_1().min_h_0().child(self.render_result(cx)))
+            })
+            .when(history_here, |this| {
+                this.child(self.render_history(false, cx))
+            });
+        let body = h_flex()
+            .w_full()
+            .h_full()
+            .min_h(dp(LEAST_CONTENT))
+            .child(main)
+            .when(self.show_history && !narrow, |this| {
+                this.child(self.render_history(true, cx))
+            });
+        // A cell too short for the content scrolls it, so nothing is cut off.
+        div()
             .id("query")
             .test_support()
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &RunQuery, _, cx| this.run(cx)))
+            .on_action(cx.listener(|this, _: &RunAllQuery, _, cx| this.run_all(cx)))
             .on_action(cx.listener(|this, _: &ExplainQuery, _, cx| this.explain(cx)))
             .on_action(cx.listener(|this, _: &CancelQuery, _, cx| {
                 if this.running() {
@@ -453,10 +605,8 @@ impl Render for QueryView {
                 }
             }))
             .size_full()
-            .min_h_0()
-            .child(main)
-            .when(self.show_history, |this| {
-                this.child(self.render_history(cx))
-            })
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(body)
     }
 }
