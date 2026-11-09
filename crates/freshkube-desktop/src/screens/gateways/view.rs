@@ -278,7 +278,12 @@ impl GatewaysScreen {
         if gateways.is_empty() {
             gateways.push(self.line(
                 format!("{id}-no-gateways"),
-                "No Gateway uses this class.".into(),
+                if detail.gateways_known {
+                    "No Gateway uses this class.".into()
+                } else {
+                    "The Gateways could not be read, so which of them use this class is not known."
+                        .into()
+                },
                 true,
                 cx,
             ));
@@ -323,7 +328,11 @@ impl GatewaysScreen {
                     .text_size(dp(12.))
                     .text_color(p.muted)
                     .truncate()
-                    .child(row.cells[0].clone()),
+                    .child(match self.mode {
+                        // A class's name is the title already: say who owns it.
+                        Mode::Classes => row.cells[2].clone(),
+                        Mode::Gateways => row.cells[0].clone(),
+                    }),
             );
         let sections = match &row.detail {
             Detail::Gateway(entry) => self.gateway_sections(row, entry, cx),

@@ -110,7 +110,8 @@ impl TopologyScreen {
                 problems: "Problem calls".into(),
                 caption: "Address, Gateways, routes, backends, workloads, left to right · dashed lines are broken or not known · every call is listed in Calls".into(),
             },
-        );
+        )
+        .unpaged();
         Self {
             runtime,
             source: None,
@@ -250,19 +251,26 @@ impl TopologyScreen {
                 tone: tone(edge.health),
                 width: 1.5,
                 label: format!(
-                    "{} → {}",
+                    "{} → {}{}",
                     topology
                         .node(&edge.from)
                         .map_or(edge.from.as_str(), |n| n.label.as_str()),
                     topology
                         .node(&edge.to)
-                        .map_or(edge.to.as_str(), |n| n.label.as_str())
+                        .map_or(edge.to.as_str(), |n| n.label.as_str()),
+                    if edge.label.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {}", edge.label)
+                    }
                 )
                 .into(),
                 tooltip: edge.words.clone().into(),
                 style: EdgeStyle::Auto,
-                pill: (!edge.label.is_empty()).then(|| edge.label.clone().into()),
-                pill_tone: tone(edge.health),
+                // A label on the line would be cut by the box before it, so
+                // the share or the listener is in the call's own words.
+                pill: None,
+                pill_tone: None,
             })
             .collect();
         self.graph.set(nodes, edges);

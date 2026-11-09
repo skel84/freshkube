@@ -49,6 +49,8 @@ pub(crate) struct ClassDetail {
     /// `(line, state, tone)`: the line is `key · state`.
     pub gateways: Vec<(String, &'static str, ui::Tone)>,
     pub gateways_more: usize,
+    /// False when the Gateway list was refused.
+    pub gateways_known: bool,
 }
 
 /// What a row's Inspector draws, as strings made once per read.
@@ -76,7 +78,7 @@ fn more(total: usize) -> usize {
 fn gateway_detail(entry: &GatewayEntry) -> GatewayDetail {
     GatewayDetail {
         state: entry.state.label(),
-        reason: entry.reason.clone(),
+        reason: plain(&entry.reason).to_owned(),
         owner: owner_words(entry.owner),
         says: entry.says.clone(),
         listeners: entry
@@ -132,7 +134,7 @@ fn gateway_detail(entry: &GatewayEntry) -> GatewayDetail {
 fn class_detail(entry: &ClassEntry) -> ClassDetail {
     ClassDetail {
         state: entry.state.label(),
-        reason: entry.reason.clone(),
+        reason: plain(&entry.reason).to_owned(),
         says: entry.says.clone(),
         gateways: entry
             .gateways
@@ -147,6 +149,7 @@ fn class_detail(entry: &ClassEntry) -> ClassDetail {
             })
             .collect(),
         gateways_more: more(entry.gateways.len()),
+        gateways_known: entry.gateways_known,
     }
 }
 
@@ -243,13 +246,22 @@ fn slug(label: &str) -> &'static str {
     }
 }
 
+/// A reason without the state word the Status column already says: the
+/// trace writes "blind: …" and "pending: …".
+fn plain(reason: &str) -> &str {
+    reason
+        .strip_prefix("blind: ")
+        .or_else(|| reason.strip_prefix("pending: "))
+        .unwrap_or(reason)
+}
+
 fn plural(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 
 fn gateway_row(entry: &GatewayEntry) -> (Row, usize) {
     let facts = &entry.facts;
-    let mut status = format!("{} — {}", entry.state.label(), entry.reason);
+    let mut status = format!("{} — {}", entry.state.label(), plain(&entry.reason));
     if entry.stale {
         status.push_str(" · stale verdict");
     }
@@ -327,11 +339,13 @@ fn class_row(entry: &ClassEntry) -> (Row, usize) {
         .controller
         .clone()
         .unwrap_or_else(|| "no such class".to_owned());
-    let mut status = format!("{} — {}", entry.state.label(), entry.reason);
+    let mut status = format!("{} — {}", entry.state.label(), plain(&entry.reason));
     if entry.stale {
         status.push_str(" · stale verdict");
     }
     let users = match entry.gateways.len() {
+        // A refused Gateway list leaves the count unknown, not zero.
+        0 if !entry.gateways_known => "unknown (Gateways not read)".to_owned(),
         0 => "no Gateways".to_owned(),
         n => plural(n, "Gateway", "Gateways"),
     };

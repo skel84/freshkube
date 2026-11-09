@@ -212,6 +212,9 @@ pub struct ClassEntry {
     pub stale: bool,
     /// The Gateways of this class, with how each reads.
     pub gateways: Vec<(String, GatewayState)>,
+    /// False when the Gateway list was refused: which Gateways use the class
+    /// is then not known, which is not the same as none.
+    pub gateways_known: bool,
 }
 
 /// What the Gateway pages draw from one read.
@@ -420,6 +423,7 @@ fn class_entries(
                 says: step.controller,
                 stale: step.stale,
                 gateways: uses(&class.name),
+                gateways_known: gateways.is_ok(),
             }
         })
         .collect::<Vec<_>>();
@@ -448,6 +452,7 @@ fn class_entries(
             says: None,
             stale: false,
             gateways: uses(name),
+            gateways_known: gateways.is_ok(),
         }));
     }
     entries.sort_by(|a, b| (a.state, &a.name).cmp(&(b.state, &b.name)));

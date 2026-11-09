@@ -19,6 +19,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const WORKLOAD_NAMESPACES: usize = 25;
 /// Pods and ReplicaSets read per namespace.
 pub const WORKLOAD_LIMIT: u32 = 500;
+/// Boxes one topology draws; Gateways past it are counted in a note.
+pub const MAX_BOXES: usize = 300;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeKind {
@@ -329,7 +331,12 @@ impl Topology {
         let gateways = view.gateways?;
         let mut builder = Builder::default();
         let mut notes = Vec::new();
+        let mut left_out = 0;
         for entry in &gateways {
+            if builder.nodes.len() >= MAX_BOXES {
+                left_out += 1;
+                continue;
+            }
             let gateway = gateway_node(entry);
             let gateway_key = gateway.key.clone();
             // The address, or a ghost that says there is none.
@@ -528,6 +535,16 @@ impl Topology {
                 "The workloads behind {unread} {} could not be read, so {} read Unknown",
                 if unread == 1 { "Service" } else { "Services" },
                 if unread == 1 { "it" } else { "they" },
+            ));
+        }
+        if left_out > 0 {
+            notes.push(format!(
+                "{left_out} more {} not drawn: a topology draws at most {MAX_BOXES} boxes",
+                if left_out == 1 {
+                    "Gateway is"
+                } else {
+                    "Gateways are"
+                },
             ));
         }
         if view.gateways_cut {

@@ -853,3 +853,49 @@ fn a_stale_class_verdict_is_marked_in_the_list() {
     let legacy = display.rows.iter().find(|r| r.name == "legacy").unwrap();
     assert!(!legacy.cells[1].contains("stale"));
 }
+
+#[test]
+fn a_refused_gateway_list_leaves_each_classs_gateways_unknown_and_not_none() {
+    let display = display_of(Mode::Classes, Shape::GatewaysRefused);
+    assert!(!display.rows.is_empty());
+    for row in &display.rows {
+        assert_eq!(row.cells[3], "unknown (Gateways not read)", "{}", row.name);
+        let Detail::Class(detail) = &row.detail else {
+            panic!("a class's detail");
+        };
+        assert!(!detail.gateways_known);
+    }
+    // Read, an unused class is "no Gateways".
+    let display = display_of(Mode::Classes, Shape::Gateways);
+    let waiting = display.rows.iter().find(|r| r.name == "waiting").unwrap();
+    assert_eq!(waiting.cells[3], "no Gateways");
+}
+
+#[test]
+fn the_status_column_does_not_repeat_the_state_it_sits_beside() {
+    let display = display_of(Mode::Gateways, Shape::Gateways);
+    for row in &display.rows {
+        let words = row.cells[1].to_string();
+        assert!(
+            !words.contains("pending: ") && !words.contains("blind: "),
+            "{words}"
+        );
+    }
+    let pending = display
+        .rows
+        .iter()
+        .find(|r| r.key == "infra/pending")
+        .unwrap();
+    assert!(
+        pending.cells[1].starts_with("Pending — "),
+        "{}",
+        pending.cells[1]
+    );
+    let classes = display_of(Mode::Classes, Shape::Gateways);
+    let silent = classes.rows.iter().find(|r| r.name == "silent").unwrap();
+    assert!(
+        silent.cells[1].starts_with("Blind — the class has no status"),
+        "{}",
+        silent.cells[1]
+    );
+}

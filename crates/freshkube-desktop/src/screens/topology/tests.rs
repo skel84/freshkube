@@ -329,3 +329,55 @@ fn a_link_carries_the_uid_of_a_live_cluster_and_none_of_the_examples() {
     let node = topology.node("gateway:infra/edge").unwrap();
     assert_eq!(node.target.as_ref().unwrap().uid, "gw-infra-edge");
 }
+
+#[gpui_kit::test]
+fn a_calls_share_or_listener_is_in_its_own_words_and_no_label_sits_on_a_line(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let page = page.read(cx);
+        // Nothing is drawn on a line, where the box before it would cut it.
+        assert!(page.graph.edges().iter().all(|e| e.pill.is_none()));
+        let split = page
+            .graph
+            .edges()
+            .iter()
+            .find(|e| e.from == "route:shop/cart-split" && e.to == "service:shop/canary")
+            .unwrap();
+        assert!(split.label.ends_with("· 20%"), "{}", split.label);
+        let gateway = page
+            .graph
+            .edges()
+            .iter()
+            .find(|e| e.from == "gateway:infra/edge" && e.to == "route:shop/web")
+            .unwrap();
+        assert!(gateway.label.ends_with("· https"), "{}", gateway.label);
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_topology_draws_at_most_the_box_cap_and_counts_the_gateways_it_leaves_out() {
+    use freshkube_core::resources::traffic::routes::{MAX_BOXES, Topology, example};
+    let mut read = example::read(Shape::Gateways).unwrap();
+    let template = read.gateways.as_ref().unwrap().items[0].clone();
+    let items = &mut read.gateways.as_mut().unwrap().items;
+    for n in 0..MAX_BOXES {
+        let mut gateway = template.clone();
+        gateway.name = format!("bulk{n}");
+        gateway.namespace = "bulk".into();
+        items.push(gateway);
+    }
+    let topology = Topology::new(&read, &example::workloads(Shape::Gateways)).unwrap();
+    assert!(topology.nodes.len() < MAX_BOXES + 20);
+    assert!(
+        topology.notes.iter().any(|n| n.contains("not drawn")),
+        "{:?}",
+        topology.notes
+    );
+    for call in &topology.edges {
+        assert!(topology.node(&call.from).is_some() && topology.node(&call.to).is_some());
+    }
+}

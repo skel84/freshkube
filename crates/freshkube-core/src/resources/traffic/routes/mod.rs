@@ -27,8 +27,8 @@ pub use read::{
     NAMESPACE_LIMIT, ROUTE_LIMIT, RouteEntry, RoutesRead, discover, read_routes,
 };
 pub use topology::{
-    Edge, Health, ListCuts, Node, NodeKind, Target, Topology, WORKLOAD_LIMIT, WORKLOAD_NAMESPACES,
-    WorkloadRead, WorkloadRef, read_workloads, resolve_workloads,
+    Edge, Health, ListCuts, MAX_BOXES, Node, NodeKind, Target, Topology, WORKLOAD_LIMIT,
+    WORKLOAD_NAMESPACES, WorkloadRead, WorkloadRef, read_workloads, resolve_workloads,
 };
 pub use trace::{
     BackendRead, Branch, BranchKind, BranchVerdict, Cause, Inputs, Listing, NamespaceLabels,
