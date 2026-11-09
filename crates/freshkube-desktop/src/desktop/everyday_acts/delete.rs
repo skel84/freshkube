@@ -250,25 +250,29 @@ impl Render for DeleteDialog {
             .id("delete-dialog")
             .test_support()
             .gap(dp(8.))
-            .child(
-                "It owns other objects, or what it owns could not be read. Choose what happens to them; the next step shows each one.",
-            )
+            .child(format!(
+                "Owns: {}. Choose what happens to them; the next step shows each one.",
+                self.impact.owns_summary()
+            ))
             .children(self.impact.choices().into_iter().map(|policy| {
                 let weak = weak.clone();
-                Button::new(SharedString::from(format!("delete-policy-{}", policy.key())))
-                    .ghost()
-                    .small()
-                    .w_full()
-                    .justify_start()
-                    .label(format!("{}: {}", policy.label(), policy.effect()))
-                    .selected(self.chosen == policy)
-                    .on_click(move |_, _, cx| {
-                        _ = weak.update(cx, |dialog, cx| {
-                            dialog.chosen = policy;
-                            dialog.error = None;
-                            cx.notify();
-                        });
-                    })
+                Button::new(SharedString::from(format!(
+                    "delete-policy-{}",
+                    policy.key()
+                )))
+                .ghost()
+                .small()
+                .w_full()
+                .justify_start()
+                .label(format!("{}: {}", policy.label(), policy.effect()))
+                .selected(self.chosen == policy)
+                .on_click(move |_, _, cx| {
+                    _ = weak.update(cx, |dialog, cx| {
+                        dialog.chosen = policy;
+                        dialog.error = None;
+                        cx.notify();
+                    });
+                })
             }))
             .when_some(self.error.clone(), |this, why| {
                 this.child(

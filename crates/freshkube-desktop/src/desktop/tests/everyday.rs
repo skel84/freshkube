@@ -1110,9 +1110,9 @@ fn an_object_that_owns_something_asks_the_propagation_first(cx: &mut TestAppCont
     w.drive(cx, Duration::from_millis(500));
     assert!(!w.present(cx, "delete-dialog"));
     assert!(
-        w.label(cx, "write-sentence").contains("deleted first"),
+        w.label(cx, "write-preview-3").contains("deleted first"),
         "{}",
-        w.label(cx, "write-sentence")
+        w.label(cx, "write-preview-3")
     );
     assert!(
         w.label(cx, "write-preview-0").contains("Pod/web-a1-x1"),

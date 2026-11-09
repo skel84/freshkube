@@ -121,6 +121,15 @@ pub(crate) fn complete(group: &str, kind: &str) -> bool {
     )
 }
 
+/// `3 ReplicaSets`' kind: the kind, with an s when there is more than one.
+fn plural(kind: &str, count: usize) -> String {
+    if count == 1 {
+        kind.to_owned()
+    } else {
+        format!("{kind}s")
+    }
+}
+
 /// What looking for the objects of one kind found.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Found {
@@ -286,7 +295,7 @@ impl Impact {
 
     /// What it owns as counts only, for the audit line and the sentence:
     /// never a name.
-    fn counts_text(&self) -> String {
+    pub fn owns_summary(&self) -> String {
         let mut parts: Vec<String> = vec![];
         for dependents in &self.dependents {
             match &dependents.found {
@@ -295,7 +304,7 @@ impl Impact {
                 } if *total > 0 => parts.push(format!(
                     "{total}{} {}",
                     if *at_least { "+" } else { "" },
-                    dependents.kind
+                    plural(dependents.kind, *total)
                 )),
                 Found::Read { at_least: true, .. } => {
                     parts.push(format!("{} unknown (list cut at {PAGE})", dependents.kind))
@@ -365,7 +374,10 @@ impl Impact {
                     at_least,
                 } => {
                     let more = if *at_least { "at least " } else { "" };
-                    lines.push(format!("{more}{total} {kind} owned by it:"));
+                    lines.push(format!(
+                        "{more}{total} {} owned by it:",
+                        plural(kind, *total)
+                    ));
                     lines.extend(names.iter().map(|name| format!("{kind}/{name}")));
                     if *total > names.len() {
                         lines.push(format!("and {} more", total - names.len()));
@@ -454,11 +466,10 @@ pub fn delete(impact: &Impact, propagation: Propagation) -> Result<ActionDescrip
     // The sentence is also the audit line's summary: the policy and counts
     // are in it, and never the contents of an object.
     let sentence = format!(
-        "Delete {} with {} propagation; owns: {}. This can't be undone. {}{tool}",
+        "Delete {} with {} propagation; owns: {}. This can't be undone.{tool}",
         impact.label(),
         propagation.label(),
-        impact.counts_text(),
-        propagation.effect()
+        impact.owns_summary(),
     );
     Ok(ActionDescription {
         kind: "delete".into(),
@@ -484,7 +495,11 @@ pub fn delete(impact: &Impact, propagation: Propagation) -> Result<ActionDescrip
             },
             Preview {
                 title: format!("Propagation: {}", propagation.label()),
-                lines: vec![propagation.effect().to_owned()],
+                lines: vec![if impact.may_own() {
+                    propagation.effect().to_owned()
+                } else {
+                    "It owns nothing, so the policy changes nothing.".to_owned()
+                }],
             },
         ],
         changes: vec![ObjectChange {

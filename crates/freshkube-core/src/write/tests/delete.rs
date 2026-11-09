@@ -358,7 +358,7 @@ async fn the_preview_reads_are_bounded_and_the_list_is_capped() {
     let action = delete::delete(&impact, Propagation::Background).unwrap();
     let owns = lines_of(&action, "What it owns");
     assert_eq!(owns.len(), 1 + delete::SHOWN + 1, "{owns:?}");
-    assert_eq!(owns[0], "12 Pod owned by it:");
+    assert_eq!(owns[0], "12 Pods owned by it:");
     assert_eq!(owns.last().unwrap(), "and 2 more");
 }
 
@@ -687,4 +687,41 @@ async fn example_data_with_no_list_for_a_kind_reads_as_unknown_not_empty() {
     assert!(matches!(dependents[0].found, Found::Unknown(_)));
     let impact = Impact::new(&row, &object, dependents).unwrap();
     assert_eq!(impact.choices(), Propagation::ALL);
+}
+
+#[tokio::test(start_paused = true)]
+async fn counts_are_plural_and_the_policy_is_said_once() {
+    let (rs_path, mut rs) = fake::replicaset("a1", 1, "registry.example/web:1", "uid-web");
+    rs["metadata"]["uid"] = json!("uid-rs-a1");
+    let mut objects = vec![(rs_path, rs)];
+    for n in 0..3 {
+        objects.push((
+            format!("{}/web-a1-p{n}", fake::PODS),
+            json!({"apiVersion": "v1", "kind": "Pod",
+                "metadata": {"name": format!("web-a1-p{n}"), "namespace": "shop",
+                    "uid": format!("uid-p{n}"), "resourceVersion": "1",
+                    "ownerReferences": [{"kind": "ReplicaSet", "name": "web-a1",
+                        "uid": "uid-rs-a1", "controller": true}]}}),
+        ));
+    }
+    let cluster = Cluster::with(objects);
+    let impact = impact_of(&cluster, &format!("{}/web-a1", fake::REPLICASETS)).await;
+    assert_eq!(impact.owns_summary(), "3 Pods");
+    let action = delete::delete(&impact, Propagation::Foreground).unwrap();
+    assert_eq!(lines_of(&action, "What it owns")[0], "3 Pods owned by it:");
+    // The effect is under its own heading, not also in the sentence.
+    assert!(
+        !action.sentence.contains("deleted first"),
+        "{}",
+        action.sentence
+    );
+    assert!(lines_of(&action, "Propagation: Foreground")[0].contains("deleted first"));
+    // Nothing owned: the section says the policy changes nothing.
+    let cluster = Cluster::with_owned();
+    let pod = impact_of(&cluster, fake::POD).await;
+    let action = delete::delete(&pod, Propagation::Background).unwrap();
+    assert_eq!(
+        lines_of(&action, "Propagation: Background"),
+        ["It owns nothing, so the policy changes nothing."]
+    );
 }
