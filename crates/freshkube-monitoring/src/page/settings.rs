@@ -265,7 +265,7 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
                 .child(outcome),
         );
     let saved = if saved_token {
-        form::SavedIn::file(format!("monitoring.json; the token in {STORE_NAME}"))
+        form::SavedIn::file("monitoring.json").and(format!("; the token in {STORE_NAME}"))
     } else {
         form::SavedIn::file("monitoring.json")
     };

@@ -23,3 +23,5 @@ The Kubernetes summary session (`kubernetes_summary/` in core and desktop) takes
 The shell's Kubernetes summary is session-owned: nine compact reflector stores run on every page and publish after a 500 ms coalescing window. Health and visible Lifecycle consume those observations; selecting a Talos node does not replace the session. The 15 s shell cycle and countdown are for Talos; metrics keep their separate polling schedules.
 
 The status bar's right side also holds the followed items' bell ("Notifying · n", after the port forwards); the shell offers the follows its connection and pushes their toasts. See [followed.md](followed.md).
+
+The status bar's status line (Overview, Kubernetes and the other shell statuses) is cut at the bar's width; hovering it shows the whole text, a connection failure's reason and fix included, in a wrapped tooltip at the text size in use (`status_text`; `the_whole_connection_failure_is_in_the_status_bars_tooltip`). A Kubernetes server that did not answer is named by host and port in the reason, never with a user, password, path or query (`freshkube-core`'s `resources/connection.rs`).

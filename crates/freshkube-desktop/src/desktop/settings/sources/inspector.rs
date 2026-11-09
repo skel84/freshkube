@@ -205,7 +205,7 @@ impl SourcesList {
                         "Pin",
                         h_flex().gap(dp(8.)).flex_wrap().child(pin).child(follow),
                     ))
-                    .saved_in(form::SavedIn::file("freshkube.yaml · sources"))
+                    .saved_in(form::SavedIn::file("freshkube.yaml").and(" · sources"))
                     .render(cx),
             );
         }

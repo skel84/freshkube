@@ -780,8 +780,8 @@ impl SettingsPage {
             form::SavedIn::file("freshkube.yaml")
         } else {
             // The key is in `keys.json`, beside the file.
-            form::SavedIn::file(format!(
-                "freshkube.yaml, the key in {}",
+            form::SavedIn::file("freshkube.yaml").and(format!(
+                ", the key in {}",
                 freshkube_core::secrets::STORE_NAME
             ))
         };

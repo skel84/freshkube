@@ -602,9 +602,7 @@ impl SourcesList {
             group = group.row(line);
         }
         group
-            .saved_in(form::SavedIn::file(
-                "freshkube.yaml · delivery.build_namespace",
-            ))
+            .saved_in(form::SavedIn::file("freshkube.yaml").and(" · delivery.build_namespace"))
             .render(cx)
             .into_any_element()
     }
