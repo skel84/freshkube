@@ -15,7 +15,7 @@ use super::rows::{self, PodState};
 use crate::fixture;
 
 /// Kinds the example data includes; the rest say so instead of listing.
-pub(crate) const KINDS: [&str; 13] = [
+pub(crate) const KINDS: [&str; 14] = [
     "cronjobs.batch",
     "pods",
     "replicasets.apps",
@@ -24,6 +24,7 @@ pub(crate) const KINDS: [&str; 13] = [
     "persistentvolumes",
     "deployments.apps",
     "services",
+    "networkpolicies.networking.k8s.io",
     "nodes",
     "namespaces",
     "secrets",
@@ -304,6 +305,7 @@ pub fn read(
             everyday::cronjobs(&connection, now),
         ),
         "services" => (service_columns(), services(&connection, now)),
+        netpol::KEY => (netpol::columns(), netpol::rows(&connection, now)),
         "nodes" => (node_columns(), nodes(&connection, context, now)),
         "secrets" => (secret_columns(), secrets(&connection, now)),
         "certificates.cert-manager.io" => (certificate_columns(), certificates(&connection, now)),
@@ -990,6 +992,7 @@ mod agent;
 mod everyday;
 mod gateway;
 mod gitops;
+pub mod netpol;
 pub use everyday::{autoscaler_of, object_json, replicasets_of};
 mod objects;
 mod summary;

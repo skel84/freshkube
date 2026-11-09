@@ -5,6 +5,7 @@
 //! is a list of steps that later slices put routes and gateways in front of.
 mod chain;
 mod endpoints;
+pub mod netpol;
 mod read;
 pub mod routes;
 mod service;

@@ -17,6 +17,8 @@ impl DetailPane {
             .when(detail.target.kind.is_pod(), |this| {
                 this.child(self.pod_sections(cx))
             })
+            // After the pod's own sections: they are what a short pane needs first.
+            .children(self.netpol_section(cx))
             .child(
                 v_flex()
                     .gap_2()
