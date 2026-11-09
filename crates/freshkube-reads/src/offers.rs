@@ -16,7 +16,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use freshkube_core::{
-    access::{self, Offer, Offers, OfferTicket, Verdict},
+    access::{self, Offer, OfferTicket, Offers, Verdict},
     cluster_source::ClusterSource,
     job::{OwnedJob, spawn_job},
     write::{self, AccessQuestion},

@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::*;
 use crate::fake_api::{self, Recorded};
-use crate::write::{AccessQuestion, Access, ask_access};
+use crate::write::{Access, AccessQuestion, ask_access};
 
 fn q(verb: &'static str, resource: &str, namespace: &str, name: &str) -> AccessQuestion {
     AccessQuestion {
@@ -50,7 +50,10 @@ fn a_refused_answer_reads_in_the_short_form_and_a_failed_one_leaves_it_open() {
         assert!(offers.land(&ticket, verdict, now));
     }
     let refused = offers.offer(&[patch.clone()], now);
-    assert_eq!(refused.refusal(), Some("Needs patch on deployments in shop"));
+    assert_eq!(
+        refused.refusal(),
+        Some("Needs patch on deployments in shop")
+    );
     let unchecked = offers.offer(&[delete.clone()], now);
     assert_eq!(unchecked, Offer::Unchecked);
     assert_eq!(unchecked.refusal(), None);
@@ -76,7 +79,10 @@ fn a_new_identity_drops_every_answer_and_ignores_one_still_on_its_way() {
     let (mut offers, now) = ready();
     let patch = q("patch", "deployments", "shop", "web");
     let tickets = offers.wants(&[patch.clone()], now);
-    assert!(!offers.reset("access-1"), "the same identity changes nothing");
+    assert!(
+        !offers.reset("access-1"),
+        "the same identity changes nothing"
+    );
     assert!(offers.reset("access-2"));
     assert!(!offers.is_ready());
     assert!(!offers.land(&tickets[0], Verdict::Refused, now));

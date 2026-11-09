@@ -35,7 +35,11 @@ async fn each_everyday_action_declares_the_review_its_description_makes() {
         .read_revisions(&history.client)
         .await;
     let cases: Vec<(Everyday, &str, ActionDescription)> = vec![
-        (Everyday::Scale, fake::DEPLOYMENT, everyday::scale(&web, 3).unwrap()),
+        (
+            Everyday::Scale,
+            fake::DEPLOYMENT,
+            everyday::scale(&web, 3).unwrap(),
+        ),
         (
             Everyday::Restart,
             fake::DEPLOYMENT,
@@ -59,14 +63,20 @@ async fn each_everyday_action_declares_the_review_its_description_makes() {
         (
             Everyday::ArgoRefresh,
             fake::APPLICATION,
-            everyday::argo_refresh(&subject(&cluster, fake::APPLICATION), everyday::Refresh::Normal)
-                .unwrap(),
+            everyday::argo_refresh(
+                &subject(&cluster, fake::APPLICATION),
+                everyday::Refresh::Normal,
+            )
+            .unwrap(),
         ),
         (
             Everyday::ArgoHardRefresh,
             fake::APPLICATION,
-            everyday::argo_refresh(&subject(&cluster, fake::APPLICATION), everyday::Refresh::Hard)
-                .unwrap(),
+            everyday::argo_refresh(
+                &subject(&cluster, fake::APPLICATION),
+                everyday::Refresh::Hard,
+            )
+            .unwrap(),
         ),
         (
             Everyday::FluxReconcile,
@@ -94,12 +104,17 @@ async fn each_everyday_action_declares_the_review_its_description_makes() {
 async fn edit_yaml_declares_the_review_its_description_makes() {
     let cluster = Cluster::new();
     let row = row_of(&cluster, fake::DEPLOYMENT);
-    let session = crate::write::edit_yaml::EditSession::from_row(&row, &cluster.object(fake::DEPLOYMENT)).unwrap();
+    let session =
+        crate::write::edit_yaml::EditSession::from_row(&row, &cluster.object(fake::DEPLOYMENT))
+            .unwrap();
     let mut text = session.editable_text();
     text.push_str("\n");
     let text = text.replace("replicas: 2", "replicas: 3");
     let action = session.describe(&text).unwrap();
-    assert_eq!(crate::write::edit_yaml::needs(&row), action.access_questions());
+    assert_eq!(
+        crate::write::edit_yaml::needs(&row),
+        action.access_questions()
+    );
 }
 
 #[test]
@@ -131,7 +146,10 @@ fn the_reasons_read_in_the_short_form() {
 }
 
 /// The cache the page reads, holding `verdict` for each of the action's questions.
-fn offers_saying(action: &ActionDescription, verdict: crate::access::Verdict) -> crate::access::Offers {
+fn offers_saying(
+    action: &ActionDescription,
+    verdict: crate::access::Verdict,
+) -> crate::access::Offers {
     let now = std::time::Instant::now();
     let mut offers = crate::access::Offers::default();
     offers.reset("access-1");
@@ -177,10 +195,7 @@ async fn a_cached_no_does_not_block_the_gate_either() {
     // The answer was old: the cluster allows it now, and the gate lets it by.
     let (cluster, dir) = (Cluster::new(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
-    assert!(matches!(
-        runner.preflight(action).await,
-        Verdict::Ready(_)
-    ));
+    assert!(matches!(runner.preflight(action).await, Verdict::Ready(_)));
     assert!(
         cluster
             .recorder

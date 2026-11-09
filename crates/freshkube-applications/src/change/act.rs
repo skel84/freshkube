@@ -88,7 +88,8 @@ impl ChangePage {
         ]
         .into_iter()
         .filter_map(|kind| {
-            let action = freshkube_delivery::acts::describe(kind, acts, &self.change, None, "", "")?;
+            let action =
+                freshkube_delivery::acts::describe(kind, acts, &self.change, None, "", "")?;
             Some((kind, action.access_questions()))
         })
         .collect()

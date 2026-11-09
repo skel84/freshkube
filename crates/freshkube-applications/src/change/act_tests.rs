@@ -157,7 +157,10 @@ fn words(
     cx.read(|cx| {
         let detail = page.read(cx).detail.as_ref().expect("a detail");
         let (why, tooltip) = detail.action_words(ix).expect("a button");
-        (why.map(|why| why.to_string()), tooltip.map(|tip| tip.to_string()))
+        (
+            why.map(|why| why.to_string()),
+            tooltip.map(|tip| tip.to_string()),
+        )
     })
 }
 
@@ -172,10 +175,7 @@ fn a_stage_action_the_cluster_refuses_is_greyed_out_with_the_reason(cx: &mut Tes
         .unwrap();
     let project = cx.read(|cx| page.read(cx).change.project.clone());
     let (refresh, _) = words(cx, &page, 1);
-    assert_eq!(
-        refresh,
-        Some(format!("Needs patch on stages in {project}"))
-    );
+    assert_eq!(refresh, Some(format!("Needs patch on stages in {project}")));
     let (warehouse, _) = words(cx, &page, 2);
     assert_eq!(
         warehouse,
@@ -211,9 +211,7 @@ fn a_stage_action_whose_review_did_not_answer_stays_on_and_says_so(cx: &mut Test
         .unwrap();
     let (why, tooltip) = words(cx, &page, 1);
     assert_eq!(why, None);
-    assert!(
-        tooltip.is_some_and(|tip| tip.contains("Couldn't check your access")),
-    );
+    assert!(tooltip.is_some_and(|tip| tip.contains("Couldn't check your access")),);
     press(cx, handle, 1);
     assert_eq!(events.borrow().len(), 1);
 }
@@ -250,7 +248,10 @@ fn only_the_selected_stages_actions_are_asked_about(cx: &mut TestAppContext) {
             .collect::<Vec<_>>()
     });
     for other in others {
-        assert!(!names.contains(&other), "{other} was asked about: {names:?}");
+        assert!(
+            !names.contains(&other),
+            "{other} was asked about: {names:?}"
+        );
     }
     drop(runtime);
 }

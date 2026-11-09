@@ -1131,8 +1131,7 @@ impl OperationsScreen {
             .collect();
         if !self.plan_needs.is_empty() {
             let needs = self.plan_needs.clone();
-            self.offers
-                .update(cx, |offers, cx| offers.want(&needs, cx));
+            self.offers.update(cx, |offers, cx| offers.want(&needs, cx));
         }
     }
 

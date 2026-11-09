@@ -18,7 +18,8 @@ pub use rollback::{Revision, Revisions, rollback};
 pub use run_now::run_now;
 
 use super::{
-    AccessQuestion, ActionDescription, Change, Inverse, InverseFrom, ObjectChange, Observation, Target, Tier,
+    AccessQuestion, ActionDescription, Change, Inverse, InverseFrom, ObjectChange, Observation,
+    Target, Tier,
 };
 
 /// The annotation `kubectl rollout restart` sets on the pod template.

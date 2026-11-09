@@ -121,8 +121,7 @@ impl DetailPane {
         if !self.active || needs.is_empty() {
             return;
         }
-        self.offers
-            .update(cx, |offers, cx| offers.want(&needs, cx));
+        self.offers.update(cx, |offers, cx| offers.want(&needs, cx));
     }
 
     /// What the cluster said of Edit on the open object.

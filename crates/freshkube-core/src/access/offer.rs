@@ -201,13 +201,8 @@ impl Offers {
                 self.answers.remove(&gone);
             }
         }
-        self.answers.insert(
-            ticket.question.clone(),
-            Entry {
-                verdict,
-                at: now,
-            },
-        );
+        self.answers
+            .insert(ticket.question.clone(), Entry { verdict, at: now });
         true
     }
 

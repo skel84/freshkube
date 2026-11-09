@@ -51,7 +51,11 @@ fn opened(
     (runtime, screen, handle, heard)
 }
 
-fn block(screen: &Entity<ResourcesScreen>, act: Everyday, cx: &mut TestAppContext) -> Option<String> {
+fn block(
+    screen: &Entity<ResourcesScreen>,
+    act: Everyday,
+    cx: &mut TestAppContext,
+) -> Option<String> {
     cx.read(|cx| {
         screen
             .read(cx)
@@ -100,7 +104,10 @@ fn a_refused_action_is_disabled_with_its_reason_and_does_nothing(cx: &mut TestAp
     .unwrap();
     cx.run_until_parked();
     assert!(
-        heard.borrow().iter().all(|(act, _)| *act != Everyday::Delete),
+        heard
+            .borrow()
+            .iter()
+            .all(|(act, _)| *act != Everyday::Delete),
         "{:?}",
         heard.borrow()
     );
@@ -183,7 +190,13 @@ fn safety_g19_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppCon
     })
     .unwrap();
     cx.run_until_parked();
-    let second = cx.read(|cx| screen.read(cx).projection.selected().map(|id| id.name.clone()));
+    let second = cx.read(|cx| {
+        screen
+            .read(cx)
+            .projection
+            .selected()
+            .map(|id| id.name.clone())
+    });
     let names = asked(cx);
     let mut distinct: Vec<_> = names.iter().collect();
     distinct.sort();
