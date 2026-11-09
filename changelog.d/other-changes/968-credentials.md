@@ -1,0 +1,1 @@
+- **Expired logins:** when a cluster login lapses mid-session (an exec plugin such as `kubelogin` that can no longer give a token), the status now reads "Unauthorized" with a plain message to sign in again, instead of "Unreachable" followed by the plugin's command line and error output.

@@ -269,6 +269,24 @@ minutes after the last is a strike, and the third closes the connection), and a
 ping on a quiet log follow would end it. A read-only unary call carries a 30 s
 deadline (`talos_rs::client::READ_DEADLINE`); streams and changes carry none.
 
+### Credentials that lapse mid-session
+
+kube asks an exec plugin for a new token when the one it holds is within ten
+seconds of expiring, at the next request, so a login that lapses while the machine
+sleeps surfaces as a failed request, not at the wake. The tests
+([`auth_refresh_tests.rs`](../crates/freshkube-core/src/auth_refresh_tests.rs), against a
+loopback server that records each `Authorization`) hold three things:
+
+- a token near expiry is refreshed at each request, so a session outlives its first token;
+- a token the server refuses reads as `Unauthorized` and the next refresh recovers on the same client;
+- a refresh that fails (the plugin exits non-zero) reads as `Unauthorized`, with a fixed
+  message and none of the plugin's command line, arguments or stderr (`Failure::from_kube`
+  finds the credential error inside the service error), and the client recovers once the
+  login works again.
+
+A network change is not detected in this step: the gap detector covers a wake, and a VPN
+coming up or down is found by the read that fails and is retried by its owner.
+
 ### The change page's outcome read
 
 What Coroot found after a deploy
