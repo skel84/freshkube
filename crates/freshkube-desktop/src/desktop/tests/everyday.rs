@@ -1226,3 +1226,40 @@ fn the_example_shows_the_impact_and_sends_nothing(cx: &mut TestAppContext) {
             .contains("example data")
     );
 }
+
+#[gpui_kit::test]
+fn switching_cluster_during_the_countdown_cancels_it_and_sends_nothing(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_millis(1500));
+    assert!(w.present(cx, "write-countdown"));
+    w.switch(cx, "dev-fra");
+    w.drive(cx, Duration::from_secs(8));
+    assert!(w.real_deletes().is_empty());
+    assert!(w.cluster.exists(fake::POD));
+    assert_eq!(
+        w.label(cx, "write-toast-status"),
+        "Cancelled. Nothing was sent."
+    );
+}
+
+#[gpui_kit::test]
+fn a_context_change_during_the_countdown_cancels_it_and_sends_nothing(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_millis(1500));
+    cx.update_window(w.handle, |_, window, cx| {
+        w.view.update(cx, |pilot, cx| {
+            pilot.applied.context = Some("another-context".into());
+            pilot.prepare_context_display(window, cx);
+        })
+    })
+    .unwrap();
+    w.drive(cx, Duration::from_secs(8));
+    assert!(w.real_deletes().is_empty());
+    assert!(w.cluster.exists(fake::POD));
+}

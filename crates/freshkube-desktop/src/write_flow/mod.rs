@@ -64,6 +64,15 @@ pub(crate) fn retain(flow: Entity<WriteFlow>, cx: &mut App) {
     cx.default_global::<Flows>().0 = open;
 }
 
+/// Ends every destructive countdown that is running, with nothing sent: a
+/// switch of cluster or context changes what the person confirmed.
+pub(crate) fn cancel_countdowns(cx: &mut App) {
+    let flows = cx.default_global::<Flows>().0.clone();
+    for flow in flows {
+        flow.update(cx, |flow, cx| flow.cancel_countdown(cx));
+    }
+}
+
 /// What a page hands over.
 pub(crate) struct WriteRequest {
     pub(crate) runner: Arc<Runner>,

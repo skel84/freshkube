@@ -247,6 +247,30 @@ impl Impact {
         super::outcome::finalizers_of(&self.object)
     }
 
+    /// What it owns as counts only, for the audit line and the sentence:
+    /// never a name.
+    fn counts_text(&self) -> String {
+        let mut parts: Vec<String> = vec![];
+        for dependents in &self.dependents {
+            match &dependents.found {
+                Found::Read {
+                    total, at_least, ..
+                } if *total > 0 => parts.push(format!(
+                    "{total}{} {}",
+                    if *at_least { "+" } else { "" },
+                    dependents.kind
+                )),
+                Found::Read { .. } => {}
+                Found::Unknown(_) => parts.push(format!("{} unknown", dependents.kind)),
+            }
+        }
+        if parts.is_empty() {
+            "nothing".to_owned()
+        } else {
+            parts.join(", ")
+        }
+    }
+
     fn controller(&self) -> Option<(String, String)> {
         self.object["metadata"]["ownerReferences"]
             .as_array()?
@@ -359,9 +383,13 @@ pub fn delete(impact: &Impact, propagation: Propagation) -> Result<ActionDescrip
         Some(GitOps::Flux) => " Flux manages it and may create it again.",
         None => "",
     };
+    // The sentence is also the audit line's summary: the policy and counts
+    // are in it, and never the contents of an object.
     let sentence = format!(
-        "Delete {}. This can't be undone. {}{tool}",
+        "Delete {} with {} propagation; it owns {}. This can't be undone. {}{tool}",
         impact.label(),
+        propagation.label(),
+        impact.counts_text(),
         propagation.effect()
     );
     Ok(ActionDescription {

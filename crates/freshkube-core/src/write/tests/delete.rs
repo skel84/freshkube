@@ -213,6 +213,46 @@ async fn safety_g18_nothing_is_sent_during_the_countdown_or_after_cancel() {
         assert!(cluster.exists(fake::POD));
     }
 
+    // A level that changes while it counts down cancels it, looser or
+    // stricter: the person confirmed under another one.
+    for becomes in [
+        Protection::Open,
+        Protection::Protected,
+        Protection::ReadOnly,
+    ] {
+        let (cluster, dir) = (Cluster::with_owned(), tmp());
+        let level = LevelCell::new(Protection::Guarded);
+        let runner =
+            fake::runner(&cluster, dir.path(), Protection::Guarded).following(level.clone());
+        let impact = impact_of(&cluster, fake::POD).await;
+        let prepared = ready(
+            &runner,
+            delete::delete(&impact, Propagation::Background).unwrap(),
+        )
+        .await;
+        let started = tokio::time::Instant::now();
+        let finished = runner
+            .execute(
+                *prepared,
+                Confirmation::Confirmed,
+                || {
+                    if started.elapsed() >= Duration::from_secs(2) {
+                        level.set(becomes);
+                    }
+                    false
+                },
+                |_| {},
+            )
+            .await;
+        assert!(
+            matches!(finished.status, Status::NotSent(_)),
+            "{becomes:?}: {:?}",
+            finished.status
+        );
+        assert!(real_deletes(&cluster).is_empty(), "{becomes:?}");
+        assert!(cluster.exists(fake::POD));
+    }
+
     // Not cancelled: the delete goes out only once the window has ended.
     let (cluster, dir) = (Cluster::with_owned(), tmp());
     let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
@@ -493,4 +533,26 @@ async fn gone_recreated_and_terminating_are_told_apart() {
         .pop()
         .unwrap();
     assert!(last.result.contains("Terminating"), "{}", last.result);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_audit_records_the_policy_and_the_counts_and_never_a_name_or_contents() {
+    let (cluster, dir) = (Cluster::with_owned(), tmp());
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded);
+    let impact = impact_of(&cluster, &format!("{}/web-a1", fake::REPLICASETS)).await;
+    let action = delete::delete(&impact, Propagation::Orphan).unwrap();
+    let prepared = ready(&runner, action).await;
+    run(&runner, prepared, Confirmation::Confirmed).await;
+    let records = AuditStore::new(dir.path().join("audit"))
+        .read()
+        .unwrap()
+        .records;
+    assert!(!records.is_empty());
+    for record in &records {
+        let sentence = &record.request.sentence;
+        assert!(sentence.contains("Orphan propagation"), "{sentence}");
+        assert!(sentence.contains("it owns 1 Pod."), "{sentence}");
+        // Counts only: the owned Pod's name is not in the line.
+        assert!(!sentence.contains("web-a1-x1"), "{sentence}");
+    }
 }

@@ -350,7 +350,11 @@ impl Runner {
             if let Some(reason) = level.refusal().or(requirement.blocked) {
                 return Some(NotSent::ReadOnly(reason));
             }
-            (level < prepared_level).then_some(NotSent::LevelChanged(level))
+            // A level changed while a destructive action counts down cancels it,
+            // looser or stricter: the person confirmed under another one.
+            (level < prepared_level
+                || (requirement.cancel_window.is_some() && level != prepared_level))
+                .then_some(NotSent::LevelChanged(level))
         };
         if let Some(not_sent) = refused_at(self.level_for(&description)) {
             return finished(Status::NotSent(not_sent), vec![], None, None);

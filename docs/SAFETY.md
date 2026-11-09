@@ -148,7 +148,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 
 - `safety_g17_delete_sends_nothing_on_read_only_and_not_for_an_object_that_moved` (`crates/freshkube-core/src/write/tests/delete.rs`)
 
-### 18. A destructive action sends nothing during its countdown or after Cancel
+### 18. A destructive action sends nothing during its countdown or after Cancel, a level change, or a switch of cluster or context
 
 - `safety_g18_nothing_is_sent_during_the_countdown_or_after_cancel` (`crates/freshkube-core/src/write/tests/delete.rs`)
 
