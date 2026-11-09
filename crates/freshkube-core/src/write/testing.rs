@@ -66,6 +66,8 @@ struct State {
     cut_lists: bool,
     /// A read of a collection never gets an answer.
     hang_lists: bool,
+    /// A read of an object is never answered.
+    hang_gets: bool,
 }
 
 /// The fake cluster, its recorder and a client over it.
@@ -326,9 +328,12 @@ impl Cluster {
                     log.record_with_body(&request, String::from_utf8_lossy(&bytes).into_owned());
                 let hangs = {
                     let state = shared.lock().unwrap();
-                    state.hang_lists
-                        && recorded.method == http::Method::GET
-                        && !state.objects.contains_key(&recorded.path)
+                    recorded.method == http::Method::GET
+                        && if state.objects.contains_key(&recorded.path) {
+                            state.hang_gets
+                        } else {
+                            state.hang_lists
+                        }
                 };
                 if hangs {
                     std::future::pending::<()>().await;
@@ -426,6 +431,11 @@ impl Cluster {
     /// Every list answers with a continue token, as one longer than a page.
     pub fn cut_lists(&self) {
         self.state.lock().unwrap().cut_lists = true;
+    }
+
+    /// A read of one object is never answered.
+    pub fn hang_object_reads(&self) {
+        self.state.lock().unwrap().hang_gets = true;
     }
 
     /// A read of a collection is never answered.

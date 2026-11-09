@@ -198,11 +198,12 @@ pub fn dependents_from(
     owned_kinds(group, kind, namespaced)
         .iter()
         .map(|owned| {
-            let items = listed
-                .iter()
-                .find(|(of, _)| *of == owned.kind)
-                .map_or(&[][..], |(_, items)| items.as_slice());
-            Dependents::of(owned.kind, uid, items, false)
+            // A kind the example has no data for is not an empty list: the
+            // Pods on screen may belong to it.
+            match listed.iter().find(|(of, _)| *of == owned.kind) {
+                Some((_, items)) => Dependents::of(owned.kind, uid, items, false),
+                None => Dependents::unknown(owned.kind, "the example lists none"),
+            }
         })
         .collect()
 }

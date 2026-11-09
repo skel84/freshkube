@@ -654,5 +654,37 @@ async fn lists_that_never_answer_end_at_the_deadline_as_unknown() {
     assert!(started.elapsed() <= delete::DEADLINE + Duration::from_secs(1));
     assert!(matches!(impact.dependents()[0].found, Found::Unknown(_)));
     assert_eq!(impact.choices(), Propagation::ALL);
-    // The object's own read is under the deadline too.
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_objects_own_read_is_under_the_deadline_too() {
+    let cluster = Cluster::with_owned();
+    let row = row_of(&cluster, fake::DEPLOYMENT);
+    cluster.hang_object_reads();
+    let started = tokio::time::Instant::now();
+    let why = Impact::read(&cluster.client, &row).await.unwrap_err();
+    assert!(why.contains("did not answer in time"), "{why}");
+    assert!(started.elapsed() <= delete::DEADLINE + Duration::from_secs(1));
+    // Nothing was listed after it: the read ended there.
+    assert!(
+        cluster
+            .recorder
+            .lines()
+            .iter()
+            .all(|line| !line.contains("replicasets")),
+        "{:?}",
+        cluster.recorder.lines()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn example_data_with_no_list_for_a_kind_reads_as_unknown_not_empty() {
+    let cluster = Cluster::with_owned();
+    let row = row_of(&cluster, fake::DEPLOYMENT);
+    let object = cluster.object(fake::DEPLOYMENT);
+    let listed = vec![("Pod", vec![])];
+    let dependents = delete::dependents_from("apps", "Deployment", true, "uid-web", &listed);
+    assert!(matches!(dependents[0].found, Found::Unknown(_)));
+    let impact = Impact::new(&row, &object, dependents).unwrap();
+    assert_eq!(impact.choices(), Propagation::ALL);
 }
