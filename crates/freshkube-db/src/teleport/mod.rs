@@ -493,7 +493,7 @@ fn watch<R: AsyncRead + Unpin + Send + 'static>(
 /// and exits when either is gone. Best effort: the group ends within a few
 /// seconds of the parent's death. Its failure to start leaves only `Drop`.
 #[cfg(unix)]
-fn watch_parent(group: u32) {
+fn watch_parent(parent: u32, group: u32) {
     use std::os::unix::process::CommandExt;
     const WATCHER: &str = r#"
 parent=$1; group=$2
@@ -507,7 +507,7 @@ fi
 "#;
     let _ = std::process::Command::new("/bin/sh")
         .args(["-c", WATCHER, "freshkube-tsh-watch"])
-        .arg(std::process::id().to_string())
+        .arg(parent.to_string())
         .arg(group.to_string())
         .env_clear()
         .stdin(Stdio::null())
@@ -578,7 +578,7 @@ impl Proxy {
         let mut child = proxy.spawn().map_err(spawn_error)?;
         #[cfg(unix)]
         if let Some(pid) = child.id() {
-            watch_parent(pid);
+            watch_parent(std::process::id(), pid);
         }
         let tail = Tail::default();
         let (send, mut ready) = mpsc::unbounded_channel();

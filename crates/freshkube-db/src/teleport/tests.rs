@@ -482,3 +482,72 @@ async fn a_checks_output_is_kept_only_to_its_cap() {
     assert_eq!(capture(Some(big)).await.len(), MAX_OUTPUT as usize);
     assert!(capture(None::<std::io::Cursor<Vec<u8>>>).await.is_empty());
 }
+
+/// Whether a process is running, not a zombie waiting to be reaped.
+#[cfg(target_os = "linux")]
+fn running(pid: u32) -> bool {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    let state = stat
+        .rsplit(')')
+        .next()
+        .and_then(|r| r.trim().chars().next());
+    !stat.is_empty() && state != Some('Z')
+}
+
+/// Every process in the group, from /proc.
+#[cfg(target_os = "linux")]
+fn members(group: u32) -> Vec<u32> {
+    fs::read_dir("/proc")
+        .unwrap()
+        .flatten()
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_string_lossy().parse().ok()?;
+            let stat = fs::read_to_string(entry.path().join("stat")).ok()?;
+            // pid (name) state ppid pgrp ...
+            let rest = stat.rsplit(')').next()?;
+            let pgrp: u32 = rest.split_whitespace().nth(2)?.parse().ok()?;
+            (pgrp == group).then_some(pid)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn the_group_ends_when_the_parent_dies_without_ending_it() {
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+    // A stand-in for the app, and a group with a leader and a child of its own.
+    let mut parent = Command::new("sleep").arg("600").spawn().unwrap();
+    let mut leader = Command::new("sh")
+        .args(["-c", "sleep 600 & wait"])
+        .stdin(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let members = members(leader.id());
+    assert!(
+        members.len() >= 2,
+        "the group has a leader and a child: {members:?}"
+    );
+    watch_parent(parent.id(), leader.id());
+
+    // While the parent lives, the group lives.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(running(leader.id()));
+
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    while running(leader.id()) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !running(leader.id()),
+        "the group's leader outlived its parent"
+    );
+    for pid in members {
+        assert!(!running(pid), "a member of the group outlived its parent");
+    }
+    let _ = leader.wait();
+}
