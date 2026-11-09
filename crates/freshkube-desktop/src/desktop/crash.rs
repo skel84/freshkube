@@ -226,12 +226,57 @@ pub(super) fn tell_notices(
 ) {
     for notice in notices {
         let key = notice.file.to_string_lossy().into_owned();
+        // A file from a newer Freshkube is never written: its sections say
+        // so where they say where they save.
+        if let freshkube_prefs::Why::Newer { version } = &notice.why {
+            let name = notice
+                .file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            freshkube_ui::form::refuse_saves(
+                &name,
+                Some(format!(
+                    "{name} was written by a newer Freshkube (version {version})"
+                )),
+                cx,
+            );
+        }
         window.push_notification(
-            Notification::warning(notice.to_string())
+            Notification::warning(notice_text(&notice))
                 .id1::<SettingsFileNotice>(key)
                 .autohide(false),
             cx,
         );
+    }
+}
+
+/// Lets a file name break after a `-` or a `.`, where GPUI otherwise keeps
+/// the whole name as one word and cuts it inside a word in a narrow toast.
+/// A zero-width space is a break opportunity and draws nothing.
+pub(super) fn breakable(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 8);
+    for c in name.chars() {
+        out.push(c);
+        if matches!(c, '-' | '.') {
+            out.push('\u{200B}');
+        }
+    }
+    out
+}
+
+/// The notice's line, with the kept copy's name breakable.
+pub(super) fn notice_text(notice: &freshkube_prefs::Notice) -> String {
+    let text = notice.to_string();
+    match &notice.why {
+        freshkube_prefs::Why::Corrupt { kept_as } => {
+            let name = kept_as.file_name().unwrap_or_default().to_string_lossy();
+            match text.strip_suffix(&*name) {
+                Some(lead) => format!("{lead}{}", breakable(&name)),
+                None => text,
+            }
+        }
+        freshkube_prefs::Why::Newer { .. } => text,
     }
 }
 

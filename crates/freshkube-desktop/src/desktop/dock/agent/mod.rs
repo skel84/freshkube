@@ -200,6 +200,10 @@ pub(crate) struct AgentView {
     #[cfg_attr(not(test), allow(dead_code))]
     listening: Option<std::net::SocketAddr>,
     focus: FocusHandle,
+    /// The body's scroll, kept at the newest answer while `pinned`, as a
+    /// chat is, until the person scrolls up.
+    body_scroll: ScrollHandle,
+    pinned: bool,
     /// The tail of the speech so far, so a citation split across two chunks
     /// is still read without scanning the whole answer again.
     cite_carry: String,
@@ -297,6 +301,8 @@ impl AgentView {
             sign_in: None,
             listening: None,
             focus: cx.focus_handle(),
+            body_scroll: ScrollHandle::new(),
+            pinned: false,
             cite_carry: String::new(),
             step_marks: Default::default(),
             follow: None,
@@ -496,6 +502,10 @@ impl AgentView {
             .filter(|notice| matches!(notice, Notice::SaveFailed { .. } | Notice::HeldOff));
         if !self.access_on() {
             self.pending = Some(question);
+            // The egress card is what the person has to answer: it comes
+            // first, and the body goes back to it.
+            self.pinned = false;
+            self.body_scroll.set_offset(point(px(0.), px(0.)));
             cx.notify();
             return;
         }
@@ -511,6 +521,9 @@ impl AgentView {
         };
         let _ = session.commands.send(run::Command::Prompt(question));
         self.working = true;
+        // A turn is what a chat follows to the bottom for; the cards that
+        // come before one stay at the top.
+        self.pinned = true;
         self.elapsed.update(cx, |elapsed, cx| elapsed.start(cx));
         cx.notify();
     }

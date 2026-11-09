@@ -373,7 +373,26 @@ pub(in crate::desktop) fn status_text(
             if glyph_only {
                 this.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
             } else {
-                this.child(div().min_w_0().truncate().child(text))
+                // The line is cut at the bar's width; the tooltip holds all
+                // of it, a connection failure's reason and fix included, at
+                // the text size in use.
+                let whole = text.clone();
+                let tooltip_id = SharedString::from(format!("{id}-whole"));
+                this.tooltip(move |window, cx| {
+                    let whole = whole.clone();
+                    let tooltip_id = tooltip_id.clone();
+                    Tooltip::element(move |_, _| {
+                        div()
+                            .id(tooltip_id.clone())
+                            .test_support()
+                            .max_w(dp(480.))
+                            .whitespace_normal()
+                            .aria_label(whole.clone())
+                            .child(whole.clone())
+                    })
+                    .build(window, cx)
+                })
+                .child(div().min_w_0().truncate().child(text))
             }
         })
         .into_any_element()

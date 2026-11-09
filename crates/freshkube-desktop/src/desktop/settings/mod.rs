@@ -260,6 +260,12 @@ impl SettingsPage {
         };
         let changed_on_disk = self.seen != seen;
         self.setup_refusal = model.saves_refused();
+        freshkube_ui::form::refuse_saves(
+            "freshkube.yaml",
+            self.setup_refusal
+                .then(|| problem.clone().unwrap_or_default()),
+            cx,
+        );
         self.setup_file = Some(file);
         if let Some(setup) = setup {
             if defer && self.seen != seen {

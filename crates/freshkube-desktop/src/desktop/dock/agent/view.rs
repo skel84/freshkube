@@ -805,6 +805,11 @@ impl Render for AgentView {
         let p = palette(cx);
         let started = !self.investigation.entries().is_empty();
         let unavailable = self.own.is_none();
+        // The newest answer stays in view, unless the person scrolled up. The
+        // handle scrolls after layout, so it reaches what this frame adds.
+        if self.pinned {
+            self.body_scroll.scroll_to_bottom();
+        }
         v_flex()
             .id("agent-tab")
             .test_support()
@@ -824,6 +829,25 @@ impl Render for AgentView {
                     .gap(dp(8.))
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
+                    .track_scroll(&self.body_scroll)
+                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                        // Up, away from the end: the tab stops following at
+                        // once, before the next frame could pull it back.
+                        if event.delta.pixel_delta(px(1.)).y > px(0.) {
+                            this.pinned = false;
+                            return;
+                        }
+                        // Down: once the wheel has moved the body and it
+                        // shows its end, the tab follows the newest answer
+                        // again.
+                        cx.defer_in(window, |this, window, cx| {
+                            let behind = this.body_scroll.max_offset().y + this.body_scroll.offset().y;
+                            if behind <= ui::dp_px(2., window) && !this.pinned {
+                                this.pinned = true;
+                                cx.notify();
+                            }
+                        });
+                    }))
                     .when(unavailable, |this| {
                         this.child(ui::banner(
                             Tone::Warn,

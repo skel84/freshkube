@@ -40,6 +40,8 @@ Workspace sections are table pages: Clusters and Delivery sources hold the selec
 | Monitoring | Metrics source: `Saved in freshkube.yaml`, or `Saved in freshkube.yaml; the token in keys.json`. This context: `Saved in monitoring.json`, with `; the token in keys.json` for a token |
 | Coroot | `Saved in freshkube.yaml, the key in keys.json`, or `Saved in freshkube.yaml` for Anonymous or a key file; `Not saved; resets at launch` in example data |
 | Clusters | Each Inspector group: `Saved in freshkube.yaml` |
+
+A section's "Saved in …" line changes when that file's saves are refused: it reads `Changes aren't saved: ` and why (`preferences.json was written by a newer Freshkube (version 2)`, or `freshkube.yaml`'s own problem). `freshkube_ui::form::refuse_saves` sets it, from `crash::tell_notices` for a file of a newer Freshkube and from the setup file's refusal for `freshkube.yaml`, so every section that names the file says it. Proved by `desktop/crash_tests.rs` (`a_newer_settings_file_makes_its_sections_say_changes_are_not_saved`) and `freshkube-ui`'s `form.rs` tests. A kept copy's name in the settings-file toast breaks after `-` and `.` (`crash::breakable`), never inside a word.
 | Argo CD destinations | The dialog: `Saved in freshkube.yaml` |
 | Delivery sources | Routing: `Saved in freshkube.yaml · sources` |
 

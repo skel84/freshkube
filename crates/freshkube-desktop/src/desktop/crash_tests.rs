@@ -228,3 +228,62 @@ fn a_notice_queued_after_launch_is_told_when_the_queue_wakes(cx: &mut TestAppCon
     cx.run_until_parked();
     assert_eq!(notices(cx, handle), 2, "a later notice is told too");
 }
+
+/// At 760x560 and text 18 the copy's name is cut inside a word unless it
+/// offers a break at each `-` and `.`, and the zero-width spaces that offer
+/// it take nothing from the words around them.
+#[test]
+fn the_kept_copys_name_breaks_at_dashes_and_dots_only() {
+    let dir = Path::new("/invented");
+    let notice = corrupt(dir);
+    let text = crash::notice_text(&notice);
+    let name = "preferences.corrupt-20261024T101500Z.json";
+    assert!(text.ends_with(&crash::breakable(name)));
+    assert_eq!(
+        crash::breakable(name),
+        "preferences.\u{200B}corrupt-\u{200B}20261024T101500Z.\u{200B}json"
+    );
+    assert_eq!(text.replace('\u{200B}', ""), notice.to_string());
+    // Text that is not the copy's name is left alone.
+    let newer = freshkube_prefs::Notice {
+        file: dir.join("follows.json"),
+        why: freshkube_prefs::Why::Newer { version: 2 },
+    };
+    assert_eq!(crash::notice_text(&newer), newer.to_string());
+}
+
+/// A file from a newer Freshkube is never written, so each section that says
+/// where it saves says that its changes aren't, and why, as soon as the
+/// notice is told.
+#[gpui_kit::test]
+fn a_newer_settings_file_makes_its_sections_say_changes_are_not_saved(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, handle) = open(cx, session(dir.path(), None), None);
+    let line = |cx: &mut TestAppContext, file: &'static str| {
+        cx.update(|cx| {
+            freshkube_ui::form::saved_in_text(&freshkube_ui::form::SavedIn::file(file), cx)
+                .to_string()
+        })
+    };
+    assert_eq!(line(cx, "preferences.json"), "Saved in preferences.json");
+    let newer = |file: &str| freshkube_prefs::Notice {
+        file: dir.path().join(file),
+        why: freshkube_prefs::Why::Newer { version: 2 },
+    };
+    cx.update_window(handle, |_, window, cx| {
+        crash::tell_notices(
+            vec![newer("preferences.json"), newer("follows.json")],
+            window,
+            cx,
+        )
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for file in ["preferences.json", "follows.json"] {
+        assert_eq!(
+            line(cx, file),
+            format!("Changes aren't saved: {file} was written by a newer Freshkube (version 2)")
+        );
+    }
+    assert_eq!(line(cx, "monitoring.json"), "Saved in monitoring.json");
+}

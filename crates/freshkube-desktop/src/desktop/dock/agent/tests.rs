@@ -1307,3 +1307,83 @@ fn the_picker_tooltip_is_the_current_text_as_soon_as_models_are_offered(cx: &mut
         "{tooltip}"
     );
 }
+
+/// Whether the body shows its end, as the drawn frame laid it out.
+fn body_at_end(tab: &Tab, cx: &mut TestAppContext) -> (bool, f32) {
+    tab.draw(cx);
+    cx.update(|cx| {
+        let scroll = &tab.view.read(cx).body_scroll;
+        let room = f32::from(scroll.max_offset().y);
+        let behind = room + f32::from(scroll.offset().y);
+        (behind.abs() < 2., room)
+    })
+}
+
+/// Adds a notice above the transcript, which makes the body longer.
+fn grow_body(tab: &Tab, cx: &mut TestAppContext) {
+    tab.view.update(cx, |view, cx| {
+        view.notice = Some(super::Notice::HeldOff);
+        cx.notify();
+    });
+}
+
+#[gpui_kit::test]
+fn the_newest_answer_stays_in_view_as_the_body_grows(cx: &mut TestAppContext) {
+    let tab = open(cx, "no-tools", 760., 560.);
+    cx.update_window(tab.handle, |_, window, cx| {
+        crate::text_size::set(18., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    tab.answered(cx);
+    let (at_end, room) = body_at_end(&tab, cx);
+    assert!(
+        room > 0.,
+        "at 760x560 and text 18 the body is longer than the tab"
+    );
+    assert!(at_end, "the answer is in view after it arrives");
+    grow_body(&tab, cx);
+    assert!(
+        body_at_end(&tab, cx).0,
+        "and stays in view as the body grows"
+    );
+}
+
+#[gpui_kit::test]
+fn a_person_who_scrolled_up_is_left_where_they_are(cx: &mut TestAppContext) {
+    let tab = open(cx, "no-tools", 760., 560.);
+    cx.update_window(tab.handle, |_, window, cx| {
+        crate::text_size::set(18., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    tab.answered(cx);
+    assert!(body_at_end(&tab, cx).0);
+    cx.update_window(tab.handle, |_, window, cx| {
+        window.scroll(
+            "agent-body",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(400.))),
+            cx,
+        )
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(!body_at_end(&tab, cx).0, "scrolled up, away from the end");
+    let before = cx.update(|cx| tab.view.read(cx).body_scroll.offset().y);
+    grow_body(&tab, cx);
+    let (at_end, _) = body_at_end(&tab, cx);
+    let after = cx.update(|cx| tab.view.read(cx).body_scroll.offset().y);
+    assert!(!at_end, "an answer arriving doesn't pull them down");
+    assert_eq!(before, after);
+    // Scrolling back to the end follows again.
+    cx.update_window(tab.handle, |_, window, cx| {
+        window.scroll(
+            "agent-body",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-5000.))),
+            cx,
+        )
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(body_at_end(&tab, cx).0);
+}

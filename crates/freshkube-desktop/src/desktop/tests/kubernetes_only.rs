@@ -690,3 +690,31 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
     });
     server.abort();
 }
+
+/// The status bar cuts a long failure at its width; hovering the segment
+/// shows all of it, the reason and the fix, as one wrapped text.
+#[gpui_kit::test]
+fn the_whole_connection_failure_is_in_the_status_bars_tooltip(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = mount_kubernetes_only(cx, kubeconfig_file("whole"), None);
+    wait_until(cx, handle, "lab to refuse", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to lab: ")
+    });
+    let line = cx
+        .update_window(handle, |_, window, _| kubernetes_status(window))
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("kubernetes-status", cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tooltip = window.find("kubernetes-status-whole");
+        assert!(tooltip.visible());
+        assert_eq!(tooltip.label(), Some(line.as_str()));
+    })
+    .unwrap();
+}
