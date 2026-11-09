@@ -364,15 +364,19 @@ fn a_gateway_with_no_address_draws_a_ghost_address() {
     let none = topology.node("address:none:staging/edge").unwrap();
     assert!(none.ghost);
     assert_eq!(none.health, Health::Unknown);
-    // A parent no Gateway answers to is a ghost Gateway with no address.
+    // A parent no Gateway answers to is a ghost Gateway. It has a ghost
+    // address too, so the layout puts it in the Gateways' column with the
+    // others, and its routes beside the other routes.
     let retired = topology.node("gateway:infra/retired").unwrap();
     assert!(retired.ghost);
     assert!(retired.target.is_none());
+    let address = topology.node("address:none:infra/retired").unwrap();
+    assert!(address.ghost && address.words.contains("no Gateway of this name"));
     assert!(
-        !topology
+        topology
             .edges
             .iter()
-            .any(|e| e.to == "gateway:infra/retired" && e.from.starts_with("address"))
+            .any(|e| { e.from == "address:none:infra/retired" && e.to == "gateway:infra/retired" })
     );
 }
 

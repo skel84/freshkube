@@ -341,7 +341,9 @@ impl Topology {
             let gateway = gateway_node(entry);
             let gateway_key = gateway.key.clone();
             // The address, or a ghost that says there is none.
-            if entry.state != GatewayState::Missing {
+            // A Gateway that does not exist has one too, so it sits in the
+            // Gateways' column with the others, not in the address's.
+            {
                 let (key, label, words, health, ghost) = match entry.address() {
                     Some(address) => (
                         format!("address:{address}"),
@@ -353,7 +355,11 @@ impl Topology {
                     None => (
                         format!("address:none:{}", entry.key()),
                         "no address".to_owned(),
-                        "the controller reports no address for this Gateway".to_owned(),
+                        if entry.state == GatewayState::Missing {
+                            "no Gateway of this name exists, so it has no address".to_owned()
+                        } else {
+                            "the controller reports no address for this Gateway".to_owned()
+                        },
                         Health::Unknown,
                         true,
                     ),
