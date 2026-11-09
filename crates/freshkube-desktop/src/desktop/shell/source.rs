@@ -150,6 +150,9 @@ impl Pilot {
         if slug == "networking" {
             lines.push(Section::new("nav-traffic", "Traffic").into());
             lines.push(self.page_line(Page::Routes, None).into());
+            lines.push(self.page_line(Page::Gateways, None).into());
+            lines.push(self.page_line(Page::GatewayClasses, None).into());
+            lines.push(self.page_line(Page::Topology, None).into());
             lines.push(Section::new("nav-networking-kinds", "Kinds").into());
         }
         if slug == "access-control" {
