@@ -47,6 +47,9 @@ pub struct Ambient {
     pub user: Option<String>,
     /// `HOME` as the audit file reads it (not the platform's home).
     pub home_variable: Option<OsString>,
+    /// `SHELL`: the login shell, for the login `PATH` of kubeconfig login
+    /// programs. Tests leave it `None`, so no test starts a real shell.
+    pub shell: Option<OsString>,
 }
 
 impl Ambient {
@@ -70,6 +73,7 @@ impl Ambient {
                 .iter()
                 .find_map(|name| lookup(name)?.into_string().ok()),
             home_variable: lookup("HOME"),
+            shell: lookup("SHELL"),
         }
     }
 
@@ -138,6 +142,7 @@ pub fn get() -> &'static Ambient {
         no_proxy: None,
         user: None,
         home_variable: None,
+        shell: None,
     };
     AMBIENT.get().unwrap_or(&EMPTY)
 }

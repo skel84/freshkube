@@ -118,8 +118,6 @@ fn main() -> Result<()> {
     freshkube_probe::first_frame::start();
     // The environment core depends on is read here once.
     freshkube_desktop::install_ambient_from_env();
-    // The login shell's PATH, for kubeconfig login programs, on its own thread.
-    freshkube_core::exec_plugin::warm_up();
     #[cfg(all(windows, not(debug_assertions)))]
     attach_console();
     let Cli {
@@ -140,6 +138,13 @@ fn main() -> Result<()> {
     } = Cli::parse();
     if let Some(code) = dispatch(command) {
         std::process::exit(code);
+    }
+    // The login shell's PATH, for kubeconfig login programs, on its own
+    // thread: not for `--help`, `--version` or a CLI read (they read it only
+    // when a connection needs it), nor under `--fixture`, which reads no
+    // kubeconfig.
+    if !fixture {
+        freshkube_core::exec_plugin::warm_up();
     }
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
