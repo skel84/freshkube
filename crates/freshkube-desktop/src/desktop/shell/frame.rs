@@ -260,7 +260,18 @@ impl Pilot {
             )
         };
         (
-            status_text("overview-status", status, indicator, text, glyph_only),
+            status_text(
+                "overview-status",
+                // The words of a reconnect are the status itself.
+                if self.chrome.reconnecting.is_some() {
+                    text.clone()
+                } else {
+                    status
+                },
+                indicator,
+                text,
+                glyph_only,
+            ),
             named,
         )
     }

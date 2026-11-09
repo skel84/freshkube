@@ -63,6 +63,10 @@ impl Pilot {
             // the error on screen is already the whole story.
             return;
         }
+        #[cfg(test)]
+        {
+            self.chrome.wakes += 1;
+        }
         self.chrome.reconnecting = Some(Duration::ZERO);
         self.refresh_now(window, cx);
         cx.notify();

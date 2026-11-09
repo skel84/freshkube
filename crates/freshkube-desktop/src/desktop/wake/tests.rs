@@ -1,10 +1,12 @@
 //! The wake watcher on the executor's clock (#968). Real sleep can't be
 //! tested: the clocks are stepped by hand, the wall clock by a cell.
-use super::*;
+use super::RECONNECTING_LIMIT;
+use crate::desktop::Pilot;
 use crate::desktop::testing::fixture;
 use freshkube_core::wake::TICK;
 use gpui_kit::test::TestWindowExt;
-use gpui_kit::TestAppContext;
+use gpui_kit::{AppContext, TestAppContext};
+use std::time::Duration;
 use std::{cell::Cell, rc::Rc};
 
 fn watch(
@@ -35,8 +37,10 @@ fn reconnecting(
     handle: gpui_kit::AnyWindowHandle,
     view: &gpui_kit::Entity<Pilot>,
 ) -> bool {
-    cx.update_window(handle, |_, _, cx| view.read(cx).chrome.reconnecting.is_some())
-        .unwrap()
+    cx.update_window(handle, |_, _, cx| {
+        view.read(cx).chrome.reconnecting.is_some()
+    })
+    .unwrap()
 }
 
 #[gpui_kit::test]
@@ -63,11 +67,11 @@ fn a_wake_says_reconnecting_in_the_status_bar_until_an_answer_lands(cx: &mut Tes
             cx.notify();
         });
         window.render_frame(cx);
-        let label = window.find("overview-status").label().unwrap();
+        let label = window.find("overview-status").label().unwrap().to_string();
         assert!(label.contains("Reconnecting to"), "{label}");
         view.update(cx, |pilot, cx| pilot.reconnected(cx));
         window.render_frame(cx);
-        let label = window.find("overview-status").label().unwrap();
+        let label = window.find("overview-status").label().unwrap().to_string();
         assert!(!label.contains("Reconnecting"), "{label}");
     })
     .unwrap();
@@ -77,21 +81,23 @@ fn a_wake_says_reconnecting_in_the_status_bar_until_an_answer_lands(cx: &mut Tes
 fn the_watcher_runs_the_wake_once_per_sleep(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let wall = watch(cx, handle, &view);
+    let wakes = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, _, cx| view.read(cx).chrome.wakes)
+            .unwrap()
+    };
     tick(cx, &wall, Duration::ZERO);
-    cx.update_window(handle, |_, _, cx| {
-        view.update(cx, |pilot, _| pilot.chrome.reconnecting = None)
-    })
-    .unwrap();
-    // A ten-minute sleep inside one tick: the wake runs, and what it starts
-    // is a refresh the person could have asked for.
+    assert_eq!(wakes(cx), 0);
+    // A ten-minute sleep inside one tick runs the wake once.
     tick(cx, &wall, Duration::from_secs(600));
-    // The ordinary tick after it is quiet: nothing marks it again.
-    cx.update_window(handle, |_, _, cx| {
-        view.update(cx, |pilot, _| pilot.chrome.reconnecting = None)
-    })
-    .unwrap();
-    tick(cx, &wall, Duration::ZERO);
-    assert!(!reconnecting(cx, handle, &view));
+    assert_eq!(wakes(cx), 1);
+    // The ordinary ticks after it are quiet.
+    for _ in 0..5 {
+        tick(cx, &wall, Duration::ZERO);
+    }
+    assert_eq!(wakes(cx), 1);
+    // A second sleep is a second wake.
+    tick(cx, &wall, Duration::from_secs(90));
+    assert_eq!(wakes(cx), 2);
 }
 
 #[gpui_kit::test]

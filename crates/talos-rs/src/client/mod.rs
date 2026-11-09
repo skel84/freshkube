@@ -550,7 +550,8 @@ impl TalosClient {
     pub async fn etcd_members(&self) -> Result<Vec<EtcdMemberInfo>, TalosError> {
         let mut client = self.machine_client();
         // Don't use with_nodes() - etcd only runs on control plane
-        let request = with_read_deadline(Request::new(EtcdMemberListRequest { query_local: false }));
+        let request =
+            with_read_deadline(Request::new(EtcdMemberListRequest { query_local: false }));
 
         let response = client.etcd_member_list(request).await?;
         let inner = response.into_inner();

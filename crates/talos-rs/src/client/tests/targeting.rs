@@ -385,7 +385,9 @@ async fn a_read_carries_a_deadline_and_a_plain_request_none() {
     let read = with_read_deadline(client.with_nodes(Request::new(())));
     // The server is told, in the `grpc-timeout` header: 30 seconds.
     assert_eq!(
-        read.metadata().get("grpc-timeout").map(|v| v.to_str().unwrap()),
+        read.metadata()
+            .get("grpc-timeout")
+            .map(|v| v.to_str().unwrap()),
         Some("30000000u")
     );
     // Targeting is untouched, and a request that is not a read has none.
