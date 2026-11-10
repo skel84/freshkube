@@ -532,6 +532,7 @@ fn a_secret_read_fills_the_names_and_the_state_follows() {
         issuer: "CN=Example CA".into(),
         not_before: now - DAY,
         not_after: now + 90 * DAY,
+        resource_version: None,
     });
     let mut view = CertsView::new(&CertsRead::new(Manager::NotInstalled), now);
     view.entries.push(e.clone());
@@ -600,10 +601,13 @@ fn tls_secret(crt: &str, key: &str) -> Secret {
 
 #[test]
 fn the_certificates_facts_are_parsed_and_only_they_leave() {
-    let outcome = facts_from_secret(tls_secret(CERTIFICATE, KEY_MARKER));
+    let mut secret = tls_secret(CERTIFICATE, KEY_MARKER);
+    secret.metadata.resource_version = Some("7".into());
+    let outcome = facts_from_secret(secret);
     let SecretOutcome::Read(facts) = &outcome else {
         panic!("{outcome:?}");
     };
+    assert_eq!(facts.resource_version.as_deref(), Some("7"));
     assert_eq!(facts.subject, "CN=shop.example.com, O=Example Shop");
     assert_eq!(facts.issuer, "CN=shop.example.com, O=Example Shop");
     assert_eq!(
@@ -1349,6 +1353,7 @@ async fn a_route_with_hosts_on_two_listeners_does_not_make_either_certificate_wr
             issuer: "CN=CA".into(),
             not_before: 0,
             not_after: i64::MAX / 2,
+            resource_version: None,
         })
     };
     view.apply_secret("infra/shop-tls", outcome("shop.example.com"), 0);
@@ -1512,6 +1517,7 @@ async fn a_route_host_deeper_than_a_wildcard_listener_is_served_as_itself_and_re
             issuer: "CN=CA".into(),
             not_before: 0,
             not_after: i64::MAX / 2,
+            resource_version: None,
         }),
         0,
     );

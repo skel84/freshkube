@@ -21,6 +21,10 @@ pub struct TlsFacts {
     pub issuer: String,
     pub not_before: i64,
     pub not_after: i64,
+    /// The Secret's `resourceVersion` when it was read, so what is shown
+    /// says which version of the Secret it is. Whether it has changed since
+    /// is not looked at: that would read the Secret again, unasked.
+    pub resource_version: Option<String>,
 }
 
 /// How reading one Secret ended.
@@ -81,7 +85,8 @@ pub async fn read_tls_secret(client: &Client, request: &SecretRequest) -> Secret
 /// The facts of a Secret's `tls.crt`. Takes the Secret by value and wipes
 /// every value in it, `tls.key` included, before it returns.
 pub fn facts_from_secret(mut secret: Secret) -> SecretOutcome {
-    let outcome = {
+    let version = secret.metadata.resource_version.clone();
+    let mut outcome = {
         let data = secret.data.as_ref();
         match data.and_then(|data| data.get("tls.crt")) {
             Some(crt) => parse_certificate(&crt.0),
@@ -93,6 +98,9 @@ pub fn facts_from_secret(mut secret: Secret) -> SecretOutcome {
             },
         }
     };
+    if let SecretOutcome::Read(facts) = &mut outcome {
+        facts.resource_version = version;
+    }
     for value in secret.data.iter_mut().flat_map(|data| data.values_mut()) {
         value.0.zeroize();
     }
@@ -140,6 +148,7 @@ fn parse_certificate(pem: &[u8]) -> SecretOutcome {
         issuer: certificate.issuer().to_string(),
         not_before: validity.not_before.timestamp(),
         not_after: validity.not_after.timestamp(),
+        resource_version: None,
     })
 }
 

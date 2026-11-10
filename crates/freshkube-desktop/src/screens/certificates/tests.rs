@@ -260,13 +260,33 @@ fn cert_manager_missing_is_said_on_the_page_and_never_as_no_certificates() {
 }
 
 #[test]
-fn refused_lists_are_an_error_naming_them_and_never_an_empty_list() {
+fn refused_lists_are_one_short_error_and_the_notes_name_each_refusal() {
     let display = display_of(Shape::Refused);
     assert!(display.rows.is_empty());
     let error = display.error.expect("an error, not an empty table");
-    assert!(error.contains("Forbidden"), "{error}");
-    assert!(error.contains("Gateways could not be read"), "{error}");
-    assert!(error.contains("Ingresses could not be read"), "{error}");
+    assert_eq!(error, "Nothing could be read. The notes above say why.");
+    let notes: Vec<_> = display
+        .notices
+        .iter()
+        .map(|(_, words)| words.to_string())
+        .collect();
+    assert_eq!(notes.len(), 3, "{notes:?}");
+    assert!(notes.iter().all(|n| n.contains("Forbidden")), "{notes:?}");
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.contains("Gateways could not be read"))
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.contains("Ingresses could not be read"))
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.contains("Certificates could not be read"))
+    );
 }
 
 #[test]
@@ -323,6 +343,7 @@ fn the_inspector_lines_are_made_with_the_read_and_capped_at_fifty() {
         issuer: "CN=b".into(),
         not_before: NOW - 10,
         not_after: NOW + 90 * 86_400,
+        resource_version: None,
     }));
     entry.assess(NOW);
     let display = Display::new(Some(&view));
@@ -540,12 +561,22 @@ fn a_refused_secret_read_says_so_and_may_be_tried_again(cx: &mut TestAppContext)
 }
 
 #[gpui_kit::test]
-fn when_nothing_could_be_read_the_error_is_not_said_again_in_banners(cx: &mut TestAppContext) {
+fn when_nothing_could_be_read_the_banners_name_each_refusal_and_the_body_is_one_line(
+    cx: &mut TestAppContext,
+) {
     let (_runtime, _page, window) = mount(cx, Shape::Refused, 1280., 880.);
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
-        window.find("certificates-state");
-        assert!(window.try_find("certificates-notice-0").is_none());
+        let state = window.find("certificates-state");
+        assert!(
+            state
+                .label()
+                .is_none_or(|l| l.contains("Nothing could be read") && !l.contains("Forbidden"))
+        );
+        for ix in 0..3 {
+            window.find(format!("certificates-notice-{ix}"));
+        }
+        window.find("certificates-retry");
     })
     .unwrap();
 }

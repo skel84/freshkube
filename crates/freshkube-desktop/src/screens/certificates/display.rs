@@ -322,8 +322,15 @@ fn entry_row(entry: &CertEntry) -> Row {
                 "From the cert-manager Certificate {} (its spec and status). The Secret was not read.",
                 cert.key()
             ),
-            (None, SecretState::Read(SecretOutcome::Read(_))) => {
-                "From the Secret's tls.crt, read on request. Only its names, issuer and dates were kept; the key never left the cluster read.".to_owned()
+            (None, SecretState::Read(SecretOutcome::Read(facts))) => {
+                let version = facts
+                    .resource_version
+                    .as_deref()
+                    .map(|v| format!(" (Secret version {v}; kept until the page is hidden)"))
+                    .unwrap_or_default();
+                format!(
+                    "From the Secret's tls.crt, read on request{version}. Only its names, issuer and dates were kept; the key never left the cluster read."
+                )
             }
             (None, SecretState::Read(SecretOutcome::Refused(_))) => {
                 "Reading the Secret failed or was refused. Read Secret tries again.".to_owned()
@@ -395,7 +402,8 @@ impl Display {
         let rows: Vec<Row> = entries.into_iter().map(entry_row).collect();
         if rows.is_empty() && !view.notes.is_empty() {
             // Everything that could name a certificate was refused.
-            display.error = Some(view.notes.join("; "));
+            // The notes above say why; the body is one short line.
+            display.error = Some("Nothing could be read. The notes above say why.".into());
             return display;
         }
         let count = |group: usize| rows.iter().filter(|r| r.group == group).count();

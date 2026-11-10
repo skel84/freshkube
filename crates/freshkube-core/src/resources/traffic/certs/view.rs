@@ -220,6 +220,7 @@ impl CertEntry {
             issuer,
             not_before,
             not_after,
+            ..
         })) = &self.secret_state
         {
             self.names = Some(names.clone());

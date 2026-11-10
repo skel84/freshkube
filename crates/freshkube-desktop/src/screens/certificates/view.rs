@@ -350,13 +350,10 @@ impl Render for CertificatesScreen {
         } else {
             None
         };
-        // When nothing could be read the error says it all; the banners would
-        // repeat the same sentences.
         let notices = self
             .display
             .notices
             .iter()
-            .filter(|_| self.display.error.is_none())
             .enumerate()
             .map(|(ix, (title, words))| {
                 ui::warning_banner(Some((*title).into()), words.clone(), None, cx)

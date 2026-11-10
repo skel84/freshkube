@@ -468,6 +468,7 @@ pub fn read_secret(shape: Shape, request: &SecretRequest, now: i64) -> SecretOut
             issuer: "CN=Example Internal CA".into(),
             not_before: now - 100 * DAY,
             not_after: now + left,
+            resource_version: Some("48213".into()),
         })
     };
     match (request.namespace(), request.name()) {
