@@ -361,7 +361,7 @@ fn walk(
     let Map(children) = parent else {
         return ignore(ignored, at, IgnoredKey::Unknown);
     };
-    let Some((_, allow)) = children.iter().find(|(candidate, _)| *candidate == key) else {
+    let Some((_, allow)) = children.iter().find(|(name, _)| *name == key) else {
         return ignore(ignored, at, IgnoredKey::Unknown);
     };
     match (allow, value) {

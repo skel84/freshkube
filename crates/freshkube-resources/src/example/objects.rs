@@ -781,7 +781,7 @@ pub fn events(identity: &ResourceIdentity, now: i64) -> Vec<ObjectEvent> {
 pub fn secret_value(identity: &ResourceIdentity, key: &str, now: i64) -> Option<SecretValue> {
     let (_, ix) = find(identity, now)?;
     let (_, _, _, data) = SECRETS.get(ix)?;
-    let (_, value) = data.iter().find(|(candidate, _)| *candidate == key)?;
+    let (_, value) = data.iter().find(|(name, _)| *name == key)?;
     Some(match String::from_utf8(value.to_vec()) {
         Ok(text) => SecretValue::Text(text),
         Err(error) => SecretValue::Binary(error.into_bytes().len()),

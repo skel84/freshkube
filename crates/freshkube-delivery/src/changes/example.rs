@@ -320,7 +320,7 @@ impl Linked<'_> {
 fn deployed(project: &str, freight: &str, stage: &str, group: usize, reach: &Reach) -> Vec<Hop> {
     let cluster = CLUSTERS
         .iter()
-        .find(|(candidate, _)| *candidate == stage)
+        .find(|(name, _)| *name == stage)
         .map_or(stage, |(_, cluster)| cluster);
     let app = format!("{project}-{stage}");
     let api = format!("{project}-api");
