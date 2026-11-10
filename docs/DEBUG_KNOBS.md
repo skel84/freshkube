@@ -8,7 +8,7 @@ A unit test in `crates/freshkube-desktop/src/debug_options.rs` reads this file a
 
 - a knob `DebugOptions::parse` reads is missing from this file or from AGENTS.md's table, or one is named there and not read;
 - a knob's blocks are not sorted by name, or its shape lines are not sorted;
-- a shape line is missing for a value the knob accepts, or names a value it doesn't. Each knob's accepted values are one list next to its parser (a `NAMES`, `SHAPES` or `STEPS` constant, or the table the parser looks values up in), and the test compares that list with the shape lines.
+- a shape line is missing for a value the knob accepts, or names a value it doesn't. Each knob's accepted values are one list next to its parser (a `SHAPES`, `NAMES` or `STEPS` constant, or a table in `debug_options.rs`), and the test compares that list with the shape lines. For most knobs the parser looks words up in that list, so a word can't be in the parser and not the list (`Variant::SHAPES`, Access, Followed, Team, Explore's, the holds, and the tables in `debug_options.rs`; `FRESHKUBE_DATABASES` treats a word not in its list as no shape). For Agent, Alerts, Certs, Netpol, Routes, Services and Timeline the parser still has its own `match` beside a `NAMES` list, so the check runs from the list to the doc only.
 
 A shape line is `- ` + the value in backticks + `:` + its description. A knob that takes free text or a value as written (a page slug, a path, a Kubernetes kind) has no shape lines. A value that is not listed for a knob is ignored where it is used, unless its block says otherwise.
 
@@ -151,7 +151,7 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Databases inven
 - `refused`: the inventory read refused.
 - `scheduled-only`: gives the MariaDB a schedule and no run Backup.
 - `stale`: a failed refresh over an earlier read.
-- `suspended`: the backup schedule is suspended.
+- `suspended`: suspends only the first database's backup schedule (`orders-daily`).
 - `switchover-stuck`: gives one database a switchover stuck for 25 minutes.
 - `unsupported`: the operator's version is not supported.
 

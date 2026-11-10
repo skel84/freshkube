@@ -104,7 +104,7 @@ impl Variant {
     /// Every fixed shape `FRESHKUBE_APPLICATIONS` takes: the one list the
     /// parser looks values up in and `docs/DEBUG_KNOBS.md`'s test compares
     /// with the doc's shape lines.
-    pub const SHAPES: [(&'static str, Self); 20] = [
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
         ("single", Self::Single),
         ("partial", Self::Partial),
         ("refused", Self::Refused),

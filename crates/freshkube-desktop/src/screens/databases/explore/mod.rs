@@ -108,49 +108,36 @@ impl Example {
         )
     }
 
-    /// The words `FRESHKUBE_DB_EXPLORE` takes (an empty one is `connected`).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) const NAMES: [&'static str; 17] = [
-        "connected",
-        "no-secret",
-        "forward-failed",
-        "refused",
-        "timed-out",
-        "not-read-only",
-        "unverified",
-        "plain",
-        "loading",
-        "teleport",
-        "teleport-no-tsh",
-        "teleport-not-logged-in",
-        "teleport-no-role",
-        "teleport-not-found",
-        "teleport-proxy-failed",
-        "query",
-        "query-app-user",
+    /// Every word `FRESHKUBE_DB_EXPLORE` takes: the one list `parse` looks
+    /// values up in (an empty one is `connected`) and `docs/DEBUG_KNOBS.md`'s
+    /// test compares with the doc.
+    pub(crate) const SHAPES: &'static [(&'static str, Self)] = &[
+        ("connected", Self::Connected),
+        ("no-secret", Self::NoSecret),
+        ("forward-failed", Self::ForwardFailed),
+        ("refused", Self::Refused),
+        ("timed-out", Self::TimedOut),
+        ("not-read-only", Self::NotReadOnly),
+        ("unverified", Self::Unverified),
+        ("plain", Self::Plain),
+        ("loading", Self::Loading),
+        ("teleport", Self::Teleport),
+        ("teleport-no-tsh", Self::TeleportNoTsh),
+        ("teleport-not-logged-in", Self::TeleportNotLoggedIn),
+        ("teleport-no-role", Self::TeleportNoRole),
+        ("teleport-not-found", Self::TeleportNotFound),
+        ("teleport-proxy-failed", Self::TeleportProxyFailed),
+        ("query", Self::Query),
+        ("query-app-user", Self::QueryAppUser),
     ];
 
     pub(crate) fn parse(text: &str) -> Option<Self> {
-        Some(match text {
-            "connected" | "" => Self::Connected,
-            "no-secret" => Self::NoSecret,
-            "forward-failed" => Self::ForwardFailed,
-            "refused" => Self::Refused,
-            "timed-out" => Self::TimedOut,
-            "not-read-only" => Self::NotReadOnly,
-            "unverified" => Self::Unverified,
-            "plain" => Self::Plain,
-            "loading" => Self::Loading,
-            "teleport" => Self::Teleport,
-            "teleport-no-tsh" => Self::TeleportNoTsh,
-            "teleport-not-logged-in" => Self::TeleportNotLoggedIn,
-            "teleport-no-role" => Self::TeleportNoRole,
-            "teleport-not-found" => Self::TeleportNotFound,
-            "teleport-proxy-failed" => Self::TeleportProxyFailed,
-            "query" => Self::Query,
-            "query-app-user" => Self::QueryAppUser,
-            _ => return None,
-        })
+        if text.is_empty() {
+            return Some(Self::Connected);
+        }
+        Self::SHAPES
+            .iter()
+            .find_map(|(word, shape)| (*word == text).then_some(*shape))
     }
 }
 

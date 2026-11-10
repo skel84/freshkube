@@ -38,28 +38,22 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// The words `FRESHKUBE_FOLLOWS` takes.
-    pub const NAMES: [&'static str; 7] = [
-        "bell",
-        "states",
-        "quiet",
-        "hidden",
-        "full",
-        "unwatched",
-        "grouped",
+    /// Every word `FRESHKUBE_FOLLOWS` takes: the one list `parse` looks values
+    /// up in and `docs/DEBUG_KNOBS.md`'s test compares with the doc.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("bell", Self::Bell),
+        ("states", Self::States),
+        ("quiet", Self::Quiet),
+        ("hidden", Self::Hidden),
+        ("full", Self::Full),
+        ("unwatched", Self::Unwatched),
+        ("grouped", Self::Grouped),
     ];
 
     pub fn parse(value: &str) -> Option<Self> {
-        Some(match value {
-            "bell" => Self::Bell,
-            "states" => Self::States,
-            "quiet" => Self::Quiet,
-            "hidden" => Self::Hidden,
-            "full" => Self::Full,
-            "unwatched" => Self::Unwatched,
-            "grouped" => Self::Grouped,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find_map(|(word, shape)| (*word == value).then_some(*shape))
     }
 }
 

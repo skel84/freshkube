@@ -88,9 +88,16 @@ pub(crate) enum LinkShape {
 }
 
 /// What a knob that picks one of a few words accepts: each word with what it
-/// means. The parser looks words up here and the docs test compares them with
-/// `docs/DEBUG_KNOBS.md`'s shape lines, so a word can't be added to one only.
+/// means. The parser looks words up in such a table and the docs test compares
+/// the table with `docs/DEBUG_KNOBS.md`'s shape lines, so a word can't be added
+/// to the parser or the doc alone. Knobs whose parser still has its own `match`
+/// beside a list of words are checked from the list to the doc only.
 type Words<T> = [(&'static str, T)];
+
+/// The one word `FRESHKUBE_APP_MENU` takes.
+const APP_MENU_BUTTON: &str = "button";
+/// The one word `FRESHKUBE_METRICS_LABELS` takes.
+const METRICS_CAPPED: &str = "capped";
 
 /// `FRESHKUBE_THEME`'s words.
 const THEMES: &Words<Theme> = &[("light", Theme::Light), ("dark", Theme::Dark)];
@@ -317,9 +324,10 @@ impl DebugOptions {
             certs: text("FRESHKUBE_CERTS")
                 .and_then(|shape| CertsShape::parse(&shape))
                 .unwrap_or_default(),
-            metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
+            metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref()
+                == Some(METRICS_CAPPED),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
-            app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
+            app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some(APP_MENU_BUTTON),
             links: pick(LINKS, text("FRESHKUBE_LINKS").as_deref()),
             text_size: text("FRESHKUBE_TEXT_SIZE")
                 .and_then(|size| freshkube_ui::text_size::parse(&size)),
@@ -404,7 +412,7 @@ mod tests {
     /// The values each knob accepts, from the one list next to its parser;
     /// `None` for a knob that takes free text or a value as written.
     fn accepted_values() -> BTreeMap<&'static str, Option<Vec<String>>> {
-        let mut applications = words_of_applications();
+        let mut applications = words(Variant::SHAPES);
         applications.push(format!("{}<name>", Variant::OUTCOME_PREFIX));
         let steps = freshkube_ui::text_size::STEPS
             .iter()
@@ -413,7 +421,7 @@ mod tests {
         BTreeMap::from([
             (
                 "FRESHKUBE_ACCESS",
-                Some(names(&freshkube_core::access::example::Shape::NAMES)),
+                Some(words(freshkube_core::access::example::Shape::SHAPES)),
             ),
             (
                 "FRESHKUBE_AGENT",
@@ -421,29 +429,29 @@ mod tests {
             ),
             ("FRESHKUBE_ALERTS", Some(names(&AlertsShape::NAMES))),
             ("FRESHKUBE_APPLICATIONS", Some(applications)),
-            ("FRESHKUBE_APP_MENU", Some(names(&["button"]))),
+            ("FRESHKUBE_APP_MENU", Some(names(&[APP_MENU_BUTTON]))),
             ("FRESHKUBE_CERTS", Some(names(&CertsShape::NAMES))),
             ("FRESHKUBE_CRASH", Some(words(CRASHES))),
             ("FRESHKUBE_CRASH_SEED", None),
             ("FRESHKUBE_DASHBOARD", None),
             (
                 "FRESHKUBE_DATABASES",
-                Some(names(&freshkube_core::databases::example::SHAPES)),
+                Some(names(freshkube_core::databases::example::SHAPES)),
             ),
             (
                 "FRESHKUBE_DB_EXPLORE",
-                Some(names(&crate::screens::ExploreExample::NAMES)),
+                Some(words(crate::screens::ExploreExample::SHAPES)),
             ),
             ("FRESHKUBE_ETCD", Some(words(ETCDS))),
-            ("FRESHKUBE_FIXTURE_HOLD", Some(names(&Hold::NAMES))),
+            ("FRESHKUBE_FIXTURE_HOLD", Some(words(Hold::SHAPES))),
             (
                 "FRESHKUBE_FOLLOWS",
-                Some(names(&freshkube_followed::example::Shape::NAMES)),
+                Some(words(freshkube_followed::example::Shape::SHAPES)),
             ),
             ("FRESHKUBE_KIND", None),
             ("FRESHKUBE_LINKS", Some(words(LINKS))),
             ("FRESHKUBE_LOG_SEARCH", None),
-            ("FRESHKUBE_METRICS_LABELS", Some(names(&["capped"]))),
+            ("FRESHKUBE_METRICS_LABELS", Some(names(&[METRICS_CAPPED]))),
             ("FRESHKUBE_MOTION", Some(words(MOTIONS))),
             ("FRESHKUBE_NETPOL", Some(names(&NetpolShape::NAMES))),
             ("FRESHKUBE_PAGE", None),
@@ -453,20 +461,13 @@ mod tests {
             ("FRESHKUBE_TABS", Some(words(TABS))),
             (
                 "FRESHKUBE_TEAM",
-                Some(names(&freshkube_core::team::example::Shape::NAMES)),
+                Some(words(freshkube_core::team::example::Shape::SHAPES)),
             ),
             ("FRESHKUBE_TEXT_SIZE", Some(steps)),
             ("FRESHKUBE_THEME", Some(words(THEMES))),
             ("FRESHKUBE_TIMELINE", Some(names(&TimelineShape::NAMES))),
             ("FRESHKUBE_WINDOW_SIZE", None),
         ])
-    }
-
-    fn words_of_applications() -> Vec<String> {
-        Variant::SHAPES
-            .iter()
-            .map(|(word, _)| word.to_string())
-            .collect()
     }
 
     fn knobs_the_parser_reads() -> BTreeSet<String> {
@@ -542,36 +543,16 @@ mod tests {
     }
 
     #[test]
-    fn the_lists_the_doc_is_compared_with_name_what_each_parser_takes() {
-        use freshkube_core::{access, team};
-        for name in freshkube_followed::example::Shape::NAMES {
+    fn debug_knobs_doc_line_for_outcome_names_every_outcome() {
+        let line = include_str!("../../../docs/DEBUG_KNOBS.md")
+            .lines()
+            .find(|line| line.starts_with(&format!("- `{}<name>`", Variant::OUTCOME_PREFIX)))
+            .expect("the doc has an outcome-<name> line");
+        for (_, name) in freshkube_applications::OutcomeKind::ALL {
             assert!(
-                freshkube_followed::example::Shape::parse(name).is_some(),
-                "{name}"
+                line.contains(&format!("`{name}`")),
+                "the outcome-<name> line lacks `{name}`"
             );
-        }
-        for name in team::example::Shape::NAMES {
-            assert!(team::example::Shape::parse(name).is_some(), "{name}");
-        }
-        for name in crate::screens::ExploreExample::NAMES {
-            assert!(
-                crate::screens::ExploreExample::parse(name).is_some(),
-                "{name}"
-            );
-        }
-        for name in access::example::Shape::NAMES {
-            let shape = access::example::Shape::parse(name);
-            assert_eq!(
-                shape == access::example::Shape::Limited,
-                name == "limited",
-                "{name}"
-            );
-        }
-        for name in Hold::NAMES {
-            assert_ne!(Hold::parse(name), Hold::default(), "{name}");
-        }
-        for (name, _) in Variant::SHAPES {
-            assert_ne!(Variant::parse(Some(name)), Variant::Acme, "{name}");
         }
     }
 
