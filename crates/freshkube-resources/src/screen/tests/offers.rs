@@ -43,6 +43,20 @@ fn opened_sized(
     shape: Shape,
     width: f32,
 ) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle, Heard) {
+    let opened = opened_unsettled(cx, shape, width);
+    settle(cx);
+    cx.update_window(opened.2, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    opened
+}
+
+/// [`opened_sized`] before the selection rests: the desk has not asked, so
+/// every action reads as pending.
+fn opened_unsettled(
+    cx: &mut TestAppContext,
+    shape: Shape,
+    width: f32,
+) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle, Heard) {
     let (runtime, screen, handle) = mount_sized(cx, Some("homelab"), width);
     let heard: Heard = Rc::default();
     cx.update(|cx| {
@@ -66,9 +80,6 @@ fn opened_sized(
         window.render_frame(cx);
     })
     .unwrap();
-    settle(cx);
-    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
-        .unwrap();
     (runtime, screen, handle, heard)
 }
 
@@ -667,4 +678,101 @@ fn a_refused_toolbar_button_shows_its_reason_when_hovered(cx: &mut TestAppContex
         freshkube_ui::tooltip::drawn(&reason) > 0,
         "the refused Delete button drew no tooltip"
     );
+}
+
+/// The open menu's items, a separator as `None`, after the frames that let
+/// a rebuild land.
+fn read_open_menu(cx: &mut TestAppContext, handle: AnyWindowHandle) -> Vec<Option<String>> {
+    for _ in 0..2 {
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+        cx.run_until_parked();
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menu = window.within("popup-menu");
+        (0usize..)
+            .map_while(|ix| menu.try_find(ix))
+            .map(|item| item.label().map(str::to_owned))
+            .collect()
+    })
+    .unwrap()
+}
+
+fn reasons(items: &[Option<String>]) -> Vec<&str> {
+    items
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .filter(|item| item.starts_with("Needs "))
+        .collect()
+}
+
+#[gpui_kit::test]
+fn a_row_menu_opened_before_the_review_answers_shows_the_reason_once_it_does(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle, heard) = opened_unsettled(cx, Shape::ActionsRefused, 1280.);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    // Pending: the action is on and says nothing (guarantee 22).
+    let before = row_menu(cx, handle, &screen);
+    assert!(before.contains(&Some("Delete…".into())), "{before:?}");
+    assert!(reasons(&before).is_empty(), "{before:?}");
+    assert_eq!(block(&screen, Everyday::Delete, cx), None);
+    // The review answers while the menu is open.
+    settle(cx);
+    assert_eq!(block(&screen, Everyday::Delete, cx), Some(reason.clone()));
+    let after = read_open_menu(cx, handle);
+    let at = after
+        .iter()
+        .position(|item| item.as_deref() == Some("Delete…"))
+        .unwrap_or_else(|| panic!("{after:?}"));
+    assert_eq!(after.get(at + 1), Some(&Some(reason)), "{after:?}");
+    // And the refused item does nothing.
+    cx.update_window(handle, |_, window, cx| {
+        window.within("popup-menu").click(at, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(heard.borrow().is_empty(), "{:?}", heard.borrow());
+}
+
+#[gpui_kit::test]
+fn an_open_row_menu_does_not_take_the_answers_of_another_row(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, _) = opened_unsettled(cx, Shape::ActionsRefused, 1280.);
+    let before = row_menu(cx, handle, &screen);
+    assert!(reasons(&before).is_empty(), "{before:?}");
+    // The selection moves to another row while the menu stays open, and
+    // that row's review answers.
+    cx.update_window(handle, |_, window, cx| {
+        let second = identity_at(&screen, 1, cx);
+        screen.update(cx, |screen, cx| screen.select_identity(&second, window, cx));
+    })
+    .unwrap();
+    settle(cx);
+    assert!(
+        block(&screen, Everyday::Delete, cx).is_some(),
+        "the other row's answer is in"
+    );
+    let after = read_open_menu(cx, handle);
+    assert!(reasons(&after).is_empty(), "{after:?}");
+    assert_eq!(after, before);
+}
+
+#[gpui_kit::test]
+fn an_open_overflow_menu_shows_the_reason_once_the_review_answers(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, _) = opened_unsettled(cx, Shape::ActionsRefused, 340.);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    let before = open_menu(cx, handle, |window, cx| window.click("resource-more", cx));
+    assert!(before.contains(&Some("Delete…".into())), "{before:?}");
+    assert!(reasons(&before).is_empty(), "{before:?}");
+    settle(cx);
+    let after = read_open_menu(cx, handle);
+    let at = after
+        .iter()
+        .position(|item| item.as_deref() == Some("Delete…"))
+        .unwrap_or_else(|| panic!("{after:?}"));
+    assert_eq!(after.get(at + 1), Some(&Some(reason)), "{after:?}");
 }

@@ -13,7 +13,8 @@ use std::rc::Rc;
 
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{
-    Action, App, Context, DismissEvent, EntityId, FocusHandle, Focusable as _, SharedString, Window,
+    Action, AnyWindowHandle, App, AppContext as _, Context, DismissEvent, EntityId, FocusHandle,
+    Focusable as _, SharedString, WeakEntity, Window,
 };
 
 gpui_kit::actions!(
@@ -33,6 +34,66 @@ thread_local! {
     /// items run on: a "…" menu gathers one from each folded control.
     static WATCHED: RefCell<HashMap<EntityId, Rc<RefCell<Vec<FocusHandle>>>>> =
         RefCell::default();
+}
+
+/// How an open menu is built again: `ready` says whether what it was opened
+/// for still stands (the row is still the selected one), and `build` adds
+/// its entries to the emptied menu, from what the page knows now.
+#[derive(Clone)]
+pub struct Rebuild {
+    pub ready: Rc<dyn Fn(&App) -> bool>,
+    pub build: Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>,
+}
+
+type Open = (WeakEntity<PopupMenu>, AnyWindowHandle, Rebuild);
+
+thread_local! {
+    /// The menus open now that [`refresh_open`] may build again.
+    static REBUILDABLE: RefCell<Vec<Open>> = RefCell::default();
+}
+
+/// Records `menu` as open, to be built again by [`refresh_open`] with
+/// `rebuild`, until it is dismissed or dropped.
+pub fn rebuildable(rebuild: Rebuild, window: &Window, cx: &mut Context<PopupMenu>) {
+    let menu = cx.entity();
+    let id = menu.entity_id();
+    REBUILDABLE.with_borrow_mut(|open| {
+        open.retain(|(weak, ..)| weak.entity_id() != id && weak.upgrade().is_some());
+        open.push((menu.downgrade(), window.window_handle(), rebuild));
+    });
+    cx.subscribe_self(move |_, _: &DismissEvent, _| {
+        REBUILDABLE.with_borrow_mut(|open| open.retain(|(weak, ..)| weak.entity_id() != id));
+    })
+    .detach();
+}
+
+/// Builds every open menu that was recorded with [`rebuildable`] again, as
+/// its page knows things now, once the next frame has drawn the page's
+/// latest state. A menu whose [`Rebuild::ready`] no longer holds is left as
+/// it is: its items already do nothing for a row that isn't selected.
+/// Call it when an answer arrives that a menu shows, never while drawing.
+pub fn refresh_open(cx: &mut App) {
+    let open: Vec<Open> = REBUILDABLE.with_borrow_mut(|open| {
+        open.retain(|(weak, ..)| weak.upgrade().is_some());
+        open.clone()
+    });
+    for (menu, handle, rebuild) in open {
+        cx.defer(move |cx| {
+            _ = cx.update_window(handle, |_, window, _| {
+                window.on_next_frame(move |window, cx| {
+                    let Some(menu) = menu.upgrade() else { return };
+                    if !(rebuild.ready)(cx) {
+                        return;
+                    }
+                    menu.update(cx, |menu, cx| {
+                        menu.rebuild(window, cx, |menu, window, cx| {
+                            (rebuild.build)(menu, window, cx)
+                        })
+                    });
+                });
+            });
+        });
+    }
 }
 
 /// One line of a menu that runs the page's commands.

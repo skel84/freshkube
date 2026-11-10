@@ -677,6 +677,17 @@ struct Fit {
     chips: Cell<f32>,
     controls: RefCell<Vec<f32>>,
     placement: Cell<Placement>,
+    /// What the "…" menu folds, as the header last drew it: the menu builds
+    /// from this each time, so one that is open can be built again with
+    /// what the page knows now ([`menu::refresh_open`]).
+    forms: RefCell<Vec<MenuItems>>,
+}
+
+impl Fit {
+    fn fill(&self, menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+        let forms = self.forms.borrow().clone();
+        forms.iter().fold(menu, |menu, form| form(menu, window, cx))
+    }
 }
 
 /// `element` in a box of its own width, whose width lands in `slot` each
@@ -922,6 +933,7 @@ impl PageHeader {
                     .child(control.element),
             );
         }
+        *state.forms.borrow_mut() = forms.clone();
         let more = (!forms.is_empty()).then(|| {
             let dot = (!notes.is_empty()).then(|| {
                 badge_dot(Tone::Accent, Some(cx.theme().background), cx)
@@ -949,18 +961,26 @@ impl PageHeader {
                         .icon(IconName::Ellipsis)
                         .accessibility_label(tip.clone())
                         .tooltip(tip)
-                        .dropdown_menu_with_anchor(
-                            Anchor::TopRight,
-                            move |mut menu, window, cx| {
+                        .dropdown_menu_with_anchor(Anchor::TopRight, {
+                            let state = state.clone();
+                            move |menu, window, cx| {
                                 // Escape gives the keyboard back, also
                                 // when no folded control has a key.
                                 menu::return_focus(None, window, cx);
-                                for form in &forms {
-                                    menu = form(menu, window, cx);
-                                }
-                                menu
-                            },
-                        ),
+                                let again = state.clone();
+                                menu::rebuildable(
+                                    menu::Rebuild {
+                                        ready: Rc::new(|_| true),
+                                        build: Rc::new(move |menu, window, cx| {
+                                            again.fill(menu, window, cx)
+                                        }),
+                                    },
+                                    window,
+                                    cx,
+                                );
+                                state.fill(menu, window, cx)
+                            }
+                        }),
                 )
                 .children(dot)
         });

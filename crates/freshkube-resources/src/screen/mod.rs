@@ -344,6 +344,8 @@ impl ResourcesScreen {
             cx.observe(&offers, |this, _, cx| {
                 this.derive_offers(cx);
                 cx.notify();
+                // A menu left open shows the answer too (#1026).
+                freshkube_ui::menu::refresh_open(cx);
             }),
             // Every change to the rows notifies the screen; the flash hears
             // of it before the next frame draws, so a fade never paints on

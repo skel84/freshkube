@@ -258,6 +258,19 @@ impl TableSource for ResourcesScreen {
         self.menu_actions(cx)
     }
 
+    fn row_menu_now(
+        &self,
+        key: &ResourceIdentity,
+        cx: &App,
+    ) -> Vec<freshkube_ui::menu::MenuAction> {
+        // Only the selected row's entries are worked out, from the offers
+        // derived for it: another row's menu is left as it is.
+        if self.projection.selected() != Some(key) || self.act_offers_for.as_ref() != Some(key) {
+            return Vec::new();
+        }
+        self.menu_actions(cx)
+    }
+
     fn loading(&self) -> Option<&table::LoadingRows> {
         (self.source.is_some()
             && *self.store.read_state() == ReadState::Loading
