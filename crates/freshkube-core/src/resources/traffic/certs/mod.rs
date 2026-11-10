@@ -7,7 +7,7 @@
 //! facts come from the Certificate's status and **no Secret is read**. Any
 //! other Secret is read only when the person asks (`read_tls_secret`), parsed
 //! here, and only the facts of `tls.crt` leave: `tls.key` is never part of any
-//! type in this module (safety guarantee 21). cert-manager's issuance
+//! type in this module (safety guarantee 23). cert-manager's issuance
 //! (Certificate → CertificateRequest → Order → Challenge) reads like a route's
 //! trace: it stops at the first break and says what cert-manager wrote.
 mod chain;

@@ -66,6 +66,19 @@ jobs:
           echo "Promoting run https://github.com/$GH_REPO/actions/runs/$run"
           echo "RUN=$run" >> "$GITHUB_ENV"
 
+      - name: Check the bundles were opened to a first frame
+        # The run is green only when every job passed, but name the job that
+        # didn't, so a failed launch is not mistaken for a missing build.
+        run: |
+          for target in $TARGETS; do
+            passed=$(gh api "repos/$GH_REPO/actions/runs/$RUN/jobs?per_page=100" --jq \
+              "[.jobs[] | select(.name | endswith(\"First frame ($target)\")) | select(.conclusion == \"success\")] | length")
+            if [ "$passed" != 1 ]; then
+              echo "::error::Run $RUN has no passing 'First frame ($target)' job; the $target bundle was never opened."
+              exit 1
+            fi
+          done
+
       - name: Download and verify the bundles
         run: |
           names=()

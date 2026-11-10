@@ -97,7 +97,7 @@ impl QueryView {
             }))
             .children(live.as_ref().map(|live| {
                 let tone = match live.encryption {
-                    Encryption::Verified => ui::Tone::Good,
+                    Encryption::Verified | Encryption::Tunnel => ui::Tone::Good,
                     Encryption::Unverified | Encryption::Plain => ui::Tone::Warn,
                 };
                 let label = live.encryption.label();

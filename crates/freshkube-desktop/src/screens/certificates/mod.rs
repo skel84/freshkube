@@ -5,7 +5,7 @@
 //! stopped. Read-only. Where cert-manager keeps the Secret its Certificate's
 //! status answers and no Secret is read; any other Secret is read only by the
 //! Read Secret control, once, and only the parsed certificate's facts are
-//! kept (safety guarantee 21).
+//! kept (safety guarantee 23).
 mod display;
 mod table;
 #[cfg(test)]

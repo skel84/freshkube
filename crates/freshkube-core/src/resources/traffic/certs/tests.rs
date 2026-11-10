@@ -615,7 +615,7 @@ fn the_certificates_facts_are_parsed_and_only_they_leave() {
 }
 
 #[test]
-fn safety_g21_tls_key_never_leaves_core() {
+fn safety_g23_tls_key_never_leaves_core() {
     let outcome = facts_from_secret(tls_secret(CERTIFICATE, KEY_MARKER));
     let SecretOutcome::Read(_) = &outcome else {
         panic!("{outcome:?}");
@@ -736,7 +736,7 @@ fn base64_of(text: &str) -> String {
 }
 
 #[tokio::test]
-async fn safety_g21_the_page_read_asks_for_no_secret_and_a_managed_secret_is_never_requested() {
+async fn safety_g23_the_page_read_asks_for_no_secret_and_a_managed_secret_is_never_requested() {
     let (client, recorder) = crate::fake_api::client(cluster);
     let read = read_certificates(&client).await;
     assert_eq!(read.manager, Manager::Ready { acme: true });
@@ -770,7 +770,7 @@ async fn safety_g21_the_page_read_asks_for_no_secret_and_a_managed_secret_is_nev
 }
 
 #[tokio::test]
-async fn safety_g21_a_secret_is_read_only_by_name_and_with_one_get() {
+async fn safety_g23_a_secret_is_read_only_by_name_and_with_one_get() {
     let (client, recorder) = crate::fake_api::client(cluster);
     let read = read_certificates(&client).await;
     let view = CertsView::new(&read, 1_800_000_000);
@@ -794,7 +794,7 @@ async fn safety_g21_a_secret_is_read_only_by_name_and_with_one_get() {
 }
 
 #[tokio::test]
-async fn safety_g21_a_refused_or_missing_secret_is_unknown_or_not_found_never_wrong() {
+async fn safety_g23_a_refused_or_missing_secret_is_unknown_or_not_found_never_wrong() {
     let (client, _) = crate::fake_api::client(|request| match request.path.as_str() {
         "/api/v1/namespaces/shop/secrets/hidden" => Some((
             403,

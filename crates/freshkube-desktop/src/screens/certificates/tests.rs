@@ -899,7 +899,7 @@ fn secrets_in(lines: &[String]) -> Vec<String> {
 }
 
 #[gpui_kit::test]
-async fn safety_g21_nothing_reads_a_secret_until_the_control_is_pressed(cx: &mut TestAppContext) {
+async fn safety_g23_nothing_reads_a_secret_until_the_control_is_pressed(cx: &mut TestAppContext) {
     use freshkube_ui::real_io::RealIo;
     cx.executor().allow_parking();
     let runtime = runtime();
