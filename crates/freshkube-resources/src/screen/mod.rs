@@ -97,6 +97,7 @@ actions!(
         HardRefreshSelected,
         ReconcileSelected,
         RenewSelected,
+        RefreshExternalSecret,
         RollbackSelected,
         RunNowSelected,
         DeleteSelected
@@ -301,6 +302,8 @@ impl ResourcesScreen {
             KeyBinding::new("shift-g", HardRefreshSelected, Some(CONTEXT)),
             KeyBinding::new("c", ReconcileSelected, Some(CONTEXT)),
             KeyBinding::new("w", RenewSelected, Some(CONTEXT)),
+            // Shift-R, beside Restart's r; Command/Ctrl-R stays the read-only Refresh.
+            KeyBinding::new("shift-r", RefreshExternalSecret, Some(CONTEXT)),
             KeyBinding::new("b", RollbackSelected, Some(CONTEXT)),
             KeyBinding::new("j", RunNowSelected, Some(CONTEXT)),
             // Not a letter, and not Backspace alone: a stray key must not

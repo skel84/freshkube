@@ -88,6 +88,12 @@ async fn each_everyday_action_declares_the_review_its_description_makes() {
             fake::CERTIFICATE,
             everyday::renew(&subject(&cluster, fake::CERTIFICATE), at).unwrap(),
         ),
+        (
+            Everyday::ExternalSecretRefresh,
+            fake::EXTERNAL_SECRET,
+            everyday::external_secret_refresh(&subject(&cluster, fake::EXTERNAL_SECRET), at)
+                .unwrap(),
+        ),
     ];
     for (act, path, action) in cases {
         let row = row_of(&cluster, path);
