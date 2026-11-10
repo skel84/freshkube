@@ -189,19 +189,31 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let dock = self.pages.dock.read(cx).shown_height(window, cx);
         let strip = self.follow_strip(cx);
+        let dock = self.pages.dock.read(cx).shown_height(window, cx);
         let accent = crate::palette::palette(cx).accent;
         freshkube_ui::page::set_below(
             dock.map(|height| height / crate::ui::dp_px(1., window))
                 .unwrap_or(0.),
         );
+        let room = self.pages.dock.read(cx).cell_room();
+        let (top, bottom) = (room.clone(), room);
         v_flex()
             .id("page-cell")
             .test_support()
             .flex_1()
             .min_w_0()
             .min_h_0()
+            // The cell's bottom, which the status bar bounds.
+            .child(self.measure_cell(
+                move |bounds| {
+                    let mut room = bottom.get();
+                    room.bottom = bounds.bottom();
+                    room.cell_top = bounds.top();
+                    bottom.set(room);
+                },
+                cx,
+            ))
             // The strip, beside the cached page, so its hairline's frames
             // draw nothing else.
             .children(strip.clone())
@@ -218,6 +230,15 @@ impl Pilot {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
+                    // The top of the room the dock may take: under the strip.
+                    .child(self.measure_cell(
+                        move |bounds| {
+                            let mut room = top.get();
+                            room.page_top = bounds.top();
+                            top.set(room);
+                        },
+                        cx,
+                    ))
                     .child(page)
                     // A 2 px frame around the followed page that takes no
                     // room and no pointer.
@@ -237,6 +258,45 @@ impl Pilot {
                     .clone()
                     .cached(StyleRefinement::default().w_full().flex_none().h(height))
             }))
+    }
+}
+
+impl Pilot {
+    /// A canvas that hands `record` its laid-out bounds and, when that
+    /// changes the dock's room, asks for the frame that draws the dock at
+    /// the new height: a notify from prepaint marks the view dirty and no
+    /// frame follows by itself. The dock is told as well, since it measures
+    /// its own frame in its own render.
+    fn measure_cell(
+        &self,
+        record: impl Fn(Bounds<Pixels>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let dock = self.pages.dock.clone();
+        let room = dock.read(cx).cell_room();
+        let pilot = cx.entity().downgrade();
+        canvas(
+            move |bounds, window, _| {
+                let before = room.get();
+                record(bounds);
+                let after = room.get();
+                if (after.page_top - before.page_top).abs() > px(0.5)
+                    || (after.bottom - before.bottom).abs() > px(0.5)
+                    || (after.cell_top - before.cell_top).abs() > px(0.5)
+                {
+                    let (pilot, dock) = (pilot.clone(), dock.clone());
+                    window.on_next_frame(move |_, cx| {
+                        _ = pilot.update(cx, |_, cx| cx.notify());
+                        // The dock is a cached view that sizes its own
+                        // frame from the room: it draws again too.
+                        dock.update(cx, |_, cx| cx.notify());
+                    });
+                }
+            },
+            |_, _, _, _| (),
+        )
+        .absolute()
+        .size_full()
     }
 }
 
