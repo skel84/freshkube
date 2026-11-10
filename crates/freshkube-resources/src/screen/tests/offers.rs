@@ -315,14 +315,20 @@ fn question(name: &str) -> freshkube_core::write::AccessQuestion {
     }
 }
 
-/// The reviews that reached the fake, as the names they asked about.
+/// The reviews that reached the fake, as the names they asked about. Only
+/// a POST to the review route is one; the recorder pushes a request with its
+/// body already read, so a review's body is never empty here.
 fn reviewed(recorder: &freshkube_core::fake_api::Recorder) -> Vec<String> {
     recorder
         .requests()
         .iter()
-        .filter(|request| request.path.ends_with("selfsubjectaccessreviews"))
+        .filter(|request| {
+            request.method == http::Method::POST
+                && request.path.ends_with("selfsubjectaccessreviews")
+        })
         .map(|request| {
-            let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+            let body: serde_json::Value = serde_json::from_str(&request.body)
+                .unwrap_or_else(|error| panic!("a review without a body ({error}): {request:?}"));
             body["spec"]["resourceAttributes"]["name"]
                 .as_str()
                 .unwrap_or_default()
