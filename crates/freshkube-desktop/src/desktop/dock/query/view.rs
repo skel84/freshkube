@@ -9,7 +9,7 @@ use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::Editor;
 use gpui_kit::component::{
-    Disableable, Selectable, Sizable,
+    Disableable, ElementExt as _, Selectable, Sizable,
     button::{Button, ButtonVariants},
     h_flex, v_flex,
 };
@@ -19,6 +19,8 @@ use gpui_kit::*;
 /// The editor's height, in dp: a few lines; the results get the rest.
 const EDITOR_HEIGHT: f32 = 112.;
 const HISTORY_WIDTH: f32 = 300.;
+/// How far a sideways wheel goes, in dp, to move the result tabs by one.
+const TAB_NOTCH: f32 = 24.;
 
 /// Said beside the session's mark when the login is the application's own.
 const APP_USER: &str = "This session is the application's own user, not a read-only reader. The database's read-only transaction keeps it from writing; a reader role is the real fix (E4).";
@@ -299,29 +301,11 @@ impl QueryView {
                         cx,
                     ))
                 })
-                // The tabs scroll sideways, and the selected one is kept in
-                // view, so a run of fifty statements can all be reached.
-                .child(
-                    h_flex()
-                        .id("query-result-tabs")
-                        .flex_1()
-                        .min_w_0()
-                        .gap(dp(4.))
-                        .overflow_x_scroll()
-                        .track_scroll(&self.results_scroll)
-                        .children(self.items.iter().enumerate().map(|(ix, item)| {
-                            let label = item.label.clone();
-                            Button::new(SharedString::from(format!("query-result-{}", ix + 1)))
-                                .ghost()
-                                .small()
-                                .h(dp(ui::CONTROL_HEIGHT))
-                                .flex_none()
-                                .label(label.clone())
-                                .accessibility_label(label)
-                                .selected(ix == selected)
-                                .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
-                        })),
-                )
+                // The tabs show whole or not at all: the strip draws from its
+                // first tab and is clipped to the last one that fits, so the
+                // selected tab is always in view and none is cut. A wheel
+                // moves it a tab at a time.
+                .child(self.render_tabs(selected, cx))
                 .when(count > 1, |this| {
                     this.child(step("query-result-next", IconName::ChevronRight, next, cx))
                         .child(
@@ -337,6 +321,98 @@ impl QueryView {
                 })
                 .into_any_element(),
         )
+    }
+
+    /// The result tabs: whole tabs from the first shown, in a strip clipped to
+    /// the last that fits, each label cut to the strip's width.
+    fn render_tabs(&self, selected: usize, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let fit = self.tabs.clone();
+        fit.begin(selected, self.items.len());
+        let (avail, clip, first) = (fit.avail(), fit.clip(), fit.first());
+        let (width, settle) = (fit.clone(), fit.clone());
+        let view = cx.entity_id();
+        h_flex()
+            .id("query-result-strip")
+            .test_support()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .on_prepaint(move |bounds, window, _| {
+                width.set_avail(bounds.size.width);
+                // The tabs are laid out after this, so their bounds are noted
+                // once the frame is done; a change draws once more, and
+                // nothing else would.
+                let settle = settle.clone();
+                window.on_next_frame(move |_, cx| {
+                    if settle.settle() {
+                        cx.notify(view);
+                    }
+                });
+            })
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                let delta = event.delta.pixel_delta(window.line_height());
+                if delta.x.abs() <= delta.y.abs() {
+                    return;
+                }
+                let notch = ui::dp_px(TAB_NOTCH, window);
+                if this.tabs.wheel(delta.x, notch) {
+                    cx.notify();
+                }
+                cx.stop_propagation();
+            }))
+            .child(
+                h_flex()
+                    .id("query-result-tabs")
+                    .test_support()
+                    .flex_none()
+                    .overflow_hidden()
+                    .gap(dp(4.))
+                    .when_some(clip, |this, clip| this.w(clip))
+                    .children(self.items.iter().enumerate().skip(first).map(|(ix, item)| {
+                        let tab = fit.clone();
+                        let active = ix == selected;
+                        h_flex()
+                            .id(SharedString::from(format!("query-result-{}", ix + 1)))
+                            .test_support()
+                            .role(Role::Tab)
+                            .aria_selected(active)
+                            .aria_label(item.label.clone())
+                            .flex_none()
+                            .when_some(avail, |this, avail| this.max_w(avail))
+                            .h(dp(freshkube_ui::inspector::TAB_HEIGHT))
+                            .px(dp(10.))
+                            .items_center()
+                            .cursor_pointer()
+                            .text_size(dp(12.5))
+                            .border_b_2()
+                            .map(|this| {
+                                if active {
+                                    this.border_color(p.accent)
+                                        .text_color(p.ink)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                } else {
+                                    this.border_color(gpui_kit::transparent_black())
+                                        .text_color(p.muted)
+                                        .hover(|style| style.text_color(p.ink))
+                                }
+                            })
+                            .on_prepaint(move |bounds, _, _| tab.note(ix, bounds))
+                            .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "query-result-{}-label",
+                                        ix + 1
+                                    )))
+                                    .test_support()
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(item.label.clone()),
+                            )
+                    })),
+            )
+            .into_any_element()
     }
 
     fn render_result(&self, cx: &mut Context<Self>) -> AnyElement {
