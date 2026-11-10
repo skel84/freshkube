@@ -286,9 +286,10 @@ impl Pilot {
                 everyday::flux_reconcile(&subject, &chrono::Utc::now().to_rfc3339())
             }
             Everyday::Renew => everyday::renew(&subject, &chrono::Utc::now().to_rfc3339()),
-            Everyday::ExternalSecretRefresh => {
-                everyday::external_secret_refresh(&subject, &chrono::Utc::now().to_rfc3339())
-            }
+            Everyday::ExternalSecretRefresh => everyday::external_secret_refresh(
+                &subject,
+                &chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            ),
             Everyday::RunNow => everyday::run_now(&subject, &job_suffix()),
             Everyday::Rollback => unreachable!("handled above"),
             Everyday::Delete => unreachable!("Delete has its own path"),

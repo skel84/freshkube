@@ -442,7 +442,7 @@ pub fn external_secret_refresh(
     shown.push(Preview {
         title: "What follows".into(),
         lines: vec![
-            format!("The operator reads the secret store again and rewrites {secret} with what it finds."),
+            format!("{secret} is rewritten with what the store holds now."),
             "The store's provider is asked again, which may count against its rate limit or cost. This can't be undone.".into(),
         ],
     });

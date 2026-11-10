@@ -282,7 +282,7 @@ fn nudges() -> [(
         ),
         (
             "externalsecrets.external-secrets.io",
-            &["Refresh"],
+            &["Refresh ExternalSecret"],
             &["shift-r"],
             &["resource-externalsecret-refresh"],
             &[Everyday::ExternalSecretRefresh],
