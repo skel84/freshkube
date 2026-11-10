@@ -1,0 +1,1 @@
+- **Clearer connection failures:** a Talos connection that can't be made now names the endpoints it tried (host and port only), the Overview's "Couldn't connect" shows the whole reason as a tooltip, its cards say "Couldn't read …" instead of staying on loading placeholders, and the Agent transcript shows a scrollbar while it scrolls.
