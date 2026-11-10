@@ -915,3 +915,45 @@ fn a_cut_gateway_list_makes_none_mean_none_among_those_read() {
     let legacy = display.rows.iter().find(|r| r.name == "legacy").unwrap();
     assert_eq!(legacy.cells[3], "1 Gateway");
 }
+
+/// At 760x560 and text size 20 the stacked table shrinks when the Inspector
+/// opens; a row clicked in its lower half stays in view, whole and selected.
+#[gpui_kit::test]
+fn a_row_clicked_low_in_the_table_stays_in_view_when_the_inspector_opens(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Mode::Gateways, Shape::Gateways, 760., 560.);
+    cx.update_window(window.into(), |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        layout_check::settle_header(window, cx);
+        window.render_frame(cx);
+        let list = window.find("gateways-list").bounds();
+        let id = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let found = window.try_find(row.id.clone())?;
+                let bounds = found.bounds();
+                (found.visible() && bounds.bottom() <= list.bottom()).then_some((bounds, &row.id))
+            })
+            .max_by(|a, b| f32::from(a.0.top()).total_cmp(&f32::from(b.0.top())))
+            .map(|(_, id)| id.clone())
+            .expect("a row in view");
+        window.click(id.clone(), cx);
+        for _ in 0..8 {
+            window.render_frame(cx);
+        }
+        let row = window.find(id).bounds();
+        let list = window.find("gateways-list").bounds();
+        assert!(
+            row.top() >= list.top() && row.bottom() <= list.bottom() + gpui_kit::px(1.),
+            "the selected row {row:?} is out of the list {list:?}"
+        );
+    })
+    .unwrap();
+}

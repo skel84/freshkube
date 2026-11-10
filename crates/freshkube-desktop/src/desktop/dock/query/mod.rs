@@ -104,6 +104,10 @@ pub(crate) struct QueryView {
     results_scroll: ScrollHandle,
     /// Frames left to snap the tabs in, after a step or a pause in a wheel.
     snap: Rc<Cell<u8>>,
+    /// The room the strip has, and the width of the whole tabs that fit in
+    /// it ([`snap_tabs`]).
+    avail: Rc<Cell<Pixels>>,
+    fit: Rc<Cell<Option<Pixels>>>,
     /// Counts wheel events, so only the last of a burst starts a snap.
     wheel: Rc<Cell<u32>>,
     _editor: Subscription,
@@ -157,6 +161,8 @@ impl QueryView {
             plan_scroll: UniformListScrollHandle::new(),
             results_scroll: ScrollHandle::new(),
             snap: Rc::default(),
+            avail: Rc::new(Cell::new(px(0.))),
+            fit: Rc::default(),
             wheel: Rc::default(),
             _editor: subscription,
         }
@@ -554,29 +560,46 @@ async fn statement(
 const FIRST_TAB: usize = 1;
 
 /// Moves the result tabs' scroll to the nearest whole tab, so none is cut
-/// at the Previous button. The scroll lands between two tabs after a wheel
-/// or a step to a tab near the end. Returns whether it moved.
-pub(super) fn snap_tabs(scroll: &ScrollHandle, tabs: usize) -> bool {
+/// at the Previous button, and sets `fit` to the width of the whole tabs
+/// that follow it within `avail`, so none is cut at the Next button either.
+/// The scroll lands between two tabs after a wheel or a step to a tab near
+/// the end. Returns whether either changed.
+pub(super) fn snap_tabs(
+    scroll: &ScrollHandle,
+    tabs: usize,
+    avail: Pixels,
+    fit: &Cell<Option<Pixels>>,
+) -> bool {
     let view = scroll.bounds();
-    if view.size.width <= px(0.) {
+    if view.size.width <= px(0.) || avail <= px(0.) {
         return false;
     }
     // The children's bounds are those of the layout, before the scroll:
     // a tab shows at its left plus the scroll's offset.
     let at = scroll.offset();
-    let nearest = (0..tabs)
-        .filter_map(|ix| scroll.bounds_for_item(FIRST_TAB + ix))
-        .map(|tab| tab.left())
-        .min_by(|a, b| {
-            let (a, b) = (
-                (*a + at.x - view.left()).abs(),
-                (*b + at.x - view.left()).abs(),
-            );
-            f32::from(a).total_cmp(&f32::from(b))
-        });
-    let Some(left) = nearest.filter(|left| (*left + at.x - view.left()).abs() > px(0.5)) else {
+    let tab = |ix: usize| scroll.bounds_for_item(FIRST_TAB + ix);
+    let shown = |left: Pixels| (left + at.x - view.left()).abs();
+    let Some((k, left)) = (0..tabs)
+        .filter_map(|ix| Some((ix, tab(ix)?.left())))
+        .min_by(|a, b| f32::from(shown(a.1)).total_cmp(&f32::from(shown(b.1))))
+    else {
         return false;
     };
-    scroll.set_offset(point(view.left() - left, at.y));
-    true
+    let mut changed = false;
+    if shown(left) > px(0.5) {
+        scroll.set_offset(point(view.left() - left, at.y));
+        changed = true;
+    }
+    let mut fitted = tab(k).map_or(avail, |first| first.size.width.min(avail));
+    for ix in k + 1..tabs {
+        match tab(ix) {
+            Some(next) if next.right() - left <= avail => fitted = next.right() - left,
+            _ => break,
+        }
+    }
+    if fit.get() != Some(fitted) {
+        fit.set(Some(fitted));
+        changed = true;
+    }
+    changed
 }

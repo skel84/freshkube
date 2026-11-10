@@ -1,12 +1,13 @@
 //! `DataTable`: the header, the virtualised rows and their selection, for
 //! any page whose entity implements [`TableSource`]. Generic rather than
 //! dynamic, so a 20,000-row list costs what a hand-written one does.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::hash::Hash;
 use std::ops::Range;
+use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::base::ObservedElement as Observed;
+use gpui_kit::base::{ElementExt as _, ObservedElement as Observed};
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -95,6 +96,12 @@ pub struct TableState {
     ids: TableIds,
     /// The loading rows the table last drew, stilled when it stops.
     loading: RefCell<Option<super::LoadingRows>>,
+    /// The list's height as the last frame drew it, and whether it has
+    /// changed since the selected row was last revealed. A stacked
+    /// Inspector shrinks the table when it opens, and a row in its lower
+    /// half would be left below the new edge.
+    list_height: Rc<Cell<Option<Pixels>>>,
+    resized: Rc<Cell<bool>>,
 }
 
 impl TableState {
@@ -106,6 +113,8 @@ impl TableState {
             sideways: ScrollHandle::new(),
             ids: TableIds::new(prefix),
             loading: RefCell::default(),
+            list_height: Rc::default(),
+            resized: Rc::default(),
         }
     }
 
@@ -498,6 +507,11 @@ impl DataTable {
         };
         let loading = source.loading();
         state.track_loading(loading);
+        // The list changed height since the last frame: the selected row
+        // is brought into view in the new one.
+        if state.resized.take() {
+            reveal(source, ScrollStrategy::Nearest);
+        }
         let empty = if loading.is_some() {
             None
         } else {
@@ -511,9 +525,21 @@ impl DataTable {
             (None, None) => Some(source.line_count().min(max) as f32 * source.row_height()),
             (None, Some(_)) => None,
         });
+        let (height, resized) = (state.list_height.clone(), state.resized.clone());
         let list = div()
             .id(ids.list.clone())
             .test_support()
+            .on_prepaint(move |bounds, window, _| {
+                let now = bounds.size.height;
+                if height
+                    .replace(Some(now))
+                    .is_some_and(|before| before != now)
+                {
+                    resized.set(true);
+                    let view = window.current_view();
+                    window.on_next_frame(move |_, cx| cx.notify(view));
+                }
+            })
             .role(Role::ListBox)
             .aria_label(source.list_label())
             .map(|this| match list_height {

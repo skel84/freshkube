@@ -741,12 +741,23 @@ async fn the_result_tabs_snap_to_whole_tabs_after_a_wheel_and_a_step(cx: &mut Te
                         tab.left() >= strip.left() - gpui_kit::px(1.),
                         "{what}: tab {ix} {tab:?} is cut at the start of {strip:?}"
                     );
+                    assert!(
+                        tab.right() <= strip.right() + gpui_kit::px(1.),
+                        "{what}: tab {ix} {tab:?} is cut at the end of {strip:?}"
+                    );
                 }
             }
             assert!(shown > 0);
         })
         .unwrap();
     };
+    for text in [13., 20.] {
+        cx.update(|cx| crate::text_size::set(text, cx));
+        whole(&h, cx, &format!("text {text} at rest"));
+    }
+    // At the first result, where more tabs follow than fit.
+    h.view.update(cx, |v, cx| v.show(0, cx));
+    whole(&h, cx, "at the first result");
     // Stepping back, then a wheel by less than a tab and a pause.
     h.click("query-result-prev", cx);
     h.click("query-result-prev", cx);

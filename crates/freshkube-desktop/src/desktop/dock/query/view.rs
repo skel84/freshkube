@@ -308,11 +308,18 @@ impl QueryView {
                 .child({
                     let (snap, wheel) = (self.snap.clone(), self.wheel.clone());
                     let (scroll, tabs) = (self.results_scroll.clone(), self.items.len());
-                    h_flex()
+                    let (avail, fit) = (self.avail.clone(), self.fit.clone());
+                    let (room, width) = (avail.clone(), fit.get());
+                    let (room_snap, room_fit) = (snap.clone(), fit.clone());
+                    let tabs_row = h_flex()
                         .id("query-result-tabs")
                         .test_support()
-                        .flex_1()
-                        .min_w_0()
+                        // The whole tabs that fit, once known: none is cut at
+                        // either end.
+                        .map(|this| match width {
+                            Some(fit) => this.flex_none().w(fit).max_w_full(),
+                            None => this.w_full(),
+                        })
                         .gap(dp(4.))
                         .overflow_x_scroll()
                         .track_scroll(&self.results_scroll)
@@ -340,7 +347,7 @@ impl QueryView {
                             let left = snap.get();
                             if left > 0 {
                                 snap.set(left - 1);
-                                if super::snap_tabs(&scroll, tabs) || left > 1 {
+                                if super::snap_tabs(&scroll, tabs, avail.get(), &fit) || left > 1 {
                                     window.refresh();
                                 }
                             }
@@ -358,7 +365,22 @@ impl QueryView {
                                 .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
                         }))
                         // Room after the last tab, so it too can sit at the start.
-                        .child(div().flex_none().w_full())
+                        .child(div().flex_none().w_full());
+                    div()
+                        .id("query-result-strip")
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        // The room the tabs have; when it changes they are
+                        // fitted again.
+                        .on_prepaint(move |bounds, window, _| {
+                            if room.replace(bounds.size.width) != bounds.size.width {
+                                room_fit.set(None);
+                                room_snap.set(3);
+                                window.refresh();
+                            }
+                        })
+                        .child(tabs_row)
                 })
                 .when(count > 1, |this| {
                     this.child(step("query-result-next", IconName::ChevronRight, next, cx))
