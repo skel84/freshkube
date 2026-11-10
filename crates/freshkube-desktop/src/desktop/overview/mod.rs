@@ -132,7 +132,7 @@ impl OverviewPage {
         });
         // The header's switcher reads the same state, so the two agree.
         let (connection, ink) = match self.state.connection {
-            _ if self.state.stale => ("Stale snapshot", Some(p.warn_ink)),
+            _ if self.state.stale => ("Last read shown · latest read failed", Some(p.warn_ink)),
             Connection::Connected => ("Connected", None),
             Connection::Failed => ("Couldn't connect", Some(p.crit_ink)),
             Connection::Connecting => ("Connecting…", None),

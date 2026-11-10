@@ -230,7 +230,13 @@ impl TableSource for OperationsScreen {
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         self.roster.is_empty().then(|| {
-            "No node roster is available, so there is nothing to select.".into_any_element()
+            let message = "Couldn't read the node list from Talos or Kubernetes, so available nodes are unknown and there is nothing to select.";
+            div()
+                .id("ops-empty-message")
+                .test_support()
+                .aria_label(message)
+                .child(message)
+                .into_any_element()
         })
     }
 }

@@ -2,6 +2,7 @@
 //! can't answer, shared by Overview and the node pane's System services.
 //! Their buttons hand a [`ConfigAction`] back to whoever draws them.
 use crate::ui::{self, clock};
+use freshkube_ui::read_state::ReadState;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Sizable,
@@ -188,24 +189,33 @@ pub(super) fn stale_banner(
     stale: Option<&StaleTalos>,
     on_action: &OnConfigAction,
     cx: &App,
-) -> Option<Div> {
+) -> Option<AnyElement> {
     let stale = stale?;
-    Some(ui::warning_banner(
-        Some(format!("Refresh failed at {}.", stale.failed).into()),
-        format!(
-            "You're looking at the snapshot from {}. {}",
-            stale.kept, stale.reason
-        ),
-        Some(button(
-            Button::new("retry")
-                .small()
-                .icon(IconName::RefreshCw)
-                .label("Retry"),
-            ConfigAction::Retry,
-            on_action,
-        )),
-        cx,
-    ))
+    let state = ReadState::Stale {
+        what: "cluster data".into(),
+        at: stale.kept.clone(),
+    };
+    let message = format!("{} {}", state.description(), stale.reason);
+    Some(
+        ui::warning_banner(
+            Some(format!("Refresh failed at {}.", stale.failed).into()),
+            message.clone(),
+            Some(button(
+                Button::new("retry")
+                    .small()
+                    .icon(IconName::RefreshCw)
+                    .label("Retry"),
+                ConfigAction::Retry,
+                on_action,
+            )),
+            cx,
+        )
+        .id("talos-stale")
+        .test_support()
+        .role(Role::Status)
+        .aria_label(message)
+        .into_any_element(),
+    )
 }
 
 impl super::Pilot {
