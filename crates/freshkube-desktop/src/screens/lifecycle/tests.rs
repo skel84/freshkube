@@ -754,6 +754,10 @@ fn an_empty_roster_says_so_in_the_table(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let empty = window.find("lifecycle-empty");
         assert!(empty.visible());
+        assert_eq!(
+            window.find("lifecycle-empty-message").label(),
+            Some("Couldn't read the node list from Talos or Kubernetes, so versions, time and configuration are unknown.")
+        );
         let header = window.find(("lifecycle-sort", 0usize)).bounds();
         assert!(empty.bounds().top() >= header.bottom());
         assert!(window.try_find("lifecycle-loading").is_none());
