@@ -34,6 +34,8 @@ const CONTEXT: &str = "TalosSecurity";
 /// The page header's id prefix.
 const PREFIX: &str = "security";
 
+const NO_CONTROL_PLANE: &str = "Freshkube doesn't know a Talos control plane to read Kubernetes credentials from, so their certificates weren't checked. No other kubeconfig was checked.";
+
 actions!(
     talos_security,
     [NextItem, PreviousItem, FirstItem, LastItem, CloseDetails]
@@ -167,9 +169,7 @@ impl ScreenPanel for SecurityScreen {
                     .await;
                 if pinned.is_none() {
                     snapshot.talos_kubeconfig_certificates = SourceSnapshot::Unavailable {
-                        reason:
-                            "No control plane is known to serve the Talos kubeconfig; no ambient kubeconfig was audited"
-                                .into(),
+                        reason: NO_CONTROL_PLANE.into(),
                     };
                 }
                 Ok(snapshot)

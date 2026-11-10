@@ -190,7 +190,7 @@ fn distinct(mut names: Vec<String>) -> Vec<String> {
 }
 
 #[gpui_kit::test]
-fn safety_g21_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppContext) {
+fn safety_g22_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppContext) {
     let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
     let rows = cx.read(|cx| screen.read(cx).store.len());
     assert!(rows > 3, "the example lists several deployments: {rows}");
@@ -219,7 +219,7 @@ fn safety_g21_only_the_selected_rows_actions_are_asked_about(cx: &mut TestAppCon
 }
 
 #[gpui_kit::test]
-fn safety_g21_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing(
+fn safety_g22_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
@@ -312,7 +312,7 @@ fn reviewed(recorder: &freshkube_core::fake_api::Recorder) -> Vec<String> {
 }
 
 #[gpui_kit::test]
-fn safety_g21_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest(
+fn safety_g22_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest(
     cx: &mut TestAppContext,
 ) {
     use freshkube_core::fake_api::{self, Recorded};
@@ -483,7 +483,7 @@ fn want_rows(
 }
 
 #[gpui_kit::test]
-fn safety_g21_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row(
+fn safety_g22_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row(
     cx: &mut TestAppContext,
 ) {
     let (runtime, screen, _handle) = mount(cx, Some("homelab"));
@@ -521,7 +521,7 @@ fn safety_g21_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new
 }
 
 #[gpui_kit::test]
-fn safety_g21_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands(cx: &mut TestAppContext) {
+fn safety_g22_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands(cx: &mut TestAppContext) {
     use freshkube_core::access::Offer;
     let (runtime, screen, _handle) = mount(cx, Some("homelab"));
     let (client, recorder, gate, counts) = holding_cluster(&runtime);

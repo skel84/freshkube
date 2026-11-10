@@ -1,1 +1,0 @@
-- **Command line:** `freshkube changes <app>`, `freshkube waiting-to-ship` and `freshkube get application <app>` read an application's changes, what waits to ship and its Stages from the terminal, read-only, with `--json` and exit codes for CI; `--older-than 2d` exits 1 for a scheduled nag ([docs](docs/features/cli.md)).

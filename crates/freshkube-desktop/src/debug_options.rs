@@ -99,8 +99,10 @@ pub struct DebugOptions {
     pub(crate) access: String,
     /// `FRESHKUBE_DB_EXPLORE`: how an example explorer connection ends
     /// (`connected`, `no-secret`, `forward-failed`, `refused`, `timed-out`,
-    /// `not-read-only`, `loading`); a known value also opens the first
-    /// PostgreSQL database in the explorer.
+    /// `not-read-only`, `loading`, and Teleport's `teleport`,
+    /// `teleport-no-tsh`, `teleport-not-logged-in`, `teleport-no-role`,
+    /// `teleport-not-found`, `teleport-proxy-failed`); a known value also
+    /// opens the first PostgreSQL database in the explorer.
     pub(crate) db_explore: String,
     /// `FRESHKUBE_PAGE`: a page slug or a fixture check's name.
     pub(crate) page: Option<String>,

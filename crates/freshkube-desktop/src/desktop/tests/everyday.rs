@@ -286,7 +286,7 @@ fn restart_asks_even_on_an_open_cluster_and_a_double_press_sends_once(cx: &mut T
 }
 
 #[gpui_kit::test]
-fn safety_g21_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review(
+fn safety_g22_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review(
     cx: &mut TestAppContext,
 ) {
     use freshkube_core::access::Offer;
