@@ -679,6 +679,10 @@ fn an_empty_roster_says_so_in_the_table(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let empty = window.find("ops-empty");
         assert!(empty.visible());
+        assert_eq!(
+            window.find("ops-empty-message").label(),
+            Some("Couldn't read the node list from Talos or Kubernetes, so available nodes are unknown and there is nothing to select.")
+        );
         assert!(empty.bounds().top() >= window.find(("ops-sort", 0usize)).bounds().bottom());
         assert!(window.try_find(row(0)).is_none());
     })
