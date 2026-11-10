@@ -1,0 +1,1 @@
+- Fixed the Agent dock's question box and Ask button being cut off by the status bar when the dock is fitted to the window while the "Following agent" bar shows; the dock now keeps to the room the bar leaves, in every tab.

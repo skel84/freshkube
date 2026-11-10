@@ -189,8 +189,17 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let dock = self.pages.dock.read(cx).shown_height(window, cx);
         let strip = self.follow_strip(cx);
+        // The strip, or the room it leaves after a click, is over the dock.
+        let above = if strip.is_some() || self.follow_spacer {
+            dock::FollowStrip::HEIGHT
+        } else {
+            0.
+        };
+        self.pages
+            .dock
+            .update(cx, |dock, cx| dock.set_above(above, cx));
+        let dock = self.pages.dock.read(cx).shown_height(window, cx);
         let accent = crate::palette::palette(cx).accent;
         freshkube_ui::page::set_below(
             dock.map(|height| height / crate::ui::dp_px(1., window))

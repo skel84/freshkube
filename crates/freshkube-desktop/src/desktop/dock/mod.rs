@@ -422,6 +422,10 @@ pub(crate) struct Dock {
     /// pod here, and it closes when following stops unless the person has
     /// used it (`follow.rs`).
     follow_tab: Option<u64>,
+    /// What the page cell draws over the dock, in dp: the follow strip, or
+    /// the room it leaves after a click. The dock keeps to the cell less
+    /// that, so it never reaches under the status bar.
+    above: f32,
     /// Where the dock was last laid out, so the shell can tell the person's
     /// input in the dock (the agent's own tab) from input in the page.
     bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
@@ -476,6 +480,7 @@ impl Dock {
             count_label: SharedString::default(),
             agent_shape,
             follow_tab: None,
+            above: 0.,
             bounds: Default::default(),
         };
         if let Some(restore) = restore {
@@ -504,10 +509,12 @@ impl Dock {
     /// selected tab needs, at most the page cell less the page's least.
     /// Fit to window takes the whole cell.
     fn open_height(&self, window: &Window, cx: &App) -> f32 {
+        let above = self.above;
+        let cell = (available_height(window) - above).max(BAR_HEIGHT);
         if self.maximized {
-            return available_height(window);
+            return cell;
         }
-        let room = open_room(window);
+        let room = (open_room(window) - above).max(MIN_HEIGHT.min(cell));
         let least = self.least_height(window, cx).min(room);
         // Until the user drags it, a window too short for a table page
         // gives the dock at most half the page cell, so the page keeps the
@@ -515,7 +522,7 @@ impl Dock {
         let short =
             window.viewport_size().height / dp_px(1., window) < freshkube_ui::page::SHORT_HEIGHT;
         let height = if short && !self.dragged {
-            self.height.size().min(available_height(window) / 2.)
+            self.height.size().min(cell / 2.)
         } else {
             self.height.size()
         };
@@ -531,6 +538,15 @@ impl Dock {
             .map(|tab| tab.least_height(cx) / dp_px(1., window))
             .unwrap_or(0.);
         MIN_HEIGHT.max(BAR_HEIGHT + 1. + view::BODY_PADDING + self.notice_height + log)
+    }
+
+    /// Tells the dock what the page cell draws over it; a change draws it
+    /// again.
+    pub(crate) fn set_above(&mut self, above: f32, cx: &mut Context<Self>) {
+        if (self.above - above).abs() > f32::EPSILON {
+            self.above = above;
+            cx.notify();
+        }
     }
 
     pub(crate) fn has_tabs(&self) -> bool {
