@@ -36,13 +36,16 @@ thread_local! {
         RefCell::default();
 }
 
+/// Adds a menu's entries to the emptied menu.
+pub type BuildMenu = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
+
 /// How an open menu is built again: `ready` says whether what it was opened
 /// for still stands (the row is still the selected one), and `build` adds
 /// its entries to the emptied menu, from what the page knows now.
 #[derive(Clone)]
 pub struct Rebuild {
     pub ready: Rc<dyn Fn(&App) -> bool>,
-    pub build: Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>,
+    pub build: BuildMenu,
 }
 
 type Open = (WeakEntity<PopupMenu>, AnyWindowHandle, Rebuild);
@@ -358,7 +361,7 @@ pub fn return_focus(focus: Option<&FocusHandle>, window: &mut Window, cx: &mut C
 mod tests {
     use super::*;
     use gpui_kit::component::Root;
-    use gpui_kit::{AppContext as _, IntoElement, Render, TestAppContext, div, px, size};
+    use gpui_kit::{IntoElement, Render, TestAppContext, div, px, size};
 
     struct Empty;
 
