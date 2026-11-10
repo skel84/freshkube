@@ -3,6 +3,8 @@
 mod coroot_tests;
 mod display;
 mod explore;
+#[cfg(test)]
+pub(crate) use explore::Example as ExploreExample;
 pub(crate) mod query_link;
 mod table;
 #[cfg(test)]

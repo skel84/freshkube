@@ -89,7 +89,7 @@ The connection is user-started and belongs to its tab ([STATE_LIFETIMES.md](../S
 
 ## Example data
 
-`--fixture` uses `freshkube_db::fake` and no forward or Secret. `FRESHKUBE_DB_EXPLORE` (AGENTS.md) opens the first PostgreSQL database in the explorer and shapes how the connection ends; `query-app-user` does the same with the application's own login, so the *Application user* mark shows; `query` also opens the Query tab with three example statements run: the rows of `orders` (capped), an `update` the session refuses, and a statement that did not run after it. In the example, `pg_sleep` never answers until Cancel, and any write is refused. The example `shop` database has the schemas `public` and `audit`; `orders` has 250 rows (more than the cap), `customers` 12, `products` none.
+`--fixture` uses `freshkube_db::fake` and no forward or Secret. `FRESHKUBE_DB_EXPLORE` ([DEBUG_KNOBS.md](../DEBUG_KNOBS.md#freshkube_db_explore)) opens the first PostgreSQL database in the explorer and shapes how the connection ends; `query-app-user` does the same with the application's own login, so the *Application user* mark shows; `query` also opens the Query tab with three example statements run: the rows of `orders` (capped), an `update` the session refuses, and a statement that did not run after it. In the example, `pg_sleep` never answers until Cancel, and any write is refused. The example `shop` database has the schemas `public` and `audit`; `orders` has 250 rows (more than the cap), `customers` 12, `products` none.
 
 ## Dependency
 
