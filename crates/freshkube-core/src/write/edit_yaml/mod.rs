@@ -283,17 +283,21 @@ fn pointer_of(path: &[String]) -> String {
 }
 
 fn target_of(row: &Row) -> Target {
-    Target {
-        group: row.group.clone(),
-        version: row.version.clone(),
-        kind: row.kind.clone(),
-        resource: row.resource.clone(),
-        namespace: row.namespace.clone(),
-        name: row.name.clone(),
-        uid: row.uid.clone(),
-        resource_version: String::new(),
-        subresource: None,
-    }
+    row.target()
+}
+
+/// What the gate asks before an edit of the object `row` names is sent, and
+/// so what a page asks before it offers Edit (`access::offer`): an edit is
+/// applied, which the API checks as `patch`.
+pub fn needs(row: &Row) -> Vec<super::AccessQuestion> {
+    vec![super::AccessQuestion::of(
+        &target_of(row),
+        Change::Edit {
+            body: Value::Null,
+            edited: vec![],
+        }
+        .verb(),
+    )]
 }
 
 fn freshkube_plural(count: usize) -> String {

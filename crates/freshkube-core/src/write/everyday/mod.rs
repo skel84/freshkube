@@ -18,7 +18,8 @@ pub use rollback::{Revision, Revisions, rollback};
 pub use run_now::run_now;
 
 use super::{
-    ActionDescription, Change, Inverse, InverseFrom, ObjectChange, Observation, Target, Tier,
+    AccessQuestion, ActionDescription, Change, Inverse, InverseFrom, ObjectChange, Observation,
+    Target, Tier,
 };
 
 /// The annotation `kubectl rollout restart` sets on the pod template.
@@ -349,6 +350,57 @@ pub struct Row {
     pub namespace: Option<String>,
     pub name: String,
     pub uid: String,
+}
+
+impl Row {
+    /// The object the row names, with no resourceVersion: what the access
+    /// questions are about.
+    pub fn target(&self) -> Target {
+        Target {
+            group: self.group.clone(),
+            version: self.version.clone(),
+            kind: self.kind.clone(),
+            resource: self.resource.clone(),
+            namespace: self.namespace.clone(),
+            name: self.name.clone(),
+            uid: self.uid.clone(),
+            resource_version: String::new(),
+            subresource: None,
+        }
+    }
+}
+
+impl Everyday {
+    /// What the gate asks before this action on the object `row` names, and
+    /// so what a page asks before it offers it (`access::offer`): declared
+    /// here, beside the action's tier, from the list row alone (no read of the
+    /// object). A test holds each to the review the action's own description
+    /// makes, so the two cannot drift apart.
+    pub fn needs(self, row: &Row) -> Vec<AccessQuestion> {
+        let mut target = row.target();
+        match self {
+            // A merge patch of the object itself.
+            Self::Scale
+            | Self::Restart
+            | Self::Suspend
+            | Self::ArgoRefresh
+            | Self::ArgoHardRefresh
+            | Self::FluxReconcile
+            | Self::Rollback => vec![AccessQuestion::of(&target, "patch")],
+            // Renew writes the Certificate's status.
+            Self::Renew => {
+                target.subresource = Some("status".into());
+                vec![AccessQuestion::of(&target, "patch")]
+            }
+            // Run now creates a Job beside the CronJob.
+            Self::RunNow => {
+                target.group = "batch".into();
+                target.resource = "jobs".into();
+                vec![AccessQuestion::of(&target, "create")]
+            }
+            Self::Delete => vec![AccessQuestion::of(&target, "delete")],
+        }
+    }
 }
 
 impl Subject {

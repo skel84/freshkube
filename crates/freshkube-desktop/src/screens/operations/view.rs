@@ -467,9 +467,12 @@ impl OperationsScreen {
         };
         // A read-only cluster refuses before anything else is asked (#852).
         let refusal = mutation::refusal(cx);
+        // The level's reason wins, then what the preview found; the cluster's
+        // no comes last ("Needs patch on nodes cluster-wide").
         let blocked = refusal
             .map(String::from)
-            .or_else(|| blocked_reason(&self.preview, kind));
+            .or_else(|| blocked_reason(&self.preview, kind))
+            .or_else(|| self.access_refusal(cx));
         let busy = Operations::current(cx);
         let can_review = blocked.is_none() && busy.is_none();
         let danger = matches!(

@@ -94,6 +94,9 @@ pub(crate) enum LinkShape {
 pub struct DebugOptions {
     /// Invented database inventory shape, parsed once with the other knobs.
     pub(crate) databases: String,
+    /// `FRESHKUBE_ACCESS`: how the example answers Your access and, as
+    /// `actions-refused` or `failed`, the reviews that decide which actions
+    /// are offered (`freshkube_core::access::example::Shape`).
     pub(crate) access: String,
     /// `FRESHKUBE_DB_EXPLORE`: how an example explorer connection ends
     /// (`connected`, `no-secret`, `forward-failed`, `refused`, `timed-out`,

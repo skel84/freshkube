@@ -189,6 +189,15 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g21_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
 - `safety_g21_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
 
+### 22. What is offered asks reviews only for the selection's actions, once the selection has rested and only while shown, and an answer never stands in for the gate
+
+- `safety_g22_only_the_selected_rows_actions_are_asked_about` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
 ### 23. A TLS Secret is read only on request, `tls.key` never leaves core, and no Secret is read where a Certificate's status answers
 
 The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.md](features/traffic.md#certificates-n4)). It lists and gets objects, and reads no Secret to draw its rows: where a cert-manager Certificate keeps the Secret, its names and expiry come from that Certificate's status, and core makes no request for the Secret at all. A Secret that no Certificate that was read keeps is offered for reading only when every Certificate could be read; with that list refused, cut or its discovery failed, Read Secret is withheld and the row says why. Any other Secret is read by one GET of its name, only when the person presses Read Secret, and only the parsed facts of `tls.crt` leave core (subject, names, issuer, not-before, not-after); the result type has no field for `tls.key`, for the PEM or for any other key, and the decoded values are wiped before it returns. The facts stay in the page's memory, survive the shell's automatic refreshes of the same source (they are not checked against later versions of the Secret: that would take a Secret read nobody asked for), and go with a hidden page or a change of source. A refused read is Unknown, never "wrong".

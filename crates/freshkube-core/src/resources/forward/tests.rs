@@ -623,7 +623,7 @@ async fn being_forbidden_ends_the_forward_and_frees_its_port() {
         ForwardFailureKind::Request(FailureKind::Forbidden)
     );
     assert!(closes(&mut stream).await);
-    assert!(port_is_free(port));
+    eventually("the port is free", || port_is_free(port)).await;
 }
 
 #[tokio::test]
@@ -662,7 +662,7 @@ async fn a_pod_forward_ends_when_its_pod_is_deleted_or_replaced() {
         ForwardState::Ended(ForwardEnd::PodGone("The pod was deleted".into()))
     );
     assert!(closes(&mut stream).await);
-    assert!(port_is_free(port));
+    eventually("the port is free", || port_is_free(port)).await;
     eventually("the websocket closes", || fake.open() == 0).await;
 
     fake.apply(PODS, pod("web-0", "u-2", Some("2026-10-02T09:00:00Z")));
@@ -830,7 +830,7 @@ async fn a_service_change_moves_the_forward_and_its_deletion_ends_it() {
         status.state,
         ForwardState::Ended(ForwardEnd::TargetDeleted("The Service was deleted".into()))
     );
-    assert!(port_is_free(port));
+    eventually("the port is free", || port_is_free(port)).await;
 }
 
 #[tokio::test]
