@@ -881,7 +881,7 @@ fn the_tab_fits_a_small_window_and_a_large_text_size(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
-    for name in AgentShape::NAMES {
+    for &(name, _) in AgentShape::SHAPES {
         let shape = AgentShape::parse(name).unwrap();
         let tab = open(cx, name, 1280., 880.);
         if shape == AgentShape::SaveFailed {

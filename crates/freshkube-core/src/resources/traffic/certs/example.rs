@@ -45,37 +45,28 @@ pub enum Shape {
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 12] = [
-        "all",
-        "healthy",
-        "expiring",
-        "wrong-name",
-        "stuck-order",
-        "stuck-challenge",
-        "not-installed",
-        "secret-unread",
-        "secret-refused",
-        "empty",
-        "refused",
-        "gateways-refused",
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("all", Self::All),
+        ("healthy", Self::Healthy),
+        ("expiring", Self::Expiring),
+        ("wrong-name", Self::WrongName),
+        ("stuck-order", Self::StuckOrder),
+        ("stuck-challenge", Self::StuckChallenge),
+        ("not-installed", Self::NotInstalled),
+        ("secret-unread", Self::SecretUnread),
+        ("secret-refused", Self::SecretRefused),
+        ("empty", Self::Empty),
+        ("refused", Self::Refused),
+        ("gateways-refused", Self::GatewaysRefused),
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "all" => Self::All,
-            "healthy" => Self::Healthy,
-            "expiring" => Self::Expiring,
-            "wrong-name" => Self::WrongName,
-            "stuck-order" => Self::StuckOrder,
-            "stuck-challenge" => Self::StuckChallenge,
-            "not-installed" => Self::NotInstalled,
-            "secret-unread" => Self::SecretUnread,
-            "secret-refused" => Self::SecretRefused,
-            "empty" => Self::Empty,
-            "refused" => Self::Refused,
-            "gateways-refused" => Self::GatewaysRefused,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, shape)| *shape)
     }
 }
 
@@ -483,5 +474,39 @@ pub fn read_secret(shape: Shape, request: &SecretRequest, now: i64) -> SecretOut
             facts("internal.example.com", &["internal.example.com"], -3 * DAY)
         }
         _ => SecretOutcome::NotFound,
+    }
+}
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("all", Shape::All),
+            ("healthy", Shape::Healthy),
+            ("expiring", Shape::Expiring),
+            ("wrong-name", Shape::WrongName),
+            ("stuck-order", Shape::StuckOrder),
+            ("stuck-challenge", Shape::StuckChallenge),
+            ("not-installed", Shape::NotInstalled),
+            ("secret-unread", Shape::SecretUnread),
+            ("secret-refused", Shape::SecretRefused),
+            ("empty", Shape::Empty),
+            ("refused", Shape::Refused),
+            ("gateways-refused", Shape::GatewaysRefused),
+        ];
+        for (word, shape) in pinned {
+            assert!(
+                matches!(Shape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
+        }
+        for unknown in ["", " ", "nope", "Firing", "all ", " all", "ALL"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
     }
 }

@@ -90,8 +90,7 @@ pub(crate) enum LinkShape {
 /// What a knob that picks one of a few words accepts: each word with what it
 /// means. The parser looks words up in such a table and the docs test compares
 /// the table with `docs/DEBUG_KNOBS.md`'s shape lines, so a word can't be added
-/// to the parser or the doc alone. Knobs whose parser still has its own `match`
-/// beside a list of words are checked from the list to the doc only.
+/// to the parser or the doc alone.
 type Words<T> = [(&'static str, T)];
 
 /// The one word `FRESHKUBE_APP_MENU` takes.
@@ -423,12 +422,12 @@ mod tests {
             ),
             (
                 "FRESHKUBE_AGENT",
-                Some(names(&crate::agent_shape::AgentShape::NAMES)),
+                Some(words(crate::agent_shape::AgentShape::SHAPES)),
             ),
-            ("FRESHKUBE_ALERTS", Some(names(&AlertsShape::NAMES))),
+            ("FRESHKUBE_ALERTS", Some(words(AlertsShape::SHAPES))),
             ("FRESHKUBE_APPLICATIONS", Some(applications)),
             ("FRESHKUBE_APP_MENU", Some(names(&[APP_MENU_BUTTON]))),
-            ("FRESHKUBE_CERTS", Some(names(&CertsShape::NAMES))),
+            ("FRESHKUBE_CERTS", Some(words(CertsShape::SHAPES))),
             ("FRESHKUBE_CRASH", Some(words(CRASHES))),
             ("FRESHKUBE_CRASH_SEED", None),
             ("FRESHKUBE_DASHBOARD", None),
@@ -451,10 +450,10 @@ mod tests {
             ("FRESHKUBE_LOG_SEARCH", None),
             ("FRESHKUBE_METRICS_LABELS", Some(names(&[METRICS_CAPPED]))),
             ("FRESHKUBE_MOTION", Some(words(MOTIONS))),
-            ("FRESHKUBE_NETPOL", Some(names(&NetpolShape::NAMES))),
+            ("FRESHKUBE_NETPOL", Some(words(NetpolShape::SHAPES))),
             ("FRESHKUBE_PAGE", None),
-            ("FRESHKUBE_ROUTES", Some(names(&RoutesShape::NAMES))),
-            ("FRESHKUBE_SERVICES", Some(names(&ServicesShape::NAMES))),
+            ("FRESHKUBE_ROUTES", Some(words(RoutesShape::SHAPES))),
+            ("FRESHKUBE_SERVICES", Some(words(ServicesShape::SHAPES))),
             ("FRESHKUBE_SIDEBAR", Some(words(SIDEBARS))),
             ("FRESHKUBE_TABS", Some(words(TABS))),
             (
@@ -463,7 +462,7 @@ mod tests {
             ),
             ("FRESHKUBE_TEXT_SIZE", Some(steps)),
             ("FRESHKUBE_THEME", Some(words(THEMES))),
-            ("FRESHKUBE_TIMELINE", Some(names(&TimelineShape::NAMES))),
+            ("FRESHKUBE_TIMELINE", Some(words(TimelineShape::SHAPES))),
             ("FRESHKUBE_WINDOW_SIZE", None),
         ])
     }
@@ -792,7 +791,7 @@ mod tests {
 
     #[test]
     fn netpol_takes_each_shape_and_falls_back_to_mixed() {
-        for name in NetpolShape::NAMES {
+        for &(name, _) in NetpolShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_NETPOL", name)]).netpol,
                 NetpolShape::parse(name).unwrap(),
@@ -806,7 +805,7 @@ mod tests {
 
     #[test]
     fn services_take_each_shape_and_fall_back_to_mixed() {
-        for name in ServicesShape::NAMES {
+        for &(name, _) in ServicesShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_SERVICES", name)]).services,
                 ServicesShape::parse(name).unwrap(),
@@ -820,7 +819,7 @@ mod tests {
 
     #[test]
     fn routes_take_each_shape_and_fall_back_to_all() {
-        for name in RoutesShape::NAMES {
+        for &(name, _) in RoutesShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_ROUTES", name)]).routes,
                 RoutesShape::parse(name).unwrap(),
@@ -834,7 +833,7 @@ mod tests {
 
     #[test]
     fn certs_take_each_shape_and_fall_back_to_all() {
-        for name in CertsShape::NAMES {
+        for &(name, _) in CertsShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_CERTS", name)]).certs,
                 CertsShape::parse(name).unwrap(),
@@ -849,7 +848,7 @@ mod tests {
 
     #[test]
     fn timeline_takes_each_shape_and_falls_back_to_busy() {
-        for name in TimelineShape::NAMES {
+        for &(name, _) in TimelineShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_TIMELINE", name)]).timeline,
                 TimelineShape::parse(name).unwrap(),
@@ -872,7 +871,7 @@ mod tests {
     #[test]
     fn agent_takes_each_shape_and_falls_back_to_ready() {
         use crate::agent_shape::AgentShape;
-        for name in AgentShape::NAMES {
+        for &(name, _) in AgentShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_AGENT", name)]).agent,
                 AgentShape::parse(name).unwrap(),
@@ -890,7 +889,7 @@ mod tests {
 
     #[test]
     fn alerts_takes_each_shape_and_falls_back_to_firing() {
-        for name in AlertsShape::NAMES {
+        for &(name, _) in AlertsShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_ALERTS", name)]).alerts,
                 AlertsShape::parse(name).unwrap(),
