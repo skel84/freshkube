@@ -645,3 +645,26 @@ fn the_arrow_keys_and_enter_skip_a_refused_item_and_its_reason(cx: &mut TestAppC
         );
     }
 }
+
+#[gpui_kit::test]
+fn a_refused_toolbar_button_shows_its_reason_when_hovered(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    assert_eq!(block(&screen, Everyday::Delete, cx), Some(reason.clone()));
+    assert_eq!(freshkube_ui::tooltip::drawn(&reason), 0);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("resource-delete", cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(
+        freshkube_ui::tooltip::drawn(&reason) > 0,
+        "the refused Delete button drew no tooltip"
+    );
+}
