@@ -1497,10 +1497,7 @@ fn is_missing_file_error(error: &talos_rs::TalosError) -> bool {
     match error {
         TalosError::Grpc(status) => match status.code() {
             tonic::Code::NotFound => true,
-            tonic::Code::Unknown => status
-                .message()
-                .to_ascii_lowercase()
-                .contains(FS_NOT_FOUND),
+            tonic::Code::Unknown => status.message().to_ascii_lowercase().contains(FS_NOT_FOUND),
             _ => false,
         },
         TalosError::Connection(message) => message.to_ascii_lowercase().contains(FS_NOT_FOUND),
