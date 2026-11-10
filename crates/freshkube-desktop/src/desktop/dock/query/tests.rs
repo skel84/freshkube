@@ -1063,3 +1063,39 @@ async fn a_wider_strip_takes_back_the_tabs_left_out_before_its_first(cx: &mut Te
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn a_fast_flick_in_one_frame_stops_where_the_last_tab_ends_the_strip(
+    cx: &mut TestAppContext,
+) {
+    // Text 13 at 760: two tabs fit beside each other, three don't.
+    let h = mount_sized(cx, Mark::Guarded, 760., 560.);
+    use_text_size(&h, 13., cx);
+    run_three(&h, cx).await;
+    h.click("query-result-prev", cx);
+    settle(&h, cx);
+    let first = |cx: &mut TestAppContext| h.view.read_with(cx, |v, _| v.tabs.first());
+    assert_eq!(first(cx), 0);
+    // Ten events of 60 px, none drawn in between, as a flick arrives.
+    cx.update_window(h.window.into(), |_, window, cx| {
+        for _ in 0..10 {
+            window.scroll(
+                "query-result-tabs",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(-60.),
+                    gpui_kit::px(0.),
+                )),
+                cx,
+            );
+        }
+    })
+    .unwrap();
+    settle(&h, cx);
+    // It stops with tabs 2 and 3 showing, not tab 3 alone beside a gap.
+    assert_eq!(first(cx), 1, "the flick ran past the end");
+    cx.update_window(h.window.into(), |_, window, _| {
+        assert_tabs_whole(window, 3, None, "after a flick");
+        assert_eq!(drawn_tabs(window, 3).len(), 2);
+    })
+    .unwrap();
+}

@@ -18,8 +18,6 @@ pub(super) struct TabFit(Rc<Fit>);
 struct Fit {
     /// The first tab drawn; the ones before it are left out.
     first: Cell<usize>,
-    /// The index of the last tab that shows whole.
-    last_whole: Cell<usize>,
     /// The room the strip has, at the last frame; `None` before one.
     avail: Cell<Option<Pixels>>,
     /// The width of the whole tabs that fit from `first`.
@@ -115,11 +113,9 @@ impl TabFit {
             fit.reveal.set(false);
         }
         // The whole tabs that fit from `first`, and the width they take.
-        let mut last = first;
         let mut right = origin.right();
-        for (ix, tab) in spans.iter().filter(|(ix, _)| *ix > first) {
+        for (_, tab) in spans.iter().filter(|(ix, _)| *ix > first) {
             if tab.right() - origin.left() <= room {
-                last = *ix;
                 right = tab.right();
             } else {
                 break;
@@ -127,9 +123,25 @@ impl TabFit {
         }
         let clip = (right - origin.left()).min(avail);
         let old = fit.clip.replace(Some(clip));
-        fit.last_whole.set(last);
         fit.first.set(first);
         moved || old.is_none_or(|old| (old - clip).abs() > px(EPSILON))
+    }
+
+    /// Whether the last tab still lies past the strip's end when it starts at
+    /// `first`, by the bounds of the last frame. Each wheel event of one frame
+    /// asks this of the `first` the one before it set, so a flick stops where
+    /// the last tab ends the strip. Unknown (not drawn yet) reads as no.
+    fn tabs_beyond_the_strip(&self) -> bool {
+        let fit = &self.0;
+        let (Some(avail), Some(last)) = (fit.avail.get(), fit.count.get().checked_sub(1)) else {
+            return false;
+        };
+        let spans = fit.spans.borrow();
+        let find = |ix: usize| spans.iter().find(|(i, _)| *i == ix).map(|(_, b)| *b);
+        match (find(fit.first.get()), find(last)) {
+            (Some(first), Some(last)) => last.right() - first.left() > avail + px(EPSILON),
+            _ => false,
+        }
     }
 
     /// A wheel of `delta` (negative reveals later tabs). A notch of a mouse
@@ -150,7 +162,7 @@ impl TabFit {
         fit.wheel.set(0.);
         let first = fit.first.get();
         if total < 0. {
-            if fit.last_whole.get() + 1 >= fit.count.get() {
+            if !self.tabs_beyond_the_strip() {
                 return false;
             }
             fit.first.set(first + 1);
