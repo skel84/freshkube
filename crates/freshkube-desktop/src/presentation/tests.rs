@@ -79,7 +79,8 @@ fn etcd_card_shows_remaining_tolerance_and_warns_when_none_remains() {
             total,
             has_quorum: true,
         });
-        let overview = overview::Overview::build(&[], &[], None, Some(&cluster), true, false);
+        let overview =
+            overview::Overview::build(&[], &[], None, Some(&cluster), true, false, false);
         let card = overview
             .cards
             .iter()
@@ -125,7 +126,8 @@ fn peak_memory_card_takes_the_memory_levels_tone_and_word() {
             load: None,
             services: Vec::new(),
         };
-        let overview = overview::Overview::build(&[], &[node], None, Some(&cluster), true, false);
+        let overview =
+            overview::Overview::build(&[], &[node], None, Some(&cluster), true, false, false);
         let card = overview
             .cards
             .iter()
@@ -171,4 +173,43 @@ fn load_history_is_bounded_and_forgets_departed_nodes() {
     history.record(&[node("b", Some(1.0))]);
     assert!(history.get("a").is_empty());
     assert_eq!(history.get("b"), vec![1.0]);
+}
+
+/// #1006: after a failed connection the cards that never answered say they
+/// couldn't be read; once a connection later succeeds, they go back to
+/// waiting for their first answer and then to their figures.
+#[test]
+fn cards_say_they_couldnt_be_read_only_while_the_connection_is_failed() {
+    use crate::presentation::overview::{CardState, Overview};
+    use crate::resources::example;
+    let ids = ["tile-nodes", "tile-workloads", "tile-pods", "tile-events"];
+    let card = |overview: &Overview, id: &str| {
+        let card = overview.cards.iter().find(|card| card.id == id).unwrap();
+        (
+            card.state.clone(),
+            card.figure.to_string(),
+            card.detail.to_string(),
+        )
+    };
+    let failed = Overview::build(&[], &[], None, None, false, true, true);
+    for id in ids {
+        let (state, figure, detail) = card(&failed, id);
+        assert_eq!(state, CardState::Current, "{id}");
+        assert_eq!(figure, "Unavailable", "{id}");
+        assert!(detail.starts_with("Couldn't read "), "{id}: {detail}");
+    }
+    // The connection is retried: the cards wait for their first answer.
+    let connecting = Overview::build(&[], &[], None, None, false, true, false);
+    for id in ids {
+        assert_eq!(card(&connecting, id).0, CardState::Waiting, "{id}");
+    }
+    // It succeeds: the cards show what was read.
+    let kube = example::summary("prod-fra", chrono::Utc::now().timestamp());
+    let connected = Overview::build(&[], &[], Some(&kube), None, false, true, false);
+    for id in ids {
+        let (state, figure, detail) = card(&connected, id);
+        assert_eq!(state, CardState::Current, "{id}");
+        assert_ne!(figure, "Unavailable", "{id}");
+        assert!(!detail.starts_with("Couldn't read "), "{id}: {detail}");
+    }
 }

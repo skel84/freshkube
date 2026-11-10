@@ -800,9 +800,8 @@ fn a_failed_connection_explains_itself_on_overview_and_stops_its_cards_loading(
     );
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let tooltip = window.find("overview-connection-whole");
-        assert!(tooltip.visible());
-        assert_eq!(tooltip.label(), Some(reason.as_str()));
+        window.find("follow-tooltip-text");
+        assert!(freshkube_ui::tooltip::drawn(&reason) > 0);
         assert!(reason.contains("tried"), "{reason}");
     })
     .unwrap();

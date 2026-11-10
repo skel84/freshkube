@@ -171,6 +171,8 @@ impl Pilot {
                 view.sync_unread_health(cx);
                 // The header reads a failed read as a failed connection.
                 view.prepare_context_display(window, cx);
+                // The Overview's cards stop loading, or start again.
+                view.rebuild_joined_nodes(cx);
                 cx.notify();
             });
         });
@@ -337,6 +339,7 @@ impl Pilot {
             .run(Some(job), task);
         self.sync_unread_health(cx);
         self.prepare_context_display(window, cx);
+        self.rebuild_joined_nodes(cx);
         cx.notify();
     }
 
@@ -375,6 +378,8 @@ impl Pilot {
         }
         self.sync_unread_health(cx);
         self.prepare_context_display(window, cx);
+        // The Overview's cards stop loading, or start reading.
+        self.rebuild_joined_nodes(cx);
         cx.notify();
     }
 
@@ -455,6 +460,8 @@ impl Pilot {
                 }
                 view.sync_unread_health(cx);
                 view.prepare_context_display(window, cx);
+                // The Overview's cards stop loading, or start again.
+                view.rebuild_joined_nodes(cx);
                 cx.notify();
             });
         });
@@ -464,6 +471,7 @@ impl Pilot {
             kube.connection = KubeConnection::Connecting;
             self.sync_unread_health(cx);
             self.prepare_context_display(window, cx);
+            self.rebuild_joined_nodes(cx);
             cx.notify();
         }
     }

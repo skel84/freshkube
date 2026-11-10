@@ -581,13 +581,16 @@ fn a_failed_connection_names_the_endpoints_as_host_and_port_only() {
         "https://192.0.2.10:50000".to_owned(),
         "https://[2001:db8::1]:50000".to_owned(),
         "https://admin:s3cret-token@cp.example.invalid:50000/path?token=abc".to_owned(),
+        // Not a URL: the user information is cut by the slash, so nothing of
+        // it may be shown.
+        "https://user:p/ss@leak.example.invalid:50000".to_owned(),
     ];
     let said = tried_endpoints(&urls);
     assert_eq!(
         said,
         " (tried 192.0.2.10:50000, [2001:db8::1]:50000, cp.example.invalid:50000)"
     );
-    for secret in ["s3cret", "admin", "token", "https"] {
+    for secret in ["s3cret", "admin", "token", "https", "user", "leak", "ss@"] {
         assert!(!said.contains(secret), "{secret} leaked into {said}");
     }
     assert_eq!(tried_endpoints(&[]), "");

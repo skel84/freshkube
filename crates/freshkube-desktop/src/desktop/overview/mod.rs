@@ -7,6 +7,7 @@ use crate::palette::palette;
 use crate::presentation::attention::{Attention, Destination};
 use crate::presentation::overview::{CardTarget, Overview};
 use crate::ui::{self, dp};
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -150,24 +151,7 @@ impl OverviewPage {
                 .flex_none()
                 .when_some(ink, |this, ink| this.text_color(ink))
                 .aria_label(connection)
-                .when_some(reason, |this, reason| {
-                    this.tooltip(move |window, cx| {
-                        let reason = reason.clone();
-                        // Wide, but never wider than the window.
-                        let width = ui::dp_px(480., window)
-                            .min(window.viewport_size().width - ui::dp_px(32., window));
-                        Tooltip::element(move |_, _| {
-                            div()
-                                .id("overview-connection-whole")
-                                .test_support()
-                                .max_w(width)
-                                .whitespace_normal()
-                                .aria_label(reason.clone())
-                                .child(reason.clone())
-                        })
-                        .build(window, cx)
-                    })
-                })
+                .when_some(reason, |this, reason| this.follow_tooltip(reason))
                 .child(connection)
                 .into_any_element()
         };

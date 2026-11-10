@@ -1423,3 +1423,42 @@ fn a_transcript_longer_than_the_tab_shows_its_scrollbar(cx: &mut TestAppContext)
     })
     .unwrap();
 }
+
+/// #1006: dragging the scrollbar's thumb up leaves the end and stays there:
+/// the tab stops following the newest answer as soon as the thumb is pressed,
+/// since Kit redraws the view while it drags and a pinned tab would scroll
+/// straight back to the end.
+#[gpui_kit::test]
+fn dragging_the_scrollbar_up_leaves_the_end_and_stays_there(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let tab = open(cx, "no-tools", 760., 560.);
+    cx.update_window(tab.handle, |_, window, cx| {
+        crate::text_size::set(18., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    tab.answered(cx);
+    assert!(body_at_end(&tab, cx).0, "the answer is in view");
+    assert!(cx.update(|cx| tab.view.read(cx).pinned), "and followed");
+    let (from, to) = cx
+        .update_window(tab.handle, |_, window, _| {
+            let body = window.find("agent-body").bounds();
+            let area = window.find("agent-scroll").bounds();
+            let thumbs = crate::desktop::testing::lane_thumbs(window, body, area);
+            assert_eq!(thumbs.len(), 1, "{thumbs:?}");
+            let thumb = thumbs[0];
+            let up = gpui_kit::point(gpui_kit::px(0.), -thumb.size.height * 2.);
+            (thumb.center(), thumb.center() + up)
+        })
+        .unwrap();
+    cx.update_window(tab.handle, |_, window, cx| window.drag(from, to, cx))
+        .unwrap();
+    tab.draw(cx);
+    tab.draw(cx);
+    assert!(
+        !cx.update(|cx| tab.view.read(cx).pinned),
+        "pressing the thumb stops following"
+    );
+    let (at_end, _) = body_at_end(&tab, cx);
+    assert!(!at_end, "the drag left the end and a frame pulled it back");
+}
