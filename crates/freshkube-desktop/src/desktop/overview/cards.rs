@@ -1,7 +1,8 @@
 //! Overview's cards, and what a click on one opens.
 use super::{super::Pilot, OverviewEvent, OverviewPage};
+use crate::desktop::shell::Connection;
 use crate::presentation::overview::{Card, CardState, CardTarget};
-use crate::ui::{self, dp};
+use crate::ui::{self, Tone, dp};
 use freshkube_ui::card::{self, CardHeader, Figure, StatCard};
 use gpui_kit::component::{ThemeStyled, v_flex};
 use gpui_kit::prelude::*;
@@ -39,7 +40,29 @@ impl OverviewPage {
             CardState::LastKnown(reason) => Some(reason.clone()),
             _ => None,
         };
+        // A failed connection answers no read: say so, not a skeleton. A
+        // restored summary still waits for its refresh.
+        let unread = matches!(card.state, CardState::Waiting)
+            && self.state.connection == Connection::Failed
+            && !self.state.last_known;
+        let unread_detail: SharedString =
+            format!("Couldn't read {}", card.label.to_lowercase()).into();
+        let unread_value = SharedString::from("Unavailable");
         let body = match card.state {
+            CardState::Waiting if unread => card::figures(
+                &[Figure {
+                    name: None,
+                    value: &unread_value,
+                    note: None,
+                    tone: Some(Tone::Unknown),
+                    gauge: None,
+                    segments: None,
+                    spark: None,
+                    detail: Some(&unread_detail),
+                    tinted: true,
+                }],
+                cx,
+            ),
             CardState::Waiting => v_flex()
                 .id("card-skeleton")
                 .test_support()

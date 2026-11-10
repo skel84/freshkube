@@ -574,3 +574,21 @@ fn a_talos_answer_is_connected_and_nothing_is_unreachable_without_a_roster() {
     let status = connection_status(&ClusterOverview::default(), false);
     assert!(!status.error().unwrap().contains("last one known"));
 }
+
+#[test]
+fn a_failed_connection_names_the_endpoints_as_host_and_port_only() {
+    let urls = [
+        "https://192.0.2.10:50000".to_owned(),
+        "https://[2001:db8::1]:50000".to_owned(),
+        "https://admin:s3cret-token@cp.example.invalid:50000/path?token=abc".to_owned(),
+    ];
+    let said = tried_endpoints(&urls);
+    assert_eq!(
+        said,
+        " (tried 192.0.2.10:50000, [2001:db8::1]:50000, cp.example.invalid:50000)"
+    );
+    for secret in ["s3cret", "admin", "token", "https"] {
+        assert!(!said.contains(secret), "{secret} leaked into {said}");
+    }
+    assert_eq!(tried_endpoints(&[]), "");
+}

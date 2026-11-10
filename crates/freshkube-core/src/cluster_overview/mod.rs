@@ -427,8 +427,9 @@ impl ClusterOverviewCollector {
                         }
                         Err(error) => {
                             cluster.connection = ClusterConnectionStatus::Unreachable(format!(
-                                "Could not connect — {}",
-                                root_cause(&error)
+                                "Could not connect — {}{}",
+                                root_cause(&error),
+                                tried_endpoints(&context.endpoint_urls())
                             ));
                         }
                     }
@@ -889,6 +890,26 @@ fn root_cause(error: &dyn std::error::Error) -> String {
         deepest = source;
     }
     deepest.to_string()
+}
+
+/// The " (tried …)" that ends a connection failure: the endpoints it tried, as `host:port` and nothing else: the
+/// scheme, any user information, a path or a query a configured endpoint
+/// might carry is dropped, so no credential reaches the failure line.
+fn tried_endpoints(endpoint_urls: &[String]) -> String {
+    let named: Vec<&str> = endpoint_urls
+        .iter()
+        .map(|url| {
+            let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            authority.rsplit('@').next().unwrap_or_default()
+        })
+        .filter(|endpoint| !endpoint.is_empty())
+        .collect();
+    if named.is_empty() {
+        String::new()
+    } else {
+        format!(" (tried {})", named.join(", "))
+    }
 }
 
 /// What one etcd member read heard.

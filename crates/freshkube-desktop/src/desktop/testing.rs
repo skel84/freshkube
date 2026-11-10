@@ -315,3 +315,28 @@ pub(super) fn record_notices(
     });
     messages
 }
+
+/// How many narrow bars are painted in the right-hand lane of `body`, inside
+/// `within`: the thumbs of Kit's scrollbar, which has no element id a test can
+/// find. A thumb is at most 12 dp wide and at least 16 dp tall.
+pub(crate) fn painted_in_lane(
+    window: &gpui_kit::Window,
+    body: gpui_kit::Bounds<gpui_kit::Pixels>,
+    within: gpui_kit::Bounds<gpui_kit::Pixels>,
+) -> usize {
+    let scale = window.scale_factor();
+    let lane = crate::ui::dp_px(12., window);
+    let body = body.scale(scale);
+    let within = within.scale(scale);
+    let lane_left = body.right() - lane.scale(scale);
+    window
+        .painted_quads()
+        .into_iter()
+        .filter(|quad| {
+            quad.bounds.is_contained_within(&within)
+                && quad.bounds.left() >= lane_left
+                && quad.bounds.size.width <= lane.scale(scale)
+                && quad.bounds.size.height >= crate::ui::dp_px(16., window).scale(scale)
+        })
+        .count()
+}

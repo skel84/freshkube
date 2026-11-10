@@ -1397,3 +1397,29 @@ fn a_person_who_scrolled_up_is_left_where_they_are(cx: &mut TestAppContext) {
         assert!(body_at_end(&tab, cx).0);
     }
 }
+
+/// #1006: a transcript longer than the tab shows Kit's scrollbar over its
+/// right edge, as other scrolling panes do, and it follows the body's scroll.
+#[gpui_kit::test]
+fn a_transcript_longer_than_the_tab_shows_its_scrollbar(cx: &mut TestAppContext) {
+    let tab = open(cx, "no-tools", 760., 560.);
+    cx.update_window(tab.handle, |_, window, cx| {
+        crate::text_size::set(18., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    tab.answered(cx);
+    let (_, room) = body_at_end(&tab, cx);
+    assert!(room > 0., "the body is longer than the tab");
+    cx.update_window(tab.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let body = window.find("agent-body").bounds();
+        let scroll_area = window.find("agent-scroll").bounds();
+        let thumbs = crate::desktop::testing::painted_in_lane(window, body, scroll_area);
+        assert!(
+            thumbs > 0,
+            "no scrollbar thumb is painted in the lane at the right of {body:?}"
+        );
+    })
+    .unwrap();
+}

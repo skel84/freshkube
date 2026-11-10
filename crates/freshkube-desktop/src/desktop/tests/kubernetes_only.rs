@@ -758,3 +758,52 @@ fn the_whole_connection_failure_is_in_the_status_bars_tooltip(cx: &mut TestAppCo
         .unwrap();
     }
 }
+
+/// #1006: on a failed connection Overview's heading holds the whole reason
+/// as a tooltip, and its cards say they couldn't be read instead of staying
+/// on loading placeholders.
+#[gpui_kit::test]
+fn a_failed_connection_explains_itself_on_overview_and_stops_its_cards_loading(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, kubeconfig_file("overview"), None);
+    wait_until(cx, handle, "lab to refuse", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to lab: ")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-overview", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("overview-connection").label(),
+            Some("Couldn't connect")
+        );
+        assert!(
+            window.try_find("card-skeleton").is_none(),
+            "a card is still loading after the connection failed"
+        );
+        window.hover("overview-connection", cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    let reason = cx.read(
+        |cx| match &view.read(cx).mode().kubernetes_only().unwrap().connection {
+            super::super::kubernetes_only::KubeConnection::Failed(error) => error.clone(),
+            other => panic!("not failed: {other:?}"),
+        },
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let tooltip = window.find("overview-connection-whole");
+        assert!(tooltip.visible());
+        assert_eq!(tooltip.label(), Some(reason.as_str()));
+        assert!(reason.contains("tried"), "{reason}");
+    })
+    .unwrap();
+}

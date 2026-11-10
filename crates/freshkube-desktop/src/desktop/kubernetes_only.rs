@@ -112,7 +112,7 @@ impl KubernetesOnly {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum KubeConnection {
+pub(in crate::desktop) enum KubeConnection {
     /// No context to connect to.
     Idle,
     Connecting,

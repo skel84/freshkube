@@ -6,6 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{Disableable, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -821,11 +822,40 @@ impl Render for AgentView {
             .text_color(p.ink)
             .child(self.render_toolbar(cx))
             .child(
-                v_flex()
-                    .id("agent-body")
+                // The shared scroll: the body scrolls under Kit's scrollbar,
+                // shown whenever the transcript overflows.
+                div()
+                    .id("agent-scroll")
                     .test_support()
+                    .relative()
                     .flex_1()
                     .min_h_0()
+                    .overflow_hidden()
+                    .child(self.render_body(unavailable, started, cx))
+                    .child(
+                        Scrollbar::vertical(&self.body_scroll)
+                            .id("agent-scrollbar")
+                            .mode(ScrollbarMode::Always),
+                    ),
+            )
+            .child(self.render_input(cx))
+    }
+}
+
+impl AgentView {
+    fn render_body(
+        &self,
+        unavailable: bool,
+        started: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        v_flex()
+                    .id("agent-body")
+                    .test_support()
+                    .size_full()
+                    .min_h_0()
+                    // Room for the scrollbar's lane.
+                    .pr(dp(10.))
                     .gap(dp(8.))
                     .overflow_y_scroll()
                     .restrict_scroll_to_axis()
@@ -884,8 +914,6 @@ impl Render for AgentView {
                                 .child(self.render_transcript(cx))
                                 .child(self.render_trail(cx)),
                         )
-                    }),
-            )
-            .child(self.render_input(cx))
+                    })
     }
 }
