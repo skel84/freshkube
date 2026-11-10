@@ -109,6 +109,7 @@ impl Example {
     }
 
     /// The words `FRESHKUBE_DB_EXPLORE` takes (an empty one is `connected`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const NAMES: [&'static str; 17] = [
         "connected",
         "no-secret",
