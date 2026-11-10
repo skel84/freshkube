@@ -1,5 +1,6 @@
 //! The GitOps and certificate nudges (#857): Argo CD's refresh, Flux's
-//! reconcile and cert-manager's renew. Each asks a controller to look again
+//! reconcile and cert-manager's renew, and (#828) an ExternalSecret's
+//! refresh. Each asks a controller to look again
 //! now; none changes what an object is meant to be. All are reversible tier
 //! with no Undo (a controller consumes the request, and an issuance cannot be
 //! taken back), so each confirms at every writable level, `open` included.
@@ -20,6 +21,16 @@ const ARGO_REFRESH_POINTER: &str = "/metadata/annotations/argocd.argoproj.io~1re
 
 /// The annotation Flux's controllers compare with `status.lastHandledReconcileAt`.
 pub const FLUX_REQUESTED_AT: &str = "reconcile.fluxcd.io/requestedAt";
+
+/// The annotation External Secrets Operator documents for a manual refresh of
+/// an ExternalSecret: `kubectl annotate es my-es force-sync=$(date +%s)
+/// --overwrite` (its FAQ and `docs/api/externalsecret.md`). The operator
+/// reconciles on any change to the object's metadata, so the key is only a
+/// token that changes. It is **not** `AnnotationForceSync`
+/// (`external-secrets.io/force-sync`, `apis/externalsecrets/v1`), which is the
+/// ClusterExternalSecret's: changing that one refreshes every ExternalSecret it
+/// made.
+pub const FORCE_SYNC: &str = "force-sync";
 
 /// The condition `cmctl renew` sets on the Certificate's status, which the
 /// issuing controller acts on, and the words it gives it.
@@ -342,6 +353,144 @@ pub fn renew(subject: &Subject, at: &str) -> Result<ActionDescription, NotOffere
                 target: subject.target.clone(),
                 verb: None,
                 holds: vec![("/status/conditions".into(), read.unwrap_or(Value::Null))],
+            }],
+        },
+    ))
+}
+
+/// Why the operator would not sync an ExternalSecret that has synced before,
+/// whatever the annotation says, or `None`. From the controller's
+/// `shouldRefresh` (`pkg/controllers/externalsecret`): under `CreatedOnce` it
+/// returns false once `status.syncedResourceVersion` and `refreshTime` are set,
+/// and under `Periodic` (the default) it returns false first of all for an
+/// interval of 0 or less once synced, before it compares the resource version.
+/// The operator then syncs only if the target Secret is missing or no longer
+/// matches, which Freshkube does not read the Secret to find out.
+fn no_sync_follows(subject: &Subject) -> Option<&'static str> {
+    let synced = subject
+        .text_at("/status/syncedResourceVersion")
+        .is_some_and(|version| !version.is_empty())
+        && subject.text_at("/status/refreshTime").is_some();
+    if !synced {
+        return None;
+    }
+    match subject.text_at("/spec/refreshPolicy") {
+        Some("CreatedOnce") => Some(
+            "Its refresh policy is CreatedOnce: the operator does not sync it again, so an annotation changes nothing.",
+        ),
+        Some("OnChange") => None,
+        _ => subject
+            .text_at("/spec/refreshInterval")
+            .is_some_and(non_positive_duration)
+            .then_some(
+                "Its refresh interval is 0: the operator does not sync it again, so an annotation changes nothing.",
+            ),
+    }
+}
+
+/// True for a Go duration string that is zero or negative (`0`, `0s`, `0h0m`,
+/// `-1m`): every number in it is zero, or it starts with a minus.
+fn non_positive_duration(text: &str) -> bool {
+    let text = text.trim();
+    if text.starts_with('-') {
+        return true;
+    }
+    let numbers: Vec<f64> = text
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    !numbers.is_empty() && numbers.iter().all(|number| *number == 0.0)
+}
+
+/// Refresh an ExternalSecret: set `force-sync` to `at` (RFC 3339), which the
+/// operator sees as a change and syncs again. It reads the provider and
+/// rewrites the target Secret, so it confirms at every writable level. Observed
+/// when `status.refreshTime` and `status.syncedResourceVersion` have both moved
+/// from what the object had; a sync that fails moves neither, and reads as not
+/// seen to take effect. Refused when the operator would not sync it anyway.
+pub fn external_secret_refresh(
+    subject: &Subject,
+    at: &str,
+) -> Result<ActionDescription, NotOffered> {
+    if !subject.offered().contains(&Everyday::ExternalSecretRefresh) {
+        return Err(NotOffered("Only an ExternalSecret can be refreshed."));
+    }
+    if subject
+        .object
+        .pointer("/metadata/deletionTimestamp")
+        .is_some()
+    {
+        return Err(NotOffered("It is being deleted: there is nothing to sync."));
+    }
+    if let Some(why) = no_sync_follows(subject) {
+        return Err(NotOffered(why));
+    }
+    let label = subject.target.label();
+    let secret = subject
+        .text_at("/spec/target/name")
+        .or_else(|| subject.text_at("/metadata/name"))
+        .map_or_else(|| "its Secret".to_owned(), |name| format!("Secret/{name}"));
+    let read = |pointer: &str| {
+        subject
+            .object
+            .pointer(pointer)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let mut shown = preview(subject, &format!("metadata.annotations[{FORCE_SYNC}]"), at);
+    shown.push(Preview {
+        title: "What follows".into(),
+        lines: vec![
+            format!("{secret} is rewritten with what the store holds now."),
+            "The store's provider is asked again, which may count against its rate limit or cost. This can't be undone.".into(),
+        ],
+    });
+    Ok(description(
+        subject,
+        "externalsecret-refresh",
+        "Refresh",
+        format!(
+            "Ask External Secrets Operator to sync {label} now: it reads the store again and rewrites {secret}."
+        ),
+        shown,
+        ObjectChange {
+            target: subject.target.clone(),
+            change: Change::MergePatch(annotate(subject, FORCE_SYNC, at)),
+            // Both move on a sync the annotation caused. `refreshTime` alone
+            // also moves on a scheduled sync, so it could count a press the
+            // operator never acted on; `syncedResourceVersion` is the
+            // generation plus a hash of the labels and annotations, which our
+            // annotation changes and a scheduled sync does not.
+            observe: Observation::All(vec![
+                Observation::FieldMoved {
+                    pointer: "/status/refreshTime".into(),
+                    from: read("/status/refreshTime"),
+                },
+                Observation::FieldMoved {
+                    pointer: "/status/syncedResourceVersion".into(),
+                    from: read("/status/syncedResourceVersion"),
+                },
+            ]),
+            inverse: None,
+            // Review the new version takes a new resourceVersion only, so what
+            // the observation and the refusals were built from is held: a
+            // sync that landed since (it moved both times), a delete that
+            // began, or a policy that changed leaves the press refused, and
+            // the next one is described from the new object.
+            depends: vec![Depends {
+                target: subject.target.clone(),
+                verb: None,
+                holds: [
+                    "/metadata/deletionTimestamp",
+                    "/status/refreshTime",
+                    "/status/syncedResourceVersion",
+                    "/spec/refreshPolicy",
+                    "/spec/refreshInterval",
+                ]
+                .into_iter()
+                .map(|pointer| (pointer.into(), read(pointer)))
+                .collect(),
             }],
         },
     ))
@@ -1011,5 +1160,241 @@ mod tests {
             hard.sentence
                 .contains("throws away the manifests Argo CD generated")
         );
+    }
+
+    fn refresh(cluster: &Cluster) -> ActionDescription {
+        external_secret_refresh(&subject(cluster, fake::EXTERNAL_SECRET), AT).unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_externalsecret_offers_refresh_only_and_the_others_refuse_it() {
+        let cluster = Cluster::new();
+        let es = subject(&cluster, fake::EXTERNAL_SECRET);
+        assert_eq!(es.offered(), [Everyday::ExternalSecretRefresh]);
+        assert_eq!(
+            super::super::offered_for("external-secrets.io", "ExternalSecret"),
+            [Everyday::ExternalSecretRefresh]
+        );
+        // Not the ClusterExternalSecret, which has its own annotation.
+        assert!(
+            super::super::offered_for("external-secrets.io", "ClusterExternalSecret").is_empty()
+        );
+        assert!(external_secret_refresh(&subject(&cluster, fake::APPLICATION), AT).is_err());
+        assert!(argo_refresh(&es, Refresh::Normal).is_err());
+        assert!(flux_reconcile(&es, AT).is_err());
+        assert!(renew(&es, AT).is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_is_reversible_with_no_undo_so_it_confirms_even_when_open() {
+        let cluster = Cluster::new();
+        let action = refresh(&cluster);
+        assert_eq!(action.tier, Tier::Reversible);
+        assert!(!action.no_confirmation);
+        assert!(action.changes.iter().all(|one| one.inverse.is_none()));
+        assert!(
+            requirement(action.tier, Protection::ReadOnly)
+                .blocked
+                .is_some()
+        );
+        let open = requirement_for(&action, Protection::Open);
+        assert!(open.confirm && !open.undo);
+        assert!(requirement_for(&action, Protection::Protected).type_name);
+    }
+
+    #[tokio::test]
+    async fn the_refresh_preview_names_the_object_the_key_and_the_time() {
+        let cluster = Cluster::new();
+        let action = refresh(&cluster);
+        assert_eq!(
+            action.preview[0].lines,
+            [
+                "Object: ExternalSecret/db-creds",
+                "Field: metadata.annotations[force-sync]",
+                &format!("Value: {AT}")
+            ]
+        );
+        let follows = action.preview[1].lines.join(" ");
+        assert!(follows.contains("Secret/db-creds"), "{follows}");
+        assert!(follows.contains("rate limit"), "{follows}");
+        assert_eq!(
+            action.title.as_deref(),
+            Some("Refresh ExternalSecret/db-creds")
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refresh_sends_the_annotation_and_is_observed_when_refresh_time_moves() {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let finished = send(&cluster, dir.path(), Protection::Guarded, refresh(&cluster)).await;
+        assert_eq!(finished.headline(), Headline::Done);
+        assert!(finished.undo.is_none());
+        let writes = cluster.writes();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].method, http::Method::PATCH);
+        assert!(writes[0].content_type.contains("merge-patch"));
+        assert!(writes[0].query.contains("fieldManager=freshkube"));
+        assert!(writes[0].path.ends_with("/externalsecrets/db-creds"));
+        let sent: serde_json::Value = serde_json::from_str(&writes[0].body).unwrap();
+        assert_eq!(sent["metadata"]["annotations"][FORCE_SYNC], AT);
+        assert_eq!(sent["metadata"]["resourceVersion"], "800");
+        assert!(sent.get("spec").is_none() && sent.get("status").is_none());
+        let now = cluster.object(fake::EXTERNAL_SECRET);
+        assert_eq!(now["status"]["refreshTime"], "2026-10-24T09:30:00Z");
+        assert_eq!(now["spec"]["refreshInterval"], "1h");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn refresh_is_not_observed_while_the_operator_has_not_synced() {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        cluster.never_reaches_the_state();
+        let finished = send(&cluster, dir.path(), Protection::Guarded, refresh(&cluster)).await;
+        assert_eq!(finished.headline(), Headline::NotObserved);
+        let now = cluster.object(fake::EXTERNAL_SECRET);
+        assert_eq!(now["metadata"]["annotations"][FORCE_SYNC], AT);
+        assert_eq!(now["status"]["refreshTime"], "2026-10-24T08:00:00Z");
+        // Sent once and not again.
+        assert_eq!(cluster.writes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_externalsecret_being_deleted_is_refused() {
+        let cluster = Cluster::new();
+        cluster.foreign_write(
+            fake::EXTERNAL_SECRET,
+            "kubectl",
+            &json!({"metadata": {"deletionTimestamp": "2026-10-24T09:00:00Z"}}),
+        );
+        let why =
+            external_secret_refresh(&subject(&cluster, fake::EXTERNAL_SECRET), AT).unwrap_err();
+        assert!(why.0.contains("being deleted"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn safety_g24_externalsecret_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved()
+     {
+        guarded(
+            fake::EXTERNAL_SECRET,
+            refresh,
+            &["metadata.annotations.force-sync"],
+            None,
+        )
+        .await;
+        // Every request of a run: the access review and the dry run first, then
+        // the one patch, and nothing for a Secret.
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let finished = send(&cluster, dir.path(), Protection::Guarded, refresh(&cluster)).await;
+        assert!(finished.succeeded());
+        let requests = cluster.recorder.requests();
+        let patches: Vec<_> = requests
+            .iter()
+            .filter(|request| request.method == http::Method::PATCH)
+            .collect();
+        assert_eq!(patches.len(), 2, "{:?}", cluster.recorder.lines());
+        assert!(patches[0].query.contains("dryRun"));
+        assert!(!patches[1].query.contains("dryRun"));
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.path.contains("/secrets")),
+            "{:?}",
+            cluster.recorder.lines()
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.path.contains("selfsubjectaccessreviews"))
+        );
+        assert!(dir.path().read_dir().unwrap().next().is_some(), "audited");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version()
+     {
+        // A delete began; a scheduled sync landed (both times moved, which the
+        // observation would otherwise count as ours); the policy changed.
+        for landed in [
+            json!({"metadata": {"deletionTimestamp": "2026-10-24T09:00:00Z"}}),
+            json!({"status": {"refreshTime": "2026-10-24T08:30:00Z",
+                "syncedResourceVersion": "1-bbbb"}}),
+            json!({"spec": {"refreshPolicy": "CreatedOnce"}}),
+        ] {
+            review_cannot_rebase(fake::EXTERNAL_SECRET, refresh, landed).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_is_observed_by_a_sync_the_annotation_caused_not_by_any_sync() {
+        let cluster = Cluster::new();
+        let action = refresh(&cluster);
+        let Observation::All(all) = &action.changes[0].observe else {
+            panic!("{:?}", action.changes[0].observe);
+        };
+        assert_eq!(
+            all,
+            &[
+                Observation::FieldMoved {
+                    pointer: "/status/refreshTime".into(),
+                    from: json!("2026-10-24T08:00:00Z")
+                },
+                Observation::FieldMoved {
+                    pointer: "/status/syncedResourceVersion".into(),
+                    from: json!("1-aaaa")
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_externalsecret_the_operator_would_not_sync_again_is_refused() {
+        for (spec, wants) in [
+            (json!({"refreshPolicy": "CreatedOnce"}), Some("CreatedOnce")),
+            (json!({"refreshInterval": "0s"}), Some("interval is 0")),
+            (json!({"refreshInterval": "0"}), Some("interval is 0")),
+            (json!({"refreshInterval": "0h0m"}), Some("interval is 0")),
+            (
+                json!({"refreshPolicy": "Periodic", "refreshInterval": "0s"}),
+                Some("interval is 0"),
+            ),
+            // OnChange syncs on the changed annotation whatever the interval.
+            (
+                json!({"refreshPolicy": "OnChange", "refreshInterval": "0s"}),
+                None,
+            ),
+            (json!({"refreshInterval": "30s"}), None),
+            (json!({"refreshInterval": "1h30m"}), None),
+        ] {
+            let cluster = Cluster::new();
+            cluster.foreign_write(fake::EXTERNAL_SECRET, "kubectl", &json!({"spec": spec}));
+            let made = external_secret_refresh(&subject(&cluster, fake::EXTERNAL_SECRET), AT);
+            match wants {
+                Some(word) => assert!(made.unwrap_err().0.contains(word), "{spec}"),
+                None => assert!(made.is_ok(), "{spec}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_externalsecret_that_never_synced_is_offered_whatever_its_policy() {
+        // Its first sync is still to come (or keeps failing): the annotation
+        // makes the operator try again.
+        let cluster = Cluster::new();
+        cluster.foreign_write(
+            fake::EXTERNAL_SECRET,
+            "kubectl",
+            &json!({"spec": {"refreshPolicy": "CreatedOnce", "refreshInterval": "0s"},
+                "status": {"syncedResourceVersion": null, "refreshTime": null}}),
+        );
+        assert!(external_secret_refresh(&subject(&cluster, fake::EXTERNAL_SECRET), AT).is_ok());
+    }
+
+    #[test]
+    fn a_duration_that_is_zero_or_negative_is_known_by_its_numbers() {
+        for zero in ["0", "0s", "0m0s", "0h0m0s", "0.0s", "-1m", " 0s "] {
+            assert!(non_positive_duration(zero), "{zero}");
+        }
+        for some in ["1s", "10m", "1h", "0h1m", "1.5h", "", "soon"] {
+            assert!(!non_positive_duration(some), "{some}");
+        }
     }
 }
