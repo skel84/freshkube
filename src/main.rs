@@ -139,6 +139,13 @@ fn main() -> Result<()> {
     if let Some(code) = dispatch(command) {
         std::process::exit(code);
     }
+    // The login shell's PATH, for kubeconfig login programs, on its own
+    // thread: not for `--help`, `--version` or a CLI read (they read it only
+    // when a connection needs it), nor under `--fixture`, which reads no
+    // kubeconfig.
+    if !fixture {
+        freshkube_core::exec_plugin::warm_up();
+    }
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
     let config = talosconfig_or_env(
