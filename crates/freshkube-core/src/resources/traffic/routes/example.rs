@@ -60,51 +60,35 @@ pub enum Shape {
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 19] = [
-        "all",
-        "serving",
-        "partly",
-        "cross-namespace",
-        "listener",
-        "no-address",
-        "class",
-        "no-backend",
-        "stale",
-        "mesh",
-        "not-installed",
-        "incomplete",
-        "mixed-bundle",
-        "refused",
-        "cut",
-        "gateways",
-        "empty",
-        "gateways-refused",
-        "workloads-refused",
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("all", Self::All),
+        ("serving", Self::Serving),
+        ("partly", Self::Partly),
+        ("cross-namespace", Self::CrossNamespace),
+        ("listener", Self::Listener),
+        ("no-address", Self::NoAddress),
+        ("class", Self::Class),
+        ("no-backend", Self::NoBackend),
+        ("stale", Self::Stale),
+        ("mesh", Self::Mesh),
+        ("not-installed", Self::NotInstalled),
+        ("incomplete", Self::Incomplete),
+        ("mixed-bundle", Self::MixedBundle),
+        ("refused", Self::Refused),
+        ("cut", Self::Cut),
+        ("gateways", Self::Gateways),
+        ("empty", Self::Empty),
+        ("gateways-refused", Self::GatewaysRefused),
+        ("workloads-refused", Self::WorkloadsRefused),
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "all" => Self::All,
-            "serving" => Self::Serving,
-            "partly" => Self::Partly,
-            "cross-namespace" => Self::CrossNamespace,
-            "listener" => Self::Listener,
-            "no-address" => Self::NoAddress,
-            "class" => Self::Class,
-            "no-backend" => Self::NoBackend,
-            "stale" => Self::Stale,
-            "mesh" => Self::Mesh,
-            "not-installed" => Self::NotInstalled,
-            "incomplete" => Self::Incomplete,
-            "mixed-bundle" => Self::MixedBundle,
-            "refused" => Self::Refused,
-            "cut" => Self::Cut,
-            "gateways" => Self::Gateways,
-            "empty" => Self::Empty,
-            "gateways-refused" => Self::GatewaysRefused,
-            "workloads-refused" => Self::WorkloadsRefused,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, shape)| *shape)
     }
 
     /// The routes this shape shows, by name.
@@ -658,7 +642,10 @@ mod parse_pins {
             ("workloads-refused", Shape::WorkloadsRefused),
         ];
         for (word, shape) in pinned {
-            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+            assert!(
+                matches!(Shape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
         }
         for unknown in ["", " ", "nope", "Firing", "all ", " all", "ALL"] {
             assert!(Shape::parse(unknown).is_none(), "{unknown:?}");

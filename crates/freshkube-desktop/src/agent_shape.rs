@@ -53,47 +53,32 @@ pub enum AgentShape {
 }
 
 impl AgentShape {
-    /// The names `FRESHKUBE_AGENT` takes.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub const NAMES: [&'static str; 16] = [
-        "ready",
-        "not-installed",
-        "unsupported",
-        "newer",
-        "signed-out",
-        "access-off",
-        "running",
-        "answered",
-        "stopped",
-        "following",
-        "refused",
-        "save-failed",
-        "no-tools",
-        "turn-failed",
-        "only-opencode",
-        "shared",
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("ready", Self::Ready),
+        ("not-installed", Self::NotInstalled),
+        ("unsupported", Self::Unsupported),
+        ("newer", Self::Newer),
+        ("signed-out", Self::SignedOut),
+        ("access-off", Self::AccessOff),
+        ("running", Self::Running),
+        ("answered", Self::Answered),
+        ("stopped", Self::Stopped),
+        ("following", Self::Following),
+        ("refused", Self::Refused),
+        ("save-failed", Self::SaveFailed),
+        ("no-tools", Self::NoTools),
+        ("turn-failed", Self::TurnFailed),
+        ("only-opencode", Self::OnlyOpencode),
+        ("shared", Self::Shared),
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "ready" => Self::Ready,
-            "not-installed" => Self::NotInstalled,
-            "unsupported" => Self::Unsupported,
-            "newer" => Self::Newer,
-            "signed-out" => Self::SignedOut,
-            "access-off" => Self::AccessOff,
-            "running" => Self::Running,
-            "answered" => Self::Answered,
-            "stopped" => Self::Stopped,
-            "following" => Self::Following,
-            "refused" => Self::Refused,
-            "save-failed" => Self::SaveFailed,
-            "no-tools" => Self::NoTools,
-            "turn-failed" => Self::TurnFailed,
-            "only-opencode" => Self::OnlyOpencode,
-            "shared" => Self::Shared,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, shape)| *shape)
     }
 
     /// Whether the shape grants access before it starts.
@@ -135,9 +120,9 @@ mod tests {
 
     #[test]
     fn every_name_parses_to_its_own_shape() {
-        let shapes: Vec<_> = AgentShape::NAMES
+        let shapes: Vec<_> = AgentShape::SHAPES
             .iter()
-            .map(|name| AgentShape::parse(name).unwrap())
+            .map(|(name, _)| AgentShape::parse(name).unwrap())
             .collect();
         for (ix, shape) in shapes.iter().enumerate() {
             assert!(!shapes[ix + 1..].contains(shape));
@@ -174,7 +159,10 @@ mod parse_pins {
             ("shared", AgentShape::Shared),
         ];
         for (word, shape) in pinned {
-            assert!(matches!(AgentShape::parse(word), Some(found) if found == shape), "{word}");
+            assert!(
+                matches!(AgentShape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
         }
         for unknown in ["", " ", "nope", "Firing", "ready ", " ready", "READY"] {
             assert!(AgentShape::parse(unknown).is_none(), "{unknown:?}");

@@ -89,7 +89,10 @@ impl Variant {
         let Some(value) = value else {
             return Self::Acme;
         };
-        if let Some((_, variant)) = Self::SHAPES.iter().find(|(name, _)| *name == value) {
+        if let Some((_, variant)) = Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == value)
+        {
             return *variant;
         }
         value

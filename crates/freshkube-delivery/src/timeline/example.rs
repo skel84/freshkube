@@ -20,18 +20,21 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// The words `FRESHKUBE_TIMELINE` takes.
-    pub const NAMES: [&'static str; 5] = ["busy", "quiet", "partial", "short-events", "none-read"];
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("busy", Self::Busy),
+        ("quiet", Self::Quiet),
+        ("partial", Self::Partial),
+        ("short-events", Self::ShortEvents),
+        ("none-read", Self::NoneRead),
+    ];
 
     pub fn parse(word: &str) -> Option<Self> {
-        Some(match word {
-            "busy" => Self::Busy,
-            "quiet" => Self::Quiet,
-            "partial" => Self::Partial,
-            "short-events" => Self::ShortEvents,
-            "none-read" => Self::NoneRead,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == word)
+            .map(|(_, shape)| *shape)
     }
 }
 
@@ -195,7 +198,10 @@ mod parse_pins {
             ("none-read", Shape::NoneRead),
         ];
         for (word, shape) in pinned {
-            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+            assert!(
+                matches!(Shape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
         }
         for unknown in ["", " ", "nope", "Firing", "busy ", " busy", "BUSY"] {
             assert!(Shape::parse(unknown).is_none(), "{unknown:?}");

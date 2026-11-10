@@ -34,34 +34,32 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// The values `FRESHKUBE_ALERTS` takes.
-    pub const NAMES: [&'static str; 8] = [
-        "firing",
-        "quiet",
-        "not-found",
-        "refused",
-        "several",
-        "no-label",
-        "stale",
-        "rules-only",
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("firing", Self::Firing),
+        ("quiet", Self::Quiet),
+        ("not-found", Self::NotFound),
+        ("refused", Self::Refused),
+        ("several", Self::Several),
+        ("no-label", Self::NoLabel),
+        ("stale", Self::Stale),
+        ("rules-only", Self::RulesOnly),
     ];
 
     pub fn parse(text: &str) -> Option<Self> {
-        Some(match text {
-            "firing" => Self::Firing,
-            "quiet" => Self::Quiet,
-            "not-found" => Self::NotFound,
-            "refused" => Self::Refused,
-            "several" => Self::Several,
-            "no-label" => Self::NoLabel,
-            "stale" => Self::Stale,
-            "rules-only" => Self::RulesOnly,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == text)
+            .map(|(_, shape)| *shape)
     }
 
     pub fn name(self) -> &'static str {
-        Self::NAMES[self as usize]
+        Self::SHAPES
+            .iter()
+            .find(|(_, shape)| *shape == self)
+            .map(|(name, _)| *name)
+            .expect("every shape is in SHAPES")
     }
 }
 
@@ -478,7 +476,10 @@ mod parse_pins {
             ("rules-only", Shape::RulesOnly),
         ];
         for (word, shape) in pinned {
-            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+            assert!(
+                matches!(Shape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
         }
         for unknown in ["", " ", "nope", "Firing", "firing ", " firing", "FIRING"] {
             assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
