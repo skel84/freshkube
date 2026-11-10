@@ -1,0 +1,1 @@
+- **ExternalSecret Refresh:** Resources can ask External Secrets Operator to sync the selected ExternalSecret now, from the toolbar, the row menu or Shift-R. It sets the operator's `force-sync` annotation after a confirmation at every writable level, is blocked on a read-only cluster, and reports whether `status.refreshTime` moved within 30 seconds.

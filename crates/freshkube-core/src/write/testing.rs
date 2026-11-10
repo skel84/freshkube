@@ -28,6 +28,8 @@ pub const APPLICATION: &str = "/apis/argoproj.io/v1alpha1/namespaces/argocd/appl
 pub const KUSTOMIZATION: &str =
     "/apis/kustomize.toolkit.fluxcd.io/v1/namespaces/flux-system/kustomizations/apps";
 pub const CERTIFICATE: &str = "/apis/cert-manager.io/v1/namespaces/shop/certificates/web-tls";
+pub const EXTERNAL_SECRET: &str =
+    "/apis/external-secrets.io/v1/namespaces/shop/externalsecrets/db-creds";
 pub const REPLICASETS: &str = "/apis/apps/v1/namespaces/shop/replicasets";
 pub const PODS: &str = "/api/v1/namespaces/shop/pods";
 /// A Pod the ReplicaSet `web-a1` owns.
@@ -229,6 +231,22 @@ pub fn replicaset(hash: &str, number: u64, image: &str, owner: &str) -> (String,
     )
 }
 
+fn external_secret() -> Value {
+    json!({
+        "apiVersion": "external-secrets.io/v1", "kind": "ExternalSecret",
+        "metadata": {"name": "db-creds", "namespace": "shop", "uid": "uid-db-creds",
+            "resourceVersion": "800", "generation": 1,
+            "managedFields": [{"manager": "kubectl", "time": "2026-10-22T09:00:00Z"}]},
+        "spec": {"refreshInterval": "1h",
+            "secretStoreRef": {"name": "meadow-store", "kind": "SecretStore"},
+            "target": {"name": "db-creds"}},
+        "status": {"refreshTime": "2026-10-24T08:00:00Z", "conditions": [
+            {"type": "Ready", "status": "True", "reason": "SecretSynced",
+             "message": "Secret was synced"}
+        ]}
+    })
+}
+
 fn secret() -> Value {
     json!({
         "apiVersion": "v1", "kind": "Secret",
@@ -246,6 +264,7 @@ impl Cluster {
             (APPLICATION.to_owned(), application()),
             (KUSTOMIZATION.to_owned(), kustomization()),
             (CERTIFICATE.to_owned(), certificate()),
+            (EXTERNAL_SECRET.to_owned(), external_secret()),
         ])
     }
 
@@ -734,6 +753,11 @@ fn controllers(state: &mut State, next: &mut Value) {
         .cloned()
     {
         next["status"]["lastHandledReconcileAt"] = at;
+    }
+    // External Secrets Operator's, seeing the annotation change, syncs and
+    // records when.
+    if next.pointer("/metadata/annotations/force-sync").is_some() {
+        next["status"]["refreshTime"] = json!("2026-10-24T09:30:00Z");
     }
     let issuing = next["status"]["conditions"].as_array().is_some_and(|all| {
         all.iter()

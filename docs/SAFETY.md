@@ -189,6 +189,12 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g21_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
 - `safety_g21_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
 
+### 22. ExternalSecret Refresh sends one `force-sync` annotation, and nothing under `read-only` or when the object began to be deleted
+
+- `safety_g22_externalsecret_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g22_refresh_after_a_delete_began_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g22_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

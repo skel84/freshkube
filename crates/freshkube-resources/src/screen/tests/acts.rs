@@ -257,7 +257,7 @@ fn nudges() -> [(
     &'static [&'static str],
     &'static [&'static str],
     &'static [Everyday],
-); 3] {
+); 4] {
     [
         (
             "applications.argoproj.io",
@@ -279,6 +279,13 @@ fn nudges() -> [(
             &["w"],
             &["resource-renew"],
             &[Everyday::Renew],
+        ),
+        (
+            "externalsecrets.external-secrets.io",
+            &["Refresh"],
+            &["shift-r"],
+            &["resource-externalsecret-refresh"],
+            &[Everyday::ExternalSecretRefresh],
         ),
     ]
 }

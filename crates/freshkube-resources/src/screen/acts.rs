@@ -44,6 +44,7 @@ fn label(act: Everyday) -> &'static str {
         Everyday::ArgoHardRefresh => "Hard refresh",
         Everyday::FluxReconcile => "Reconcile",
         Everyday::Renew => "Renew",
+        Everyday::ExternalSecretRefresh => "Refresh",
         Everyday::Rollback => "Roll back…",
         Everyday::RunNow => "Run now",
         Everyday::Delete => "Delete…",
@@ -111,6 +112,9 @@ impl ResourcesScreen {
                 Everyday::ArgoHardRefresh => MenuAction::new(label(act), HardRefreshSelected),
                 Everyday::FluxReconcile => MenuAction::new(label(act), ReconcileSelected),
                 Everyday::Renew => MenuAction::new(label(act), RenewSelected),
+                Everyday::ExternalSecretRefresh => {
+                    MenuAction::new(label(act), RefreshExternalSecret)
+                }
                 Everyday::Rollback => MenuAction::new(label(act), RollbackSelected),
                 Everyday::RunNow => MenuAction::new(label(act), RunNowSelected),
                 Everyday::Delete => MenuAction::new(label(act), DeleteSelected),
@@ -180,6 +184,9 @@ impl ResourcesScreen {
                             page::action_item(label(act), ReconcileSelected, focus)
                         }
                         Everyday::Renew => page::action_item(label(act), RenewSelected, focus),
+                        Everyday::ExternalSecretRefresh => {
+                            page::action_item(label(act), RefreshExternalSecret, focus)
+                        }
                         Everyday::Rollback => {
                             page::action_item(label(act), RollbackSelected, focus)
                         }
@@ -204,6 +211,9 @@ impl ResourcesScreen {
                             button.on_click(page::dispatch(ReconcileSelected, focus))
                         }
                         Everyday::Renew => button.on_click(page::dispatch(RenewSelected, focus)),
+                        Everyday::ExternalSecretRefresh => {
+                            button.on_click(page::dispatch(RefreshExternalSecret, focus))
+                        }
                         Everyday::Rollback => {
                             button.on_click(page::dispatch(RollbackSelected, focus))
                         }

@@ -41,6 +41,7 @@ pub enum Workload {
     HelmRepository,
     OciRepository,
     Certificate,
+    ExternalSecret,
 }
 
 impl Workload {
@@ -58,6 +59,7 @@ impl Workload {
             ("source.toolkit.fluxcd.io", "HelmRepository") => Some(Self::HelmRepository),
             ("source.toolkit.fluxcd.io", "OCIRepository") => Some(Self::OciRepository),
             ("cert-manager.io", "Certificate") => Some(Self::Certificate),
+            ("external-secrets.io", "ExternalSecret") => Some(Self::ExternalSecret),
             _ => None,
         }
     }
@@ -76,6 +78,7 @@ impl Workload {
             | Self::HelmRepository
             | Self::OciRepository => &[Everyday::FluxReconcile],
             Self::Certificate => &[Everyday::Renew],
+            Self::ExternalSecret => &[Everyday::ExternalSecretRefresh],
         }
     }
 
@@ -93,6 +96,7 @@ impl Workload {
             Self::HelmRepository => "helmrepositories",
             Self::OciRepository => "ocirepositories",
             Self::Certificate => "certificates",
+            Self::ExternalSecret => "externalsecrets",
         }
     }
 }
@@ -127,6 +131,8 @@ pub enum Everyday {
     FluxReconcile,
     /// cert-manager: renew a Certificate.
     Renew,
+    /// External Secrets Operator: ask for a sync of an ExternalSecret now.
+    ExternalSecretRefresh,
     Rollback,
     RunNow,
     /// Delete, with an impact preview (`write/delete/`): offered on every
@@ -144,6 +150,7 @@ impl Everyday {
             Self::ArgoHardRefresh => "argo-hard-refresh",
             Self::FluxReconcile => "flux-reconcile",
             Self::Renew => "renew",
+            Self::ExternalSecretRefresh => "externalsecret-refresh",
             Self::Rollback => "rollback",
             Self::RunNow => "run-now",
             Self::Delete => "delete",
@@ -628,7 +635,7 @@ pub fn suspend(subject: &Subject) -> Result<ActionDescription, NotOffered> {
 }
 
 mod nudges;
-pub use nudges::{Refresh, argo_refresh, flux_reconcile, renew};
+pub use nudges::{Refresh, argo_refresh, external_secret_refresh, flux_reconcile, renew};
 
 #[cfg(test)]
 mod tests {
