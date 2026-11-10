@@ -416,7 +416,7 @@ fn reading_a_secret_fills_the_row_in_place_and_the_key_is_nowhere_on_the_page(
         window.render_frame(cx);
         let entry = entry_of(&page, "prod-eu/internal-tls", cx);
         assert_eq!(entry.state, CertState::Broken);
-        assert_eq!(entry.reason, "expired");
+        assert_eq!(entry.reason, "the certificate has expired");
         let row = page
             .read(cx)
             .display
@@ -451,7 +451,7 @@ fn a_refused_secret_read_leaves_the_row_unknown_with_the_reason(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
-fn what_was_read_of_a_secret_is_forgotten_with_the_page_a_new_read_and_a_new_source(
+fn what_was_read_of_a_secret_survives_an_automatic_refresh_and_goes_with_the_page_and_the_source(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
@@ -469,8 +469,17 @@ fn what_was_read_of_a_secret_is_forgotten_with_the_page_a_new_read_and_a_new_sou
     };
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
-        // Hidden: gone, and readable again when shown.
+        // The shell refreshes the visible page on its own: what was read stays.
         read(window, cx);
+        for _ in 0..2 {
+            page.update(cx, |page, cx| page.refresh(window, cx));
+            window.render_frame(cx);
+            assert_eq!(
+                entry_of(&page, "prod-eu/legacy-tls", cx).state,
+                CertState::Healthy
+            );
+        }
+        // Hidden: gone, and unread when shown again.
         page.update(cx, |page, cx| page.set_visible(false, window, cx));
         assert_eq!(
             entry_of(&page, "prod-eu/legacy-tls", cx).state,
@@ -478,8 +487,6 @@ fn what_was_read_of_a_secret_is_forgotten_with_the_page_a_new_read_and_a_new_sou
         );
         page.update(cx, |page, cx| page.set_visible(true, window, cx));
         window.render_frame(cx);
-        // A new read.
-        read(window, cx);
         page.update(cx, |page, cx| page.refresh(window, cx));
         window.render_frame(cx);
         assert_eq!(
@@ -501,6 +508,65 @@ fn what_was_read_of_a_secret_is_forgotten_with_the_page_a_new_read_and_a_new_sou
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_refused_secret_read_says_so_and_may_be_tried_again(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::SecretRefused, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let key = page.read(cx).display.rows[0].key.to_string();
+        let id = row_id(&page, &key, cx);
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.press("r", cx);
+        window.render_frame(cx);
+        let row = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|r| r.key == key.as_str())
+            .unwrap();
+        assert!(row.can_read, "a refusal may be tried again");
+        assert!(
+            row.detail.source.contains("failed or was refused"),
+            "{}",
+            row.detail.source
+        );
+        assert!(!row.detail.source.contains("was read on request"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn when_nothing_could_be_read_the_error_is_not_said_again_in_banners(cx: &mut TestAppContext) {
+    let (_runtime, _page, window) = mount(cx, Shape::Refused, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.find("certificates-state");
+        assert!(window.try_find("certificates-notice-0").is_none());
+    })
+    .unwrap();
+}
+
+#[test]
+fn the_inspector_headline_says_where_a_chain_stopped_and_a_valid_one_adds_nothing() {
+    let display = display_of(Shape::All);
+    let reason = |key: &str| {
+        display
+            .rows
+            .iter()
+            .find(|r| r.key == key)
+            .unwrap()
+            .detail
+            .reason
+            .clone()
+    };
+    assert_eq!(reason("payments/pay-tls"), "Stopped at Order");
+    assert_eq!(reason("cart/cart-tls"), "Stopped at Challenge");
+    assert_eq!(reason("infra/edge-tls"), "");
+    assert!(reason("shop/shop-tls").starts_with("does not name"));
 }
 
 #[gpui_kit::test]

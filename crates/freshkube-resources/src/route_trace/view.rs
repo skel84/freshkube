@@ -230,7 +230,7 @@ fn parent(row: &ParentRow, on_link: &Option<OnLink>, cx: &App) -> impl IntoEleme
                             link_button(
                                 format!("{}-certificate-{ix}", row.id).into(),
                                 // The Secret's name, so two certificates read apart.
-                                format!("Open certificate {name}"),
+                                format!("Open Certificate {name}"),
                                 Some(link),
                                 on_link,
                             )

@@ -191,9 +191,13 @@ impl CertEntry {
     }
 
     pub fn can_read_secret(&self) -> bool {
+        // A refused or failed read may be tried again; a read one may not.
         self.managed.is_none()
             && self.withheld.is_none()
-            && self.secret_state == SecretState::NotRead
+            && matches!(
+                self.secret_state,
+                SecretState::NotRead | SecretState::Read(SecretOutcome::Refused(_))
+            )
     }
 
     fn facts(&mut self, now: i64) {
@@ -302,7 +306,7 @@ impl CertEntry {
         if let Some(end) = self.not_after
             && end <= now
         {
-            return (CertState::Broken, "expired".into());
+            return (CertState::Broken, "the certificate has expired".into());
         }
         if !self.wrong.is_empty() {
             return (

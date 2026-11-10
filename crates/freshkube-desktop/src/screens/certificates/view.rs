@@ -147,8 +147,10 @@ impl CertificatesScreen {
                 ))
                 .child(div().child(row.state))
                 .into_any_element(),
-            self.line(format!("{id}-reason"), detail.reason.clone(), false, cx),
         ];
+        if !detail.reason.is_empty() {
+            status.push(self.line(format!("{id}-reason"), detail.reason.clone(), false, cx));
+        }
         for field in &row.fields {
             status.push(
                 ui::named_field(
@@ -216,12 +218,14 @@ impl CertificatesScreen {
                         .test_support()
                         .gap(dp(6.))
                         .items_start()
-                        .child(ui::status_mark(
+                        // Steps with no glyph (not used, not reached) keep its
+                        // width, so every step's text starts at one edge.
+                        .child(div().w(dp(10.)).flex_none().child(ui::status_mark(
                             format!("{id}-chain-{ix}-state"),
                             step.tone,
                             step.state,
                             cx,
-                        ))
+                        )))
                         .child(
                             div()
                                 .min_w_0()
@@ -346,10 +350,13 @@ impl Render for CertificatesScreen {
         } else {
             None
         };
+        // When nothing could be read the error says it all; the banners would
+        // repeat the same sentences.
         let notices = self
             .display
             .notices
             .iter()
+            .filter(|_| self.display.error.is_none())
             .enumerate()
             .map(|(ix, (title, words))| {
                 ui::warning_banner(Some((*title).into()), words.clone(), None, cx)

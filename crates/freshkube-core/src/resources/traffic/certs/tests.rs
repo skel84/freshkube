@@ -498,7 +498,7 @@ fn expiry_under_fourteen_days_reads_expiring_and_fourteen_does_not() {
         now,
     );
     assert_eq!(expired.state, CertState::Broken);
-    assert_eq!(expired.reason, "expired");
+    assert_eq!(expired.reason, "the certificate has expired");
     // A wrong name outranks an expiring certificate, and expired outranks both.
     let both = entry(
         Some(&["a.example.com"]),
@@ -1213,7 +1213,7 @@ fn expiry_is_worded_from_the_seconds_left_at_the_edges() {
     let now = 1_000_000;
     let e = entry(Some(&["a.example.com"]), &["a.example.com"], Some(now), now);
     assert_eq!(e.state, CertState::Broken);
-    assert_eq!(e.reason, "expired");
+    assert_eq!(e.reason, "the certificate has expired");
     let e = entry(
         Some(&["a.example.com"]),
         &["a.example.com"],
@@ -1604,4 +1604,18 @@ fn a_wrong_name_outranks_a_failing_renewal() {
     e.assess(now);
     assert_eq!(e.state, CertState::WrongName);
     assert_eq!(e.reason, "does not name b.example.com");
+}
+
+#[test]
+fn a_refused_secret_read_may_be_tried_again_and_a_good_one_may_not() {
+    let now = 1_000_000;
+    let mut e = entry(None, &["shop.example.com"], None, now);
+    e.secret_state = SecretState::Read(SecretOutcome::Refused(Failure::new(
+        FailureKind::Forbidden,
+        "forbidden",
+    )));
+    e.assess(now);
+    assert!(e.can_read_secret() && e.secret_request().is_some());
+    e.secret_state = SecretState::Read(SecretOutcome::NotFound);
+    assert!(!e.can_read_secret() && e.secret_request().is_none());
 }

@@ -292,8 +292,24 @@ fn entry_row(entry: &CertEntry) -> Row {
                 .collect()
         })
         .unwrap_or_default();
+    // The Inspector's headline says where, and the chain below says why; the
+    // row's cell carries the whole line. A valid certificate has nothing to add.
+    let headline = match (&entry.chain, entry.state) {
+        (_, CertState::Healthy) => String::new(),
+        (Some(chain), CertState::Broken | CertState::Issuing) if chain.stopped_at().is_some() => {
+            let at = chain
+                .stopped_at()
+                .map(|s| s.kind.label())
+                .unwrap_or_default();
+            match entry.state {
+                CertState::Issuing => format!("In progress at {at}"),
+                _ => format!("Stopped at {at}"),
+            }
+        }
+        _ => entry.reason.clone(),
+    };
     let detail = Detail {
-        reason: entry.reason.clone(),
+        reason: headline,
         names: names_note.map(|names| names.into_iter().take(DETAIL_LINES).collect()),
         names_more: more(names_total),
         served_more: more(served.len()),
@@ -308,6 +324,9 @@ fn entry_row(entry: &CertEntry) -> Row {
             ),
             (None, SecretState::Read(SecretOutcome::Read(_))) => {
                 "From the Secret's tls.crt, read on request. Only its names, issuer and dates were kept; the key never left the cluster read.".to_owned()
+            }
+            (None, SecretState::Read(SecretOutcome::Refused(_))) => {
+                "Reading the Secret failed or was refused. Read Secret tries again.".to_owned()
             }
             (None, SecretState::Read(_)) => "The Secret was read on request.".to_owned(),
             (None, SecretState::NotRead) => "Not read.".to_owned(),

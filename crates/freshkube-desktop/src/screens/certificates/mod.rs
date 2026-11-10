@@ -91,6 +91,10 @@ pub(crate) struct CertificatesScreen {
     /// When the example data was read, which a loader does not keep.
     example_read: Option<std::time::SystemTime>,
     secret_job: Option<SecretJob>,
+    /// What the person read of each Secret (`namespace/name`), kept across
+    /// the shell's automatic refreshes of the same source and applied to each
+    /// new read; dropped when the page hides or the source changes.
+    secrets: std::collections::BTreeMap<String, SecretOutcome>,
 }
 
 impl EventEmitter<ScreenEvent> for CertificatesScreen {}
@@ -148,6 +152,7 @@ impl CertificatesScreen {
             shape: certs::example::Shape::default(),
             example_read: None,
             secret_job: None,
+            secrets: std::collections::BTreeMap::new(),
         }
     }
 
@@ -160,10 +165,10 @@ impl CertificatesScreen {
         Some(self.source.as_ref()?.id.clone())
     }
 
-    /// Forgets every Secret's facts and any read in flight: the page keeps
-    /// them only while the read they were made against is the one shown.
+    /// Forgets every Secret's facts and any read in flight.
     fn forget_secrets(&mut self) {
         self.secret_job = None;
+        self.secrets.clear();
     }
 
     fn read(&mut self, cx: &mut Context<Self>) {
@@ -223,12 +228,17 @@ impl CertificatesScreen {
             return;
         }
         self.prepared = now;
-        // A new read forgets what was read of any Secret.
-        self.forget_secrets();
+        // A new read of the same source (the shell refreshes on its own) keeps
+        // what the person read of each Secret: it is applied to the new rows.
         self.view = self
             .loader
             .data()
             .map(|read| CertsView::new(read, self.read_at));
+        if let Some(view) = &mut self.view {
+            for (key, outcome) in &self.secrets {
+                view.apply_secret(key, outcome.clone(), self.read_at);
+            }
+        }
         self.rebuild();
         if self.view.is_some()
             && let Some(key) = self.wanted.take()
@@ -389,6 +399,7 @@ impl CertificatesScreen {
 
     fn land_secret(&mut self, key: &str, outcome: SecretOutcome, cx: &mut Context<Self>) {
         self.secret_job = None;
+        self.secrets.insert(key.to_owned(), outcome.clone());
         if let Some(view) = &mut self.view {
             view.apply_secret(key, outcome, self.read_at);
         }
@@ -433,8 +444,8 @@ impl ScreenPanel for CertificatesScreen {
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.visible = visible;
         if !visible {
-            // Hidden: what was read of any Secret goes, and the next show
-            // reads the page again, which starts every Secret unread.
+            // Hidden: what was read of any Secret goes, so the next show
+            // starts every Secret unread.
             self.forget_secrets();
             if let Some(view) = &mut self.view {
                 view.forget_secrets(self.read_at);
