@@ -20,7 +20,7 @@ mod processes;
 mod routes;
 mod security;
 mod storage;
-mod topology;
+pub(crate) mod topology;
 mod workloads;
 
 pub(crate) use access::AccessScreen;

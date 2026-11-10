@@ -165,6 +165,10 @@ pub trait GraphSource: Sized + 'static {
         false
     }
 
+    /// A click on the canvas where there is no box or call, such as one that
+    /// clears the page's box selection.
+    fn background_click(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
     /// A box click.
     fn open(&mut self, node: &Self::Key, window: &mut Window, cx: &mut Context<Self>);
 
@@ -290,6 +294,7 @@ struct Ids {
     problems: SharedString,
     inspector: SharedString,
     connections: SharedString,
+    connections_scrollbar: SharedString,
     empty: SharedString,
 }
 
@@ -310,6 +315,7 @@ impl Ids {
             problems: id("problems"),
             inspector: id("inspector"),
             connections: id("connections"),
+            connections_scrollbar: id("connections-scrollbar"),
             empty: id("empty"),
         }
     }
@@ -326,6 +332,14 @@ pub struct GraphState<K> {
     visible: Vec<usize>,
     /// The selected box, if the page selects one in the inspector.
     boxed: Option<K>,
+    /// Where the card is, and whether the inspector sits under the graph,
+    /// as the last frame drew them, so a page can bring a stacked
+    /// inspector into view.
+    panel: Rc<std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
+    stacked: std::cell::Cell<bool>,
+    /// Set by a click on a box or a call, so the canvas under it ignores
+    /// the same click.
+    item_clicked: std::cell::Cell<bool>,
     /// The edges the inspector lists: `visible`, or only the selected
     /// box's calls. Derived in `prepare`, never while drawing.
     listed: Vec<usize>,
@@ -361,6 +375,9 @@ impl<K: Clone + Ord> GraphState<K> {
             ends: vec![],
             visible: vec![],
             boxed: None,
+            panel: Default::default(),
+            stacked: Default::default(),
+            item_clicked: Default::default(),
             listed: vec![],
             selected: None,
             page: 0,
@@ -490,6 +507,7 @@ impl<K: Clone + Ord> GraphState<K> {
     /// No boxes, no calls, the first page and nothing selected.
     pub fn clear(&mut self) {
         self.selected = None;
+        self.boxed = None;
         self.page = 0;
         self.set(vec![], vec![]);
     }
@@ -513,6 +531,15 @@ impl<K: Clone + Ord> GraphState<K> {
         };
         if let Some((from, _)) = self.ends[ix] {
             self.page = from / self.per_page;
+        }
+        // A call the box doesn't touch would show in the inspector with its
+        // row missing from the list: the box filter ends.
+        if self
+            .boxed
+            .as_ref()
+            .is_some_and(|b| *b != key.0 && *b != key.1)
+        {
+            self.boxed = None;
         }
         self.selected = Some(key);
         self.prepare();
@@ -540,8 +567,18 @@ impl<K: Clone + Ord> GraphState<K> {
     pub fn set_box(&mut self, key: Option<K>) {
         if self.boxed != key {
             self.boxed = key;
-            self.prepare();
+            self.derive_listed();
         }
+    }
+
+    /// Whether the inspector sits under the graph and its card ends below
+    /// `viewport`'s bottom: the page may scroll it into view.
+    pub fn inspector_below(&self, viewport: &gpui_kit::Bounds<gpui_kit::Pixels>) -> bool {
+        self.stacked.get()
+            && self
+                .panel
+                .get()
+                .is_some_and(|panel| panel.bottom() > viewport.bottom())
     }
 
     /// The box whose calls the inspector lists.
@@ -637,6 +674,24 @@ impl<K: Clone + Ord> GraphState<K> {
         format!("{}-{part}", self.ids.prefix).into()
     }
 
+    /// The calls the inspector lists: those the filter keeps, or only the
+    /// selected box's, and the count line that says so. It runs when the
+    /// filter, the box or the data changes, never while drawing.
+    fn derive_listed(&mut self) {
+        self.listed = match &self.boxed {
+            Some(key) => self
+                .visible
+                .iter()
+                .copied()
+                .filter(|&ix| &self.edges[ix].from == key || &self.edges[ix].to == key)
+                .collect(),
+            None => self.visible.clone(),
+        };
+        let calls = self.text.nouns.1;
+        self.display.count =
+            format!("{} of {} {calls}", self.listed.len(), self.edges.len()).into();
+    }
+
     /// Derives the page: which boxes it shows, where, and the route of
     /// every call between them. It runs when anything shown changes, never
     /// while drawing.
@@ -650,15 +705,7 @@ impl<K: Clone + Ord> GraphState<K> {
         {
             self.selected = None;
         }
-        self.listed = match &self.boxed {
-            Some(key) => self
-                .visible
-                .iter()
-                .copied()
-                .filter(|&ix| &self.edges[ix].from == key || &self.edges[ix].to == key)
-                .collect(),
-            None => self.visible.clone(),
-        };
+        self.derive_listed();
         let pages = self.nodes.len().div_ceil(self.per_page).max(1);
         self.page = self.page.min(pages - 1);
         let start = self.page * self.per_page;

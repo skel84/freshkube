@@ -3,6 +3,7 @@
 //! the leading side and the inspector beside it, or under it once the
 //! whole graph can't sit beside it.
 
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{Disableable, Sizable, h_flex, v_flex};
@@ -94,6 +95,8 @@ impl GraphView {
             split.lead_start(lead, cx);
             lead + STACKED.trail.start
         };
+        state.stacked.set(!beside);
+        let panel = state.panel.clone();
         let graph = render_lead(source, scrolls, window, cx).into_any_element();
         let inspector = render_inspector(source, cx);
         let p = palette(cx);
@@ -105,6 +108,7 @@ impl GraphView {
                     .id(state.ids.panel.clone())
                     .test_support()
                     .w_full()
+                    .on_prepaint(move |bounds, _, _| panel.set(Some(bounds)))
                     // The panes' heights, inside the card's borders.
                     .h(ui::dp_px(height, window) + px(2.))
                     .min_w_0()
@@ -280,7 +284,12 @@ fn render_lead<S: GraphSource>(
                         line().child(glyph(Some(tone), cx)).child(muted(label, cx))
                     }),
                 )
-                .child(muted(state.text.caption.clone(), cx)),
+                .child(
+                    muted(state.text.caption.clone(), cx)
+                        .id(SharedString::from(format!("{}-caption", state.ids.prefix)))
+                        .aria_label(state.text.caption.clone())
+                        .test_support(),
+                ),
         )
 }
 
@@ -315,10 +324,7 @@ fn render_inspector<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyEleme
         .child(list)
         .child(
             div()
-                .id(SharedString::from(format!(
-                    "{}-scrollbar",
-                    state.ids.connections
-                )))
+                .id(state.ids.connections_scrollbar.clone())
                 .test_support()
                 .absolute()
                 .inset_0()

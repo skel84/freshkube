@@ -190,3 +190,49 @@ fn the_list_follows_the_selected_box_and_scrolls_with_the_shared_scrollbar(
     })
     .unwrap();
 }
+
+#[test]
+fn a_box_with_no_calls_lists_none_and_says_so() {
+    let mut state = state(8, 0);
+    state.set_box(Some(3));
+    assert_eq!(state.listed_count(), 0);
+    state.set_box(None);
+    assert_eq!(state.listed_count(), 0);
+    // A box the graph doesn't have lists none either.
+    let mut state = super::state(8, 12);
+    state.set_box(Some(99));
+    assert_eq!(state.listed_count(), 0);
+}
+
+#[test]
+fn a_refresh_keeps_the_box_and_derives_its_calls_again() {
+    let mut state = state(8, 12);
+    let key = state.edges()[0].from;
+    state.set_box(Some(key));
+    let before = state.listed_count();
+    let (mut nodes, mut edges) = invented(8, 12);
+    edges.reverse();
+    nodes.reverse();
+    state.set(nodes.clone(), edges.clone());
+    assert_eq!((state.boxed(), state.listed_count()), (Some(&key), before));
+    // New data with a call fewer for the box lists one fewer.
+    let gone = edges
+        .iter()
+        .position(|edge| edge.from == key || edge.to == key)
+        .unwrap();
+    edges.remove(gone);
+    state.set(nodes, edges);
+    assert_eq!(state.listed_count(), before - 1);
+    // Clearing the graph lets the box go with it.
+    state.clear();
+    assert_eq!(state.boxed(), None);
+}
+
+#[test]
+fn selecting_a_box_derives_the_list_without_laying_the_graph_out_again() {
+    let mut state = state(8, 12);
+    let before = freshkube_probe::probe::count("graph.prepare");
+    state.set_box(Some(state.edges()[0].from));
+    state.set_box(None);
+    assert_eq!(freshkube_probe::probe::count("graph.prepare"), before);
+}

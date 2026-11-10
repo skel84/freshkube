@@ -630,23 +630,45 @@ async fn the_strip_holds_its_wrapped_actions_at_a_small_window(cx: &mut TestAppC
     })
     .unwrap();
     connected(cx, &page, &window).await;
-    cx.update_window(window.into(), |_, window, cx| {
-        window.render_frame(cx);
-        let strip = window.find("explore-strip").bounds();
-        let browser = window.find("explore-browser").bounds();
-        for id in ["explore-query", "explore-reload", "explore-writes-gate"] {
-            let bounds = window.find(id).bounds();
+    for text in [13., 20.] {
+        cx.update(|cx| crate::text_size::set(text, cx));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let strip = window.find("explore-strip").bounds();
+            let browser = window.find("explore-browser").bounds();
+            for id in [
+                "explore-read-only",
+                "explore-facts",
+                "explore-query",
+                "explore-reload",
+                "explore-writes-gate",
+            ] {
+                let bounds = window.find(id).bounds();
+                assert!(
+                    bounds.top() >= strip.top() && bounds.bottom() <= strip.bottom(),
+                    "text {text}: {id} {bounds:?} sits outside the strip {strip:?}"
+                );
+            }
             assert!(
-                bounds.top() >= strip.top() && bounds.bottom() <= strip.bottom(),
-                "{id} {bounds:?} sits outside the strip {strip:?}"
+                browser.top() >= strip.bottom(),
+                "{browser:?} under {strip:?}"
             );
-        }
-        assert!(
-            browser.top() >= strip.bottom(),
-            "{browser:?} under {strip:?}"
-        );
-    })
-    .unwrap();
+            // Two lines of their own, not one that wraps.
+            let (facts, actions) = (
+                window.find("explore-facts").bounds(),
+                window.find("explore-actions").bounds(),
+            );
+            assert!(
+                actions.top() >= facts.bottom(),
+                "{facts:?} then {actions:?}"
+            );
+            assert!(
+                facts.right() <= window.viewport_size().width,
+                "{facts:?} runs past the edge"
+            );
+        })
+        .unwrap();
+    }
 }
 
 #[gpui_kit::test]

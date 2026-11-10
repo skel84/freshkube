@@ -113,7 +113,9 @@ impl ExploreView {
             .test_support()
             .flex_1()
             .min_w_0()
-            .gap(dp(8.))
+            .flex_wrap()
+            .gap_x(dp(8.))
+            .gap_y(dp(2.))
             .items_center()
             .child(
                 ui::tag(ui::Tone::Good, None, "Read-only session", cx)

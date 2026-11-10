@@ -39,6 +39,16 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 
 const PREFIX: &str = "topology";
+/// The key context of the page, where Escape lets go of the selected box.
+pub(crate) const CONTEXT: &str = "Topology";
+
+gpui_kit::actions!(
+    topology,
+    [
+        /// Lets go of the selected box, so Calls lists every call again.
+        ClearBox
+    ]
+);
 /// A read this old is read again when the page shows.
 const ON_SHOW: OnShow = OnShow::ReadIfOlder(Duration::from_secs(30));
 /// The whole read: N2a's, then the workloads.
@@ -66,8 +76,6 @@ pub(crate) struct TopologyScreen {
     prepared: u64,
     graph: GraphState<String>,
     split: InspectorSplit,
-    /// The box last clicked.
-    selected: Option<String>,
     focus: FocusHandle,
     loading: TableLoading,
     scroll: ScrollHandle,
@@ -108,7 +116,7 @@ impl TopologyScreen {
                 nouns: ("boxes", "calls"),
                 title: "Calls".into(),
                 problems: "Problem calls".into(),
-                caption: "Address, Gateways, routes, backends, workloads, left to right · dashed lines are broken or not known · every call is listed in Calls".into(),
+                caption: "Address, Gateways, routes, backends, workloads, left to right · dashed lines are broken or not known · Calls lists every call, or the selected box's".into(),
             },
         )
         .unpaged();
@@ -125,7 +133,6 @@ impl TopologyScreen {
             prepared: u64::MAX,
             graph,
             split: freshkube_ui::graph::inspector_split(PREFIX, cx),
-            selected: None,
             focus: cx.focus_handle(),
             loading: TableLoading::new(PREFIX, cx),
             scroll: ScrollHandle::new(),
@@ -212,8 +219,6 @@ impl TopologyScreen {
         self.unknown = 0;
         let Some(Ok(topology)) = &self.topology else {
             self.graph.clear();
-            self.graph.set_box(None);
-            self.selected = None;
             return;
         };
         let count = |kind| topology.nodes.iter().filter(|n| n.kind == kind).count();
@@ -276,13 +281,20 @@ impl TopologyScreen {
             .collect();
         self.graph.set(nodes, edges);
         if self
-            .selected
-            .as_ref()
+            .graph
+            .boxed()
             .is_some_and(|key| topology.node(key).is_none())
         {
-            self.selected = None;
+            self.graph.set_box(None);
         }
-        self.graph.set_box(self.selected.clone());
+    }
+
+    /// Lets go of the selected box: Calls lists every call again.
+    fn clear_box(&mut self, cx: &mut Context<Self>) {
+        if self.graph.boxed().is_some() {
+            self.graph.set_box(None);
+            cx.notify();
+        }
     }
 
     fn topology(&self) -> Option<&Topology> {
@@ -290,7 +302,7 @@ impl TopologyScreen {
     }
 
     fn selected_node(&self) -> Option<&Node> {
-        self.topology()?.node(self.selected.as_ref()?)
+        self.topology()?.node(self.graph.boxed()?)
     }
 
     /// Opens the selected box in Resources, when it is an object.
@@ -486,6 +498,15 @@ impl Render for TopologyScreen {
             });
         let notices = self.notices(cx);
         v_flex()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &ClearBox, _, cx| {
+                if this.graph.boxed().is_some() {
+                    this.clear_box(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .size_full()
             .min_h_0()
             .text_size(dp(13.))
@@ -528,18 +549,28 @@ impl GraphSource for TopologyScreen {
     }
 
     fn highlighted(&self) -> Option<&String> {
-        self.selected.as_ref()
+        self.graph.boxed()
+    }
+
+    fn background_click(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.clear_box(cx);
     }
 
     fn open(&mut self, node: &String, _: &mut Window, cx: &mut Context<Self>) {
         // A click selects the box and shows it in the inspector; opening it
         // in Resources is the footer's button.
-        self.selected = Some(node.clone());
+        // A second click on the same box lets go of it.
+        if self.graph.boxed() == Some(node) {
+            self.clear_box(cx);
+            return;
+        }
         self.graph.clear_selection();
-        // The calls list follows the box, and the page scrolls to the
-        // inspector, which opens under a graph too wide to sit beside it.
+        // The calls list follows the box, and a stacked inspector under the
+        // graph, out of view, is scrolled to.
         self.graph.set_box(Some(node.clone()));
-        self.scroll.scroll_to_bottom();
+        if self.graph.inspector_below(&self.scroll.bounds()) {
+            self.scroll.scroll_to_bottom();
+        }
         cx.notify();
     }
 
@@ -660,7 +691,6 @@ impl ScreenPanel for TopologyScreen {
         self.source = source.kube;
         if changed {
             self.loader.reset();
-            self.selected = None;
             self.graph.set_box(None);
         }
         cx.notify();

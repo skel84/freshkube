@@ -23,6 +23,8 @@ use gpui_kit::component::input::{EditorState, InputEvent};
 use gpui_kit::*;
 use history::{Ended, History};
 use results::{Grid, Item, Rows, State};
+use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -97,6 +99,13 @@ pub(crate) struct QueryView {
     least: Pixels,
     /// The plan list's scroll, kept so a plan stays where it was read.
     plan_scroll: UniformListScrollHandle,
+    /// The result tabs' scroll, which keeps the selected tab in view and
+    /// snaps to whole tabs ([`snap_tabs`]).
+    results_scroll: ScrollHandle,
+    /// Frames left to snap the tabs in, after a step or a pause in a wheel.
+    snap: Rc<Cell<u8>>,
+    /// Counts wheel events, so only the last of a burst starts a snap.
+    wheel: Rc<Cell<u32>>,
     _editor: Subscription,
 }
 
@@ -146,6 +155,9 @@ impl QueryView {
             focus: cx.focus_handle(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             plan_scroll: UniformListScrollHandle::new(),
+            results_scroll: ScrollHandle::new(),
+            snap: Rc::default(),
+            wheel: Rc::default(),
             _editor: subscription,
         }
     }
@@ -418,6 +430,9 @@ impl QueryView {
     /// Selects result `ix` and shows it.
     pub(super) fn show(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected = ix.min(self.items.len().saturating_sub(1));
+        self.results_scroll
+            .scroll_to_item(FIRST_TAB + self.selected);
+        self.snap.set(2);
         let rows = match self.items.get(self.selected).map(|item| &item.state) {
             Some(State::Rows(rows)) => Some(rows.clone()),
             _ => None,
@@ -532,4 +547,36 @@ async fn statement(
             ))
         }
     }
+}
+
+/// The scroll handle's first child is not a tab: the tabs are children
+/// `FIRST_TAB` onward.
+const FIRST_TAB: usize = 1;
+
+/// Moves the result tabs' scroll to the nearest whole tab, so none is cut
+/// at the Previous button. The scroll lands between two tabs after a wheel
+/// or a step to a tab near the end. Returns whether it moved.
+pub(super) fn snap_tabs(scroll: &ScrollHandle, tabs: usize) -> bool {
+    let view = scroll.bounds();
+    if view.size.width <= px(0.) {
+        return false;
+    }
+    // The children's bounds are those of the layout, before the scroll:
+    // a tab shows at its left plus the scroll's offset.
+    let at = scroll.offset();
+    let nearest = (0..tabs)
+        .filter_map(|ix| scroll.bounds_for_item(FIRST_TAB + ix))
+        .map(|tab| tab.left())
+        .min_by(|a, b| {
+            let (a, b) = (
+                (*a + at.x - view.left()).abs(),
+                (*b + at.x - view.left()).abs(),
+            );
+            f32::from(a).total_cmp(&f32::from(b))
+        });
+    let Some(left) = nearest.filter(|left| (*left + at.x - view.left()).abs() > px(0.5)) else {
+        return false;
+    };
+    scroll.set_offset(point(view.left() - left, at.y));
+    true
 }

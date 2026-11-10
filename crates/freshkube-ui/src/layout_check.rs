@@ -26,8 +26,6 @@ use crate::ui::dp_px;
 pub const HEADER_HEIGHT: f32 = 26.;
 pub const ROW_HEIGHT: f32 = 26.;
 pub const FOOTER_HEIGHT: f32 = 26.;
-/// The rows a stacked table keeps visible beside its inspector.
-pub const STACKED_ROWS: f32 = 3.;
 /// The header's toolbar: its row, the title as its label, and its controls.
 pub const TOOLBAR_HEIGHT: f32 = 38.;
 pub const LABEL_TEXT: f32 = 13.;
@@ -190,13 +188,14 @@ pub fn assert_inspector(
         table,
         inspector,
         title,
-        HEADER_HEIGHT + STACKED_ROWS * ROW_HEIGHT + FOOTER_HEIGHT,
+        crate::inspector::LIST_MIN_HEIGHT,
     );
 }
 
 /// [`assert_inspector`] for a page whose stacked table keeps its own least:
-/// `least` dp high at the least; the default is its header, three rows and
-/// its footer.
+/// `least` dp high at the least; the default is the Inspector's own
+/// [`LIST_MIN_HEIGHT`](crate::inspector::LIST_MIN_HEIGHT): header, three rows
+/// and footer. A selected row in the table is whole.
 pub fn assert_inspector_keeping(
     window: &mut Window,
     cx: &mut App,
@@ -247,6 +246,22 @@ pub fn assert_inspector_keeping(
             "{inspector}: the stacked table is {:?} high, under {least:?}",
             table.size.height
         );
+        // The selected row, if the table has one, is whole inside it.
+        let selected = snapshots(window).into_iter().find(|line| {
+            line.visible()
+                && line.role() == Some(Role::ListBoxOption)
+                && line.selected() == Some(true)
+                && line.bounds().left() >= table.left()
+                && line.bounds().right() <= table.right() + px(1.)
+        });
+        if let Some(row) = selected {
+            let row = row.bounds();
+            let rows_end = table.bottom() - dp_px(FOOTER_HEIGHT, window);
+            assert!(
+                row.top() >= table.top() - px(1.) && row.bottom() <= rows_end + px(1.),
+                "{inspector}: the selected row {row:?} is cut by the table {table:?}"
+            );
+        }
     }
     let pad = dp_px(PANE_PADDING, window);
     check("the title's inset", title.left() - pane.left(), pad);

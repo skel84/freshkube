@@ -7,6 +7,7 @@ use freshkube_db::wire::Encryption;
 use freshkube_ui::{level, page, palette::palette};
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::input::Editor;
 use gpui_kit::component::{
     Disableable, Selectable, Sizable,
@@ -15,6 +16,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::time::Duration;
 
 /// The editor's height, in dp: a few lines; the results get the rest.
 const EDITOR_HEIGHT: f32 = 112.;
@@ -278,9 +280,6 @@ impl QueryView {
                     }
                 }))
         };
-        // The strip starts a tab before the selected one, so the selected
-        // tab shows whole and no tab is cut at the Previous button.
-        let start = selected.saturating_sub(1);
         let previous = selected.checked_sub(1);
         let next = (selected + 1 < count).then_some(selected + 1);
         Some(
@@ -302,18 +301,51 @@ impl QueryView {
                         cx,
                     ))
                 })
-                // The tabs start at whole tabs, a tab before the selected
-                // one, so a run of fifty statements can all be reached by
-                // stepping and none is cut at the Previous button.
-                .child(
+                // The tabs scroll sideways, and the selected one is kept in
+                // view, so a run of fifty statements can all be reached. A
+                // step or a pause in the wheel snaps the strip to a whole
+                // tab ([`super::snap_tabs`]), so none is cut at Previous.
+                .child({
+                    let (snap, wheel) = (self.snap.clone(), self.wheel.clone());
+                    let (scroll, tabs) = (self.results_scroll.clone(), self.items.len());
                     h_flex()
                         .id("query-result-tabs")
                         .test_support()
                         .flex_1()
                         .min_w_0()
                         .gap(dp(4.))
-                        .overflow_x_hidden()
-                        .children(self.items.iter().enumerate().skip(start).map(|(ix, item)| {
+                        .overflow_x_scroll()
+                        .track_scroll(&self.results_scroll)
+                        .on_scroll_wheel({
+                            let snap = snap.clone();
+                            move |_, window, cx| {
+                                // Only the last wheel event of a burst snaps.
+                                let burst = wheel.get().wrapping_add(1);
+                                wheel.set(burst);
+                                let (wheel, snap) = (wheel.clone(), snap.clone());
+                                window
+                                    .spawn(cx, async move |cx| {
+                                        cx.background_executor()
+                                            .timer(Duration::from_millis(120))
+                                            .await;
+                                        if wheel.get() == burst {
+                                            snap.set(2);
+                                            cx.update(|window, _| window.refresh()).ok();
+                                        }
+                                    })
+                                    .detach();
+                            }
+                        })
+                        .on_prepaint(move |_, window, _| {
+                            let left = snap.get();
+                            if left > 0 {
+                                snap.set(left - 1);
+                                if super::snap_tabs(&scroll, tabs) || left > 1 {
+                                    window.refresh();
+                                }
+                            }
+                        })
+                        .children(self.items.iter().enumerate().map(|(ix, item)| {
                             let label = item.label.clone();
                             Button::new(SharedString::from(format!("query-result-{}", ix + 1)))
                                 .ghost()
@@ -324,8 +356,10 @@ impl QueryView {
                                 .accessibility_label(label)
                                 .selected(ix == selected)
                                 .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
-                        })),
-                )
+                        }))
+                        // Room after the last tab, so it too can sit at the start.
+                        .child(div().flex_none().w_full())
+                })
                 .when(count > 1, |this| {
                     this.child(step("query-result-next", IconName::ChevronRight, next, cx))
                         .child(

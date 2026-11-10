@@ -63,6 +63,10 @@ const MOST_KEYS_NAMED: usize = 5;
 /// The page's id prefix: `settings-title`, `-list`, `-banner`.
 const PREFIX: &str = "settings";
 /// The list's key context, around the table.
+/// The least height of the stacked table: its header and one row, with its
+/// hairlines. Settings keeps this where other pages keep three rows, so the
+/// Inspector's heading and body stay in reach at 760×560 and text size 20.
+pub(crate) const STACKED_LIST_LEAST: f32 = table::HEADER_HEIGHT + table::ROW_HEIGHT + 2.;
 pub(super) const CONTEXT: &str = "SettingsWorkspace";
 
 gpui_kit::actions!(
@@ -434,7 +438,7 @@ impl SettingsPage {
             // and scroll viewport, even at 760×560 with text size 20.
             split: InspectorSplit::new(PREFIX, cx).stacked(inspector::Stacked {
                 lead: inspector::Pane::new(inspector::STACKED_LIST_HEIGHT)
-                    .least(table::HEADER_HEIGHT + table::ROW_HEIGHT + 2.),
+                    .least(STACKED_LIST_LEAST),
                 trail: inspector::Pane::new(inspector::STACKED_HEIGHT).least(80.),
             }),
             page_scroll: ScrollHandle::new(),

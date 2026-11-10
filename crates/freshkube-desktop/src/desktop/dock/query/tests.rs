@@ -11,6 +11,7 @@ use gpui_kit::component::input::EditorState;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext, Entity, TestAppContext, WindowHandle, px, size};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{cell::RefCell, rc::Rc};
 
 struct Harness {
@@ -712,7 +713,7 @@ async fn a_run_of_fifty_statements_can_all_be_reached_one_result_at_a_time(
 }
 
 #[gpui_kit::test]
-async fn the_result_tabs_never_stop_with_the_first_one_cut_off(cx: &mut TestAppContext) {
+async fn the_result_tabs_snap_to_whole_tabs_after_a_wheel_and_a_step(cx: &mut TestAppContext) {
     let h = mount(cx, Mark::Guarded);
     let text = "select 1; ".repeat(20);
     h.type_text(&text, 0, 0..text.len(), cx);
@@ -722,35 +723,45 @@ async fn the_result_tabs_never_stop_with_the_first_one_cut_off(cx: &mut TestAppC
         !v.running() && v.items.len() == 20
     })
     .await;
+    let whole = |h: &Harness, cx: &mut TestAppContext, what: &str| {
+        cx.update_window(h.window.into(), |_, window, cx| {
+            for _ in 0..4 {
+                window.render_frame(cx);
+            }
+            let strip = window.find("query-result-tabs").bounds();
+            let mut shown = 0;
+            for ix in 1..=20 {
+                let Some(tab) = window.try_find(format!("query-result-{ix}")) else {
+                    continue;
+                };
+                let tab = tab.bounds();
+                if tab.right() > strip.left() + gpui_kit::px(1.) && tab.left() < strip.right() {
+                    shown += 1;
+                    assert!(
+                        tab.left() >= strip.left() - gpui_kit::px(1.),
+                        "{what}: tab {ix} {tab:?} is cut at the start of {strip:?}"
+                    );
+                }
+            }
+            assert!(shown > 0);
+        })
+        .unwrap();
+    };
+    // Stepping back, then a wheel by less than a tab and a pause.
     h.click("query-result-prev", cx);
     h.click("query-result-prev", cx);
+    whole(&h, cx, "after steps");
     cx.update_window(h.window.into(), |_, window, cx| {
-        // A wheel over the strip, by less than a tab.
         window.scroll(
             "query-result-tabs",
             gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(-30.), gpui_kit::px(0.))),
             cx,
         );
-        window.render_frame(cx);
-        window.render_frame(cx);
-        let strip = window.find("query-result-tabs").bounds();
-        let mut shown = 0;
-        for ix in 1..=20 {
-            let Some(tab) = window.try_find(format!("query-result-{ix}")) else {
-                continue;
-            };
-            let tab = tab.bounds();
-            if tab.right() > strip.left() && tab.left() < strip.right() {
-                shown += 1;
-                assert!(
-                    tab.left() >= strip.left() - gpui_kit::px(1.),
-                    "tab {ix} {tab:?} is cut at the start of {strip:?}"
-                );
-            }
-        }
-        assert!(shown > 0);
     })
     .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.run_until_parked();
+    whole(&h, cx, "after a wheel");
 }
 
 #[gpui_kit::test]
