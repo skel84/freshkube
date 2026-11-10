@@ -9,6 +9,7 @@ use freshkube_core::write::AccessQuestion;
 use freshkube_core::write::delete;
 use freshkube_core::write::everyday::{Everyday, Row, acts_for};
 use freshkube_ui::menu::MenuAction;
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::Disableable;
 
 /// A request to act on the selected workload, with the connection it was
@@ -215,7 +216,10 @@ impl ResourcesScreen {
                 Everyday::RunNow => MenuAction::new(label(act), RunNowSelected),
                 Everyday::Delete => MenuAction::new(label(act), DeleteSelected),
             };
-            lines.push(line.enabled(self.act_block(act).is_none()));
+            lines.push(match self.act_block(act) {
+                Some(reason) => line.refused(reason),
+                None => line,
+            });
         }
         lines
     }
@@ -263,9 +267,16 @@ impl ResourcesScreen {
                 .h(dp(ui::CONTROL_HEIGHT))
                 .label(label(act));
             let (button, fold) = match self.act_block(act) {
+                // The reason belongs to a wrapper that draws it while the
+                // pointer is over the button, so it doesn't depend on the
+                // disabled button's own hover.
                 Some(reason) => (
-                    button.disabled(true).tooltip(reason),
-                    page::disabled_item(label(act)),
+                    div()
+                        .id(header.id(&format!("{}-why", act.key())))
+                        .child(button.disabled(true))
+                        .follow_tooltip(reason.clone())
+                        .into_any_element(),
+                    page::refused_item(label(act), reason),
                 ),
                 None => {
                     let focus = &self.focus;
@@ -324,7 +335,7 @@ impl ResourcesScreen {
                         Everyday::RunNow => button.on_click(page::dispatch(RunNowSelected, focus)),
                         Everyday::Delete => button.on_click(page::dispatch(DeleteSelected, focus)),
                     };
-                    (button, fold)
+                    (button.into_any_element(), fold)
                 }
             };
             header = header.foldable(button, fold);

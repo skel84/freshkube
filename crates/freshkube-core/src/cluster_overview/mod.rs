@@ -427,8 +427,9 @@ impl ClusterOverviewCollector {
                         }
                         Err(error) => {
                             cluster.connection = ClusterConnectionStatus::Unreachable(format!(
-                                "Could not connect — {}",
-                                root_cause(&error)
+                                "Could not connect — {}{}",
+                                root_cause(&error),
+                                tried_endpoints(&context.endpoint_urls())
                             ));
                         }
                     }
@@ -889,6 +890,29 @@ fn root_cause(error: &dyn std::error::Error) -> String {
         deepest = source;
     }
     deepest.to_string()
+}
+
+/// The " (tried …)" that ends a connection failure: the endpoints it tried,
+/// as `host:port` and nothing else. The scheme, any user information, a path
+/// or a query a configured endpoint might carry is dropped, so no credential
+/// reaches the failure line.
+fn tried_endpoints(endpoint_urls: &[String]) -> String {
+    // Parsed, not cut by hand: only the host and the port come out, and an
+    // endpoint that doesn't parse names nothing, so no part of its user
+    // information can show.
+    let named: Vec<String> = endpoint_urls
+        .iter()
+        .filter_map(|endpoint| {
+            let url = url::Url::parse(endpoint).ok()?;
+            let host = url.host_str().filter(|host| !host.is_empty())?;
+            Some(format!("{host}:{}", url.port_or_known_default()?))
+        })
+        .collect();
+    if named.is_empty() {
+        String::new()
+    } else {
+        format!(" (tried {})", named.join(", "))
+    }
 }
 
 /// What one etcd member read heard.

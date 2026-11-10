@@ -54,7 +54,7 @@ mod system_services;
 mod tabs;
 mod target;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 #[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]
