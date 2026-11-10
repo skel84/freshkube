@@ -34,7 +34,16 @@ fn opened(
     cx: &mut TestAppContext,
     shape: Shape,
 ) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle, Heard) {
-    let (runtime, screen, handle) = mount(cx, Some("homelab"));
+    opened_sized(cx, shape, 1280.)
+}
+
+/// [`opened`] in a window `width` dp wide.
+fn opened_sized(
+    cx: &mut TestAppContext,
+    shape: Shape,
+    width: f32,
+) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle, Heard) {
+    let (runtime, screen, handle) = mount_sized(cx, Some("homelab"), width);
     let heard: Heard = Rc::default();
     cx.update(|cx| {
         desk(cx).update(cx, |desk, _| desk.set_example(shape));
@@ -554,4 +563,56 @@ fn safety_g22_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands(cx: &m
             .offer(&[question("web-0"), question("web-1")], cx)
     });
     assert_eq!(known, Offer::Pending);
+}
+
+#[gpui_kit::test]
+fn the_row_menu_says_why_an_action_is_refused(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, heard) = opened(cx, Shape::ActionsRefused);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    let items = row_menu(cx, handle, &screen);
+    let at = |label: &str| items.iter().position(|item| item.as_deref() == Some(label));
+    // The reason is the toolbar tooltip's, drawn right under the item.
+    assert_eq!(block(&screen, Everyday::Delete, cx), Some(reason.clone()));
+    let item = at("Delete…").expect("listed");
+    assert_eq!(items.get(item + 1), Some(&Some(reason)), "{items:?}");
+    // Still unclickable.
+    cx.update_window(handle, |_, window, cx| {
+        window.within("popup-menu").click(item, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(heard.borrow().is_empty(), "{:?}", heard.borrow());
+}
+
+#[gpui_kit::test]
+fn an_allowed_action_has_no_reason_line_in_the_row_menu(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
+    let space = namespace(&screen, cx);
+    if !matches!(space.as_str(), "shop" | "payments") {
+        return;
+    }
+    let items = row_menu(cx, handle, &screen);
+    let restart = items
+        .iter()
+        .position(|item| item.as_deref() == Some("Restart"));
+    let next = items.get(restart.unwrap() + 1).cloned().flatten();
+    assert!(
+        next.is_none_or(|text| !text.starts_with("Needs")),
+        "{items:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn the_overflow_menu_says_why_an_action_is_refused(cx: &mut TestAppContext) {
+    // Narrow enough that the toolbar's actions fold into "…".
+    let (_runtime, screen, handle, _) = opened_sized(cx, Shape::ActionsRefused, 340.);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    let items = open_menu(cx, handle, |window, cx| window.click("resource-more", cx));
+    let at = items
+        .iter()
+        .position(|item| item.as_deref() == Some("Delete…"))
+        .unwrap_or_else(|| panic!("{items:?}"));
+    assert_eq!(items.get(at + 1), Some(&Some(reason)), "{items:?}");
 }

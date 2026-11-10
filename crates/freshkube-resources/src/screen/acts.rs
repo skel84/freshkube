@@ -211,7 +211,10 @@ impl ResourcesScreen {
                 Everyday::RunNow => MenuAction::new(label(act), RunNowSelected),
                 Everyday::Delete => MenuAction::new(label(act), DeleteSelected),
             };
-            lines.push(line.enabled(self.act_block(act).is_none()));
+            lines.push(match self.act_block(act) {
+                Some(reason) => line.refused(reason),
+                None => line,
+            });
         }
         lines
     }
@@ -260,8 +263,8 @@ impl ResourcesScreen {
                 .label(label(act));
             let (button, fold) = match self.act_block(act) {
                 Some(reason) => (
-                    button.disabled(true).tooltip(reason),
-                    page::disabled_item(label(act)),
+                    button.disabled(true).tooltip(reason.clone()),
+                    page::refused_item(label(act), reason),
                 ),
                 None => {
                     let focus = &self.focus;

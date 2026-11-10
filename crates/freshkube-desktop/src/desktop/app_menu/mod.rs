@@ -281,6 +281,7 @@ fn entries(
                 enabled: available(action.as_ref()),
                 label: name,
                 action,
+                reason: None,
                 checked: checked.then_some(true),
             }),
         })

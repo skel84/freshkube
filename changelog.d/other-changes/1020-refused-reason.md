@@ -1,0 +1,1 @@
+- **A refused action says why wherever it is shown:** the row menu and the "…" overflow menu (and the change page's folded Copy Kargo link) now show the reason under a disabled action, the same words as the toolbar tooltip, and the item stays unclickable. On the change page, a button's tooltip no longer draws over its neighbour's.
