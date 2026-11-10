@@ -345,6 +345,8 @@ impl DetailPane {
 
     /// The text changed: mark the lines that differ from where it started.
     pub(super) fn edited(&mut self, cx: &mut Context<Self>) {
+        // A note from the last Review is about the text before this edit.
+        self.feedback = None;
         let mark = palette(cx).accent_soft;
         let Some(Edit {
             phase: Phase::Editing(editing),

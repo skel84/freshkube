@@ -276,7 +276,8 @@ impl ResourcesScreen {
                         .child(button.disabled(true))
                         .follow_tooltip(reason.clone())
                         .into_any_element(),
-                    page::refused_item(label(act), reason),
+                    page::Fold::from(page::refused_item(label(act), reason.clone()))
+                        .stamped(Some(reason)),
                 ),
                 None => {
                     let focus = &self.focus;
@@ -335,6 +336,7 @@ impl ResourcesScreen {
                         Everyday::RunNow => button.on_click(page::dispatch(RunNowSelected, focus)),
                         Everyday::Delete => button.on_click(page::dispatch(DeleteSelected, focus)),
                     };
+                    let fold = page::Fold::from(fold).stamped(None::<SharedString>);
                     (button.into_any_element(), fold)
                 }
             };
