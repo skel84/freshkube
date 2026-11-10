@@ -381,6 +381,7 @@ impl Render for CertificatesScreen {
         let retryable = self.source.is_some()
             && (self.display.error.is_some() || self.loader.error().is_some());
         let body = if let Some(words) = state {
+            let state_words = SharedString::from(words.clone());
             page::inset()
                 .child(
                     ui::empty_state(
@@ -397,6 +398,7 @@ impl Render for CertificatesScreen {
                     )
                     .h_auto()
                     .id("certificates-state")
+                    .aria_label(state_words)
                     .test_support(),
                 )
                 .into_any_element()

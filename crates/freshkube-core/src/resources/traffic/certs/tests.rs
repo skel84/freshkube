@@ -1625,3 +1625,27 @@ fn a_refused_secret_read_may_be_tried_again_and_a_good_one_may_not() {
     e.secret_state = SecretState::Read(SecretOutcome::NotFound);
     assert!(!e.can_read_secret() && e.secret_request().is_none());
 }
+
+#[test]
+fn a_withheld_or_managed_row_takes_no_kept_secret_facts() {
+    let now = 0;
+    let mut view = CertsView::new(&CertsRead::new(Manager::NotInstalled), now);
+    let mut open = entry(None, &["a.example.com"], None, now);
+    open.secret = "open-tls".into();
+    let mut withheld = entry(None, &["b.example.com"], None, now);
+    withheld.secret = "withheld-tls".into();
+    withheld.withheld = Some("not offered for reading".into());
+    withheld.assess(now);
+    let mut managed = entry(Some(&["c.example.com"]), &["c.example.com"], Some(1), now);
+    managed.secret = "managed-tls".into();
+    view.entries = vec![open, withheld, managed];
+    assert!(view.takes_secret("shop/open-tls"));
+    assert!(!view.takes_secret("shop/withheld-tls"));
+    assert!(!view.takes_secret("shop/managed-tls"));
+    assert!(!view.takes_secret("shop/none"));
+    view.apply_secret("shop/withheld-tls", SecretOutcome::NotFound, now);
+    assert_eq!(
+        view.entry("shop/withheld-tls").unwrap().secret_state,
+        SecretState::NotRead
+    );
+}

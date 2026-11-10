@@ -479,16 +479,24 @@ impl CertsView {
     }
 
     /// Records the outcome of a Secret the person asked to read, and works
-    /// the entry out again. A Secret a Certificate answers for is ignored.
+    /// the entry out again. A Secret a Certificate answers for, or one that
+    /// is withheld because the Certificates were not all read, is ignored.
     pub fn apply_secret(&mut self, key: &str, outcome: SecretOutcome, now: i64) {
         if let Some(entry) = self
             .entries
             .iter_mut()
-            .find(|e| e.key() == key && e.managed.is_none())
+            .find(|e| e.key() == key && e.managed.is_none() && e.withheld.is_none())
         {
             entry.secret_state = SecretState::Read(outcome);
             entry.assess(now);
         }
+    }
+
+    /// Whether a Secret read applied to `key` would show: its row is there,
+    /// no Certificate keeps it and reading it is not withheld.
+    pub fn takes_secret(&self, key: &str) -> bool {
+        self.entry(key)
+            .is_some_and(|e| e.managed.is_none() && e.withheld.is_none())
     }
 
     /// Forgets every Secret read, so each entry reads as not yet read.

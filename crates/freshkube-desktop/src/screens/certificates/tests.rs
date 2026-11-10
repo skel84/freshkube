@@ -568,10 +568,9 @@ fn when_nothing_could_be_read_the_banners_name_each_refusal_and_the_body_is_one_
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
         let state = window.find("certificates-state");
-        assert!(
-            state
-                .label()
-                .is_none_or(|l| l.contains("Nothing could be read") && !l.contains("Forbidden"))
+        assert_eq!(
+            state.label(),
+            Some("Nothing could be read. The notes above say why.")
         );
         for ix in 0..3 {
             window.find(format!("certificates-notice-{ix}"));
@@ -1072,6 +1071,30 @@ async fn safety_g23_nothing_reads_a_secret_until_the_control_is_pressed(cx: &mut
         &recorder.lines()[before..],
         ["GET /api/v1/namespaces/shop/secrets/legacy-tls"]
     );
+    // A refresh after the read applies the kept facts again and fetches no
+    // Secret: the one GET is still the only one.
+    cx.update_window(window.into(), |window, _, cx| {
+        let _ = window;
+        page.update(cx, |page, cx| page.read(cx));
+    })
+    .unwrap();
+    cx.wait_for_io(window.into(), |_, cx| !page.read(cx).loader.is_loading())
+        .await;
+    cx.run_until_parked();
+    assert_eq!(
+        secrets_in(&recorder.lines()).len(),
+        1,
+        "{:?}",
+        recorder.lines()
+    );
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(matches!(
+            entry_of(&page, "shop/legacy-tls", cx).secret_state,
+            freshkube_core::resources::traffic::certs::SecretState::Read(_)
+        ));
+    })
+    .unwrap();
     // And once: the Secret was read, so a second press has nothing to read.
     cx.update_window(window.into(), |_, window, cx| {
         window.render_frame(cx);
@@ -1080,7 +1103,12 @@ async fn safety_g23_nothing_reads_a_secret_until_the_control_is_pressed(cx: &mut
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(recorder.lines().len(), before + 1, "{:?}", recorder.lines());
+    assert_eq!(
+        secrets_in(&recorder.lines()).len(),
+        1,
+        "{:?}",
+        recorder.lines()
+    );
     // The key is nowhere on the page.
     cx.update_window(window.into(), |_, _, cx| {
         let shown = format!("{:?}", page.read(cx).view);

@@ -235,6 +235,9 @@ impl CertificatesScreen {
             .data()
             .map(|read| CertsView::new(read, self.read_at));
         if let Some(view) = &mut self.view {
+            // Only to a row that still takes it: one a Certificate now keeps,
+            // or whose reading is withheld, loses what was kept for it.
+            self.secrets.retain(|key, _| view.takes_secret(key));
             for (key, outcome) in &self.secrets {
                 view.apply_secret(key, outcome.clone(), self.read_at);
             }
