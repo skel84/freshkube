@@ -463,6 +463,14 @@ pub struct ChangePage {
     parent: Option<SharedString>,
     /// "Notify me": what the page offers to follow, when the app can.
     follow: Option<Entity<freshkube_followed::FollowMenu>>,
+    /// The app's reviews of what the person may do (#854), when a page made
+    /// them: a Stage action the cluster says no to shows disabled with the
+    /// reason. It only guides; the gate asks afresh.
+    offers: Option<Entity<freshkube_reads::OfferDesk>>,
+    /// What the reviews say of the selected Stage's actions, derived when
+    /// the selection or an answer changes, never while drawing.
+    stage_offers: Vec<(ActKind, freshkube_core::access::Offer)>,
+    _offer_watch: Option<Subscription>,
 }
 
 impl EventEmitter<ChangeEvent> for ChangePage {}
@@ -486,6 +494,10 @@ impl ChangePage {
         let view_store = crate::change_view::store(window, cx);
         let page = cx.weak_entity();
         let matrix = cx.new(|_| overview::Matrix::new(page));
+        let offers = freshkube_reads::existing_offer_desk(cx);
+        let offer_watch = offers
+            .as_ref()
+            .map(|desk| cx.observe(desk, |page, _, cx| page.offers_landed(cx)));
         let mut page = Self {
             page_link: page_link(&change),
             copied: false,
@@ -538,6 +550,9 @@ impl ChangePage {
             outcomes: outcome::Outcomes::default(),
             parent: None,
             follow: freshkube_followed::FollowMenu::create(format!("{PREFIX}-follow"), cx),
+            offers,
+            stage_offers: Vec::new(),
+            _offer_watch: offer_watch,
         };
         if visible {
             page.read(Some(window), cx);
@@ -786,6 +801,7 @@ impl ChangePage {
         self.selected = Some(row.key.clone());
         self.matrix_stale.set(true);
         self.link_selected = false;
+        self.want_stage_offers(cx);
         self.detail = self.derive_detail();
         self.offer_follows(cx);
         self.read_outcome(false, cx);

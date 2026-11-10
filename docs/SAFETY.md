@@ -189,6 +189,15 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g21_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
 - `safety_g21_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
 
+### 22. What is offered asks reviews only for the selection's actions, once the selection has rested and only while shown, and an answer never stands in for the gate
+
+- `safety_g22_only_the_selected_rows_actions_are_asked_about` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
