@@ -5,6 +5,11 @@ Checks the archive against its .sha256, extracts it, runs the executable with
 FRESHKUBE_FIRST_FRAME=1 and waits for `first frame: window after N ms` on
 stderr. Fails if the app exits, panics or stays silent until the timeout. On
 Linux, run it under a display (`xvfb-run`).
+
+A macOS .zip holds Freshkube.app. It is unpacked with `ditto` (which keeps the
+execute bit and the signature), its signature is verified, and the app is
+started from Contents/MacOS/freshkube, not through `open`, which hides the
+output and the exit code this script reads.
 """
 
 import argparse
@@ -34,7 +39,21 @@ def verify(archive):
         sys.exit(f"{archive.name}: sha256 {actual}, expected {expected}")
 
 
+def extract_app(archive, into):
+    # Python's zipfile drops the execute bit and the extended attributes a
+    # signature may rely on; `ditto` is what the packaging verified with.
+    subprocess.run(["ditto", "-x", "-k", str(archive), str(into)], check=True)
+    [app] = into.glob("*.app")
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+    executable = app / "Contents/MacOS/freshkube"
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        sys.exit(f"{app.name} has no executable Contents/MacOS/freshkube")
+    return executable
+
+
 def extract(archive, into):
+    if sys.platform == "darwin" and archive.name.endswith(".zip"):
+        return extract_app(archive, into)
     if archive.name.endswith(".tar.gz"):
         with tarfile.open(archive) as tar:
             tar.extractall(into, filter="data")
@@ -52,8 +71,9 @@ def first_frame(executable, home, timeout):
         **os.environ,
         "FRESHKUBE_FIRST_FRAME": "1",
         "RUST_BACKTRACE": "1",
-        # Preferences and caches stay in the temporary directory on Linux;
-        # Windows finds AppData through the shell, on a throwaway runner.
+        # Preferences and caches stay in the temporary directory on Linux and
+        # macOS (~/Library); Windows finds AppData through the shell, on a
+        # throwaway runner.
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / "config"),
         "XDG_DATA_HOME": str(home / "data"),
@@ -106,7 +126,7 @@ def first_frame(executable, home, timeout):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("archive", type=Path, help="Freshkube-<version>-<target>.tar.gz or .zip")
+    parser.add_argument("archive", type=Path, help="Freshkube-<version>-<target>.tar.gz or .zip (a macOS .zip holds Freshkube.app)")
     parser.add_argument("--timeout", type=int, default=120, help="seconds to wait (default 120)")
     args = parser.parse_args()
     verify(args.archive)

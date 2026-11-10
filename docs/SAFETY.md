@@ -179,9 +179,20 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g20_a_plan_never_analyzes` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_every_request_ends_rolled_back_with_its_locks_let_go_and_nothing_is_committed` (`crates/freshkube-db/src/safety.rs`)
 
+### 21. A Teleport child belongs to one explorer tab, runs only from Explore on loopback, never signs in for anyone, and carries no secret
+
+- `safety_g21_closing_the_tab_kills_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
+- `safety_g21_quitting_the_app_ends_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
+- `safety_g21_the_child_dies_with_its_proxy` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_a_proxy_that_listens_beyond_loopback_is_killed` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_not_signed_in_is_told_without_running_a_login` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).
 - Guarantee 19 has one known gap, #1005: when Talos's CNI file reads fail with text that holds "not found", `is_missing_file_error` reads them as missing files, the provider becomes none, and the `cni` check fails with the node never reached. It is listed in `KNOWN_GAPS` in the harness; the harness fails while it is listed and no longer fails, so the fix removes it.
+- Guarantee 21 has a Windows gap: the Teleport child has no parent-death watcher there (macOS and Linux have one, tested by `the_group_ends_when_the_parent_dies_without_ending_it`), so a crash or a force quit can leave `tsh proxy db` running until its Teleport certificate expires; a clean quit still ends it. A job object, as `freshkube-agent` uses for the agent, would close it.

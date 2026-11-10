@@ -1,1 +1,0 @@
-- **Page states:** Lifecycle, Security, Talos pages in Kubernetes-only mode and Notifications explain what is missing and where to go next in plain words; out-of-date cluster data names the last read time.
