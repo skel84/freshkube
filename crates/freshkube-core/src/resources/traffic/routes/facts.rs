@@ -38,7 +38,7 @@ impl Cond {
     }
 }
 
-pub(super) fn conditions(value: &Value) -> Vec<Cond> {
+pub(crate) fn conditions(value: &Value) -> Vec<Cond> {
     value
         .as_array()
         .into_iter()
@@ -59,7 +59,7 @@ pub(super) fn conditions(value: &Value) -> Vec<Cond> {
         .collect()
 }
 
-pub(super) fn find<'a>(conditions: &'a [Cond], kind: &str) -> Option<&'a Cond> {
+pub(crate) fn find<'a>(conditions: &'a [Cond], kind: &str) -> Option<&'a Cond> {
     conditions.iter().find(|c| c.kind == kind)
 }
 
@@ -364,6 +364,9 @@ pub struct Listener {
     pub kinds: Option<Vec<(String, String)>>,
     /// `tls.certificateRefs`, by name alone: no Secret is read.
     pub certificates: Vec<String>,
+    /// The same references with the namespace they name (none: the
+    /// Gateway's own), for the Certificates page (N4). Only core Secrets.
+    pub certificate_refs: Vec<(Option<String>, String)>,
 }
 
 impl Listener {
@@ -447,6 +450,16 @@ impl GatewayFacts {
                             .into_iter()
                             .flatten()
                             .filter_map(|c| opt(&c["name"]))
+                            .collect(),
+                        certificate_refs: l["tls"]["certificateRefs"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|c| {
+                                c["group"].as_str().is_none_or(str::is_empty)
+                                    && c["kind"].as_str().is_none_or(|k| k == "Secret")
+                            })
+                            .filter_map(|c| Some((opt(&c["namespace"]), opt(&c["name"])?)))
                             .collect(),
                     })
                 })

@@ -210,7 +210,7 @@ pub async fn discover(client: &Client) -> Result<(ApiState, Option<GatewayKinds>
     Ok((ApiState::Ready { mixed }, Some(kinds)))
 }
 
-async fn list_json(
+pub(crate) async fn list_json(
     client: &Client,
     kind: &ResourceKind,
     limit: u32,

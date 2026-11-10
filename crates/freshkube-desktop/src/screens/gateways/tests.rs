@@ -673,6 +673,7 @@ fn the_networking_column_lists_the_gateway_pages_under_traffic(cx: &mut TestAppC
             ("nav-gateways", "gateways-title"),
             ("nav-gateway-classes", "gateway-classes-title"),
             ("nav-topology", "topology-title"),
+            ("nav-certificates", "certificates-title"),
         ] {
             cx.update_window(window, |_, window, cx| {
                 window.render_frame(cx);

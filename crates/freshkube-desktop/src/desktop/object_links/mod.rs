@@ -1,5 +1,5 @@
 //! Relationship navigation uses the same object entry point as cards and search.
-use super::switch::LinkWork;
+use super::switch::{LinkRoute, LinkWork};
 use super::tabs::{self, OpenIn};
 use super::*;
 use crate::resources::ResourceLink;
@@ -39,6 +39,44 @@ impl Pilot {
         self.navigate_from_keyboard(Page::Observability, window, cx);
     }
 
+    /// A TLS Secret's row on the Certificates page. It navigates and selects
+    /// and reads nothing; a link made in another cluster is refused, never
+    /// opened on this one, and no cluster is switched for it.
+    fn open_certificate(
+        &mut self,
+        namespace: String,
+        name: String,
+        connection: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let object = resources::model::ObjectRef {
+            namespace: namespace.clone(),
+            name: name.clone(),
+            uid: String::new(),
+            connection,
+        };
+        match self.route_link(&object, cx) {
+            LinkRoute::Here => {}
+            LinkRoute::Refuse(message) => {
+                self.tell(message, window, cx);
+                return;
+            }
+            LinkRoute::Activate(_) => {
+                self.tell(
+                    format!("Can’t open {name}: it belongs to a cluster that isn’t shown"),
+                    window,
+                    cx,
+                );
+                return;
+            }
+        }
+        self.pages
+            .certificates
+            .update(cx, |page, cx| page.select(&namespace, &name, cx));
+        self.navigate_from_keyboard(Page::Certificates, window, cx);
+    }
+
     pub(super) fn resource_link(
         &mut self,
         intent: ResourceLink,
@@ -60,6 +98,11 @@ impl Pilot {
                 .dock
                 .update(cx, |dock, cx| dock.open_shell(request, window, cx)),
             ResourceLink::CopyLink => self.copy_link(window, cx),
+            ResourceLink::Certificate {
+                namespace,
+                name,
+                connection,
+            } => self.open_certificate(namespace, name, connection, window, cx),
             ResourceLink::Node(name, tab) => {
                 if open_in != OpenIn::Here
                     && let Some(view) = tabs::node_view(&name, tab)

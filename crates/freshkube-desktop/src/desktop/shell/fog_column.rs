@@ -41,6 +41,7 @@ impl Pilot {
                         (Page::Gateways, "Gateways"),
                         (Page::GatewayClasses, "Gateway classes"),
                         (Page::Topology, "Gateway topology"),
+                        (Page::Certificates, "Certificates"),
                     ],
                     "access-control" => &[(Page::Access, "Your access")],
                     _ => &[],

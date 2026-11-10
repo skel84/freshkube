@@ -1,6 +1,6 @@
-# Routes, Gateways and the HTTPRoute trace (#949, N2a and N2b)
+# Routes, Gateways, the HTTPRoute trace and Certificates (#949, N2a, N2b and N4)
 
-Where traffic stops on its way from a hostname to the pods behind it. The Service endpoints and the workload chain (N1) are in [resources.md](resources.md#service-endpoints-and-the-workload-traffic-chain-949-n1); this is the Gateway API half, for HTTPRoute. Everything here is read-only: lists and gets, no Secret, no write path, and a proposed fix is text to copy that nothing applies.
+Where traffic stops on its way from a hostname to the pods behind it. The Service endpoints and the workload chain (N1) are in [resources.md](resources.md#service-endpoints-and-the-workload-traffic-chain-949-n1); this is the Gateway API half, for HTTPRoute. Everything here is read-only: lists and gets, no Secret (except the Certificates page's Read Secret, on request: [guarantee 23](../SAFETY.md)), no write path, and a proposed fix is text to copy that nothing applies.
 
 Code:
 
@@ -88,6 +88,43 @@ The one read beyond N2a's is the workloads: the pods a backend Service publishes
 
 Each page reads only while shown (30 s before a shown page reads again) and drops a read in flight when it hides, like Routes. A refused Gateway list is an error with Retry on the Gateways page and Topology; the classes page still answers from its own list. `FRESHKUBE_ROUTES=gateways` shapes all three (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)).
 
+## Certificates (N4)
+
+The Certificates page (`Page::Certificates`, `FRESHKUBE_PAGE=certificates`, the Networking column's Traffic section after Topology) lists each TLS Secret a Gateway listener or an Ingress serves, plus the cert-manager Certificates nothing serves yet. A row is a Secret, `namespace/name`, read as *state — reason*, with when it expires, who serves it and where its facts came from. Read-only.
+
+Code:
+
+- `crates/freshkube-core/src/resources/traffic/certs/`, no UI types: `facts.rs` (Certificate, CertificateRequest, Order, Challenge and an Ingress's TLS, parsed from the objects as returned), `names.rs` (what a name covers), `chain.rs` (the issuance chain), `secret.rs` (the one Secret read), `view.rs` (`CertsView`, one `CertEntry` per Secret), `read.rs` (discovery and the bounded lists) and `example.rs` (the invented cluster behind `FRESHKUBE_CERTS`).
+- `crates/freshkube-desktop/src/screens/certificates/`: the page, on `freshkube_ui::page` and `table` with the shared Inspector.
+- `route_trace/` in `freshkube-resources` links a route's trace to the certificate its listener serves.
+
+Tests that prove it: `certs/tests.rs` in core (the chain's break point at each step, wrong-name hosts, the 14-day line, the key being dropped, the fake API's requests) and `screens/certificates/tests.rs`.
+
+### What a row says
+
+States, worst first (groups; a cluster where everything is valid gets a flat list): **Not valid** (expired, the Secret missing or not a certificate, or the issuance stopped at a step), **Wrong name** (a host served under the certificate that none of its names covers), **Renewal failing** (valid, but the last renewal attempt failed), **Issuing**, **Expiring** (under 14 days; exactly 14 is not), **Unknown** (the names and expiry were not read, or could not be) and **Valid**. Unknown is never green. A wrong name outranks an expiring certificate; expired outranks both.
+
+- **Hosts a listener serves** are its hostname and the hostnames of the routes attached to it, found per listener: a route's hostnames count for the listeners it fits and whose `allowedRoutes` do not refuse its namespace (the trace keeps that set, `ParentTrace::admitted`, so a sibling listener's acceptance doesn't admit it elsewhere), keeping only the hostnames that overlap the listener's and, where the route's is a wildcard at least as wide, the listener's own (a route host deeper than a `*.suffix` listener is served as itself, so a certificate for `*.suffix` reads Wrong name for it) (a route naming no host serves the listener's); an **Ingress** serves its `tls` hosts, or its rule hosts when the entry names none. A name covers a host when they are equal or the name is `*.suffix` and the host is exactly one label below it, as TLS reads a wildcard; a wildcard host is covered only by the same wildcard. Nothing is judged wrong without the names.
+- **Expiry** is counted from the moment of the read. A Certificate's own list (the Resources kind) is the server's printed table and carries no `notAfter`, so expiry is on this page only.
+
+### Where the facts come from, and the Secret
+
+Where a cert-manager Certificate keeps the Secret (its `spec.secretName`, in the same namespace), the names, issuer and dates come from the Certificate's spec and status, and **no Secret is read**: core offers no request for it, and a Secret read applied to it is ignored. With the Certificates list refused, cut or its discovery failed, no Secret is known to be unmanaged, so Read Secret is withheld and the row says why. Any other Secret reads "Secret not read" until the person presses **Read Secret** (toolbar, `R`, the row menu or the Inspector's footer; never a button on the row). That is one GET of that Secret by name. `tls.crt` is parsed in core and only its facts leave: subject, names, issuer, not-before and not-after. `tls.key`, the PEM and every other key are never in any type of the result, and the decoded values of the Secret are wiped before the read returns. The page keeps the facts in memory only. They survive the shell's automatic refreshes (the shell refreshes the shown page about every 15 s, and a result that vanished within seconds was unusable), so they can be older than the rows around them; they are dropped when the page is hidden and when the source or the access identity changes; they are in no Search, link, log or audit entry. The outcomes each have words: read, not found, no `tls.crt`, not a TLS Secret, not a certificate, or **refused** (Unknown, never "wrong"). This is [safety guarantee 23](../SAFETY.md).
+
+### cert-manager and the issuance chain
+
+cert-manager is found by discovery (`cert-manager.io`, and `acme.cert-manager.io` for Orders and Challenges). **Not installed** is said in a banner and in the empty state, never as "no certificates"; a refused discovery is "could not be read", not "not installed". For a Certificate that is not issued, is renewing, or whose last renewal attempt failed (cert-manager keeps `Ready=True` and writes `lastFailureTime`; the row reads **Renewal failing**, even when the failed retry's request is Stopped, until the certificate itself expires), the CertificateRequests, Orders and Challenges are listed too (500 each) and chained by `ownerReferences`, not by name, and only the request of the revision being issued (the one after `status.revision`) counts, so an older signed request is never picked; a Certificate that is issued reads the chain as issued and reads nothing more.
+
+The chain reads like a route's trace: Certificate → CertificateRequest → Order → Challenge, each step **Done**, **In progress**, **Stopped**, **Can't tell**, **Not reached** or **Not used**, with what cert-manager wrote. It stops at the first break and later steps read "not reached". A Challenge still pending with a reason cert-manager wrote (a failed self-check, say) is Stopped. A Certificate with no request yet is in progress at the request. An issuer that is not ACME makes no Order, so those steps read "not used". A list that was refused, cut or not served is Unknown with its reason, never "no Order". That includes a failed discovery of the ACME group, which is not read as "not ACME".
+
+### The link from a route's trace
+
+A route's Trace tab shows, on the listener the trace chose, **Open certificate ⟨secret⟩**. It is a `ResourceLink::Certificate`: the shell opens the Certificates page with that row selected, reads nothing, and refuses a link made in another cluster rather than switching to it.
+
+### Reads and lifetime
+
+Lists with limits (Ingresses 500, Certificates 500, and the Gateway API's as in Reads above). The page reads only while shown (30 s before a shown page reads again) and drops a read in flight when it hides; `FRESHKUBE_FIXTURE_HOLD=routes` holds it. A refused list is a note naming it, and when nothing could be read at all an error with Retry, never an empty list. `FRESHKUBE_CERTS` shapes the page (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)).
+
 ## Left for later
 
-Ingress (N3); certificates (N4); NetworkPolicy (N5); probes, Overview attention rows, the rail mark and Search (N6); the other route kinds and further controllers (N7); applying a ReferenceGrant (N8).
+Ingress as a page of its own, with its annotations (N3); NetworkPolicy (N5); probes, Overview attention rows, the rail mark and Search (N6); the other route kinds and further controllers (N7); applying a ReferenceGrant (N8).

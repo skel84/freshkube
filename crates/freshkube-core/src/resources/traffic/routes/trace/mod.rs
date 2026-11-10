@@ -294,6 +294,12 @@ pub struct ParentTrace {
     pub verdict: RouteVerdict,
     /// Other controllers' verdicts on this parent, not part of this one.
     pub others: Vec<OtherController>,
+    /// `(namespace, name)` of the Secrets the listener the trace chose
+    /// serves, by name alone: the Certificates page (N4) says what they are.
+    pub certificates: Vec<(String, String)>,
+    /// The listeners, by name, the route may attach to: those that fit it
+    /// and do not refuse its namespace (not the whole Gateway's verdict).
+    pub admitted: Vec<String>,
 }
 
 /// The one line a Routes row reads: where it stops and why.
@@ -368,7 +374,7 @@ pub(super) fn blame(reason: &str) -> Owner {
 }
 
 /// Wildcards as the API writes them: `*.example.com` covers any label below.
-fn hosts_overlap(a: &str, b: &str) -> bool {
+pub fn hosts_overlap(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
@@ -420,8 +426,9 @@ mod backend;
 mod parent;
 
 use backend::branches;
+pub use parent::listeners_for;
 pub(super) use parent::{Standing, class_check, class_step, gateway_step, standing};
-use parent::{listener_step, namespace_step};
+use parent::{admitted_listeners, listener_step, namespace_step};
 
 /// A parent's verdict from its shared steps and branches.
 fn parent_verdict(steps: &[TraceStep], branches: &[Branch]) -> RouteVerdict {
@@ -464,6 +471,8 @@ fn trace_parent(
             branches: Vec::new(),
             verdict: RouteVerdict::Mesh,
             others: Vec::new(),
+            certificates: Vec::new(),
+            admitted: Vec::new(),
         };
     }
     let gateway_namespace = parent.namespace_or(&route.namespace);
@@ -521,6 +530,8 @@ fn trace_parent(
                 branches: Vec::new(),
                 verdict,
                 others: Vec::new(),
+                certificates: Vec::new(),
+                admitted: Vec::new(),
             };
         }
     };
@@ -542,6 +553,29 @@ fn trace_parent(
         Vec::new()
     };
     let verdict = parent_verdict(&chain.steps, &branches);
+    // By configuration, whether or not an earlier step stopped the trace.
+    let fits: Vec<Listener> = parent::listeners_for(gateway, parent, route)
+        .into_iter()
+        .cloned()
+        .collect();
+    let admitted = admitted_listeners(gateway, &fits, route, inputs);
+    let certificates = fitting
+        .first()
+        .map(|listener| {
+            listener
+                .certificate_refs
+                .iter()
+                .map(|(namespace, name)| {
+                    (
+                        namespace
+                            .clone()
+                            .unwrap_or_else(|| gateway.namespace.clone()),
+                        name.clone(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     ParentTrace {
         parent: parent.clone(),
         label,
@@ -550,6 +584,8 @@ fn trace_parent(
         branches,
         verdict,
         others: Vec::new(),
+        certificates,
+        admitted,
     }
 }
 
