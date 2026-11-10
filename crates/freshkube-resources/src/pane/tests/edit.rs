@@ -121,9 +121,20 @@ fn edit_opens_an_editor_marks_changed_lines_and_review_hands_core_s_description_
     );
     assert!(emitted.borrow().is_empty());
 
-    type_text(cx, handle, &pane, with_label(&text));
-    // The note was about the text before the edit.
+    // A real keystroke in the editor clears it: the note was about the text
+    // before this edit (#1004).
+    cx.update_window(handle, |_, window, cx| window.input("#", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
     assert!(label(cx, handle, "detail-edit-error").is_none());
+    assert_eq!(
+        label(cx, handle, "detail-edit-count").as_deref(),
+        Some("1 line changed")
+    );
+
+    type_text(cx, handle, &pane, with_label(&text));
     assert_eq!(
         label(cx, handle, "detail-edit-count").as_deref(),
         Some("1 line changed")

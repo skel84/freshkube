@@ -13,11 +13,12 @@ use gpui_kit::component::{
     v_flex,
 };
 
-/// The tallest the banners under the fix bar grow, in dp, before they scroll.
-const NOTES_MAX_HEIGHT: f32 = 100.;
-/// The least a capped block keeps, in dp: a banner's first line, so the
-/// banners stay on the page when the trail needs the room.
-const NOTES_MIN_HEIGHT: f32 = page::CAPPED_NOTES_FLOOR;
+/// The tallest the banners under the fix bar grow, in dp, before they scroll:
+/// the block's viewport, inside its padding.
+const NOTES_MAX_HEIGHT: f32 = 88.;
+/// The least the cap asks for, in dp. The block itself never shows less than
+/// two lines (`page::capped_notes`), whatever the cap.
+const NOTES_MIN_HEIGHT: f32 = 0.;
 /// What the table keeps in view under the capped banners at rest, in dp:
 /// its header and two rows.
 const TABLE_VISIBLE: f32 = 90.;
@@ -219,6 +220,7 @@ impl ChangePage {
                 children,
                 None,
                 None,
+                window,
                 cx,
             )
         } else {
@@ -282,7 +284,9 @@ impl ChangePage {
             return most;
         }
         let top = notes.top() - self.page_scroll.offset().y;
-        let room = page.bottom() - top - freshkube_ui::ui::dp_px(TABLE_VISIBLE, window);
+        let room = page.bottom()
+            - top
+            - freshkube_ui::ui::dp_px(TABLE_VISIBLE + 2. * page::CAPPED_NOTES_PAD, window);
         let cap = room.max(least).min(most);
         if self.notes_cap_used.replace(cap) != cap {
             window.on_next_frame(|window, _| window.refresh());
