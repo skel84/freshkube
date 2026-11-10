@@ -54,7 +54,7 @@ A backend refused across namespaces proposes a ReferenceGrant for that exact pai
 
 ## Example data
 
-`FRESHKUBE_FIXTURE_HOLD=routes` keeps the page on its loading rows. `FRESHKUBE_ROUTES` (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)) shapes the page and an example route's trace: `all` (the default) shows every verdict at once. With `FRESHKUBE_KIND=httproutes.gateway.networking.k8s.io` Resources lists the example routes; a link from the page to one names it without a UID, since the example objects are listed again there under identities of their own (a cluster's link carries the route's UID). Their panes always read the full set, so every route finds its own trace, except under the shapes about the API itself (`not-installed`, `incomplete`, `mixed-bundle`, `refused`).
+`FRESHKUBE_FIXTURE_HOLD=routes` keeps the page on its loading rows. `FRESHKUBE_ROUTES` ([DEBUG_KNOBS.md](../DEBUG_KNOBS.md#freshkube_routes)) shapes the page and an example route's trace: `all` (the default) shows every verdict at once. With `FRESHKUBE_KIND=httproutes.gateway.networking.k8s.io` Resources lists the example routes; a link from the page to one names it without a UID, since the example objects are listed again there under identities of their own (a cluster's link carries the route's UID). Their panes always read the full set, so every route finds its own trace, except under the shapes about the API itself (`not-installed`, `incomplete`, `mixed-bundle`, `refused`).
 
 ## The Gateway and GatewayClass pages (N2b)
 
@@ -86,7 +86,7 @@ The one read beyond N2a's is the workloads: the pods a backend Service publishes
 
 ### Reads and lifetime
 
-Each page reads only while shown (30 s before a shown page reads again) and drops a read in flight when it hides, like Routes. A refused Gateway list is an error with Retry on the Gateways page and Topology; the classes page still answers from its own list. `FRESHKUBE_ROUTES=gateways` shapes all three (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)).
+Each page reads only while shown (30 s before a shown page reads again) and drops a read in flight when it hides, like Routes. A refused Gateway list is an error with Retry on the Gateways page and Topology; the classes page still answers from its own list. `FRESHKUBE_ROUTES=gateways` shapes all three ([DEBUG_KNOBS.md](../DEBUG_KNOBS.md#freshkube_routes)).
 
 ## Certificates (N4)
 
@@ -123,7 +123,7 @@ A route's Trace tab shows, on the listener the trace chose, **Open certificate â
 
 ### Reads and lifetime
 
-Lists with limits (Ingresses 500, Certificates 500, and the Gateway API's as in Reads above). The page reads only while shown (30 s before a shown page reads again) and drops a read in flight when it hides; `FRESHKUBE_FIXTURE_HOLD=routes` holds it. A refused list is a note naming it, and when nothing could be read at all an error with Retry, never an empty list. `FRESHKUBE_CERTS` shapes the page (the table in [AGENTS.md](../../AGENTS.md#build-run-and-test)).
+Lists with limits (Ingresses 500, Certificates 500, and the Gateway API's as in Reads above). The page reads only while shown (30 s before a shown page reads again) and drops a read in flight when it hides; `FRESHKUBE_FIXTURE_HOLD=routes` holds it. A refused list is a note naming it, and when nothing could be read at all an error with Retry, never an empty list. `FRESHKUBE_CERTS` shapes the page ([DEBUG_KNOBS.md](../DEBUG_KNOBS.md#freshkube_certs)).
 
 ## Left for later
 

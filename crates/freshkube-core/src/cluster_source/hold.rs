@@ -30,6 +30,17 @@ impl Hold {
         routes: false,
     };
 
+    /// The words `FRESHKUBE_FIXTURE_HOLD` takes.
+    pub const NAMES: [&'static str; 7] = [
+        "talos",
+        "lists",
+        "coroot",
+        "monitoring",
+        "applications",
+        "routes",
+        "all",
+    ];
+
     /// The holds a `FRESHKUBE_FIXTURE_HOLD` value names; an unknown or
     /// missing one holds nothing.
     pub fn parse(value: &str) -> Self {

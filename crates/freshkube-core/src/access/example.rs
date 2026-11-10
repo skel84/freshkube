@@ -29,6 +29,17 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// The words `FRESHKUBE_ACCESS` takes; `limited` is the default shape.
+    pub const NAMES: [&'static str; 7] = [
+        "limited",
+        "full",
+        "incomplete",
+        "failed",
+        "identity-changed",
+        "ns-refused",
+        "actions-refused",
+    ];
+
     /// An empty or unknown value is the default shape.
     pub fn parse(text: &str) -> Self {
         match text {

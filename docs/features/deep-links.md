@@ -84,7 +84,7 @@ Close, the list's Escape or opening anything else clears the card. A node the cl
 
 ## Example data
 
-`--fixture` resolves links against the example rows, so a second fixture instance can open a copied link (`--open-link`). `FRESHKUBE_LINKS` forces an outcome on every link opened (`refused`, `not-found`, `not-served`, `replaced`) or reshapes how the example clusters identify themselves (`several`, `none`, `ca-only`, `unchecked`; [AGENTS.md](../../AGENTS.md)). Each example cluster has its own invented fingerprint and CA (`deep_link/example.rs`), so a link made in one window matches another on the CA alone until that context is checked.
+`--fixture` resolves links against the example rows, so a second fixture instance can open a copied link (`--open-link`). `FRESHKUBE_LINKS` forces an outcome on every link opened (`refused`, `not-found`, `not-served`, `replaced`) or reshapes how the example clusters identify themselves (`several`, `none`, `ca-only`, `unchecked`; [DEBUG_KNOBS.md](../DEBUG_KNOBS.md#freshkube_links)). Each example cluster has its own invented fingerprint and CA (`deep_link/example.rs`), so a link made in one window matches another on the CA alone until that context is checked.
 
 ## Opening from the system
 

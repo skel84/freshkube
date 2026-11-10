@@ -108,6 +108,27 @@ impl Example {
         )
     }
 
+    /// The words `FRESHKUBE_DB_EXPLORE` takes (an empty one is `connected`).
+    pub(crate) const NAMES: [&'static str; 17] = [
+        "connected",
+        "no-secret",
+        "forward-failed",
+        "refused",
+        "timed-out",
+        "not-read-only",
+        "unverified",
+        "plain",
+        "loading",
+        "teleport",
+        "teleport-no-tsh",
+        "teleport-not-logged-in",
+        "teleport-no-role",
+        "teleport-not-found",
+        "teleport-proxy-failed",
+        "query",
+        "query-app-user",
+    ];
+
     pub(crate) fn parse(text: &str) -> Option<Self> {
         Some(match text {
             "connected" | "" => Self::Connected,

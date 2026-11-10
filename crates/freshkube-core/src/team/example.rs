@@ -25,6 +25,9 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// The words `FRESHKUBE_TEAM` takes.
+    pub const NAMES: [&'static str; 5] = ["none", "joined", "update", "trust", "failed"];
+
     pub fn parse(text: &str) -> Option<Self> {
         Some(match text {
             "none" => Self::NoTeam,

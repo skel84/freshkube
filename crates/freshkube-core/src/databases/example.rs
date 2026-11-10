@@ -377,6 +377,36 @@ pub fn coroot(at: DateTime<Utc>, shape: &str, inv: &Inventory) -> Evidence {
     Evidence { states }
 }
 
+/// The words `FRESHKUBE_DATABASES` takes, for `shaped` and the Coroot answer;
+/// anything else is the default example.
+pub const SHAPES: [&str; 25] = [
+    "not-installed",
+    "refused",
+    "unsupported",
+    "failed",
+    "empty",
+    "backup-refused",
+    "partial",
+    "old",
+    "backup-failed",
+    "no-primary",
+    "stale",
+    "no-backup",
+    "no-schedule",
+    "suspended",
+    "cert-expiring",
+    "switchover-stuck",
+    "mariadb",
+    "coroot-none",
+    "coroot-not-found",
+    "coroot-no-report",
+    "coroot-unreachable",
+    "coroot-disagree",
+    "lag-high",
+    "scheduled-only",
+    "engine-refused",
+];
+
 pub fn shaped(at: DateTime<Utc>, shape: &str) -> Inventory {
     let mut inv = inventory(at);
     match shape {

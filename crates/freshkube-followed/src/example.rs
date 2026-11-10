@@ -38,6 +38,17 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// The words `FRESHKUBE_FOLLOWS` takes.
+    pub const NAMES: [&'static str; 7] = [
+        "bell",
+        "states",
+        "quiet",
+        "hidden",
+        "full",
+        "unwatched",
+        "grouped",
+    ];
+
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value {
             "bell" => Self::Bell,
