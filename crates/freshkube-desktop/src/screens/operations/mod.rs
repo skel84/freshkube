@@ -841,6 +841,13 @@ pub(crate) struct OperationsScreen {
     focus: FocusHandle,
     _operations: Subscription,
     _protection: Subscription,
+    /// The app's reviews of what the person may do (#854). They only guide:
+    /// the run keeps its own checks.
+    offers: Entity<freshkube_reads::OfferDesk>,
+    _offers: Subscription,
+    /// What the plan needs of Kubernetes for the nodes picked, derived when
+    /// the plan changes.
+    plan_needs: Vec<freshkube_core::write::AccessQuestion>,
     /// The status bar's segment, none without a target, and the audit
     /// revision and source it was derived from.
     status: Option<(StatusKey, Option<Segment>)>,
@@ -866,6 +873,7 @@ impl OperationsScreen {
             KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
         ]);
         let operations = Operations::global(cx);
+        let offers = freshkube_reads::offer_desk(&runtime, cx);
         Self {
             runtime,
             source: None,
@@ -892,12 +900,25 @@ impl OperationsScreen {
             _operations: cx.observe(&operations, |_, _, cx| cx.notify()),
             // Review turns off at once when the cluster becomes read-only.
             _protection: cx.observe_global::<mutation::GlobalProtection>(|_, cx| cx.notify()),
+            // An answer to a review lands (#854): the plan may now say no.
+            _offers: cx.observe(&offers, |_, _, cx| cx.notify()),
+            offers,
+            plan_needs: Vec::new(),
             status: None,
         }
     }
 }
 
 impl ScreenPanel for OperationsScreen {
+    /// A hidden screen asks nothing: what the plan wanted of the cluster is
+    /// forgotten and the reviews in flight are dropped (#854).
+    fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
+        if !visible {
+            let owner = cx.entity_id();
+            self.offers.update(cx, |offers, _| offers.stop(owner));
+        }
+    }
+
     fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
         self.loading.motion(self.first_read(cx))
     }
@@ -944,6 +965,7 @@ impl ScreenPanel for OperationsScreen {
     }
 
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.want_plan(cx);
         self.ensure_preview(false, window, cx);
         if self.audit.data().is_none() && !self.audit.is_loading() {
             self.load_audit(cx);
@@ -1105,9 +1127,27 @@ impl OperationsScreen {
         }
     }
 
+    /// What the operation asks of Kubernetes for the nodes picked, asked of
+    /// the cluster for what isn't known: only the plan's, never every node's,
+    /// and only while the screen is shown (called when the plan changes or
+    /// the screen is activated, never while drawing).
+    fn want_plan(&mut self, cx: &mut Context<Self>) {
+        self.plan_needs = self
+            .selected
+            .iter()
+            .flat_map(|target| self.operation.access_needs(&target.name))
+            .collect();
+        // Always, even with nothing picked: a call replaces what was wanted.
+        let needs = self.plan_needs.clone();
+        let owner = cx.entity_id();
+        self.offers
+            .update(cx, |offers, cx| offers.want(owner, &needs, cx));
+    }
+
     /// The selection, operation or options changed.
     fn plan_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.derive_order();
+        self.want_plan(cx);
         self.notice = None;
         self.confirm_when_ready = false;
         self.ensure_preview(false, window, cx);
@@ -1198,6 +1238,17 @@ impl OperationsScreen {
         );
     }
 
+    /// Why the cluster says the plan is not allowed ("Needs patch on nodes
+    /// cluster-wide"), when it did. A review that didn't answer says nothing:
+    /// the run's own checks decide.
+    pub(super) fn access_refusal(&self, cx: &App) -> Option<String> {
+        self.offers
+            .read(cx)
+            .offer(&self.plan_needs, cx)
+            .refusal()
+            .map(str::to_owned)
+    }
+
     /// Opens the confirmation for the preview on screen, after a fresh one.
     fn review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.notice = None;
@@ -1211,6 +1262,11 @@ impl OperationsScreen {
                 "{} is running. Wait for it to finish, or cancel it from the status bar.",
                 running.label
             ));
+            cx.notify();
+            return;
+        }
+        if let Some(why) = self.access_refusal(cx) {
+            self.notice = Some(why);
             cx.notify();
             return;
         }

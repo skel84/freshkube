@@ -240,7 +240,7 @@ fn external_secret() -> Value {
         "spec": {"refreshInterval": "1h",
             "secretStoreRef": {"name": "meadow-store", "kind": "SecretStore"},
             "target": {"name": "db-creds"}},
-        "status": {"refreshTime": "2026-10-24T08:00:00Z", "conditions": [
+        "status": {"refreshTime": "2026-10-24T08:00:00Z", "syncedResourceVersion": "1-aaaa", "conditions": [
             {"type": "Ready", "status": "True", "reason": "SecretSynced",
              "message": "Secret was synced"}
         ]}
@@ -758,6 +758,10 @@ fn controllers(state: &mut State, next: &mut Value) {
     // records when.
     if next.pointer("/metadata/annotations/force-sync").is_some() {
         next["status"]["refreshTime"] = json!("2026-10-24T09:30:00Z");
+        // The generation and a hash of the labels and annotations, as the
+        // operator makes it: the annotation's value is in it.
+        let token = next["metadata"]["annotations"]["force-sync"].as_str();
+        next["status"]["syncedResourceVersion"] = json!(format!("1-{}", token.unwrap_or_default()));
     }
     let issuing = next["status"]["conditions"].as_array().is_some_and(|all| {
         all.iter()

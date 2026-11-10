@@ -189,11 +189,30 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g21_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
 - `safety_g21_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
 
-### 22. ExternalSecret Refresh sends one `force-sync` annotation, and nothing under `read-only` or when the object began to be deleted
+### 22. What is offered asks reviews only for the selection's actions, once the selection has rested and only while shown, and an answer never stands in for the gate
 
-- `safety_g22_externalsecret_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
-- `safety_g22_refresh_after_a_delete_began_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
-- `safety_g22_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g22_only_the_selected_rows_actions_are_asked_about` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
+### 23. A TLS Secret is read only on request, `tls.key` never leaves core, and no Secret is read where a Certificate's status answers
+
+The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.md](features/traffic.md#certificates-n4)). It lists and gets objects, and reads no Secret to draw its rows: where a cert-manager Certificate keeps the Secret, its names and expiry come from that Certificate's status, and core makes no request for the Secret at all. A Secret that no Certificate that was read keeps is offered for reading only when every Certificate could be read; with that list refused, cut or its discovery failed, Read Secret is withheld and the row says why. Any other Secret is read by one GET of its name, only when the person presses Read Secret, and only the parsed facts of `tls.crt` leave core (subject, names, issuer, not-before, not-after); the result type has no field for `tls.key`, for the PEM or for any other key, and the decoded values are wiped before it returns. The facts stay in the page's memory, survive the shell's automatic refreshes of the same source (they are not checked against later versions of the Secret: that would take a Secret read nobody asked for), and go with a hidden page or a change of source. A refused read is Unknown, never "wrong".
+
+- `safety_g23_tls_key_never_leaves_core` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_the_page_read_asks_for_no_secret_and_a_managed_secret_is_never_requested` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_a_secret_is_read_only_by_name_and_with_one_get` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_a_refused_or_missing_secret_is_unknown_or_not_found_never_wrong` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_nothing_reads_a_secret_until_the_control_is_pressed` (`crates/freshkube-desktop/src/screens/certificates/tests.rs`)
+
+### 24. ExternalSecret Refresh sends one `force-sync` annotation, and nothing under `read-only`, for an object the operator would not sync, or when the object moved on (a delete, a sync, a policy change)
+
+- `safety_g24_externalsecret_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
 ## Known gaps
 

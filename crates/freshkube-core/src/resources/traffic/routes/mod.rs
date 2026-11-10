@@ -13,6 +13,7 @@ mod read;
 mod topology;
 mod trace;
 
+pub(crate) use facts::conditions;
 pub use facts::{
     AllowedNamespaces, BackendRef, ClassFacts, Cond, GATEWAY_GROUP, GatewayFacts, GrantFacts,
     Listener, ListenerStatus, ParentRef, ParentStatus, RouteFacts, Rule, Selector, Tri,
@@ -22,6 +23,7 @@ pub use gateways::{
     ListenerRow, ListenerState,
 };
 pub use grant::{GrantProposal, proposal};
+pub(crate) use read::list_json;
 pub use read::{
     ApiState, BACKEND_LIMIT, CLASS_LIMIT, GATEWAY_LIMIT, GRANT_LIMIT, GatewayKinds,
     NAMESPACE_LIMIT, ROUTE_LIMIT, RouteEntry, RoutesRead, discover, read_routes,
@@ -33,7 +35,7 @@ pub use topology::{
 pub use trace::{
     BackendRead, Branch, BranchKind, BranchVerdict, Cause, Inputs, Listing, NamespaceLabels,
     OtherController, Owner, ParentTrace, RouteTrace, RouteVerdict, StepId, StepVerdict, Summary,
-    TraceStep, trace_route,
+    TraceStep, hosts_overlap, listeners_for, trace_route,
 };
 
 #[cfg(test)]

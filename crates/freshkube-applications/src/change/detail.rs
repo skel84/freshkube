@@ -45,6 +45,17 @@ pub(super) struct Detail {
 }
 
 impl Detail {
+    /// Why action button `ix` can't be pressed, and its tooltip, for the
+    /// page's tests.
+    #[cfg(test)]
+    pub(super) fn action_words(
+        &self,
+        ix: usize,
+    ) -> Option<(Option<SharedString>, Option<SharedString>)> {
+        let line = self.actions.get(ix)?;
+        Some((line.why.clone(), line.tooltip.clone()))
+    }
+
     /// The outcome banner's tone and which Settings section its button
     /// opens, for the page's tests.
     #[cfg(any(test, feature = "testing"))]

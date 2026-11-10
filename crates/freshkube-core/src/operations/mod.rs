@@ -19,6 +19,8 @@ use std::{
     time::{Duration, Instant},
 };
 use talos_rs::TalosClient;
+
+use crate::write::AccessQuestion;
 use thiserror::Error;
 
 use crate::failure::{Failure, FailureKind};
@@ -116,6 +118,37 @@ impl OperationKind {
     /// Whether taking the node down can reduce etcd quorum.
     pub const fn is_destructive(self) -> bool {
         matches!(self, Self::Reboot | Self::Shutdown)
+    }
+
+    /// What the operation asks of the Kubernetes API for `node`, as the
+    /// reviews that answer it (#854): a page asks them before it offers the
+    /// operation. Only the Kubernetes part: the Talos reboot and shutdown are
+    /// the Machine API's, not a `SelfSubjectAccessReview`'s to answer. A
+    /// drain evicts pods in every namespace, so that review names none. The
+    /// run itself keeps its own checks; this only guides.
+    pub fn access_needs(self, node: &str) -> Vec<AccessQuestion> {
+        let node_patch = AccessQuestion {
+            verb: "patch",
+            group: String::new(),
+            resource: "nodes".into(),
+            subresource: None,
+            namespace: None,
+            name: Some(node.to_owned()),
+        };
+        match self {
+            Self::Cordon | Self::Uncordon => vec![node_patch],
+            Self::Drain | Self::Reboot | Self::Shutdown => vec![
+                node_patch,
+                AccessQuestion {
+                    verb: "create",
+                    group: String::new(),
+                    resource: "pods".into(),
+                    subresource: Some("eviction".into()),
+                    namespace: None,
+                    name: None,
+                },
+            ],
+        }
     }
 }
 

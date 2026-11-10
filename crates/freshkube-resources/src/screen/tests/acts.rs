@@ -48,7 +48,7 @@ fn opened(
     (runtime, screen, handle, heard)
 }
 
-fn row_menu(
+pub(super) fn row_menu(
     cx: &mut TestAppContext,
     handle: AnyWindowHandle,
     screen: &Entity<ResourcesScreen>,

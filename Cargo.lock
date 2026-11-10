@@ -3059,6 +3059,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "http",
+ "http-body-util",
  "k8s-openapi",
  "kube",
  "serde",

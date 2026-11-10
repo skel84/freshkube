@@ -6,6 +6,7 @@ mod frozen;
 mod keys;
 mod list;
 mod menu;
+mod offers;
 mod pods;
 mod reads;
 use gpui_kit::component::Root;

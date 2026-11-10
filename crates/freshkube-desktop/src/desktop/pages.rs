@@ -23,6 +23,7 @@ pub(crate) enum Page {
     Gateways,
     GatewayClasses,
     Topology,
+    Certificates,
     Access,
     Etcd,
     SystemServices,
@@ -53,6 +54,7 @@ pub(super) enum PageId {
     Gateways,
     GatewayClasses,
     Topology,
+    Certificates,
     Access,
     Processes,
     Storage,
@@ -67,12 +69,13 @@ pub(super) enum PageId {
 
 impl PageId {
     /// The retained inspection views (Databases uses the Kubernetes source).
-    pub(super) const SCREENS: [Self; 15] = [
+    pub(super) const SCREENS: [Self; 16] = [
         Self::Databases,
         Self::Routes,
         Self::Gateways,
         Self::GatewayClasses,
         Self::Topology,
+        Self::Certificates,
         Self::Access,
         Self::Processes,
         Self::Storage,
@@ -104,9 +107,9 @@ mod tests {
         let screen = |id: PageId| match id {
             Overview | Nodes | SystemServices | Monitoring | Observability | Applications
             | Settings | Resources => false,
-            Databases | Routes | Gateways | GatewayClasses | Topology | Access | Processes
-            | Storage | Network | Diagnostics | Etcd | Health | Security | Lifecycle
-            | Operations => true,
+            Databases | Routes | Gateways | GatewayClasses | Topology | Certificates | Access
+            | Processes | Storage | Network | Diagnostics | Etcd | Health | Security
+            | Lifecycle | Operations => true,
         };
         let pages = [
             Overview,
@@ -191,9 +194,11 @@ impl Area {
             Page::Nodes => Self::Nodes,
             Page::Health => Self::Group("workloads"),
             Page::Databases => Self::Group("storage"),
-            Page::Routes | Page::Gateways | Page::GatewayClasses | Page::Topology => {
-                Self::Group("networking")
-            }
+            Page::Routes
+            | Page::Gateways
+            | Page::GatewayClasses
+            | Page::Topology
+            | Page::Certificates => Self::Group("networking"),
             Page::Access => Self::Group("access-control"),
             Page::Resources => match kind.key().as_str() {
                 "namespaces" => Self::Namespaces,
@@ -283,7 +288,7 @@ impl Area {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 19] = [
+    pub(super) const ALL: [Page; 20] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -302,6 +307,7 @@ impl Page {
         Self::Gateways,
         Self::GatewayClasses,
         Self::Topology,
+        Self::Certificates,
         Self::Access,
     ];
 
@@ -317,6 +323,7 @@ impl Page {
             Self::Gateways => PageId::Gateways,
             Self::GatewayClasses => PageId::GatewayClasses,
             Self::Topology => PageId::Topology,
+            Self::Certificates => PageId::Certificates,
             Self::Access => PageId::Access,
             Self::Etcd => PageId::Etcd,
             Self::SystemServices => PageId::SystemServices,
@@ -344,6 +351,7 @@ impl Page {
                 | Self::Gateways
                 | Self::GatewayClasses
                 | Self::Topology
+                | Self::Certificates
                 | Self::Access
                 | Self::Monitoring
                 | Self::Observability
@@ -367,6 +375,7 @@ impl Page {
             Self::Gateways => "Gateways",
             Self::GatewayClasses => "Gateway classes",
             Self::Topology => "Topology",
+            Self::Certificates => "Certificates",
             Self::Access => "Your access",
             Self::Etcd => "etcd",
             Self::SystemServices => "System services",
@@ -390,6 +399,7 @@ impl Page {
             Self::Gateways => "gateways",
             Self::GatewayClasses => "gateway-classes",
             Self::Topology => "topology",
+            Self::Certificates => "certificates",
             Self::Access => "access",
             Self::Etcd => "etcd",
             Self::SystemServices => "system-services",

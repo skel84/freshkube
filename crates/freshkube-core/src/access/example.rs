@@ -21,6 +21,11 @@ pub enum Shape {
     IdentityChanged,
     /// The namespaces can't be listed: only the context's own is reviewed.
     NsRefused,
+    /// What is offered (slice 2): every action's review is refused except
+    /// patches in `shop` and `payments` and on nodes, so a smoke shows the
+    /// reasons. The
+    /// table of Your access answers as `limited`.
+    ActionsRefused,
 }
 
 impl Shape {
@@ -32,6 +37,7 @@ impl Shape {
             "failed" => Self::Failed,
             "identity-changed" => Self::IdentityChanged,
             "ns-refused" => Self::NsRefused,
+            "actions-refused" => Self::ActionsRefused,
             _ => Self::Limited,
         }
     }
@@ -183,4 +189,29 @@ fn nodes(shape: Shape, _epoch: usize) -> Result<Cells, String> {
         note: None,
         named: Vec::new(),
     })
+}
+
+/// What the example answers to the review an action declared (#854, slice 2).
+/// Every shape allows every action, so the example pages keep what they
+/// offer, except [`Shape::ActionsRefused`] (a no for every delete and create,
+/// and for a patch outside `shop` and `payments` other than on a node, so a
+/// cordon is allowed and a drain is refused for its evictions) and
+/// [`Shape::Failed`] (no review answers, so every action says it couldn't
+/// check).
+pub fn offer_verdict(shape: Shape, question: &crate::write::AccessQuestion) -> super::Verdict {
+    use super::Verdict;
+    match shape {
+        Shape::ActionsRefused => {
+            let patches = question.verb == "patch"
+                && (question.resource == "nodes"
+                    || matches!(question.namespace.as_deref(), Some("shop" | "payments")));
+            if patches {
+                Verdict::Allowed
+            } else {
+                Verdict::Refused
+            }
+        }
+        Shape::Failed => Verdict::Failed("the review was refused: forbidden".into()),
+        _ => Verdict::Allowed,
+    }
 }
