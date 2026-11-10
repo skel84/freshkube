@@ -1268,3 +1268,116 @@ fn a_hand_back_open_waits_for_a_window_that_is_still_loading(cx: &mut TestAppCon
     tab.click("agent-trail-r1", cx);
     assert_eq!(tab.shown(cx), before, "the guard held the move");
 }
+
+/// The dock fitted to the window, in a small window at the largest text
+/// size, with the follow strip over the page: the strip takes room from the
+/// page cell, so the dock keeps to what is left and its question box and
+/// Ask stay whole above the status bar.
+#[gpui_kit::test]
+fn a_maximized_dock_keeps_ask_whole_under_the_follow_strip(cx: &mut TestAppContext) {
+    ask_stays_whole_under_the_strip(true, cx);
+}
+
+/// The same with the dock restored to its own height, which the strip's
+/// arrival must shrink at once, without waiting for another event.
+#[gpui_kit::test]
+fn a_restored_dock_keeps_ask_whole_when_the_follow_strip_arrives(cx: &mut TestAppContext) {
+    ask_stays_whole_under_the_strip(false, cx);
+}
+
+fn ask_stays_whole_under_the_strip(maximized: bool, cx: &mut TestAppContext) {
+    let tab = open(cx, "following", 760., 560.);
+    while cx
+        .update_window(tab.handle, |_, window, _| window.rem_size())
+        .unwrap()
+        < px(20.)
+    {
+        cx.update_window(tab.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("secondary-=", cx)
+        })
+        .unwrap();
+    }
+    let at = places(&tab, cx);
+    tab.read(
+        1,
+        view("pods", Some(&at.namespace), None, ViewTab::Details),
+        cx,
+    );
+    assert!(tab.present("follow-strip", cx));
+    let dock = tab.dock.clone();
+    cx.update_window(tab.handle, |_, _, cx| {
+        dock.update(cx, |dock, cx| dock.set_maximized(maximized, cx))
+    })
+    .unwrap();
+    for _ in 0..4 {
+        cx.update_window(tab.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    cx.update_window(tab.handle, |_, window, _| {
+        let status = window.find("status-bar").bounds();
+        let cell = window.find("page-cell").bounds();
+        let dock = window.find("dock").bounds();
+        let ask = window.find("agent-ask").bounds();
+        let input = window.find("agent-input").bounds();
+        assert!(
+            dock.bottom() <= cell.bottom() + px(1.),
+            "the dock {dock:?} ends inside the page cell {cell:?}"
+        );
+        assert!(
+            input.bottom() <= status.top() + px(1.) && ask.bottom() <= status.top() + px(1.),
+            "input {input:?} and Ask {ask:?} sit above the status bar {status:?}"
+        );
+        assert!(ask.size.height > px(10.) && input.size.height > px(10.));
+    })
+    .unwrap();
+}
+
+/// With view tabs over the page and the dock restored, every frame after the
+/// strip arrives keeps Ask above the status bar, not only the settled one.
+#[gpui_kit::test]
+fn the_restored_dock_never_dips_under_the_status_bar_while_the_strip_arrives(
+    cx: &mut TestAppContext,
+) {
+    let tab = super::tests::open_with(cx, "following", Some("clusters"), 760., 560.);
+    while cx
+        .update_window(tab.handle, |_, window, _| window.rem_size())
+        .unwrap()
+        < px(20.)
+    {
+        cx.update_window(tab.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("secondary-=", cx)
+        })
+        .unwrap();
+    }
+    let at = places(&tab, cx);
+    for number in 1..=3 {
+        tab.read(
+            number,
+            view("pods", Some(&at.namespace), None, ViewTab::Details),
+            cx,
+        );
+        for frame in 0..6 {
+            cx.update_window(tab.handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.simulate_next_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(tab.handle, |_, window, _| {
+                let status = window.find("status-bar").bounds();
+                let ask = window.find("agent-ask").bounds();
+                assert!(
+                    ask.bottom() <= status.top() + px(1.),
+                    "read {number}, frame {frame}: Ask {ask:?} above the status bar {status:?}"
+                );
+            })
+            .unwrap();
+        }
+    }
+}
