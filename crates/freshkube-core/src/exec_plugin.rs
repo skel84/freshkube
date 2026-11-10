@@ -229,22 +229,67 @@ pub async fn config_from_kubeconfig(
     let early = early_dirs(home.as_deref());
     if let Resolution::Missing { context, program } = try_resolve(&mut kubeconfig, options, &early)
     {
-        let login = tokio::task::spawn_blocking(|| login_dirs().map(<[PathBuf]>::to_vec))
-            .await
-            .unwrap_or_default();
-        let dirs = lookup_dirs_in(
-            home.as_deref(),
-            login.as_deref().unwrap_or_default(),
-            &std::env::var_os("PATH").unwrap_or_default(),
-        );
+        let (dirs, login_read) = full_dirs(home.as_deref()).await;
         if let Resolution::Missing { .. } = try_resolve(&mut kubeconfig, options, &dirs) {
             return Err(ConfigError::Plugin(Failure::new(
                 FailureKind::Config,
-                not_found(context.as_deref(), &program, &dirs, login.is_some()),
+                not_found(context.as_deref(), &program, &dirs, login_read),
             )));
         }
     }
     build(kubeconfig, options).await
+}
+
+/// The full list, in order: the usual places, `~/.local/bin`, the login
+/// shell's `PATH` (awaited here, off this thread) and the process's own
+/// `PATH`; and whether the login shell's `PATH` was read.
+async fn full_dirs(home: Option<&Path>) -> (Vec<PathBuf>, bool) {
+    let login = tokio::task::spawn_blocking(|| login_dirs().map(<[PathBuf]>::to_vec))
+        .await
+        .unwrap_or_default();
+    let dirs = lookup_dirs_in(
+        home,
+        login.as_deref().unwrap_or_default(),
+        &std::env::var_os("PATH").unwrap_or_default(),
+    );
+    (dirs, login.is_some())
+}
+
+/// Finds a helper program that is only a name (`tsh`) the way a kubeconfig's
+/// exec command is found: the usual install directories, `~/.local/bin`, the
+/// login shell's `PATH`, then the process's own. The login shell is awaited
+/// only when the quick places miss. Call it from async code, never the UI
+/// thread. A miss is a `Config` failure naming `subject`, the program and
+/// every place looked in; `other_fix` finishes its advice, after "Install it
+/// in one of those places" (and, where the login shell's `PATH` was read,
+/// "add its directory to your shell's PATH"): "or {other_fix}".
+pub async fn locate_program(
+    subject: &str,
+    program: &str,
+    other_fix: &str,
+) -> Result<PathBuf, Failure> {
+    let home = crate::ambient::get().home.clone();
+    if let Some(found) = find_program(program, &early_dirs(home.as_deref())) {
+        return Ok(found);
+    }
+    let (dirs, login_read) = full_dirs(home.as_deref()).await;
+    locate_in(subject, program, &dirs, login_read, other_fix)
+}
+
+/// [`locate_program`] over a fixed list of directories.
+fn locate_in(
+    subject: &str,
+    program: &str,
+    dirs: &[PathBuf],
+    login_read: bool,
+    other_fix: &str,
+) -> Result<PathBuf, Failure> {
+    find_program(program, dirs).ok_or_else(|| {
+        Failure::new(
+            FailureKind::Config,
+            not_found_for(subject, program, dirs, login_read, other_fix),
+        )
+    })
 }
 
 async fn build(
@@ -372,17 +417,37 @@ fn not_found(context: Option<&str>, program: &str, dirs: &[PathBuf], login_read:
         Some(context) => format!("Context '{context}'"),
         None => "The kubeconfig".to_owned(),
     };
+    not_found_for(
+        &subject,
+        program,
+        dirs,
+        login_read,
+        "give its absolute path as the command in the kubeconfig",
+    )
+}
+
+/// The same message for any `subject` that needs `program`; `other_fix`
+/// ends the advice ("or {other_fix}").
+fn not_found_for(
+    subject: &str,
+    program: &str,
+    dirs: &[PathBuf],
+    login_read: bool,
+    other_fix: &str,
+) -> String {
     let places: Vec<String> = dirs
         .iter()
         .map(|place| place.display().to_string())
         .collect();
     let fix = if login_read {
-        "Install it in one of those places, add its directory to your shell's PATH, \
-         or give its absolute path as the command in the kubeconfig"
+        format!(
+            "Install it in one of those places, add its directory to your shell's PATH, or {other_fix}"
+        )
     } else {
-        "The login shell's PATH could not be read, so it was not searched. \
-         Install it in one of those places, or give its absolute path as the command \
-         in the kubeconfig"
+        format!(
+            "The login shell's PATH could not be read, so it was not searched. \
+             Install it in one of those places, or {other_fix}"
+        )
     };
     format!(
         "{subject} needs the login program '{program}', which was not found in {}. {fix}",
@@ -506,6 +571,60 @@ mod tests {
             !failure.message.contains("secret-argument"),
             "arguments never reach the message"
         );
+    }
+
+    #[test]
+    fn a_helper_found_only_in_a_lookup_directory_is_returned_absolute() {
+        let root = tempfile::tempdir().unwrap();
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let place = root.path().join("place");
+        let installed = install(&place, "tsh");
+        let found = locate_in("Teleport", "tsh", &[empty, place], true, "choose its file").unwrap();
+        assert_eq!(found, installed);
+        assert!(found.is_absolute());
+    }
+
+    #[test]
+    fn a_helper_found_nowhere_names_the_program_and_every_place() {
+        let root = tempfile::tempdir().unwrap();
+        let one = root.path().join("one");
+        let two = root.path().join("two");
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        let failure = locate_in(
+            "Teleport database access",
+            "tsh",
+            &[one.clone(), two.clone()],
+            true,
+            "choose its file in the Teleport settings",
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Config);
+        assert!(
+            failure
+                .message
+                .starts_with("Teleport database access needs the login program 'tsh'")
+        );
+        assert!(failure.message.contains(one.to_str().unwrap()));
+        assert!(failure.message.contains(two.to_str().unwrap()));
+        assert!(
+            failure
+                .message
+                .contains("Install it in one of those places")
+        );
+        assert!(
+            failure
+                .message
+                .ends_with("or choose its file in the Teleport settings"),
+            "the caller's fix finishes the advice"
+        );
+        assert!(
+            !failure.message.contains("kubeconfig"),
+            "no kubeconfig advice for another program"
+        );
+        let unread = locate_in("Teleport", "tsh", &[one], false, "choose its file").unwrap_err();
+        assert!(unread.message.contains("could not be read"));
     }
 
     #[test]
