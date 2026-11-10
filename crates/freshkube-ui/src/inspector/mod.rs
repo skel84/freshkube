@@ -43,14 +43,14 @@ pub const LIST_MIN_WIDTH: f32 = 320.;
 /// short window still leaves the inspector room for a few lines.
 pub const STACKED_LIST_HEIGHT: f32 = 190.;
 pub const STACKED_HEIGHT: f32 = 380.;
-/// The least height the table keeps when stacked: its header, a group row
-/// in case one leads, one whole data row, the footer, whose legend or
+/// The least height the table keeps when stacked: its header, three whole
+/// data rows (a group row may take one of them), the footer, whose legend or
 /// counts sit under the rows, and the bare table's hairlines above and
 /// below. The hairlines are a pixel each, so as dp they fit them at the
 /// default text size and larger, and fall short by under a fifth of a
 /// pixel at 12.
 pub const LIST_MIN_HEIGHT: f32 =
-    table::HEADER_HEIGHT + 2. * table::ROW_HEIGHT + table::FOOTER_HEIGHT + 2.;
+    table::HEADER_HEIGHT + 3. * table::ROW_HEIGHT + table::FOOTER_HEIGHT + 2.;
 /// The least height the inspector keeps when stacked.
 pub const MIN_HEIGHT: f32 = 220.;
 /// How tall the split is beside the table while a short page scrolls.
