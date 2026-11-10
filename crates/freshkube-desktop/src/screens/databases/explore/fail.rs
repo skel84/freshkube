@@ -25,6 +25,9 @@ pub(crate) enum Fail {
     Untrusted(String),
     /// Teleport's route couldn't be used: one of its own states.
     Teleport(TeleportError),
+    /// `tsh` was found in none of the places a login program is looked for;
+    /// the message names them.
+    TshNotFound(String),
 }
 
 impl Fail {
@@ -76,6 +79,7 @@ impl Fail {
             Self::TimedOut => "timed-out",
             Self::Unreachable(_) => "unreachable",
             Self::NotReadOnly(_) => "not-read-only",
+            Self::TshNotFound(_) => "teleport-not-installed",
             Self::Teleport(error) => match error.slug() {
                 "bad-settings" => "teleport-bad-settings",
                 "not-installed" => "teleport-not-installed",
@@ -102,6 +106,7 @@ impl Fail {
             Self::TimedOut => "The database did not answer in time",
             Self::Unreachable(_) => "The database could not be reached",
             Self::NotReadOnly(_) => "The session could not be made read-only",
+            Self::TshNotFound(_) => "tsh is not installed",
             Self::Teleport(error) => match error {
                 TeleportError::BadSettings(_) => "The Teleport settings are not valid",
                 TeleportError::NotInstalled => "tsh is not installed",
@@ -148,6 +153,9 @@ impl Fail {
                 "{why}. Freshkube only explores through a read-only session, so it did not use this one."
             ),
             Self::Teleport(error) => teleport_words(error),
+            Self::TshNotFound(why) => format!(
+                "{why}. This database is reached through Teleport, which needs its `tsh` client. Then try again."
+            ),
         }
     }
 

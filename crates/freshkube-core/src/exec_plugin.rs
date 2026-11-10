@@ -247,6 +247,44 @@ pub async fn config_from_kubeconfig(
     build(kubeconfig, options).await
 }
 
+/// Finds a helper program that is only a name (`tsh`) the way a kubeconfig's
+/// exec command is found: the usual install directories, `~/.local/bin`, the
+/// login shell's `PATH`, then the process's own. The login shell is awaited
+/// only when the quick places miss. Call it from async code, never the UI
+/// thread. A miss is a `Config` failure naming `subject`, the program and
+/// every place looked in.
+pub async fn locate_program(subject: &str, program: &str) -> Result<PathBuf, Failure> {
+    let home = crate::ambient::get().home.clone();
+    let early = early_dirs(home.as_deref());
+    if let Some(found) = find_program(program, &early) {
+        return Ok(found);
+    }
+    let login = tokio::task::spawn_blocking(|| login_dirs().map(<[PathBuf]>::to_vec))
+        .await
+        .unwrap_or_default();
+    let dirs = lookup_dirs_in(
+        home.as_deref(),
+        login.as_deref().unwrap_or_default(),
+        &std::env::var_os("PATH").unwrap_or_default(),
+    );
+    locate_in(subject, program, &dirs, login.is_some())
+}
+
+/// [`locate_program`] over a fixed list of directories.
+fn locate_in(
+    subject: &str,
+    program: &str,
+    dirs: &[PathBuf],
+    login_read: bool,
+) -> Result<PathBuf, Failure> {
+    find_program(program, dirs).ok_or_else(|| {
+        Failure::new(
+            FailureKind::Config,
+            not_found_for(subject, program, dirs, login_read),
+        )
+    })
+}
+
 async fn build(
     kubeconfig: Kubeconfig,
     options: &KubeConfigOptions,
@@ -372,6 +410,11 @@ fn not_found(context: Option<&str>, program: &str, dirs: &[PathBuf], login_read:
         Some(context) => format!("Context '{context}'"),
         None => "The kubeconfig".to_owned(),
     };
+    not_found_for(&subject, program, dirs, login_read)
+}
+
+/// The same message for any `subject` that needs `program`.
+fn not_found_for(subject: &str, program: &str, dirs: &[PathBuf], login_read: bool) -> String {
     let places: Vec<String> = dirs
         .iter()
         .map(|place| place.display().to_string())
@@ -506,6 +549,49 @@ mod tests {
             !failure.message.contains("secret-argument"),
             "arguments never reach the message"
         );
+    }
+
+    #[test]
+    fn a_helper_found_only_in_a_lookup_directory_is_returned_absolute() {
+        let root = tempfile::tempdir().unwrap();
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        let place = root.path().join("place");
+        let installed = install(&place, "tsh");
+        let found = locate_in("Teleport", "tsh", &[empty, place], true).unwrap();
+        assert_eq!(found, installed);
+        assert!(found.is_absolute());
+    }
+
+    #[test]
+    fn a_helper_found_nowhere_names_the_program_and_every_place() {
+        let root = tempfile::tempdir().unwrap();
+        let one = root.path().join("one");
+        let two = root.path().join("two");
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        let failure = locate_in(
+            "Teleport database access",
+            "tsh",
+            &[one.clone(), two.clone()],
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Config);
+        assert!(
+            failure
+                .message
+                .starts_with("Teleport database access needs the login program 'tsh'")
+        );
+        assert!(failure.message.contains(one.to_str().unwrap()));
+        assert!(failure.message.contains(two.to_str().unwrap()));
+        assert!(
+            failure
+                .message
+                .contains("Install it in one of those places")
+        );
+        let unread = locate_in("Teleport", "tsh", &[one], false).unwrap_err();
+        assert!(unread.message.contains("could not be read"));
     }
 
     #[test]

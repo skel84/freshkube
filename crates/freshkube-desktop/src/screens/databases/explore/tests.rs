@@ -1162,3 +1162,17 @@ fn nothing_secret_is_in_teleports_words_or_debug() {
         );
     }
 }
+
+#[test]
+fn a_tsh_found_nowhere_names_the_places_and_is_its_own_state() {
+    let fail = Fail::TshNotFound(
+        "Teleport database access needs the login program 'tsh', which was not found in \
+         /opt/homebrew/bin, /usr/local/bin. Install it in one of those places"
+            .into(),
+    );
+    assert_eq!(fail.slug(), "teleport-not-installed");
+    assert_eq!(fail.title(), "tsh is not installed");
+    assert!(fail.words().contains("/opt/homebrew/bin, /usr/local/bin"));
+    assert!(fail.retry());
+    assert_eq!(fail.command(), None);
+}

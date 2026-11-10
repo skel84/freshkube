@@ -733,7 +733,18 @@ async fn connect_live(
 /// same read-only session as ever. No Secret is read and no password exists:
 /// the tunnel signs in with Teleport's certificate, which Freshkube never
 /// sees. A failure after the proxy started drops it, which kills the child.
-async fn connect_teleport(access: TeleportAccess, cluster: String) -> Result<Connected, Fail> {
+async fn connect_teleport(mut access: TeleportAccess, cluster: String) -> Result<Connected, Fail> {
+    // A person's chosen `tsh` is used as it is; else core's lookup, the one a
+    // kubeconfig's login program gets, so a Dock launch finds a Homebrew `tsh`.
+    // The explorer's child then runs this absolute path.
+    if access.tsh.is_none() {
+        let program = format!("tsh{}", std::env::consts::EXE_SUFFIX);
+        let found =
+            freshkube_core::exec_plugin::locate_program("Teleport database access", &program)
+                .await
+                .map_err(|failure| Fail::TshNotFound(failure.message))?;
+        access.tsh = Some(found);
+    }
     let proxy = Proxy::start(&access, &cluster)
         .await
         .map_err(Fail::Teleport)?;
