@@ -25,6 +25,8 @@ mod workloads;
 
 pub(crate) use access::AccessScreen;
 pub(crate) use certificates::CertificatesScreen;
+#[cfg(test)]
+pub(crate) use databases::ExploreExample;
 pub(crate) use databases::{
     CorootInput, DatabasesScreen,
     query_link::{Live, QueryRequest, Shared},

@@ -432,7 +432,7 @@ mod tests {
             ),
             (
                 "FRESHKUBE_DB_EXPLORE",
-                Some(names(&crate::screens::databases::explore::Example::NAMES)),
+                Some(names(&crate::screens::ExploreExample::NAMES)),
             ),
             ("FRESHKUBE_ETCD", Some(words(ETCDS))),
             ("FRESHKUBE_FIXTURE_HOLD", Some(names(&Hold::NAMES))),
@@ -553,9 +553,9 @@ mod tests {
         for name in team::example::Shape::NAMES {
             assert!(team::example::Shape::parse(name).is_some(), "{name}");
         }
-        for name in crate::screens::databases::explore::Example::NAMES {
+        for name in crate::screens::ExploreExample::NAMES {
             assert!(
-                crate::screens::databases::explore::Example::parse(name).is_some(),
+                crate::screens::ExploreExample::parse(name).is_some(),
                 "{name}"
             );
         }
