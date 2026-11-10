@@ -28,12 +28,25 @@ pub(super) struct Tab {
 }
 
 pub(super) fn open(cx: &mut TestAppContext, shape: &str, width: f32, height: f32) -> Tab {
+    open_with(cx, shape, None, width, height)
+}
+
+/// [`open`] with `FRESHKUBE_TABS` set, when given.
+pub(super) fn open_with(
+    cx: &mut TestAppContext,
+    shape: &str,
+    tabs: Option<&str>,
+    width: f32,
+    height: f32,
+) -> Tab {
     // The session runs on a real Tokio runtime and a real loopback socket.
     cx.executor().allow_parking();
     let (runtime, handle, pilot) = mount(
         cx,
-        GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| {
-            (name == "FRESHKUBE_AGENT").then(|| shape.into())
+        GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| match name {
+            "FRESHKUBE_AGENT" => Some(shape.into()),
+            "FRESHKUBE_TABS" => tabs.map(Into::into),
+            _ => None,
         })),
         width,
         height,

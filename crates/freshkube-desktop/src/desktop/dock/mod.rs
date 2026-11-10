@@ -517,8 +517,11 @@ impl Dock {
         if self.maximized {
             return cell;
         }
-        let room = self.open_room(window);
-        let least = self.least_height(window, cx).min(room);
+        // What the selected tab needs to show whole wins over the page's
+        // least: a cut-off question box is worse than a short page. Only
+        // the cell itself bounds it.
+        let least = self.least_height(window, cx).min(cell);
+        let room = self.open_room(window).max(least);
         // Until the user drags it, a window too short for a table page
         // gives the dock at most half the page cell, so the page keeps the
         // row the logs came from.

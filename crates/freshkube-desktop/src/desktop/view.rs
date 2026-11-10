@@ -262,13 +262,15 @@ impl Pilot {
     /// A canvas that hands `record` its laid-out bounds and, when that
     /// changes the dock's room, asks for the frame that draws the dock at
     /// the new height: a notify from prepaint marks the view dirty and no
-    /// frame follows by itself.
+    /// frame follows by itself. The dock is told as well, since it measures
+    /// its own frame in its own render.
     fn measure_cell(
         &self,
         record: impl Fn(Bounds<Pixels>) + 'static,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let room = self.pages.dock.read(cx).cell_room();
+        let dock = self.pages.dock.clone();
+        let room = dock.read(cx).cell_room();
         let pilot = cx.entity().downgrade();
         canvas(
             move |bounds, window, _| {
@@ -276,9 +278,12 @@ impl Pilot {
                 record(bounds);
                 let after = room.get();
                 if (after.0 - before.0).abs() > px(0.5) || (after.1 - before.1).abs() > px(0.5) {
-                    let pilot = pilot.clone();
+                    let (pilot, dock) = (pilot.clone(), dock.clone());
                     window.on_next_frame(move |_, cx| {
                         _ = pilot.update(cx, |_, cx| cx.notify());
+                        // The dock is a cached view that sizes its own
+                        // frame from the room: it draws again too.
+                        _ = dock.update(cx, |_, cx| cx.notify());
                     });
                 }
             },
