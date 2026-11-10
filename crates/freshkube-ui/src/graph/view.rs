@@ -294,20 +294,40 @@ fn render_inspector<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyEleme
     let footer = source.inspector_footer(selected, cx);
     let list = uniform_list(
         state.ids.connections.clone(),
-        state.visible.len(),
+        state.listed.len(),
         cx.processor(|this: &mut S, range: std::ops::Range<usize>, _, cx| {
             range
                 .map(|ix| {
                     let graph = this.graph();
-                    render_row(&graph.edges[graph.visible[ix]], graph, cx)
+                    render_row(&graph.edges[graph.listed[ix]], graph, cx)
                 })
                 .collect()
         }),
     )
     .track_scroll(&state.scroll)
-    .flex_1()
-    .min_h_0()
-    .w_full();
+    .size_full();
+    // The scrollbar is a sibling of the list, over its right edge.
+    let list = div()
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .child(list)
+        .child(
+            div()
+                .id(SharedString::from(format!(
+                    "{}-scrollbar",
+                    state.ids.connections
+                )))
+                .test_support()
+                .absolute()
+                .inset_0()
+                .child(
+                    Scrollbar::vertical(&state.scroll)
+                        .id("connections-scrollbar")
+                        .mode(ScrollbarMode::Always),
+                ),
+        );
     let content = v_flex()
         .size_full()
         .min_w_0()

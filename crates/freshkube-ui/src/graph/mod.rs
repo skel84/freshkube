@@ -324,6 +324,11 @@ pub struct GraphState<K> {
     ends: Vec<Option<(usize, usize)>>,
     /// The edges the filter keeps, in the source's order.
     visible: Vec<usize>,
+    /// The selected box, if the page selects one in the inspector.
+    boxed: Option<K>,
+    /// The edges the inspector lists: `visible`, or only the selected
+    /// box's calls. Derived in `prepare`, never while drawing.
+    listed: Vec<usize>,
     selected: Option<(K, K)>,
     page: usize,
     /// Boxes on one page.
@@ -355,6 +360,8 @@ impl<K: Clone + Ord> GraphState<K> {
             edges: Rc::default(),
             ends: vec![],
             visible: vec![],
+            boxed: None,
+            listed: vec![],
             selected: None,
             page: 0,
             per_page: PER_PAGE,
@@ -528,6 +535,20 @@ impl<K: Clone + Ord> GraphState<K> {
         self.scroll.scroll_to_item(row, strategy);
     }
 
+    /// The inspector lists only the calls of box `key`, or every call
+    /// that passes the filter for `None`.
+    pub fn set_box(&mut self, key: Option<K>) {
+        if self.boxed != key {
+            self.boxed = key;
+            self.prepare();
+        }
+    }
+
+    /// The box whose calls the inspector lists.
+    pub fn boxed(&self) -> Option<&K> {
+        self.boxed.as_ref()
+    }
+
     /// Clears the selected call when the page selects a card.
     pub fn clear_selection(&mut self) {
         self.selected = None;
@@ -571,6 +592,11 @@ impl<K: Clone + Ord> GraphState<K> {
     /// How many calls the filter keeps.
     pub fn visible_count(&self) -> usize {
         self.visible.len()
+    }
+
+    /// How many calls the inspector lists.
+    pub fn listed_count(&self) -> usize {
+        self.listed.len()
     }
 
     /// The boxes on this page with their top-left corners, in dp.
@@ -624,6 +650,15 @@ impl<K: Clone + Ord> GraphState<K> {
         {
             self.selected = None;
         }
+        self.listed = match &self.boxed {
+            Some(key) => self
+                .visible
+                .iter()
+                .copied()
+                .filter(|&ix| &self.edges[ix].from == key || &self.edges[ix].to == key)
+                .collect(),
+            None => self.visible.clone(),
+        };
         let pages = self.nodes.len().div_ceil(self.per_page).max(1);
         self.page = self.page.min(pages - 1);
         let start = self.page * self.per_page;
@@ -721,7 +756,7 @@ impl<K: Clone + Ord> GraphState<K> {
             )
             .into(),
             page_label: format!("Page {} of {}", self.page + 1, pages).into(),
-            count: format!("{} of {} {calls}", self.visible.len(), self.edges.len()).into(),
+            count: format!("{} of {} {calls}", self.listed.len(), self.edges.len()).into(),
             placed: Rc::new(placed),
             shown: Rc::new(shown),
             markers,

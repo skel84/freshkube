@@ -26,6 +26,8 @@ use crate::ui::dp_px;
 pub const HEADER_HEIGHT: f32 = 26.;
 pub const ROW_HEIGHT: f32 = 26.;
 pub const FOOTER_HEIGHT: f32 = 26.;
+/// The rows a stacked table keeps visible beside its inspector.
+pub const STACKED_ROWS: f32 = 3.;
 /// The header's toolbar: its row, the title as its label, and its controls.
 pub const TOOLBAR_HEIGHT: f32 = 38.;
 pub const LABEL_TEXT: f32 = 13.;
@@ -213,6 +215,17 @@ pub fn assert_inspector(
             "its width against the split's",
             pane.size.width,
             split.size.width,
+        );
+        // Under the table, the table keeps its header, three rows and its
+        // footer, so the selected row is whole and not the only one.
+        let least = dp_px(
+            HEADER_HEIGHT + STACKED_ROWS * ROW_HEIGHT + FOOTER_HEIGHT,
+            window,
+        );
+        assert!(
+            table.size.height >= least - px(1.),
+            "{inspector}: the stacked table is {:?} high, under {least:?} for {STACKED_ROWS} rows",
+            table.size.height
         );
     }
     let pad = dp_px(PANE_PADDING, window);

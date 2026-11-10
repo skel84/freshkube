@@ -299,15 +299,18 @@ impl QueryView {
                         cx,
                     ))
                 })
-                // The tabs scroll sideways, and the selected one is kept in
-                // view, so a run of fifty statements can all be reached.
+                // The tabs move only by whole tabs: the selected one is
+                // brought to the start of the strip, so a run of fifty
+                // statements can all be reached and none is cut at the
+                // Previous button. A wheel would stop between two tabs.
                 .child(
                     h_flex()
                         .id("query-result-tabs")
+                        .test_support()
                         .flex_1()
                         .min_w_0()
                         .gap(dp(4.))
-                        .overflow_x_scroll()
+                        .overflow_x_hidden()
                         .track_scroll(&self.results_scroll)
                         .children(self.items.iter().enumerate().map(|(ix, item)| {
                             let label = item.label.clone();

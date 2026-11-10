@@ -421,3 +421,28 @@ fn one_gateway_with_hundreds_of_routes_still_stays_under_the_box_cap() {
         assert!(topology.node(&call.from).is_some() && topology.node(&call.to).is_some());
     }
 }
+
+#[gpui_kit::test]
+fn a_selected_box_lists_its_calls_and_shows_its_detail_without_scrolling(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let all = page.read(cx).graph.listed_count();
+        page.update(cx, |page, cx| {
+            use freshkube_ui::graph::GraphSource as _;
+            page.open(&"gateway:infra/edge".to_owned(), window, cx);
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let own = page.read(cx).graph.listed_count();
+        assert!(own > 0 && own < all, "{own} of {all} calls");
+        let (viewport, detail) = (window.viewport_size(), window.find("topology-node-detail"));
+        assert!(
+            detail.bounds().bottom() <= viewport.height,
+            "the detail sits below the window: {:?} in {viewport:?}",
+            detail.bounds()
+        );
+        window.press("escape", cx);
+    })
+    .unwrap();
+}

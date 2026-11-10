@@ -712,6 +712,47 @@ async fn a_run_of_fifty_statements_can_all_be_reached_one_result_at_a_time(
 }
 
 #[gpui_kit::test]
+async fn the_result_tabs_never_stop_with_the_first_one_cut_off(cx: &mut TestAppContext) {
+    let h = mount(cx, Mark::Guarded);
+    let text = "select 1; ".repeat(20);
+    h.type_text(&text, 0, 0..text.len(), cx);
+    h.click("query-run", cx);
+    cx.wait_for_io(h.window.into(), |_, cx| {
+        let v = h.view.read(cx);
+        !v.running() && v.items.len() == 20
+    })
+    .await;
+    h.click("query-result-prev", cx);
+    h.click("query-result-prev", cx);
+    cx.update_window(h.window.into(), |_, window, cx| {
+        // A wheel over the strip, by less than a tab.
+        window.scroll(
+            "query-result-tabs",
+            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(-30.), gpui_kit::px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let strip = window.find("query-result-tabs").bounds();
+        let mut shown = 0;
+        for ix in 1..=20 {
+            let Some(tab) = window.try_find(format!("query-result-{ix}")) else {
+                continue;
+            };
+            let tab = tab.bounds();
+            if tab.right() > strip.left() && tab.left() < strip.right() {
+                shown += 1;
+                assert!(
+                    tab.left() >= strip.left() - gpui_kit::px(1.),
+                    "tab {ix} {tab:?} is cut at the start of {strip:?}"
+                );
+            }
+        }
+        assert!(shown > 0);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 async fn the_buttons_stay_where_they_are_whatever_the_status_beside_them_says(
     cx: &mut TestAppContext,
 ) {

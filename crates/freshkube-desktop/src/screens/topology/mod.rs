@@ -212,6 +212,7 @@ impl TopologyScreen {
         self.unknown = 0;
         let Some(Ok(topology)) = &self.topology else {
             self.graph.clear();
+            self.graph.set_box(None);
             self.selected = None;
             return;
         };
@@ -281,6 +282,7 @@ impl TopologyScreen {
         {
             self.selected = None;
         }
+        self.graph.set_box(self.selected.clone());
     }
 
     fn topology(&self) -> Option<&Topology> {
@@ -534,6 +536,10 @@ impl GraphSource for TopologyScreen {
         // in Resources is the footer's button.
         self.selected = Some(node.clone());
         self.graph.clear_selection();
+        // The calls list follows the box, and the page scrolls to the
+        // inspector, which opens under a graph too wide to sit beside it.
+        self.graph.set_box(Some(node.clone()));
+        self.scroll.scroll_to_bottom();
         cx.notify();
     }
 
@@ -655,6 +661,7 @@ impl ScreenPanel for TopologyScreen {
         if changed {
             self.loader.reset();
             self.selected = None;
+            self.graph.set_box(None);
         }
         cx.notify();
     }
