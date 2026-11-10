@@ -38,8 +38,14 @@ pub fn tab(
 ) -> Observed<Stateful<Div>> {
     let p = palette(cx);
     let label = label.into();
+    let id = id.into();
+    // A named tab's label has an id of its own, `<id>-label`, to be found by.
+    let label_id = match &id {
+        ElementId::Name(name) => Some(SharedString::from(format!("{name}-label"))),
+        _ => None,
+    };
     h_flex()
-        .id(id.into())
+        .id(id)
         .test_support()
         .role(Role::Tab)
         .aria_selected(active)
@@ -63,7 +69,17 @@ pub fn tab(
                     .hover(|style| style.text_color(p.ink))
             }
         })
-        .child(label)
+        // A tab given less room than its label needs ends it in an ellipsis.
+        .child(match label_id {
+            Some(id) => div()
+                .id(id)
+                .test_support()
+                .min_w_0()
+                .truncate()
+                .child(label)
+                .into_any_element(),
+            None => div().min_w_0().truncate().child(label).into_any_element(),
+        })
 }
 
 /// A tab strip's memory between frames, kept on the page's entity like an
