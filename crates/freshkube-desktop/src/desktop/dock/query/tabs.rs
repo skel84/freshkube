@@ -4,7 +4,7 @@
 //! bounds as it is drawn), never from the length of a label. A step or a
 //! change of selection reveals the selected tab; a sideways wheel moves by one
 //! whole tab per notch.
-use gpui_kit::{Bounds, Pixels, px};
+use gpui_kit::{Bounds, Pixels, ScrollDelta, px};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -63,10 +63,16 @@ impl TabFit {
         self.0.spans.borrow_mut().push((ix, bounds));
     }
 
-    /// The strip's room, noted as it is prepainted; a new width reveals the
-    /// selected tab again. Returns whether anything is left to settle.
+    /// The strip's room, noted as it is prepainted. A new width reveals the
+    /// selected tab again; a wider one starts from the first tab, so tabs
+    /// left out before `first` come back instead of leaving a gap.
     pub(super) fn set_avail(&self, width: Pixels) {
-        if self.0.avail.replace(Some(width)) != Some(width) {
+        if let Some(old) = self.0.avail.replace(Some(width))
+            && old != width
+        {
+            if width > old {
+                self.0.first.set(0);
+            }
             self.0.reveal.set(true);
         }
     }
@@ -82,7 +88,8 @@ impl TabFit {
         let find = |ix: usize| spans.iter().find(|(i, _)| *i == ix).map(|(_, b)| *b);
         let mut first = fit.first.get();
         let Some(mut origin) = find(first) else {
-            return false;
+            // `first` moved since the frame drew (a wider strip): draw it.
+            return true;
         };
         let room = avail + px(EPSILON);
         let mut moved = false;
@@ -125,12 +132,18 @@ impl TabFit {
         moved || old.is_none_or(|old| (old - clip).abs() > px(EPSILON))
     }
 
-    /// A wheel of `delta` (negative reveals later tabs) moves one whole tab
-    /// when it has gone `notch` far. Returns whether the strip moved.
-    pub(super) fn wheel(&self, delta: Pixels, notch: Pixels) -> bool {
+    /// A wheel of `delta` (negative reveals later tabs). A notch of a mouse
+    /// (`ScrollDelta::Lines`) moves one whole tab per event; pixels, as a
+    /// trackpad sends them, add up and move one when they have gone `notch`
+    /// far. Returns whether the strip moved.
+    pub(super) fn wheel(&self, delta: ScrollDelta, line: Pixels, notch: Pixels) -> bool {
         let fit = &self.0;
-        let total = fit.wheel.get() + f32::from(delta);
-        if total.abs() < f32::from(notch) {
+        let total = match delta {
+            ScrollDelta::Lines(lines) => lines.x * f32::from(line),
+            ScrollDelta::Pixels(pixels) => fit.wheel.get() + f32::from(pixels.x),
+        };
+        let step = matches!(delta, ScrollDelta::Lines(_)) && total != 0.;
+        if !step && total.abs() < f32::from(notch) {
             fit.wheel.set(total);
             return false;
         }

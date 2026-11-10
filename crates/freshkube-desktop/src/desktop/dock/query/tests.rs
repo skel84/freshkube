@@ -902,18 +902,16 @@ fn assert_tabs_whole(
     }
 }
 
-/// Draws a few frames, each followed by what the platform runs before the
-/// next, so the strip has fitted itself.
+/// What the platform runs between frames, and the draws it asks for: the
+/// strip must ask for its own redraw (`render_frame` would draw regardless).
 fn settle(h: &Harness, cx: &mut TestAppContext) {
-    cx.update_window(h.window.into(), |_, window, cx| {
-        for _ in 0..6 {
-            window.render_frame(cx);
+    for _ in 0..6 {
+        cx.update_window(h.window.into(), |_, window, cx| {
             window.simulate_next_frame(cx);
-        }
-        window.render_frame(cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
 }
 
 #[gpui_kit::test]
@@ -991,4 +989,77 @@ async fn result_tabs_stay_whole_and_keep_the_selected_one_in_view_at_a_small_win
             assert_ne!(first(cx), rest, "{}", at("the wheel moved nothing"));
         }
     }
+}
+
+async fn run_three(h: &Harness, cx: &mut TestAppContext) {
+    let sql = "select * from orders where id > 100; update orders set status = 'paid' where id = 7; select 1";
+    h.type_text(sql, 0, 0..sql.len(), cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    settle(h, cx);
+}
+
+fn use_text_size(h: &Harness, text: f32, cx: &mut TestAppContext) {
+    cx.update(|cx| crate::text_size::install(None, cx));
+    cx.update_window(h.window.into(), |_, _, cx| crate::text_size::set(text, cx))
+        .unwrap();
+}
+
+fn wheel_lines(h: &Harness, lines: f32, cx: &mut TestAppContext) {
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.scroll(
+            "query-result-tabs",
+            gpui_kit::ScrollDelta::Lines(gpui_kit::point(lines, 0.)),
+            cx,
+        );
+    })
+    .unwrap();
+    settle(h, cx);
+}
+
+#[gpui_kit::test]
+async fn one_notch_of_a_mouse_wheel_moves_one_tab_at_every_text_size(cx: &mut TestAppContext) {
+    // Widths where the three tabs don't all fit beside each other.
+    for (text, width) in [(13., 300.), (20., 420.)] {
+        let h = mount_sized(cx, Mark::Guarded, width, 560.);
+        use_text_size(&h, text, cx);
+        run_three(&h, cx).await;
+        // Back to the first result, so the strip starts at its first tab.
+        h.click("query-result-prev", cx);
+        settle(&h, cx);
+        let first = |cx: &mut TestAppContext| h.view.read_with(cx, |v, _| v.tabs.first());
+        assert_eq!(first(cx), 0, "text {text}");
+        wheel_lines(&h, -1., cx);
+        assert_eq!(first(cx), 1, "text {text}: one notch forward");
+        wheel_lines(&h, 1., cx);
+        assert_eq!(first(cx), 0, "text {text}: one notch back");
+        cx.update_window(h.window.into(), |_, window, _| {
+            assert_tabs_whole(window, 3, None, &format!("text {text} after a notch"));
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+async fn a_wider_strip_takes_back_the_tabs_left_out_before_its_first(cx: &mut TestAppContext) {
+    let h = mount_sized(cx, Mark::Guarded, 420., 560.);
+    use_text_size(&h, 20., cx);
+    run_three(&h, cx).await;
+    // The last result: the strip has stepped past the earlier tabs.
+    h.click("query-result-next", cx);
+    settle(&h, cx);
+    assert!(h.view.read_with(cx, |v, _| v.tabs.first()) > 0);
+    // Widen the window until all three fit: the strip fills from the start.
+    cx.simulate_window_resize(
+        h.window.into(),
+        gpui_kit::size(gpui_kit::px(1400.), gpui_kit::px(560.)),
+    );
+    settle(&h, cx);
+    assert_eq!(h.view.read_with(cx, |v, _| v.tabs.first()), 0);
+    cx.update_window(h.window.into(), |_, window, _| {
+        assert_tabs_whole(window, 3, Some(3), "after widening");
+        let shown = drawn_tabs(window, 3).len();
+        assert_eq!(shown, 3, "all three tabs show once they fit");
+    })
+    .unwrap();
 }

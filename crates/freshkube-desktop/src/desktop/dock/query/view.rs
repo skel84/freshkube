@@ -326,7 +326,6 @@ impl QueryView {
     /// The result tabs: whole tabs from the first shown, in a strip clipped to
     /// the last that fits, each label cut to the strip's width.
     fn render_tabs(&self, selected: usize, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
         let fit = self.tabs.clone();
         fit.begin(selected, self.items.len());
         let (avail, clip, first) = (fit.avail(), fit.clip(), fit.first());
@@ -351,12 +350,13 @@ impl QueryView {
                 });
             })
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
-                let delta = event.delta.pixel_delta(window.line_height());
-                if delta.x.abs() <= delta.y.abs() {
+                let line = window.line_height();
+                let pixels = event.delta.pixel_delta(line);
+                if pixels.x.abs() <= pixels.y.abs() {
                     return;
                 }
                 let notch = ui::dp_px(TAB_NOTCH, window);
-                if this.tabs.wheel(delta.x, notch) {
+                if this.tabs.wheel(event.delta, line, notch) {
                     cx.notify();
                 }
                 cx.stop_propagation();
@@ -372,44 +372,16 @@ impl QueryView {
                     .children(self.items.iter().enumerate().skip(first).map(|(ix, item)| {
                         let tab = fit.clone();
                         let active = ix == selected;
-                        h_flex()
-                            .id(SharedString::from(format!("query-result-{}", ix + 1)))
-                            .test_support()
-                            .role(Role::Tab)
-                            .aria_selected(active)
-                            .aria_label(item.label.clone())
-                            .flex_none()
-                            .when_some(avail, |this, avail| this.max_w(avail))
-                            .h(dp(freshkube_ui::inspector::TAB_HEIGHT))
-                            .px(dp(10.))
-                            .items_center()
-                            .cursor_pointer()
-                            .text_size(dp(12.5))
-                            .border_b_2()
-                            .map(|this| {
-                                if active {
-                                    this.border_color(p.accent)
-                                        .text_color(p.ink)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                } else {
-                                    this.border_color(gpui_kit::transparent_black())
-                                        .text_color(p.muted)
-                                        .hover(|style| style.text_color(p.ink))
-                                }
-                            })
-                            .on_prepaint(move |bounds, _, _| tab.note(ix, bounds))
-                            .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "query-result-{}-label",
-                                        ix + 1
-                                    )))
-                                    .test_support()
-                                    .min_w_0()
-                                    .truncate()
-                                    .child(item.label.clone()),
-                            )
+                        freshkube_ui::inspector::tab(
+                            SharedString::from(format!("query-result-{}", ix + 1)),
+                            item.label.clone(),
+                            active,
+                            cx,
+                        )
+                        .when_some(avail, |this, avail| this.max_w(avail))
+                        .tab_index(0)
+                        .on_prepaint(move |bounds, _, _| tab.note(ix, bounds))
+                        .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
                     })),
             )
             .into_any_element()
