@@ -13,6 +13,7 @@ use freshkube_ui::motion::Choice;
 use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
+use freshkube_core::resources::traffic::certs::example::Shape as CertsShape;
 use freshkube_core::resources::traffic::routes::example::Shape as RoutesShape;
 use freshkube_delivery::timeline::example::Shape as TimelineShape;
 use freshkube_resources::example::netpol::Shape as NetpolShape;
@@ -93,11 +94,16 @@ pub(crate) enum LinkShape {
 pub struct DebugOptions {
     /// Invented database inventory shape, parsed once with the other knobs.
     pub(crate) databases: String,
+    /// `FRESHKUBE_ACCESS`: how the example answers Your access and, as
+    /// `actions-refused` or `failed`, the reviews that decide which actions
+    /// are offered (`freshkube_core::access::example::Shape`).
     pub(crate) access: String,
     /// `FRESHKUBE_DB_EXPLORE`: how an example explorer connection ends
     /// (`connected`, `no-secret`, `forward-failed`, `refused`, `timed-out`,
-    /// `not-read-only`, `loading`); a known value also opens the first
-    /// PostgreSQL database in the explorer.
+    /// `not-read-only`, `loading`, and Teleport's `teleport`,
+    /// `teleport-no-tsh`, `teleport-not-logged-in`, `teleport-no-role`,
+    /// `teleport-not-found`, `teleport-proxy-failed`); a known value also
+    /// opens the first PostgreSQL database in the explorer.
     pub(crate) db_explore: String,
     /// `FRESHKUBE_PAGE`: a page slug or a fixture check's name.
     pub(crate) page: Option<String>,
@@ -152,6 +158,12 @@ pub struct DebugOptions {
     /// `not-installed`, `incomplete`, `mixed-bundle`, `refused`, `cut`); anything
     /// else is `all`.
     pub(crate) routes: RoutesShape,
+    /// `FRESHKUBE_CERTS`: what the Certificates page's example shows (`all`,
+    /// `healthy`, `expiring`, `wrong-name`, `stuck-order`, `stuck-challenge`,
+    /// `not-installed`, `secret-unread`, `secret-refused`, `empty`, `refused`,
+    /// `gateways-refused`);
+    /// anything else is `all`.
+    pub(crate) certs: CertsShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -267,6 +279,9 @@ impl DebugOptions {
                 .unwrap_or_default(),
             routes: text("FRESHKUBE_ROUTES")
                 .and_then(|shape| RoutesShape::parse(&shape))
+                .unwrap_or_default(),
+            certs: text("FRESHKUBE_CERTS")
+                .and_then(|shape| CertsShape::parse(&shape))
                 .unwrap_or_default(),
             metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
@@ -629,6 +644,21 @@ mod tests {
     }
 
     #[test]
+    fn certs_take_each_shape_and_fall_back_to_all() {
+        for name in CertsShape::NAMES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_CERTS", name)]).certs,
+                CertsShape::parse(name).unwrap(),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_CERTS", "bogus")]).certs,
+            CertsShape::All
+        );
+    }
+
+    #[test]
     fn timeline_takes_each_shape_and_falls_back_to_busy() {
         for name in TimelineShape::NAMES {
             assert_eq!(
@@ -821,6 +851,7 @@ mod tests {
         assert_eq!(options.services, ServicesShape::Mixed);
         assert_eq!(options.netpol, NetpolShape::Mixed);
         assert_eq!(options.routes, RoutesShape::All);
+        assert_eq!(options.certs, CertsShape::All);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }

@@ -4,6 +4,21 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.22.0 (2026-11-10)
+
+### Other changes
+
+- **Command line:** `freshkube changes <app>`, `freshkube waiting-to-ship` and `freshkube get application <app>` read an application's changes, what waits to ship and its Stages from the terminal, read-only, with `--json` and exit codes for CI; `--older-than 2d` exits 1 for a scheduled nag ([docs](docs/features/cli.md)).
+- **Delete:** the Resources page can delete any object it lists, except Namespaces, Nodes and CustomResourceDefinitions, from the row menu, the toolbar and ⌘⌫. The dialog first shows what the object owns, whether a controller or Argo CD or Flux will make it again, and its finalizers (anything it couldn't read is shown as unknown), asks for the object's name on a `protected` cluster, and counts down 5 seconds with Cancel before it sends. The result says whether the object is gone, was recreated under a new UID, or is still Terminating and held by which finalizers.
+- **Database explorer:** a **Query** button in the explorer opens a read-only query editor in the dock, on the explorer's own session. It runs the selection or the statement at the cursor with a result tab per statement and a history for the tab's life, shows a statement's plan without running it, stops a running statement with Cancel, and shows the cluster's protection level. The database refuses a write, and it is never retried ([#948](https://github.com/skel84/freshkube/issues/948)).
+- **Gateways:** the Networking column's Traffic section gains Gateways, Gateway classes and a Topology page. Each Gateway and class reads as the controller says (failed, partly serving, pending, blind, unknown or serving), with its listeners, the routes attached to it and the hosts two Gateways both name, and the topology draws address, Gateways, routes, backends and workloads. Read-only.
+- **NetworkPolicy:** a NetworkPolicy's Details say what it selects and what each direction does (not governed, denies everything, opens to everything, restricts) with its peers spelled out, and a Pod's or workload's Details list the policies that apply and what each direction comes to, default deny included. Only Kubernetes NetworkPolicy is read, and the pane says so; a refused or cut read reads unknown, never "no policy".
+- **Page states:** Lifecycle, Security, Talos pages in Kubernetes-only mode and Notifications explain what is missing and where to go next in plain words; out-of-date cluster data names the last read time.
+- **Diagnostics:** every diagnostic check is now tested with its sources down, where it must say unknown, and on a healthy fixture, where it must not fail, so a new check can't show a false failure unnoticed.
+- **Release checks:** each macOS bundle is now opened to its first window, on a clean runner, before a release can be drafted; a bundle that signs or loads wrongly stops the release.
+- **Smoke follow-ups:** the Agent tab keeps its newest answer in view unless you have scrolled up, and a followed log tab no longer takes the keyboard from Ask; a Settings section whose file is refused says its changes aren't saved and why, and the kept copy's name breaks at `-` and `.`; the status bar's status line shows all of a connection failure in a tooltip, and an unreachable server is named by host and port.
+- **Edit YAML and write dialogs:** the change page's pull request banner fits whole in a short window; Edit YAML collapses its locked list to one line and keeps a Secret's `data` out of the editable text; example data's diff reads changed fields as changed; and the write dialog's body shows its scrollbar and never cuts a diff row.
+
 ## 0.21.2 (2026-10-24)
 
 ### Other changes

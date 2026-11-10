@@ -47,7 +47,7 @@ const NODE_WIDTH: f32 = 200.;
 /// The presence column holds two glyphs and a dot, whatever the rows say.
 const PRESENCE_CHARS: usize = 15;
 
-const NO_NODES: &str = "No nodes are available from Talos or Kubernetes, so versions, time and configuration are unknown.";
+const NO_NODES: &str = "Couldn't read the node list from Talos or Kubernetes, so versions, time and configuration are unknown.";
 
 /// DESIGN.md's widths: 7.5 a character plus 24, between 64 and 280.
 fn fit(label: &str, texts: impl Iterator<Item = usize>) -> f32 {
@@ -270,6 +270,13 @@ impl TableSource for LifecycleScreen {
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
-        (self.line_count() == 0).then(|| NO_NODES.into_any_element())
+        (self.line_count() == 0).then(|| {
+            div()
+                .id("lifecycle-empty-message")
+                .test_support()
+                .aria_label(NO_NODES)
+                .child(NO_NODES)
+                .into_any_element()
+        })
     }
 }

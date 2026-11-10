@@ -122,6 +122,22 @@ fn links_name_the_gateway_and_the_service_at_the_end_of_a_branch() {
 }
 
 #[test]
+fn the_listener_a_trace_chose_links_the_certificate_it_serves() {
+    // The HTTPS listener of infra/edge names edge-tls in its own namespace.
+    assert_eq!(
+        model("web").parents[0].certificates,
+        [TraceLink::Certificate {
+            namespace: "infra".into(),
+            name: "edge-tls".into()
+        }]
+    );
+    // A plain HTTP listener serves no certificate: nothing to link.
+    assert!(model("status").parents[0].certificates.is_empty());
+    // A parent that is not a Gateway has none either.
+    assert!(model("mesh-cart").parents[0].certificates.is_empty());
+}
+
+#[test]
 fn the_text_a_frame_draws_is_derived_with_the_model() {
     let web = model("web");
     assert_eq!(web.tab_title, "Trace shop.example.com/api");

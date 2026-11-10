@@ -1,1 +1,0 @@
-- **Edit YAML and write dialogs:** the change page's pull request banner fits whole in a short window; Edit YAML collapses its locked list to one line and keeps a Secret's `data` out of the editable text; example data's diff reads changed fields as changed; and the write dialog's body shows its scrollbar and never cuts a diff row.

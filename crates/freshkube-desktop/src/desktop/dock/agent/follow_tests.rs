@@ -927,6 +927,7 @@ fn a_view_can_name_only_plain_places() {
             | LinkPage::Gateways
             | LinkPage::GatewayClasses
             | LinkPage::Topology
+            | LinkPage::Certificates
             | LinkPage::Access
             | LinkPage::Resources
             | LinkPage::Etcd

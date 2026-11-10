@@ -361,6 +361,31 @@ pub struct ActionDescription {
 }
 
 impl ActionDescription {
+    /// What the gate asks before it sends: the review of each change's verb on
+    /// its object, and of each verb a dependency names. A page that has the
+    /// description can offer the action by it, without building a review.
+    pub fn access_questions(&self) -> Vec<super::AccessQuestion> {
+        let mut questions: Vec<super::AccessQuestion> = vec![];
+        for change in &self.changes {
+            let asked = [Some(super::AccessQuestion::of(
+                &change.target,
+                change.change.verb(),
+            ))]
+            .into_iter()
+            .chain(change.depends.iter().map(|depends| {
+                depends
+                    .verb
+                    .map(|verb| super::AccessQuestion::of(&depends.target, verb))
+            }));
+            for question in asked.flatten() {
+                if !questions.contains(&question) {
+                    questions.push(question);
+                }
+            }
+        }
+        questions
+    }
+
     /// The level the action is held to: the strictest of the cluster the
     /// objects are in (`own`) and its destination's.
     pub fn level(&self, own: Protection) -> Protection {

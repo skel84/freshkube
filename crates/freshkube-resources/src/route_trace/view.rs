@@ -137,7 +137,7 @@ fn step(row: &StepRow, cx: &App) -> impl IntoElement {
 
 fn link_button(
     id: SharedString,
-    label: &'static str,
+    label: impl Into<SharedString>,
     link: Option<&TraceLink>,
     on_link: &Option<OnLink>,
 ) -> Option<Button> {
@@ -218,7 +218,24 @@ fn parent(row: &ParentRow, on_link: &Option<OnLink>, cx: &App) -> impl IntoEleme
                     "Open Gateway",
                     row.gateway.as_ref(),
                     on_link,
-                )),
+                ))
+                .children(
+                    row.certificates
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, link)| {
+                            let TraceLink::Certificate { name, .. } = link else {
+                                return None;
+                            };
+                            link_button(
+                                format!("{}-certificate-{ix}", row.id).into(),
+                                // The Secret's name, so two certificates read apart.
+                                format!("Open Certificate {name}"),
+                                Some(link),
+                                on_link,
+                            )
+                        }),
+                ),
         )
         .children(row.steps.iter().map(|row| step(row, cx)))
         .children(row.others.iter().enumerate().map(|(ix, other)| {

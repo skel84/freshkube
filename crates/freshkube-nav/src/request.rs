@@ -12,6 +12,13 @@ pub enum ResourceLink {
         object: ObjectRef,
     },
     Node(String, NodeTab),
+    /// A TLS Secret's row on the Certificates page (#949, N4): navigates and
+    /// selects, and reads nothing.
+    Certificate {
+        namespace: String,
+        name: String,
+        connection: Option<String>,
+    },
     /// An object's logs, which open in the dock.
     Logs(LogsRequest),
     /// A shell in a pod's container, which starts in a dock tab: the
