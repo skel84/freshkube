@@ -545,3 +545,50 @@ fn the_measured_chip_width_matches_the_chip_as_drawn(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_folded_copy_kargo_link_says_why_it_is_greyed_out(cx: &mut TestAppContext) {
+    // Narrow, so the header's controls fold into "…".
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
+    let reason = "the cluster records no address for Kargo";
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let mut change = page.read(cx).change.clone();
+        change.page = Err(reason.into());
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        window.render_frame(cx);
+        window.click("change-more", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let items: Vec<Option<String>> = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let menu = window.within("popup-menu");
+            (0usize..)
+                .map_while(|ix| menu.try_find(ix))
+                .map(|item| item.label().map(str::to_owned))
+                .collect()
+        })
+        .unwrap();
+    let at = items
+        .iter()
+        .position(|item| item.as_deref() == Some("Copy Kargo link"))
+        .unwrap_or_else(|| panic!("{items:?}"));
+    // Its reason is the tooltip's words, in a line right under it, and the
+    // item does nothing.
+    assert_eq!(
+        items.get(at + 1),
+        Some(&Some(reason.to_owned())),
+        "{items:?}"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.within("popup-menu").click(at, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(
+        cx.read_from_clipboard()
+            .is_none_or(|item| item.text().is_none_or(|t| !t.contains("kargo")))
+    );
+}
