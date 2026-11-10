@@ -23,8 +23,6 @@ use gpui_kit::component::input::{EditorState, InputEvent};
 use gpui_kit::*;
 use history::{Ended, History};
 use results::{Grid, Item, Rows, State};
-use std::cell::Cell;
-use std::rc::Rc;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -99,11 +97,8 @@ pub(crate) struct QueryView {
     least: Pixels,
     /// The plan list's scroll, kept so a plan stays where it was read.
     plan_scroll: UniformListScrollHandle,
-    /// The result tabs' scroll, which keeps the selected tab in view and
-    /// snaps to whole tabs ([`snap_tabs`]).
+    /// The result tabs' scroll, which keeps the selected tab in view.
     results_scroll: ScrollHandle,
-    /// How the tabs are fitted and snapped ([`TabsSnap`]).
-    tabs_snap: Rc<TabsSnap>,
     _editor: Subscription,
 }
 
@@ -154,7 +149,6 @@ impl QueryView {
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             plan_scroll: UniformListScrollHandle::new(),
             results_scroll: ScrollHandle::new(),
-            tabs_snap: Rc::default(),
             _editor: subscription,
         }
     }
@@ -427,9 +421,7 @@ impl QueryView {
     /// Selects result `ix` and shows it.
     pub(super) fn show(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected = ix.min(self.items.len().saturating_sub(1));
-        self.results_scroll
-            .scroll_to_item(FIRST_TAB + self.selected);
-        self.tabs_snap.arm(false);
+        self.results_scroll.scroll_to_item(self.selected);
         let rows = match self.items.get(self.selected).map(|item| &item.state) {
             Some(State::Rows(rows)) => Some(rows.clone()),
             _ => None,
@@ -544,116 +536,4 @@ async fn statement(
             ))
         }
     }
-}
-
-/// The scroll handle's first child is not a tab: the tabs are children
-/// `FIRST_TAB` onward.
-const FIRST_TAB: usize = 1;
-
-/// What the result tabs keep to fit and snap themselves, shared with the
-/// strip's closures.
-#[derive(Default)]
-pub(super) struct TabsSnap {
-    /// Frames left to snap the tabs in, after a step, a pause in a wheel or
-    /// a change of room. Each snap that moves something asks for more.
-    pub(super) frames: Cell<u8>,
-    /// The way a wheel moved the strip, once it paused: -1, 0 or 1.
-    pub(super) dir: Cell<i8>,
-    /// The wheel moved the strip, so it needn't show the selected tab until
-    /// a step or a new room.
-    pub(super) free: Cell<bool>,
-    /// The room the strip has, and the width of the whole tabs that fit in it.
-    pub(super) avail: Cell<Pixels>,
-    pub(super) fit: Cell<Option<Pixels>>,
-    /// Counts wheel events, so only the last of a burst snaps, and how far
-    /// they went sideways.
-    pub(super) burst: Cell<u32>,
-    pub(super) travel: Cell<f32>,
-}
-
-impl TabsSnap {
-    const FRAMES: u8 = 6;
-
-    /// Asks for the tabs to be fitted on the next frames; `free` keeps the
-    /// strip where a wheel left it.
-    pub(super) fn arm(&self, free: bool) {
-        self.free.set(free);
-        self.frames.set(Self::FRAMES);
-    }
-}
-
-/// Fits the result tabs and snaps their scroll to whole tabs, so none is cut
-/// at the Previous or the Next button. The strip starts at the tab nearest
-/// its start (the next one in the direction of a wheel, `snap.dir`), moved
-/// to show the `selected` tab unless a wheel left it free; the strip is as
-/// wide as the whole tabs that fit from there (`snap.fit`); a tab wider than
-/// the room is cut by its own ellipsis, where it is drawn. Returns whether
-/// anything moved.
-pub(super) fn snap_tabs(
-    scroll: &ScrollHandle,
-    tabs: usize,
-    selected: usize,
-    snap: &TabsSnap,
-) -> bool {
-    let (view, avail) = (scroll.bounds(), snap.avail.get());
-    if view.size.width <= px(0.) || avail <= px(0.) || tabs == 0 {
-        return false;
-    }
-    // The children's bounds are those of the layout, before the scroll:
-    // a tab shows at its left plus the scroll's offset.
-    let at = scroll.offset();
-    let tab = |ix: usize| scroll.bounds_for_item(FIRST_TAB + ix);
-    let shown = |ix: usize| tab(ix).map(|tab| tab.left() + at.x - view.left());
-    let dir = snap.dir.replace(0);
-    let mut k = if dir != 0 {
-        let from = |ix: &usize| shown(*ix);
-        if dir > 0 {
-            (0..tabs)
-                .find(|ix| from(ix).is_some_and(|left| left >= px(-0.5)))
-                .unwrap_or(tabs - 1)
-        } else {
-            (0..tabs)
-                .rev()
-                .find(|ix| from(ix).is_some_and(|left| left <= px(0.5)))
-                .unwrap_or(0)
-        }
-    } else {
-        (0..tabs)
-            .filter_map(|ix| Some((ix, shown(ix)?.abs())))
-            .min_by(|a, b| f32::from(a.1).total_cmp(&f32::from(b.1)))
-            .map_or(0, |(ix, _)| ix)
-    };
-    if !snap.free.get()
-        && dir == 0
-        && let Some(last) = tab(selected)
-    {
-        // The selected tab shows: the strip starts at it or before, with
-        // the tabs between whole in the room.
-        k = k.min(selected);
-        while k < selected && tab(k).is_some_and(|first| last.right() - first.left() > avail) {
-            k += 1;
-        }
-    }
-    let Some(first) = tab(k) else {
-        return false;
-    };
-    let mut changed = false;
-    if shown(k).is_some_and(|left| left.abs() > px(0.5)) {
-        scroll.set_offset(point(view.left() - first.left(), at.y));
-        changed = true;
-    }
-    let mut fitted = first.size.width.min(avail);
-    for ix in k + 1..tabs {
-        match tab(ix) {
-            Some(next) if next.right() - first.left() <= avail => {
-                fitted = next.right() - first.left();
-            }
-            _ => break,
-        }
-    }
-    if snap.fit.get() != Some(fitted) {
-        snap.fit.set(Some(fitted));
-        changed = true;
-    }
-    changed
 }

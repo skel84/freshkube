@@ -7,7 +7,6 @@ use freshkube_db::wire::Encryption;
 use freshkube_ui::{level, page, palette::palette};
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
-use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::input::Editor;
 use gpui_kit::component::{
     Disableable, Selectable, Sizable,
@@ -16,7 +15,6 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::time::Duration;
 
 /// The editor's height, in dp: a few lines; the results get the rest.
 const EDITOR_HEIGHT: f32 = 112.;
@@ -302,71 +300,15 @@ impl QueryView {
                     ))
                 })
                 // The tabs scroll sideways, and the selected one is kept in
-                // view, so a run of fifty statements can all be reached. A
-                // step or a pause in the wheel snaps the strip to a whole
-                // tab ([`super::snap_tabs`]), so none is cut at Previous.
-                .child({
-                    let snap = self.tabs_snap.clone();
-                    let (scroll, tabs) = (self.results_scroll.clone(), self.items.len());
-                    let (width, room) = (snap.fit.get(), snap.avail.get());
-                    // A tab wider than the room is cut by an ellipsis of its own.
-                    let label_width = (room > px(0.)).then(|| room - px(40.));
-                    let tabs_row = h_flex()
+                // view, so a run of fifty statements can all be reached.
+                .child(
+                    h_flex()
                         .id("query-result-tabs")
-                        .test_support()
-                        // The whole tabs that fit, once known: none is cut at
-                        // either end.
-                        .map(|this| match width {
-                            Some(fit) => this.flex_none().w(fit).max_w_full(),
-                            None => this.w_full(),
-                        })
+                        .flex_1()
+                        .min_w_0()
                         .gap(dp(4.))
                         .overflow_x_scroll()
                         .track_scroll(&self.results_scroll)
-                        .on_scroll_wheel({
-                            let snap = snap.clone();
-                            move |event: &ScrollWheelEvent, window, cx| {
-                                // Only the last wheel event of a burst snaps,
-                                // to the tab the burst was heading for.
-                                let burst = snap.burst.get().wrapping_add(1);
-                                snap.burst.set(burst);
-                                let sideways = f32::from(event.delta.pixel_delta(px(16.)).x);
-                                snap.travel.set(snap.travel.get() + sideways);
-                                let snap = snap.clone();
-                                window
-                                    .spawn(cx, async move |cx| {
-                                        cx.background_executor()
-                                            .timer(Duration::from_millis(120))
-                                            .await;
-                                        if snap.burst.get() == burst {
-                                            // Content moves against the wheel's delta.
-                                            let travel = snap.travel.replace(0.);
-                                            snap.dir.set(if travel < 0. {
-                                                1
-                                            } else if travel > 0. {
-                                                -1
-                                            } else {
-                                                0
-                                            });
-                                            snap.arm(true);
-                                            cx.update(|window, _| window.refresh()).ok();
-                                        }
-                                    })
-                                    .detach();
-                            }
-                        })
-                        .on_prepaint({
-                            let snap = snap.clone();
-                            move |_, window, _| {
-                                let left = snap.frames.get();
-                                if left > 0 {
-                                    snap.frames.set(left - 1);
-                                    if super::snap_tabs(&scroll, tabs, selected, &snap) {
-                                        window.refresh();
-                                    }
-                                }
-                            }
-                        })
                         .children(self.items.iter().enumerate().map(|(ix, item)| {
                             let label = item.label.clone();
                             Button::new(SharedString::from(format!("query-result-{}", ix + 1)))
@@ -374,38 +316,12 @@ impl QueryView {
                                 .small()
                                 .h(dp(ui::CONTROL_HEIGHT))
                                 .flex_none()
-                                .when_some(room.gt(&px(0.)).then_some(room), |this, room| {
-                                    this.max_w(room)
-                                })
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .when_some(label_width, |this, width| this.max_w(width))
-                                        .child(label.clone()),
-                                )
+                                .label(label.clone())
                                 .accessibility_label(label)
                                 .selected(ix == selected)
                                 .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
-                        }))
-                        // Room after the last tab, so it too can sit at the start.
-                        .child(div().flex_none().w_full());
-                    div()
-                        .id("query-result-strip")
-                        .test_support()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        // The room the tabs have; when it changes they are
-                        // fitted again.
-                        .on_prepaint(move |bounds, window, _| {
-                            if snap.avail.replace(bounds.size.width) != bounds.size.width {
-                                snap.fit.set(None);
-                                snap.arm(false);
-                                window.refresh();
-                            }
-                        })
-                        .child(tabs_row)
-                })
+                        })),
+                )
                 .when(count > 1, |this| {
                     this.child(step("query-result-next", IconName::ChevronRight, next, cx))
                         .child(
