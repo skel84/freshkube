@@ -146,3 +146,38 @@ mod tests {
         assert_eq!(AgentShape::parse(""), None);
     }
 }
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("ready", AgentShape::Ready),
+            ("not-installed", AgentShape::NotInstalled),
+            ("unsupported", AgentShape::Unsupported),
+            ("newer", AgentShape::Newer),
+            ("signed-out", AgentShape::SignedOut),
+            ("access-off", AgentShape::AccessOff),
+            ("running", AgentShape::Running),
+            ("answered", AgentShape::Answered),
+            ("stopped", AgentShape::Stopped),
+            ("following", AgentShape::Following),
+            ("refused", AgentShape::Refused),
+            ("save-failed", AgentShape::SaveFailed),
+            ("no-tools", AgentShape::NoTools),
+            ("turn-failed", AgentShape::TurnFailed),
+            ("only-opencode", AgentShape::OnlyOpencode),
+            ("shared", AgentShape::Shared),
+        ];
+        for (word, shape) in pinned {
+            assert!(matches!(AgentShape::parse(word), Some(found) if found == shape), "{word}");
+        }
+        for unknown in ["", " ", "nope", "Firing", "ready ", " ready", "READY"] {
+            assert!(AgentShape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
+}

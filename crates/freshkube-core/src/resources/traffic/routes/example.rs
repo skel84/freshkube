@@ -627,3 +627,41 @@ pub fn workloads(shape: Shape) -> WorkloadRead {
     .into_iter()
     .collect()
 }
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("all", Shape::All),
+            ("serving", Shape::Serving),
+            ("partly", Shape::Partly),
+            ("cross-namespace", Shape::CrossNamespace),
+            ("listener", Shape::Listener),
+            ("no-address", Shape::NoAddress),
+            ("class", Shape::Class),
+            ("no-backend", Shape::NoBackend),
+            ("stale", Shape::Stale),
+            ("mesh", Shape::Mesh),
+            ("not-installed", Shape::NotInstalled),
+            ("incomplete", Shape::Incomplete),
+            ("mixed-bundle", Shape::MixedBundle),
+            ("refused", Shape::Refused),
+            ("cut", Shape::Cut),
+            ("gateways", Shape::Gateways),
+            ("empty", Shape::Empty),
+            ("gateways-refused", Shape::GatewaysRefused),
+            ("workloads-refused", Shape::WorkloadsRefused),
+        ];
+        for (word, shape) in pinned {
+            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+        }
+        for unknown in ["", " ", "nope", "Firing", "all ", " all", "ALL"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
+}

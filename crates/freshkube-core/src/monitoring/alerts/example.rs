@@ -458,3 +458,30 @@ pub fn silences_page(shape: Shape, now: DateTime<Utc>) -> Result<SilencesData, U
         State::Reading => Err(Unknown::Unread("Not read yet".into())),
     }
 }
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("firing", Shape::Firing),
+            ("quiet", Shape::Quiet),
+            ("not-found", Shape::NotFound),
+            ("refused", Shape::Refused),
+            ("several", Shape::Several),
+            ("no-label", Shape::NoLabel),
+            ("stale", Shape::Stale),
+            ("rules-only", Shape::RulesOnly),
+        ];
+        for (word, shape) in pinned {
+            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+        }
+        for unknown in ["", " ", "nope", "Firing", "firing ", " firing", "FIRING"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
+}

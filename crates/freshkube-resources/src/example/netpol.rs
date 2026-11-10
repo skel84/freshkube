@@ -316,3 +316,32 @@ pub fn read_policy(
     };
     Ok(PolicyReading::new(facts, pods))
 }
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("mixed", Shape::Mixed),
+            ("default-deny", Shape::DefaultDeny),
+            ("open", Shape::Open),
+            ("restricts", Shape::Restricts),
+            ("ip-block", Shape::IpBlock),
+            ("namespace-selector", Shape::NamespaceSelector),
+            ("none", Shape::None),
+            ("host-network", Shape::HostNetwork),
+            ("refused", Shape::Refused),
+            ("cut", Shape::Cut),
+        ];
+        for (word, shape) in pinned {
+            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+        }
+        for unknown in ["", " ", "nope", "Firing", "mixed ", " mixed", "MIXED"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
+}

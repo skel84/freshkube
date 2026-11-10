@@ -178,3 +178,27 @@ pub fn reads(now: i64, shape: Shape) -> Vec<SourceRead> {
     }
     reads
 }
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("busy", Shape::Busy),
+            ("quiet", Shape::Quiet),
+            ("partial", Shape::Partial),
+            ("short-events", Shape::ShortEvents),
+            ("none-read", Shape::NoneRead),
+        ];
+        for (word, shape) in pinned {
+            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+        }
+        for unknown in ["", " ", "nope", "Firing", "busy ", " busy", "BUSY"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
+}

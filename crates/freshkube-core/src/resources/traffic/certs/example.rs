@@ -485,3 +485,34 @@ pub fn read_secret(shape: Shape, request: &SecretRequest, now: i64) -> SecretOut
         _ => SecretOutcome::NotFound,
     }
 }
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("all", Shape::All),
+            ("healthy", Shape::Healthy),
+            ("expiring", Shape::Expiring),
+            ("wrong-name", Shape::WrongName),
+            ("stuck-order", Shape::StuckOrder),
+            ("stuck-challenge", Shape::StuckChallenge),
+            ("not-installed", Shape::NotInstalled),
+            ("secret-unread", Shape::SecretUnread),
+            ("secret-refused", Shape::SecretRefused),
+            ("empty", Shape::Empty),
+            ("refused", Shape::Refused),
+            ("gateways-refused", Shape::GatewaysRefused),
+        ];
+        for (word, shape) in pinned {
+            assert!(matches!(Shape::parse(word), Some(found) if found == shape), "{word}");
+        }
+        for unknown in ["", " ", "nope", "Firing", "all ", " all", "ALL"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
+}
