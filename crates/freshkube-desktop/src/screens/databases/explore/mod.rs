@@ -729,22 +729,40 @@ async fn connect_live(
     })
 }
 
+/// A person's chosen `tsh` is kept as it is; with none, `find` looks (core's
+/// lookup, the one a kubeconfig's login program gets, so a Dock launch finds a
+/// Homebrew `tsh`) and its absolute path replaces `None`. The explorer's child
+/// then runs only that path. A miss is [`Fail::TshNotFound`].
+async fn with_resolved_tsh<F, Fut>(
+    mut access: TeleportAccess,
+    find: F,
+) -> Result<TeleportAccess, Fail>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<std::path::PathBuf, freshkube_core::failure::Failure>>,
+{
+    if access.tsh.is_none() {
+        let found = find()
+            .await
+            .map_err(|failure| Fail::TshNotFound(failure.message))?;
+        access.tsh = Some(found);
+    }
+    Ok(access)
+}
+
 /// The Teleport route, off the UI thread: `tsh`'s checks, the proxy and the
 /// same read-only session as ever. No Secret is read and no password exists:
 /// the tunnel signs in with Teleport's certificate, which Freshkube never
 /// sees. A failure after the proxy started drops it, which kills the child.
-async fn connect_teleport(mut access: TeleportAccess, cluster: String) -> Result<Connected, Fail> {
-    // A person's chosen `tsh` is used as it is; else core's lookup, the one a
-    // kubeconfig's login program gets, so a Dock launch finds a Homebrew `tsh`.
-    // The explorer's child then runs this absolute path.
-    if access.tsh.is_none() {
-        let program = format!("tsh{}", std::env::consts::EXE_SUFFIX);
-        let found =
-            freshkube_core::exec_plugin::locate_program("Teleport database access", &program)
-                .await
-                .map_err(|failure| Fail::TshNotFound(failure.message))?;
-        access.tsh = Some(found);
-    }
+async fn connect_teleport(access: TeleportAccess, cluster: String) -> Result<Connected, Fail> {
+    let access = with_resolved_tsh(access, || {
+        freshkube_core::exec_plugin::locate_program(
+            "Teleport database access",
+            "tsh",
+            "choose its file in the Teleport settings",
+        )
+    })
+    .await?;
     let proxy = Proxy::start(&access, &cluster)
         .await
         .map_err(Fail::Teleport)?;

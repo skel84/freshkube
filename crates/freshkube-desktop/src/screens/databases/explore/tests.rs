@@ -1164,15 +1164,57 @@ fn nothing_secret_is_in_teleports_words_or_debug() {
 }
 
 #[test]
-fn a_tsh_found_nowhere_names_the_places_and_is_its_own_state() {
+fn a_tsh_found_nowhere_names_the_places_and_keeps_the_install_help() {
+    use freshkube_db::teleport::TeleportError;
     let fail = Fail::TshNotFound(
         "Teleport database access needs the login program 'tsh', which was not found in \
          /opt/homebrew/bin, /usr/local/bin. Install it in one of those places"
             .into(),
     );
     assert_eq!(fail.slug(), "teleport-not-installed");
-    assert_eq!(fail.title(), "tsh is not installed");
-    assert!(fail.words().contains("/opt/homebrew/bin, /usr/local/bin"));
+    let not_installed = Fail::Teleport(TeleportError::NotInstalled);
+    assert_eq!(fail.title(), not_installed.title());
+    assert_eq!(fail.command().as_deref(), Some("brew install teleport"));
+    let words = fail.words();
+    assert!(words.contains("/opt/homebrew/bin, /usr/local/bin"));
+    assert!(words.contains("On macOS, run `brew install teleport`"));
     assert!(fail.retry());
-    assert_eq!(fail.command(), None);
+}
+
+#[test]
+fn a_chosen_tsh_is_kept_and_a_found_one_replaces_none() {
+    use std::path::PathBuf;
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let chosen = freshkube_db::teleport::TeleportAccess {
+        tsh: Some(PathBuf::from("/chosen/tsh")),
+        ..super::example_teleport()
+    };
+    let kept = runtime
+        .block_on(super::with_resolved_tsh(chosen, || async {
+            panic!("a chosen tsh is never looked for")
+        }))
+        .unwrap();
+    assert_eq!(kept.tsh, Some(PathBuf::from("/chosen/tsh")));
+
+    let found = runtime
+        .block_on(super::with_resolved_tsh(
+            super::example_teleport(),
+            || async { Ok(PathBuf::from("/opt/homebrew/bin/tsh")) },
+        ))
+        .unwrap();
+    assert_eq!(found.tsh, Some(PathBuf::from("/opt/homebrew/bin/tsh")));
+
+    let missing = runtime.block_on(super::with_resolved_tsh(
+        super::example_teleport(),
+        || async {
+            Err(freshkube_core::failure::Failure::new(
+                freshkube_core::failure::FailureKind::Config,
+                "not found in /x".to_owned(),
+            ))
+        },
+    ));
+    assert_eq!(
+        missing.unwrap_err(),
+        Fail::TshNotFound("not found in /x".into())
+    );
 }

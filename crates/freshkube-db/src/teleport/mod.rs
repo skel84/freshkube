@@ -67,7 +67,8 @@ pub struct TeleportAccess {
     pub db_user: String,
     /// The database to open.
     pub database: String,
-    /// A `tsh` the person chose; else the one on `PATH`.
+    /// The `tsh` to run: an absolute path, the person's choice or the one the
+    /// caller found. `None` is [`TeleportError::NotInstalled`].
     pub tsh: Option<PathBuf>,
 }
 
@@ -206,17 +207,6 @@ impl TeleportAccess {
     fn proxy_command(&self, name: &str) -> String {
         format!("tsh {}", self.proxy_args(name).join(" "))
     }
-}
-
-/// `tsh` on `PATH`, or the file the person chose.
-pub fn locate_tsh(chosen: Option<&Path>) -> Option<PathBuf> {
-    if let Some(path) = chosen {
-        return path.is_file().then(|| path.to_owned());
-    }
-    let program = format!("tsh{}", std::env::consts::EXE_SUFFIX);
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(&program))
-        .find(|candidate| candidate.is_file())
 }
 
 fn command(tsh: &Path) -> Command {
@@ -557,10 +547,16 @@ impl Proxy {
     ) -> Result<Self, TeleportError> {
         access.validate()?;
         let name = access.database_name(cluster)?;
-        let tsh = locate_tsh(access.tsh.as_deref()).ok_or(TeleportError::NotInstalled)?;
-        check_login(&tsh, access).await?;
-        check_listed(&tsh, access, &name).await?;
-        Self::spawn(&tsh, access, &name, ready_within).await
+        // The caller resolves `tsh` (the app finds it where a kubeconfig's login
+        // programs are found); this child runs only that absolute path.
+        let tsh = access
+            .tsh
+            .as_deref()
+            .filter(|path| path.is_file())
+            .ok_or(TeleportError::NotInstalled)?;
+        check_login(tsh, access).await?;
+        check_listed(tsh, access, &name).await?;
+        Self::spawn(tsh, access, &name, ready_within).await
     }
 
     async fn spawn(
