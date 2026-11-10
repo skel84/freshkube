@@ -262,3 +262,45 @@ fn only_the_selected_stages_actions_are_asked_about(cx: &mut TestAppContext) {
     }
     drop(runtime);
 }
+
+#[gpui_kit::test]
+fn a_buttons_tooltip_does_not_draw_once_the_pointer_is_on_its_neighbour(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
+    select(cx, handle, &page, "prod-ams-promotion");
+    // What each button's tooltip says: its reason where it has one.
+    let said = |cx: &mut TestAppContext, ix| {
+        let (why, tip) = words(cx, &page, ix);
+        why.or(tip).expect("a tooltip")
+    };
+    let (promote, reverify) = (said(cx, 4), said(cx, 3));
+    let hover = |cx: &mut TestAppContext, ix: usize| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.hover(format!("change-action-{ix}"), cx);
+        })
+        .unwrap();
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    };
+    hover(cx, 4);
+    assert!(freshkube_ui::tooltip::drawn(&promote) > 0, "Promote's tip");
+    hover(cx, 3);
+    cx.executor().advance_clock(Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let drawn = freshkube_ui::tooltip::drawn(&promote);
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert_eq!(
+        freshkube_ui::tooltip::drawn(&promote),
+        drawn,
+        "Promote's tooltip drew again over its neighbour's"
+    );
+    assert!(
+        freshkube_ui::tooltip::drawn(&reverify) > 0,
+        "the neighbour's"
+    );
+}

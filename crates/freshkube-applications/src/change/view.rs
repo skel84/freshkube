@@ -154,7 +154,7 @@ impl ChangePage {
             Ok(address) => (button.tooltip(address.clone()), page::item(label, handler)),
             Err(why) => (
                 button.disabled(true).tooltip(why.clone()),
-                page::disabled_item(label),
+                page::refused_item(label, why.clone()),
             ),
         }
     }
