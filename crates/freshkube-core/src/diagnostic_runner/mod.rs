@@ -1489,8 +1489,9 @@ fn file_probe(
 /// Whether a read error says the file is not there. Only two replies do: the
 /// gRPC `NotFound` code, and the file system's own message that the Talos API
 /// passes through (`ENOENT`, "no such file or directory"), as a gRPC `Unknown`
-/// status or as the error in a read's metadata. Any other error, whatever its
-/// text, says nothing about the file.
+/// status. Any other error, whatever its text, says nothing about the file; an
+/// upstream error in a read's metadata keeps its own code (`read_file`), so an
+/// `Unavailable` that mentions a socket's missing file is not a missing file.
 fn is_missing_file_error(error: &talos_rs::TalosError) -> bool {
     use talos_rs::TalosError;
     const FS_NOT_FOUND: &str = "no such file or directory";
@@ -1500,7 +1501,6 @@ fn is_missing_file_error(error: &talos_rs::TalosError) -> bool {
             tonic::Code::Unknown => status.message().to_ascii_lowercase().contains(FS_NOT_FOUND),
             _ => false,
         },
-        TalosError::Connection(message) => message.to_ascii_lowercase().contains(FS_NOT_FOUND),
         _ => false,
     }
 }
@@ -2109,6 +2109,49 @@ mod tests {
     }
 
     #[test]
+    fn four_missing_reads_name_no_cni_and_one_unavailable_read_names_none() {
+        let down = || {
+            let (probe, _) = file_probe(
+                "/etc/cni/net.d",
+                Err(talos_rs::TalosError::Grpc(tonic::Status::unavailable(
+                    "peer unavailable, not found in cache",
+                ))),
+            );
+            probe
+        };
+        let all_missing = CniFileEvidence {
+            flannel_subnet: FileProbe::Missing,
+            cilium_config: FileProbe::Missing,
+            calico_config: FileProbe::Missing,
+            cni_directory: FileProbe::Missing,
+            ..CniFileEvidence::default()
+        };
+        assert!(matches!(
+            cni_type_from_files(&all_missing),
+            SourceState::Available(CniType::None)
+        ));
+        let one_down = CniFileEvidence {
+            cni_directory: down(),
+            ..all_missing.clone()
+        };
+        assert!(matches!(
+            cni_type_from_files(&one_down),
+            SourceState::Unavailable(_)
+        ));
+        let all_down = CniFileEvidence {
+            flannel_subnet: down(),
+            cilium_config: down(),
+            calico_config: down(),
+            cni_directory: down(),
+            ..CniFileEvidence::default()
+        };
+        assert!(matches!(
+            cni_type_from_files(&all_down),
+            SourceState::Unavailable(_)
+        ));
+    }
+
+    #[test]
     fn missing_file_is_only_a_real_not_found() {
         use talos_rs::TalosError;
         use tonic::Status;
@@ -2116,7 +2159,6 @@ mod tests {
             TalosError::Grpc(Status::not_found("file not found")),
             TalosError::Grpc(Status::not_found("anything")),
             TalosError::Grpc(Status::unknown("open /run/x: No Such File or directory")),
-            TalosError::Connection("open /run/x: no such file or directory".into()),
         ] {
             assert!(is_missing_file_error(&error), "{error}");
         }
@@ -2129,6 +2171,10 @@ mod tests {
             TalosError::Grpc(Status::permission_denied("denied")),
             TalosError::Connection("timeout".into()),
             TalosError::Connection("node not found".into()),
+            TalosError::Connection("open /run/x: no such file or directory".into()),
+            TalosError::Grpc(Status::unavailable(
+                "dial unix /system/run/machined/machined.sock: connect: no such file or directory",
+            )),
             TalosError::ConfigInvalid("bad".into()),
         ] {
             assert!(!is_missing_file_error(&error), "{error}");
