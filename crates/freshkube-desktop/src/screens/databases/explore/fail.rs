@@ -25,6 +25,9 @@ pub(crate) enum Fail {
     Untrusted(String),
     /// Teleport's route couldn't be used: one of its own states.
     Teleport(TeleportError),
+    /// `tsh` was found in none of the places a login program is looked for;
+    /// the message names them.
+    TshNotFound(String),
 }
 
 impl Fail {
@@ -56,6 +59,7 @@ impl Fail {
     pub(crate) fn command(&self) -> Option<String> {
         match self {
             Self::Teleport(error) => error.command(),
+            Self::TshNotFound(_) => TeleportError::NotInstalled.command(),
             _ => None,
         }
     }
@@ -76,6 +80,7 @@ impl Fail {
             Self::TimedOut => "timed-out",
             Self::Unreachable(_) => "unreachable",
             Self::NotReadOnly(_) => "not-read-only",
+            Self::TshNotFound(_) => "teleport-not-installed",
             Self::Teleport(error) => match error.slug() {
                 "bad-settings" => "teleport-bad-settings",
                 "not-installed" => "teleport-not-installed",
@@ -102,9 +107,10 @@ impl Fail {
             Self::TimedOut => "The database did not answer in time",
             Self::Unreachable(_) => "The database could not be reached",
             Self::NotReadOnly(_) => "The session could not be made read-only",
+            Self::TshNotFound(_) => NOT_INSTALLED_TITLE,
             Self::Teleport(error) => match error {
                 TeleportError::BadSettings(_) => "The Teleport settings are not valid",
-                TeleportError::NotInstalled => "tsh is not installed",
+                TeleportError::NotInstalled => NOT_INSTALLED_TITLE,
                 TeleportError::NotLoggedIn { .. } => "Not signed in to Teleport",
                 TeleportError::NoRole { .. } => "No role allows this database",
                 TeleportError::NotFound { .. } => "Teleport has no database by that name",
@@ -148,6 +154,10 @@ impl Fail {
                 "{why}. Freshkube only explores through a read-only session, so it did not use this one."
             ),
             Self::Teleport(error) => teleport_words(error),
+            Self::TshNotFound(why) => format!(
+                "{why}.{} Elsewhere, see Teleport's install page. Then try again.",
+                mac_install_hint()
+            ),
         }
     }
 
@@ -165,6 +175,17 @@ impl Fail {
     }
 }
 
+/// The title of both ways `tsh` can be missing.
+const NOT_INSTALLED_TITLE: &str = "tsh is not installed";
+
+/// " On macOS, run `brew install teleport`.", from the state's own command.
+fn mac_install_hint() -> String {
+    TeleportError::NotInstalled
+        .command()
+        .map(|c| format!(" On macOS, run `{c}`."))
+        .unwrap_or_default()
+}
+
 /// What happened and what to do, for each of Teleport's states. The command is
 /// one the person runs in their own terminal; Freshkube never signs in for them.
 fn teleport_words(error: &TeleportError) -> String {
@@ -177,15 +198,10 @@ fn teleport_words(error: &TeleportError) -> String {
         TeleportError::BadSettings(why) => format!(
             "{why}. Fix the Teleport settings in your team's setup; Freshkube didn't start anything."
         ),
-        TeleportError::NotInstalled => {
-            let mac = error
-                .command()
-                .map(|c| format!(" On macOS, run `{c}`."))
-                .unwrap_or_default();
-            format!(
-                "This database is reached through Teleport, which needs its `tsh` client on this computer.{mac} Elsewhere, see Teleport's install page. Then try again."
-            )
-        }
+        TeleportError::NotInstalled => format!(
+            "This database is reached through Teleport, which needs its `tsh` client on this computer.{} Elsewhere, see Teleport's install page. Then try again.",
+            mac_install_hint()
+        ),
         TeleportError::NotLoggedIn { proxy } => format!(
             "There is no active Teleport session at {proxy}: you haven't signed in, or it has expired.{} Freshkube never signs in for you. Then try again.",
             run(error.command())

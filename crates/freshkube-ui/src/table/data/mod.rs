@@ -315,6 +315,14 @@ pub trait TableSource: Sized + 'static {
     ) -> Vec<crate::menu::MenuAction> {
         Vec::new()
     }
+    /// The entries of `key`'s row menu as the page knows them now, for a
+    /// menu that is open while an answer lands ([`crate::menu::refresh_open`]).
+    /// Unlike [`row_menu`](Self::row_menu) it selects nothing, so it is empty
+    /// unless `key` is still the selected row; empty, the open menu is left
+    /// as it is.
+    fn row_menu_now(&self, _key: &Self::Key, _cx: &App) -> Vec<crate::menu::MenuAction> {
+        Vec::new()
+    }
     /// What replaces the rows until the first answer: the
     /// [`super::LoadingRows`] the page keeps, drawn still under the real
     /// header; the page draws their [`super::LoadingMotion`] over the table.
@@ -828,12 +836,39 @@ fn render_line<S: TableSource>(
                     .update(cx, |view, cx| view.row_menu(&key, window, cx))
                     .unwrap_or_default();
                 let (view, key) = (view.clone(), key.clone());
-                let live = move |cx: &App| {
-                    view.upgrade().is_some_and(|view| {
-                        let view = view.read(cx);
-                        view.selected_key() == Some(&key) && view.line_of(&key).is_some()
-                    })
+                let live = {
+                    let (view, key) = (view.clone(), key.clone());
+                    move |cx: &App| {
+                        view.upgrade().is_some_and(|view| {
+                            let view = view.read(cx);
+                            view.selected_key() == Some(&key) && view.line_of(&key).is_some()
+                        })
+                    }
                 };
+                // An answer that lands while the menu is open builds it again
+                // from the same row, if it is still the selected one.
+                let rebuild = {
+                    let (view, key, focus, live) = (view, key, focus.clone(), live.clone());
+                    crate::menu::Rebuild(Rc::new(move |cx| {
+                        let actions = view
+                            .upgrade()
+                            .filter(|_| live(cx))
+                            .map(|view| view.read(cx).row_menu_now(&key, cx))
+                            .filter(|actions| !actions.is_empty())?;
+                        let (focus, live) = (focus.clone(), live.clone());
+                        Some(crate::menu::builder(move |menu, window, cx| {
+                            crate::menu::actions(
+                                menu,
+                                actions,
+                                &focus,
+                                move |cx| live(cx),
+                                window,
+                                cx,
+                            )
+                        }))
+                    }))
+                };
+                crate::menu::rebuildable(rebuild, window, cx);
                 crate::menu::actions(menu, actions, &focus, live, window, cx)
             })
             .into_any_element(),
