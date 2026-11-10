@@ -647,6 +647,22 @@ mod nudges {
         )
     }
 
+    fn external_secret() -> Nudge {
+        (
+            Everyday::ExternalSecretRefresh,
+            ResourceKind::new(
+                "external-secrets.io",
+                "v1",
+                "ExternalSecret",
+                "externalsecrets",
+                true,
+            ),
+            "shop",
+            "db-creds",
+            "uid-db-creds",
+        )
+    }
+
     impl World {
         fn press_nudge(&self, cx: &mut TestAppContext, (act, kind, namespace, name, uid): Nudge) {
             let source = ClusterSource {
@@ -684,6 +700,11 @@ mod nudges {
             (argo(), "refresh Application/shop", fake::APPLICATION),
             (flux(), "reconcile Kustomization/apps", fake::KUSTOMIZATION),
             (cert(), "Renew Certificate/web-tls", fake::CERTIFICATE),
+            (
+                external_secret(),
+                "sync ExternalSecret/db-creds",
+                fake::EXTERNAL_SECRET,
+            ),
         ] {
             let w = world(cx, "core-fra");
             w.press_nudge(cx, nudge);
@@ -705,8 +726,49 @@ mod nudges {
     }
 
     #[gpui_kit::test]
+    fn safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret(
+        cx: &mut TestAppContext,
+    ) {
+        // Read-only: no request at all, no dialog, nothing audited.
+        let ro = world(cx, "stage-fra");
+        ro.press_nudge(cx, external_secret());
+        ro.drive(cx, Duration::from_secs(1));
+        assert!(ro.cluster.recorder.requests().is_empty());
+        assert!(!ro.present(cx, "write-dialog") && !ro.present(cx, "write-confirm"));
+        assert_eq!(ro.audit(), "");
+        // Guarded: Escape sends nothing; Confirm sends one annotation.
+        let w = world(cx, "core-fra");
+        w.press_nudge(cx, external_secret());
+        w.drive(cx, Duration::from_millis(500));
+        assert!(w.present(cx, "write-confirm"));
+        w.escape(cx);
+        w.drive(cx, Duration::from_millis(500));
+        assert!(w.cluster.writes().is_empty());
+        w.press_nudge(cx, external_secret());
+        w.drive(cx, Duration::from_millis(500));
+        w.click(cx, "write-confirm");
+        w.drive(cx, Duration::from_secs(3));
+        assert_eq!(w.cluster.writes().len(), 1);
+        let body: serde_json::Value = serde_json::from_str(&w.cluster.writes()[0].body).unwrap();
+        assert_eq!(
+            body["metadata"]["annotations"].as_object().unwrap().len(),
+            1
+        );
+        assert!(body["metadata"]["annotations"]["force-sync"].is_string());
+        assert!(
+            w.cluster
+                .recorder
+                .requests()
+                .iter()
+                .all(|request| !request.path.contains("/secrets")),
+            "{:?}",
+            w.cluster.recorder.lines()
+        );
+    }
+
+    #[gpui_kit::test]
     fn an_open_cluster_still_asks_for_a_nudge_because_none_can_be_undone(cx: &mut TestAppContext) {
-        for nudge in [argo(), flux(), cert()] {
+        for nudge in [argo(), flux(), cert(), external_secret()] {
             let w = world(cx, "dev-fra");
             w.press_nudge(cx, nudge);
             w.drive(cx, Duration::from_millis(500));
@@ -718,7 +780,7 @@ mod nudges {
     #[gpui_kit::test]
     fn a_read_only_cluster_sends_no_request_for_any_nudge(cx: &mut TestAppContext) {
         let w = world(cx, "stage-fra");
-        for nudge in [argo(), flux(), cert()] {
+        for nudge in [argo(), flux(), cert(), external_secret()] {
             w.press_nudge(cx, nudge);
         }
         w.drive(cx, Duration::from_secs(1));
@@ -749,6 +811,12 @@ mod nudges {
                 cert().1,
                 "certificates.cert-manager.io",
                 "ledger-tls",
+            ),
+            (
+                Everyday::ExternalSecretRefresh,
+                external_secret().1,
+                "externalsecrets.external-secrets.io",
+                "lantern-api",
             ),
         ] {
             let (_, rows) = crate::resources::example::read("core-fra", key, None, now).unwrap();

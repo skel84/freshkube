@@ -316,6 +316,9 @@ impl ResourcesScreen {
             .on_action(
                 cx.listener(|view, _: &RenewSelected, _, cx| view.run_act(Everyday::Renew, cx)),
             )
+            .on_action(cx.listener(|view, _: &RefreshExternalSecret, _, cx| {
+                view.run_act(Everyday::ExternalSecretRefresh, cx)
+            }))
             .on_action(
                 cx.listener(|view, _: &RollbackSelected, _, cx| {
                     view.run_act(Everyday::Rollback, cx)

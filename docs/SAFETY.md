@@ -208,6 +208,12 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g23_a_refused_or_missing_secret_is_unknown_or_not_found_never_wrong` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
 - `safety_g23_nothing_reads_a_secret_until_the_control_is_pressed` (`crates/freshkube-desktop/src/screens/certificates/tests.rs`)
 
+### 24. ExternalSecret Refresh sends one `force-sync` annotation, and nothing under `read-only`, for an object the operator would not sync, or when the object moved on (a delete, a sync, a policy change)
+
+- `safety_g24_externalsecret_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
