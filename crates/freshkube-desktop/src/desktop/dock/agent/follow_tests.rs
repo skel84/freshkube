@@ -1299,8 +1299,14 @@ fn a_maximized_dock_keeps_ask_whole_under_the_follow_strip(cx: &mut TestAppConte
         dock.update(cx, |dock, cx| dock.set_maximized(true, cx))
     })
     .unwrap();
-    tab.draw(cx);
-    tab.draw(cx);
+    for _ in 0..4 {
+        cx.update_window(tab.handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
     cx.update_window(tab.handle, |_, window, _| {
         let status = window.find("status-bar").bounds();
         let cell = window.find("page-cell").bounds();
