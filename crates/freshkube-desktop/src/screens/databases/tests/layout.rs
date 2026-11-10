@@ -300,7 +300,9 @@ fn the_stacked_inspector_stays_reachable_under_a_long_coverage_banner(cx: &mut T
             assert_eq!(window.rem_size(), px(20.));
             let banner = window.find("databases-notices").bounds();
             assert!(
-                banner.size.height <= px(80. * 20. / 13.) + px(1.),
+                // The cap's content box and padding, and the 1 px edge
+                // outside the cap.
+                banner.size.height <= px(80. * 20. / 13.) + px(2.),
                 "{shape}: banner {banner:?}"
             );
             let before = window.find("databases-detail").bounds().origin.y;

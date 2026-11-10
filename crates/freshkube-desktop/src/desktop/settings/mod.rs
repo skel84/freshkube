@@ -867,7 +867,7 @@ impl SettingsPage {
         page::capped_notes(
             "settings-banners",
             if short {
-                dp(48.).into()
+                dp(31.).into()
             } else {
                 gpui_kit::Length::Auto
             },
@@ -895,6 +895,7 @@ impl SettingsPage {
                 }))],
             None,
             Some(tone),
+            window,
             cx,
         )
         .min_h_0()
