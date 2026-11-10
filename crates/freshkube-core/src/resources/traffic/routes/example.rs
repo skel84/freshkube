@@ -60,51 +60,35 @@ pub enum Shape {
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 19] = [
-        "all",
-        "serving",
-        "partly",
-        "cross-namespace",
-        "listener",
-        "no-address",
-        "class",
-        "no-backend",
-        "stale",
-        "mesh",
-        "not-installed",
-        "incomplete",
-        "mixed-bundle",
-        "refused",
-        "cut",
-        "gateways",
-        "empty",
-        "gateways-refused",
-        "workloads-refused",
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("all", Self::All),
+        ("serving", Self::Serving),
+        ("partly", Self::Partly),
+        ("cross-namespace", Self::CrossNamespace),
+        ("listener", Self::Listener),
+        ("no-address", Self::NoAddress),
+        ("class", Self::Class),
+        ("no-backend", Self::NoBackend),
+        ("stale", Self::Stale),
+        ("mesh", Self::Mesh),
+        ("not-installed", Self::NotInstalled),
+        ("incomplete", Self::Incomplete),
+        ("mixed-bundle", Self::MixedBundle),
+        ("refused", Self::Refused),
+        ("cut", Self::Cut),
+        ("gateways", Self::Gateways),
+        ("empty", Self::Empty),
+        ("gateways-refused", Self::GatewaysRefused),
+        ("workloads-refused", Self::WorkloadsRefused),
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "all" => Self::All,
-            "serving" => Self::Serving,
-            "partly" => Self::Partly,
-            "cross-namespace" => Self::CrossNamespace,
-            "listener" => Self::Listener,
-            "no-address" => Self::NoAddress,
-            "class" => Self::Class,
-            "no-backend" => Self::NoBackend,
-            "stale" => Self::Stale,
-            "mesh" => Self::Mesh,
-            "not-installed" => Self::NotInstalled,
-            "incomplete" => Self::Incomplete,
-            "mixed-bundle" => Self::MixedBundle,
-            "refused" => Self::Refused,
-            "cut" => Self::Cut,
-            "gateways" => Self::Gateways,
-            "empty" => Self::Empty,
-            "gateways-refused" => Self::GatewaysRefused,
-            "workloads-refused" => Self::WorkloadsRefused,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, shape)| *shape)
     }
 
     /// The routes this shape shows, by name.
@@ -626,4 +610,45 @@ pub fn workloads(shape: Shape) -> WorkloadRead {
     ]
     .into_iter()
     .collect()
+}
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("all", Shape::All),
+            ("serving", Shape::Serving),
+            ("partly", Shape::Partly),
+            ("cross-namespace", Shape::CrossNamespace),
+            ("listener", Shape::Listener),
+            ("no-address", Shape::NoAddress),
+            ("class", Shape::Class),
+            ("no-backend", Shape::NoBackend),
+            ("stale", Shape::Stale),
+            ("mesh", Shape::Mesh),
+            ("not-installed", Shape::NotInstalled),
+            ("incomplete", Shape::Incomplete),
+            ("mixed-bundle", Shape::MixedBundle),
+            ("refused", Shape::Refused),
+            ("cut", Shape::Cut),
+            ("gateways", Shape::Gateways),
+            ("empty", Shape::Empty),
+            ("gateways-refused", Shape::GatewaysRefused),
+            ("workloads-refused", Shape::WorkloadsRefused),
+        ];
+        for (word, shape) in pinned {
+            assert!(
+                matches!(Shape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
+        }
+        for unknown in ["", " ", "nope", "Firing", "all ", " all", "ALL"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
 }
