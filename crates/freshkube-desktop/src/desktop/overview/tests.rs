@@ -303,7 +303,7 @@ fn cards_wait_for_a_first_answer_and_mark_the_last_known_one() {
             .state
             .clone()
     };
-    let waiting = Overview::build(&[], &[], None, None, false, false);
+    let waiting = Overview::build(&[], &[], None, None, false, false, false);
     assert!(
         waiting
             .cards
@@ -314,7 +314,15 @@ fn cards_wait_for_a_first_answer_and_mark_the_last_known_one() {
     let cluster = fixture::cluster("prod-fra", 0);
     let nodes = node_summaries(&cluster);
     let mut kube = example::summary("prod-fra", chrono::Utc::now().timestamp());
-    let current = Overview::build(&[], &nodes, Some(&kube), Some(&cluster), false, false);
+    let current = Overview::build(
+        &[],
+        &nodes,
+        Some(&kube),
+        Some(&cluster),
+        false,
+        false,
+        false,
+    );
     assert!(
         current
             .cards
@@ -330,7 +338,15 @@ fn cards_wait_for_a_first_answer_and_mark_the_last_known_one() {
         message: "timed out".into(),
         last_good: pods,
     });
-    let failed = Overview::build(&[], &nodes, Some(&kube), Some(&cluster), false, false);
+    let failed = Overview::build(
+        &[],
+        &nodes,
+        Some(&kube),
+        Some(&cluster),
+        false,
+        false,
+        false,
+    );
     assert_eq!(state(&failed, "tile-events"), CardState::Current);
     assert_eq!(
         state(&failed, "tile-pods"),
@@ -397,7 +413,7 @@ fn kubernetes_only_cards_and_refused_parts_keep_the_other_counts() {
     use freshkube_core::kubernetes_summary::Part;
     let mut kube = example::summary("prod-fra", chrono::Utc::now().timestamp());
     kube.events = Part::Refused("forbidden".into());
-    let display = Overview::build(&[], &[], Some(&kube), None, true, true);
+    let display = Overview::build(&[], &[], Some(&kube), None, true, true, false);
     assert_eq!(
         display.cards.iter().map(|card| card.id).collect::<Vec<_>>(),
         vec!["tile-nodes", "tile-workloads", "tile-pods", "tile-events"]
@@ -435,16 +451,17 @@ fn services_and_memory_cards_without_evidence_are_unknown() {
         Some(&silent),
         false,
         false,
+        false,
     );
     // The Talos overview hasn't arrived.
-    let waiting = Overview::build(&[], &[], None, None, false, false);
+    let waiting = Overview::build(&[], &[], None, None, false, false, false);
     // Nodes answered, but none of their services reports health.
     let cluster = fixture::cluster("prod-fra", 0);
     let mut nodes = node_summaries(&cluster);
     for service in nodes.iter_mut().flat_map(|node| &mut node.services) {
         service.health = None;
     }
-    let unreported = Overview::build(&[], &nodes, None, Some(&cluster), false, false);
+    let unreported = Overview::build(&[], &nodes, None, Some(&cluster), false, false, false);
     for (case, overview, ids) in [
         ("silent", &silent, &["tile-services", "tile-memory"][..]),
         ("waiting", &waiting, &["tile-services", "tile-memory"][..]),

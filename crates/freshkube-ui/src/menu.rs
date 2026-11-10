@@ -44,6 +44,8 @@ pub enum MenuAction {
         enabled: bool,
         /// For a toggle, whether it is on.
         checked: Option<bool>,
+        /// Why the item is disabled, drawn under it while it is.
+        reason: Option<SharedString>,
     },
     /// A submenu of more entries, run on the same list.
     Submenu {
@@ -61,7 +63,21 @@ impl MenuAction {
             action: Box::new(action),
             enabled: true,
             checked: None,
+            reason: None,
         }
+    }
+
+    /// Shown, greyed out and inert, with `reason` drawn under it. The
+    /// reason is plain text: the page words it, this crate knows no core.
+    pub fn refused(mut self, reason: impl Into<SharedString>) -> Self {
+        if let Self::Item {
+            enabled, reason: r, ..
+        } = &mut self
+        {
+            *enabled = false;
+            *r = Some(reason.into());
+        }
+        self
     }
 
     /// Shown, but greyed out and inert.
@@ -99,11 +115,13 @@ impl Clone for MenuAction {
                 action,
                 enabled,
                 checked,
+                reason,
             } => Self::Item {
                 label: label.clone(),
                 action: action.boxed_clone(),
                 enabled: *enabled,
                 checked: *checked,
+                reason: reason.clone(),
             },
             Self::Submenu {
                 label,
@@ -185,6 +203,7 @@ fn entries(
                 action,
                 enabled,
                 checked,
+                reason,
             } => {
                 if !enabled {
                     // Use Kit's native disabled item: it keeps the label and
@@ -195,6 +214,9 @@ fn entries(
                         action,
                         true,
                     );
+                    if let Some(reason) = reason {
+                        menu = menu.item(PopupMenuItem::label(reason));
+                    }
                     any = true;
                     continue;
                 }

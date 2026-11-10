@@ -7,6 +7,7 @@ use crate::palette::palette;
 use crate::presentation::attention::{Attention, Destination};
 use crate::presentation::overview::{CardTarget, Overview};
 use crate::ui::{self, dp};
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -43,6 +44,8 @@ pub(super) struct OverviewState {
     /// Why the attention list may be out of date.
     attention_stale: Option<SharedString>,
     connection: Connection,
+    /// Why the connection failed, whole, for the heading's tooltip.
+    failure: Option<SharedString>,
     /// The restored summary shows its age instead of the connection.
     last_known: bool,
 }
@@ -141,12 +144,14 @@ impl OverviewPage {
             // The restored summary says how old it is, on its own timer.
             self.age_label.clone().into_any_element()
         } else {
+            let reason = self.state.failure.clone();
             div()
                 .id("overview-connection")
                 .test_support()
                 .flex_none()
                 .when_some(ink, |this, ink| this.text_color(ink))
                 .aria_label(connection)
+                .when_some(reason, |this, reason| this.follow_tooltip(reason))
                 .child(connection)
                 .into_any_element()
         };
@@ -257,8 +262,28 @@ impl super::Pilot {
             stale: self.overview.is_stale() || summary.is_stale(),
             attention_stale: self.attention_stale(),
             connection: self.context_display.state,
+            failure: self.connection_failure(),
             last_known: self.switch.last_known_since().is_some(),
         }
+    }
+
+    /// Why the connection failed, in the words the failure came with: the
+    /// Kubernetes API's, else the config's or the Talos overview's. `None`
+    /// while the connection hasn't failed.
+    fn connection_failure(&self) -> Option<SharedString> {
+        if self.context_display.state != Connection::Failed {
+            return None;
+        }
+        let kube = self
+            .mode()
+            .kubernetes_only()
+            .and_then(|kube| match &kube.connection {
+                super::kubernetes_only::KubeConnection::Failed(error) => Some(error.clone()),
+                _ => None,
+            });
+        kube.or_else(|| self.config_error.clone())
+            .or_else(|| self.overview.error().cloned())
+            .map(Into::into)
     }
 
     /// Why the attention list may be out of date: the Talos overview's or
