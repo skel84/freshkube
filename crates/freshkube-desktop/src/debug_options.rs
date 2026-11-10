@@ -379,26 +379,24 @@ mod tests {
     /// `docs/DEBUG_KNOBS.md`'s blocks in file order: each knob with the
     /// values of its shape lines (`` - `value`: … ``), in file order.
     fn documented_shapes() -> Vec<(String, Vec<String>)> {
-        include_str!("../../../docs/DEBUG_KNOBS.md")
-            .split("\n## `FRESHKUBE_")
-            .skip(1)
-            .map(|block| {
-                let (name, body) = block.split_once("`\n").expect("a knob block has a title");
-                let shapes = body
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("- `"))
-                    .map(|rest| {
-                        let (value, after) = rest.split_once('`').expect("a closed value");
-                        assert!(
-                            after.starts_with(':'),
-                            "FRESHKUBE_{name}: `{value}` needs `:` and a description"
-                        );
-                        value.to_string()
-                    })
-                    .collect();
-                (format!("FRESHKUBE_{name}"), shapes)
-            })
-            .collect()
+        // Line by line, so a checkout with CRLF line endings reads the same.
+        let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
+        for line in include_str!("../../../docs/DEBUG_KNOBS.md").lines() {
+            if let Some(rest) = line.strip_prefix("## `FRESHKUBE_") {
+                let name = rest.strip_suffix('`').expect("a knob block has a title");
+                blocks.push((format!("FRESHKUBE_{name}"), Vec::new()));
+            } else if let (Some(rest), Some((knob, shapes))) =
+                (line.strip_prefix("- `"), blocks.last_mut())
+            {
+                let (value, after) = rest.split_once('`').expect("a closed value");
+                assert!(
+                    after.starts_with(':'),
+                    "{knob}: `{value}` needs `:` and a description"
+                );
+                shapes.push(value.to_string());
+            }
+        }
+        blocks
     }
 
     fn words<T>(table: &Words<T>) -> Vec<String> {
