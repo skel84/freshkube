@@ -151,9 +151,11 @@ pub const CAPPED_NOTES_PAD: f32 = 6.;
 /// The size of banner text, in dp, which the floor is measured in.
 const BANNER_TEXT: f32 = 12.5;
 
-/// GPUI's default line height, a multiple of the font size (`phi()`), which
-/// neither `banner_frame` nor Kit's root changes.
-const LINE_HEIGHT: f32 = 1.618_034;
+/// GPUI's default line height, a multiple of the font size (`phi()`, the
+/// golden ratio), which neither `banner_frame` nor Kit's root changes.
+fn line_height_ratio() -> f32 {
+    (1. + 5_f32.sqrt()) / 2.
+}
 
 /// A banner's own frame as `banner_frame` draws it: 0.625 rem above and
 /// below, which scales with the text, and a 1 px border either side.
@@ -167,7 +169,7 @@ const BANNER_BORDER: f32 = 2.;
 /// the cap, never a minimum: a block whose notes are shorter stays as short.
 fn floor(tone: Option<Tone>, window: &Window) -> Pixels {
     let font = BANNER_TEXT * f32::from(window.rem_size()) / crate::ui::BASE_TEXT;
-    let lines = 2. * (font * LINE_HEIGHT).round();
+    let lines = 2. * (font * line_height_ratio()).round();
     let frame = BANNER_FRAME_REMS * f32::from(window.rem_size()) + BANNER_BORDER;
     px(lines + if tone.is_none() { frame } else { 0. })
 }

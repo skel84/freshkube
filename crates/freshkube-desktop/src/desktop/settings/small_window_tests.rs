@@ -386,8 +386,10 @@ async fn a_long_destination_save_caps_the_banner_and_reveals_the_new_row(cx: &mu
             let banner = window.find("settings-saved").bounds();
             // The cap bounds the viewport, and gives way to two lines of
             // banner text (12.5 dp at the default line height, #1004).
-            let cap =
-                crate::ui::dp_px(31., window).max(crate::ui::dp_px(2. * 12.5 * 1.618, window));
+            let cap = crate::ui::dp_px(31., window).max(crate::ui::dp_px(
+                2. * 12.5 * (1. + 5_f32.sqrt()) / 2.,
+                window,
+            ));
             let scroll = page.read(cx).banners_scroll.clone();
             if freshkube_ui::page::is_short(window) {
                 assert!(
