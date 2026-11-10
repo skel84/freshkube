@@ -143,11 +143,23 @@ pub fn inset() -> Div {
         .py(dp(PANE_PADDING_Y))
 }
 
+/// The padding in dp a capped block takes above and below, which its floor
+/// counts: tighter than a pane's, since the block is for banners that must
+/// leave their page room.
+pub const CAPPED_NOTES_PAD: f32 = 6.;
+
+/// The least height in dp a capped block keeps, whatever its cap: two lines
+/// of banner text (12.5 dp at 1.5) and [`CAPPED_NOTES_PAD`] of padding the
+/// caller puts above and below. A cap that leaves less would cut a line at every scroll
+/// position, so the cap yields to this floor.
+pub const CAPPED_NOTES_FLOOR: f32 = 2. * 1.5 * 12.5 + 2. * CAPPED_NOTES_PAD;
+
 /// Notes under a page's header, capped to leave room for its body. The cap
 /// accepts pixels or dp; [`Length::Auto`] keeps an uncapped block scrollable.
 /// An optional bottom hairline counts towards the cap. The caller keeps its
 /// padding on the outer frame, outside the scroll viewport and its overlay.
-/// The scrollbar stays visible whenever the notes overflow the cap.
+/// The scrollbar stays visible whenever the notes overflow the cap. The block
+/// is never shorter than [`CAPPED_NOTES_FLOOR`], which wins over the cap.
 /// With a tone, children are banner contents: the block draws their shared
 /// border, background and padding outside the viewport.
 pub fn capped_notes(
@@ -170,6 +182,7 @@ pub fn capped_notes(
             this.border_b_1().border_color(color)
         })
         .max_h(cap)
+        .min_h(dp(CAPPED_NOTES_FLOOR))
         .child(
             v_flex()
                 .relative()
@@ -1160,6 +1173,35 @@ mod tests {
         assert_capped_notes_scroll(cx, None);
     }
 
+    /// #1004: a cap below two lines gives way to the floor.
+    #[gpui_kit::test]
+    fn a_cap_under_two_lines_gives_way_to_the_floor(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+            let view = cx.new(|_| Notes {
+                scroll: ScrollHandle::new(),
+                cap: dp(10.).into(),
+                tone: None,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let height = window.find("notes").bounds().size.height;
+            assert!(
+                height >= dp_px(CAPPED_NOTES_FLOOR, window) - px(1.),
+                "{height:?}"
+            );
+        })
+        .unwrap();
+    }
+
     #[gpui_kit::test]
     fn capped_banner_thumb_tracks_its_inner_scroll_viewport(cx: &mut TestAppContext) {
         assert_capped_notes_scroll(cx, Some(Tone::Good));
@@ -1178,7 +1220,7 @@ mod tests {
         let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
             let view = cx.new(|_| Notes {
                 scroll: scroll.clone(),
-                cap: dp(48.).into(),
+                cap: dp(70.).into(),
                 tone,
             });
             notes = Some(view.clone());
@@ -1187,7 +1229,7 @@ mod tests {
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
             let viewport = window.find("notes").bounds();
-            assert!((viewport.size.height - dp_px(48., window)).abs() <= px(1.));
+            assert!((viewport.size.height - dp_px(70., window)).abs() <= px(1.));
             // The empty content paints nothing: the only visible narrow quad
             // is the scrollbar thumb, even before any hover or scroll input.
             let thumb = |window: &Window| {

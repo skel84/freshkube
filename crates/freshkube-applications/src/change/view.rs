@@ -17,7 +17,7 @@ use gpui_kit::component::{
 const NOTES_MAX_HEIGHT: f32 = 100.;
 /// The least a capped block keeps, in dp: a banner's first line, so the
 /// banners stay on the page when the trail needs the room.
-const NOTES_MIN_HEIGHT: f32 = 40.;
+const NOTES_MIN_HEIGHT: f32 = page::CAPPED_NOTES_FLOOR;
 /// What the table keeps in view under the capped banners at rest, in dp:
 /// its header and two rows.
 const TABLE_VISIBLE: f32 = 90.;
@@ -227,7 +227,11 @@ impl ChangePage {
         .flex_none()
         .min_w_0()
         .px(dp(page::PANE_PADDING))
-        .py(dp(page::PANE_PADDING_Y))
+        .py(dp(if capped {
+            page::CAPPED_NOTES_PAD
+        } else {
+            page::PANE_PADDING_Y
+        }))
         .when(capped, |this| {
             let scroll = self.notes_scroll.clone();
             this.on_scroll_wheel(move |event, window, cx| {

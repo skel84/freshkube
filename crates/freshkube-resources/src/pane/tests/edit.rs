@@ -122,6 +122,8 @@ fn edit_opens_an_editor_marks_changed_lines_and_review_hands_core_s_description_
     assert!(emitted.borrow().is_empty());
 
     type_text(cx, handle, &pane, with_label(&text));
+    // The note was about the text before the edit.
+    assert!(label(cx, handle, "detail-edit-error").is_none());
     assert_eq!(
         label(cx, handle, "detail-edit-count").as_deref(),
         Some("1 line changed")

@@ -1,0 +1,1 @@
+- **Banners and Edit YAML:** a capped block of banners is never shorter than two lines, so none is cut at 760x560 with the largest text, and Edit YAML's "Nothing was changed." note clears on the next edit.

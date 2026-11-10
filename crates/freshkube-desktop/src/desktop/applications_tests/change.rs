@@ -2313,6 +2313,37 @@ fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut Test
     }
 }
 
+/// #1004: with two banners at 760x560 and text 20 the capped block is at
+/// least two lines tall, so no scroll position cuts a line in half.
+#[gpui_kit::test]
+fn the_capped_block_is_two_lines_tall_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let least = freshkube_ui::ui::dp_px(freshkube_ui::page::CAPPED_NOTES_FLOOR, window);
+        assert!(
+            notes.size.height >= least - gpui_kit::px(1.),
+            "{notes:?} is under two lines ({least:?})"
+        );
+    })
+    .unwrap();
+}
+
 /// #981: at 760x560 with text 20 the pull request banner drops its secondary
 /// parts and wraps: it is never cut by the block, which shows no scroll thumb
 /// of its own, and its label still says everything.
