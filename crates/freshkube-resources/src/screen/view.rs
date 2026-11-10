@@ -163,13 +163,30 @@ impl ResourcesScreen {
                 .update(cx, |view, cx| view.group_menu(&target, window, cx))
                 .unwrap_or_default();
             let view = view.clone();
-            let live = move |cx: &gpui_kit::App| match &row {
-                // The fold alone acts on no row.
-                None => true,
-                Some(row) => view
-                    .upgrade()
-                    .is_some_and(|view| view.read(cx).projection.selected() == Some(row)),
+            let live = {
+                let (view, row) = (view.clone(), row.clone());
+                move |cx: &gpui_kit::App| match &row {
+                    // The fold alone acts on no row.
+                    None => true,
+                    Some(row) => view
+                        .upgrade()
+                        .is_some_and(|view| view.read(cx).projection.selected() == Some(row)),
+                }
             };
+            // An answer that lands while the menu is open builds it again,
+            // if the row it selected is still the selected one.
+            let rebuild = {
+                let (view, focus, live) = (view, focus.clone(), live.clone());
+                freshkube_ui::menu::Rebuild(std::rc::Rc::new(move |cx| {
+                    let view = view.upgrade().filter(|_| row.is_some() && live(cx))?;
+                    let actions = view.read(cx).menu_actions(cx);
+                    let (focus, live) = (focus.clone(), live.clone());
+                    Some(freshkube_ui::menu::builder(move |menu, window, cx| {
+                        freshkube_ui::menu::actions(menu, actions, &focus, live, window, cx)
+                    }))
+                }))
+            };
+            freshkube_ui::menu::rebuildable(rebuild, window, cx);
             freshkube_ui::menu::actions(menu, actions, &focus, live, window, cx)
         });
         Some(line.into_any_element())

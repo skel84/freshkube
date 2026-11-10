@@ -429,9 +429,22 @@ fn value_label(label: &str, value: &str) -> (SharedString, bool) {
 pub struct Fold {
     items: MenuItems,
     changed: Option<SharedString>,
+    stamp: u64,
 }
 
 impl Fold {
+    /// What the folded form shows that can change while the "…" menu is
+    /// open, such as a reason line. The open menu is built again only when
+    /// the stamps of its folds changed, so a form that never changes needs
+    /// none, and one with the same stamp is taken to show the same.
+    pub fn stamped(mut self, stamp: impl std::hash::Hash) -> Self {
+        use std::hash::Hasher as _;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        stamp.hash(&mut hasher);
+        self.stamp = hasher.finish();
+        self
+    }
+
     /// The note, or `None` while the control is at its default.
     pub fn changed(mut self, note: Option<SharedString>) -> Self {
         self.changed = note;
@@ -444,6 +457,7 @@ impl From<MenuItems> for Fold {
         Self {
             items,
             changed: None,
+            stamp: 0,
         }
     }
 }
@@ -681,10 +695,15 @@ struct Fit {
     /// from this each time, so one that is open can be built again with
     /// what the page knows now ([`menu::refresh_open`]).
     forms: RefCell<Vec<MenuItems>>,
+    /// What the folds' stamps added up to when the header last drew, and
+    /// what they were when the open "…" menu was last built.
+    stamp: Cell<u64>,
+    built: Cell<u64>,
 }
 
 impl Fit {
     fn fill(&self, menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+        self.built.set(self.stamp.get());
         let forms = self.forms.borrow().clone();
         forms.iter().fold(menu, |menu, form| form(menu, window, cx))
     }
@@ -915,10 +934,12 @@ impl PageHeader {
         let mut shown = Vec::new();
         let mut slots = Vec::new();
         let mut forms = Vec::new();
+        let mut stamp = 0u64;
         let mut notes = Vec::new();
         for (ix, control) in self.controls.into_iter().enumerate() {
             if folded.contains(&ix) {
                 if let Some(fold) = control.fold {
+                    stamp = stamp.rotate_left(7) ^ fold.stamp;
                     forms.push(fold.items);
                     notes.extend(fold.changed);
                 }
@@ -934,6 +955,7 @@ impl PageHeader {
             );
         }
         *state.forms.borrow_mut() = forms.clone();
+        state.stamp.set(stamp);
         let more = (!forms.is_empty()).then(|| {
             let dot = (!notes.is_empty()).then(|| {
                 badge_dot(Tone::Accent, Some(cx.theme().background), cx)
@@ -969,12 +991,17 @@ impl PageHeader {
                                 menu::return_focus(None, window, cx);
                                 let again = state.clone();
                                 menu::rebuildable(
-                                    menu::Rebuild {
-                                        ready: Rc::new(|_| true),
-                                        build: Rc::new(move |menu, window, cx| {
-                                            again.fill(menu, window, cx)
-                                        }),
-                                    },
+                                    menu::Rebuild(Rc::new(move |_| {
+                                        // Only when a fold's stamp changed: a
+                                        // rebuild drops the highlight and any
+                                        // open submenu.
+                                        (again.stamp.get() != again.built.get()).then(|| {
+                                            let again = again.clone();
+                                            menu::builder(move |menu, window, cx| {
+                                                again.fill(menu, window, cx)
+                                            })
+                                        })
+                                    })),
                                     window,
                                     cx,
                                 );

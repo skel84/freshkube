@@ -36,17 +36,26 @@ thread_local! {
         RefCell::default();
 }
 
-/// Adds a menu's entries to the emptied menu.
-pub type BuildMenu = Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
+/// Adds a menu's entries to the emptied menu, once.
+pub type BuildMenu = Box<dyn FnOnce(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>;
 
-/// How an open menu is built again: `ready` says whether what it was opened
-/// for still stands (the row is still the selected one), and `build` adds
-/// its entries to the emptied menu, from what the page knows now.
-#[derive(Clone)]
-pub struct Rebuild {
-    pub ready: Rc<dyn Fn(&App) -> bool>,
-    pub build: BuildMenu,
+/// A [`BuildMenu`] from `build`.
+pub fn builder(
+    build: impl FnOnce(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
+) -> BuildMenu {
+    Box::new(build)
 }
+
+/// How an open menu is built again. Asked once the page has drawn its latest
+/// state, it answers `None` to leave the menu as it is (what it was opened
+/// for no longer stands, such as the row no longer being selected, or
+/// nothing it shows has changed) or the builder that adds its entries to the
+/// emptied menu, worked out from what the page knows then.
+#[derive(Clone)]
+pub struct Rebuild(pub Rc<AskRebuild>);
+
+/// What a [`Rebuild`] asks: the builder, or `None` to leave the menu.
+pub type AskRebuild = dyn Fn(&App) -> Option<BuildMenu>;
 
 type Open = (WeakEntity<PopupMenu>, AnyWindowHandle, Rebuild);
 
@@ -71,8 +80,10 @@ pub fn rebuildable(rebuild: Rebuild, window: &Window, cx: &mut Context<PopupMenu
 }
 
 /// Builds every open menu that was recorded with [`rebuildable`] again, as
-/// its page knows things now, once the next frame has drawn the page's
-/// latest state. A menu whose [`Rebuild::ready`] no longer holds is left as
+/// its page knows things now. Next-frame callbacks run before a frame draws,
+/// so the first one only waits for the frame that draws the page's latest
+/// state, and the second, at the start of the frame after, asks each menu's
+/// [`Rebuild`] and applies its answer. A menu that answers `None` is left as
 /// it is: its items already do nothing for a row that isn't selected.
 /// Call it when an answer arrives that a menu shows, never while drawing.
 pub fn refresh_open(cx: &mut App) {
@@ -83,15 +94,11 @@ pub fn refresh_open(cx: &mut App) {
     for (menu, handle, rebuild) in open {
         cx.defer(move |cx| {
             _ = cx.update_window(handle, |_, window, _| {
-                window.on_next_frame(move |window, cx| {
-                    let Some(menu) = menu.upgrade() else { return };
-                    if !(rebuild.ready)(cx) {
-                        return;
-                    }
-                    menu.update(cx, |menu, cx| {
-                        menu.rebuild(window, cx, |menu, window, cx| {
-                            (rebuild.build)(menu, window, cx)
-                        })
+                window.on_next_frame(move |window, _| {
+                    window.on_next_frame(move |window, cx| {
+                        let Some(menu) = menu.upgrade() else { return };
+                        let Some(build) = (rebuild.0)(cx) else { return };
+                        menu.update(cx, |menu, cx| menu.rebuild(window, cx, build));
                     });
                 });
             });
@@ -401,5 +408,54 @@ mod tests {
         cx.update(|cx| menu.update(cx, |_, cx| cx.emit(DismissEvent)));
         cx.run_until_parked();
         assert!(!watched(id));
+    }
+
+    /// Next-frame callbacks run before a frame draws, so a rebuild asked in
+    /// the first one would read what the page drew the frame before. It is
+    /// asked in the second, after the frame that drew the answer.
+    #[gpui_kit::test]
+    fn a_menu_is_rebuilt_one_frame_after_the_refresh_is_asked(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
+            let view = cx.new(|_| Empty);
+            Root::new(view, window, cx)
+        });
+        let asked = Rc::new(std::cell::Cell::new(0));
+        let menu = cx
+            .update_window(handle.into(), |_, window, cx| {
+                PopupMenu::build(window, cx, |menu, window, cx| {
+                    let asked = asked.clone();
+                    rebuildable(
+                        Rebuild(Rc::new(move |_| {
+                            asked.set(asked.get() + 1);
+                            None
+                        })),
+                        window,
+                        cx,
+                    );
+                    menu
+                })
+            })
+            .unwrap();
+        cx.update(refresh_open);
+        cx.run_until_parked();
+        let frame = |cx: &mut TestAppContext| {
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.simulate_next_frame(cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        frame(cx);
+        assert_eq!(asked.get(), 0, "asked before the frame that draws");
+        frame(cx);
+        assert_eq!(asked.get(), 1, "asked after it");
+        frame(cx);
+        assert_eq!(asked.get(), 1, "asked once");
+        drop(menu);
     }
 }

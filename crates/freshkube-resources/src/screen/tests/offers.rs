@@ -683,11 +683,13 @@ fn a_refused_toolbar_button_shows_its_reason_when_hovered(cx: &mut TestAppContex
 /// The open menu's items, a separator as `None`, after the frames that let
 /// a rebuild land.
 fn read_open_menu(cx: &mut TestAppContext, handle: AnyWindowHandle) -> Vec<Option<String>> {
-    for _ in 0..2 {
+    // As the platform runs a frame: next-frame callbacks first, then the
+    // draw. The rebuild takes two such frames, so it asks after the page
+    // drew what the answer changed.
+    for _ in 0..3 {
         cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            // The rebuild waits for the frame that drew the page's answer.
             window.simulate_next_frame(cx);
+            window.render_frame(cx);
         })
         .unwrap();
         cx.run_until_parked();

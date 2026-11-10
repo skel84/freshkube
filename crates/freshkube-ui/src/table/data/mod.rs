@@ -824,24 +824,24 @@ fn render_line<S: TableSource>(
                 // from the same row, if it is still the selected one.
                 let rebuild = {
                     let (view, key, focus, live) = (view, key, focus.clone(), live.clone());
-                    crate::menu::Rebuild {
-                        ready: Rc::new({
-                            let (view, key, live) = (view.clone(), key.clone(), live.clone());
-                            move |cx| {
-                                live(cx)
-                                    && view.upgrade().is_some_and(|view| {
-                                        !view.read(cx).row_menu_now(&key, cx).is_empty()
-                                    })
-                            }
-                        }),
-                        build: Rc::new(move |menu, window, cx| {
-                            let actions = view
-                                .upgrade()
-                                .map(|view| view.read(cx).row_menu_now(&key, cx))
-                                .unwrap_or_default();
-                            crate::menu::actions(menu, actions, &focus, live.clone(), window, cx)
-                        }),
-                    }
+                    crate::menu::Rebuild(Rc::new(move |cx| {
+                        let actions = view
+                            .upgrade()
+                            .filter(|_| live(cx))
+                            .map(|view| view.read(cx).row_menu_now(&key, cx))
+                            .filter(|actions| !actions.is_empty())?;
+                        let (focus, live) = (focus.clone(), live.clone());
+                        Some(crate::menu::builder(move |menu, window, cx| {
+                            crate::menu::actions(
+                                menu,
+                                actions,
+                                &focus,
+                                move |cx| live(cx),
+                                window,
+                                cx,
+                            )
+                        }))
+                    }))
                 };
                 crate::menu::rebuildable(rebuild, window, cx);
                 crate::menu::actions(menu, actions, &focus, live, window, cx)
