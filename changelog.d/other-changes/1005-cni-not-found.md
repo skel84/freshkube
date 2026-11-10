@@ -1,0 +1,1 @@
+- The CNI check no longer fails when Talos file reads error with "not found" text while the node is unreachable; only a real not-found counts as a missing file, so the check says unknown.
