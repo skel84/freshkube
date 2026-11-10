@@ -207,8 +207,10 @@ impl Pilot {
             // The cell's bottom, which the status bar bounds.
             .child(self.measure_cell(
                 move |bounds| {
-                    let (top, _) = bottom.get();
-                    bottom.set((top, bounds.bottom()));
+                    let mut room = bottom.get();
+                    room.bottom = bounds.bottom();
+                    room.cell_top = bounds.top();
+                    bottom.set(room);
                 },
                 cx,
             ))
@@ -231,8 +233,9 @@ impl Pilot {
                     // The top of the room the dock may take: under the strip.
                     .child(self.measure_cell(
                         move |bounds| {
-                            let (_, bottom) = top.get();
-                            top.set((bounds.top(), bottom));
+                            let mut room = top.get();
+                            room.page_top = bounds.top();
+                            top.set(room);
                         },
                         cx,
                     ))
@@ -277,13 +280,16 @@ impl Pilot {
                 let before = room.get();
                 record(bounds);
                 let after = room.get();
-                if (after.0 - before.0).abs() > px(0.5) || (after.1 - before.1).abs() > px(0.5) {
+                if (after.page_top - before.page_top).abs() > px(0.5)
+                    || (after.bottom - before.bottom).abs() > px(0.5)
+                    || (after.cell_top - before.cell_top).abs() > px(0.5)
+                {
                     let (pilot, dock) = (pilot.clone(), dock.clone());
                     window.on_next_frame(move |_, cx| {
                         _ = pilot.update(cx, |_, cx| cx.notify());
                         // The dock is a cached view that sizes its own
                         // frame from the room: it draws again too.
-                        _ = dock.update(cx, |_, cx| cx.notify());
+                        dock.update(cx, |_, cx| cx.notify());
                     });
                 }
             },

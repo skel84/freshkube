@@ -429,7 +429,7 @@ pub(crate) struct Dock {
     /// strip, its spacer) and its bottom, which the status bar bounds. The
     /// shell fills it while it draws the cell; the dock keeps to what it
     /// measures, so nothing drawn outside or over the cell is forgotten.
-    cell_room: Rc<Cell<(Pixels, Pixels)>>,
+    cell_room: Rc<Cell<CellRoom>>,
     /// Where the dock was last laid out, so the shell can tell the person's
     /// input in the dock (the agent's own tab) from input in the page.
     bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
@@ -517,11 +517,8 @@ impl Dock {
         if self.maximized {
             return cell;
         }
-        // What the selected tab needs to show whole wins over the page's
-        // least: a cut-off question box is worse than a short page. Only
-        // the cell itself bounds it.
-        let least = self.least_height(window, cx).min(cell);
-        let room = self.open_room(window).max(least);
+        let room = self.open_room(window);
+        let least = self.least_height(window, cx).min(room);
         // Until the user drags it, a window too short for a table page
         // gives the dock at most half the page cell, so the page keeps the
         // row the logs came from.
@@ -547,15 +544,15 @@ impl Dock {
     }
 
     /// The cell the shell fills in as it lays the page cell out.
-    pub(crate) fn cell_room(&self) -> Rc<Cell<(Pixels, Pixels)>> {
+    pub(crate) fn cell_room(&self) -> Rc<Cell<CellRoom>> {
         self.cell_room.clone()
     }
 
     /// The page cell's room for the dock, in dp: as laid out, else (before
     /// the first frame) the window less the header and status bar.
     fn cell_height(&self, window: &Window) -> f32 {
-        let (top, bottom) = self.cell_room.get();
-        let measured = (bottom - top) / dp_px(1., window);
+        let room = self.cell_room.get();
+        let measured = (room.bottom - room.page_top) / dp_px(1., window);
         if measured > 0. {
             measured.max(BAR_HEIGHT)
         } else {
@@ -564,10 +561,15 @@ impl Dock {
     }
 
     /// The most an open dock that isn't fitted to the window takes, in dp:
-    /// the cell keeps [`PAGE_LEAST`] for the page when it has it.
+    /// the page keeps [`PAGE_LEAST`] when the window has it, counted from
+    /// the top of the cell, so a strip over the page takes from the page
+    /// and not from the dock.
     fn open_room(&self, window: &Window) -> f32 {
         let cell = self.cell_height(window);
-        (cell - PAGE_LEAST).max(MIN_HEIGHT.min(cell))
+        let room = self.cell_room.get();
+        let whole = (room.bottom - room.cell_top) / dp_px(1., window);
+        let whole = if whole > 0. { whole.max(cell) } else { cell };
+        (whole - PAGE_LEAST).max(MIN_HEIGHT.min(cell)).min(cell)
     }
 
     pub(crate) fn has_tabs(&self) -> bool {
@@ -1584,6 +1586,16 @@ impl Dock {
 fn available_height(window: &Window) -> f32 {
     let unit = dp_px(1., window);
     (window.viewport_size().height / unit - FRAME_CHROME).max(BAR_HEIGHT)
+}
+
+/// Where the page cell lies, as laid out: its top, the top of the room under
+/// whatever the cell draws over the page (the follow strip, its spacer) and
+/// its bottom, which the status bar bounds.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CellRoom {
+    pub(crate) cell_top: Pixels,
+    pub(crate) page_top: Pixels,
+    pub(crate) bottom: Pixels,
 }
 
 /// The kind a saved tab names, if it still has logs.
