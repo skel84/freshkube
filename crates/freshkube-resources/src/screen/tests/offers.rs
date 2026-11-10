@@ -587,18 +587,17 @@ fn the_row_menu_says_why_an_action_is_refused(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn an_allowed_action_has_no_reason_line_in_the_row_menu(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
-    let space = namespace(&screen, cx);
-    if !matches!(space.as_str(), "shop" | "payments") {
-        return;
-    }
+    // Everything is allowed, so no action is refused and no line says why.
+    let (_runtime, screen, handle, _) = opened(cx, Shape::Full);
+    assert_eq!(block(&screen, Everyday::Restart, cx), None);
+    assert_eq!(block(&screen, Everyday::Delete, cx), None);
     let items = row_menu(cx, handle, &screen);
-    let restart = items
-        .iter()
-        .position(|item| item.as_deref() == Some("Restart"));
-    let next = items.get(restart.unwrap() + 1).cloned().flatten();
+    assert!(items.contains(&Some("Restart".into())), "{items:?}");
     assert!(
-        next.is_none_or(|text| !text.starts_with("Needs")),
+        items
+            .iter()
+            .flatten()
+            .all(|item| !item.starts_with("Needs ")),
         "{items:?}"
     );
 }
@@ -615,4 +614,34 @@ fn the_overflow_menu_says_why_an_action_is_refused(cx: &mut TestAppContext) {
         .position(|item| item.as_deref() == Some("Delete…"))
         .unwrap_or_else(|| panic!("{items:?}"));
     assert_eq!(items.get(at + 1), Some(&Some(reason)), "{items:?}");
+}
+
+#[gpui_kit::test]
+fn the_arrow_keys_and_enter_skip_a_refused_item_and_its_reason(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, heard) = opened(cx, Shape::ActionsRefused);
+    let items = row_menu(cx, handle, &screen);
+    let refused = |act: Everyday, cx: &mut TestAppContext| block(&screen, act, cx).is_some();
+    assert!(refused(Everyday::Delete, cx));
+    // Walk the menu one more step each time and press Enter: whatever
+    // the selection rests on, it is never the refused Delete, and a reason
+    // line is no item to choose.
+    for steps in 1..=items.len() + 1 {
+        row_menu(cx, handle, &screen);
+        cx.update_window(handle, |_, window, cx| {
+            for _ in 0..steps {
+                window.press("down", cx);
+            }
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(
+            heard
+                .borrow()
+                .iter()
+                .all(|(act, _)| *act != Everyday::Delete),
+            "after {steps} steps: {:?}",
+            heard.borrow()
+        );
+    }
 }
