@@ -806,3 +806,21 @@ async fn argo_cd_is_read_where_its_own_workloads_say_it_runs() {
     );
     only_reads(&fake);
 }
+
+#[tokio::test]
+async fn a_failed_read_answers_with_the_documented_keys() {
+    let up = cluster(world());
+    let down = Fake::unreachable();
+    for line in ["changes storefront", "waiting-to-ship"] {
+        let found = run(&up, &format!("{line} {KUBE} --json")).await;
+        let failed = run(&down, &format!("{line} {KUBE} --json")).await;
+        assert_eq!(failed.code, 3, "{line}");
+        let keys = |run: &Run| -> Vec<String> {
+            let mut keys: Vec<String> = run.json().as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(keys(&failed), keys(&found), "{line}");
+        assert_eq!(failed.json()["problems"][0]["state"], "unknown", "{line}");
+    }
+}
