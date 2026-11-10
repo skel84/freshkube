@@ -306,11 +306,11 @@ impl QueryView {
                 // step or a pause in the wheel snaps the strip to a whole
                 // tab ([`super::snap_tabs`]), so none is cut at Previous.
                 .child({
-                    let (snap, wheel) = (self.snap.clone(), self.wheel.clone());
+                    let snap = self.tabs_snap.clone();
                     let (scroll, tabs) = (self.results_scroll.clone(), self.items.len());
-                    let (avail, fit) = (self.avail.clone(), self.fit.clone());
-                    let (room, width) = (avail.clone(), fit.get());
-                    let (room_snap, room_fit) = (snap.clone(), fit.clone());
+                    let (width, room) = (snap.fit.get(), snap.avail.get());
+                    // A tab wider than the room is cut by an ellipsis of its own.
+                    let label_width = (room > px(0.)).then(|| room - px(40.));
                     let tabs_row = h_flex()
                         .id("query-result-tabs")
                         .test_support()
@@ -325,30 +325,45 @@ impl QueryView {
                         .track_scroll(&self.results_scroll)
                         .on_scroll_wheel({
                             let snap = snap.clone();
-                            move |_, window, cx| {
-                                // Only the last wheel event of a burst snaps.
-                                let burst = wheel.get().wrapping_add(1);
-                                wheel.set(burst);
-                                let (wheel, snap) = (wheel.clone(), snap.clone());
+                            move |event: &ScrollWheelEvent, window, cx| {
+                                // Only the last wheel event of a burst snaps,
+                                // to the tab the burst was heading for.
+                                let burst = snap.burst.get().wrapping_add(1);
+                                snap.burst.set(burst);
+                                let sideways = f32::from(event.delta.pixel_delta(px(16.)).x);
+                                snap.travel.set(snap.travel.get() + sideways);
+                                let snap = snap.clone();
                                 window
                                     .spawn(cx, async move |cx| {
                                         cx.background_executor()
                                             .timer(Duration::from_millis(120))
                                             .await;
-                                        if wheel.get() == burst {
-                                            snap.set(2);
+                                        if snap.burst.get() == burst {
+                                            // Content moves against the wheel's delta.
+                                            let travel = snap.travel.replace(0.);
+                                            snap.dir.set(if travel < 0. {
+                                                1
+                                            } else if travel > 0. {
+                                                -1
+                                            } else {
+                                                0
+                                            });
+                                            snap.arm(true);
                                             cx.update(|window, _| window.refresh()).ok();
                                         }
                                     })
                                     .detach();
                             }
                         })
-                        .on_prepaint(move |_, window, _| {
-                            let left = snap.get();
-                            if left > 0 {
-                                snap.set(left - 1);
-                                if super::snap_tabs(&scroll, tabs, avail.get(), &fit) || left > 1 {
-                                    window.refresh();
+                        .on_prepaint({
+                            let snap = snap.clone();
+                            move |_, window, _| {
+                                let left = snap.frames.get();
+                                if left > 0 {
+                                    snap.frames.set(left - 1);
+                                    if super::snap_tabs(&scroll, tabs, selected, &snap) {
+                                        window.refresh();
+                                    }
                                 }
                             }
                         })
@@ -359,7 +374,15 @@ impl QueryView {
                                 .small()
                                 .h(dp(ui::CONTROL_HEIGHT))
                                 .flex_none()
-                                .label(label.clone())
+                                .when_some(room.gt(&px(0.)).then_some(room), |this, room| {
+                                    this.max_w(room)
+                                })
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .when_some(label_width, |this, width| this.max_w(width))
+                                        .child(label.clone()),
+                                )
                                 .accessibility_label(label)
                                 .selected(ix == selected)
                                 .on_click(cx.listener(move |this, _, _, cx| this.show(ix, cx)))
@@ -368,15 +391,16 @@ impl QueryView {
                         .child(div().flex_none().w_full());
                     div()
                         .id("query-result-strip")
+                        .test_support()
                         .flex_1()
                         .min_w_0()
                         .overflow_hidden()
                         // The room the tabs have; when it changes they are
                         // fitted again.
                         .on_prepaint(move |bounds, window, _| {
-                            if room.replace(bounds.size.width) != bounds.size.width {
-                                room_fit.set(None);
-                                room_snap.set(3);
+                            if snap.avail.replace(bounds.size.width) != bounds.size.width {
+                                snap.fit.set(None);
+                                snap.arm(false);
                                 window.refresh();
                             }
                         })

@@ -102,14 +102,8 @@ pub(crate) struct QueryView {
     /// The result tabs' scroll, which keeps the selected tab in view and
     /// snaps to whole tabs ([`snap_tabs`]).
     results_scroll: ScrollHandle,
-    /// Frames left to snap the tabs in, after a step or a pause in a wheel.
-    snap: Rc<Cell<u8>>,
-    /// The room the strip has, and the width of the whole tabs that fit in
-    /// it ([`snap_tabs`]).
-    avail: Rc<Cell<Pixels>>,
-    fit: Rc<Cell<Option<Pixels>>>,
-    /// Counts wheel events, so only the last of a burst starts a snap.
-    wheel: Rc<Cell<u32>>,
+    /// How the tabs are fitted and snapped ([`TabsSnap`]).
+    tabs_snap: Rc<TabsSnap>,
     _editor: Subscription,
 }
 
@@ -160,10 +154,7 @@ impl QueryView {
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             plan_scroll: UniformListScrollHandle::new(),
             results_scroll: ScrollHandle::new(),
-            snap: Rc::default(),
-            avail: Rc::new(Cell::new(px(0.))),
-            fit: Rc::default(),
-            wheel: Rc::default(),
+            tabs_snap: Rc::default(),
             _editor: subscription,
         }
     }
@@ -438,7 +429,7 @@ impl QueryView {
         self.selected = ix.min(self.items.len().saturating_sub(1));
         self.results_scroll
             .scroll_to_item(FIRST_TAB + self.selected);
-        self.snap.set(2);
+        self.tabs_snap.arm(false);
         let rows = match self.items.get(self.selected).map(|item| &item.state) {
             Some(State::Rows(rows)) => Some(rows.clone()),
             _ => None,
@@ -559,46 +550,109 @@ async fn statement(
 /// `FIRST_TAB` onward.
 const FIRST_TAB: usize = 1;
 
-/// Moves the result tabs' scroll to the nearest whole tab, so none is cut
-/// at the Previous button, and sets `fit` to the width of the whole tabs
-/// that follow it within `avail`, so none is cut at the Next button either.
-/// The scroll lands between two tabs after a wheel or a step to a tab near
-/// the end. Returns whether either changed.
+/// What the result tabs keep to fit and snap themselves, shared with the
+/// strip's closures.
+#[derive(Default)]
+pub(super) struct TabsSnap {
+    /// Frames left to snap the tabs in, after a step, a pause in a wheel or
+    /// a change of room. Each snap that moves something asks for more.
+    pub(super) frames: Cell<u8>,
+    /// The way a wheel moved the strip, once it paused: -1, 0 or 1.
+    pub(super) dir: Cell<i8>,
+    /// The wheel moved the strip, so it needn't show the selected tab until
+    /// a step or a new room.
+    pub(super) free: Cell<bool>,
+    /// The room the strip has, and the width of the whole tabs that fit in it.
+    pub(super) avail: Cell<Pixels>,
+    pub(super) fit: Cell<Option<Pixels>>,
+    /// Counts wheel events, so only the last of a burst snaps, and how far
+    /// they went sideways.
+    pub(super) burst: Cell<u32>,
+    pub(super) travel: Cell<f32>,
+}
+
+impl TabsSnap {
+    const FRAMES: u8 = 6;
+
+    /// Asks for the tabs to be fitted on the next frames; `free` keeps the
+    /// strip where a wheel left it.
+    pub(super) fn arm(&self, free: bool) {
+        self.free.set(free);
+        self.frames.set(Self::FRAMES);
+    }
+}
+
+/// Fits the result tabs and snaps their scroll to whole tabs, so none is cut
+/// at the Previous or the Next button. The strip starts at the tab nearest
+/// its start (the next one in the direction of a wheel, `snap.dir`), moved
+/// to show the `selected` tab unless a wheel left it free; the strip is as
+/// wide as the whole tabs that fit from there (`snap.fit`); a tab wider than
+/// the room is cut by its own ellipsis, where it is drawn. Returns whether
+/// anything moved.
 pub(super) fn snap_tabs(
     scroll: &ScrollHandle,
     tabs: usize,
-    avail: Pixels,
-    fit: &Cell<Option<Pixels>>,
+    selected: usize,
+    snap: &TabsSnap,
 ) -> bool {
-    let view = scroll.bounds();
-    if view.size.width <= px(0.) || avail <= px(0.) {
+    let (view, avail) = (scroll.bounds(), snap.avail.get());
+    if view.size.width <= px(0.) || avail <= px(0.) || tabs == 0 {
         return false;
     }
     // The children's bounds are those of the layout, before the scroll:
     // a tab shows at its left plus the scroll's offset.
     let at = scroll.offset();
     let tab = |ix: usize| scroll.bounds_for_item(FIRST_TAB + ix);
-    let shown = |left: Pixels| (left + at.x - view.left()).abs();
-    let Some((k, left)) = (0..tabs)
-        .filter_map(|ix| Some((ix, tab(ix)?.left())))
-        .min_by(|a, b| f32::from(shown(a.1)).total_cmp(&f32::from(shown(b.1))))
-    else {
+    let shown = |ix: usize| tab(ix).map(|tab| tab.left() + at.x - view.left());
+    let dir = snap.dir.replace(0);
+    let mut k = if dir != 0 {
+        let from = |ix: &usize| shown(*ix);
+        if dir > 0 {
+            (0..tabs)
+                .find(|ix| from(ix).is_some_and(|left| left >= px(-0.5)))
+                .unwrap_or(tabs - 1)
+        } else {
+            (0..tabs)
+                .rev()
+                .find(|ix| from(ix).is_some_and(|left| left <= px(0.5)))
+                .unwrap_or(0)
+        }
+    } else {
+        (0..tabs)
+            .filter_map(|ix| Some((ix, shown(ix)?.abs())))
+            .min_by(|a, b| f32::from(a.1).total_cmp(&f32::from(b.1)))
+            .map_or(0, |(ix, _)| ix)
+    };
+    if !snap.free.get()
+        && dir == 0
+        && let Some(last) = tab(selected)
+    {
+        // The selected tab shows: the strip starts at it or before, with
+        // the tabs between whole in the room.
+        k = k.min(selected);
+        while k < selected && tab(k).is_some_and(|first| last.right() - first.left() > avail) {
+            k += 1;
+        }
+    }
+    let Some(first) = tab(k) else {
         return false;
     };
     let mut changed = false;
-    if shown(left) > px(0.5) {
-        scroll.set_offset(point(view.left() - left, at.y));
+    if shown(k).is_some_and(|left| left.abs() > px(0.5)) {
+        scroll.set_offset(point(view.left() - first.left(), at.y));
         changed = true;
     }
-    let mut fitted = tab(k).map_or(avail, |first| first.size.width.min(avail));
+    let mut fitted = first.size.width.min(avail);
     for ix in k + 1..tabs {
         match tab(ix) {
-            Some(next) if next.right() - left <= avail => fitted = next.right() - left,
+            Some(next) if next.right() - first.left() <= avail => {
+                fitted = next.right() - first.left();
+            }
             _ => break,
         }
     }
-    if fit.get() != Some(fitted) {
-        fit.set(Some(fitted));
+    if snap.fit.get() != Some(fitted) {
+        snap.fit.set(Some(fitted));
         changed = true;
     }
     changed
