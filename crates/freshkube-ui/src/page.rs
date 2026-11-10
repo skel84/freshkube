@@ -345,6 +345,15 @@ pub fn disabled_item(label: impl Into<SharedString>) -> MenuItems {
     Rc::new(move |menu, _, _| menu.item(PopupMenuItem::new(label.clone()).disabled(true)))
 }
 
+/// [`disabled_item`] that says why: the reason, in plain text, under it.
+pub fn refused_item(label: impl Into<SharedString>, reason: impl Into<SharedString>) -> MenuItems {
+    let (label, reason) = (label.into(), reason.into());
+    Rc::new(move |menu, _, _| {
+        menu.item(PopupMenuItem::new(label.clone()).disabled(true))
+            .item(PopupMenuItem::label(reason.clone()))
+    })
+}
+
 /// The folded form of a control that opens a menu or picks one of several:
 /// its `items` under `label`.
 pub fn submenu(label: impl Into<SharedString>, items: MenuItems) -> MenuItems {

@@ -34,7 +34,16 @@ fn opened(
     cx: &mut TestAppContext,
     shape: Shape,
 ) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle, Heard) {
-    let (runtime, screen, handle) = mount(cx, Some("homelab"));
+    opened_sized(cx, shape, 1280.)
+}
+
+/// [`opened`] in a window `width` dp wide.
+fn opened_sized(
+    cx: &mut TestAppContext,
+    shape: Shape,
+    width: f32,
+) -> (Runtime, Entity<ResourcesScreen>, AnyWindowHandle, Heard) {
+    let (runtime, screen, handle) = mount_sized(cx, Some("homelab"), width);
     let heard: Heard = Rc::default();
     cx.update(|cx| {
         desk(cx).update(cx, |desk, _| desk.set_example(shape));
@@ -554,4 +563,108 @@ fn safety_g22_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands(cx: &m
             .offer(&[question("web-0"), question("web-1")], cx)
     });
     assert_eq!(known, Offer::Pending);
+}
+
+#[gpui_kit::test]
+fn the_row_menu_says_why_an_action_is_refused(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, heard) = opened(cx, Shape::ActionsRefused);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    let items = row_menu(cx, handle, &screen);
+    let at = |label: &str| items.iter().position(|item| item.as_deref() == Some(label));
+    // The reason is the toolbar tooltip's, drawn right under the item.
+    assert_eq!(block(&screen, Everyday::Delete, cx), Some(reason.clone()));
+    let item = at("Delete…").expect("listed");
+    assert_eq!(items.get(item + 1), Some(&Some(reason)), "{items:?}");
+    // Still unclickable.
+    cx.update_window(handle, |_, window, cx| {
+        window.within("popup-menu").click(item, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(heard.borrow().is_empty(), "{:?}", heard.borrow());
+}
+
+#[gpui_kit::test]
+fn an_allowed_action_has_no_reason_line_in_the_row_menu(cx: &mut TestAppContext) {
+    // Everything is allowed, so no action is refused and no line says why.
+    let (_runtime, screen, handle, _) = opened(cx, Shape::Full);
+    assert_eq!(block(&screen, Everyday::Restart, cx), None);
+    assert_eq!(block(&screen, Everyday::Delete, cx), None);
+    let items = row_menu(cx, handle, &screen);
+    assert!(items.contains(&Some("Restart".into())), "{items:?}");
+    assert!(
+        items
+            .iter()
+            .flatten()
+            .all(|item| !item.starts_with("Needs ")),
+        "{items:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn the_overflow_menu_says_why_an_action_is_refused(cx: &mut TestAppContext) {
+    // Narrow enough that the toolbar's actions fold into "…".
+    let (_runtime, screen, handle, _) = opened_sized(cx, Shape::ActionsRefused, 340.);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    let items = open_menu(cx, handle, |window, cx| window.click("resource-more", cx));
+    let at = items
+        .iter()
+        .position(|item| item.as_deref() == Some("Delete…"))
+        .unwrap_or_else(|| panic!("{items:?}"));
+    assert_eq!(items.get(at + 1), Some(&Some(reason)), "{items:?}");
+}
+
+#[gpui_kit::test]
+fn the_arrow_keys_and_enter_skip_a_refused_item_and_its_reason(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, heard) = opened(cx, Shape::ActionsRefused);
+    let items = row_menu(cx, handle, &screen);
+    let refused = |act: Everyday, cx: &mut TestAppContext| block(&screen, act, cx).is_some();
+    assert!(refused(Everyday::Delete, cx));
+    // Walk the menu one more step each time and press Enter: whatever
+    // the selection rests on, it is never the refused Delete, and a reason
+    // line is no item to choose.
+    for steps in 1..=items.len() + 1 {
+        row_menu(cx, handle, &screen);
+        cx.update_window(handle, |_, window, cx| {
+            for _ in 0..steps {
+                window.press("down", cx);
+            }
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(
+            heard
+                .borrow()
+                .iter()
+                .all(|(act, _)| *act != Everyday::Delete),
+            "after {steps} steps: {:?}",
+            heard.borrow()
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn a_refused_toolbar_button_shows_its_reason_when_hovered(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle, _) = opened(cx, Shape::ActionsRefused);
+    let space = namespace(&screen, cx);
+    let reason = format!("Needs delete on deployments in {space}");
+    assert_eq!(block(&screen, Everyday::Delete, cx), Some(reason.clone()));
+    assert_eq!(freshkube_ui::tooltip::drawn(&reason), 0);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("resource-delete", cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(
+        freshkube_ui::tooltip::drawn(&reason) > 0,
+        "the refused Delete button drew no tooltip"
+    );
 }

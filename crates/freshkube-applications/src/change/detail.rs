@@ -22,6 +22,7 @@ use freshkube_delivery::change::{
 use freshkube_ui::inspector::Inspector;
 use freshkube_ui::palette::palette;
 use freshkube_ui::platform::{OpenDestinationsSettings, OpenSourcesSettings};
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::{Disableable as _, Sizable, button::Button, h_flex, v_flex};
 
 /// The width of a field's label.
@@ -615,10 +616,14 @@ impl ChangePage {
                 })),
                 None => button,
             };
+            // The tooltip belongs to a wrapper that draws it only while the
+            // pointer is over this button, so the one the pointer left
+            // never covers its neighbour's.
+            let wrap = div().id(SharedString::from(format!("change-action-{ix}-tip")));
             match (action.why.clone(), action.tooltip.clone()) {
-                (Some(why), _) => button.disabled(true).tooltip(why),
-                (None, Some(tooltip)) => button.tooltip(tooltip),
-                (None, None) => button,
+                (Some(why), _) => wrap.child(button.disabled(true)).follow_tooltip(why),
+                (None, Some(tooltip)) => wrap.child(button).follow_tooltip(tooltip),
+                (None, None) => wrap.child(button),
             }
         });
         h_flex()
