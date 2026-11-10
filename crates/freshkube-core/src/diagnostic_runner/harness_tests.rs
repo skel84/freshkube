@@ -42,14 +42,7 @@ struct Gap {
     issue: &'static str,
 }
 
-const KNOWN_GAPS: &[Gap] = &[Gap {
-    id: "cni",
-    scenario: "Talos file reads say not found",
-    // `is_missing_file_error` calls any error whose text holds "not found" a
-    // missing file, so four such errors name the provider `None` and `cni`
-    // fails with Talos unreached.
-    issue: "#1005",
-}];
+const KNOWN_GAPS: &[Gap] = &[];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Provider {
@@ -115,8 +108,8 @@ fn no_such_file() -> TalosError {
     TalosError::Grpc(Status::not_found("file not found"))
 }
 
-/// An error that is not the file's absence, yet whose text holds "not found",
-/// as `is_missing_file_error` reads it.
+/// An error that is not the file's absence, yet whose text holds "not found":
+/// `is_missing_file_error` must not take it for a missing file.
 fn not_found_text() -> TalosError {
     TalosError::Grpc(Status::unavailable("peer unavailable, not found in cache"))
 }
