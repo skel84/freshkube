@@ -183,6 +183,29 @@ pub fn assert_inspector(
     inspector: &'static str,
     title: &'static str,
 ) {
+    assert_inspector_keeping(
+        window,
+        cx,
+        split,
+        table,
+        inspector,
+        title,
+        HEADER_HEIGHT + STACKED_ROWS * ROW_HEIGHT + FOOTER_HEIGHT,
+    );
+}
+
+/// [`assert_inspector`] for a page whose stacked table keeps its own least:
+/// `least` dp high at the least; the default is its header, three rows and
+/// its footer.
+pub fn assert_inspector_keeping(
+    window: &mut Window,
+    cx: &mut App,
+    split: &'static str,
+    table: &'static str,
+    inspector: &'static str,
+    title: &'static str,
+    least: f32,
+) {
     window.render_frame(cx);
     let split = window.find(split).bounds();
     let table = window.find(table).bounds();
@@ -218,13 +241,10 @@ pub fn assert_inspector(
         );
         // Under the table, the table keeps its header, three rows and its
         // footer, so the selected row is whole and not the only one.
-        let least = dp_px(
-            HEADER_HEIGHT + STACKED_ROWS * ROW_HEIGHT + FOOTER_HEIGHT,
-            window,
-        );
+        let least = dp_px(least, window);
         assert!(
             table.size.height >= least - px(1.),
-            "{inspector}: the stacked table is {:?} high, under {least:?} for {STACKED_ROWS} rows",
+            "{inspector}: the stacked table is {:?} high, under {least:?}",
             table.size.height
         );
     }

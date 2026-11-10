@@ -65,13 +65,14 @@ fn small_window_stacked_inspector_keeps_the_table_header_in_place(cx: &mut TestA
         for _ in 0..6 {
             window.render_frame(cx);
         }
-        layout_check::assert_inspector(
+        layout_check::assert_inspector_keeping(
             window,
             cx,
             "settings-split",
             "settings-table",
             "settings-detail",
             "settings-detail-title",
+            freshkube_ui::table::HEADER_HEIGHT + freshkube_ui::table::ROW_HEIGHT + 2.,
         );
         let fixed = [
             "settings-title",

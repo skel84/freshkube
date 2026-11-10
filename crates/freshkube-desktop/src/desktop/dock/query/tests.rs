@@ -732,6 +732,7 @@ async fn the_result_tabs_never_stop_with_the_first_one_cut_off(cx: &mut TestAppC
             cx,
         );
         window.render_frame(cx);
+        window.render_frame(cx);
         let strip = window.find("query-result-tabs").bounds();
         let mut shown = 0;
         for ix in 1..=20 {

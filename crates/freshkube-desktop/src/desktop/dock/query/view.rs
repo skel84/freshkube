@@ -278,6 +278,9 @@ impl QueryView {
                     }
                 }))
         };
+        // The strip starts a tab before the selected one, so the selected
+        // tab shows whole and no tab is cut at the Previous button.
+        let start = selected.saturating_sub(1);
         let previous = selected.checked_sub(1);
         let next = (selected + 1 < count).then_some(selected + 1);
         Some(
@@ -299,10 +302,9 @@ impl QueryView {
                         cx,
                     ))
                 })
-                // The tabs move only by whole tabs: the selected one is
-                // brought to the start of the strip, so a run of fifty
-                // statements can all be reached and none is cut at the
-                // Previous button. A wheel would stop between two tabs.
+                // The tabs start at whole tabs, a tab before the selected
+                // one, so a run of fifty statements can all be reached by
+                // stepping and none is cut at the Previous button.
                 .child(
                     h_flex()
                         .id("query-result-tabs")
@@ -311,8 +313,7 @@ impl QueryView {
                         .min_w_0()
                         .gap(dp(4.))
                         .overflow_x_hidden()
-                        .track_scroll(&self.results_scroll)
-                        .children(self.items.iter().enumerate().map(|(ix, item)| {
+                        .children(self.items.iter().enumerate().skip(start).map(|(ix, item)| {
                             let label = item.label.clone();
                             Button::new(SharedString::from(format!("query-result-{}", ix + 1)))
                                 .ghost()

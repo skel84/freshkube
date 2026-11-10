@@ -97,8 +97,6 @@ pub(crate) struct QueryView {
     least: Pixels,
     /// The plan list's scroll, kept so a plan stays where it was read.
     plan_scroll: UniformListScrollHandle,
-    /// The result tabs' scroll, which keeps the selected tab in view.
-    results_scroll: ScrollHandle,
     _editor: Subscription,
 }
 
@@ -148,7 +146,6 @@ impl QueryView {
             focus: cx.focus_handle(),
             least: crate::ui::dp_px(LEAST_HEIGHT, window),
             plan_scroll: UniformListScrollHandle::new(),
-            results_scroll: ScrollHandle::new(),
             _editor: subscription,
         }
     }
@@ -421,7 +418,6 @@ impl QueryView {
     /// Selects result `ix` and shows it.
     pub(super) fn show(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected = ix.min(self.items.len().saturating_sub(1));
-        self.results_scroll.scroll_to_item(self.selected);
         let rows = match self.items.get(self.selected).map(|item| &item.state) {
             Some(State::Rows(rows)) => Some(rows.clone()),
             _ => None,
