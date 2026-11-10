@@ -5,7 +5,9 @@
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::{Selectable, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Context, PathBuilder, TestSupportExt, Window, canvas, div, point};
+use gpui_kit::{
+    AnyElement, Context, PathBuilder, SharedString, TestSupportExt, Window, canvas, div, point,
+};
 
 use freshkube_graph::layout::{Metrics, NODE_H, NODE_W};
 
@@ -198,6 +200,22 @@ pub(super) fn render_graph<S: GraphSource>(
         .w(dp(display.width))
         .h(dp(display.height + room))
         .child(calls)
+        // The canvas itself, under the boxes and the calls: a click that
+        // lands on it hit neither.
+        .child(
+            div()
+                .id(SharedString::from(format!("{}-background", state.ids.prefix)))
+                .test_support()
+                .absolute()
+                .inset_0()
+                .on_click(cx.listener(|this: &mut S, _, window, cx| {
+                    // A box or a call took the click first; this is for the
+                    // canvas between them.
+                    if !this.graph().item_clicked.replace(false) {
+                        this.background_click(window, cx);
+                    }
+                })),
+        )
         .children(display.markers.iter().map(|&ix| {
             let edge = &state.edges[display.shown[ix].edge];
             let (x, y) = display.shown[ix].route.mid;
@@ -219,6 +237,7 @@ pub(super) fn render_graph<S: GraphSource>(
                 })
                 .on_click(cx.listener(move |this: &mut S, _, window, cx| {
                     this.graph_mut().keyboard = false;
+                    this.graph().item_clicked.set(true);
                     this.select_link(&from, &to, window, cx);
                     cx.notify();
                 }))
@@ -272,6 +291,7 @@ pub(super) fn render_graph<S: GraphSource>(
                             })
                             .on_click(cx.listener(move |this: &mut S, _, window, cx| {
                                 this.graph_mut().keyboard = false;
+                                this.graph().item_clicked.set(true);
                                 this.select_link(&from, &to, window, cx);
                                 cx.notify();
                             })),
@@ -340,6 +360,7 @@ pub(super) fn render_graph<S: GraphSource>(
                 })
                 .on_click(cx.listener(move |this: &mut S, _, window, cx| {
                     this.graph_mut().keyboard = false;
+                    this.graph().item_clicked.set(true);
                     if this.graph().focus_handle().is_some() {
                         this.step_to(Cursor::Node(key.clone()), window, cx);
                     }

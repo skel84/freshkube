@@ -217,13 +217,14 @@ fn clusters_is_a_table_page_with_an_inspector_at_every_size(cx: &mut TestAppCont
                 );
                 window.click("settings-cluster-core-fra", cx);
                 window.render_frame(cx);
-                layout_check::assert_inspector(
+                layout_check::assert_inspector_keeping(
                     window,
                     cx,
                     "settings-split",
                     "settings-table",
                     "settings-detail",
                     "settings-detail-title",
+                    crate::desktop::settings::STACKED_LIST_LEAST,
                 );
                 let beside =
                     crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;

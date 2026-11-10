@@ -181,6 +181,30 @@ pub fn assert_inspector(
     inspector: &'static str,
     title: &'static str,
 ) {
+    assert_inspector_keeping(
+        window,
+        cx,
+        split,
+        table,
+        inspector,
+        title,
+        crate::inspector::LIST_MIN_HEIGHT,
+    );
+}
+
+/// [`assert_inspector`] for a page whose stacked table keeps its own least:
+/// `least` dp high at the least; the default is the Inspector's own
+/// [`LIST_MIN_HEIGHT`](crate::inspector::LIST_MIN_HEIGHT): header, three rows
+/// and footer. A selected row in the table is whole.
+pub fn assert_inspector_keeping(
+    window: &mut Window,
+    cx: &mut App,
+    split: &'static str,
+    table: &'static str,
+    inspector: &'static str,
+    title: &'static str,
+    least: f32,
+) {
     window.render_frame(cx);
     let split = window.find(split).bounds();
     let table = window.find(table).bounds();
@@ -214,6 +238,30 @@ pub fn assert_inspector(
             pane.size.width,
             split.size.width,
         );
+        // Under the table, the table keeps its header, three rows and its
+        // footer, so the selected row is whole and not the only one.
+        let least = dp_px(least, window);
+        assert!(
+            table.size.height >= least - px(1.),
+            "{inspector}: the stacked table is {:?} high, under {least:?}",
+            table.size.height
+        );
+        // The selected row, if the table has one, is whole inside it.
+        let selected = snapshots(window).into_iter().find(|line| {
+            line.visible()
+                && line.role() == Some(Role::ListBoxOption)
+                && line.selected() == Some(true)
+                && line.bounds().left() >= table.left()
+                && line.bounds().right() <= table.right() + px(1.)
+        });
+        if let Some(row) = selected {
+            let row = row.bounds();
+            let rows_end = table.bottom() - dp_px(FOOTER_HEIGHT, window);
+            assert!(
+                row.top() >= table.top() - px(1.) && row.bottom() <= rows_end + px(1.),
+                "{inspector}: the selected row {row:?} is cut by the table {table:?}"
+            );
+        }
     }
     let pad = dp_px(PANE_PADDING, window);
     check("the title's inset", title.left() - pane.left(), pad);

@@ -421,3 +421,193 @@ fn one_gateway_with_hundreds_of_routes_still_stays_under_the_box_cap() {
         assert!(topology.node(&call.from).is_some() && topology.node(&call.to).is_some());
     }
 }
+
+#[gpui_kit::test]
+fn a_selected_box_lists_its_calls_and_shows_its_detail_without_scrolling(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let all = page.read(cx).graph.listed_count();
+        page.update(cx, |page, cx| {
+            use freshkube_ui::graph::GraphSource as _;
+            page.open(&"gateway:infra/edge".to_owned(), window, cx);
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let own = page.read(cx).graph.listed_count();
+        assert!(own > 0 && own < all, "{own} of {all} calls");
+        let (viewport, detail) = (window.viewport_size(), window.find("topology-node-detail"));
+        assert!(
+            detail.bounds().bottom() <= viewport.height,
+            "the detail sits below the window: {:?} in {viewport:?}",
+            detail.bounds()
+        );
+    })
+    .unwrap();
+}
+
+/// Opens `key` as a click on its box does.
+fn open_box(
+    page: &Entity<TopologyScreen>,
+    key: &str,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::App,
+) {
+    use freshkube_ui::graph::GraphSource as _;
+    page.update(cx, |page, cx| page.open(&key.to_owned(), window, cx));
+    window.render_frame(cx);
+}
+
+#[gpui_kit::test]
+fn a_box_is_let_go_by_escape_a_second_click_and_a_click_on_the_canvas(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update(|cx| {
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "escape",
+            super::ClearBox,
+            Some(super::CONTEXT),
+        )])
+    });
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let all = page.read(cx).graph.listed_count();
+        let own =
+            |page: &Entity<TopologyScreen>, cx: &gpui_kit::App| page.read(cx).graph.listed_count();
+        // Escape, with the page focused.
+        page.update(cx, |page, cx| page.focus(window, cx));
+        open_box(&page, "gateway:infra/edge", window, cx);
+        assert!(own(&page, cx) < all);
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert_eq!((own(&page, cx), page.read(cx).graph.boxed()), (all, None));
+        // A second click on the same box.
+        open_box(&page, "gateway:infra/edge", window, cx);
+        assert!(own(&page, cx) < all);
+        open_box(&page, "gateway:infra/edge", window, cx);
+        assert_eq!(own(&page, cx), all);
+        // Another box moves the filter, it doesn't end it.
+        open_box(&page, "gateway:infra/edge", window, cx);
+        open_box(&page, "route:shop/web", window, cx);
+        assert_eq!(
+            page.read(cx).graph.boxed().map(String::as_str),
+            Some("route:shop/web")
+        );
+        // A click on the box itself keeps it; one on the canvas lets go.
+        let ix = page
+            .read(cx)
+            .graph
+            .nodes()
+            .iter()
+            .position(|node| node.key == "gateway:infra/edge")
+            .unwrap();
+        window.click(format!("topology-node-{ix}"), cx);
+        window.render_frame(cx);
+        assert_eq!(
+            page.read(cx).graph.boxed().map(String::as_str),
+            Some("gateway:infra/edge")
+        );
+        // A spot of the canvas in the window that no box covers.
+        let canvas = window.find("topology-background").bounds();
+        let viewport = window.viewport_size();
+        let boxes: Vec<_> = (0..page.read(cx).graph.nodes().len())
+            .map(|ix| window.find(format!("topology-node-{ix}")).bounds())
+            .collect();
+        let free = (0..40)
+            .flat_map(|row| (0..40).map(move |col| (col, row)))
+            .map(|(col, row)| {
+                gpui_kit::point(
+                    canvas.origin.x + px(20. + 36. * col as f32),
+                    canvas.origin.y + px(20. + 27. * row as f32),
+                )
+            })
+            .find(|at| {
+                at.x < viewport.width - px(10.)
+                    && at.y > px(10.)
+                    && at.y < viewport.height - px(10.)
+                    && at.x < canvas.right()
+                    && at.y < canvas.bottom()
+                    && !boxes.iter().any(|b| b.contains(at))
+            })
+            .expect("a free spot");
+        window.click_at("topology-background", free - canvas.origin, cx);
+        window.render_frame(cx);
+        assert_eq!((own(&page, cx), page.read(cx).graph.boxed()), (all, None));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn escape_passes_on_when_no_box_is_selected(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    let count = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = count.clone();
+    cx.update(|cx| {
+        cx.bind_keys([gpui_kit::KeyBinding::new(
+            "escape",
+            super::ClearBox,
+            Some(super::CONTEXT),
+        )]);
+        cx.on_action(move |_: &super::ClearBox, _| seen.set(seen.get() + 1));
+    });
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.focus(window, cx));
+        window.press("escape", cx);
+        assert_eq!(count.get(), 1, "nothing selected: Escape passes on");
+        open_box(&page, "gateway:infra/edge", window, cx);
+        window.press("escape", cx);
+        assert_eq!(count.get(), 1, "a box was selected: Escape lets it go");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_call_the_box_does_not_touch_ends_the_filter_and_one_it_touches_keeps_it(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let (touching, other) = page.read_with(cx, |page, _| {
+            let edges = page.graph.edges();
+            let touches = |e: &&freshkube_ui::graph::GraphEdge<String>| {
+                e.from == "gateway:infra/edge" || e.to == "gateway:infra/edge"
+            };
+            (
+                edges.iter().find(touches).unwrap().clone(),
+                edges.iter().find(|e| !touches(e)).unwrap().clone(),
+            )
+        });
+        open_box(&page, "gateway:infra/edge", window, cx);
+        page.update(cx, |page, _| {
+            page.graph.select(&touching.from, &touching.to)
+        });
+        assert_eq!(
+            page.read(cx).graph.boxed().map(String::as_str),
+            Some("gateway:infra/edge")
+        );
+        page.update(cx, |page, _| page.graph.select(&other.from, &other.to));
+        let all = page.read(cx).graph.visible_count();
+        assert_eq!(page.read(cx).graph.boxed(), None);
+        assert_eq!(page.read(cx).graph.listed_count(), all);
+        assert!(page.read(cx).graph.selected().is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_caption_does_not_say_every_call_is_listed(cx: &mut TestAppContext) {
+    let (_runtime, _page, window) = mount(cx, Shape::All, 1280., 880.);
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let caption = window.find("topology-caption");
+        assert!(
+            !caption
+                .label()
+                .unwrap_or_default()
+                .contains("every call is listed"),
+            "the caption says every call is listed"
+        );
+    })
+    .unwrap();
+}

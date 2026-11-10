@@ -1,0 +1,1 @@
+- On the Topology graph, selecting a box lists only that box's calls and scrolls its detail into view, and the calls list has a scrollbar; a stacked Inspector keeps three whole table rows at a small window and a row clicked low in the table stays in view when it opens; and the database explorer's strip puts its actions on their own line when narrow.

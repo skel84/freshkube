@@ -603,6 +603,74 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
     .unwrap();
 }
 
+/// At 760x560 the strip's actions wrap to a second line; the strip is as
+/// tall as both lines, so nothing sits under the panes below it.
+#[gpui_kit::test]
+async fn the_strip_holds_its_wrapped_actions_at_a_small_window(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, page, window) = super::super::tests::mount_sized(cx, 760., 560.);
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, _| {
+            page.explore_example = Some(Example::Connected)
+        });
+        window.render_frame(cx);
+        let id = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|r| r.identity.name == "orders-db")
+            .unwrap()
+            .id
+            .clone();
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.click("databases-explore", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    connected(cx, &page, &window).await;
+    for text in [13., 20.] {
+        cx.update(|cx| crate::text_size::set(text, cx));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let strip = window.find("explore-strip").bounds();
+            let browser = window.find("explore-browser").bounds();
+            for id in [
+                "explore-read-only",
+                "explore-facts",
+                "explore-query",
+                "explore-reload",
+                "explore-writes-gate",
+            ] {
+                let bounds = window.find(id).bounds();
+                assert!(
+                    bounds.top() >= strip.top() && bounds.bottom() <= strip.bottom(),
+                    "text {text}: {id} {bounds:?} sits outside the strip {strip:?}"
+                );
+            }
+            assert!(
+                browser.top() >= strip.bottom(),
+                "{browser:?} under {strip:?}"
+            );
+            // Two lines of their own, not one that wraps.
+            let (facts, actions) = (
+                window.find("explore-facts").bounds(),
+                window.find("explore-actions").bounds(),
+            );
+            assert!(
+                actions.top() >= facts.bottom(),
+                "{facts:?} then {actions:?}"
+            );
+            assert!(
+                facts.right() <= window.viewport_size().width,
+                "{facts:?} runs past the edge"
+            );
+        })
+        .unwrap();
+    }
+}
+
 #[gpui_kit::test]
 async fn the_query_button_hands_the_dock_the_explorers_session_and_closing_ends_it(
     cx: &mut TestAppContext,
