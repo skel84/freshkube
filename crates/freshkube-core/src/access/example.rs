@@ -29,17 +29,24 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// Every word `FRESHKUBE_ACCESS` takes: the one list `parse` looks values
+    /// up in and `docs/DEBUG_KNOBS.md`'s test compares with the doc.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("limited", Self::Limited),
+        ("full", Self::Full),
+        ("incomplete", Self::Incomplete),
+        ("failed", Self::Failed),
+        ("identity-changed", Self::IdentityChanged),
+        ("ns-refused", Self::NsRefused),
+        ("actions-refused", Self::ActionsRefused),
+    ];
+
     /// An empty or unknown value is the default shape.
     pub fn parse(text: &str) -> Self {
-        match text {
-            "full" => Self::Full,
-            "incomplete" => Self::Incomplete,
-            "failed" => Self::Failed,
-            "identity-changed" => Self::IdentityChanged,
-            "ns-refused" => Self::NsRefused,
-            "actions-refused" => Self::ActionsRefused,
-            _ => Self::Limited,
-        }
+        Self::SHAPES
+            .iter()
+            .find_map(|(word, shape)| (*word == text).then_some(*shape))
+            .unwrap_or(Self::Limited)
     }
 }
 

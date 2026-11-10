@@ -297,6 +297,8 @@ fn report(at: DateTime<Utc>, engine: Engine, name: &str, lag: &[(&str, f64)]) ->
 
 /// What the example Coroot says of `inv`'s databases for a shape.
 pub fn coroot(at: DateTime<Utc>, shape: &str, inv: &Inventory) -> Evidence {
+    // `SHAPES` is the whole list: a word not in it is no shape.
+    let shape = if SHAPES.contains(&shape) { shape } else { "" };
     use super::coroot::Absence;
     let uids = || inv.databases.items.iter().map(|db| db.identity.uid.clone());
     match shape {
@@ -377,7 +379,39 @@ pub fn coroot(at: DateTime<Utc>, shape: &str, inv: &Inventory) -> Evidence {
     Evidence { states }
 }
 
+/// The words `FRESHKUBE_DATABASES` takes, for `shaped` and the Coroot answer;
+/// anything else is the default example.
+pub const SHAPES: &[&str] = &[
+    "not-installed",
+    "refused",
+    "unsupported",
+    "failed",
+    "empty",
+    "backup-refused",
+    "partial",
+    "old",
+    "backup-failed",
+    "no-primary",
+    "stale",
+    "no-backup",
+    "no-schedule",
+    "suspended",
+    "cert-expiring",
+    "switchover-stuck",
+    "mariadb",
+    "coroot-none",
+    "coroot-not-found",
+    "coroot-no-report",
+    "coroot-unreachable",
+    "coroot-disagree",
+    "lag-high",
+    "scheduled-only",
+    "engine-refused",
+];
+
 pub fn shaped(at: DateTime<Utc>, shape: &str) -> Inventory {
+    // `SHAPES` is the whole list: a word not in it is no shape.
+    let shape = if SHAPES.contains(&shape) { shape } else { "" };
     let mut inv = inventory(at);
     match shape {
         "not-installed" => return Inventory::unavailable(Coverage::NotServed, at),

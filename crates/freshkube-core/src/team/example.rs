@@ -25,15 +25,20 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// Every word `FRESHKUBE_TEAM` takes: the one list `parse` looks values up
+    /// in and `docs/DEBUG_KNOBS.md`'s test compares with the doc.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("none", Self::NoTeam),
+        ("joined", Self::Joined),
+        ("update", Self::Update),
+        ("trust", Self::Trust),
+        ("failed", Self::Failed),
+    ];
+
     pub fn parse(text: &str) -> Option<Self> {
-        Some(match text {
-            "none" => Self::NoTeam,
-            "joined" => Self::Joined,
-            "update" => Self::Update,
-            "trust" => Self::Trust,
-            "failed" => Self::Failed,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find_map(|(word, shape)| (*word == text).then_some(*shape))
     }
 }
 

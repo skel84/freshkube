@@ -492,3 +492,17 @@ fn example_daily_schedule_brackets_observation_at_two_utc_every_day() {
         assert_eq!((next.hour(), next.minute(), next.second()), (2, 0, 0));
     }
 }
+
+#[test]
+fn every_listed_example_shape_changes_the_inventory_or_what_coroot_says() {
+    let at = now();
+    let plain = example::shaped(at, "");
+    let plain_coroot = example::coroot(at, "", &plain);
+    for shape in example::SHAPES {
+        let inv = example::shaped(at, shape);
+        let changed = inv != plain || example::coroot(at, shape, &inv) != plain_coroot;
+        assert!(changed, "{shape} changes nothing: list it only if it does");
+    }
+    // A word the list lacks is no shape, whatever the example code matches.
+    assert_eq!(example::shaped(at, "not-a-shape"), plain);
+}
