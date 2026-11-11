@@ -129,6 +129,16 @@ impl Failure {
             kube::Error::HyperError(error) => {
                 Self::new(FailureKind::Unreachable, error.to_string())
             }
+            // The auth layer runs the exec plugin or reads the token at each
+            // request, so a login that lapsed arrives inside the service
+            // error, with the plugin's command line and its stderr in its
+            // text. It is the person's credentials, not the network, and
+            // what the plugin printed is nobody's to show.
+            kube::Error::Service(error) if has_auth_error(error.as_ref()) => Self::new(
+                FailureKind::Unauthorized,
+                "The credentials could not be refreshed: the login program failed or the token \
+                 is no longer valid. Sign in again, then Refresh",
+            ),
             kube::Error::Service(error) => {
                 let message = with_causes(error.as_ref());
                 let kind = if timed_out(error.as_ref()) {
@@ -186,6 +196,18 @@ impl From<TalosError> for Failure {
     fn from(error: TalosError) -> Self {
         Self::from_talos(&error)
     }
+}
+
+/// Whether the credential source failed, among the error's causes.
+fn has_auth_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(cause) = source {
+        if cause.downcast_ref::<kube::client::AuthError>().is_some() {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
 }
 
 /// Whether a read or write timed out, or the OS did, among the error's

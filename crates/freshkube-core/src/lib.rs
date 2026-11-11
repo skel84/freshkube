@@ -24,6 +24,8 @@
 pub mod access;
 pub mod agent_reads;
 pub mod ambient;
+#[cfg(all(test, unix))]
+mod auth_refresh_tests;
 mod base_url;
 mod client_cache;
 pub mod cluster_overview;
