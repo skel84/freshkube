@@ -78,6 +78,13 @@ pub async fn create_channel(ctx: &Context) -> Result<Channel, TalosError> {
             .tls_config(tls_config.clone())
             .map_err(|e| TalosError::Tls(format!("TLS config error: {:?}", e)))?
             .connect_timeout(CONNECT_TIMEOUT)
+            // No HTTP/2 keepalive: apid sets no keepalive enforcement
+            // policy, so grpc-go's default applies (a ping less than five
+            // minutes after the last is a strike, the third closes the
+            // connection with `too_many_pings`), and a ping every few
+            // seconds would end a follow on a quiet service. A dead
+            // connection is found by TCP keepalive, the read deadline and
+            // the wake (`freshkube_core::wake`).
             .tcp_keepalive(Some(Duration::from_secs(60)));
         endpoints.push((url.clone(), endpoint));
     }

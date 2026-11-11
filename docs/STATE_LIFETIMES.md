@@ -219,6 +219,50 @@ page.
 | What it knows | `ClusterSession.alerts`: its identity and the last `State`. Unread, stale, refused or without the central store's cluster label is Unknown, never "no alerts"; only a current read with nothing active is quiet, and PrometheusRule objects alone say nothing of health. A failed read keeps the one before it as stale evidence. |
 | Sharing | One read per live session and one per source. #846's Followed owner reads `Pilot::alert_state` instead of polling. The Alerts, Rules and Silences pages are not part of it: each is an ordinary `Loader` owner that reads only while shown (`OnShow::ReadIfOlder(30 s)`), and Refresh reads again. |
 
+### Sleep and wake
+
+The machine sleeping (#968) is noticed by
+[`freshkube_core::wake::GapDetector`](../crates/freshkube-core/src/wake.rs): the
+monotonic clock stops during sleep on macOS and Linux and the wall clock does
+not, so a [5 s tick](../crates/freshkube-desktop/src/desktop/wake/mod.rs) that
+sees the wall clock gain 15 s or more on the executor's clock has seen a wake.
+No native hook is used; Windows' monotonic clock keeps running in sleep, so a
+wake there goes unseen. The decision is a function of two readings, tested on
+the executor's clock with a wall clock a test sets.
+
+A wake does what a Refresh the person asked for does (`Pilot::refresh_now`),
+and nothing more. It starts no read of its own and no owner changes:
+
+| Read | On a wake |
+| --- | --- |
+| Kubernetes summary (session-owned) | `relist()`: a new generation, every watch restarts and relists; nothing from before publishes. |
+| Session alert read | Read again, as the summary's relist does. |
+| Talos overview | Read again, unless one is already running. |
+| The shown page | Refreshed through `ScreenPanel::refresh`; a hidden page stays stopped. |
+| Dock log tabs, followed items, forwards | Unchanged in this step (the next ones resume their own streams). |
+
+A wake does nothing when nothing is connected (a Kubernetes-only entry with
+no context chosen or tried, no overview read yet, a load or an error on screen),
+and a gap under 60 s soon after the last wake (by the executor's clock) is the same
+wake: an NTP step after waking relists nothing again. A gap of 60 s or more is a sleep
+of its own, since the executor's clock stood still through it.
+
+The status bar says "Reconnecting to <context>…" from the wake until a read has
+answered: a summary publication in which some watched source is current, or every
+source has settled, current or failed (`Publication::has_answered`; the
+publication a relist makes straight away carries only the syncing state and
+clears nothing), or the overview answers or fails (`Chrome.reconnecting`). It
+gives up after 45 s so a read that never answers cannot hold the words. Then the
+status shows its usual line and refresh time, or the failure. In this cut the
+status bar alone says the data may be old: the Overview and the shown page keep
+their values unmarked until the new read lands.
+
+Talos channels keep a 60 s TCP keepalive and send no HTTP/2 pings: apid sets no
+keepalive enforcement policy, so grpc-go's default applies (a ping less than five
+minutes after the last is a strike, and the third closes the connection), and a
+ping on a quiet log follow would end it. A read-only unary call carries a 30 s
+deadline (`talos_rs::client::READ_DEADLINE`); streams and changes carry none.
+
 ### The change page's outcome read
 
 What Coroot found after a deploy

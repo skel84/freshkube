@@ -60,6 +60,7 @@ pub(crate) mod tests;
 #[cfg(test)]
 mod use_kubernetes_tests;
 mod view;
+mod wake;
 mod write_runner;
 
 use crate::{
@@ -628,6 +629,7 @@ impl Pilot {
                         // The ring advances every second; a refresh that
                         // started above notified the shell by itself.
                         view.tick_countdown(cx);
+                        view.tick_reconnecting(cx);
                     })
                     .is_err()
                 {
@@ -830,6 +832,7 @@ impl Pilot {
         let (debug, runtime) = (options.debug.clone(), self.runtime.clone());
         self.start_crash_log(&debug, &runtime, window, cx);
         self.tell_settings_files(window, cx);
+        self.start_wake_watch(window, cx);
         // A link given at launch, and every one the operating system opens
         // us with after it, opens once the window has settled and has a
         // cluster to read.

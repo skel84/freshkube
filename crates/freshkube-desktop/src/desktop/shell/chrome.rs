@@ -132,6 +132,9 @@ pub(in crate::desktop) struct Chrome {
     pub(in crate::desktop) automatic: bool,
     /// The time since the last refresh, which the ring counts down.
     pub(in crate::desktop) elapsed: Duration,
+    /// How long the status bar has said "Reconnecting…" since the machine
+    /// woke, until an answer lands (`desktop/wake.rs`).
+    pub(in crate::desktop) reconnecting: Option<Duration>,
     /// The frame-rate readout in the status bar.
     pub(in crate::desktop) fps: Entity<super::fps::Fps>,
     /// The status bar's port forwards, which redraw on their own.
@@ -181,6 +184,7 @@ impl Chrome {
             }),
             automatic,
             elapsed: Duration::ZERO,
+            reconnecting: None,
             fps: cx.new(super::fps::Fps::new),
             forwards: cx.new(ForwardsIndicator::new),
             followed: freshkube_followed::owner::followed(cx)

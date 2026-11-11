@@ -234,6 +234,17 @@ impl Pilot {
                 ),
                 format!("Connecting to {context}…"),
             )
+        } else if self.chrome.reconnecting.is_some() {
+            named = Some(context.to_owned());
+            (
+                Some(
+                    Icon::new(IconName::RefreshCw)
+                        .size(dp(13.))
+                        .text_color(p.accent)
+                        .into_any_element(),
+                ),
+                format!("Reconnecting to {context}…"),
+            )
         } else if self.overview.is_stale() {
             (
                 glyph(Tone::Warn),
@@ -249,7 +260,18 @@ impl Pilot {
             )
         };
         (
-            status_text("overview-status", status, indicator, text, glyph_only),
+            status_text(
+                "overview-status",
+                // The words of a reconnect are the status itself.
+                if self.chrome.reconnecting.is_some() {
+                    text.clone()
+                } else {
+                    status
+                },
+                indicator,
+                text,
+                glyph_only,
+            ),
             named,
         )
     }

@@ -1,0 +1,1 @@
+- **Waking from sleep:** after the machine sleeps, the status bar now says "Reconnecting…" and the cluster reads start again instead of sitting on old data until the next refresh, and Talos read-only calls get a 30-second deadline.

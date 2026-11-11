@@ -838,3 +838,49 @@ fn summary_retains_only_issue_identities() {
             .contains_key(&("pods".into(), "batch".into(), "healthy".into()))
     );
 }
+
+#[test]
+fn a_relist_publication_has_not_answered_until_a_read_does() {
+    let session = session();
+    // Every watched source answers: the first publication has answered.
+    for_each_source(&session);
+    assert!(session.derive(now()).has_answered());
+    // A relist marks every source syncing: the publication it makes says
+    // nothing yet of the connection.
+    session.relist();
+    assert!(!session.derive(now()).has_answered());
+    // One list lands: a source is current.
+    sync::<Pod>(&session, vec![pod("a", "ua", "1")]);
+    assert!(session.derive(now()).has_answered());
+}
+
+#[test]
+fn a_relist_whose_every_read_fails_has_answered_with_the_failures() {
+    let session = session();
+    for_each_source(&session);
+    let generation = session.relist();
+    assert!(!session.derive(now()).has_answered());
+    for source in Source::WATCHED {
+        session.fail(
+            generation,
+            source,
+            ObservationFailure::Read(FailureKind::Timeout),
+        );
+    }
+    assert!(session.derive(now()).has_answered());
+}
+
+/// Every watched source listed once, empty.
+fn for_each_source(session: &Session) {
+    use k8s_openapi::api::apps::v1::{DaemonSet, StatefulSet};
+    use k8s_openapi::api::core::v1::{Namespace, Node, PersistentVolume, PersistentVolumeClaim};
+    sync::<Node>(session, vec![]);
+    sync::<Pod>(session, vec![]);
+    sync::<KubeEvent>(session, vec![]);
+    sync::<Deployment>(session, vec![]);
+    sync::<DaemonSet>(session, vec![]);
+    sync::<StatefulSet>(session, vec![]);
+    sync::<PersistentVolume>(session, vec![]);
+    sync::<PersistentVolumeClaim>(session, vec![]);
+    sync::<Namespace>(session, vec![]);
+}

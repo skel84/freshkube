@@ -653,6 +653,16 @@ impl Pilot {
         }
     }
 
+    /// Whether something is connected that a wake could reconnect: a
+    /// Kubernetes-only context that has been chosen and tried, or a Talos
+    /// overview that has been read.
+    pub(super) fn has_connection(&self) -> bool {
+        match self.mode().kubernetes_only() {
+            Some(kube) => kube.access.is_some() && !matches!(kube.connection, KubeConnection::Idle),
+            None => self.overview.data().is_some(),
+        }
+    }
+
     /// The status bar's account of the kubeconfig and the connection, and
     /// whether it names the context.
     pub(super) fn render_kubernetes_status(
@@ -683,6 +693,8 @@ impl Pilot {
             (glyph(Tone::Crit), format!("No kubeconfig loaded: {error}"))
         } else if self.config_loading {
             (spinner(), "Reading the kubeconfig…".to_owned())
+        } else if self.chrome.reconnecting.is_some() {
+            (spinner(), format!("Reconnecting to {context}…"))
         } else {
             match connection {
                 KubeConnection::Idle

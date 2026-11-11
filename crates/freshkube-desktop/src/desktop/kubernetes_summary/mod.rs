@@ -330,6 +330,11 @@ impl Pilot {
             .active_mut()
             .kubernetes_summary
             .apply(&request, Ok(publication.summary.clone()));
+        // A publication of the syncing state after a wake says nothing of
+        // the connection: the words stay until a read has answered.
+        if publication.has_answered() {
+            self.reconnected(cx);
+        }
         if self.switch.restored_taken.take().is_some() {
             self.switch
                 .age_label
