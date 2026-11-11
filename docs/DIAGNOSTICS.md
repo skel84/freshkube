@@ -124,8 +124,10 @@ snapshots through it. What the collector reads from a live API stays out of reac
 
 **Known gaps.** A check that fails a scenario today is listed in `KNOWN_GAPS` with the
 scenario and its issue, and is skipped only there. The harness fails when a listed gap no
-longer fails, so a fix removes its entry. Today: `cni` when the file reads say "not found"
-(#1005).
+longer fails, so a fix removes its entry. Today there are none: #1005 (`cni` when the file reads say
+"not found") is closed, because only the gRPC `NotFound` code or the file system's own
+"no such file or directory" reply counts as a missing file, and any other read error is
+unavailable, so the check says unknown.
 
 ## Before Merging
 

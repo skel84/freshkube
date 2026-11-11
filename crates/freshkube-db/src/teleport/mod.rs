@@ -1,0 +1,667 @@
+//! Teleport database access (#948, E3): `tsh proxy db` as a child process.
+//!
+//! The route changes, the rules don't: Teleport's certificate signs in, so no
+//! password is read, and the session over the tunnel is the same read-only
+//! session as ever. Freshkube runs `tsh` only from an explicit Explore, and
+//! never runs `tsh login` for anyone: a person who isn't signed in is told
+//! the command.
+//!
+//! - **The child** is `tsh proxy db --tunnel`, which signs in with `tsh`'s own
+//!   certificate. Freshkube never opens the profile directory, names a
+//!   certificate or key on a command line, or reads one. The child's
+//!   environment is cleared down to what `tsh` itself needs.
+//! - **Loopback only:** the port is the one `tsh` announces, and an announced
+//!   address that isn't loopback ends the child.
+//! - **Owned by one tab:** a [`Proxy`] kills its child when dropped, so closing
+//!   the tab, connecting again or quitting the app leaves no process behind.
+//!   After a crash or a force quit, where nothing is dropped, a watcher shell
+//!   ends the child's process group (macOS and Linux; not yet on Windows).
+//! - **Stderr** is redacted ([`redact`]) and bounded before anyone shows it.
+mod redact;
+#[cfg(test)]
+mod tests;
+
+pub use redact::redact;
+use std::{
+    collections::VecDeque,
+    net::{IpAddr, Ipv4Addr},
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt},
+    process::{Child, Command},
+    sync::mpsc,
+    task::JoinHandle,
+};
+
+/// How long `tsh status` and `tsh db ls` may take.
+pub const CHECK_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long the proxy may take to say it is listening.
+pub const READY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Environment variables the child keeps, and no others. `tsh` needs a home
+/// for its profile and a path to run; none of them is a secret.
+const KEPT_ENV: [&str; 8] = [
+    "PATH",
+    "HOME",
+    "TELEPORT_HOME",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    "SYSTEMROOT",
+    "USERPROFILE",
+];
+
+/// What the team (or, until E4 reads the Team file, an example) configures.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TeleportAccess {
+    /// The Teleport proxy, `host` or `host:port`.
+    pub proxy: String,
+    /// How a Teleport database is named from the Cluster's name; `{name}` is
+    /// replaced, as in `{name}-ro`.
+    pub name_pattern: String,
+    /// The database user Teleport signs the session in as.
+    pub db_user: String,
+    /// The database to open.
+    pub database: String,
+    /// The `tsh` to run: an absolute path, the person's choice or the one the
+    /// caller found. `None` is [`TeleportError::NotInstalled`].
+    pub tsh: Option<PathBuf>,
+}
+
+/// Why Teleport can't be used, each a state of the connect step.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum TeleportError {
+    #[error("The Teleport settings are not valid: {0}")]
+    BadSettings(String),
+    #[error("tsh is not installed")]
+    NotInstalled,
+    #[error("Not signed in to Teleport at {proxy}")]
+    NotLoggedIn { proxy: String },
+    #[error("No role allows {user} to use {name}")]
+    NoRole {
+        name: String,
+        user: String,
+        proxy: String,
+    },
+    #[error("No database named {name} under the pattern {pattern}")]
+    NotFound {
+        name: String,
+        pattern: String,
+        proxy: String,
+    },
+    #[error("The Teleport proxy failed: {why}")]
+    ProxyFailed { why: String, command: String },
+}
+
+impl TeleportError {
+    /// The command the person can run themselves. Freshkube never runs a
+    /// login for them.
+    pub fn command(&self) -> Option<String> {
+        match self {
+            Self::BadSettings(_) => None,
+            Self::NotInstalled => Some("brew install teleport".into()),
+            Self::NotLoggedIn { proxy } => Some(format!("tsh login --proxy={proxy}")),
+            Self::NoRole { proxy, .. } => Some(format!("tsh status --proxy={proxy}")),
+            Self::NotFound { proxy, .. } => Some(format!("tsh db ls --proxy={proxy}")),
+            Self::ProxyFailed { command, .. } => Some(command.clone()),
+        }
+    }
+
+    /// Stable, for element ids and tests.
+    pub fn slug(&self) -> &'static str {
+        match self {
+            Self::BadSettings(_) => "bad-settings",
+            Self::NotInstalled => "not-installed",
+            Self::NotLoggedIn { .. } => "not-logged-in",
+            Self::NoRole { .. } => "no-role",
+            Self::NotFound { .. } => "not-found",
+            Self::ProxyFailed { .. } => "proxy-failed",
+        }
+    }
+}
+
+fn plain(text: &str, extra: &[char]) -> bool {
+    !text.is_empty()
+        && text.len() <= 253
+        && !text.starts_with('-')
+        && text.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') || extra.contains(&c)
+        })
+}
+
+impl TeleportAccess {
+    /// Refuses a setting that could be taken for an option or hold a space.
+    pub fn validate(&self) -> Result<(), TeleportError> {
+        let bad = |what: &str| {
+            Err(TeleportError::BadSettings(format!(
+                "the {what} has characters Teleport names don't"
+            )))
+        };
+        if !plain(&self.proxy, &[':']) {
+            return bad("proxy");
+        }
+        if !plain(&self.db_user, &['@']) {
+            return bad("database user");
+        }
+        if !plain(&self.database, &[]) {
+            return bad("database");
+        }
+        if !self.name_pattern.contains("{name}") {
+            return Err(TeleportError::BadSettings(
+                "the name pattern has no {name} in it".into(),
+            ));
+        }
+        if !plain(&self.name_pattern.replace("{name}", "x"), &[]) {
+            return bad("name pattern");
+        }
+        Ok(())
+    }
+
+    /// The Teleport database name for a Cluster.
+    pub fn database_name(&self, cluster: &str) -> Result<String, TeleportError> {
+        let name = self.name_pattern.replace("{name}", cluster);
+        if plain(&name, &[]) {
+            Ok(name)
+        } else {
+            Err(TeleportError::BadSettings(
+                "the database name from the pattern has characters Teleport names don't".into(),
+            ))
+        }
+    }
+
+    pub fn status_args(&self) -> Vec<String> {
+        vec![
+            format!("--proxy={}", self.proxy),
+            "status".into(),
+            "--format=json".into(),
+        ]
+    }
+
+    pub fn list_args(&self) -> Vec<String> {
+        vec![
+            format!("--proxy={}", self.proxy),
+            "db".into(),
+            "ls".into(),
+            "--format=json".into(),
+        ]
+    }
+
+    /// The proxy's arguments: no certificate, key, password or token. `--tunnel`
+    /// has `tsh` sign in with its own certificate.
+    pub fn proxy_args(&self, name: &str) -> Vec<String> {
+        vec![
+            format!("--proxy={}", self.proxy),
+            "proxy".into(),
+            "db".into(),
+            "--tunnel".into(),
+            format!("--db-user={}", self.db_user),
+            format!("--db-name={}", self.database),
+            name.into(),
+        ]
+    }
+
+    fn proxy_command(&self, name: &str) -> String {
+        format!("tsh {}", self.proxy_args(name).join(" "))
+    }
+}
+
+fn command(tsh: &Path) -> Command {
+    let mut command = Command::new(tsh);
+    command
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    for key in KEPT_ENV {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+/// What the person's own paths are, to cut out of anything shown.
+fn private_paths() -> Vec<String> {
+    ["HOME", "TELEPORT_HOME", "USERPROFILE", "TMPDIR"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .collect()
+}
+
+fn shown(stderr: &str) -> String {
+    let private = private_paths();
+    let private: Vec<&str> = private.iter().map(String::as_str).collect();
+    redact(stderr, &private)
+}
+
+struct Ran {
+    ok: bool,
+    stdout: String,
+    stderr: String,
+}
+
+/// The most of a check's output that is kept; the rest is read and dropped.
+const MAX_OUTPUT: u64 = 1 << 20;
+
+/// Reads a pipe to its end, keeping the first `MAX_OUTPUT` bytes and
+/// dropping the rest, so a child that writes a lot neither fills memory nor
+/// blocks on a full pipe.
+async fn capture<R: AsyncRead + Unpin>(stream: Option<R>) -> Vec<u8> {
+    let Some(mut stream) = stream else {
+        return Vec::new();
+    };
+    let mut kept = Vec::new();
+    let _ = (&mut stream).take(MAX_OUTPUT).read_to_end(&mut kept).await;
+    let _ = tokio::io::copy(&mut stream, &mut tokio::io::sink()).await;
+    kept
+}
+
+async fn run(tsh: &Path, args: &[String]) -> Result<Ran, TeleportError> {
+    let mut child = command(tsh).args(args).spawn().map_err(spawn_error)?;
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    let work = async {
+        let (status, out, err) = tokio::join!(child.wait(), capture(stdout), capture(stderr));
+        (status, out, err)
+    };
+    // On a timeout the future is dropped with `child`, which kills it.
+    let (status, out, err) = tokio::time::timeout(CHECK_TIMEOUT, work)
+        .await
+        .map_err(|_| failed("tsh did not answer in time", ""))?;
+    let status = status.map_err(|e| failed(&e.to_string(), ""))?;
+    Ok(Ran {
+        ok: status.success(),
+        stdout: String::from_utf8_lossy(&out).into_owned(),
+        stderr: String::from_utf8_lossy(&err).into_owned(),
+    })
+}
+
+fn spawn_error(error: std::io::Error) -> TeleportError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        TeleportError::NotInstalled
+    } else {
+        failed(&error.to_string(), "")
+    }
+}
+
+fn failed(why: &str, command: &str) -> TeleportError {
+    TeleportError::ProxyFailed {
+        why: shown(why),
+        command: command.to_owned(),
+    }
+}
+
+/// Reads what `tsh`'s stderr says into one of the states.
+fn classify(stderr: &str, access: &TeleportAccess, name: &str, command: &str) -> TeleportError {
+    let lower = stderr.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| lower.contains(w));
+    if has(&[
+        "not logged in",
+        "please login",
+        "please log in",
+        "expired",
+        "re-login",
+        "relogin",
+    ]) {
+        TeleportError::NotLoggedIn {
+            proxy: access.proxy.clone(),
+        }
+    } else if has(&[
+        "access to db denied",
+        "access denied",
+        "not allowed to access",
+        "not authorized",
+    ]) {
+        TeleportError::NoRole {
+            name: name.to_owned(),
+            user: access.db_user.clone(),
+            proxy: access.proxy.clone(),
+        }
+    } else if has(&["database not found", "not found"]) {
+        TeleportError::NotFound {
+            name: name.to_owned(),
+            pattern: access.name_pattern.clone(),
+            proxy: access.proxy.clone(),
+        }
+    } else {
+        failed(stderr, command)
+    }
+}
+
+/// Signed in? A nonzero exit is "not signed in or expired", which is what
+/// `tsh status` says for both. Only the exit and whether a profile is active
+/// are read, never what is in the profile.
+async fn check_login(tsh: &Path, access: &TeleportAccess) -> Result<(), TeleportError> {
+    let not_logged_in = || TeleportError::NotLoggedIn {
+        proxy: access.proxy.clone(),
+    };
+    let ran = run(tsh, &access.status_args()).await?;
+    if !ran.ok {
+        return Err(not_logged_in());
+    }
+    let active = serde_json::from_str::<serde_json::Value>(&ran.stdout)
+        .ok()
+        .map(|v| v.get("active").is_some_and(|a| !a.is_null()));
+    if active == Some(false) {
+        return Err(not_logged_in());
+    }
+    Ok(())
+}
+
+/// Is the database listed under this name? A role that can't see it never
+/// lists it, so the two read alike here; a role that sees it but may not log
+/// in is told by the proxy.
+async fn check_listed(
+    tsh: &Path,
+    access: &TeleportAccess,
+    name: &str,
+) -> Result<(), TeleportError> {
+    let ran = run(tsh, &access.list_args()).await?;
+    if !ran.ok {
+        return Err(classify(
+            &ran.stderr,
+            access,
+            name,
+            &access.proxy_command(name),
+        ));
+    }
+    let listed = serde_json::from_str::<serde_json::Value>(&ran.stdout)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .ok_or_else(|| {
+            failed(
+                "tsh db ls answered something other than a list",
+                &access.proxy_command(name),
+            )
+        })?;
+    let names = |entry: &serde_json::Value| {
+        entry
+            .pointer("/metadata/name")
+            .or_else(|| entry.get("name"))
+            .and_then(|n| n.as_str())
+            .map(str::to_owned)
+    };
+    if listed.iter().filter_map(names).any(|n| n == name) {
+        Ok(())
+    } else {
+        Err(TeleportError::NotFound {
+            name: name.to_owned(),
+            pattern: access.name_pattern.clone(),
+            proxy: access.proxy.clone(),
+        })
+    }
+}
+
+/// The loopback address and port `tsh` announced it listens on.
+enum Listen {
+    Loopback(IpAddr, u16),
+    /// Announced an address other than loopback.
+    Exposed(String),
+}
+
+/// The address in `tsh`'s ready line: `Started authenticated tunnel for the
+/// PostgreSQL database "…" in cluster "…" on 127.0.0.1:62351.` Only a line
+/// that starts with `Started` counts, and only the text after its last ` on `
+/// is read, so a warning or a cluster name written as `host:port` is never
+/// taken for the address.
+fn ready_line(line: &str) -> Option<Listen> {
+    let line = line.trim();
+    if !line.starts_with("Started") {
+        return None;
+    }
+    let (_, address) = line.rsplit_once(" on ")?;
+    let address = address.trim().trim_end_matches('.');
+    let (host, port) = address.rsplit_once(':')?;
+    let port: u16 = port.parse().ok()?;
+    let host = host.trim_matches(['[', ']']);
+    if host == "localhost" {
+        return Some(Listen::Loopback(Ipv4Addr::LOCALHOST.into(), port));
+    }
+    let ip: IpAddr = host.parse().ok()?;
+    Some(if ip.is_loopback() {
+        Listen::Loopback(ip, port)
+    } else {
+        Listen::Exposed(ip.to_string())
+    })
+}
+
+type Tail = Arc<Mutex<VecDeque<String>>>;
+const TAIL_LINES: usize = 40;
+
+/// The longest line kept; the rest of a longer one is dropped as it is read.
+const MAX_LINE_BYTES: usize = 1024;
+
+fn watch<R: AsyncRead + Unpin + Send + 'static>(
+    mut stream: R,
+    tail: Tail,
+    ready: Option<mpsc::UnboundedSender<Listen>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let push = |line: &[u8]| {
+            let line = String::from_utf8_lossy(line).into_owned();
+            if let Some(ready) = &ready
+                && let Some(listen) = ready_line(&line)
+            {
+                let _ = ready.send(listen);
+            }
+            let mut tail = tail.lock().unwrap_or_else(|e| e.into_inner());
+            if tail.len() == TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        };
+        // Keep reading after the ready line so a full pipe never stalls
+        // `tsh`; a line is cut at `MAX_LINE_BYTES` as it is read, so a child
+        // that never writes a newline can't grow memory.
+        let (mut line, mut chunk) = (Vec::new(), [0u8; 4096]);
+        while let Ok(n) = stream.read(&mut chunk).await {
+            if n == 0 {
+                break;
+            }
+            for &byte in &chunk[..n] {
+                if byte == b'\n' {
+                    push(&line);
+                    line.clear();
+                } else if line.len() < MAX_LINE_BYTES {
+                    line.push(byte);
+                }
+            }
+        }
+        if !line.is_empty() {
+            push(&line);
+        }
+    })
+}
+
+/// Ends the child's process group if Freshkube dies without dropping the
+/// [`Proxy`] (a crash, a force quit, `kill -9`): a small shell, in a group of
+/// its own, waits for this process to be gone and then terminates the group,
+/// and exits when either is gone. Best effort: the group ends within a few
+/// seconds of the parent's death. Its failure to start leaves only `Drop`.
+#[cfg(unix)]
+fn watch_parent(parent: u32, group: u32) {
+    use std::os::unix::process::CommandExt;
+    const WATCHER: &str = r#"
+parent=$1; group=$2
+alive() { kill -s 0 -- "$1" 2>/dev/null; }
+while alive "$parent" && alive "-$group"; do sleep 1; done
+if alive "-$group"; then
+  kill -s TERM -- "-$group" 2>/dev/null
+  sleep 2
+  kill -s KILL -- "-$group" 2>/dev/null
+fi
+"#;
+    let _ = std::process::Command::new("/bin/sh")
+        .args(["-c", WATCHER, "freshkube-tsh-watch"])
+        .arg(parent.to_string())
+        .arg(group.to_string())
+        .env_clear()
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(|mut watcher| {
+            // Reaped when it exits, so it never lingers as a zombie.
+            std::thread::spawn(move || {
+                let _ = watcher.wait();
+            });
+        });
+}
+
+/// A running `tsh proxy db --tunnel`. Dropping it kills the child.
+pub struct Proxy {
+    child: Child,
+    address: IpAddr,
+    port: u16,
+    name: String,
+    tail: Tail,
+    readers: Vec<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for Proxy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Proxy")
+            .field("name", &self.name)
+            .field("port", &self.port)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Proxy {
+    /// Checks `tsh`, the login and the name, then starts the proxy and waits
+    /// for it to listen. Every failure is one of [`TeleportError`]'s states and
+    /// leaves no child behind.
+    pub async fn start(access: &TeleportAccess, cluster: &str) -> Result<Self, TeleportError> {
+        Self::start_within(access, cluster, READY_TIMEOUT).await
+    }
+
+    pub async fn start_within(
+        access: &TeleportAccess,
+        cluster: &str,
+        ready_within: Duration,
+    ) -> Result<Self, TeleportError> {
+        access.validate()?;
+        let name = access.database_name(cluster)?;
+        // The caller resolves `tsh` (the app finds it where a kubeconfig's login
+        // programs are found); this child runs only that absolute path.
+        let tsh = access
+            .tsh
+            .as_deref()
+            .filter(|path| path.is_file())
+            .ok_or(TeleportError::NotInstalled)?;
+        check_login(tsh, access).await?;
+        check_listed(tsh, access, &name).await?;
+        Self::spawn(tsh, access, &name, ready_within).await
+    }
+
+    async fn spawn(
+        tsh: &Path,
+        access: &TeleportAccess,
+        name: &str,
+        ready_within: Duration,
+    ) -> Result<Self, TeleportError> {
+        let again = access.proxy_command(name);
+        let mut proxy = command(tsh);
+        proxy.args(access.proxy_args(name));
+        // Its own process group, so the parent-death watcher can end it.
+        #[cfg(unix)]
+        proxy.process_group(0);
+        let mut child = proxy.spawn().map_err(spawn_error)?;
+        #[cfg(unix)]
+        if let Some(pid) = child.id() {
+            watch_parent(std::process::id(), pid);
+        }
+        let tail = Tail::default();
+        let (send, mut ready) = mpsc::unbounded_channel();
+        let mut readers = Vec::new();
+        if let Some(out) = child.stdout.take() {
+            readers.push(watch(out, tail.clone(), Some(send.clone())));
+        }
+        if let Some(err) = child.stderr.take() {
+            readers.push(watch(err, tail.clone(), None));
+        }
+        drop(send);
+        let stop = |readers: &[JoinHandle<()>]| readers.iter().for_each(JoinHandle::abort);
+        let outcome = tokio::select! {
+            listen = ready.recv() => listen.map(Ok),
+            _ = child.wait() => None,
+            _ = tokio::time::sleep(ready_within) => Some(Err(failed("tsh did not start listening in time", &again))),
+        };
+        match outcome {
+            Some(Ok(Listen::Loopback(address, port))) => Ok(Self {
+                child,
+                address,
+                port,
+                name: name.to_owned(),
+                tail,
+                readers,
+            }),
+            Some(Ok(Listen::Exposed(address))) => {
+                let _ = child.start_kill();
+                stop(&readers);
+                Err(failed(
+                    &format!("tsh would listen on {address}, which is not this computer only"),
+                    &again,
+                ))
+            }
+            Some(Err(error)) => {
+                let _ = child.start_kill();
+                stop(&readers);
+                Err(error)
+            }
+            None => {
+                // It ended before it listened: let the readers finish, then say why.
+                for reader in readers.iter_mut() {
+                    let _ = tokio::time::timeout(Duration::from_secs(1), reader).await;
+                }
+                let text = tail_text(&tail);
+                Err(classify(&text, access, name, &again))
+            }
+        }
+    }
+
+    /// Where the proxy listens: always loopback.
+    pub fn address(&self) -> IpAddr {
+        self.address
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The Teleport database it reaches.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn pid(&self) -> Option<u32> {
+        self.child.id()
+    }
+
+    /// Whether the child is still running.
+    pub fn running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// What the child last said, redacted and bounded, for a proxy that ended.
+    pub fn tail(&self) -> String {
+        shown(&tail_text(&self.tail))
+    }
+}
+
+fn tail_text(tail: &Tail) -> String {
+    let tail = tail.lock().unwrap_or_else(|e| e.into_inner());
+    tail.iter().cloned().collect::<Vec<_>>().join("\n")
+}
+
+impl Drop for Proxy {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+        self.readers.iter().for_each(JoinHandle::abort);
+    }
+}

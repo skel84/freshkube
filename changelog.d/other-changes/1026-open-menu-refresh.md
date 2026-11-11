@@ -1,0 +1,1 @@
+- **An open row menu or "…" menu shows an access answer that lands while it is open:** a refused action now gets its reason line under it without closing and reopening the menu. A review still pending greys nothing, and a menu opened for a row that is no longer selected is left alone.

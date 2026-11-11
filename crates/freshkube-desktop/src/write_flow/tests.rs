@@ -679,6 +679,11 @@ fn a_tall_diff_is_never_cut_scrolls_and_shows_its_scrollbar(cx: &mut TestAppCont
             last.bottom() > body.bottom(),
             "the diff fits: {last:?} in {body:?}"
         );
+        // The scrollbar is drawn in the lane at the body's right edge.
+        assert!(
+            crate::desktop::testing::painted_in_lane(window, body, body) > 0,
+            "no scrollbar thumb is painted in the lane at the right of {body:?}"
+        );
         // Scrolling reaches the last row, whole.
         // The body's scroll is the one the scrollbar follows.
         let scroll = flow.read(cx).scroll.clone();

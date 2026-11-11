@@ -1,0 +1,1 @@
+- The database explorer's Teleport route now finds `tsh` where a kubeconfig's login programs are found (Homebrew's and `/usr/local/bin`, `~/.local/bin`, the login shell's `PATH`), so an app started from the Dock finds it; a missing `tsh` names the places looked in.

@@ -482,6 +482,36 @@ mod route {
     }
 
     #[gpui_kit::test]
+    fn the_trace_links_the_certificate_of_its_listener_and_the_link_only_navigates(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, pane, handle, emitted) = mount(cx);
+        cx.update_window(handle, |_, window, cx| {
+            let (route, shape) = route(Routes::All, "web");
+            open_route(&pane, &route, shape, cx);
+            pane.update(cx, |pane, cx| pane.set_tab(Tab::Trace, cx));
+            window.render_frame(cx);
+            window.click("route-trace-parent-0-certificate-0", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let links = emitted
+            .borrow()
+            .iter()
+            .filter_map(|event| match event {
+                DetailEvent::Link(link) => Some(link.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(links.len(), 1, "{links:?}");
+        assert!(
+            matches!(&links[0], ResourceLink::Certificate { namespace, name, .. }
+                if namespace == "infra" && name == "edge-tls"),
+            "{links:?}"
+        );
+    }
+
+    #[gpui_kit::test]
     fn a_gateway_api_that_is_not_there_or_a_refused_read_is_plain_never_not_serving(
         cx: &mut TestAppContext,
     ) {

@@ -26,7 +26,7 @@ mod undo;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-pub use access::{Access, review as review_access};
+pub use access::{Access, AccessQuestion, ask as ask_access, review as review_access};
 pub use action::{
     ActionDescription, Change, Depends, Destination, Inverse, InverseFrom, ObjectChange,
     Observation, Preview, Propagation, Target,

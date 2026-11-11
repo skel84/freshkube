@@ -126,3 +126,113 @@ fn a_marker_click_selects_its_call(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[test]
+fn a_selected_box_lists_only_its_calls_and_clearing_it_lists_all() {
+    let mut state = state(8, 12);
+    let all = state.listed_count();
+    let key = state.edges()[0].from;
+    let own = state
+        .edges()
+        .iter()
+        .filter(|edge| edge.from == key || edge.to == key)
+        .count();
+    assert!(own > 0 && own < all);
+    state.set_box(Some(key));
+    assert_eq!(state.listed_count(), own);
+    // The boxes and the calls drawn stay where they were.
+    assert_eq!(state.visible_count(), all);
+    // The problem filter and the box filter both apply.
+    state.set_problems(true);
+    assert!(state.listed_count() <= own);
+    state.set_problems(false);
+    state.set_box(None);
+    assert_eq!(state.listed_count(), all);
+}
+
+#[gpui_kit::test]
+fn the_list_follows_the_selected_box_and_scrolls_with_the_shared_scrollbar(
+    cx: &mut TestAppContext,
+) {
+    let (handle, map) = open(cx, state(8, 12), 1280., None);
+    let key = map.read_with(cx, |map, _| map.graph.edges()[0].from);
+    let (own, other) = map.read_with(cx, |map, _| {
+        let edges = map.graph.edges();
+        (
+            edges
+                .iter()
+                .find(|e| e.from == key || e.to == key)
+                .unwrap()
+                .row_id
+                .clone(),
+            edges
+                .iter()
+                .find(|e| e.from != key && e.to != key)
+                .unwrap()
+                .row_id
+                .clone(),
+        )
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.find(other.clone());
+        window.find("map-connections-scrollbar");
+        map.update(cx, |map, cx| {
+            map.graph.set_box(Some(key));
+            cx.notify();
+        });
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.find(own.clone());
+        assert!(window.try_find(other.clone()).is_none());
+    })
+    .unwrap();
+}
+
+#[test]
+fn a_box_with_no_calls_lists_none_and_says_so() {
+    let mut state = state(8, 0);
+    state.set_box(Some(3));
+    assert_eq!(state.listed_count(), 0);
+    state.set_box(None);
+    assert_eq!(state.listed_count(), 0);
+    // A box the graph doesn't have lists none either.
+    let mut state = super::state(8, 12);
+    state.set_box(Some(99));
+    assert_eq!(state.listed_count(), 0);
+}
+
+#[test]
+fn a_refresh_keeps_the_box_and_derives_its_calls_again() {
+    let mut state = state(8, 12);
+    let key = state.edges()[0].from;
+    state.set_box(Some(key));
+    let before = state.listed_count();
+    let (mut nodes, mut edges) = invented(8, 12);
+    edges.reverse();
+    nodes.reverse();
+    state.set(nodes.clone(), edges.clone());
+    assert_eq!((state.boxed(), state.listed_count()), (Some(&key), before));
+    // New data with a call fewer for the box lists one fewer.
+    let gone = edges
+        .iter()
+        .position(|edge| edge.from == key || edge.to == key)
+        .unwrap();
+    edges.remove(gone);
+    state.set(nodes, edges);
+    assert_eq!(state.listed_count(), before - 1);
+    // Clearing the graph lets the box go with it.
+    state.clear();
+    assert_eq!(state.boxed(), None);
+}
+
+#[test]
+fn selecting_a_box_derives_the_list_without_laying_the_graph_out_again() {
+    let mut state = state(8, 12);
+    let before = freshkube_probe::probe::count("graph.prepare");
+    state.set_box(Some(state.edges()[0].from));
+    state.set_box(None);
+    assert_eq!(freshkube_probe::probe::count("graph.prepare"), before);
+}

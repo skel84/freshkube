@@ -18,7 +18,8 @@ pub use rollback::{Revision, Revisions, rollback};
 pub use run_now::run_now;
 
 use super::{
-    ActionDescription, Change, Inverse, InverseFrom, ObjectChange, Observation, Target, Tier,
+    AccessQuestion, ActionDescription, Change, Inverse, InverseFrom, ObjectChange, Observation,
+    Target, Tier,
 };
 
 /// The annotation `kubectl rollout restart` sets on the pod template.
@@ -41,6 +42,7 @@ pub enum Workload {
     HelmRepository,
     OciRepository,
     Certificate,
+    ExternalSecret,
 }
 
 impl Workload {
@@ -58,6 +60,7 @@ impl Workload {
             ("source.toolkit.fluxcd.io", "HelmRepository") => Some(Self::HelmRepository),
             ("source.toolkit.fluxcd.io", "OCIRepository") => Some(Self::OciRepository),
             ("cert-manager.io", "Certificate") => Some(Self::Certificate),
+            ("external-secrets.io", "ExternalSecret") => Some(Self::ExternalSecret),
             _ => None,
         }
     }
@@ -76,6 +79,7 @@ impl Workload {
             | Self::HelmRepository
             | Self::OciRepository => &[Everyday::FluxReconcile],
             Self::Certificate => &[Everyday::Renew],
+            Self::ExternalSecret => &[Everyday::ExternalSecretRefresh],
         }
     }
 
@@ -93,6 +97,7 @@ impl Workload {
             Self::HelmRepository => "helmrepositories",
             Self::OciRepository => "ocirepositories",
             Self::Certificate => "certificates",
+            Self::ExternalSecret => "externalsecrets",
         }
     }
 }
@@ -127,6 +132,8 @@ pub enum Everyday {
     FluxReconcile,
     /// cert-manager: renew a Certificate.
     Renew,
+    /// External Secrets Operator: ask for a sync of an ExternalSecret now.
+    ExternalSecretRefresh,
     Rollback,
     RunNow,
     /// Delete, with an impact preview (`write/delete/`): offered on every
@@ -144,6 +151,7 @@ impl Everyday {
             Self::ArgoHardRefresh => "argo-hard-refresh",
             Self::FluxReconcile => "flux-reconcile",
             Self::Renew => "renew",
+            Self::ExternalSecretRefresh => "externalsecret-refresh",
             Self::Rollback => "rollback",
             Self::RunNow => "run-now",
             Self::Delete => "delete",
@@ -349,6 +357,58 @@ pub struct Row {
     pub namespace: Option<String>,
     pub name: String,
     pub uid: String,
+}
+
+impl Row {
+    /// The object the row names, with no resourceVersion: what the access
+    /// questions are about.
+    pub fn target(&self) -> Target {
+        Target {
+            group: self.group.clone(),
+            version: self.version.clone(),
+            kind: self.kind.clone(),
+            resource: self.resource.clone(),
+            namespace: self.namespace.clone(),
+            name: self.name.clone(),
+            uid: self.uid.clone(),
+            resource_version: String::new(),
+            subresource: None,
+        }
+    }
+}
+
+impl Everyday {
+    /// What the gate asks before this action on the object `row` names, and
+    /// so what a page asks before it offers it (`access::offer`): declared
+    /// here, beside the action's tier, from the list row alone (no read of the
+    /// object). A test holds each to the review the action's own description
+    /// makes, so the two cannot drift apart.
+    pub fn needs(self, row: &Row) -> Vec<AccessQuestion> {
+        let mut target = row.target();
+        match self {
+            // A merge patch of the object itself.
+            Self::Scale
+            | Self::Restart
+            | Self::Suspend
+            | Self::ArgoRefresh
+            | Self::ArgoHardRefresh
+            | Self::FluxReconcile
+            | Self::ExternalSecretRefresh
+            | Self::Rollback => vec![AccessQuestion::of(&target, "patch")],
+            // Renew writes the Certificate's status.
+            Self::Renew => {
+                target.subresource = Some("status".into());
+                vec![AccessQuestion::of(&target, "patch")]
+            }
+            // Run now creates a Job beside the CronJob.
+            Self::RunNow => {
+                target.group = "batch".into();
+                target.resource = "jobs".into();
+                vec![AccessQuestion::of(&target, "create")]
+            }
+            Self::Delete => vec![AccessQuestion::of(&target, "delete")],
+        }
+    }
 }
 
 impl Subject {
@@ -628,7 +688,7 @@ pub fn suspend(subject: &Subject) -> Result<ActionDescription, NotOffered> {
 }
 
 mod nudges;
-pub use nudges::{Refresh, argo_refresh, flux_reconcile, renew};
+pub use nudges::{Refresh, argo_refresh, external_secret_refresh, flux_reconcile, renew};
 
 #[cfg(test)]
 mod tests {

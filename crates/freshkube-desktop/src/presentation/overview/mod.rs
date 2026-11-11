@@ -59,6 +59,7 @@ pub(crate) struct Overview {
 fn part<T>(
     value: Option<&Part<T>>,
     kind: &str,
+    unreadable: bool,
     loaded: impl FnOnce(&T) -> (String, String, Tone),
 ) -> (String, String, Tone, CardState) {
     match value {
@@ -87,6 +88,13 @@ fn part<T>(
             };
             (figure, detail, Tone::Unknown, state)
         }
+        // The connection failed, so nothing will answer: say so, not a skeleton.
+        None if unreadable => (
+            "Unavailable".into(),
+            format!("Couldn't read {kind}"),
+            Tone::Unknown,
+            CardState::Current,
+        ),
         None => (
             "—".into(),
             format!("Waiting for {kind}"),
@@ -103,6 +111,9 @@ struct Inputs<'a> {
     talos: Option<&'a ClusterOverview>,
     summary: &'a Option<ClusterSummary>,
     fixture: bool,
+    /// The connection failed: a part that never answered says it couldn't
+    /// be read, instead of waiting.
+    unreadable: bool,
 }
 impl Overview {
     pub(crate) fn build(
@@ -112,6 +123,7 @@ impl Overview {
         talos: Option<&ClusterOverview>,
         fixture: bool,
         kube_only: bool,
+        unreadable: bool,
     ) -> Self {
         let mut result = Self::default();
         let summary = talos.map(|cluster| cluster_summary(cluster, nodes));
@@ -121,6 +133,7 @@ impl Overview {
             talos,
             summary: &summary,
             fixture,
+            unreadable,
         };
         result.subtitle(inputs);
         result.roster(inputs);
@@ -283,7 +296,14 @@ impl Overview {
 }
 
 /// Ready nodes of all, with each node's tone as a segment.
-fn nodes_card(Inputs { rows, kube, .. }: Inputs) -> Card {
+fn nodes_card(
+    Inputs {
+        rows,
+        kube,
+        unreadable,
+        ..
+    }: Inputs,
+) -> Card {
     let ready = rows
         .iter()
         .filter(|row| row.kubernetes.as_ref().is_some_and(|node| node.is_ready()))
@@ -292,17 +312,18 @@ fn nodes_card(Inputs { rows, kube, .. }: Inputs) -> Card {
         .iter()
         .filter(|row| row.role == super::Role::ControlPlane)
         .count();
-    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.nodes), "nodes", |_| {
-        (
-            format!("{ready} / {} Ready", rows.len()),
-            format!("{planes} control planes · {} workers", rows.len() - planes),
-            if ready == rows.len() {
-                Tone::Good
-            } else {
-                Tone::Warn
-            },
-        )
-    });
+    let (figure, detail, tone, state) =
+        part(kube.map(|kube| &kube.nodes), "nodes", unreadable, |_| {
+            (
+                format!("{ready} / {} Ready", rows.len()),
+                format!("{planes} control planes · {} workers", rows.len() - planes),
+                if ready == rows.len() {
+                    Tone::Good
+                } else {
+                    Tone::Warn
+                },
+            )
+        });
     Card {
         id: "tile-nodes",
         label: "Nodes",
@@ -370,13 +391,19 @@ fn etcd_card(Inputs { kube, summary, .. }: Inputs, talos_state: CardState) -> Ca
 }
 
 /// Unhealthy workloads, and what couldn't be read.
-fn workloads_card(Inputs { kube, .. }: Inputs) -> Card {
+fn workloads_card(
+    Inputs {
+        kube, unreadable, ..
+    }: Inputs,
+) -> Card {
     let workloads_state = match kube {
         Some(kube)
             if kube.workloads.snapshot().is_some() || !kube.workloads.unavailable().is_empty() =>
         {
             CardState::Current
         }
+        // Nothing will answer after a failed connection.
+        None if unreadable => CardState::Current,
         _ => CardState::Waiting,
     };
     let (figure, detail, tone) = kube
@@ -431,7 +458,11 @@ fn workloads_card(Inputs { kube, .. }: Inputs) -> Card {
                     .collect::<Vec<_>>()
                     .join(" · ")
             })
-            .unwrap_or("Waiting for workloads".into()),
+            .unwrap_or(if unreadable {
+                "Couldn't read workloads".into()
+            } else {
+                "Waiting for workloads".into()
+            }),
             Tone::Unknown,
         ));
     let (detail, tone) =
@@ -465,37 +496,42 @@ fn workloads_card(Inputs { kube, .. }: Inputs) -> Card {
 }
 
 /// Pods, with their issues.
-fn pods_card(Inputs { kube, .. }: Inputs) -> Card {
-    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.pods), "pods", |pods| {
-        let mut parts = Vec::new();
-        let crash = pods
-            .issues_by_status
-            .get("CrashLoopBackOff")
-            .copied()
-            .unwrap_or(0);
-        if crash > 0 {
-            parts.push(format!("{crash} CrashLoopBackOff"));
-        }
-        let pending = pods.phases.get("Pending").copied().unwrap_or(0);
-        if pending > 0 {
-            parts.push(format!("{pending} Pending"));
-        }
-        if pods.on_not_ready > 0 && kube.is_some_and(|kube| kube.nodes.is_current()) {
-            parts.push(format!("{} on a NotReady node", pods.on_not_ready));
-        }
-        if parts.is_empty() {
-            parts.push("No pod issues reported".into());
-        }
-        (
-            pods.total.to_string(),
-            parts.join(" · "),
-            if pods.issues.is_empty() {
-                Tone::Good
-            } else {
-                Tone::Warn
-            },
-        )
-    });
+fn pods_card(
+    Inputs {
+        kube, unreadable, ..
+    }: Inputs,
+) -> Card {
+    let (figure, detail, tone, state) =
+        part(kube.map(|kube| &kube.pods), "pods", unreadable, |pods| {
+            let mut parts = Vec::new();
+            let crash = pods
+                .issues_by_status
+                .get("CrashLoopBackOff")
+                .copied()
+                .unwrap_or(0);
+            if crash > 0 {
+                parts.push(format!("{crash} CrashLoopBackOff"));
+            }
+            let pending = pods.phases.get("Pending").copied().unwrap_or(0);
+            if pending > 0 {
+                parts.push(format!("{pending} Pending"));
+            }
+            if pods.on_not_ready > 0 && kube.is_some_and(|kube| kube.nodes.is_current()) {
+                parts.push(format!("{} on a NotReady node", pods.on_not_ready));
+            }
+            if parts.is_empty() {
+                parts.push("No pod issues reported".into());
+            }
+            (
+                pods.total.to_string(),
+                parts.join(" · "),
+                if pods.issues.is_empty() {
+                    Tone::Good
+                } else {
+                    Tone::Warn
+                },
+            )
+        });
     let filter = kube
         .and_then(|kube| kube.pods.loaded())
         .and_then(|pods| pods.issues.first())
@@ -593,27 +629,36 @@ fn memory_card(Inputs { rows, summary, .. }: Inputs, talos_state: CardState) -> 
 }
 
 /// Warning events in the last hour.
-fn events_card(Inputs { kube, .. }: Inputs) -> Card {
-    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.events), "events", |events| {
-        (
-            events.total.to_string(),
-            format!(
-                "Warnings in the last hour · {}",
-                events
-                    .reasons
-                    .iter()
-                    .take(3)
-                    .map(|(reason, count)| format!("{reason} {count}"))
-                    .collect::<Vec<_>>()
-                    .join(" · ")
-            ),
-            if events.total > 0 {
-                Tone::Warn
-            } else {
-                Tone::Good
-            },
-        )
-    });
+fn events_card(
+    Inputs {
+        kube, unreadable, ..
+    }: Inputs,
+) -> Card {
+    let (figure, detail, tone, state) = part(
+        kube.map(|kube| &kube.events),
+        "events",
+        unreadable,
+        |events| {
+            (
+                events.total.to_string(),
+                format!(
+                    "Warnings in the last hour · {}",
+                    events
+                        .reasons
+                        .iter()
+                        .take(3)
+                        .map(|(reason, count)| format!("{reason} {count}"))
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                ),
+                if events.total > 0 {
+                    Tone::Warn
+                } else {
+                    Tone::Good
+                },
+            )
+        },
+    );
     Card {
         id: "tile-events",
         label: "Events",
@@ -628,32 +673,41 @@ fn events_card(Inputs { kube, .. }: Inputs) -> Card {
 }
 
 /// Pending claims and available volumes.
-fn storage_card(Inputs { kube, .. }: Inputs) -> Card {
-    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.claims), "claims", |claims| {
-        (
-            format!("{} Pending", claims.pending_count),
-            format!(
-                "{}{} bound · {} PVs available",
-                claims
-                    .pending
-                    .first()
-                    .map(|claim| format!(
-                        "{}/{} · {} · ",
-                        claim.namespace, claim.name, claim.reason
-                    ))
-                    .unwrap_or_default(),
-                claims.bound,
-                kube.and_then(|kube| kube.available_volumes.loaded())
-                    .map(ToString::to_string)
-                    .unwrap_or("unavailable".into())
-            ),
-            if claims.pending_count > 0 {
-                Tone::Warn
-            } else {
-                Tone::Good
-            },
-        )
-    });
+fn storage_card(
+    Inputs {
+        kube, unreadable, ..
+    }: Inputs,
+) -> Card {
+    let (figure, detail, tone, state) = part(
+        kube.map(|kube| &kube.claims),
+        "claims",
+        unreadable,
+        |claims| {
+            (
+                format!("{} Pending", claims.pending_count),
+                format!(
+                    "{}{} bound · {} PVs available",
+                    claims
+                        .pending
+                        .first()
+                        .map(|claim| format!(
+                            "{}/{} · {} · ",
+                            claim.namespace, claim.name, claim.reason
+                        ))
+                        .unwrap_or_default(),
+                    claims.bound,
+                    kube.and_then(|kube| kube.available_volumes.loaded())
+                        .map(ToString::to_string)
+                        .unwrap_or("unavailable".into())
+                ),
+                if claims.pending_count > 0 {
+                    Tone::Warn
+                } else {
+                    Tone::Good
+                },
+            )
+        },
+    );
     Card {
         id: "tile-storage",
         label: "Storage",

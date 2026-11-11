@@ -185,3 +185,25 @@ fn a_drag_stops_at_the_graph(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// A page brings the inspector into view only when it sits under the graph
+/// and its card ends below the page's viewport.
+#[gpui_kit::test]
+fn the_inspector_is_below_only_when_stacked_and_past_the_viewport(cx: &mut TestAppContext) {
+    let view = gpui_kit::Bounds::new(point(px(0.), px(0.)), gpui_kit::size(px(1280.), px(300.)));
+    let (handle, beside) = open(cx, state(8, 10), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!beside.read(cx).graph.inspector_below(&view));
+    })
+    .unwrap();
+    let (handle, stacked) = open(cx, state(7, 8), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(stacked.read(cx).graph.inspector_below(&view));
+        let tall =
+            gpui_kit::Bounds::new(point(px(0.), px(0.)), gpui_kit::size(px(1280.), px(5000.)));
+        assert!(!stacked.read(cx).graph.inspector_below(&tall));
+    })
+    .unwrap();
+}

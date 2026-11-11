@@ -575,6 +575,7 @@ impl Pilot {
             self.overview.data(),
             self.mode().is_example(),
             !self.mode().has_talos(),
+            self.context_display.state == super::shell::Connection::Failed,
         );
         if self.overview.is_stale() {
             let reason = self

@@ -179,9 +179,44 @@ The explorer's and the Query tab's session (`freshkube-db`, [database-explorer.m
 - `safety_g20_a_plan_never_analyzes` (`crates/freshkube-db/src/safety.rs`)
 - `safety_g20_every_request_ends_rolled_back_with_its_locks_let_go_and_nothing_is_committed` (`crates/freshkube-db/src/safety.rs`)
 
+### 21. A Teleport child belongs to one explorer tab, runs only from Explore on loopback, never signs in for anyone, and carries no secret
+
+- `safety_g21_closing_the_tab_kills_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
+- `safety_g21_quitting_the_app_ends_the_teleport_child` (`crates/freshkube-desktop/src/screens/databases/explore/tests.rs`)
+- `safety_g21_the_child_dies_with_its_proxy` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_a_proxy_that_listens_beyond_loopback_is_killed` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_not_signed_in_is_told_without_running_a_login` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_the_childs_arguments_hold_no_secret` (`crates/freshkube-db/src/teleport/tests.rs`)
+- `safety_g21_the_child_gets_only_the_environment_tsh_needs` (`crates/freshkube-db/src/teleport/tests.rs`)
+
+### 22. What is offered asks reviews only for the selection's actions, once the selection has rested and only while shown, and an answer never stands in for the gate
+
+- `safety_g22_only_the_selected_rows_actions_are_asked_about` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_held_arrow_asks_about_the_row_it_stops_on_and_a_hidden_page_asks_nothing` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_on_a_live_cluster_only_the_last_selection_is_reviewed_and_a_hide_stops_the_rest` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_selection_change_behind_four_reviews_in_flight_asks_only_the_new_row` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_a_hide_drops_what_is_queued_and_in_flight_and_nothing_lands` (`crates/freshkube-resources/src/screen/tests/offers.rs`)
+- `safety_g22_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
+### 23. A TLS Secret is read only on request, `tls.key` never leaves core, and no Secret is read where a Certificate's status answers
+
+The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.md](features/traffic.md#certificates-n4)). It lists and gets objects, and reads no Secret to draw its rows: where a cert-manager Certificate keeps the Secret, its names and expiry come from that Certificate's status, and core makes no request for the Secret at all. A Secret that no Certificate that was read keeps is offered for reading only when every Certificate could be read; with that list refused, cut or its discovery failed, Read Secret is withheld and the row says why. Any other Secret is read by one GET of its name, only when the person presses Read Secret, and only the parsed facts of `tls.crt` leave core (subject, names, issuer, not-before, not-after); the result type has no field for `tls.key`, for the PEM or for any other key, and the decoded values are wiped before it returns. The facts stay in the page's memory, survive the shell's automatic refreshes of the same source (they are not checked against later versions of the Secret: that would take a Secret read nobody asked for), and go with a hidden page or a change of source. A refused read is Unknown, never "wrong".
+
+- `safety_g23_tls_key_never_leaves_core` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_the_page_read_asks_for_no_secret_and_a_managed_secret_is_never_requested` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_a_secret_is_read_only_by_name_and_with_one_get` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_a_refused_or_missing_secret_is_unknown_or_not_found_never_wrong` (`crates/freshkube-core/src/resources/traffic/certs/tests.rs`)
+- `safety_g23_nothing_reads_a_secret_until_the_control_is_pressed` (`crates/freshkube-desktop/src/screens/certificates/tests.rs`)
+
+### 24. ExternalSecret Refresh sends one `force-sync` annotation, and nothing under `read-only`, for an object the operator would not sync, or when the object moved on (a delete, a sync, a policy change)
+
+- `safety_g24_externalsecret_refresh_sends_one_annotation_and_nothing_under_read_only_or_when_moved` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
+- `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).
-- Guarantee 19 has one known gap, #1005: when Talos's CNI file reads fail with text that holds "not found", `is_missing_file_error` reads them as missing files, the provider becomes none, and the `cni` check fails with the node never reached. It is listed in `KNOWN_GAPS` in the harness; the harness fails while it is listed and no longer fails, so the fix removes it.
+- Guarantee 21 has a Windows gap: the Teleport child has no parent-death watcher there (macOS and Linux have one, tested by `the_group_ends_when_the_parent_dies_without_ending_it`), so a crash or a force quit can leave `tsh proxy db` running until its Teleport certificate expires; a clean quit still ends it. A job object, as `freshkube-agent` uses for the agent, would close it.

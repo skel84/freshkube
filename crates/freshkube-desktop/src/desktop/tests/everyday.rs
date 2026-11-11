@@ -286,6 +286,62 @@ fn restart_asks_even_on_an_open_cluster_and_a_double_press_sends_once(cx: &mut T
 }
 
 #[gpui_kit::test]
+fn safety_g22_an_allowed_answer_on_the_page_does_not_skip_the_dialogs_review(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::access::Offer;
+    let w = world(cx, "dev-fra");
+    // The app's offer desk, bound to the fake cluster, is asked what a
+    // Restart of `web` needs, and the cluster allows it.
+    let questions = Everyday::Restart.needs(&web_row());
+    let source = ClusterSource {
+        id: "live-test".into(),
+        context: "ctx-a".into(),
+        access: ClusterAccess::Live(Arc::new(Fake(w.cluster.client.clone()))),
+    };
+    let desk = cx.update(|cx| freshkube_reads::existing_offer_desk(cx).expect("the shell's desk"));
+    cx.update(|cx| {
+        desk.update(cx, |desk, cx| {
+            desk.bind(Some(&source), cx);
+            let owner = cx.entity_id();
+            desk.want(owner, &questions, cx);
+        })
+    });
+    cx.executor()
+        .advance_clock(freshkube_reads::OFFER_PAUSE + Duration::from_millis(1));
+    w.drive(cx, Duration::from_secs(1));
+    let offer = cx.read(|cx| desk.read(cx).offer(&questions, cx));
+    assert_eq!(offer, Offer::Allowed, "{:?}", w.cluster.recorder.lines());
+    // The cluster says no by the time the person presses Restart. The page
+    // would offer it, and the dialog's check still asks and decides.
+    let reviews = |w: &World| {
+        w.cluster
+            .recorder
+            .lines()
+            .iter()
+            .filter(|line| line.contains("selfsubjectaccessreviews"))
+            .count()
+    };
+    let before = reviews(&w);
+    w.cluster.deny_access();
+    w.press_web(cx, Everyday::Restart);
+    w.drive(cx, Duration::from_secs(1));
+    assert!(w.present(cx, "write-refused"), "the review decided");
+    assert!(!w.present(cx, "write-confirm"));
+    assert!(reviews(&w) > before, "the preflight asked afresh");
+    // Nothing was written: the one POST that isn't an access review is the
+    // desk's question of who you are, which creates nothing.
+    let written: Vec<_> = w
+        .cluster
+        .writes()
+        .into_iter()
+        .filter(|request| !request.path.ends_with("/selfsubjectreviews"))
+        .map(|request| request.line())
+        .collect();
+    assert!(written.is_empty(), "{written:?}");
+}
+
+#[gpui_kit::test]
 fn switching_clusters_during_the_read_sends_and_asks_nothing(cx: &mut TestAppContext) {
     let w = world(cx, "prod-ams");
     w.press_web(cx, Everyday::Restart);
@@ -591,6 +647,22 @@ mod nudges {
         )
     }
 
+    fn external_secret() -> Nudge {
+        (
+            Everyday::ExternalSecretRefresh,
+            ResourceKind::new(
+                "external-secrets.io",
+                "v1",
+                "ExternalSecret",
+                "externalsecrets",
+                true,
+            ),
+            "shop",
+            "db-creds",
+            "uid-db-creds",
+        )
+    }
+
     impl World {
         fn press_nudge(&self, cx: &mut TestAppContext, (act, kind, namespace, name, uid): Nudge) {
             let source = ClusterSource {
@@ -628,6 +700,11 @@ mod nudges {
             (argo(), "refresh Application/shop", fake::APPLICATION),
             (flux(), "reconcile Kustomization/apps", fake::KUSTOMIZATION),
             (cert(), "Renew Certificate/web-tls", fake::CERTIFICATE),
+            (
+                external_secret(),
+                "sync ExternalSecret/db-creds",
+                fake::EXTERNAL_SECRET,
+            ),
         ] {
             let w = world(cx, "core-fra");
             w.press_nudge(cx, nudge);
@@ -649,8 +726,49 @@ mod nudges {
     }
 
     #[gpui_kit::test]
+    fn safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret(
+        cx: &mut TestAppContext,
+    ) {
+        // Read-only: no request at all, no dialog, nothing audited.
+        let ro = world(cx, "stage-fra");
+        ro.press_nudge(cx, external_secret());
+        ro.drive(cx, Duration::from_secs(1));
+        assert!(ro.cluster.recorder.requests().is_empty());
+        assert!(!ro.present(cx, "write-dialog") && !ro.present(cx, "write-confirm"));
+        assert_eq!(ro.audit(), "");
+        // Guarded: Escape sends nothing; Confirm sends one annotation.
+        let w = world(cx, "core-fra");
+        w.press_nudge(cx, external_secret());
+        w.drive(cx, Duration::from_millis(500));
+        assert!(w.present(cx, "write-confirm"));
+        w.escape(cx);
+        w.drive(cx, Duration::from_millis(500));
+        assert!(w.cluster.writes().is_empty());
+        w.press_nudge(cx, external_secret());
+        w.drive(cx, Duration::from_millis(500));
+        w.click(cx, "write-confirm");
+        w.drive(cx, Duration::from_secs(3));
+        assert_eq!(w.cluster.writes().len(), 1);
+        let body: serde_json::Value = serde_json::from_str(&w.cluster.writes()[0].body).unwrap();
+        assert_eq!(
+            body["metadata"]["annotations"].as_object().unwrap().len(),
+            1
+        );
+        assert!(body["metadata"]["annotations"]["force-sync"].is_string());
+        assert!(
+            w.cluster
+                .recorder
+                .requests()
+                .iter()
+                .all(|request| !request.path.contains("/secrets")),
+            "{:?}",
+            w.cluster.recorder.lines()
+        );
+    }
+
+    #[gpui_kit::test]
     fn an_open_cluster_still_asks_for_a_nudge_because_none_can_be_undone(cx: &mut TestAppContext) {
-        for nudge in [argo(), flux(), cert()] {
+        for nudge in [argo(), flux(), cert(), external_secret()] {
             let w = world(cx, "dev-fra");
             w.press_nudge(cx, nudge);
             w.drive(cx, Duration::from_millis(500));
@@ -662,7 +780,7 @@ mod nudges {
     #[gpui_kit::test]
     fn a_read_only_cluster_sends_no_request_for_any_nudge(cx: &mut TestAppContext) {
         let w = world(cx, "stage-fra");
-        for nudge in [argo(), flux(), cert()] {
+        for nudge in [argo(), flux(), cert(), external_secret()] {
             w.press_nudge(cx, nudge);
         }
         w.drive(cx, Duration::from_secs(1));
@@ -693,6 +811,12 @@ mod nudges {
                 cert().1,
                 "certificates.cert-manager.io",
                 "ledger-tls",
+            ),
+            (
+                Everyday::ExternalSecretRefresh,
+                external_secret().1,
+                "externalsecrets.external-secrets.io",
+                "lantern-api",
             ),
         ] {
             let (_, rows) = crate::resources::example::read("core-fra", key, None, now).unwrap();

@@ -736,7 +736,7 @@ async fn a_refusal_ends_the_session_and_is_unknown() {
 
 #[test]
 fn the_example_shapes_parse_by_name_and_each_says_what_it_should() {
-    for name in example::Shape::NAMES {
+    for &(name, _) in example::Shape::SHAPES {
         let shape = example::Shape::parse(name).unwrap();
         assert_eq!(shape.name(), name);
         // Every page and the session can answer for every shape.

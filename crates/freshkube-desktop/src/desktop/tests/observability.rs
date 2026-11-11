@@ -128,6 +128,14 @@ fn the_wheel_brings_an_incident_inspectors_first_objective_up_whole(cx: &mut Tes
                 break;
             }
         }
+        // The table keeps three rows, so the frame scrolls to the
+        // inspector; the wheel then goes to the body under the pointer.
+        window.scroll(
+            "obs-scroll",
+            ScrollDelta::Pixels(point(px(0.), px(-4000.))),
+            cx,
+        );
+        window.render_frame(cx);
         let body = window.find("obs-incident-detail-body").bounds();
         let first = window.find("obs-incident-slo-0-name").bounds();
         let table = window.find("obs-incidents-table").bounds().top();

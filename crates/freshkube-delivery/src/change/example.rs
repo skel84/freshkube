@@ -1463,7 +1463,7 @@ fn github(change: &mut Change, trouble: Trouble) {
         (_, Some(stale)) => (Gap::Unreadable, stale.sentence()),
         (_, None) => (Gap::Unreadable, trouble.words().to_owned()),
     };
-    change.missing.push(Missing::new(gap, words));
+    change.missing.push(Missing::new(gap, words).from_github());
 }
 
 /// The example's Freight as a Warehouse that subscribes to an image alone
