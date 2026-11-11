@@ -691,6 +691,7 @@ async fn a_run_of_fifty_statements_can_all_be_reached_one_result_at_a_time(
     // The left-out note is a tab like the others: drawn, and a click on it
     // shows it.
     h.click("query-result-next", cx);
+    settle(&h, cx);
     assert!(h.present("query-result-51", cx));
     h.click("query-result-51", cx);
     assert_eq!(
@@ -834,4 +835,267 @@ async fn run_says_when_it_ran_one_of_several_statements(cx: &mut TestAppContext)
     h.click("query-run", cx);
     h.finished(cx).await;
     assert!(!h.label("query-summary", cx).unwrap().contains("Ran 1 of"));
+}
+
+/// Every tab the strip draws, as (id, bounds), in order.
+fn drawn_tabs(
+    window: &mut gpui_kit::Window,
+    count: usize,
+) -> Vec<(usize, gpui_kit::Bounds<gpui_kit::Pixels>)> {
+    (1..=count)
+        .filter_map(|n| {
+            let id = gpui_kit::SharedString::from(format!("query-result-{n}"));
+            window.try_find(id).map(|e| (n, e.bounds()))
+        })
+        .collect()
+}
+
+/// The tab strip's invariants: a tab that shows at all shows whole inside the
+/// clip, none is cut under either button, and the label's text box is no
+/// wider than the clip.
+fn assert_tabs_whole(
+    window: &mut gpui_kit::Window,
+    count: usize,
+    selected_shows: Option<usize>,
+    when: &str,
+) {
+    let clip = window.find("query-result-tabs").bounds();
+    let prev = window.try_find("query-result-prev").map(|e| e.bounds());
+    let next = window.try_find("query-result-next").map(|e| e.bounds());
+    let mut shown = Vec::new();
+    for (n, tab) in drawn_tabs(window, count) {
+        let meets = tab.right() > clip.left() && tab.left() < clip.right();
+        if !meets {
+            continue;
+        }
+        let eps = gpui_kit::px(0.5);
+        assert!(
+            tab.left() >= clip.left() - eps && tab.right() <= clip.right() + eps,
+            "{when}: tab {n} {tab:?} is cut by the strip {clip:?}"
+        );
+        if let Some(prev) = prev {
+            assert!(tab.left() >= prev.right() - eps, "{when}: tab {n} under ‹");
+        }
+        if let Some(next) = next {
+            assert!(
+                tab.right() <= next.left() + eps,
+                "{when}: tab {n} {tab:?} under › {next:?}, strip {clip:?}"
+            );
+        }
+        let label = window
+            .find(gpui_kit::SharedString::from(format!(
+                "query-result-{n}-label"
+            )))
+            .bounds();
+        assert!(
+            label.size.width <= clip.size.width + eps,
+            "{when}: tab {n}'s label {label:?} is wider than the strip {clip:?}"
+        );
+        shown.push(n);
+    }
+    assert!(!shown.is_empty(), "{when}: no tab shows");
+    if let Some(selected) = selected_shows {
+        assert!(
+            shown.contains(&selected),
+            "{when}: the selected tab {selected} is not shown (shown: {shown:?})"
+        );
+    }
+}
+
+/// What the platform runs between frames, and the draws it asks for: the
+/// strip must ask for its own redraw (`render_frame` would draw regardless).
+fn settle(h: &Harness, cx: &mut TestAppContext) {
+    for _ in 0..6 {
+        cx.update_window(h.window.into(), |_, window, cx| {
+            window.simulate_next_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+}
+
+#[gpui_kit::test]
+async fn result_tabs_stay_whole_and_keep_the_selected_one_in_view_at_a_small_window(
+    cx: &mut TestAppContext,
+) {
+    // Text 13 and 20 at 760 wide, and 20 at a width where a label is wider
+    // than the strip.
+    for (text, width) in [(13., 760.), (20., 760.), (20., 420.)] {
+        let h = mount_sized(cx, Mark::Guarded, width, 560.);
+        cx.update(|cx| crate::text_size::install(None, cx));
+        cx.update_window(h.window.into(), |_, _, cx| crate::text_size::set(text, cx))
+            .unwrap();
+        let sql = "select * from orders where id > 100; update orders set status = 'paid' where id = 7; select 1";
+        h.type_text(sql, 0, 0..sql.len(), cx);
+        h.click("query-run", cx);
+        h.finished(cx).await;
+        settle(&h, cx);
+        let at = |what: &str| format!("text {text}, width {width}, {what}");
+        // At rest the second result (the refusal) is selected and shows.
+        assert_eq!(h.view.read_with(cx, |v, _| v.selected), 1);
+        cx.update_window(h.window.into(), |_, window, _| {
+            assert_tabs_whole(window, 3, Some(2), &at("at rest"));
+        })
+        .unwrap();
+        // ‹ and › land on whole tabs and keep the selection in view.
+        for (button, expect) in [
+            ("query-result-prev", 1),
+            ("query-result-next", 2),
+            ("query-result-next", 3),
+            ("query-result-prev", 2),
+        ] {
+            h.click(button, cx);
+            settle(&h, cx);
+            cx.update_window(h.window.into(), |_, window, _| {
+                assert_tabs_whole(window, 3, Some(expect), &at(button));
+            })
+            .unwrap();
+        }
+        // A sideways wheel moves by whole tabs, either way.
+        let first = |cx: &mut TestAppContext| h.view.read_with(cx, |v, _| v.tabs.first());
+        for dx in [-60., -60., 60., 60., 15.] {
+            cx.update_window(h.window.into(), |_, window, cx| {
+                window.scroll(
+                    "query-result-tabs",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                        gpui_kit::px(dx),
+                        gpui_kit::px(0.),
+                    )),
+                    cx,
+                );
+            })
+            .unwrap();
+            settle(&h, cx);
+            cx.update_window(h.window.into(), |_, window, _| {
+                assert_tabs_whole(window, 3, None, &at(&format!("wheel {dx}")));
+            })
+            .unwrap();
+        }
+        // Where a tab doesn't fit beside the others, the wheel did move it.
+        if width < 500. {
+            let rest = first(cx);
+            cx.update_window(h.window.into(), |_, window, cx| {
+                window.scroll(
+                    "query-result-tabs",
+                    gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                        gpui_kit::px(-60.),
+                        gpui_kit::px(0.),
+                    )),
+                    cx,
+                );
+            })
+            .unwrap();
+            settle(&h, cx);
+            assert_ne!(first(cx), rest, "{}", at("the wheel moved nothing"));
+        }
+    }
+}
+
+async fn run_three(h: &Harness, cx: &mut TestAppContext) {
+    let sql = "select * from orders where id > 100; update orders set status = 'paid' where id = 7; select 1";
+    h.type_text(sql, 0, 0..sql.len(), cx);
+    h.click("query-run", cx);
+    h.finished(cx).await;
+    settle(h, cx);
+}
+
+fn use_text_size(h: &Harness, text: f32, cx: &mut TestAppContext) {
+    cx.update(|cx| crate::text_size::install(None, cx));
+    cx.update_window(h.window.into(), |_, _, cx| crate::text_size::set(text, cx))
+        .unwrap();
+}
+
+fn wheel_lines(h: &Harness, lines: f32, cx: &mut TestAppContext) {
+    cx.update_window(h.window.into(), |_, window, cx| {
+        window.scroll(
+            "query-result-tabs",
+            gpui_kit::ScrollDelta::Lines(gpui_kit::point(lines, 0.)),
+            cx,
+        );
+    })
+    .unwrap();
+    settle(h, cx);
+}
+
+#[gpui_kit::test]
+async fn one_notch_of_a_mouse_wheel_moves_one_tab_at_every_text_size(cx: &mut TestAppContext) {
+    // Widths where the three tabs don't all fit beside each other.
+    for (text, width) in [(13., 300.), (20., 420.)] {
+        let h = mount_sized(cx, Mark::Guarded, width, 560.);
+        use_text_size(&h, text, cx);
+        run_three(&h, cx).await;
+        // Back to the first result, so the strip starts at its first tab.
+        h.click("query-result-prev", cx);
+        settle(&h, cx);
+        let first = |cx: &mut TestAppContext| h.view.read_with(cx, |v, _| v.tabs.first());
+        assert_eq!(first(cx), 0, "text {text}");
+        wheel_lines(&h, -1., cx);
+        assert_eq!(first(cx), 1, "text {text}: one notch forward");
+        wheel_lines(&h, 1., cx);
+        assert_eq!(first(cx), 0, "text {text}: one notch back");
+        cx.update_window(h.window.into(), |_, window, _| {
+            assert_tabs_whole(window, 3, None, &format!("text {text} after a notch"));
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+async fn a_wider_strip_takes_back_the_tabs_left_out_before_its_first(cx: &mut TestAppContext) {
+    let h = mount_sized(cx, Mark::Guarded, 420., 560.);
+    use_text_size(&h, 20., cx);
+    run_three(&h, cx).await;
+    // The last result: the strip has stepped past the earlier tabs.
+    h.click("query-result-next", cx);
+    settle(&h, cx);
+    assert!(h.view.read_with(cx, |v, _| v.tabs.first()) > 0);
+    // Widen the window until all three fit: the strip fills from the start.
+    cx.simulate_window_resize(
+        h.window.into(),
+        gpui_kit::size(gpui_kit::px(1400.), gpui_kit::px(560.)),
+    );
+    settle(&h, cx);
+    assert_eq!(h.view.read_with(cx, |v, _| v.tabs.first()), 0);
+    cx.update_window(h.window.into(), |_, window, _| {
+        assert_tabs_whole(window, 3, Some(3), "after widening");
+        let shown = drawn_tabs(window, 3).len();
+        assert_eq!(shown, 3, "all three tabs show once they fit");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn a_fast_flick_in_one_frame_stops_where_the_last_tab_ends_the_strip(
+    cx: &mut TestAppContext,
+) {
+    // Text 13 at 760: two tabs fit beside each other, three don't.
+    let h = mount_sized(cx, Mark::Guarded, 760., 560.);
+    use_text_size(&h, 13., cx);
+    run_three(&h, cx).await;
+    h.click("query-result-prev", cx);
+    settle(&h, cx);
+    let first = |cx: &mut TestAppContext| h.view.read_with(cx, |v, _| v.tabs.first());
+    assert_eq!(first(cx), 0);
+    // Ten events of 60 px, none drawn in between, as a flick arrives.
+    cx.update_window(h.window.into(), |_, window, cx| {
+        for _ in 0..10 {
+            window.scroll(
+                "query-result-tabs",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(-60.),
+                    gpui_kit::px(0.),
+                )),
+                cx,
+            );
+        }
+    })
+    .unwrap();
+    settle(&h, cx);
+    // It stops with tabs 2 and 3 showing, not tab 3 alone beside a gap.
+    assert_eq!(first(cx), 1, "the flick ran past the end");
+    cx.update_window(h.window.into(), |_, window, _| {
+        assert_tabs_whole(window, 3, None, "after a flick");
+        assert_eq!(drawn_tabs(window, 3).len(), 2);
+    })
+    .unwrap();
 }

@@ -74,6 +74,9 @@ pub enum Encryption {
     Unverified,
     /// The server did not offer TLS.
     Plain,
+    /// Over `tsh`'s tunnel (Teleport): the leg to `tsh` is loopback and `tsh`
+    /// carries it over its own mutual TLS, so plain here is not exposed.
+    Tunnel,
 }
 
 impl Encryption {
@@ -82,6 +85,7 @@ impl Encryption {
             Self::Verified => "encrypted, certificate verified",
             Self::Unverified => "encrypted, certificate not verified",
             Self::Plain => "not encrypted",
+            Self::Tunnel => "through Teleport (tsh tunnel)",
         }
     }
 }

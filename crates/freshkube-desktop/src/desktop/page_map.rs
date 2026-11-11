@@ -20,9 +20,10 @@ use crate::{
     monitoring::page::MonitoringPage,
     resources::{ResourcesScreen, custom::CustomResources},
     screens::{
-        AccessScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen, GatewaysMode, GatewaysScreen,
-        LifecycleScreen, NetworkScreen, OperationsScreen, ProcessesScreen, RoutesScreen,
-        ScreenHandle, ScreenPanel, SecurityScreen, StorageScreen, TopologyScreen, WorkloadsScreen,
+        AccessScreen, CertificatesScreen, DatabasesScreen, DiagnosticsScreen, EtcdScreen,
+        GatewaysMode, GatewaysScreen, LifecycleScreen, NetworkScreen, OperationsScreen,
+        ProcessesScreen, RoutesScreen, ScreenHandle, ScreenPanel, SecurityScreen, StorageScreen,
+        TopologyScreen, WorkloadsScreen,
     },
 };
 
@@ -38,6 +39,7 @@ pub(super) struct Pages {
     pub(super) node_workspace: Entity<nodes::Nodes>,
     pub(super) health: Entity<WorkloadsScreen>,
     pub(super) lifecycle: Entity<LifecycleScreen>,
+    pub(super) certificates: Entity<CertificatesScreen>,
     pub(super) databases: Entity<DatabasesScreen>,
     pub(super) resources: Entity<ResourcesScreen>,
     pub(super) dock: Entity<dock::Dock>,
@@ -98,6 +100,10 @@ impl Pages {
                 cx.new(|cx| TopologyScreen::new(runtime.clone(), window, cx).with_example(shape)),
             )
         };
+        let certificates = {
+            let shape = options.debug.certs;
+            cx.new(|cx| CertificatesScreen::new(runtime.clone(), window, cx).with_example(shape))
+        };
         let access = {
             let shape = options.debug.access.clone();
             cx.new(|cx| AccessScreen::new(runtime.clone(), window, cx).with_example(&shape))
@@ -112,6 +118,7 @@ impl Pages {
                     PageId::Gateways => ScreenHandle::new(gateways.clone()),
                     PageId::GatewayClasses => ScreenHandle::new(gateway_classes.clone()),
                     PageId::Topology => ScreenHandle::new(topology.clone()),
+                    PageId::Certificates => ScreenHandle::new(certificates.clone()),
                     PageId::Access => ScreenHandle::new(access.clone()),
                     PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
                     PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
@@ -155,6 +162,10 @@ impl Pages {
             screen.set_routes_shape(options.debug.routes, cx);
             screen.set_netpol_shape(options.debug.netpol, cx)
         });
+        // What an action is offered as (#854): the example answers by the
+        // same knob as Your access.
+        let shape = freshkube_core::access::example::Shape::parse(&options.debug.access);
+        freshkube_reads::offer_desk(runtime, cx).update(cx, |desk, _| desk.set_example(shape));
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), options.debug.agent, cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
@@ -240,6 +251,7 @@ impl Pages {
             node_workspace,
             health,
             lifecycle,
+            certificates,
             databases,
             resources,
             dock,

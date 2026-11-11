@@ -19,6 +19,7 @@ pub mod readonly;
 mod safety;
 pub mod session;
 pub mod statements;
+pub mod teleport;
 pub mod wire;
 
 pub use dbflux_core::{DbError, Value};

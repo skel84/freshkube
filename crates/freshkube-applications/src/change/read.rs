@@ -211,6 +211,7 @@ impl ChangePage {
         });
         if let Some(change) = self.loader.data().filter(|_| answered).cloned() {
             self.show(change);
+            self.want_stage_offers(cx);
             self.offer_follows(cx);
             self.read_pull(false, cx);
             if let Some(stage) = self.stage.take() {
@@ -237,6 +238,12 @@ impl ChangePage {
             self.hide_outcomes();
             self.want_coroot(false, cx);
             self.pull_visible(false, cx);
+            // A hidden page asks nothing: what it wanted is forgotten and
+            // the reviews in flight are dropped.
+            if let Some(desk) = self.offers.clone() {
+                let owner = cx.entity_id();
+                desk.update(cx, |desk, _| desk.stop(owner));
+            }
             cx.notify();
             return;
         }
@@ -245,6 +252,7 @@ impl ChangePage {
         }
         self.pull_visible(true, cx);
         self.want_coroot(true, cx);
+        self.want_stage_offers(cx);
         self.read_outcome(false, cx);
     }
 

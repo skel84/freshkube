@@ -97,6 +97,7 @@ actions!(
         HardRefreshSelected,
         ReconcileSelected,
         RenewSelected,
+        RefreshExternalSecret,
         RollbackSelected,
         RunNowSelected,
         DeleteSelected
@@ -256,6 +257,14 @@ pub struct ResourcesScreen {
     usage_state: UsageState,
     /// Why writes are not allowed on this cluster, set by the shell.
     write_block: Option<&'static str>,
+    /// The app's reviews of what the person may do (#854): an action the
+    /// cluster says no to is shown disabled with the reason. It only guides.
+    offers: Entity<freshkube_reads::OfferDesk>,
+    /// What the cluster said of each action on the selected row, derived
+    /// when the selection or an answer changes and read while drawing; and
+    /// the row it was derived for, so another row's answer is never shown.
+    act_offers: Vec<(Everyday, freshkube_core::access::Offer)>,
+    act_offers_for: Option<ResourceIdentity>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -293,6 +302,8 @@ impl ResourcesScreen {
             KeyBinding::new("shift-g", HardRefreshSelected, Some(CONTEXT)),
             KeyBinding::new("c", ReconcileSelected, Some(CONTEXT)),
             KeyBinding::new("w", RenewSelected, Some(CONTEXT)),
+            // Shift-R, beside Restart's r; Command/Ctrl-R stays the read-only Refresh.
+            KeyBinding::new("shift-r", RefreshExternalSecret, Some(CONTEXT)),
             KeyBinding::new("b", RollbackSelected, Some(CONTEXT)),
             KeyBinding::new("j", RunNowSelected, Some(CONTEXT)),
             // Not a letter, and not Backspace alone: a stray key must not
@@ -327,7 +338,15 @@ impl ResourcesScreen {
             )
             .searchable(true)
         });
+        let offers = freshkube_reads::offer_desk(&runtime, cx);
         let subscriptions = vec![
+            // An answer lands: an action may now read as refused.
+            cx.observe(&offers, |this, _, cx| {
+                this.derive_offers(cx);
+                cx.notify();
+                // A menu left open shows the answer too (#1026).
+                freshkube_ui::menu::refresh_open(cx);
+            }),
             // Every change to the rows notifies the screen; the flash hears
             // of it before the next frame draws, so a fade never paints on
             // a row's old line.
@@ -458,6 +477,9 @@ impl ResourcesScreen {
             usage: Watch::default(),
             usage_state: UsageState::default(),
             write_block: None,
+            offers,
+            act_offers: Vec::new(),
+            act_offers_for: None,
             _subscriptions: subscriptions,
         }
     }
@@ -641,6 +663,11 @@ impl ResourcesScreen {
         let same = self.source.as_ref().map(|source| &source.id)
             == source.as_ref().map(|source| &source.id);
         self.source = source;
+        if !self.embedded {
+            let source = self.source.clone();
+            self.offers
+                .update(cx, |offers, cx| offers.bind(source.as_ref(), cx));
+        }
         if same {
             if let Some(source) = &self.source {
                 let access = source.access.clone();
@@ -742,6 +769,7 @@ impl ResourcesScreen {
         self.usage.set_visible(visible);
         if visible {
             self.namespace_read.set_visible(true, OnShow::Never, cx);
+            self.want_offers(cx);
             self.restart(window, cx);
             self.tick = Some(cx.spawn(async move |this, cx| {
                 loop {
@@ -752,6 +780,10 @@ impl ResourcesScreen {
                 }
             }));
         } else {
+            // A hidden page asks nothing: what it wanted is forgotten and the
+            // reviews in flight are dropped.
+            let owner = cx.entity_id();
+            self.offers.update(cx, |offers, _| offers.stop(owner));
             self.tick = None;
             self.clear_flash(cx);
             if self.namespace_read.is_loading() {
@@ -767,6 +799,8 @@ impl ResourcesScreen {
             return;
         }
         self.namespaces_for = None;
+        // Answers that have expired are asked again for the selection.
+        self.want_offers(cx);
         self.restart(window, cx);
         self.detail.update(cx, |detail, cx| detail.refresh(cx));
     }
@@ -1113,6 +1147,8 @@ impl ResourcesScreen {
             detail.set_context(context, cx);
             detail.open(target, access, &version, delay, cx)
         });
+        // The pane's Edit is asked about with the row's actions.
+        self.want_offers(cx);
         // A short page scrolls its frame: reveal the drawer.
         self.page_scroll.scroll_to_bottom();
         cx.notify();
@@ -1147,6 +1183,8 @@ impl ResourcesScreen {
         self.hide_detail(cx);
         self.projection.select(&self.store, None);
         self.restore = None;
+        // The row just left is no longer wanted.
+        self.want_offers(cx);
     }
 
     /// Closes the pane, keeping the row it showed selected, so Enter
@@ -1293,6 +1331,7 @@ impl ResourcesScreen {
         self.restore = None;
         self.show_identity(identity);
         self.scroll_to_selection(ScrollStrategy::Nearest);
+        self.want_offers(cx);
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -1392,6 +1431,7 @@ impl ResourcesScreen {
         self.restore = None;
         self.projection.select(&self.store, Some(next));
         self.scroll_to_selection(ScrollStrategy::Nearest);
+        self.want_offers(cx);
         // An open drawer follows the selection; a closed one stays closed
         // until Enter or a click.
         if self.detail.read(cx).target_identity().is_some()

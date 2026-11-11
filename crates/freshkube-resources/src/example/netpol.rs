@@ -43,33 +43,26 @@ pub enum Shape {
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 10] = [
-        "mixed",
-        "default-deny",
-        "open",
-        "restricts",
-        "ip-block",
-        "namespace-selector",
-        "none",
-        "host-network",
-        "refused",
-        "cut",
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("mixed", Self::Mixed),
+        ("default-deny", Self::DefaultDeny),
+        ("open", Self::Open),
+        ("restricts", Self::Restricts),
+        ("ip-block", Self::IpBlock),
+        ("namespace-selector", Self::NamespaceSelector),
+        ("none", Self::None),
+        ("host-network", Self::HostNetwork),
+        ("refused", Self::Refused),
+        ("cut", Self::Cut),
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "mixed" => Self::Mixed,
-            "default-deny" => Self::DefaultDeny,
-            "open" => Self::Open,
-            "restricts" => Self::Restricts,
-            "ip-block" => Self::IpBlock,
-            "namespace-selector" => Self::NamespaceSelector,
-            "none" => Self::None,
-            "host-network" => Self::HostNetwork,
-            "refused" => Self::Refused,
-            "cut" => Self::Cut,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, shape)| *shape)
     }
 
     /// The policies, by name, this shape lets the panes see.
@@ -315,4 +308,36 @@ pub fn read_policy(
         }
     };
     Ok(PolicyReading::new(facts, pods))
+}
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("mixed", Shape::Mixed),
+            ("default-deny", Shape::DefaultDeny),
+            ("open", Shape::Open),
+            ("restricts", Shape::Restricts),
+            ("ip-block", Shape::IpBlock),
+            ("namespace-selector", Shape::NamespaceSelector),
+            ("none", Shape::None),
+            ("host-network", Shape::HostNetwork),
+            ("refused", Shape::Refused),
+            ("cut", Shape::Cut),
+        ];
+        for (word, shape) in pinned {
+            assert!(
+                matches!(Shape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
+        }
+        for unknown in ["", " ", "nope", "Firing", "mixed ", " mixed", "MIXED"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
 }

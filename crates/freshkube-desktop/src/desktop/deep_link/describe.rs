@@ -46,6 +46,7 @@ fn title(page: LinkPage) -> &'static str {
         LinkPage::Gateways => "Gateways",
         LinkPage::GatewayClasses => "Gateway classes",
         LinkPage::Topology => "Gateway topology",
+        LinkPage::Certificates => "Certificates",
         LinkPage::Access => "Your access",
         LinkPage::Resources => "Resources",
         LinkPage::Etcd => "etcd",

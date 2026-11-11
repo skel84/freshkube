@@ -30,16 +30,71 @@ impl Hold {
         routes: false,
     };
 
+    /// Every word `FRESHKUBE_FIXTURE_HOLD` takes, with what it holds: the one
+    /// list `parse` looks values up in and `docs/DEBUG_KNOBS.md`'s test
+    /// compares with the doc.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        (
+            "talos",
+            Self {
+                talos: true,
+                ..Self::NONE
+            },
+        ),
+        (
+            "lists",
+            Self {
+                lists: true,
+                ..Self::NONE
+            },
+        ),
+        (
+            "coroot",
+            Self {
+                coroot: true,
+                ..Self::NONE
+            },
+        ),
+        (
+            "monitoring",
+            Self {
+                monitoring: true,
+                ..Self::NONE
+            },
+        ),
+        (
+            "applications",
+            Self {
+                applications: true,
+                ..Self::NONE
+            },
+        ),
+        (
+            "routes",
+            Self {
+                routes: true,
+                ..Self::NONE
+            },
+        ),
+        (
+            "all",
+            Self {
+                talos: true,
+                lists: true,
+                coroot: true,
+                monitoring: true,
+                applications: true,
+                routes: true,
+            },
+        ),
+    ];
+
     /// The holds a `FRESHKUBE_FIXTURE_HOLD` value names; an unknown or
     /// missing one holds nothing.
     pub fn parse(value: &str) -> Self {
-        Self {
-            talos: matches!(value, "talos" | "all"),
-            lists: matches!(value, "lists" | "all"),
-            coroot: matches!(value, "coroot" | "all"),
-            monitoring: matches!(value, "monitoring" | "all"),
-            applications: matches!(value, "applications" | "all"),
-            routes: matches!(value, "routes" | "all"),
-        }
+        Self::SHAPES
+            .iter()
+            .find_map(|(word, hold)| (*word == value).then_some(*hold))
+            .unwrap_or(Self::NONE)
     }
 }

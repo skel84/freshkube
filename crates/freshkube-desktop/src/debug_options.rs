@@ -13,6 +13,7 @@ use freshkube_ui::motion::Choice;
 use crate::applications::Variant;
 use crate::fixture::Hold;
 use freshkube_core::monitoring::alerts::example::Shape as AlertsShape;
+use freshkube_core::resources::traffic::certs::example::Shape as CertsShape;
 use freshkube_core::resources::traffic::routes::example::Shape as RoutesShape;
 use freshkube_delivery::timeline::example::Shape as TimelineShape;
 use freshkube_resources::example::netpol::Shape as NetpolShape;
@@ -86,6 +87,63 @@ pub(crate) enum LinkShape {
     Unchecked,
 }
 
+/// What a knob that picks one of a few words accepts: each word with what it
+/// means. The parser looks words up in such a table and the docs test compares
+/// the table with `docs/DEBUG_KNOBS.md`'s shape lines, so a word can't be added
+/// to the parser or the doc alone.
+type Words<T> = [(&'static str, T)];
+
+/// The one word `FRESHKUBE_APP_MENU` takes.
+const APP_MENU_BUTTON: &str = "button";
+/// The one word `FRESHKUBE_METRICS_LABELS` takes.
+const METRICS_CAPPED: &str = "capped";
+
+/// `FRESHKUBE_THEME`'s words.
+const THEMES: &Words<Theme> = &[("light", Theme::Light), ("dark", Theme::Dark)];
+/// `FRESHKUBE_SIDEBAR`'s words.
+const SIDEBARS: &Words<Sidebar> = &[
+    ("collapsed", Sidebar::Collapsed),
+    ("expanded", Sidebar::Expanded),
+];
+/// `FRESHKUBE_MOTION`'s words.
+const MOTIONS: &Words<Choice> = &[("reduced", Choice::Reduced), ("full", Choice::Full)];
+/// `FRESHKUBE_ETCD`'s words.
+const ETCDS: &Words<EtcdExample> = &[
+    ("lost", EtcdExample::Lost),
+    ("single", EtcdExample::Single),
+    ("alarms", EtcdExample::Alarms),
+];
+/// `FRESHKUBE_LINKS`'s words.
+const LINKS: &Words<LinkShape> = &[
+    ("refused", LinkShape::Refused),
+    ("not-found", LinkShape::NotFound),
+    ("not-served", LinkShape::NotServed),
+    ("replaced", LinkShape::Replaced),
+    ("several", LinkShape::Several),
+    ("none", LinkShape::Unmatched),
+    ("ca-only", LinkShape::CaOnly),
+    ("unchecked", LinkShape::Unchecked),
+];
+/// `FRESHKUBE_TABS`'s words.
+const TABS: &Words<TabsShape> = &[
+    ("clusters", TabsShape::Clusters),
+    ("missing", TabsShape::Missing),
+];
+/// `FRESHKUBE_CRASH`'s words.
+const CRASHES: &Words<CrashShape> = &[
+    ("notice", CrashShape::Notice),
+    ("panic", CrashShape::Panic),
+    ("task", CrashShape::Task),
+];
+
+/// The word's meaning in `words`, or `None` for anything else.
+fn pick<T: Copy>(words: &Words<T>, value: Option<&str>) -> Option<T> {
+    let value = value?;
+    words
+        .iter()
+        .find_map(|(word, meaning)| (*word == value).then_some(*meaning))
+}
+
 /// What the launch asks for beyond its source: where to open and how to look.
 /// A value that names nothing known is kept as given and ignored where it is
 /// used, as before.
@@ -93,11 +151,16 @@ pub(crate) enum LinkShape {
 pub struct DebugOptions {
     /// Invented database inventory shape, parsed once with the other knobs.
     pub(crate) databases: String,
+    /// `FRESHKUBE_ACCESS`: how the example answers Your access and, as
+    /// `actions-refused` or `failed`, the reviews that decide which actions
+    /// are offered (`freshkube_core::access::example::Shape`).
     pub(crate) access: String,
     /// `FRESHKUBE_DB_EXPLORE`: how an example explorer connection ends
     /// (`connected`, `no-secret`, `forward-failed`, `refused`, `timed-out`,
-    /// `not-read-only`, `loading`); a known value also opens the first
-    /// PostgreSQL database in the explorer.
+    /// `not-read-only`, `loading`, and Teleport's `teleport`,
+    /// `teleport-no-tsh`, `teleport-not-logged-in`, `teleport-no-role`,
+    /// `teleport-not-found`, `teleport-proxy-failed`); a known value also
+    /// opens the first PostgreSQL database in the explorer.
     pub(crate) db_explore: String,
     /// `FRESHKUBE_PAGE`: a page slug or a fixture check's name.
     pub(crate) page: Option<String>,
@@ -152,6 +215,12 @@ pub struct DebugOptions {
     /// `not-installed`, `incomplete`, `mixed-bundle`, `refused`, `cut`); anything
     /// else is `all`.
     pub(crate) routes: RoutesShape,
+    /// `FRESHKUBE_CERTS`: what the Certificates page's example shows (`all`,
+    /// `healthy`, `expiring`, `wrong-name`, `stuck-order`, `stuck-challenge`,
+    /// `not-installed`, `secret-unread`, `secret-refused`, `empty`, `refused`,
+    /// `gateways-refused`);
+    /// anything else is `all`.
+    pub(crate) certs: CertsShape,
     /// `FRESHKUBE_METRICS_LABELS=capped`: the example store's answer to Check
     /// entries is cut at its cap.
     pub(crate) metrics_labels_capped: bool,
@@ -225,30 +294,13 @@ impl DebugOptions {
             db_explore: text("FRESHKUBE_DB_EXPLORE").unwrap_or_default(),
             page: text("FRESHKUBE_PAGE"),
             kind: text("FRESHKUBE_KIND"),
-            theme: match text("FRESHKUBE_THEME").as_deref() {
-                Some("light") => Some(Theme::Light),
-                Some("dark") => Some(Theme::Dark),
-                _ => None,
-            },
-            sidebar: match text("FRESHKUBE_SIDEBAR").as_deref() {
-                Some("collapsed") => Some(Sidebar::Collapsed),
-                Some("expanded") => Some(Sidebar::Expanded),
-                _ => None,
-            },
+            theme: pick(THEMES, text("FRESHKUBE_THEME").as_deref()),
+            sidebar: pick(SIDEBARS, text("FRESHKUBE_SIDEBAR").as_deref()),
             dashboard: var("FRESHKUBE_DASHBOARD").map(PathBuf::from),
             log_search: text("FRESHKUBE_LOG_SEARCH"),
-            motion: match text("FRESHKUBE_MOTION").as_deref() {
-                Some("reduced") => Some(Choice::Reduced),
-                Some("full") => Some(Choice::Full),
-                _ => None,
-            },
+            motion: pick(MOTIONS, text("FRESHKUBE_MOTION").as_deref()),
             window_size: text("FRESHKUBE_WINDOW_SIZE"),
-            etcd: match text("FRESHKUBE_ETCD").as_deref() {
-                Some("lost") => Some(EtcdExample::Lost),
-                Some("single") => Some(EtcdExample::Single),
-                Some("alarms") => Some(EtcdExample::Alarms),
-                _ => None,
-            },
+            etcd: pick(ETCDS, text("FRESHKUBE_ETCD").as_deref()),
             applications: Variant::parse(text("FRESHKUBE_APPLICATIONS").as_deref()),
             alerts: text("FRESHKUBE_ALERTS")
                 .and_then(|shape| AlertsShape::parse(&shape))
@@ -268,39 +320,24 @@ impl DebugOptions {
             routes: text("FRESHKUBE_ROUTES")
                 .and_then(|shape| RoutesShape::parse(&shape))
                 .unwrap_or_default(),
-            metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref() == Some("capped"),
+            certs: text("FRESHKUBE_CERTS")
+                .and_then(|shape| CertsShape::parse(&shape))
+                .unwrap_or_default(),
+            metrics_labels_capped: text("FRESHKUBE_METRICS_LABELS").as_deref()
+                == Some(METRICS_CAPPED),
             hold: Hold::parse(&text("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default()),
-            app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some("button"),
-            links: match text("FRESHKUBE_LINKS").as_deref() {
-                Some("refused") => Some(LinkShape::Refused),
-                Some("not-found") => Some(LinkShape::NotFound),
-                Some("not-served") => Some(LinkShape::NotServed),
-                Some("replaced") => Some(LinkShape::Replaced),
-                Some("several") => Some(LinkShape::Several),
-                Some("none") => Some(LinkShape::Unmatched),
-                Some("ca-only") => Some(LinkShape::CaOnly),
-                Some("unchecked") => Some(LinkShape::Unchecked),
-                _ => None,
-            },
+            app_menu_button: text("FRESHKUBE_APP_MENU").as_deref() == Some(APP_MENU_BUTTON),
+            links: pick(LINKS, text("FRESHKUBE_LINKS").as_deref()),
             text_size: text("FRESHKUBE_TEXT_SIZE")
                 .and_then(|size| freshkube_ui::text_size::parse(&size)),
             follows: text("FRESHKUBE_FOLLOWS")
                 .as_deref()
                 .and_then(freshkube_followed::example::Shape::parse),
-            tabs: match text("FRESHKUBE_TABS").as_deref() {
-                Some("clusters") => Some(TabsShape::Clusters),
-                Some("missing") => Some(TabsShape::Missing),
-                _ => None,
-            },
+            tabs: pick(TABS, text("FRESHKUBE_TABS").as_deref()),
             team: text("FRESHKUBE_TEAM")
                 .as_deref()
                 .and_then(freshkube_core::team::example::Shape::parse),
-            crash: match text("FRESHKUBE_CRASH").as_deref() {
-                Some("notice") => Some(CrashShape::Notice),
-                Some("panic") => Some(CrashShape::Panic),
-                Some("task") => Some(CrashShape::Task),
-                _ => None,
-            },
+            crash: pick(CRASHES, text("FRESHKUBE_CRASH").as_deref()),
             crash_seed: text("FRESHKUBE_CRASH_SEED"),
         }
     }
@@ -326,8 +363,10 @@ impl DebugOptions {
 mod tests {
     use super::*;
 
+    use std::collections::{BTreeMap, BTreeSet};
+
     /// The knob names AGENTS.md's table documents, in its first column.
-    fn documented_knobs() -> std::collections::BTreeSet<String> {
+    fn documented_knobs() -> BTreeSet<String> {
         include_str!("../../../AGENTS.md")
             .lines()
             .filter_map(|line| line.strip_prefix("| `FRESHKUBE_"))
@@ -336,18 +375,182 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn agents_table_names_every_knob_the_parser_reads_and_no_other() {
-        let read = std::cell::RefCell::new(std::collections::BTreeSet::new());
+    /// `docs/DEBUG_KNOBS.md`'s blocks in file order: each knob with the
+    /// values of its shape lines (`` - `value`: … ``), in file order.
+    fn documented_shapes() -> Vec<(String, Vec<String>)> {
+        // Line by line, so a checkout with CRLF line endings reads the same.
+        let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
+        for line in include_str!("../../../docs/DEBUG_KNOBS.md").lines() {
+            if let Some(rest) = line.strip_prefix("## `FRESHKUBE_") {
+                let name = rest.strip_suffix('`').expect("a knob block has a title");
+                blocks.push((format!("FRESHKUBE_{name}"), Vec::new()));
+            } else if let (Some(rest), Some((knob, shapes))) =
+                (line.strip_prefix("- `"), blocks.last_mut())
+            {
+                let (value, after) = rest.split_once('`').expect("a closed value");
+                assert!(
+                    after.starts_with(':'),
+                    "{knob}: `{value}` needs `:` and a description"
+                );
+                shapes.push(value.to_string());
+            }
+        }
+        blocks
+    }
+
+    fn words<T>(table: &Words<T>) -> Vec<String> {
+        table.iter().map(|(word, _)| word.to_string()).collect()
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|word| word.to_string()).collect()
+    }
+
+    /// The values each knob accepts, from the one list next to its parser;
+    /// `None` for a knob that takes free text or a value as written.
+    fn accepted_values() -> BTreeMap<&'static str, Option<Vec<String>>> {
+        let mut applications = words(Variant::SHAPES);
+        applications.push(format!("{}<name>", Variant::OUTCOME_PREFIX));
+        let steps = freshkube_ui::text_size::STEPS
+            .iter()
+            .map(|step| step.to_string())
+            .collect();
+        BTreeMap::from([
+            (
+                "FRESHKUBE_ACCESS",
+                Some(words(freshkube_core::access::example::Shape::SHAPES)),
+            ),
+            (
+                "FRESHKUBE_AGENT",
+                Some(words(crate::agent_shape::AgentShape::SHAPES)),
+            ),
+            ("FRESHKUBE_ALERTS", Some(words(AlertsShape::SHAPES))),
+            ("FRESHKUBE_APPLICATIONS", Some(applications)),
+            ("FRESHKUBE_APP_MENU", Some(names(&[APP_MENU_BUTTON]))),
+            ("FRESHKUBE_CERTS", Some(words(CertsShape::SHAPES))),
+            ("FRESHKUBE_CRASH", Some(words(CRASHES))),
+            ("FRESHKUBE_CRASH_SEED", None),
+            ("FRESHKUBE_DASHBOARD", None),
+            (
+                "FRESHKUBE_DATABASES",
+                Some(names(freshkube_core::databases::example::SHAPES)),
+            ),
+            (
+                "FRESHKUBE_DB_EXPLORE",
+                Some(words(crate::screens::ExploreExample::SHAPES)),
+            ),
+            ("FRESHKUBE_ETCD", Some(words(ETCDS))),
+            ("FRESHKUBE_FIXTURE_HOLD", Some(words(Hold::SHAPES))),
+            (
+                "FRESHKUBE_FOLLOWS",
+                Some(words(freshkube_followed::example::Shape::SHAPES)),
+            ),
+            ("FRESHKUBE_KIND", None),
+            ("FRESHKUBE_LINKS", Some(words(LINKS))),
+            ("FRESHKUBE_LOG_SEARCH", None),
+            ("FRESHKUBE_METRICS_LABELS", Some(names(&[METRICS_CAPPED]))),
+            ("FRESHKUBE_MOTION", Some(words(MOTIONS))),
+            ("FRESHKUBE_NETPOL", Some(words(NetpolShape::SHAPES))),
+            ("FRESHKUBE_PAGE", None),
+            ("FRESHKUBE_ROUTES", Some(words(RoutesShape::SHAPES))),
+            ("FRESHKUBE_SERVICES", Some(words(ServicesShape::SHAPES))),
+            ("FRESHKUBE_SIDEBAR", Some(words(SIDEBARS))),
+            ("FRESHKUBE_TABS", Some(words(TABS))),
+            (
+                "FRESHKUBE_TEAM",
+                Some(words(freshkube_core::team::example::Shape::SHAPES)),
+            ),
+            ("FRESHKUBE_TEXT_SIZE", Some(steps)),
+            ("FRESHKUBE_THEME", Some(words(THEMES))),
+            ("FRESHKUBE_TIMELINE", Some(words(TimelineShape::SHAPES))),
+            ("FRESHKUBE_WINDOW_SIZE", None),
+        ])
+    }
+
+    fn knobs_the_parser_reads() -> BTreeSet<String> {
+        let read = std::cell::RefCell::new(BTreeSet::new());
         let _ = DebugOptions::parse(|name| {
             read.borrow_mut().insert(name.to_string());
             None
         });
+        read.into_inner()
+    }
+
+    #[test]
+    fn agents_table_names_every_knob_the_parser_reads_and_no_other() {
         assert_eq!(
-            read.into_inner(),
+            knobs_the_parser_reads(),
             documented_knobs(),
             "AGENTS.md's knob table and DebugOptions::parse disagree"
         );
+    }
+
+    #[test]
+    fn debug_knobs_doc_has_a_block_for_every_knob_the_parser_reads_and_no_other() {
+        let blocks: Vec<String> = documented_shapes()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(
+            blocks.iter().cloned().collect::<BTreeSet<_>>(),
+            knobs_the_parser_reads(),
+            "docs/DEBUG_KNOBS.md's blocks and DebugOptions::parse disagree"
+        );
+        let mut sorted = blocks.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            blocks, sorted,
+            "docs/DEBUG_KNOBS.md's blocks must be sorted by name, once each"
+        );
+        assert_eq!(
+            accepted_values()
+                .keys()
+                .map(|name| name.to_string())
+                .collect::<BTreeSet<_>>(),
+            knobs_the_parser_reads(),
+            "accepted_values() and DebugOptions::parse disagree"
+        );
+    }
+
+    #[test]
+    fn debug_knobs_doc_has_a_line_for_every_value_a_knob_accepts_and_no_other() {
+        let accepted = accepted_values();
+        for (knob, shapes) in documented_shapes() {
+            let mut sorted = shapes.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(
+                shapes, sorted,
+                "{knob}: shape lines must be sorted, once each, in docs/DEBUG_KNOBS.md"
+            );
+            let expected: BTreeSet<String> = accepted[knob.as_str()]
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            let documented: BTreeSet<String> = shapes.into_iter().collect();
+            let missing: Vec<_> = expected.difference(&documented).collect();
+            let extra: Vec<_> = documented.difference(&expected).collect();
+            assert!(
+                missing.is_empty() && extra.is_empty(),
+                "{knob}: docs/DEBUG_KNOBS.md lacks a line for {missing:?} and has lines for {extra:?} the knob doesn't accept"
+            );
+        }
+    }
+
+    #[test]
+    fn debug_knobs_doc_line_for_outcome_names_every_outcome() {
+        let line = include_str!("../../../docs/DEBUG_KNOBS.md")
+            .lines()
+            .find(|line| line.starts_with(&format!("- `{}<name>`", Variant::OUTCOME_PREFIX)))
+            .expect("the doc has an outcome-<name> line");
+        for (_, name) in freshkube_applications::OutcomeKind::ALL {
+            assert!(
+                line.contains(&format!("`{name}`")),
+                "the outcome-<name> line lacks `{name}`"
+            );
+        }
     }
 
     #[test]
@@ -588,7 +791,7 @@ mod tests {
 
     #[test]
     fn netpol_takes_each_shape_and_falls_back_to_mixed() {
-        for name in NetpolShape::NAMES {
+        for &(name, _) in NetpolShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_NETPOL", name)]).netpol,
                 NetpolShape::parse(name).unwrap(),
@@ -602,7 +805,7 @@ mod tests {
 
     #[test]
     fn services_take_each_shape_and_fall_back_to_mixed() {
-        for name in ServicesShape::NAMES {
+        for &(name, _) in ServicesShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_SERVICES", name)]).services,
                 ServicesShape::parse(name).unwrap(),
@@ -616,7 +819,7 @@ mod tests {
 
     #[test]
     fn routes_take_each_shape_and_fall_back_to_all() {
-        for name in RoutesShape::NAMES {
+        for &(name, _) in RoutesShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_ROUTES", name)]).routes,
                 RoutesShape::parse(name).unwrap(),
@@ -629,8 +832,23 @@ mod tests {
     }
 
     #[test]
+    fn certs_take_each_shape_and_fall_back_to_all() {
+        for &(name, _) in CertsShape::SHAPES {
+            assert_eq!(
+                parse(&[("FRESHKUBE_CERTS", name)]).certs,
+                CertsShape::parse(name).unwrap(),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            parse(&[("FRESHKUBE_CERTS", "bogus")]).certs,
+            CertsShape::All
+        );
+    }
+
+    #[test]
     fn timeline_takes_each_shape_and_falls_back_to_busy() {
-        for name in TimelineShape::NAMES {
+        for &(name, _) in TimelineShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_TIMELINE", name)]).timeline,
                 TimelineShape::parse(name).unwrap(),
@@ -653,7 +871,7 @@ mod tests {
     #[test]
     fn agent_takes_each_shape_and_falls_back_to_ready() {
         use crate::agent_shape::AgentShape;
-        for name in AgentShape::NAMES {
+        for &(name, _) in AgentShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_AGENT", name)]).agent,
                 AgentShape::parse(name).unwrap(),
@@ -671,7 +889,7 @@ mod tests {
 
     #[test]
     fn alerts_takes_each_shape_and_falls_back_to_firing() {
-        for name in AlertsShape::NAMES {
+        for &(name, _) in AlertsShape::SHAPES {
             assert_eq!(
                 parse(&[("FRESHKUBE_ALERTS", name)]).alerts,
                 AlertsShape::parse(name).unwrap(),
@@ -821,6 +1039,7 @@ mod tests {
         assert_eq!(options.services, ServicesShape::Mixed);
         assert_eq!(options.netpol, NetpolShape::Mixed);
         assert_eq!(options.routes, RoutesShape::All);
+        assert_eq!(options.certs, CertsShape::All);
         // The dashboard's path alone keeps its bytes, as `var_os` did.
         assert!(options.dashboard.is_some());
     }

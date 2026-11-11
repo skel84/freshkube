@@ -47,6 +47,14 @@ pub struct Recorder(Arc<Mutex<Vec<Recorded>>>);
 impl Recorder {
     /// Records a request, never panics, and returns what was recorded.
     pub fn record<B>(&self, request: &Request<B>) -> Recorded {
+        self.record_with_body(request, String::new())
+    }
+
+    /// Records a request with its body, which only the caller could read.
+    /// The entry is complete when it is pushed, in one step under the lock: a
+    /// test reading [`Recorder::requests`] on another thread never sees a
+    /// request whose body is still to come.
+    pub fn record_with_body<B>(&self, request: &Request<B>, body: String) -> Recorded {
         let recorded = Recorded {
             method: request.method().clone(),
             path: request.uri().path().to_owned(),
@@ -63,19 +71,9 @@ impl Recorder {
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("")
                 .to_owned(),
-            body: String::new(),
+            body,
         };
         self.0.lock().unwrap().push(recorded.clone());
-        recorded
-    }
-
-    /// Records a request with its body, which only the caller could read.
-    pub fn record_with_body<B>(&self, request: &Request<B>, body: String) -> Recorded {
-        let mut recorded = self.record(request);
-        recorded.body = body.clone();
-        if let Some(last) = self.0.lock().unwrap().last_mut() {
-            last.body = body;
-        }
         recorded
     }
 
@@ -234,5 +232,28 @@ mod tests {
         let recorder = Recorder::default();
         recorder.record(&Request::get("/api/v1/secrets").body(()).unwrap());
         recorder.assert_all("pods only", |request| request.path == "/api/v1/pods");
+    }
+
+    /// A reader polling while requests are recorded never sees a half-made
+    /// entry: every request recorded with a body shows that body at once.
+    #[test]
+    fn a_request_is_never_seen_before_its_body() {
+        let recorder = Recorder::default();
+        let writer = recorder.clone();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = done.clone();
+        let thread = std::thread::spawn(move || {
+            for _ in 0..20_000 {
+                let request = Request::post("/review").body(()).unwrap();
+                writer.record_with_body(&request, "{\"spec\":{}}".into());
+            }
+            stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        while !done.load(std::sync::atomic::Ordering::SeqCst) {
+            for request in recorder.requests() {
+                assert_eq!(request.body, "{\"spec\":{}}", "{}", request.line());
+            }
+        }
+        thread.join().unwrap();
     }
 }

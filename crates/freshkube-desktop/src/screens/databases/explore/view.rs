@@ -46,22 +46,40 @@ impl ExploreView {
             Phase::Connecting => (
                 "explore-state-connecting".into(),
                 format!("Connecting to {name}"),
-                "Connecting read-only…".into(),
+                if self.teleport.is_some() {
+                    "Checking Teleport, starting its proxy and connecting read-only…".into()
+                } else {
+                    "Connecting read-only…".into()
+                },
                 false,
             ),
             Phase::Connected => unreachable!("a connected tab draws its tables"),
         };
-        let actions = if retry {
-            vec![
+        let mut actions = Vec::new();
+        // The command is for the person's own terminal; copying it is as far
+        // as Freshkube goes.
+        if let Phase::Failed(fail) = &self.phase
+            && let Some(command) = fail.command().filter(|c| !c.is_empty())
+        {
+            actions.push(
+                Button::new("explore-copy-command")
+                    .icon(IconName::Copy)
+                    .label("Copy command")
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(command.clone()))
+                    })
+                    .into_any_element(),
+            );
+        }
+        if retry {
+            actions.push(
                 Button::new("explore-retry")
                     .icon(IconName::RefreshCw)
                     .label("Try again")
                     .on_click(cx.listener(|this, _, _, cx| this.connect(cx)))
                     .into_any_element(),
-            ]
-        } else {
-            Vec::new()
-        };
+            );
+        }
         // A narrow window or a large text size may not fit the words and the
         // button: the state scrolls, so Try again can always be reached.
         div()
@@ -82,24 +100,23 @@ impl ExploreView {
     }
 
     /// The session's line: how it reads, who it is, and the writes gate.
-    fn strip(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn strip(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let summary = self.data.read(cx).summary();
         let capped = self.data.read(cx).capped();
-        h_flex()
-            .id("explore-strip")
+        // What the session says, then its actions: on one line when the page
+        // is wide and, when narrow, on a second line of their own. Two
+        // definite lines give the strip its whole height, where a wrapping
+        // line is measured as one and the second slips under the panes.
+        let facts = h_flex()
+            .id("explore-facts")
             .test_support()
+            .flex_1()
+            .min_w_0()
             .flex_wrap()
             .gap_x(dp(8.))
             .gap_y(dp(2.))
-            .px(dp(page::PANE_PADDING))
-            .py(dp(3.))
-            .min_h(dp(34.))
-            .flex_none()
             .items_center()
-            .border_b_1()
-            .border_color(p.line)
-            .text_size(dp(12.))
             .child(
                 ui::tag(ui::Tone::Good, None, "Read-only session", cx)
                     .id("explore-read-only")
@@ -108,7 +125,7 @@ impl ExploreView {
             )
             .children(self.encryption().map(|encryption| {
                 let tone = match encryption {
-                    Encryption::Verified => ui::Tone::Good,
+                    Encryption::Verified | Encryption::Tunnel => ui::Tone::Good,
                     Encryption::Unverified | Encryption::Plain => ui::Tone::Warn,
                 };
                 let label = capitalised(encryption.label());
@@ -149,7 +166,13 @@ impl ExploreView {
                     .id("explore-capped")
                     .aria_label("The table has more rows than the cap")
                     .test_support()
-            }))
+            }));
+        let actions = h_flex()
+            .id("explore-actions")
+            .test_support()
+            .flex_none()
+            .gap(dp(4.))
+            .items_center()
             .child(
                 Button::new("explore-query")
                     .ghost()
@@ -191,8 +214,34 @@ impl ExploreView {
                             .disabled(true),
                     )
                     .child(ui::tag(ui::Tone::Outline, None, "later slice", cx)),
-            )
-            .into_any_element()
+            );
+        let frame = v_flex()
+            .id("explore-strip")
+            .test_support()
+            .px(dp(page::PANE_PADDING))
+            .py(dp(3.))
+            .min_h(dp(34.))
+            .flex_none()
+            .border_b_1()
+            .border_color(p.line)
+            .text_size(dp(12.));
+        if narrow {
+            frame
+                .gap(dp(2.))
+                .child(facts.w_full().flex_none().min_h(dp(ui::CONTROL_HEIGHT)))
+                .child(actions)
+                .into_any_element()
+        } else {
+            frame
+                .child(
+                    h_flex()
+                        .gap(dp(8.))
+                        .items_center()
+                        .child(facts)
+                        .child(actions),
+                )
+                .into_any_element()
+        }
     }
 }
 
@@ -224,7 +273,7 @@ impl Render for ExploreView {
             };
             v_flex()
                 .size_full()
-                .child(self.strip(cx))
+                .child(self.strip(!beside, cx))
                 .child(panes)
                 .into_any_element()
         } else {

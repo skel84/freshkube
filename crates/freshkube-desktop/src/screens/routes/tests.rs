@@ -715,3 +715,46 @@ fn the_toolbar_buttons_are_icons_in_a_narrow_page_and_words_in_a_wide_one(cx: &m
     let (wide, _) = width_of(cx, 1280.);
     assert!(wide > px(64.), "{wide:?}");
 }
+
+/// At 760x560 and text size 20 the stacked table shrinks when the Inspector
+/// opens; a row clicked in its lower half stays in view, whole and selected.
+#[gpui_kit::test]
+fn a_row_clicked_low_in_the_table_stays_in_view_when_the_inspector_opens(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, Shape::All, 760., 560.);
+    cx.update_window(window.into(), |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_, window, cx| {
+        layout_check::settle_header(window, cx);
+        window.render_frame(cx);
+        // The lowest row the table draws whole before the Inspector opens.
+        let list = window.find("routes-list").bounds();
+        let id = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let found = window.try_find(row.id.clone())?;
+                let bounds = found.bounds();
+                (found.visible() && bounds.bottom() <= list.bottom()).then_some((bounds, &row.id))
+            })
+            .max_by(|a, b| f32::from(a.0.top()).total_cmp(&f32::from(b.0.top())))
+            .map(|(_, id)| id.clone())
+            .expect("a row in view");
+        window.click(id.clone(), cx);
+        for _ in 0..8 {
+            window.render_frame(cx);
+        }
+        let row = window.find(id).bounds();
+        let list = window.find("routes-list").bounds();
+        assert!(
+            row.top() >= list.top() && row.bottom() <= list.bottom() + gpui_kit::px(1.),
+            "the selected row {row:?} is out of the list {list:?}"
+        );
+    })
+    .unwrap();
+}

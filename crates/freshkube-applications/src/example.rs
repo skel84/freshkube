@@ -86,34 +86,46 @@ impl Variant {
     /// `FRESHKUBE_APPLICATIONS`, parsed into `DebugOptions` (debug and
     /// stress builds only); anything else is `Acme`.
     pub fn parse(value: Option<&str>) -> Self {
-        match value {
-            Some("single") => Self::Single,
-            Some("partial") => Self::Partial,
-            Some("refused") => Self::Refused,
-            Some("unserved") => Self::Unserved,
-            Some("failed") => Self::Failed,
-            Some("capped") => Self::Capped,
-            Some("spread") => Self::Spread,
-            Some("not-found") => Self::NotFound,
-            Some("unlabelled") => Self::Unlabelled,
-            Some("stages") => Self::Stages,
-            Some("workloads") => Self::Workloads,
-            Some("unreachable") => Self::Unreachable,
-            Some("argo-refused") => Self::ArgoRefused,
-            Some("destination") => Self::Destination,
-            Some("image-only") => Self::ImageOnly,
-            Some("github-limited") => Self::GitHubLimited,
-            Some("github-refused") => Self::GitHubRefused,
-            Some("github-offline") => Self::GitHubOffline,
-            Some("causes") => Self::Causes,
-            Some("promoting") => Self::Promoting,
-            Some(other) => other
-                .strip_prefix("outcome-")
-                .and_then(crate::change::OutcomeKind::parse)
-                .map_or(Self::Acme, Self::Outcome),
-            None => Self::Acme,
+        let Some(value) = value else {
+            return Self::Acme;
+        };
+        if let Some((_, variant)) = Self::SHAPES.iter().find(|(name, _)| *name == value) {
+            return *variant;
         }
+        value
+            .strip_prefix(Self::OUTCOME_PREFIX)
+            .and_then(crate::change::OutcomeKind::parse)
+            .map_or(Self::Acme, Self::Outcome)
     }
+
+    /// The prefix of `outcome-<name>`, whose names `OutcomeKind::ALL` lists.
+    pub const OUTCOME_PREFIX: &'static str = "outcome-";
+
+    /// Every fixed shape `FRESHKUBE_APPLICATIONS` takes: the one list the
+    /// parser looks values up in and `docs/DEBUG_KNOBS.md`'s test compares
+    /// with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("single", Self::Single),
+        ("partial", Self::Partial),
+        ("refused", Self::Refused),
+        ("unserved", Self::Unserved),
+        ("failed", Self::Failed),
+        ("capped", Self::Capped),
+        ("spread", Self::Spread),
+        ("not-found", Self::NotFound),
+        ("unlabelled", Self::Unlabelled),
+        ("stages", Self::Stages),
+        ("workloads", Self::Workloads),
+        ("unreachable", Self::Unreachable),
+        ("argo-refused", Self::ArgoRefused),
+        ("destination", Self::Destination),
+        ("image-only", Self::ImageOnly),
+        ("github-limited", Self::GitHubLimited),
+        ("github-refused", Self::GitHubRefused),
+        ("github-offline", Self::GitHubOffline),
+        ("causes", Self::Causes),
+        ("promoting", Self::Promoting),
+    ];
 
     /// The outcome every Deployment hop shows, in the shape that says one.
     pub(crate) fn outcome(self) -> Option<crate::change::OutcomeKind> {

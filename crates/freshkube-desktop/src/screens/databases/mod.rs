@@ -3,6 +3,8 @@
 mod coroot_tests;
 mod display;
 mod explore;
+#[cfg(test)]
+pub(crate) use explore::Example as ExploreExample;
 pub(crate) mod query_link;
 mod table;
 #[cfg(test)]
@@ -101,6 +103,9 @@ pub(crate) struct DatabasesScreen {
     /// set, that the first PostgreSQL database opens in the explorer.
     explore_example: Option<explore::Example>,
     explore_on_start: bool,
+    /// Teleport's settings, once the Team setup supplies them (E4); until
+    /// then only an example or a test sets them.
+    teleport: Option<freshkube_db::teleport::TeleportAccess>,
 }
 impl EventEmitter<ScreenEvent> for DatabasesScreen {}
 impl EventEmitter<ResourceLink> for DatabasesScreen {}
@@ -173,6 +178,7 @@ impl DatabasesScreen {
             active: None,
             explore_example: None,
             explore_on_start: false,
+            teleport: None,
         }
     }
     pub(crate) fn with_example(mut self, shape: String) -> Self {
@@ -478,9 +484,14 @@ impl DatabasesScreen {
                 .access
                 .is_example()
                 .then(|| self.explore_example.unwrap_or_default());
+            let teleport = match example {
+                Some(shape) if shape.is_teleport() => Some(explore::example_teleport()),
+                _ => self.teleport.clone(),
+            };
             let runtime = self.runtime.clone();
-            let view =
-                cx.new(|cx| explore::ExploreView::new(runtime, source, database, example, cx));
+            let view = cx.new(|cx| {
+                explore::ExploreView::new(runtime, source, database, example, teleport, cx)
+            });
             // The explorer's Query button reaches the dock through the page.
             // Detached: it lasts as long as the explorer does.
             cx.subscribe(&view, |_, _, request: &query_link::QueryRequest, cx| {

@@ -63,6 +63,35 @@ The page adds a POST path (the reviews), so it has a guarantee in the safety sui
 
 `--fixture` answers from invented namespaces. `FRESHKUBE_ACCESS` shapes it: `limited` (the default: writes in `shop` and `payments`, reads elsewhere, nothing in `kube-system`), `full`, `incomplete` (every review incomplete), `failed` (`shop`, `payments` and Nodes can't be checked), `identity-changed` (the first answers are for one person, then the cluster says another), `ns-refused` (the namespace list is refused and the context names `shop`, so only `shop` is reviewed).
 
-## Not in this slice
+## Before an action is offered (slice 2)
 
-"See your access" from a disabled action, and the everyday actions' disabled reasons in the short form ([#853](https://github.com/skel84/freshkube/issues/853), [#857](https://github.com/skel84/freshkube/issues/857)), need a cache of answers wired into Resources' controls and the change page; they come with slice 2.
+The second half of [#854](https://github.com/skel84/freshkube/issues/854): before an action is shown as available, the app asks the API whether the person may do it, and shows one the cluster refuses **disabled, with the reason**, never hidden. It only guides. The gate stays core's `write` preflight, a `SelfSubjectAccessReview` on the exact object, unchanged and never skipped ([WRITE_MODEL.md](../WRITE_MODEL.md#your-access-854)); nothing reads these answers to allow or refuse a write, and a cached yes does not skip the gate, nor does a cached no block it (`safety_g22_…`).
+
+Code, under `crates/`: core's `write/access.rs` (`AccessQuestion`, `ask`), `write/action.rs` (`ActionDescription::access_questions`), `write/everyday/` (`Everyday::needs`), `write/edit_yaml/` (`needs`), `operations/` (`OperationKind::access_needs`), `access/offer.rs` (`Offers`, the cache) and `access/example.rs` (`offer_verdict`); `freshkube-reads`' `offers.rs` (`OfferDesk`, the app-wide owner of the jobs); and where the answers are read: `freshkube-resources`' `screen/acts.rs` and `pane/edit/`, `freshkube-applications`' `change/act.rs`, and `freshkube-desktop`'s `screens/operations/`. Tests: core's `access/offer_tests.rs` and `write/tests/offer.rs`, and Resources' `screen/tests/offers.rs`.
+
+- **The action declares the question, in core, beside its tier.** An `AccessQuestion` is one verb on a resource (group and subresource included) in a namespace, on a named object (none for `create`, as the gate does). A page never builds a review. A test holds each declared question to the review the action's own description makes, so the two cannot drift apart.
+
+| Action | Asks |
+|--------|------|
+| Scale, Restart, Roll back, Suspend or resume, Argo CD Refresh, Flux Reconcile | `patch` on the object |
+| cert-manager Renew | `patch` on `certificates/status` |
+| Run now | `create` on `jobs` (group `batch`) in the CronJob's namespace |
+| Delete | `delete` on the object |
+| Edit YAML | `patch` on the object |
+| Stage actions (Refresh, Reverify, Promote, Abort) | what each one's description reviews: `patch` on the Stage, the Warehouse or the Promotion, `create` on `promotions` |
+| Operations: cordon, uncordon | `patch` on the node |
+| Operations: drain, reboot, shutdown | `patch` on the node, and `create` on `pods/eviction` (no namespace: a drain evicts in every one) |
+
+  A service's Restart, and the Talos reboot and shutdown inside an operation, go through the Machine API, not the Kubernetes API, so no `SelfSubjectAccessReview` answers them and they are not asked.
+- **The reason** is the short form of Your access, "Needs patch on deployments in shop" (cluster-scoped: "Needs patch on nodes cluster-wide"), on the control's tooltip, through the path the protection level uses (`set_write_block`, the row menu's disabled line, the toolbar's disabled button). **When several apply, the level's reason wins, then one a kind already has** (Delete on a Namespace keeps "not offered here yet": a hard block outranks access), and the cluster's no comes last. A key does what its control does: nothing for a refused action.
+- **A review that didn't answer** (a failure, a timeout, a server that gives none) never blocks: the action stays on offer and its tooltip adds "Couldn't check your access". The gate asks anyway.
+- **Only the selection's actions are asked about**, never every row, and only once the selection has rested. Resources asks for the selected row's kind's actions, and Edit for the open object, in one call; the change page asks for the selected Stage's actions; Operations asks for the nodes picked in the plan. Each call **replaces** what the last one wanted (a call with no questions, as when the selection is cleared or a hop shows no Stage, forgets it and asks nothing, not even who you are), and nothing is sent until the selection has rested for `OFFER_PAUSE` (150 ms), so holding an arrow key through a list asks about the row it stops on and no other. A page that hides calls `OfferDesk::stop`: what it wanted is forgotten and the reviews in flight are dropped, so a hidden page asks nothing (another page's wants are left alone). Who you are is asked on the first call, not when the context changes, so a page nobody shows asks nothing. At most four reviews run at once.
+- **What is shown is derived when something changes, not while drawing.** Resources keeps what the cluster said of each action on the selected row (and the pane of Edit), the change page of each Stage action, and Operations of its plan; each is derived when the selection changes or an answer lands, and read by the frame. An answer is never shown for another row than the one it was derived for.
+- **Cached per access identity, person and question.** `Offers` is keyed by `ClusterSource.id` ([ACCESS_IDENTITY.md](../ACCESS_IDENTITY.md)), by who `SelfSubjectReview` says you are (nothing is asked until that has answered or failed; a server without it answers "someone"), and by verb, resource with group and subresource, namespace and name. A new identity or another person drops every answer, every review in flight and the question of who you are at once, and a late answer from before is ignored by its generation. An answer is believed for 2 minutes (`OFFER_TTL`), after which the action reads as unasked, and is asked again the next time the selection shows; the cache holds at most 256 answers (`OFFER_CAP`), the oldest first out.
+- **Where it doesn't reach yet.** A Kargo on another workspace entry's cluster is written to with that entry's own connection, so the change page asks only when Kargo is the open cluster (or the example); the Stage actions of another entry stay on offer and the gate decides. "See your access" on a refused action is not built.
+
+Example data (`--fixture`): every shape allows every action, so the example pages offer what they always did, except `FRESHKUBE_ACCESS=actions-refused` (every delete and create refused, and a patch outside `shop` and `payments` except on nodes, so a cordon is allowed and a drain says it needs to evict) and `failed` (no review answers: every action says "Couldn't check your access"). The table of Your access answers `actions-refused` as `limited`.
+
+## Not built
+
+"See your access" from a disabled action, which opens the table on that namespace with the missing cell marked, and the Stage actions on another workspace entry's cluster.

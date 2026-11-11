@@ -234,6 +234,27 @@ scripts/smoke.sh shot monitoring
 scripts/smoke.sh stop
 ```
 
+## First frame
+
+After `package`, `macos-app.yml` runs a `First frame (<target>)` job on the same
+runner type, `macos-15` for Apple silicon and `macos-15-intel` for Intel. It
+checks out `scripts` only, downloads the uploaded ZIP, and runs
+`scripts/first-frame.py` on it, as the Linux and Windows jobs do
+([PACKAGING.md](PACKAGING.md#ci)). For a macOS ZIP the script:
+
+1. checks the archive against its `.sha256`;
+2. unpacks it with `ditto -x -k` (Python's `zipfile` drops the execute bit) and
+   runs `codesign --verify --deep --strict` on `Freshkube.app`;
+3. starts `Contents/MacOS/freshkube --fixture` with `FRESHKUBE_FIRST_FRAME=1`
+   and an empty `HOME`, and waits up to 120 s for `first frame: window after N ms`.
+
+It runs the executable inside the bundle and not `open`: `open` hands the app
+to Launch Services and returns, so the script would lose its output and exit
+code. An exit, a panic, closed output or silence fails the job. This catches a
+bundle that links, signs or loads resources wrongly, which `--version` in
+`package-macos.py` does not. The job is part of the CI run, so a failure fails
+the run, and the Release workflow refuses a run without both passing jobs.
+
 ## Releases
 
 A release ships the bundles `main` built for the release commit; it never
@@ -244,7 +265,8 @@ compiles again. [Release](../.github/workflows/release.yml) runs when a tag
    `Cargo.toml`, and that the tagged commit is on `main`. It also runs
    `scripts/changelog.sh check --empty`: any pending fragment stops the release
    with an instruction to collect the notes before tagging.
-2. It finds the successful CI run of that commit on `main` and downloads both
+2. It finds the successful CI run of that commit on `main`, checks that both
+   `First frame (<target>)` jobs passed in it (below), and downloads both
    bundles. Without one (still running, failed, skipped or expired) it stops and
    says so; it never builds a replacement. It also looks for the Linux and
    Windows preview builds of that commit; a missing or failed one is left out

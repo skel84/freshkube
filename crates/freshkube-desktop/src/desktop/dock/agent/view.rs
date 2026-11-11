@@ -6,6 +6,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::{Disableable, Selectable, Sizable, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -821,71 +822,118 @@ impl Render for AgentView {
             .text_color(p.ink)
             .child(self.render_toolbar(cx))
             .child(
-                v_flex()
-                    .id("agent-body")
+                // The shared scroll: the body scrolls under Kit's scrollbar,
+                // shown whenever the transcript overflows.
+                div()
+                    .id("agent-scroll")
                     .test_support()
+                    .relative()
                     .flex_1()
                     .min_h_0()
-                    .gap(dp(8.))
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .track_scroll(&self.body_scroll)
-                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
-                        // Up, away from the end: the tab stops following at
-                        // once, before the next frame could pull it back.
-                        // Only a body that can scroll is left: a short answer
-                        // that grows afterwards is still followed.
-                        if event.delta.pixel_delta(px(1.)).y > px(0.)
-                            && this.body_scroll.max_offset().y > px(0.)
-                        {
-                            this.pinned = false;
-                            return;
-                        }
-                        // Down: once the wheel has moved the body and it
-                        // shows its end, the tab follows the newest answer
-                        // again.
-                        cx.defer_in(window, |this, window, cx| {
-                            let behind = this.body_scroll.max_offset().y + this.body_scroll.offset().y;
-                            if behind <= ui::dp_px(2., window) && !this.pinned {
-                                this.pinned = true;
-                                cx.notify();
-                            }
-                        });
-                    }))
-                    .when(unavailable, |this| {
-                        this.child(ui::banner(
-                            Tone::Warn,
-                            Some("This cluster isn't an entry of your setup".into()),
-                            div()
-                                .id("agent-no-entry")
-                                .test_support()
-                                .child("Agent access is granted per entry in freshkube.yaml, so it can't be turned on for this one."),
-                            None,
-                            cx,
-                        ))
-                    })
-                    // The question waiting for access comes first: it is
-                    // what the person has to answer.
-                    .children(self.render_egress(cx))
-                    .children(self.render_notice(cx))
-                    .children(self.render_only_opencode(cx))
-                    .when(
-                        (!started || !self.setup.can_start()) && self.pending.is_none(),
-                        |this| this.child(self.render_setup(cx)),
-                    )
-                    .when(started, |this| {
-                        this.child(
-                            h_flex()
-                                .id("agent-split")
-                                .test_support()
-                                .items_start()
-                                .gap(dp(0.))
-                                .w_full()
-                                .child(self.render_transcript(cx))
-                                .child(self.render_trail(cx)),
-                        )
-                    }),
+                    .overflow_hidden()
+                    .child(self.render_body(unavailable, started, cx))
+                    .child(
+                        // The lane the scrollbar draws in. Pressing it takes
+                        // hold of the body, so the tab stops following the
+                        // newest answer before the next frame could pull the
+                        // thumb back to the end.
+                        div()
+                            .id("agent-scrollbar-lane")
+                            .test_support()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .bottom_0()
+                            .w(dp(10.))
+                            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                                if this.pinned && this.body_scroll.max_offset().y > px(0.) {
+                                    this.pinned = false;
+                                    cx.notify();
+                                }
+                            }))
+                            .child(
+                                Scrollbar::vertical(&self.body_scroll)
+                                    .id("agent-scrollbar")
+                                    .mode(ScrollbarMode::Always),
+                            ),
+                    ),
             )
             .child(self.render_input(cx))
+    }
+}
+
+impl AgentView {
+    fn render_body(
+        &self,
+        unavailable: bool,
+        started: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        v_flex()
+            .id("agent-body")
+            .test_support()
+            .size_full()
+            .min_h_0()
+            // Room for the scrollbar's lane.
+            .pr(dp(10.))
+            .gap(dp(8.))
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .track_scroll(&self.body_scroll)
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                // Up, away from the end: the tab stops following at
+                // once, before the next frame could pull it back.
+                // Only a body that can scroll is left: a short answer
+                // that grows afterwards is still followed.
+                if event.delta.pixel_delta(px(1.)).y > px(0.)
+                    && this.body_scroll.max_offset().y > px(0.)
+                {
+                    this.pinned = false;
+                    return;
+                }
+                // Down: once the wheel has moved the body and it
+                // shows its end, the tab follows the newest answer
+                // again.
+                cx.defer_in(window, |this, window, cx| {
+                    let behind = this.body_scroll.max_offset().y + this.body_scroll.offset().y;
+                    if behind <= ui::dp_px(2., window) && !this.pinned {
+                        this.pinned = true;
+                        cx.notify();
+                    }
+                });
+            }))
+            .when(unavailable, |this| {
+                this.child(ui::banner(
+                    Tone::Warn,
+                    Some("This cluster isn't an entry of your setup".into()),
+                    div()
+                        .id("agent-no-entry")
+                        .test_support()
+                        .child("Agent access is granted per entry in freshkube.yaml, so it can't be turned on for this one."),
+                    None,
+                    cx,
+                ))
+            })
+            // The question waiting for access comes first: it is
+            // what the person has to answer.
+            .children(self.render_egress(cx))
+            .children(self.render_notice(cx))
+            .children(self.render_only_opencode(cx))
+            .when(
+                (!started || !self.setup.can_start()) && self.pending.is_none(),
+                |this| this.child(self.render_setup(cx)),
+            )
+            .when(started, |this| {
+                this.child(
+                    h_flex()
+                        .id("agent-split")
+                        .test_support()
+                        .items_start()
+                        .gap(dp(0.))
+                        .w_full()
+                        .child(self.render_transcript(cx))
+                        .child(self.render_trail(cx)),
+                )
+            })
     }
 }

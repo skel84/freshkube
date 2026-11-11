@@ -51,4 +51,4 @@ One job per document read of an open NetworkPolicy, Pod or workload, owned by th
 
 ## Example data
 
-`FRESHKUBE_NETPOL` (AGENTS.md's knob table): `mixed` (the default) the whole set, `default-deny`, `open`, `restricts`, `ip-block`, `namespace-selector`, `none` (no policy: nothing is governed), `host-network` (the example pods on the node's network, all Unknown), `refused` and `cut`. Open `FRESHKUBE_KIND=networkpolicies.networking.k8s.io` for a policy, `pods` or `deployments.apps` for the Pod and workload block; `payments/api` is selected by a default deny and a restriction, `web/frontend` by an open policy.
+`FRESHKUBE_NETPOL` ([DEBUG_KNOBS.md](../DEBUG_KNOBS.md#freshkube_netpol)): `mixed` (the default) the whole set, `default-deny`, `open`, `restricts`, `ip-block`, `namespace-selector`, `none` (no policy: nothing is governed), `host-network` (the example pods on the node's network, all Unknown), `refused` and `cut`. Open `FRESHKUBE_KIND=networkpolicies.networking.k8s.io` for a policy, `pods` or `deployments.apps` for the Pod and workload block; `payments/api` is selected by a default deny and a restriction, `web/frontend` by an open policy.

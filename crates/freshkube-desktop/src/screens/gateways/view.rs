@@ -511,11 +511,12 @@ impl Render for GatewaysScreen {
                         this.child(
                             page::capped_notes(
                                 SharedString::from(format!("{prefix}-notices")),
-                                if short { dp(80.).into() } else { Length::Auto },
+                                if short { dp(60.).into() } else { Length::Auto },
                                 &self.notes_scroll,
                                 notices.into_iter().chain(failure),
                                 Some(palette(cx).line),
                                 None,
+                                window,
                                 cx,
                             )
                             .flex_none()

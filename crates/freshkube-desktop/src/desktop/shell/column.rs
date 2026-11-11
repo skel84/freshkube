@@ -296,6 +296,7 @@ pub(super) fn page_icon(page: Page) -> IconName {
         Page::Etcd | Page::Databases => IconName::Database,
         Page::Routes | Page::Gateways | Page::GatewayClasses => IconName::Network,
         Page::Topology => IconName::Waypoints,
+        Page::Certificates => IconName::ShieldCheck,
         Page::SystemServices => IconName::ServerCog,
         Page::Security | Page::Access => IconName::ShieldCheck,
         Page::Lifecycle => IconName::RefreshCw,

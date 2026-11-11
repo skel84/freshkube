@@ -85,6 +85,18 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(view.read(cx).overview.is_stale());
+        assert_eq!(
+            window.find("overview-connection").label(),
+            Some("Last read shown · latest read failed")
+        );
+        let overview = &view.read(cx).overview;
+        let kept = crate::ui::clock(overview.last_successful().unwrap());
+        let message = format!(
+            "Read at {kept}; the latest read failed. {}",
+            overview.error().unwrap()
+        );
+        assert!(window.find("talos-stale").visible());
+        assert_eq!(window.find("talos-stale").label(), Some(message.as_str()));
         assert!(
             window
                 .find("overview-status")

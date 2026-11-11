@@ -149,6 +149,7 @@ pub enum LinkPage {
     Gateways,
     GatewayClasses,
     Topology,
+    Certificates,
     Access,
     Resources,
     Etcd,
@@ -161,7 +162,7 @@ pub enum LinkPage {
 }
 
 impl LinkPage {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -170,6 +171,7 @@ impl LinkPage {
         Self::Gateways,
         Self::GatewayClasses,
         Self::Topology,
+        Self::Certificates,
         Self::Access,
         Self::Resources,
         Self::Etcd,
@@ -192,6 +194,7 @@ impl LinkPage {
             Self::Gateways => "gateways",
             Self::GatewayClasses => "gateway-classes",
             Self::Topology => "topology",
+            Self::Certificates => "certificates",
             Self::Access => "access",
             Self::Resources => "resources",
             Self::Etcd => "etcd",
