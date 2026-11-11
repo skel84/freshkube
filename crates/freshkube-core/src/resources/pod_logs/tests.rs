@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 
 use super::*;
-use crate::resources::watch::tests::server;
+use crate::resources::watch::tests::{Reply, hanging_server, server};
 
 const POD: &str = "/api/v1/namespaces/shop/pods/web-0";
 
@@ -228,7 +228,7 @@ async fn lines_are_cut_stripped_and_read_whatever_their_bytes() {
     let mut position = LogPosition::default();
     let reader = futures::io::Cursor::new(body);
     let read = tokio::spawn(async move {
-        pump(reader, &mut position, &sender)
+        pump(reader, &mut position, &sender, None)
             .await
             .map(|r| (r.lines, position))
     });
@@ -262,7 +262,7 @@ async fn resuming_skips_what_was_read_even_within_one_second() {
     let body = "2026-10-01T12:00:01.1Z early\n2026-10-01T12:00:01.25Z b\n2026-10-01T12:00:01.25Z c\n2026-10-01T12:00:01.25Z d\n2026-10-01T12:00:02Z e\n";
     let (sender, mut receiver) = mpsc::channel(8);
     let reader = futures::io::Cursor::new(body.as_bytes().to_vec());
-    tokio::spawn(async move { pump(reader, &mut position, &sender).await.map(|_| ()) });
+    tokio::spawn(async move { pump(reader, &mut position, &sender, None).await.map(|_| ()) });
     let mut read = Vec::new();
     while let Some(PodLogUpdate::Line(line)) = receiver.recv().await {
         read.push(line.split_once(' ').unwrap().1.to_owned());
@@ -457,4 +457,79 @@ fn a_restart_count_exposes_previous_logs_even_without_last_state() {
     let container = &document.overview.pod.unwrap().containers[0];
     assert!(container.has_previous());
     assert!(container.started());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wake_reopens_the_log_from_its_last_line_and_repeats_none() {
+    let turns = Arc::new(Mutex::new((0, 0)));
+    let (client, seen) = hanging_server(move |uri| {
+        let mut turns = turns.lock().unwrap();
+        if uri.contains("/log?") {
+            turns.1 += 1;
+            return if turns.1 == 1 {
+                // Three lines, two in the same second, then silence.
+                let (_, body) = lines(&[("00:01", "a"), ("00:02", "b"), ("00:02", "c")]);
+                Reply::hanging(body)
+            } else {
+                // Kubernetes resumes to the second: b and c come again.
+                let (_, body) = lines(&[
+                    ("00:02", "b"),
+                    ("00:02", "c"),
+                    ("00:02", "d"),
+                    ("00:03", "e"),
+                ]);
+                Reply::done(200, body)
+            };
+        }
+        turns.0 += 1;
+        let state = if turns.0 <= 2 {
+            running(0)
+        } else {
+            json!({"restarts": 0, "state": exited(0, "Completed")})
+        };
+        Reply::done(200, pod("Never", "Running", state))
+    });
+    let (sender, mut receiver) = mpsc::channel(16);
+    let task = tokio::spawn(follow_pod_log(client, request(), sender));
+    let mut updates = Vec::new();
+    // Until the third line, then a long silence: nothing arrives by itself.
+    while updates
+        .iter()
+        .filter(|u| matches!(u, PodLogUpdate::Line(_)))
+        .count()
+        < 3
+    {
+        updates.push(receiver.recv().await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    let quiet = receiver.try_recv();
+    assert!(quiet.is_err(), "{quiet:?}");
+    crate::wake::announce();
+    while let Some(update) = receiver.recv().await {
+        updates.push(update);
+    }
+    task.await.unwrap();
+    assert_eq!(
+        summary(&updates),
+        [
+            "streaming",
+            "a",
+            "b",
+            "c",
+            // A wake is no failure: no "reconnecting", no wait.
+            "streaming",
+            "d",
+            "e",
+            "ended exit 0 (Completed)",
+        ]
+    );
+    // The second open asked from the last line's time.
+    let seen = seen.lock().unwrap();
+    let opens: Vec<_> = seen.iter().filter(|uri| uri.contains("/log?")).collect();
+    assert_eq!(opens.len(), 2);
+    assert!(
+        opens[1].contains("sinceTime=2026-10-01T12%3A00%3A02"),
+        "{}",
+        opens[1]
+    );
 }

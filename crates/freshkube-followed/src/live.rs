@@ -113,6 +113,35 @@ where
     }
 }
 
+/// What one pod's watch events say of the pod, across the lists the watcher
+/// makes again (after a 410, or a wake).
+#[derive(Default)]
+struct PodEvents {
+    /// The list now being read has held the pod.
+    listed: bool,
+}
+
+impl PodEvents {
+    /// The pod as the rules see it, or `None` when the event says nothing
+    /// new. A list that ends with no pod in it says the pod is gone: a pod
+    /// deleted while nobody watched leaves no `Delete` to hear.
+    fn step(&mut self, event: watcher::Event<Pod>) -> Option<Seen> {
+        match event {
+            watcher::Event::Init => {
+                self.listed = false;
+                None
+            }
+            watcher::Event::InitApply(pod) => {
+                self.listed = true;
+                Some(Seen::Pod(Some(pod_seen(&pod))))
+            }
+            watcher::Event::Apply(pod) => Some(Seen::Pod(Some(pod_seen(&pod)))),
+            watcher::Event::Delete(_) => Some(Seen::Pod(None)),
+            watcher::Event::InitDone => (!self.listed).then_some(Seen::Pod(None)),
+        }
+    }
+}
+
 /// Watches one pod by name until the job is dropped.
 pub async fn watch_pod(access: ClusterAccess, namespace: String, name: String, tx: Sender<Seen>) {
     let sender = tx.clone();
@@ -133,22 +162,26 @@ pub async fn watch_pod(access: ClusterAccess, namespace: String, name: String, t
             };
             let api: Api<Pod> = Api::namespaced(client, &namespace);
             let config = watcher::Config::default().fields(&format!("metadata.name={name}"));
-            let mut stream = pin!(watcher(api, config));
+            let mut stream = pin!(freshkube_core::wake::restarting(move || watcher(
+                api.clone(),
+                config.clone()
+            )));
+            let mut events = PodEvents::default();
             let mut healthy = false;
             loop {
                 let Some(item) = stream.next().await else {
                     return (Ended::Closed, healthy);
                 };
                 let seen = match item {
-                    Ok(watcher::Event::InitApply(pod) | watcher::Event::Apply(pod)) => {
-                        Seen::Pod(Some(pod_seen(&pod)))
+                    Ok(event) => {
+                        if matches!(event, watcher::Event::InitDone) {
+                            healthy = true;
+                        }
+                        match events.step(event) {
+                            Some(seen) => seen,
+                            None => continue,
+                        }
                     }
-                    Ok(watcher::Event::Delete(_)) => Seen::Pod(None),
-                    Ok(watcher::Event::InitDone) => {
-                        healthy = true;
-                        continue;
-                    }
-                    Ok(watcher::Event::Init) => continue,
                     // An expired version: the watcher lists again by itself.
                     Err(watcher::Error::WatchError(status)) if status.code == 410 => continue,
                     Err(error) => return (failed(error), healthy),
@@ -182,7 +215,10 @@ pub async fn watch_project(access: ClusterAccess, project: String, tx: Sender<Se
                 "stages",
             );
             let api: Api<DynamicObject> = Api::namespaced_with(client, &project, &resource);
-            let mut stream = pin!(watcher(api, watcher::Config::default()));
+            let mut stream = pin!(freshkube_core::wake::restarting(move || watcher(
+                api.clone(),
+                watcher::Config::default()
+            )));
             let mut stages: BTreeMap<String, StageSeen> = BTreeMap::new();
             let mut listing: BTreeMap<String, StageSeen> = BTreeMap::new();
             let mut healthy = false;
@@ -398,6 +434,67 @@ mod tests {
             "{:?}",
             recorder.lines()
         );
+    }
+
+    fn some_pod() -> Pod {
+        serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "api-7c9", "namespace": "shop"},
+            "status": {"conditions": [{"type": "Ready", "status": "True"}]}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_list_without_the_pod_says_it_is_gone_and_one_with_it_says_nothing_of_that() {
+        let mut events = PodEvents::default();
+        // The first list holds the pod: it is seen, and the list's end adds nothing.
+        assert!(events.step(watcher::Event::Init).is_none());
+        assert!(matches!(
+            events.step(watcher::Event::InitApply(some_pod())),
+            Some(Seen::Pod(Some(_)))
+        ));
+        assert!(events.step(watcher::Event::InitDone).is_none());
+        // A wake, a 410: the watcher lists again, and the pod was deleted
+        // meanwhile, so the list is empty and no `Delete` ever came.
+        assert!(events.step(watcher::Event::Init).is_none());
+        assert_eq!(
+            events.step(watcher::Event::InitDone),
+            Some(Seen::Pod(None)),
+            "an empty list is the pod gone"
+        );
+        // And a list that has it again is not reported gone.
+        assert!(events.step(watcher::Event::Init).is_none());
+        events.step(watcher::Event::InitApply(some_pod()));
+        assert!(events.step(watcher::Event::InitDone).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_followed_pod_that_is_not_in_the_list_is_reported_gone() {
+        let (access, recorder) = fake(|request| {
+            (request.path == "/api/v1/namespaces/shop/pods").then(|| {
+                if request.query.contains("watch=true") {
+                    json(200, "")
+                } else {
+                    json(
+                        200,
+                        serde_json::json!({
+                            "apiVersion": "v1", "kind": "PodList",
+                            "metadata": {"resourceVersion": "1"}, "items": []
+                        }),
+                    )
+                }
+            })
+        });
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let job = tokio::spawn(watch_pod(access, "shop".into(), "api-7c9".into(), tx));
+        let seen = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("an answer")
+            .expect("a report");
+        assert_eq!(seen, Seen::Pod(None));
+        drop(rx);
+        job.abort();
+        only_reads(&recorder);
     }
 
     #[tokio::test]

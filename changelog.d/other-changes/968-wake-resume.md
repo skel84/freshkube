@@ -1,0 +1,1 @@
+- **After sleep, streams pick up where they were:** Resources lists, pod logs, followed items and the pod and event watches that were open when the machine slept now start again on waking, from their last version or last log line, instead of waiting out a dead connection; no row or log line is repeated.

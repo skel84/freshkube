@@ -99,6 +99,10 @@ pub async fn watch_collection(
             )
             .await
             {
+                // A wake: the connection is dead and nobody knows yet. Watch
+                // again at once from the last version; if it has expired
+                // the server says 410 and the list follows, as always.
+                WatchEnd::Woke => backoff = MIN_BACKOFF,
                 WatchEnd::Resume => {
                     if started.elapsed() < MIN_WATCH {
                         tokio::time::sleep(backoff).await;
@@ -139,6 +143,8 @@ async fn fail(
 enum WatchEnd {
     /// The server ended the watch normally; resume from the last version.
     Resume,
+    /// The machine woke: watch again at once from the last version.
+    Woke,
     /// The version expired (410); list again.
     Relist,
     Failed(Failure),
@@ -154,26 +160,29 @@ async fn watch_once(
     resource_version: &mut String,
     sink: &mut mpsc::Sender<WatchBatch>,
 ) -> WatchEnd {
-    let stream = match watch_table(client, kind, namespace, field_selector, resource_version).await
-    {
+    let mut wakes = crate::wake::Wakes::new();
+    let opened = tokio::select! {
+        opened = watch_table(client, kind, namespace, field_selector, resource_version) => opened,
+        _ = wakes.woke() => return WatchEnd::Woke,
+    };
+    let stream = match opened {
         Ok(stream) => stream,
         Err(failure) => return WatchEnd::Failed(failure),
     };
     let mut stream = std::pin::pin!(stream);
     let mut batcher = Batcher::new(BATCH_WINDOW, MAX_BATCH);
     loop {
-        let item = match batcher.deadline() {
-            Some(at) => tokio::select! {
-                item = stream.next() => Some(item),
-                _ = tokio::time::sleep_until(at) => None,
+        let at = batcher
+            .deadline()
+            .unwrap_or_else(|| Instant::now() + Duration::from_secs(24 * 60 * 60));
+        let end = tokio::select! {
+            item = stream.next() => match item {
+                None => Some(WatchEnd::Resume),
+                Some(item) => map_event(item, resource_version, batcher.pending_mut()),
             },
-            None => Some(stream.next().await),
-        };
-        let end = match item {
             // The batch window elapsed.
-            None => None,
-            Some(None) => Some(WatchEnd::Resume),
-            Some(Some(item)) => map_event(item, resource_version, batcher.pending_mut()),
+            _ = tokio::time::sleep_until(at), if batcher.deadline().is_some() => None,
+            _ = wakes.woke() => Some(WatchEnd::Woke),
         };
         if let Some(batch) = batcher.flush(Instant::now(), end.is_some())
             && !send(sink, batch).await
@@ -217,6 +226,68 @@ pub(super) mod tests {
                         .status(status)
                         .body(Body::from(body.into_bytes()))
                         .unwrap(),
+                )
+            }
+        });
+        (Client::new(service, "default"), seen)
+    }
+
+    /// One answer of [`hanging_server`]: `body` is sent and, with `hang`,
+    /// the response then stays open and silent, as a connection does that
+    /// died in sleep.
+    pub(crate) struct Reply {
+        pub(crate) status: u16,
+        pub(crate) body: String,
+        pub(crate) hang: bool,
+    }
+
+    impl Reply {
+        pub(crate) fn done(status: u16, body: String) -> Self {
+            Self {
+                status,
+                body,
+                hang: false,
+            }
+        }
+
+        pub(crate) fn hanging(body: String) -> Self {
+            Self {
+                status: 200,
+                body,
+                hang: true,
+            }
+        }
+    }
+
+    /// As [`server`], and an answer may hang open after its body.
+    pub(crate) fn hanging_server(
+        respond: impl Fn(&str) -> Reply + Send + Sync + 'static,
+    ) -> (Client, Arc<Mutex<Vec<String>>>) {
+        use futures::StreamExt;
+        use http_body_util::{BodyExt, StreamBody, combinators::BoxBody};
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let service = tower::service_fn(move |request: Request<Body>| {
+            let uri = request.uri().to_string();
+            log.lock().unwrap().push(uri.clone());
+            let reply = respond(&uri);
+            async move {
+                // A watch's last line is only a line once its newline is in.
+                let mut body = reply.body;
+                if reply.hang && !body.ends_with('\n') {
+                    body.push('\n');
+                }
+                let frame = Ok::<_, std::convert::Infallible>(http_body::Frame::data(
+                    bytes::Bytes::from(body.into_bytes()),
+                ));
+                let head = futures::stream::iter([frame]);
+                let body: BoxBody<bytes::Bytes, std::convert::Infallible> = if reply.hang {
+                    BodyExt::boxed(StreamBody::new(head.chain(futures::stream::pending())))
+                } else {
+                    BodyExt::boxed(StreamBody::new(head))
+                };
+                Ok::<_, std::convert::Infallible>(
+                    Response::builder().status(reply.status).body(body).unwrap(),
                 )
             }
         });
@@ -450,6 +521,58 @@ pub(super) mod tests {
         assert!(watches[0].starts_with("/api/v1/pods?watch=1"));
         assert!(watches[0].contains("resourceVersion=10&timeoutSeconds=290"));
         assert!(watches[1].contains("resourceVersion=20"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_wake_watches_again_from_the_last_version_with_no_relist_and_no_repeat() {
+        let (client, seen) = hanging_server(|uri| {
+            if !uri.contains("watch=1") {
+                return Reply::done(200, list("10", "", &["a"]));
+            }
+            if uri.contains("resourceVersion=10") {
+                // Two changes, then a connection that goes silent.
+                Reply::hanging([event("ADDED", "b", "11"), event("MODIFIED", "a", "12")].join("\n"))
+            } else {
+                // Watching from 12 brings what came after it, once.
+                Reply::hanging(event("ADDED", "c", "13"))
+            }
+        });
+        let (sender, mut receiver) = mpsc::channel(8);
+        let task = tokio::spawn(watch_collection(
+            client,
+            builtin("pods").unwrap(),
+            None,
+            None,
+            sender,
+        ));
+        let mut summary = Vec::new();
+        let take = |events: Vec<WatchEvent>, summary: &mut Vec<String>| {
+            for event in events {
+                summary.push(match event {
+                    WatchEvent::Reset { rows, .. } => format!("reset {}", names(&rows).join(",")),
+                    WatchEvent::Upsert(row) => format!("upsert {}", row.metadata().unwrap().name),
+                    other => format!("{other:?}"),
+                });
+            }
+        };
+        // The list, then the two changes (one batch or two).
+        while summary.len() < 3 {
+            take(receiver.recv().await.unwrap().events, &mut summary);
+        }
+        assert_eq!(summary, ["reset a", "upsert b", "upsert a"]);
+        // Silence: nothing more, however long.
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        assert!(receiver.try_recv().is_err());
+        crate::wake::announce();
+        take(receiver.recv().await.unwrap().events, &mut summary);
+        assert_eq!(summary, ["reset a", "upsert b", "upsert a", "upsert c"]);
+        let seen = seen.lock().unwrap();
+        let lists = seen.iter().filter(|uri| !uri.contains("watch=1")).count();
+        let watches: Vec<_> = seen.iter().filter(|uri| uri.contains("watch=1")).collect();
+        assert_eq!(lists, 1, "a wake resumes; it does not list again");
+        assert_eq!(watches.len(), 2);
+        assert!(watches[1].contains("resourceVersion=12"), "{}", watches[1]);
+        task.abort();
     }
 
     /// A burst followed by a 410 arrives as one batch, since the 410 ends the

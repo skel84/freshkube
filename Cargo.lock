@@ -2807,6 +2807,7 @@ dependencies = [
  "grafaui-model",
  "grafaui-prometheus",
  "http",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",

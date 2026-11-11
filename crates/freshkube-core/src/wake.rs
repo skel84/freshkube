@@ -11,6 +11,9 @@
 //! test steps both clocks by hand and never sleeps.
 use std::time::Duration;
 
+use futures::{Stream, StreamExt};
+use tokio::sync::watch;
+
 /// How often the watcher reads the two clocks.
 pub const TICK: Duration = Duration::from_secs(5);
 
@@ -56,12 +59,134 @@ impl Default for GapDetector {
     }
 }
 
+/// The wake, told to every live stream that wants to start over.
+///
+/// A stream that was open when the machine slept is dead but doesn't know
+/// it: its TCP connection is gone and nothing says so until a timeout, a
+/// minute or more later. The shell [`announce`]s a wake; each stream holds
+/// a [`Wakes`] and, on one, drops what it had and opens again from where it
+/// was (a watch from its last resourceVersion, a log from its last line).
+/// Nothing starts that wasn't already reading: only a stream that exists
+/// hears it.
+#[cfg(not(test))]
+fn signal() -> &'static watch::Sender<u64> {
+    static SIGNAL: std::sync::OnceLock<watch::Sender<u64>> = std::sync::OnceLock::new();
+    SIGNAL.get_or_init(|| watch::channel(0).0)
+}
+
+/// In a test the signal is the test thread's own (a Tokio test runs on one
+/// thread), so one test's wake never reaches another's streams.
+#[cfg(test)]
+fn signal() -> &'static watch::Sender<u64> {
+    thread_local! {
+        static SIGNAL: &'static watch::Sender<u64> = Box::leak(Box::new(watch::channel(0).0));
+    }
+    SIGNAL.with(|signal| *signal)
+}
+
+/// Tells every [`Wakes`] that the machine woke.
+pub fn announce() {
+    signal().send_modify(|wakes| *wakes += 1);
+}
+
+/// What one stream hears of wakes: those after it was made.
+#[derive(Debug)]
+pub struct Wakes(watch::Receiver<u64>);
+
+impl Wakes {
+    pub fn new() -> Self {
+        Self(signal().subscribe())
+    }
+
+    /// Resolves at the next wake, and again at each one after it.
+    pub async fn woke(&mut self) {
+        if self.0.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+impl Default for Wakes {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `open()`'s stream, opened again with `open()` at each wake: a kube
+/// watcher that starts over lists first, which every consumer already
+/// handles as it does the list after a 410, replacing what it holds. Ends
+/// when the stream does.
+pub fn restarting<S, F>(open: F) -> impl Stream<Item = S::Item>
+where
+    S: Stream,
+    F: Fn() -> S,
+{
+    let wakes = Wakes::new();
+    let stream = Box::pin(open());
+    futures::stream::unfold(
+        (open, stream, wakes),
+        |(open, mut stream, mut wakes)| async move {
+            loop {
+                tokio::select! {
+                    item = stream.next() => {
+                        return item.map(|item| (item, (open, stream, wakes)));
+                    }
+                    _ = wakes.woke() => stream = Box::pin(open()),
+                }
+            }
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
+    }
+
+    #[tokio::test]
+    async fn a_wake_reaches_streams_made_before_it_and_not_after() {
+        let mut before = Wakes::new();
+        announce();
+        let mut after = Wakes::new();
+        tokio::time::timeout(Duration::from_secs(1), before.woke())
+            .await
+            .expect("heard");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), after.woke())
+                .await
+                .is_err()
+        );
+        // And each wake again.
+        announce();
+        tokio::time::timeout(Duration::from_secs(1), after.woke())
+            .await
+            .expect("heard");
+    }
+
+    #[tokio::test]
+    async fn a_restarting_stream_opens_again_at_a_wake_and_keeps_going() {
+        use std::sync::atomic::{AtomicU32, Ordering::SeqCst};
+        let opened = std::sync::Arc::new(AtomicU32::new(0));
+        let counter = opened.clone();
+        let stream = restarting(move || {
+            let n = counter.fetch_add(1, SeqCst);
+            // Each opening says its number, then goes quiet.
+            Box::pin(futures::stream::iter([n]).chain(futures::stream::pending()))
+                as std::pin::Pin<Box<dyn Stream<Item = u32> + Send>>
+        });
+        let mut stream = std::pin::pin!(stream);
+        assert_eq!(stream.next().await, Some(0));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), stream.next())
+                .await
+                .is_err()
+        );
+        announce();
+        assert_eq!(stream.next().await, Some(1));
+        assert_eq!(opened.load(SeqCst), 2);
     }
 
     #[test]

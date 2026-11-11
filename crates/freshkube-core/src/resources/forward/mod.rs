@@ -548,7 +548,7 @@ async fn follow_object<T, S>(
 
     let mut backoff = MIN_BACKOFF;
     loop {
-        let mut stream = std::pin::pin!(watch());
+        let mut stream = std::pin::pin!(crate::wake::restarting(&watch));
         let mut seen = false;
         let failure = loop {
             let Some(item) = stream.next().await else {
