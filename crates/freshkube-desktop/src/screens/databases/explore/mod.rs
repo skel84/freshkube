@@ -31,6 +31,7 @@ use freshkube_db::{
     credentials::Password,
     fake,
     postgres::Postgres,
+    teleport::{Proxy, TeleportAccess, TeleportError},
     wire::{Encryption, Target, TlsPlan, TokioPostgres},
 };
 use freshkube_reads::{Loader, OnShow};
@@ -68,6 +69,25 @@ pub(crate) enum Example {
     /// As `Query`, with the application's own user as the login, so the
     /// strip warns that the session is not a reader.
     QueryAppUser,
+    /// Through Teleport, connected: the strip reads "Through Teleport (tsh tunnel)".
+    Teleport,
+    /// Teleport's states (E3), each with the command to run.
+    TeleportNoTsh,
+    TeleportNotLoggedIn,
+    TeleportNoRole,
+    TeleportNotFound,
+    TeleportProxyFailed,
+}
+
+/// The invented Teleport settings the examples use.
+pub(crate) fn example_teleport() -> TeleportAccess {
+    TeleportAccess {
+        proxy: "teleport.example.com".into(),
+        name_pattern: "{name}-ro".into(),
+        db_user: "reader".into(),
+        database: "shop".into(),
+        tsh: None,
+    }
 }
 
 /// What the example Query tab opens with.
@@ -75,21 +95,49 @@ const EXAMPLE_QUERY: &str =
     "select * from orders;\nupdate orders set status = 'paid';\nselect * from customers";
 
 impl Example {
+    /// Whether the example reaches the database through Teleport.
+    pub(crate) fn is_teleport(self) -> bool {
+        matches!(
+            self,
+            Self::Teleport
+                | Self::TeleportNoTsh
+                | Self::TeleportNotLoggedIn
+                | Self::TeleportNoRole
+                | Self::TeleportNotFound
+                | Self::TeleportProxyFailed
+        )
+    }
+
+    /// Every word `FRESHKUBE_DB_EXPLORE` takes: the one list `parse` looks
+    /// values up in (an empty one is `connected`) and `docs/DEBUG_KNOBS.md`'s
+    /// test compares with the doc.
+    pub(crate) const SHAPES: &'static [(&'static str, Self)] = &[
+        ("connected", Self::Connected),
+        ("no-secret", Self::NoSecret),
+        ("forward-failed", Self::ForwardFailed),
+        ("refused", Self::Refused),
+        ("timed-out", Self::TimedOut),
+        ("not-read-only", Self::NotReadOnly),
+        ("unverified", Self::Unverified),
+        ("plain", Self::Plain),
+        ("loading", Self::Loading),
+        ("teleport", Self::Teleport),
+        ("teleport-no-tsh", Self::TeleportNoTsh),
+        ("teleport-not-logged-in", Self::TeleportNotLoggedIn),
+        ("teleport-no-role", Self::TeleportNoRole),
+        ("teleport-not-found", Self::TeleportNotFound),
+        ("teleport-proxy-failed", Self::TeleportProxyFailed),
+        ("query", Self::Query),
+        ("query-app-user", Self::QueryAppUser),
+    ];
+
     pub(crate) fn parse(text: &str) -> Option<Self> {
-        Some(match text {
-            "connected" | "" => Self::Connected,
-            "no-secret" => Self::NoSecret,
-            "forward-failed" => Self::ForwardFailed,
-            "refused" => Self::Refused,
-            "timed-out" => Self::TimedOut,
-            "not-read-only" => Self::NotReadOnly,
-            "unverified" => Self::Unverified,
-            "plain" => Self::Plain,
-            "loading" => Self::Loading,
-            "query" => Self::Query,
-            "query-app-user" => Self::QueryAppUser,
-            _ => return None,
-        })
+        if text.is_empty() {
+            return Some(Self::Connected);
+        }
+        Self::SHAPES
+            .iter()
+            .find_map(|(word, shape)| (*word == text).then_some(*shape))
     }
 }
 
@@ -109,6 +157,15 @@ struct Connected {
     who: SharedString,
     /// What protects the connection to the server.
     encryption: Encryption,
+    /// Where it goes, when the route (Teleport) is known only once connected.
+    route: Option<SharedString>,
+    /// The Teleport child, owned by this connection: dropping the last
+    /// handle, with the tab, kills it.
+    #[allow(
+        dead_code,
+        reason = "held only so dropping the connection kills the child"
+    )]
+    proxy: Option<Arc<Proxy>>,
     /// The login is the application's own user, not a reader.
     app_user: bool,
 }
@@ -141,6 +198,8 @@ pub(super) struct ExploreView {
     pick: Loader<Result<PodChoice, Fail>, u64>,
     connect: Loader<Result<Connected, Fail>, u64>,
     link: Option<Link>,
+    /// Teleport's settings when the database is reached through it.
+    teleport: Option<TeleportAccess>,
     /// The pod used and the local port, for the header.
     route: Option<SharedString>,
     /// Whether the pod chosen is a replica, which decides the Service name
@@ -152,6 +211,8 @@ pub(super) struct ExploreView {
     data: Entity<DataView>,
     _browser: Subscription,
     _release: Subscription,
+    /// Quitting drops the connection, and the Teleport child with it.
+    _quit: Subscription,
 }
 
 impl ExploreView {
@@ -160,6 +221,7 @@ impl ExploreView {
         source: ClusterSource,
         database: Database,
         example: Option<Example>,
+        teleport: Option<TeleportAccess>,
         cx: &mut Context<Self>,
     ) -> Self {
         let browser = cx.new(|cx| Browser::new(runtime.clone(), cx));
@@ -171,6 +233,12 @@ impl ExploreView {
             cx.notify();
         });
         let release = cx.on_release(|this, cx| this.release_forward(cx));
+        let quit = cx.on_app_quit(|this, _| {
+            // The app is ending: nothing else will drop the connection, so
+            // drop it here, which kills the Teleport child it holds.
+            this.connect.reset();
+            async {}
+        });
         Self {
             runtime,
             source,
@@ -182,6 +250,7 @@ impl ExploreView {
             pick: Loader::default(),
             connect: Loader::default(),
             link: None,
+            teleport,
             route: None,
             replica: true,
             waiting_port: None,
@@ -189,6 +258,7 @@ impl ExploreView {
             data,
             _browser: subscription,
             _release: release,
+            _quit: quit,
         }
     }
 
@@ -248,12 +318,18 @@ impl ExploreView {
         if let Some(example) = self.example {
             self.connect_example(example, cx);
         } else if self.visible {
-            self.start_pick(cx);
+            match self.teleport.clone() {
+                Some(access) => self.start_teleport(access, cx),
+                None => self.start_pick(cx),
+            }
         }
         cx.notify();
     }
 
     fn connect_example(&mut self, example: Example, cx: &mut Context<Self>) {
+        if example.is_teleport() {
+            return self.connect_teleport_example(example, cx);
+        }
         let shape = match example {
             Example::Loading => {
                 // A read that is never answered: the tab waits on its first step.
@@ -272,6 +348,7 @@ impl ExploreView {
             Example::Refused => fake::Shape::Refused,
             Example::TimedOut => fake::Shape::TimedOut,
             Example::NotReadOnly => fake::Shape::NotReadOnly,
+            _ => unreachable!("Teleport's examples are handled above"),
         };
         self.route = Some("example · no forward".into());
         match fake::connect(shape, Limits::default()) {
@@ -291,6 +368,8 @@ impl ExploreView {
                     session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
                     who,
                     encryption,
+                    route: None,
+                    proxy: None,
                     app_user,
                 };
                 self.connect.resolve(self.epoch, Ok(Ok(connected)));
@@ -301,6 +380,51 @@ impl ExploreView {
             }
             Err(error) => self.fail(Fail::of_connect(error), cx),
         }
+    }
+
+    /// Teleport's examples: connected over the tunnel, or one of its states.
+    /// No `tsh` runs and nothing listens.
+    fn connect_teleport_example(&mut self, example: Example, cx: &mut Context<Self>) {
+        let access = self.teleport.clone().unwrap_or_else(example_teleport);
+        let name = access
+            .database_name(&self.database.identity.name)
+            .unwrap_or_default();
+        let error = match example {
+            Example::TeleportNoTsh => TeleportError::NotInstalled,
+            Example::TeleportNotLoggedIn => TeleportError::NotLoggedIn {
+                proxy: access.proxy.clone(),
+            },
+            Example::TeleportNoRole => TeleportError::NoRole {
+                name,
+                user: access.db_user.clone(),
+                proxy: access.proxy.clone(),
+            },
+            Example::TeleportNotFound => TeleportError::NotFound {
+                name,
+                pattern: access.name_pattern.clone(),
+                proxy: access.proxy.clone(),
+            },
+            Example::TeleportProxyFailed => TeleportError::ProxyFailed {
+                why: "ERROR: listen tcp 127.0.0.1:41234: bind: address already in use".into(),
+                command: format!("tsh {}", access.proxy_args(&name).join(" ")),
+            },
+            _ => {
+                let route = format!("Teleport · {name} · localhost:41234 · example");
+                let session = fake::connect(fake::Shape::Connected, Limits::default())
+                    .expect("the example database connects");
+                let connected = Connected {
+                    session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
+                    who: "reader · Teleport · example".into(),
+                    encryption: Encryption::Tunnel,
+                    route: Some(route.into()),
+                    proxy: None,
+                    app_user: false,
+                };
+                self.connect.resolve(self.epoch, Ok(Ok(connected)));
+                return self.connected(cx);
+            }
+        };
+        self.fail(Fail::Teleport(error), cx);
     }
 
     fn fail(&mut self, fail: Fail, cx: &mut Context<Self>) {
@@ -444,6 +568,28 @@ impl ExploreView {
         );
     }
 
+    /// The Teleport route: one job checks `tsh`, the login and the name,
+    /// starts the proxy and connects over it. There is no pod, forward or
+    /// Secret. The proxy child goes with the connection, or with the job
+    /// if it is dropped before it lands.
+    fn start_teleport(&mut self, access: TeleportAccess, cx: &mut Context<Self>) {
+        self.phase = Phase::Connecting;
+        let cluster = self.database.identity.name.clone();
+        let runtime = self.runtime.clone();
+        let epoch = self.epoch;
+        reading::read_within(
+            reading::TELEPORT_DEADLINE,
+            self,
+            |this: &mut Self| &mut this.connect,
+            epoch,
+            &runtime,
+            "the database",
+            async move { Ok(connect_teleport(access, cluster).await) },
+            |this, cx| this.connected(cx),
+            cx,
+        );
+    }
+
     fn connected(&mut self, cx: &mut Context<Self>) {
         let Some(result) = self.connect.data().cloned() else {
             let error = self
@@ -456,6 +602,9 @@ impl ExploreView {
         match result {
             Err(fail) => self.fail(fail, cx),
             Ok(connected) => {
+                if connected.route.is_some() {
+                    self.route = connected.route.clone();
+                }
                 self.phase = Phase::Connected;
                 let session = connected.session.clone();
                 self.browser
@@ -583,7 +732,83 @@ async fn connect_live(
         session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
         who: format!("{} · {}", login.user, login.kind.label()).into(),
         encryption,
+        route: None,
+        proxy: None,
         app_user: login.kind == explore::LoginKind::AppUser,
+    })
+}
+
+/// A person's chosen `tsh` is kept as it is; with none, `find` looks (core's
+/// lookup, the one a kubeconfig's login program gets, so a Dock launch finds a
+/// Homebrew `tsh`) and its absolute path replaces `None`. The explorer's child
+/// then runs only that path. A miss is [`Fail::TshNotFound`].
+async fn with_resolved_tsh<F, Fut>(
+    mut access: TeleportAccess,
+    find: F,
+) -> Result<TeleportAccess, Fail>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<std::path::PathBuf, freshkube_core::failure::Failure>>,
+{
+    if access.tsh.is_none() {
+        let found = find()
+            .await
+            .map_err(|failure| Fail::TshNotFound(failure.message))?;
+        access.tsh = Some(found);
+    }
+    Ok(access)
+}
+
+/// The Teleport route, off the UI thread: `tsh`'s checks, the proxy and the
+/// same read-only session as ever. No Secret is read and no password exists:
+/// the tunnel signs in with Teleport's certificate, which Freshkube never
+/// sees. A failure after the proxy started drops it, which kills the child.
+async fn connect_teleport(access: TeleportAccess, cluster: String) -> Result<Connected, Fail> {
+    let access = with_resolved_tsh(access, || {
+        freshkube_core::exec_plugin::locate_program(
+            "Teleport database access",
+            "tsh",
+            "choose its file in the Teleport settings",
+        )
+    })
+    .await?;
+    let proxy = Proxy::start(&access, &cluster)
+        .await
+        .map_err(Fail::Teleport)?;
+    // There is no cluster CA on this route; the leg is loopback to `tsh`.
+    let tls = TlsPlan {
+        server_name: proxy.name().to_owned(),
+        ca_pem: None,
+    };
+    let limits = Limits::default();
+    let (wire, _seen) = TokioPostgres::connect(
+        Target {
+            address: proxy.address(),
+            port: proxy.port(),
+            user: &access.db_user,
+            database: &access.database,
+        },
+        &Password::new(""),
+        &limits,
+        &tls,
+    )
+    .await
+    .map_err(Fail::of_connect)?;
+    let session = Postgres::open(wire, limits)
+        .await
+        .map_err(Fail::of_connect)?;
+    let route = format!("Teleport · {} · localhost:{}", proxy.name(), proxy.port());
+    Ok(Connected {
+        session: Arc::new(tokio::sync::Mutex::new(Box::new(session))),
+        who: format!("{} · Teleport", access.db_user).into(),
+        // What Freshkube's own leg is, not what `pg_stat_ssl` says: behind
+        // Teleport that backend's client is Teleport's database agent, whose
+        // hop to Postgres is Teleport's to secure. Ours is loopback to `tsh`,
+        // and `tsh` carries it over its own mutual TLS.
+        encryption: Encryption::Tunnel,
+        route: Some(route.into()),
+        proxy: Some(Arc::new(proxy)),
+        app_user: false,
     })
 }
 

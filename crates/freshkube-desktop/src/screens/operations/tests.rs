@@ -679,6 +679,10 @@ fn an_empty_roster_says_so_in_the_table(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let empty = window.find("ops-empty");
         assert!(empty.visible());
+        assert_eq!(
+            window.find("ops-empty-message").label(),
+            Some("Couldn't read the node list from Talos or Kubernetes, so available nodes are unknown and there is nothing to select.")
+        );
         assert!(empty.bounds().top() >= window.find(("ops-sort", 0usize)).bounds().bottom());
         assert!(window.try_find(row(0)).is_none());
     })
@@ -1120,4 +1124,114 @@ fn safety_g10_a_read_only_cluster_refuses_review_and_starts_nothing(cx: &mut Tes
         assert!(window.find("confirm-dialog").visible());
     })
     .unwrap();
+}
+
+// ---- #854: what the cluster says before an operation is offered ----
+
+/// The app's offer desk, bound to example data that answers `shape`.
+fn offers_answering(cx: &mut TestAppContext, shape: freshkube_core::access::example::Shape) {
+    cx.update(|cx| {
+        let desk = freshkube_reads::existing_offer_desk(cx).expect("the screen made the desk");
+        let source = crate::resources::ClusterSource {
+            id: "example-access".into(),
+            context: "prod-fra".into(),
+            access: crate::resources::ClusterAccess::EXAMPLE,
+        };
+        desk.update(cx, |desk, cx| {
+            desk.set_example(shape);
+            desk.bind(Some(&source), cx);
+        });
+    });
+}
+
+/// The selection rests: the clock passes the pause before the desk asks.
+fn settle(cx: &mut TestAppContext) {
+    cx.executor()
+        .advance_clock(freshkube_reads::OFFER_PAUSE + Duration::from_millis(1));
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_plan_the_cluster_refuses_says_why_and_cannot_be_reviewed(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    offers_answering(cx, freshkube_core::access::example::Shape::ActionsRefused);
+    // The plan is on show: the nodes picked are asked about. The example
+    // allows the node patch and refuses evictions, so a drain says why.
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.activate(window, cx));
+    })
+    .unwrap();
+    settle(cx);
+    render(cx, handle);
+    cx.update_window(handle.into(), |_, window, cx| {
+        let blocked = window.find("ops-blocked").label().unwrap().to_owned();
+        assert!(
+            blocked.contains("Needs create on pods/eviction cluster-wide"),
+            "{blocked}"
+        );
+        // Shown, not hidden: Review is there, and opens nothing.
+        window.click("ops-review", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("confirm-dialog").is_none());
+    })
+    .unwrap();
+    // A cordon needs only the node patch, which the example allows.
+    set_operation(cx, handle, &screen, OperationKind::Cordon);
+    settle(cx);
+    render(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("ops-blocked").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_plan_whose_review_did_not_answer_is_not_blocked_by_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    offers_answering(cx, freshkube_core::access::example::Shape::Failed);
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.activate(window, cx));
+    })
+    .unwrap();
+    settle(cx);
+    render(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("ops-blocked").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn only_the_nodes_in_the_plan_are_asked_about(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    offers_answering(cx, freshkube_core::access::example::Shape::Full);
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.activate(window, cx));
+    })
+    .unwrap();
+    settle(cx);
+    let asked = |cx: &mut TestAppContext| -> Vec<String> {
+        cx.read(|cx| {
+            freshkube_reads::existing_offer_desk(cx)
+                .unwrap()
+                .read(cx)
+                .asked()
+                .iter()
+                .filter(|question| question.resource == "nodes")
+                .filter_map(|question| question.name.clone())
+                .collect()
+        })
+    };
+    assert_eq!(asked(cx), ["talos-cp-fra1-01"]);
+    // Another node joins the plan, and only then is it asked about.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row(1), cx);
+    })
+    .unwrap();
+    settle(cx);
+    assert_eq!(asked(cx), ["talos-cp-fra1-01", "talos-cp-fra1-02"]);
 }

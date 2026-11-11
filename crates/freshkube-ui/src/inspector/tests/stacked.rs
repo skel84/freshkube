@@ -40,6 +40,12 @@ fn a_short_stacked_split_keeps_a_whole_row_and_the_first_field(cx: &mut TestAppC
             rows.bottom()
         );
         assert!(row.bottom() <= footer.top() + px(0.5));
+        // Three rows stay visible beside the inspector, not one.
+        assert!(
+            rows.size.height >= dp_px(3. * crate::table::ROW_HEIGHT, window) - px(0.5),
+            "the table keeps under three rows: {:?}",
+            rows.size.height
+        );
         assert!(
             field.bottom() <= inspector.bottom(),
             "the first field shows: it ends at {:?}, the inspector at {:?}",

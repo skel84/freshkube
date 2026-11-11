@@ -28,12 +28,25 @@ pub(super) struct Tab {
 }
 
 pub(super) fn open(cx: &mut TestAppContext, shape: &str, width: f32, height: f32) -> Tab {
+    open_with(cx, shape, None, width, height)
+}
+
+/// [`open`] with `FRESHKUBE_TABS` set, when given.
+pub(super) fn open_with(
+    cx: &mut TestAppContext,
+    shape: &str,
+    tabs: Option<&str>,
+    width: f32,
+    height: f32,
+) -> Tab {
     // The session runs on a real Tokio runtime and a real loopback socket.
     cx.executor().allow_parking();
     let (runtime, handle, pilot) = mount(
         cx,
-        GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| {
-            (name == "FRESHKUBE_AGENT").then(|| shape.into())
+        GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| match name {
+            "FRESHKUBE_AGENT" => Some(shape.into()),
+            "FRESHKUBE_TABS" => tabs.map(Into::into),
+            _ => None,
         })),
         width,
         height,
@@ -868,7 +881,7 @@ fn the_tab_fits_a_small_window_and_a_large_text_size(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_shapes_open_where_they_say(cx: &mut TestAppContext) {
-    for name in AgentShape::NAMES {
+    for &(name, _) in AgentShape::SHAPES {
         let shape = AgentShape::parse(name).unwrap();
         let tab = open(cx, name, 1280., 880.);
         if shape == AgentShape::SaveFailed {
@@ -1396,4 +1409,69 @@ fn a_person_who_scrolled_up_is_left_where_they_are(cx: &mut TestAppContext) {
         cx.run_until_parked();
         assert!(body_at_end(&tab, cx).0);
     }
+}
+
+/// #1006: a transcript longer than the tab shows Kit's scrollbar over its
+/// right edge, as other scrolling panes do, and it follows the body's scroll.
+#[gpui_kit::test]
+fn a_transcript_longer_than_the_tab_shows_its_scrollbar(cx: &mut TestAppContext) {
+    let tab = open(cx, "no-tools", 760., 560.);
+    cx.update_window(tab.handle, |_, window, cx| {
+        crate::text_size::set(18., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    tab.answered(cx);
+    let (_, room) = body_at_end(&tab, cx);
+    assert!(room > 0., "the body is longer than the tab");
+    cx.update_window(tab.handle, |_, window, cx| {
+        window.render_frame(cx);
+        let body = window.find("agent-body").bounds();
+        let scroll_area = window.find("agent-scroll").bounds();
+        let thumbs = crate::desktop::testing::painted_in_lane(window, body, scroll_area);
+        assert!(
+            thumbs > 0,
+            "no scrollbar thumb is painted in the lane at the right of {body:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// #1006: dragging the scrollbar's thumb up leaves the end and stays there:
+/// the tab stops following the newest answer as soon as the thumb is pressed,
+/// since Kit redraws the view while it drags and a pinned tab would scroll
+/// straight back to the end.
+#[gpui_kit::test]
+fn dragging_the_scrollbar_up_leaves_the_end_and_stays_there(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    let tab = open(cx, "no-tools", 760., 560.);
+    cx.update_window(tab.handle, |_, window, cx| {
+        crate::text_size::set(18., cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    tab.answered(cx);
+    assert!(body_at_end(&tab, cx).0, "the answer is in view");
+    assert!(cx.update(|cx| tab.view.read(cx).pinned), "and followed");
+    let (from, to) = cx
+        .update_window(tab.handle, |_, window, _| {
+            let body = window.find("agent-body").bounds();
+            let area = window.find("agent-scroll").bounds();
+            let thumbs = crate::desktop::testing::lane_thumbs(window, body, area);
+            assert_eq!(thumbs.len(), 1, "{thumbs:?}");
+            let thumb = thumbs[0];
+            let up = gpui_kit::point(gpui_kit::px(0.), -thumb.size.height * 2.);
+            (thumb.center(), thumb.center() + up)
+        })
+        .unwrap();
+    cx.update_window(tab.handle, |_, window, cx| window.drag(from, to, cx))
+        .unwrap();
+    tab.draw(cx);
+    tab.draw(cx);
+    assert!(
+        !cx.update(|cx| tab.view.read(cx).pinned),
+        "pressing the thumb stops following"
+    );
+    let (at_end, _) = body_at_end(&tab, cx);
+    assert!(!at_end, "the drag left the end and a frame pulled it back");
 }

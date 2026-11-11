@@ -431,7 +431,7 @@ const CONFIG_DRIFT: &str = "Configuration drift detected across nodes";
 const TIME_UNSYNCHRONIZED: &str = "Time is not synchronized on: ";
 const ETCD_UNSAFE: &str = "etcd is not safe for a single-member disruptive operation";
 const ETCD_UNAVAILABLE: &str = "etcd pre-operation state is unavailable or partial";
-const ROSTER_UNAVAILABLE: &str = "Neither Talos discovery nor the Kubernetes roster is available";
+const ROSTER_UNAVAILABLE: &str = "Couldn't read the node list from Talos or Kubernetes";
 
 impl LifecycleAlert {
     pub fn kind(&self) -> LifecycleAlertKind {
@@ -1868,5 +1868,9 @@ iV6NtZU=\n-----END CERTIFICATE-----\n";
                 .iter()
                 .any(|alert| alert.health == HealthIndicator::Unknown)
         );
+        assert!(alerts.iter().any(|alert| {
+            alert.kind() == LifecycleAlertKind::RosterUnavailable
+                && alert.message == "Couldn't read the node list from Talos or Kubernetes"
+        }));
     }
 }

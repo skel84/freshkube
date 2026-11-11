@@ -17,14 +17,20 @@
 mod board;
 mod columns;
 pub mod example;
+mod offer;
 mod request;
 mod review;
 
 pub use board::{Answer, Board, Changed, PARALLEL, RowKey, RowView, Ticket};
 pub use columns::{COLUMNS, Cell, Cells, Column, Need, Rule, RulesAnswer};
+pub use offer::{
+    CAP as OFFER_CAP, COULDNT_CHECK, Offer, OfferTicket, Offers, TTL as OFFER_TTL, Verdict,
+};
 pub use request::request_text;
 pub use review::{Namespaces, Who, list_namespaces, nodes, rules, who};
 
+#[cfg(test)]
+mod offer_tests;
 #[cfg(test)]
 mod tests;
 

@@ -2207,7 +2207,8 @@ fn a_destination_changed_in_settings_reaches_a_promote_dialog_the_shell_built(
 
 /// #887: with the fix bar and the banners up in a short window at the
 /// largest text size, the trail keeps at least three rows in view or
-/// reachable by scrolling the page, and every banner still says why: also
+/// reachable by scrolling the page (the header and one row before any
+/// scrolling, since #1004 keeps the block two lines tall), and every banner still says why: also
 /// with a failed refresh, whose banner leads the capped block.
 #[gpui_kit::test]
 fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut TestAppContext) {
@@ -2281,11 +2282,13 @@ fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut Test
                 table.size.height >= row * 3.,
                 "table {table:?} for rows of {row:?}"
             );
-            // And the header with two rows (three rows' height) sit above the
-            // status bar before any scrolling, the banners having given way.
+            // And the header with a row (two rows' height) sit above the
+            // status bar before any scrolling, the banners having given way
+            // as far as their two-line floor (#1004) lets them; the rest of
+            // the trail is a scroll of the page away.
             let status = window.find("status-bar").bounds();
             assert!(
-                table.top() + row * 3. <= status.top(),
+                table.top() + row * 2. <= status.top(),
                 "table {table:?} for rows of {row:?} under the status bar {status:?}"
             );
             // A wheel over the block scrolls the block and leaves the page.
@@ -2311,6 +2314,45 @@ fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut Test
         })
         .unwrap();
     }
+}
+
+/// #1004: with banners at 760x560 and text 20 the capped block shows at
+/// least two measured lines whole, so no scroll position cuts a line in half.
+/// A failed refresh with a one-word reason is a real two-line banner (its
+/// title and the reason), laid out at this size: the block's viewport, the
+/// block inside its padding, is at least as tall as it.
+#[gpui_kit::test]
+fn the_capped_block_shows_two_measured_lines_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::GitHubLimited);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        change(&view, cx)
+            .unwrap()
+            .update(cx, |page, cx| page.fail_read("x", window, cx));
+        window.render_frame(cx);
+        for _ in 0..10 {
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        window.render_frame(cx);
+        assert!(freshkube_ui::page::is_short(window));
+        let notes = window.find("change-notes").bounds();
+        let banner = window.find("change-stale").bounds();
+        let viewport = notes.size.height
+            - freshkube_ui::ui::dp_px(freshkube_ui::page::CAPPED_NOTES_PAD, window) * 2.;
+        assert!(
+            viewport >= banner.size.height - gpui_kit::px(1.),
+            "the block's viewport {viewport:?} in {notes:?} is under a two-line banner {banner:?}"
+        );
+    })
+    .unwrap();
 }
 
 /// #981: at 760x560 with text 20 the pull request banner drops its secondary

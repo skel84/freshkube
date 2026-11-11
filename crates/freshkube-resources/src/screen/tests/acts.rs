@@ -48,7 +48,7 @@ fn opened(
     (runtime, screen, handle, heard)
 }
 
-fn row_menu(
+pub(super) fn row_menu(
     cx: &mut TestAppContext,
     handle: AnyWindowHandle,
     screen: &Entity<ResourcesScreen>,
@@ -257,7 +257,7 @@ fn nudges() -> [(
     &'static [&'static str],
     &'static [&'static str],
     &'static [Everyday],
-); 3] {
+); 4] {
     [
         (
             "applications.argoproj.io",
@@ -279,6 +279,13 @@ fn nudges() -> [(
             &["w"],
             &["resource-renew"],
             &[Everyday::Renew],
+        ),
+        (
+            "externalsecrets.external-secrets.io",
+            &["Refresh ExternalSecret"],
+            &["shift-r"],
+            &["resource-externalsecret-refresh"],
+            &[Everyday::ExternalSecretRefresh],
         ),
     ]
 }

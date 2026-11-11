@@ -440,13 +440,14 @@ impl Render for DatabasesScreen {
                                 "databases-notices",
                                 // Two lines, the banner's padding and this
                                 // inset fit whole before scrolling begins.
-                                if short { dp(80.).into() } else { Length::Auto },
+                                if short { dp(60.).into() } else { Length::Auto },
                                 &self.notes_scroll,
                                 notice.into_iter().chain(failure),
                                 // A bottom edge, so a clipped banner reads as
                                 // scrollable, not cut off by the table.
                                 Some(palette(cx).line),
                                 None,
+                                window,
                                 cx,
                             )
                             .flex_none()

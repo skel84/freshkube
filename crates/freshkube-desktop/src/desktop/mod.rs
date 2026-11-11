@@ -54,7 +54,7 @@ mod system_services;
 mod tabs;
 mod target;
 #[cfg(test)]
-mod testing;
+pub(crate) mod testing;
 #[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]
@@ -524,6 +524,11 @@ impl Pilot {
             KeyBinding::new("down", settings::NextCluster, Some(settings::CONTEXT)),
             KeyBinding::new("up", settings::PreviousCluster, Some(settings::CONTEXT)),
             KeyBinding::new("escape", settings::ClearCluster, Some(settings::CONTEXT)),
+            KeyBinding::new(
+                "escape",
+                crate::screens::topology::ClearBox,
+                Some(crate::screens::topology::CONTEXT),
+            ),
             KeyBinding::new("a", settings::AddCluster, Some(settings::CONTEXT)),
             // A key shows its last binding: E, as Enter on a list opens.
             KeyBinding::new("enter", settings::EditCluster, Some(settings::CONTEXT)),

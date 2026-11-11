@@ -250,3 +250,40 @@ fn the_toolbar_is_one_row_wide_and_two_narrow_or_large(cx: &mut TestAppContext) 
         );
     }
 }
+
+/// With view tabs over the page (two or more), the dock fitted to the window
+/// still ends above the status bar: it keeps to the page cell as laid out,
+/// whatever the window draws outside or over it.
+#[gpui_kit::test]
+fn a_maximized_dock_ends_above_the_status_bar_under_view_tabs(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = crate::desktop::testing::mount(
+        cx,
+        crate::GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_TABS").then(|| "clusters".into())
+        })),
+        760.,
+        560.,
+    );
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    cx.update_window(handle, |_, _, cx| {
+        dock.update(cx, |dock, cx| dock.set_maximized(true, cx))
+    })
+    .unwrap();
+    settle(handle, cx);
+    cx.update_window(handle, |_, window, _| {
+        let status = window.find("status-bar").bounds();
+        let cell = window.find("page-cell").bounds();
+        let dock = window.find("dock").bounds();
+        assert!(
+            cell.bottom() <= status.top() + px(1.),
+            "the page cell {cell:?} ends above the status bar {status:?}"
+        );
+        assert!(
+            dock.bottom() <= status.top() + px(1.) && dock.top() >= cell.top() - px(1.),
+            "the dock {dock:?} stays inside the page cell {cell:?}"
+        );
+    })
+    .unwrap();
+}

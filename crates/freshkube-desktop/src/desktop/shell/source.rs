@@ -153,6 +153,7 @@ impl Pilot {
             lines.push(self.page_line(Page::Gateways, None).into());
             lines.push(self.page_line(Page::GatewayClasses, None).into());
             lines.push(self.page_line(Page::Topology, None).into());
+            lines.push(self.page_line(Page::Certificates, None).into());
             lines.push(Section::new("nav-networking-kinds", "Kinds").into());
         }
         if slug == "access-control" {

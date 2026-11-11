@@ -275,10 +275,24 @@ pub async fn run(args: &ChangesArgs, target: &Target) -> Result<Report, Stop> {
 }
 
 fn problem_report(args: &ChangesArgs, problem: &Problem) -> Report {
+    // The same keys as an answer has, with nothing found.
     let mut json = Map::new();
     json.insert("application".into(), json!(args.app));
+    json.insert("stages".into(), json!([]));
+    json.insert("stage".into(), json!(args.stage));
+    json.insert(
+        "since".into(),
+        json!(
+            args.since
+                .as_deref()
+                .and_then(|text| span(text).ok())
+                .map(|span| span.num_seconds())
+        ),
+    );
+    json.insert("github".into(), json!("anonymous"));
     json.insert("changes".into(), json!([]));
     json.insert("notes".into(), json!([]));
+    json.insert("sign_in".into(), json!([]));
     json.insert("problems".into(), json!([problem.json()]));
     Report {
         json,

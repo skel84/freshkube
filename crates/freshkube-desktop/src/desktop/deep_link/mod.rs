@@ -75,6 +75,7 @@ pub(super) fn page_of(page: LinkPage) -> Page {
         LinkPage::Gateways => Page::Gateways,
         LinkPage::GatewayClasses => Page::GatewayClasses,
         LinkPage::Topology => Page::Topology,
+        LinkPage::Certificates => Page::Certificates,
         LinkPage::Access => Page::Access,
         LinkPage::Resources => Page::Resources,
         LinkPage::Etcd => Page::Etcd,

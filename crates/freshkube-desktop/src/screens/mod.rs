@@ -6,6 +6,7 @@
 //! to the visible screen only. A screen owns its requests, its data and its
 //! example data; hidden screens never contact the cluster.
 mod access;
+mod certificates;
 mod databases;
 mod diagnostics;
 mod etcd;
@@ -19,10 +20,13 @@ mod processes;
 mod routes;
 mod security;
 mod storage;
-mod topology;
+pub(crate) mod topology;
 mod workloads;
 
 pub(crate) use access::AccessScreen;
+pub(crate) use certificates::CertificatesScreen;
+#[cfg(test)]
+pub(crate) use databases::ExploreExample;
 pub(crate) use databases::{
     CorootInput, DatabasesScreen,
     query_link::{Live, QueryRequest, Shared},

@@ -29,33 +29,26 @@ pub enum Shape {
 }
 
 impl Shape {
-    pub const NAMES: [&'static str; 10] = [
-        "mixed",
-        "healthy",
-        "nothing",
-        "draining",
-        "legacy",
-        "pending",
-        "no-selector",
-        "external-name",
-        "refused",
-        "services-refused",
+    /// Every word the knob takes: the one list `parse` looks words up in
+    /// and `docs/DEBUG_KNOBS.md`'s test compares with the doc's shape lines.
+    pub const SHAPES: &'static [(&'static str, Self)] = &[
+        ("mixed", Self::Mixed),
+        ("healthy", Self::Healthy),
+        ("nothing", Self::Nothing),
+        ("draining", Self::Draining),
+        ("legacy", Self::Legacy),
+        ("pending", Self::Pending),
+        ("no-selector", Self::NoSelector),
+        ("external-name", Self::ExternalName),
+        ("refused", Self::Refused),
+        ("services-refused", Self::ServicesRefused),
     ];
 
     pub fn parse(name: &str) -> Option<Self> {
-        Some(match name {
-            "mixed" => Self::Mixed,
-            "healthy" => Self::Healthy,
-            "nothing" => Self::Nothing,
-            "draining" => Self::Draining,
-            "legacy" => Self::Legacy,
-            "pending" => Self::Pending,
-            "no-selector" => Self::NoSelector,
-            "external-name" => Self::ExternalName,
-            "refused" => Self::Refused,
-            "services-refused" => Self::ServicesRefused,
-            _ => return None,
-        })
+        Self::SHAPES
+            .iter()
+            .find(|(candidate, _)| *candidate == name)
+            .map(|(_, shape)| *shape)
     }
 }
 
@@ -201,4 +194,36 @@ pub(crate) fn reading(facts: ServiceFacts, shape: Shape, with_pods: bool) -> Ser
         }
     });
     ServiceReading::new(facts, published, unpublished)
+}
+
+#[cfg(test)]
+mod parse_pins {
+    use super::*;
+
+    /// Every word the parser takes, with what it means; written down before
+    /// the parser looked its words up in a table.
+    #[test]
+    fn parse_takes_exactly_these_words() {
+        let pinned = [
+            ("mixed", Shape::Mixed),
+            ("healthy", Shape::Healthy),
+            ("nothing", Shape::Nothing),
+            ("draining", Shape::Draining),
+            ("legacy", Shape::Legacy),
+            ("pending", Shape::Pending),
+            ("no-selector", Shape::NoSelector),
+            ("external-name", Shape::ExternalName),
+            ("refused", Shape::Refused),
+            ("services-refused", Shape::ServicesRefused),
+        ];
+        for (word, shape) in pinned {
+            assert!(
+                matches!(Shape::parse(word), Some(found) if found == shape),
+                "{word}"
+            );
+        }
+        for unknown in ["", " ", "nope", "Firing", "mixed ", " mixed", "MIXED"] {
+            assert!(Shape::parse(unknown).is_none(), "{unknown:?}");
+        }
+    }
 }

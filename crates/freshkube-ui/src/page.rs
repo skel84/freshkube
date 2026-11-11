@@ -143,13 +143,60 @@ pub fn inset() -> Div {
         .py(dp(PANE_PADDING_Y))
 }
 
+/// The padding in dp the change page puts around its capped block: tighter
+/// than a pane's, since the block is for banners that must leave their page
+/// room.
+pub const CAPPED_NOTES_PAD: f32 = 6.;
+
+/// The size of banner text, in dp, which the floor is measured in.
+const BANNER_TEXT: f32 = 12.5;
+
+/// GPUI's default line height, a multiple of the font size (`phi()`, the
+/// golden ratio), which neither `banner_frame` nor Kit's root changes.
+fn line_height_ratio() -> f32 {
+    (1. + 5_f32.sqrt()) / 2.
+}
+
+/// A banner's own frame as `banner_frame` draws it: 0.625 rem above and
+/// below, which scales with the text, and a 1 px border either side.
+const BANNER_FRAME_REMS: f32 = 2. * 0.625;
+const BANNER_BORDER: f32 = 2.;
+
+/// The least a capped block's viewport shows: two laid-out lines of banner
+/// text, as GPUI rounds a line, and, where the banners carry their own frame
+/// (no `tone`), that frame too. A cap that leaves less would cut a line at
+/// every scroll position, so the cap yields to this floor. It is a bound on
+/// the cap, never a minimum: a block whose notes are shorter stays as short.
+fn floor(tone: Option<Tone>, window: &Window) -> Pixels {
+    let font = BANNER_TEXT * f32::from(window.rem_size()) / crate::ui::BASE_TEXT;
+    let lines = 2. * (font * line_height_ratio()).round();
+    let frame = BANNER_FRAME_REMS * f32::from(window.rem_size()) + BANNER_BORDER;
+    px(lines + if tone.is_none() { frame } else { 0. })
+}
+
+/// The cap in pixels where it is one: pixels, or rems at the window's rem
+/// size.
+fn cap_pixels(cap: Length, window: &Window) -> Option<Pixels> {
+    use gpui_kit::{AbsoluteLength, DefiniteLength};
+    match cap {
+        Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels))) => Some(pixels),
+        Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Rems(rems))) => {
+            Some(rems.0 * window.rem_size())
+        }
+        _ => None,
+    }
+}
+
 /// Notes under a page's header, capped to leave room for its body. The cap
 /// accepts pixels or dp; [`Length::Auto`] keeps an uncapped block scrollable.
-/// An optional bottom hairline counts towards the cap. The caller keeps its
-/// padding on the outer frame, outside the scroll viewport and its overlay.
+/// It bounds the scroll viewport, the content box, so the padding the caller
+/// puts on the outer frame, a bottom hairline and a tone's frame all sit
+/// outside it. It gives way to a floor of two lines of banner text, so no
+/// scroll position cuts a line whatever the cap and the text size.
 /// The scrollbar stays visible whenever the notes overflow the cap.
 /// With a tone, children are banner contents: the block draws their shared
 /// border, background and padding outside the viewport.
+#[allow(clippy::too_many_arguments)] // the id, cap, content, edge, tone and the window it measures in
 pub fn capped_notes(
     id: impl Into<ElementId>,
     cap: impl Into<Length>,
@@ -157,6 +204,7 @@ pub fn capped_notes(
     children: impl IntoIterator<Item = impl IntoElement>,
     bottom_edge: Option<Hsla>,
     tone: Option<Tone>,
+    window: &Window,
     cx: &App,
 ) -> Observed<Stateful<Div>> {
     let cap: Length = cap.into();
@@ -169,7 +217,6 @@ pub fn capped_notes(
         .when_some(bottom_edge, |this, color| {
             this.border_b_1().border_color(color)
         })
-        .max_h(cap)
         .child(
             v_flex()
                 .relative()
@@ -179,6 +226,10 @@ pub fn capped_notes(
                     div()
                         .id((id.clone(), "viewport"))
                         .min_h_0()
+                        .when_some(cap_pixels(cap, window), |this, cap| {
+                            this.max_h(cap.max(floor(tone, window)))
+                        })
+                        .when(cap_pixels(cap, window).is_none(), |this| this.max_h(cap))
                         .overflow_y_scroll()
                         .restrict_scroll_to_axis()
                         .track_scroll(scroll)
@@ -345,6 +396,15 @@ pub fn disabled_item(label: impl Into<SharedString>) -> MenuItems {
     Rc::new(move |menu, _, _| menu.item(PopupMenuItem::new(label.clone()).disabled(true)))
 }
 
+/// [`disabled_item`] that says why: the reason, in plain text, under it.
+pub fn refused_item(label: impl Into<SharedString>, reason: impl Into<SharedString>) -> MenuItems {
+    let (label, reason) = (label.into(), reason.into());
+    Rc::new(move |menu, _, _| {
+        menu.item(PopupMenuItem::new(label.clone()).disabled(true))
+            .item(PopupMenuItem::label(reason.clone()))
+    })
+}
+
 /// The folded form of a control that opens a menu or picks one of several:
 /// its `items` under `label`.
 pub fn submenu(label: impl Into<SharedString>, items: MenuItems) -> MenuItems {
@@ -420,9 +480,22 @@ fn value_label(label: &str, value: &str) -> (SharedString, bool) {
 pub struct Fold {
     items: MenuItems,
     changed: Option<SharedString>,
+    stamp: u64,
 }
 
 impl Fold {
+    /// What the folded form shows that can change while the "…" menu is
+    /// open, such as a reason line. The open menu is built again only when
+    /// the stamps of its folds changed, so a form that never changes needs
+    /// none, and one with the same stamp is taken to show the same.
+    pub fn stamped(mut self, stamp: impl std::hash::Hash) -> Self {
+        use std::hash::Hasher as _;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        stamp.hash(&mut hasher);
+        self.stamp = hasher.finish();
+        self
+    }
+
     /// The note, or `None` while the control is at its default.
     pub fn changed(mut self, note: Option<SharedString>) -> Self {
         self.changed = note;
@@ -435,6 +508,7 @@ impl From<MenuItems> for Fold {
         Self {
             items,
             changed: None,
+            stamp: 0,
         }
     }
 }
@@ -668,6 +742,22 @@ struct Fit {
     chips: Cell<f32>,
     controls: RefCell<Vec<f32>>,
     placement: Cell<Placement>,
+    /// What the "…" menu folds, as the header last drew it: the menu builds
+    /// from this each time, so one that is open can be built again with
+    /// what the page knows now ([`menu::refresh_open`]).
+    forms: RefCell<Vec<MenuItems>>,
+    /// What the folds' stamps added up to when the header last drew, and
+    /// what they were when the open "…" menu was last built.
+    stamp: Cell<u64>,
+    built: Cell<u64>,
+}
+
+impl Fit {
+    fn fill(&self, menu: PopupMenu, window: &mut Window, cx: &mut Context<PopupMenu>) -> PopupMenu {
+        self.built.set(self.stamp.get());
+        let forms = self.forms.borrow().clone();
+        forms.iter().fold(menu, |menu, form| form(menu, window, cx))
+    }
 }
 
 /// `element` in a box of its own width, whose width lands in `slot` each
@@ -895,10 +985,12 @@ impl PageHeader {
         let mut shown = Vec::new();
         let mut slots = Vec::new();
         let mut forms = Vec::new();
+        let mut stamp = 0u64;
         let mut notes = Vec::new();
         for (ix, control) in self.controls.into_iter().enumerate() {
             if folded.contains(&ix) {
                 if let Some(fold) = control.fold {
+                    stamp = stamp.rotate_left(7) ^ fold.stamp;
                     forms.push(fold.items);
                     notes.extend(fold.changed);
                 }
@@ -913,6 +1005,8 @@ impl PageHeader {
                     .child(control.element),
             );
         }
+        *state.forms.borrow_mut() = forms.clone();
+        state.stamp.set(stamp);
         let more = (!forms.is_empty()).then(|| {
             let dot = (!notes.is_empty()).then(|| {
                 badge_dot(Tone::Accent, Some(cx.theme().background), cx)
@@ -940,18 +1034,31 @@ impl PageHeader {
                         .icon(IconName::Ellipsis)
                         .accessibility_label(tip.clone())
                         .tooltip(tip)
-                        .dropdown_menu_with_anchor(
-                            Anchor::TopRight,
-                            move |mut menu, window, cx| {
+                        .dropdown_menu_with_anchor(Anchor::TopRight, {
+                            let state = state.clone();
+                            move |menu, window, cx| {
                                 // Escape gives the keyboard back, also
                                 // when no folded control has a key.
                                 menu::return_focus(None, window, cx);
-                                for form in &forms {
-                                    menu = form(menu, window, cx);
-                                }
-                                menu
-                            },
-                        ),
+                                let again = state.clone();
+                                menu::rebuildable(
+                                    menu::Rebuild(Rc::new(move |_| {
+                                        // Only when a fold's stamp changed: a
+                                        // rebuild drops the highlight and any
+                                        // open submenu.
+                                        (again.stamp.get() != again.built.get()).then(|| {
+                                            let again = again.clone();
+                                            menu::builder(move |menu, window, cx| {
+                                                again.fill(menu, window, cx)
+                                            })
+                                        })
+                                    })),
+                                    window,
+                                    cx,
+                                );
+                                state.fill(menu, window, cx)
+                            }
+                        }),
                 )
                 .children(dot)
         });
@@ -1072,7 +1179,7 @@ mod tests {
     }
 
     impl Render for PaddedNotes {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             v_flex().id("parent").test_support().size_full().child(
                 capped_notes(
                     "notes",
@@ -1088,6 +1195,7 @@ mod tests {
                     .test_support()],
                     Some(palette(cx).line),
                     None,
+                    window,
                     cx,
                 )
                 .px(dp(PANE_PADDING))
@@ -1142,7 +1250,7 @@ mod tests {
     }
 
     impl Render for Notes {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             v_flex().size_full().child(capped_notes(
                 "notes",
                 self.cap,
@@ -1150,6 +1258,7 @@ mod tests {
                 [div().flex_none().h(dp(180.))],
                 None,
                 self.tone,
+                window,
                 cx,
             ))
         }
@@ -1158,6 +1267,95 @@ mod tests {
     #[gpui_kit::test]
     fn capped_notes_show_a_scrollbar_only_when_their_content_overflows(cx: &mut TestAppContext) {
         assert_capped_notes_scroll(cx, None);
+    }
+
+    struct TwoLines;
+
+    impl Render for TwoLines {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            // A real banner of two lines, whose laid-out height is what the
+            // floor has to show whole.
+            let banner = crate::ui::banner(
+                Tone::Warn,
+                None,
+                v_flex().child("First line").child("Second line"),
+                None,
+                cx,
+            )
+            .id("two-lines")
+            .test_support();
+            v_flex().size_full().child(capped_notes(
+                "notes",
+                dp(10.),
+                &SCROLL.with(|scroll| scroll.clone()),
+                [banner],
+                None,
+                None,
+                window,
+                cx,
+            ))
+        }
+    }
+
+    thread_local! {
+        static SCROLL: ScrollHandle = ScrollHandle::new();
+    }
+
+    /// #1004: a cap below two lines gives way to the floor, which shows two
+    /// measured lines of a real banner whole at every text size.
+    #[gpui_kit::test]
+    fn a_cap_under_two_lines_gives_way_to_two_measured_lines(cx: &mut TestAppContext) {
+        for text in [13., 20.] {
+            cx.update(|cx| {
+                gpui_kit::init(cx);
+                crate::theme::install(cx);
+                crate::text_size::install(None, cx);
+                crate::text_size::set(text, cx);
+                cx.set_reduce_motion(true);
+            });
+            let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+                Root::new(cx.new(|_| TwoLines), window, cx)
+            });
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let banner = window.find("two-lines").bounds().size.height;
+                let viewport = SCROLL.with(|scroll| scroll.bounds().size.height);
+                assert!(
+                    viewport >= banner - px(1.),
+                    "text {text}: the viewport {viewport:?} is under the banner {banner:?}"
+                );
+            })
+            .unwrap();
+        }
+    }
+
+    /// The floor is a bound on the cap, not a minimum: notes shorter than it
+    /// leave no blank space under them.
+    #[gpui_kit::test]
+    fn a_short_note_leaves_no_blank_space_under_it(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let scroll = ScrollHandle::new();
+        let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+            let view = cx.new(|_| Notes {
+                scroll: scroll.clone(),
+                cap: dp(200.).into(),
+                tone: None,
+            });
+            Root::new(view, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            // Notes draws one 180 dp child: taller than the floor, under the cap.
+            let height = scroll.bounds().size.height;
+            assert!((height - dp_px(180., window)).abs() <= px(1.), "{height:?}");
+        })
+        .unwrap();
     }
 
     #[gpui_kit::test]
@@ -1178,7 +1376,7 @@ mod tests {
         let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
             let view = cx.new(|_| Notes {
                 scroll: scroll.clone(),
-                cap: dp(48.).into(),
+                cap: dp(70.).into(),
                 tone,
             });
             notes = Some(view.clone());
@@ -1187,7 +1385,7 @@ mod tests {
         cx.update_window(handle.into(), |_, window, cx| {
             window.render_frame(cx);
             let viewport = window.find("notes").bounds();
-            assert!((viewport.size.height - dp_px(48., window)).abs() <= px(1.));
+            assert!((scroll.bounds().size.height - dp_px(70., window)).abs() <= px(1.));
             // The empty content paints nothing: the only visible narrow quad
             // is the scrollbar thumb, even before any hover or scroll input.
             let thumb = |window: &Window| {

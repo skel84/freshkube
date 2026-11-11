@@ -11,6 +11,11 @@ use tokio::runtime::Handle;
 /// timeout so the server's own answer arrives first.
 pub(super) const READ_DEADLINE: Duration = Duration::from_secs(40);
 
+/// The Teleport route's job: `tsh status` and `tsh db ls` (20 s each), the
+/// proxy's ready wait (15 s) and the connect (10 s), with room to spare, so
+/// a slow link ends in one of Teleport's states, not a generic timeout.
+pub(super) const TELEPORT_DEADLINE: Duration = Duration::from_secs(75);
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn read<V, T, I>(
     view: &mut V,
@@ -26,13 +31,37 @@ pub(super) fn read<V, T, I>(
     T: Send + 'static,
     I: Clone + Eq + 'static,
 {
-    let request = slot(view).start(identity);
-    let (job, receiver) = spawn_job(
-        runtime,
+    read_within(
         READ_DEADLINE,
-        format!("Reading {what} timed out"),
+        view,
+        slot,
+        identity,
+        runtime,
+        what,
         work,
-    );
+        then,
+        cx,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn read_within<V, T, I>(
+    deadline: Duration,
+    view: &mut V,
+    slot: impl Fn(&mut V) -> &mut Loader<T, I> + Clone + 'static,
+    identity: I,
+    runtime: &Handle,
+    what: &'static str,
+    work: impl Future<Output = Result<T, String>> + Send + 'static,
+    then: impl Fn(&mut V, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) where
+    V: 'static,
+    T: Send + 'static,
+    I: Clone + Eq + 'static,
+{
+    let request = slot(view).start(identity);
+    let (job, receiver) = spawn_job(runtime, deadline, format!("Reading {what} timed out"), work);
     let stopped = format!("Reading {what} stopped unexpectedly");
     let landing = slot.clone();
     let task = cx.spawn(async move |this, cx| {

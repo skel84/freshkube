@@ -209,6 +209,17 @@ struct Miss {
     owner: Owner,
 }
 
+/// The listeners a route's parent reference fits (the trace's own choice),
+/// for the Certificates page, which asks which hosts a listener serves. A
+/// route that fits none gives none.
+pub fn listeners_for<'a>(
+    gateway: &'a GatewayFacts,
+    parent: &ParentRef,
+    route: &RouteFacts,
+) -> Vec<&'a Listener> {
+    fitting(gateway, parent, route).unwrap_or_default()
+}
+
 /// The listeners that fit the route by name, port, protocol, kind and
 /// hostname, in the Gateway's order. The namespace is the next step's.
 fn fitting<'a>(
@@ -463,6 +474,22 @@ pub(super) fn listener_step(
         .cloned()
         .collect();
     (step.quoting(asks, serves), usable)
+}
+
+/// The names of the listeners, of those given, that do not refuse the
+/// route's namespace: the ones the route may attach to (an unknown answer
+/// counts as not refused).
+pub(super) fn admitted_listeners(
+    gateway: &GatewayFacts,
+    listeners: &[Listener],
+    route: &RouteFacts,
+    inputs: &Inputs,
+) -> Vec<String> {
+    listeners
+        .iter()
+        .filter(|l| !matches!(allows(gateway, l, route, inputs).0, Allow::No(_)))
+        .map(|l| l.name.clone())
+        .collect()
 }
 
 /// Whether one listener lets the route's namespace attach.

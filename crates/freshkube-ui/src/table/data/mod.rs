@@ -1,12 +1,13 @@
 //! `DataTable`: the header, the virtualised rows and their selection, for
 //! any page whose entity implements [`TableSource`]. Generic rather than
 //! dynamic, so a 20,000-row list costs what a hand-written one does.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::hash::Hash;
 use std::ops::Range;
+use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::base::ObservedElement as Observed;
+use gpui_kit::base::{ElementExt as _, ObservedElement as Observed};
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::{ActiveTheme, Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -95,6 +96,12 @@ pub struct TableState {
     ids: TableIds,
     /// The loading rows the table last drew, stilled when it stops.
     loading: RefCell<Option<super::LoadingRows>>,
+    /// The list's height as the last frame drew it, and whether it has
+    /// changed since the selected row was last revealed. A stacked
+    /// Inspector shrinks the table when it opens, and a row in its lower
+    /// half would be left below the new edge.
+    list_height: Rc<Cell<Option<Pixels>>>,
+    resized: Rc<Cell<bool>>,
 }
 
 impl TableState {
@@ -106,6 +113,8 @@ impl TableState {
             sideways: ScrollHandle::new(),
             ids: TableIds::new(prefix),
             loading: RefCell::default(),
+            list_height: Rc::default(),
+            resized: Rc::default(),
         }
     }
 
@@ -306,6 +315,14 @@ pub trait TableSource: Sized + 'static {
     ) -> Vec<crate::menu::MenuAction> {
         Vec::new()
     }
+    /// The entries of `key`'s row menu as the page knows them now, for a
+    /// menu that is open while an answer lands ([`crate::menu::refresh_open`]).
+    /// Unlike [`row_menu`](Self::row_menu) it selects nothing, so it is empty
+    /// unless `key` is still the selected row; empty, the open menu is left
+    /// as it is.
+    fn row_menu_now(&self, _key: &Self::Key, _cx: &App) -> Vec<crate::menu::MenuAction> {
+        Vec::new()
+    }
     /// What replaces the rows until the first answer: the
     /// [`super::LoadingRows`] the page keeps, drawn still under the real
     /// header; the page draws their [`super::LoadingMotion`] over the table.
@@ -498,6 +515,11 @@ impl DataTable {
         };
         let loading = source.loading();
         state.track_loading(loading);
+        // The list changed height since the last frame: the selected row
+        // is brought into view in the new one.
+        if state.resized.take() {
+            reveal(source, ScrollStrategy::Nearest);
+        }
         let empty = if loading.is_some() {
             None
         } else {
@@ -511,9 +533,21 @@ impl DataTable {
             (None, None) => Some(source.line_count().min(max) as f32 * source.row_height()),
             (None, Some(_)) => None,
         });
+        let (height, resized) = (state.list_height.clone(), state.resized.clone());
         let list = div()
             .id(ids.list.clone())
             .test_support()
+            .on_prepaint(move |bounds, window, _| {
+                let now = bounds.size.height;
+                if height
+                    .replace(Some(now))
+                    .is_some_and(|before| before != now)
+                {
+                    resized.set(true);
+                    let view = window.current_view();
+                    window.on_next_frame(move |_, cx| cx.notify(view));
+                }
+            })
             .role(Role::ListBox)
             .aria_label(source.list_label())
             .map(|this| match list_height {
@@ -802,12 +836,39 @@ fn render_line<S: TableSource>(
                     .update(cx, |view, cx| view.row_menu(&key, window, cx))
                     .unwrap_or_default();
                 let (view, key) = (view.clone(), key.clone());
-                let live = move |cx: &App| {
-                    view.upgrade().is_some_and(|view| {
-                        let view = view.read(cx);
-                        view.selected_key() == Some(&key) && view.line_of(&key).is_some()
-                    })
+                let live = {
+                    let (view, key) = (view.clone(), key.clone());
+                    move |cx: &App| {
+                        view.upgrade().is_some_and(|view| {
+                            let view = view.read(cx);
+                            view.selected_key() == Some(&key) && view.line_of(&key).is_some()
+                        })
+                    }
                 };
+                // An answer that lands while the menu is open builds it again
+                // from the same row, if it is still the selected one.
+                let rebuild = {
+                    let (view, key, focus, live) = (view, key, focus.clone(), live.clone());
+                    crate::menu::Rebuild(Rc::new(move |cx| {
+                        let actions = view
+                            .upgrade()
+                            .filter(|_| live(cx))
+                            .map(|view| view.read(cx).row_menu_now(&key, cx))
+                            .filter(|actions| !actions.is_empty())?;
+                        let (focus, live) = (focus.clone(), live.clone());
+                        Some(crate::menu::builder(move |menu, window, cx| {
+                            crate::menu::actions(
+                                menu,
+                                actions,
+                                &focus,
+                                move |cx| live(cx),
+                                window,
+                                cx,
+                            )
+                        }))
+                    }))
+                };
+                crate::menu::rebuildable(rebuild, window, cx);
                 crate::menu::actions(menu, actions, &focus, live, window, cx)
             })
             .into_any_element(),

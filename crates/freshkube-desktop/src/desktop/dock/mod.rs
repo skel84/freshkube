@@ -21,6 +21,8 @@ mod saved;
 mod tests;
 mod view;
 
+use std::cell::Cell;
+use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::resources::{ResourceKind, builtin, runs_pods};
@@ -422,6 +424,12 @@ pub(crate) struct Dock {
     /// pod here, and it closes when following stops unless the person has
     /// used it (`follow.rs`).
     follow_tab: Option<u64>,
+    /// Where the page cell's room for the dock begins and ends, as laid
+    /// out: its top under whatever the cell draws over the page (the follow
+    /// strip, its spacer) and its bottom, which the status bar bounds. The
+    /// shell fills it while it draws the cell; the dock keeps to what it
+    /// measures, so nothing drawn outside or over the cell is forgotten.
+    cell_room: Rc<Cell<CellRoom>>,
     /// Where the dock was last laid out, so the shell can tell the person's
     /// input in the dock (the agent's own tab) from input in the page.
     bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
@@ -476,6 +484,7 @@ impl Dock {
             count_label: SharedString::default(),
             agent_shape,
             follow_tab: None,
+            cell_room: Default::default(),
             bounds: Default::default(),
         };
         if let Some(restore) = restore {
@@ -504,10 +513,11 @@ impl Dock {
     /// selected tab needs, at most the page cell less the page's least.
     /// Fit to window takes the whole cell.
     fn open_height(&self, window: &Window, cx: &App) -> f32 {
+        let cell = self.cell_height(window);
         if self.maximized {
-            return available_height(window);
+            return cell;
         }
-        let room = open_room(window);
+        let room = self.open_room(window);
         let least = self.least_height(window, cx).min(room);
         // Until the user drags it, a window too short for a table page
         // gives the dock at most half the page cell, so the page keeps the
@@ -515,7 +525,7 @@ impl Dock {
         let short =
             window.viewport_size().height / dp_px(1., window) < freshkube_ui::page::SHORT_HEIGHT;
         let height = if short && !self.dragged {
-            self.height.size().min(available_height(window) / 2.)
+            self.height.size().min(cell / 2.)
         } else {
             self.height.size()
         };
@@ -531,6 +541,35 @@ impl Dock {
             .map(|tab| tab.least_height(cx) / dp_px(1., window))
             .unwrap_or(0.);
         MIN_HEIGHT.max(BAR_HEIGHT + 1. + view::BODY_PADDING + self.notice_height + log)
+    }
+
+    /// The cell the shell fills in as it lays the page cell out.
+    pub(crate) fn cell_room(&self) -> Rc<Cell<CellRoom>> {
+        self.cell_room.clone()
+    }
+
+    /// The page cell's room for the dock, in dp: as laid out, else (before
+    /// the first frame) the window less the header and status bar.
+    fn cell_height(&self, window: &Window) -> f32 {
+        let room = self.cell_room.get();
+        let measured = (room.bottom - room.page_top) / dp_px(1., window);
+        if measured > 0. {
+            measured.max(BAR_HEIGHT)
+        } else {
+            available_height(window)
+        }
+    }
+
+    /// The most an open dock that isn't fitted to the window takes, in dp:
+    /// the page keeps [`PAGE_LEAST`] when the window has it, counted from
+    /// the top of the cell, so a strip over the page takes from the page
+    /// and not from the dock.
+    fn open_room(&self, window: &Window) -> f32 {
+        let cell = self.cell_height(window);
+        let room = self.cell_room.get();
+        let whole = (room.bottom - room.cell_top) / dp_px(1., window);
+        let whole = if whole > 0. { whole.max(cell) } else { cell };
+        (whole - PAGE_LEAST).max(MIN_HEIGHT.min(cell)).min(cell)
     }
 
     pub(crate) fn has_tabs(&self) -> bool {
@@ -1302,7 +1341,7 @@ impl Dock {
             }
             return;
         }
-        let height = height.min(open_room(window));
+        let height = height.min(self.open_room(window));
         let state = (self.open, self.maximized);
         self.maximized = false;
         self.dragged = true;
@@ -1549,11 +1588,14 @@ fn available_height(window: &Window) -> f32 {
     (window.viewport_size().height / unit - FRAME_CHROME).max(BAR_HEIGHT)
 }
 
-/// The most an open dock that isn't fitted to the window takes, in dp: the
-/// page keeps [`PAGE_LEAST`] when the window has it.
-fn open_room(window: &Window) -> f32 {
-    let available = available_height(window);
-    (available - PAGE_LEAST).max(MIN_HEIGHT.min(available))
+/// Where the page cell lies, as laid out: its top, the top of the room under
+/// whatever the cell draws over the page (the follow strip, its spacer) and
+/// its bottom, which the status bar bounds.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CellRoom {
+    pub(crate) cell_top: Pixels,
+    pub(crate) page_top: Pixels,
+    pub(crate) bottom: Pixels,
 }
 
 /// The kind a saved tab names, if it still has logs.

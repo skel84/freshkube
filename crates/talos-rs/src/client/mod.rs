@@ -774,11 +774,9 @@ impl TalosClient {
             match chunk {
                 Ok(data) => {
                     // Check for errors in the metadata
-                    if let Some(metadata) = &data.metadata
-                        && !metadata.error.is_empty()
-                    {
-                        return Err(TalosError::Connection(metadata.error.clone()));
-                    }
+                    // Keeps the upstream code, so a caller can tell a file's
+                    // absence from a node it could not reach.
+                    crate::log_stream::validate_metadata(data.metadata.as_ref())?;
                     if let Ok(text) = String::from_utf8(data.bytes) {
                         output.push_str(&text);
                     }

@@ -2,7 +2,7 @@
 //! schema browser, and a capped table. The example session is
 //! `freshkube_db::fake`; no forward, Secret or socket is used.
 use super::super::tests::mount;
-use super::{Example, Phase};
+use super::{Example, Fail, Phase};
 use crate::screens::ScreenPanel;
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::test::TestWindowExt;
@@ -603,6 +603,74 @@ async fn a_narrow_window_with_large_text_stacks_the_panes_and_keeps_the_rows_in_
     .unwrap();
 }
 
+/// At 760x560 the strip's actions wrap to a second line; the strip is as
+/// tall as both lines, so nothing sits under the panes below it.
+#[gpui_kit::test]
+async fn the_strip_holds_its_wrapped_actions_at_a_small_window(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, page, window) = super::super::tests::mount_sized(cx, 760., 560.);
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, _| {
+            page.explore_example = Some(Example::Connected)
+        });
+        window.render_frame(cx);
+        let id = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|r| r.identity.name == "orders-db")
+            .unwrap()
+            .id
+            .clone();
+        window.click(id, cx);
+        window.render_frame(cx);
+        window.click("databases-explore", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    connected(cx, &page, &window).await;
+    for text in [13., 20.] {
+        cx.update(|cx| crate::text_size::set(text, cx));
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let strip = window.find("explore-strip").bounds();
+            let browser = window.find("explore-browser").bounds();
+            for id in [
+                "explore-read-only",
+                "explore-facts",
+                "explore-query",
+                "explore-reload",
+                "explore-writes-gate",
+            ] {
+                let bounds = window.find(id).bounds();
+                assert!(
+                    bounds.top() >= strip.top() && bounds.bottom() <= strip.bottom(),
+                    "text {text}: {id} {bounds:?} sits outside the strip {strip:?}"
+                );
+            }
+            assert!(
+                browser.top() >= strip.bottom(),
+                "{browser:?} under {strip:?}"
+            );
+            // Two lines of their own, not one that wraps.
+            let (facts, actions) = (
+                window.find("explore-facts").bounds(),
+                window.find("explore-actions").bounds(),
+            );
+            assert!(
+                actions.top() >= facts.bottom(),
+                "{facts:?} then {actions:?}"
+            );
+            assert!(
+                facts.right() <= window.viewport_size().width,
+                "{facts:?} runs past the edge"
+            );
+        })
+        .unwrap();
+    }
+}
+
 #[gpui_kit::test]
 async fn the_query_button_hands_the_dock_the_explorers_session_and_closing_ends_it(
     cx: &mut TestAppContext,
@@ -822,4 +890,399 @@ async fn the_login_secret_is_read_once_whatever_the_query_tab_runs_and_cancels(
     let lines = recorder.lines();
     assert_eq!(lines, after_connect, "the API was asked again: {lines:?}");
     assert_eq!(login_reads(&lines), 1);
+}
+
+// Teleport (E3).
+
+#[gpui_kit::test]
+async fn each_teleport_state_is_shown_with_its_command(cx: &mut TestAppContext) {
+    for (shape, id, command) in [
+        (
+            Example::TeleportNoTsh,
+            "explore-state-teleport-not-installed",
+            "brew install teleport",
+        ),
+        (
+            Example::TeleportNotLoggedIn,
+            "explore-state-teleport-not-logged-in",
+            "tsh login --proxy=teleport.example.com",
+        ),
+        (
+            Example::TeleportNoRole,
+            "explore-state-teleport-no-role",
+            "tsh status --proxy=teleport.example.com",
+        ),
+        (
+            Example::TeleportNotFound,
+            "explore-state-teleport-not-found",
+            "tsh db ls --proxy=teleport.example.com",
+        ),
+        (
+            Example::TeleportProxyFailed,
+            "explore-state-teleport-proxy-failed",
+            "tsh --proxy=teleport.example.com proxy db --tunnel",
+        ),
+    ] {
+        let (_runtime, page, window) = open(cx, shape).await;
+        cx.update_window(window.into(), |_, window, cx| {
+            window.render_frame(cx);
+            let state = window.try_find(id).unwrap_or_else(|| panic!("{id}"));
+            let words = state.label().unwrap_or_default().to_owned();
+            assert!(words.contains(command), "{id}: {words}");
+            // The person copies the command; Freshkube runs nothing.
+            assert!(window.try_find("explore-copy-command").is_some(), "{id}");
+            assert!(window.try_find("explore-retry").is_some(), "{id}");
+            assert!(window.try_find("explore-read-only").is_none());
+        })
+        .unwrap();
+        cx.update(|cx| {
+            let view = explorer(&page, cx);
+            let Phase::Failed(fail) = view.read(cx).phase().clone() else {
+                panic!("{id}: not failed");
+            };
+            assert!(fail.command().unwrap().contains(command));
+        });
+    }
+}
+
+#[gpui_kit::test]
+async fn teleport_connects_read_only_and_says_it_is_a_tunnel_not_unencrypted(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = open(cx, Example::Teleport).await;
+    connected(cx, &page, &window).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("explore-read-only").label(),
+            Some("Read-only session")
+        );
+        assert_eq!(
+            window.find("explore-encryption").label(),
+            Some("Through Teleport (tsh tunnel)")
+        );
+        let who = window
+            .find("explore-who")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(who.contains("Teleport") && !who.contains("Secret"), "{who}");
+        let route = window
+            .find("explore-route")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(route.contains("orders-db-ro"), "{route}");
+    })
+    .unwrap();
+}
+
+/// A fake `tsh` that signs in, lists `orders-db-ro` and announces the proxy on
+/// `port`. Each proxy it starts adds its pid to `pids`.
+#[cfg(unix)]
+fn fake_tsh(dir: &std::path::Path, port: u16) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = format!(
+        "#!/bin/sh\n[ \"$1\" = --warmup ] && exit 0\ncase \"$2\" in\n  status) echo '{{\"active\":{{}}}}' ;;\n  db) echo '[{{\"metadata\":{{\"name\":\"orders-db-ro\"}}}}]' ;;\n  proxy) echo \"$$\" >> \"$(dirname \"$0\")/pids\"; echo 'Started authenticated tunnel for the PostgreSQL database \"orders-db-ro\" in cluster \"teleport.example.com\" on 127.0.0.1:{port}.'; exec sleep 300 ;;\nesac\n"
+    );
+    let path = dir.join("tsh");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Another test's fork may still hold the file open for writing, which
+    // makes running it fail with "text file busy" for a moment.
+    for _ in 0..200 {
+        match std::process::Command::new(&path).arg("--warmup").status() {
+            Err(e) if e.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            _ => break,
+        }
+    }
+    path
+}
+
+#[cfg(unix)]
+fn pid_alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(unix)]
+async fn gone(pid: u32) {
+    for _ in 0..100 {
+        if !pid_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the proxy child {pid} outlived its owner");
+}
+
+/// The pids the fake `tsh` has started proxies as, once there are `count`.
+#[cfg(unix)]
+fn proxy_pids(dir: &std::path::Path, count: usize) -> Vec<u32> {
+    for _ in 0..400 {
+        let text = std::fs::read_to_string(dir.join("pids")).unwrap_or_default();
+        let pids: Vec<u32> = text.lines().filter_map(|l| l.trim().parse().ok()).collect();
+        if pids.len() >= count {
+            return pids;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    panic!("the fake tsh did not start {count} proxies");
+}
+
+/// A listener that accepts and never answers, so a connect over the proxy
+/// stays busy while the test looks at the child.
+#[cfg(unix)]
+fn silent_port() -> (std::net::TcpListener, u16) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    (listener, port)
+}
+
+#[cfg(unix)]
+fn teleport_access(dir: &std::path::Path, port: u16) -> freshkube_db::teleport::TeleportAccess {
+    freshkube_db::teleport::TeleportAccess {
+        tsh: Some(fake_tsh(dir, port)),
+        ..super::example_teleport()
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_connect_over_the_proxy_leaves_no_child() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    // Nothing serves port 9, so the connection is refused; the job's end
+    // drops the proxy and with it the child.
+    let access = teleport_access(tmp.path(), 9);
+    let result = runtime.block_on(super::connect_teleport(access, "orders-db".into()));
+    assert!(
+        matches!(
+            result,
+            Err(Fail::Unreachable(_) | Fail::Refused(_) | Fail::TimedOut)
+        ),
+        "{result:?}"
+    );
+    let pid = proxy_pids(tmp.path(), 1)[0];
+    runtime.block_on(gone(pid));
+}
+
+#[cfg(unix)]
+#[test]
+fn the_tunnel_route_reads_as_a_tunnel_whatever_the_server_says_of_ssl() {
+    use freshkube_db::{fake::FakeServer, wire::Encryption};
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    // The fake server offers no TLS, as a plain Postgres would; behind
+    // Teleport that would be the agent's hop, not ours, so the strip must
+    // not depend on it.
+    let server = runtime.block_on(FakeServer::start());
+    let access = teleport_access(tmp.path(), server.port());
+    let connected = runtime
+        .block_on(super::connect_teleport(access, "orders-db".into()))
+        .expect("connects over the fake proxy");
+    assert_eq!(connected.encryption, Encryption::Tunnel);
+    assert!(connected.who.contains("Teleport") && !connected.who.contains("Secret"));
+    let route = connected.route.clone().unwrap();
+    assert!(route.contains("orders-db-ro"), "{route}");
+    assert!(!connected.app_user);
+    let pid = proxy_pids(tmp.path(), 1)[0];
+    assert!(pid_alive(pid));
+    drop(connected);
+    runtime.block_on(gone(pid));
+}
+
+/// An explorer tab that really runs the Teleport route (no example), over
+/// the fake `tsh`, beside the page's example one.
+#[cfg(unix)]
+fn teleport_view(
+    runtime: &tokio::runtime::Runtime,
+    page: &Page,
+    access: freshkube_db::teleport::TeleportAccess,
+    cx: &mut TestAppContext,
+) -> Entity<super::ExploreView> {
+    cx.update(|cx| {
+        let (source, database) = {
+            let view = explorer(page, cx);
+            let view = view.read(cx);
+            (view.source.clone(), view.database.clone())
+        };
+        let handle = runtime.handle().clone();
+        cx.new(|cx| super::ExploreView::new(handle, source, database, None, Some(access), cx))
+    })
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+async fn try_again_kills_the_previous_child_and_closing_kills_the_last(cx: &mut TestAppContext) {
+    let (runtime, page, _window) = open(cx, Example::Teleport).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (_listener, port) = silent_port();
+    let view = teleport_view(&runtime, &page, teleport_access(tmp.path(), port), cx);
+    cx.update(|cx| view.update(cx, |v, cx| v.set_visible(true, cx)));
+    let first = proxy_pids(tmp.path(), 1)[0];
+    assert!(pid_alive(first));
+    // Try again connects again: the first job is dropped, and its child with it.
+    cx.update(|cx| view.update(cx, |v, cx| v.connect(cx)));
+    let second = proxy_pids(tmp.path(), 2)[1];
+    runtime.block_on(gone(first));
+    assert!(pid_alive(second));
+    // Dropping the tab drops its connection job and the child.
+    drop(view);
+    // The entity is released when the next update ends.
+    cx.update(|_| {});
+    cx.run_until_parked();
+    runtime.block_on(gone(second));
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+async fn hiding_the_tab_mid_connect_leaves_no_child(cx: &mut TestAppContext) {
+    let (runtime, page, _window) = open(cx, Example::Teleport).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let (_listener, port) = silent_port();
+    let view = teleport_view(&runtime, &page, teleport_access(tmp.path(), port), cx);
+    cx.update(|cx| view.update(cx, |v, cx| v.set_visible(true, cx)));
+    let pid = proxy_pids(tmp.path(), 1)[0];
+    assert!(pid_alive(pid));
+    cx.update(|cx| view.update(cx, |v, cx| v.set_visible(false, cx)));
+    runtime.block_on(gone(pid));
+}
+
+/// A connected Example tab whose connection holds a real proxy over the fake
+/// `tsh`; returns the child's pid.
+#[cfg(unix)]
+async fn connected_with_a_proxy(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    page: &Page,
+    dir: &std::path::Path,
+) -> u32 {
+    use freshkube_db::teleport::Proxy;
+    let proxy = runtime
+        .block_on(Proxy::start(&teleport_access(dir, 9), "orders-db"))
+        .expect("the fake tsh listens");
+    let pid = proxy.pid().unwrap();
+    assert!(pid_alive(pid));
+    // The tab owns the connection that holds the proxy.
+    cx.update(|cx| {
+        explorer(page, cx).update(cx, |view, _| {
+            let mut connected: super::Connected = view.connect.data().unwrap().clone().unwrap();
+            connected.proxy = Some(std::sync::Arc::new(proxy));
+            view.connect.resolve(view.epoch, Ok(Ok(connected)));
+        })
+    });
+    pid
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+async fn safety_g21_closing_the_tab_kills_the_teleport_child(cx: &mut TestAppContext) {
+    let (runtime, page, window) = open(cx, Example::Teleport).await;
+    connected(cx, &page, &window).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let pid = connected_with_a_proxy(cx, &runtime, &page, tmp.path()).await;
+    cx.update_window(window.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("databases-explore-close-orders-db", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(|cx| page.read(cx).explorers.is_empty()));
+    runtime.block_on(gone(pid));
+}
+
+#[cfg(unix)]
+#[gpui_kit::test]
+async fn safety_g21_quitting_the_app_ends_the_teleport_child(cx: &mut TestAppContext) {
+    let (runtime, page, window) = open(cx, Example::Teleport).await;
+    connected(cx, &page, &window).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let pid = connected_with_a_proxy(cx, &runtime, &page, tmp.path()).await;
+    cx.update(|cx| cx.shutdown());
+    cx.run_until_parked();
+    runtime.block_on(gone(pid));
+}
+
+#[test]
+fn nothing_secret_is_in_teleports_words_or_debug() {
+    use freshkube_db::teleport::TeleportError;
+    let hostile = "token=sekrit password=hunter2";
+    let proxy_failed = Fail::Teleport(TeleportError::ProxyFailed {
+        why: freshkube_db::teleport::redact(hostile, &[]),
+        command: "tsh --proxy=teleport.example.com proxy db --tunnel".into(),
+    });
+    for text in [
+        format!("{proxy_failed:?}"),
+        proxy_failed.words(),
+        proxy_failed.title().to_owned(),
+    ] {
+        assert!(
+            !text.contains("sekrit") && !text.contains("hunter2"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_tsh_found_nowhere_names_the_places_and_keeps_the_install_help() {
+    use freshkube_db::teleport::TeleportError;
+    let fail = Fail::TshNotFound(
+        "Teleport database access needs the login program 'tsh', which was not found in \
+         /opt/homebrew/bin, /usr/local/bin. Install it in one of those places"
+            .into(),
+    );
+    assert_eq!(fail.slug(), "teleport-not-installed");
+    let not_installed = Fail::Teleport(TeleportError::NotInstalled);
+    assert_eq!(fail.title(), not_installed.title());
+    assert_eq!(fail.command().as_deref(), Some("brew install teleport"));
+    let words = fail.words();
+    assert!(words.contains("/opt/homebrew/bin, /usr/local/bin"));
+    assert!(words.contains("On macOS, run `brew install teleport`"));
+    assert!(fail.retry());
+}
+
+#[test]
+fn a_chosen_tsh_is_kept_and_a_found_one_replaces_none() {
+    use std::path::PathBuf;
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let chosen = freshkube_db::teleport::TeleportAccess {
+        tsh: Some(PathBuf::from("/chosen/tsh")),
+        ..super::example_teleport()
+    };
+    let kept = runtime
+        .block_on(super::with_resolved_tsh(chosen, || async {
+            panic!("a chosen tsh is never looked for")
+        }))
+        .unwrap();
+    assert_eq!(kept.tsh, Some(PathBuf::from("/chosen/tsh")));
+
+    let found = runtime
+        .block_on(super::with_resolved_tsh(
+            super::example_teleport(),
+            || async { Ok(PathBuf::from("/opt/homebrew/bin/tsh")) },
+        ))
+        .unwrap();
+    assert_eq!(found.tsh, Some(PathBuf::from("/opt/homebrew/bin/tsh")));
+
+    let missing = runtime.block_on(super::with_resolved_tsh(
+        super::example_teleport(),
+        || async {
+            Err(freshkube_core::failure::Failure::new(
+                freshkube_core::failure::FailureKind::Config,
+                "not found in /x".to_owned(),
+            ))
+        },
+    ));
+    assert_eq!(
+        missing.unwrap_err(),
+        Fail::TshNotFound("not found in /x".into())
+    );
 }
