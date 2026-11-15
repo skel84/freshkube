@@ -537,3 +537,97 @@ fn a_long_followed_name_truncates_in_settings_instead_of_wrapping(cx: &mut TestA
     })
     .unwrap();
 }
+
+fn open_settings_notifications(cx: &mut TestAppContext, f: &Following) {
+    cx.update_window(f.handle, |_, window, cx| {
+        f.pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Notifications, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+
+fn permission_words(cx: &mut TestAppContext, f: &Following) -> String {
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window
+            .find("notifications-permission")
+            .label()
+            .unwrap_or_default()
+            .to_owned()
+    })
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn settings_says_banners_are_not_available_where_there_is_no_native_sink(
+    cx: &mut TestAppContext,
+) {
+    let f = following(cx, Shape::States);
+    open_settings_notifications(cx, &f);
+    assert!(present(cx, f.handle, "notifications-permission-row"));
+    let words = permission_words(cx, &f);
+    assert!(words.starts_with("Not available"), "{words}");
+}
+
+#[gpui_kit::test]
+fn settings_says_allowed_once_the_system_allows_banners(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Banners);
+    open_settings_notifications(cx, &f);
+    let words = permission_words(cx, &f);
+    assert!(words.starts_with("Allowed"), "{words}");
+}
+
+#[gpui_kit::test]
+fn settings_says_a_refusal_keeps_notices_in_the_app(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Banners);
+    cx.update(|cx| {
+        f.followed
+            .update(cx, |followed, cx| followed.permission_answered(false, cx))
+    });
+    open_settings_notifications(cx, &f);
+    let words = permission_words(cx, &f);
+    assert!(words.starts_with("Refused"), "{words}");
+}
+
+fn emit_open(cx: &mut TestAppContext, f: &Following, context: &str) {
+    let subject = freshkube_followed::Subject::CrashLoop {
+        namespace: "shop".into(),
+        pod: "api-7c9".into(),
+    };
+    let context = context.to_owned();
+    cx.update(|cx| {
+        f.followed.update(cx, |_, cx| {
+            cx.emit(freshkube_followed::owner::Event::Open { subject, context })
+        })
+    });
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_banner_click_in_the_open_cluster_opens_the_pod_and_says_where_from(
+    cx: &mut TestAppContext,
+) {
+    let f = following(cx, Shape::Bell);
+    let context = cx.read(|cx| f.followed.read(cx).items()[0].follow.context.clone());
+    let before = notices(cx, f.handle);
+    emit_open(cx, &f, &context);
+    assert_eq!(
+        cx.read(|cx| f.pilot.read(cx).navigation.page),
+        super::Page::Resources
+    );
+    assert_eq!(notices(cx, f.handle), before + 1, "marked as from a notice");
+}
+
+#[gpui_kit::test]
+fn a_banner_click_about_another_cluster_names_it_and_changes_nothing(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Bell);
+    let page = cx.read(|cx| f.pilot.read(cx).navigation.page);
+    let before = notices(cx, f.handle);
+    emit_open(cx, &f, "retired-ams");
+    assert_eq!(cx.read(|cx| f.pilot.read(cx).navigation.page), page);
+    assert_eq!(notices(cx, f.handle), before + 1);
+}

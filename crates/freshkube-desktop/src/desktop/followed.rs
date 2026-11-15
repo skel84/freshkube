@@ -5,7 +5,9 @@
 
 use freshkube_core::write::Protection;
 use freshkube_followed::live::Coroot;
+use freshkube_followed::model::Subject;
 use freshkube_followed::owner::{Connection, Event, followed};
+use freshkube_nav::{KindKey, LinkPage, Name, Namespace, ViewState, ViewTab};
 use gpui_kit::component::{
     WindowExt,
     notification::{Notification, NotificationType},
@@ -81,8 +83,14 @@ impl Pilot {
             subscriptions.push(cx.subscribe_in(
                 &followed,
                 window,
-                |_, _, event: &Event, window, cx| {
-                    let Event::Toast { words, failure } = event;
+                |this, _, event: &Event, window, cx| {
+                    let (words, failure) = match event {
+                        Event::Toast { words, failure } => (words, failure),
+                        Event::Open { subject, context } => {
+                            this.open_from_notice(subject, context, window, cx);
+                            return;
+                        }
+                    };
                     let mut note = Notification::new().title(words.title.clone());
                     // A failure wears the bell's failure glyph and colour.
                     note = if *failure {
@@ -100,8 +108,100 @@ impl Pilot {
                 },
             ));
         }
+        // Banners show only while the app is not the front app.
+        if let Some(followed) = followed(cx) {
+            followed.update(cx, |f, _| f.set_in_front(window.is_window_active()));
+            subscriptions.push(cx.observe_window_activation(window, move |_, window, cx| {
+                let front = window.is_window_active();
+                followed.update(cx, |f, _| f.set_in_front(front));
+            }));
+        }
         let observability = self.pages.observability.clone();
         subscriptions.push(cx.observe(&observability, |this, _, cx| this.offer_followed(cx)));
         subscriptions
+    }
+}
+
+/// Where a banner's click goes: the pod's Events, or the page that holds
+/// the item. Identities only, so it goes through the same guarded open as
+/// a deep link.
+pub(super) fn view_for(subject: &Subject) -> Option<ViewState> {
+    let page = |page| Some(ViewState::page(page));
+    match subject {
+        Subject::CrashLoop { namespace, pod } => {
+            let mut view = ViewState::page(LinkPage::Resources);
+            view.kind = Some(KindKey::parse("pods").ok()?);
+            view.ns = Some(Namespace::parse(namespace).ok()?);
+            view.object = Some(freshkube_nav::ViewObject {
+                name: Name::parse(pod).ok()?,
+                uid: None,
+            });
+            // The cause: what the pod's events say.
+            view.tab = ViewTab::Events;
+            view.check().ok()?;
+            Some(view)
+        }
+        Subject::Landing { .. } | Subject::Verification { .. } => page(LinkPage::Applications),
+        Subject::Incident { .. } => page(LinkPage::Observability),
+    }
+}
+
+impl Pilot {
+    /// A banner was clicked. Opens what it was about in the cluster that is
+    /// open; another cluster is named, never switched to unasked.
+    pub(super) fn open_from_notice(
+        &mut self,
+        subject: &Subject,
+        context: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.activate_window();
+        let here = self
+            .source()
+            .kube
+            .is_some_and(|kube| kube.context == context);
+        if !here {
+            self.tell(
+                format!("Open {context} to see this: {}", subject.title()),
+                window,
+                cx,
+            );
+            return;
+        }
+        let Some(view) = view_for(subject) else {
+            return;
+        };
+        self.apply_view(&view, window, cx);
+        self.tell("Opened from a notification".into(), window, cx);
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    #[test]
+    fn a_crash_loop_opens_its_pod_on_events() {
+        let view = view_for(&Subject::CrashLoop {
+            namespace: "shop".into(),
+            pod: "api-1".into(),
+        })
+        .expect("a view");
+        assert_eq!(view.page, LinkPage::Resources);
+        assert_eq!(view.tab, ViewTab::Events);
+        assert_eq!(view.object.expect("object").name.as_str(), "api-1");
+    }
+
+    #[test]
+    fn a_landing_and_an_incident_open_their_pages() {
+        let landing = Subject::Landing {
+            project: "p".into(),
+            stage: "s".into(),
+            freight: "f".into(),
+        };
+        assert_eq!(view_for(&landing).unwrap().page, LinkPage::Applications);
+        let incident = Subject::Incident { application: None };
+        assert_eq!(view_for(&incident).unwrap().page, LinkPage::Observability);
     }
 }

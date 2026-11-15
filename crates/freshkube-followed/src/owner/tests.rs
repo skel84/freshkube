@@ -9,6 +9,7 @@ use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{Connection, Event, Followed, Options, install, stop_all};
+use crate::banner::{Permission, Scripted};
 use crate::example::{Script, Shape};
 use crate::model::{MAX_FOLLOWS, Refused, Subject, WatchKey};
 use crate::notice::{Notice, Quiet};
@@ -119,8 +120,11 @@ impl Harness {
         self.events
             .borrow()
             .iter()
-            .map(|Event::Toast { words, failure }| {
-                (words.title.clone(), words.body.clone(), *failure)
+            .filter_map(|event| match event {
+                Event::Toast { words, failure } => {
+                    Some((words.title.clone(), words.body.clone(), *failure))
+                }
+                Event::Open { .. } => None,
             })
             .collect()
     }
@@ -811,4 +815,185 @@ fn a_toast_about_a_follow_names_it_unless_details_hide(cx: &mut TestAppContext) 
     settings.hide_details = Some(true);
     cx.update(|cx| h.followed.update(cx, |f, cx| f.set_settings(settings, cx)));
     assert!(hides(cx, Some("dev-fra")), "Hide details On wins");
+}
+
+fn with_sink(cx: &mut TestAppContext, h: &Harness) -> Arc<Scripted> {
+    let sink = Arc::new(Scripted::default());
+    cx.update(|cx| {
+        h.followed
+            .update(cx, |f, cx| f.set_notifier(sink.clone(), cx))
+    });
+    sink
+}
+
+fn set_front(cx: &mut TestAppContext, h: &Harness, front: bool) {
+    cx.update(|cx| h.followed.update(cx, |f, _| f.set_in_front(front)));
+}
+
+fn answer(cx: &mut TestAppContext, h: &Harness, granted: bool) {
+    cx.update(|cx| {
+        h.followed
+            .update(cx, |f, cx| f.permission_answered(granted, cx))
+    });
+}
+
+fn permission(cx: &mut TestAppContext, h: &Harness) -> Permission {
+    cx.update(|cx| h.followed.read(cx).permission())
+}
+
+#[gpui_kit::test]
+fn the_system_is_asked_once_at_the_first_follow_and_never_after_a_refusal(
+    cx: &mut TestAppContext,
+) {
+    let h = harness(cx, None);
+    let sink = with_sink(cx, &h);
+    assert_eq!(sink.asked(), 0, "nothing followed, nothing asked");
+    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("web"), connection("dev-fra", false)).unwrap();
+    assert_eq!(sink.asked(), 1);
+    assert_eq!(permission(cx, &h), Permission::Asking);
+    answer(cx, &h, false);
+    assert_eq!(permission(cx, &h), Permission::Denied);
+    h.follow(cx, pod("db"), connection("dev-fra", false)).unwrap();
+    assert_eq!(sink.asked(), 1, "a refusal is not asked again");
+}
+
+#[gpui_kit::test]
+fn a_system_with_no_native_sink_is_never_asked_and_toasts(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    assert_eq!(permission(cx, &h), Permission::NotAsked);
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    assert_eq!(h.toasts().len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_granted_permission_shows_a_banner_only_while_the_app_is_not_in_front(
+    cx: &mut TestAppContext,
+) {
+    let h = harness(cx, None);
+    let sink = with_sink(cx, &h);
+    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    answer(cx, &h, true);
+    set_front(cx, &h, true);
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    assert_eq!(h.toasts().len(), 1, "in front: a toast");
+    assert!(sink.shown().is_empty());
+    set_front(cx, &h, false);
+    h.deliver(cx, &pod_key("api"), crash(true, false));
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    assert_eq!(h.toasts().len(), 1, "out of front: no second toast");
+    let shown = sink.shown();
+    assert_eq!(shown.len(), 1);
+    assert!(shown[0].failure);
+}
+
+#[gpui_kit::test]
+fn a_denied_permission_keeps_the_toast(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    let sink = with_sink(cx, &h);
+    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    answer(cx, &h, false);
+    set_front(cx, &h, false);
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    assert_eq!(h.toasts().len(), 1);
+    assert!(sink.shown().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_banner_on_a_protected_cluster_hides_its_details(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    let sink = with_sink(cx, &h);
+    h.follow(cx, pod("api"), connection("prod-ams", true)).unwrap();
+    answer(cx, &h, true);
+    set_front(cx, &h, false);
+    h.deliver(
+        &mut *cx,
+        &key(
+            "prod-ams",
+            WatchKey::Pod {
+                namespace: "shop".into(),
+                name: "api".into(),
+            },
+        ),
+        crash(false, true),
+    );
+    let shown = sink.shown();
+    assert_eq!(shown[0].words.title, "Freshkube · 1 update");
+    assert_eq!(shown[0].words.body, None);
+}
+
+#[gpui_kit::test]
+fn quiet_hours_hold_a_banner_but_let_a_failure_through(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    let sink = with_sink(cx, &h);
+    h.follow(cx, landing("wonky-otter"), connection("dev-fra", false))
+        .unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    answer(cx, &h, true);
+    set_front(cx, &h, false);
+    cx.update(|cx| {
+        h.followed.update(cx, |f, cx| {
+            f.set_settings(
+                crate::notice::Settings {
+                    quiet: Quiet {
+                        enabled: true,
+                        from: 11 * 60,
+                        until: 13 * 60,
+                    },
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+    });
+    h.deliver(cx, &project_key("checkout"), landed("wonky-otter"));
+    assert!(sink.shown().is_empty(), "held: the bell only");
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    assert_eq!(sink.shown().len(), 1, "a failure comes through");
+}
+
+#[gpui_kit::test]
+fn a_click_on_a_banner_asks_the_shell_to_open_its_item_once_known(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    let sink = with_sink(cx, &h);
+    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    answer(cx, &h, true);
+    set_front(cx, &h, false);
+    h.deliver(cx, &pod_key("api"), crash(false, true));
+    let notice = sink.shown()[0].notice;
+    let click = |cx: &mut TestAppContext, id| {
+        cx.update(|cx| h.followed.update(cx, |f, cx| f.banner_clicked(id, cx)))
+    };
+    click(cx, notice + 99);
+    assert!(
+        !h.events
+            .borrow()
+            .iter()
+            .any(|e| matches!(e, Event::Open { .. })),
+        "an unknown banner opens nothing"
+    );
+    click(cx, notice);
+    assert!(h.events.borrow().iter().any(|e| matches!(
+        e,
+        Event::Open { subject, context } if *subject == pod("api") && context == "dev-fra"
+    )));
+}
+
+#[gpui_kit::test]
+fn the_permission_answer_is_saved_and_a_pending_question_is_not(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("freshkube-perm-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let prefs = dir.join("preferences.json");
+    let first = harness(cx, Some(prefs.clone()));
+    with_sink(cx, &first);
+    first
+        .follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
+    let saved = crate::saved::load(&crate::saved::document(&prefs));
+    assert_eq!(saved.permission, Permission::NotAsked, "Asking is not saved");
+    answer(cx, &first, true);
+    let saved = crate::saved::load(&crate::saved::document(&prefs));
+    assert_eq!(saved.permission, Permission::Granted);
+    let _ = std::fs::remove_dir_all(&dir);
 }
