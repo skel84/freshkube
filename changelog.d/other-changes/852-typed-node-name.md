@@ -1,0 +1,1 @@
+- **Typed node name:** on a `protected` cluster, cordon, uncordon, drain, reboot and shutdown on the Operations page also ask for the node's name (the cluster entry's id for several nodes) before they start; `guarded` and `open` clusters keep their confirmation.
