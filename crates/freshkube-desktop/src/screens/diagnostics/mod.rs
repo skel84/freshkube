@@ -642,12 +642,16 @@ impl DiagnosticsScreen {
         cx.spawn_in(window, async move |this, cx| {
             let decided =
                 mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
+            // An update that fails (the window is gone) is a refusal, never
+            // "go on".
             let refused = match decided {
-                Err(refusal) => cx.update(|_, cx| mutation::refused_text(refusal, cx)).ok(),
+                Err(refusal) => Some(
+                    cx.update(|_, cx| mutation::refused_text(refusal, cx))
+                        .unwrap_or_else(|_| refusal.text()),
+                ),
                 Ok(_) => cx
                     .update(|_, cx| mutation::moved_during_read(held, cx))
-                    .ok()
-                    .flatten(),
+                    .unwrap_or_else(|_| Some(mutation::WINDOW_GONE.to_owned())),
             };
             let Some(text) = refused else {
                 _ = this.update_in(cx, |view, window, cx| {

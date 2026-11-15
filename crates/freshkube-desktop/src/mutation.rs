@@ -116,6 +116,7 @@ impl Default for GlobalProtection {
             None,
             None,
             false,
+            None,
         )
     }
 }
@@ -148,10 +149,16 @@ pub(crate) fn set_setup_file(file: Option<std::path::PathBuf>, from_file: bool, 
     global.6 = from_file;
 }
 
+/// Sets the kubeconfig context the window shows, with its level.
+pub(crate) fn set_window_context(context: String, cx: &mut App) {
+    cx.default_global::<GlobalProtection>().7 = Some(context);
+}
+
 /// What a write reads again from the setup file at its send step, for the
 /// identity the dialog is for: the active entry when the setup file lists
 /// the entries, else the kubeconfig context `context` (a legacy
-/// `workspace.json` user has no file to name an entry in). Taken when the
+/// `workspace.json` user has no file to name an entry in) as the shell
+/// published it, else `context`, the caller's. Taken when the
 /// dialog opens, so the re-read is against the same identity however the
 /// window moves after.
 ///
@@ -174,6 +181,11 @@ pub(crate) fn send_guard(
     };
     Some(SetupLevels::new(file, subject))
 }
+
+/// The notice when the window went away while the setup file was read: a
+/// failed update is a refusal, never "go on".
+pub(crate) const WINDOW_GONE: &str =
+    "The window closed while the setup file was read; review again.";
 
 /// How long the setup file may take to read before a send refuses: it is a
 /// few kilobytes, so a read that takes this long is not going to answer.
@@ -822,6 +834,32 @@ impl TestSetup {
         setup
     }
 
+    /// A window with no entry active, whose shown context is `window_context`
+    /// (the Talos cluster's name is something else), and a setup file that
+    /// lists an entry on that context at `level`.
+    pub(crate) fn by_context(
+        window_context: &str,
+        level: Protection,
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> Self {
+        let setup = Self {
+            dir: tempfile::tempdir().expect("a temporary directory"),
+        };
+        let text = format!(
+            "version: 1\nclusters:\n  - id: other\n    role: core\n    context: {window_context}\n    protection: {}\n",
+            level.key()
+        );
+        std::fs::write(setup.file(), text).expect("the setup file is written");
+        let file = setup.file();
+        let window_context = window_context.to_owned();
+        cx.update(|cx| {
+            set_active_entry(None, cx);
+            set_setup_file(Some(file), true, cx);
+            set_window_context(window_context, cx);
+        });
+        setup
+    }
+
     /// A legacy `workspace.json` user: the window works under an entry the
     /// migration made, and there is no `freshkube.yaml` to list it.
     pub(crate) fn legacy(cx: &mut gpui_kit::TestAppContext) -> Self {
@@ -874,7 +912,7 @@ mod tests {
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
     use super::{
         Protection, TestSetup, clear_level_floor, level, level_floor, moved_during_read,
-        raise_level, send_guard, set_protection, set_setup_file,
+        raise_level, send_guard, set_protection, set_setup_file, set_window_context,
     };
     use freshkube_core::write::{Subject, Unreadable};
     use gpui_kit::TestAppContext;
@@ -938,6 +976,21 @@ mod tests {
             );
             clear_level_floor(cx);
             assert_eq!(level_floor(cx), None);
+        });
+    }
+
+    /// The Context subject takes its name from what the shell published, so the
+    /// name read and the level held are about the same context, not from the
+    /// Talos cluster's name the caller passes.
+    #[gpui_kit::test]
+    fn the_context_subject_is_the_windows_not_the_talos_clusters_name(cx: &mut TestAppContext) {
+        let _setup = TestSetup::by_context("display-ctx", Protection::ReadOnly, cx);
+        cx.update(|cx| {
+            let guard = send_guard("talos-cluster", false, cx).unwrap();
+            assert_eq!(guard.subject(), &Subject::Context("display-ctx".into()));
+            assert_eq!(guard.read(), Ok(Protection::ReadOnly));
+            // Without a published context the caller's name is used.
+            set_setup_file(None, false, cx);
         });
     }
 }

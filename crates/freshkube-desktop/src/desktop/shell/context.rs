@@ -137,6 +137,8 @@ impl Pilot {
             .current_level(cx)
             .stricter(crate::mutation::level_floor(cx).unwrap_or(Protection::Open));
         crate::mutation::set_active_entry(self.switch.active_cluster().map(str::to_owned), cx);
+        // The context the window shows, for the name a send reads again.
+        crate::mutation::set_window_context(self.display_context(cx), cx);
         // Every entry's level, so a write to an entry the window doesn't show
         // follows a change made in Settings as the window's own does.
         crate::mutation::set_entry_levels(self.entry_levels(cx), cx);
