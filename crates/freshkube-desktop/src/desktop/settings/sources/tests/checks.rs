@@ -26,7 +26,7 @@ fn check_sources_finds_each_state(cx: &mut TestAppContext) {
             vec![
                 row(KARGO, "cicd-fra", "Refused"),
                 row(BUILDS, "cicd-fra", "Unreachable"),
-                row(ARGOCD, "core-fra", "Not served"),
+                row(ARGOCD, "core-fra", "Not installed"),
                 row(WORKLOADS, MAPPED, "2 readable, 1 unreachable"),
             ]
         );

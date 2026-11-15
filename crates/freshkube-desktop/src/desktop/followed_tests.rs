@@ -195,7 +195,9 @@ fn a_protected_cluster_toasts_only_the_title(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(notices(cx, f.handle), told + 1, "a toast was pushed");
     let heard = heard.borrow();
-    let freshkube_followed::owner::Event::Toast { words, .. } = &heard[0];
+    let freshkube_followed::owner::Event::Toast { words, .. } = &heard[0] else {
+        panic!("a toast");
+    };
     assert_eq!(words.title, "Freshkube · 1 update");
     assert_eq!(words.body, None);
 }
@@ -536,4 +538,132 @@ fn a_long_followed_name_truncates_in_settings_instead_of_wrapping(cx: &mut TestA
         assert_eq!(reads.size.height, ends.size.height, "one line: {reads:?}");
     })
     .unwrap();
+}
+
+fn open_settings_notifications(cx: &mut TestAppContext, f: &Following) {
+    cx.update_window(f.handle, |_, window, cx| {
+        f.pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Notifications, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+
+fn permission(cx: &mut TestAppContext, f: &Following) -> (bool, freshkube_followed::Permission) {
+    cx.read(|cx| {
+        let owner = f.followed.read(cx);
+        (owner.banners_native(), owner.permission())
+    })
+}
+
+#[gpui_kit::test]
+fn settings_has_the_banners_row_and_a_system_with_no_native_sink_is_never_asked(
+    cx: &mut TestAppContext,
+) {
+    let f = following(cx, Shape::States);
+    open_settings_notifications(cx, &f);
+    assert!(present(cx, f.handle, "notifications-permission-row"));
+    assert_eq!(
+        permission(cx, &f),
+        (false, freshkube_followed::Permission::NotAsked)
+    );
+}
+
+#[gpui_kit::test]
+fn the_banners_example_is_allowed_and_a_refusal_is_kept(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Banners);
+    open_settings_notifications(cx, &f);
+    assert!(present(cx, f.handle, "notifications-permission-row"));
+    assert_eq!(
+        permission(cx, &f),
+        (true, freshkube_followed::Permission::Granted)
+    );
+    cx.update(|cx| {
+        f.followed
+            .update(cx, |followed, cx| followed.permission_answered(false, cx))
+    });
+    open_settings_notifications(cx, &f);
+    assert!(present(cx, f.handle, "notifications-permission-row"));
+    assert_eq!(
+        permission(cx, &f),
+        (true, freshkube_followed::Permission::Denied)
+    );
+}
+
+fn emit_open(cx: &mut TestAppContext, f: &Following, context: &str) {
+    let subject = freshkube_followed::Subject::CrashLoop {
+        namespace: "shop".into(),
+        pod: "api-7c9".into(),
+    };
+    let context = context.to_owned();
+    cx.update(|cx| {
+        f.followed.update(cx, |_, cx| {
+            cx.emit(freshkube_followed::owner::Event::Open { subject, context })
+        })
+    });
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn a_banner_click_in_the_open_cluster_opens_the_pod_and_says_where_from(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Bell);
+    let context = cx.read(|cx| f.followed.read(cx).items()[0].follow.context.clone());
+    let before = notices(cx, f.handle);
+    emit_open(cx, &f, &context);
+    assert_eq!(
+        cx.read(|cx| f.pilot.read(cx).navigation.page),
+        super::Page::Resources
+    );
+    assert_eq!(notices(cx, f.handle), before + 1, "marked as from a notice");
+}
+
+#[gpui_kit::test]
+fn a_banner_click_about_another_cluster_names_it_and_changes_nothing(cx: &mut TestAppContext) {
+    let f = following(cx, Shape::Bell);
+    let page = cx.read(|cx| f.pilot.read(cx).navigation.page);
+    let before = notices(cx, f.handle);
+    let told = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let heard = told.clone();
+    cx.update(|cx| {
+        cx.subscribe(&f.pilot, move |_, notice: &super::switch::Notice, _| {
+            heard.borrow_mut().push(notice.0.clone());
+        })
+        .detach();
+    });
+    emit_open(cx, &f, "retired-ams");
+    // It names the cluster and never the pod, whatever Hide details says.
+    assert_eq!(*told.borrow(), ["Open retired-ams to see this."]);
+    assert_eq!(cx.read(|cx| f.pilot.read(cx).navigation.page), page);
+    assert_eq!(notices(cx, f.handle), before + 1);
+}
+
+#[test]
+fn a_crash_loop_opens_its_pod_on_events() {
+    use freshkube_nav::{LinkPage, ViewTab};
+    let view = super::followed::view_for(&freshkube_followed::Subject::CrashLoop {
+        namespace: "shop".into(),
+        pod: "api-1".into(),
+    })
+    .expect("a view");
+    assert_eq!(view.page, LinkPage::Resources);
+    assert_eq!(view.tab, ViewTab::Events);
+    assert_eq!(view.object.expect("object").name.as_str(), "api-1");
+}
+
+#[test]
+fn a_landing_and_an_incident_open_their_pages() {
+    use freshkube_followed::Subject;
+    use freshkube_nav::LinkPage;
+    let landing = Subject::Landing {
+        project: "p".into(),
+        stage: "s".into(),
+        freight: "f".into(),
+    };
+    let view = super::followed::view_for;
+    assert_eq!(view(&landing).unwrap().page, LinkPage::Applications);
+    let incident = Subject::Incident { application: None };
+    assert_eq!(view(&incident).unwrap().page, LinkPage::Observability);
 }

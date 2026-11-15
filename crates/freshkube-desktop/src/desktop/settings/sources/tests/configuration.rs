@@ -43,6 +43,47 @@ fn a_workspace_of_one_reads_the_open_cluster(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_open_cluster_and_a_pin_to_a_removed_entry_say_so_in_plain_words(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.settings_page.update(cx, |page, cx| {
+                page.set_workspace(&Loaded::Missing, false, cx)
+            })
+        });
+        open(window, cx, &view);
+        let whys = |cx: &gpui_kit::App| -> Vec<String> {
+            list(&view, cx)
+                .read(cx)
+                .rows
+                .iter()
+                .filter(|row| row.read != Read::SetupFile)
+                .map(|row| row.why.to_string())
+                .collect()
+        };
+        assert!(
+            whys(cx).iter().any(|why| why == "Only the open cluster"),
+            "{:?}",
+            whys(cx)
+        );
+        assert!(whys(cx).iter().all(|why| !why.contains("Workspace of one")));
+
+        let setup = r#"{"version":1,"clusters":[{"id":"cluster-a","role":"core","context":"acme-a"}],"sources":{"builds":"cluster-gone"}}"#;
+        let workspace = freshkube_core::workspace::parse(setup.as_bytes()).unwrap();
+        set_workspace(&view, workspace, false, cx);
+        window.render_frame(cx);
+        assert!(
+            whys(cx)
+                .iter()
+                .any(|why| why == "Chosen, but no longer listed"),
+            "{:?}",
+            whys(cx)
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_new_workspace_forgets_the_check(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {

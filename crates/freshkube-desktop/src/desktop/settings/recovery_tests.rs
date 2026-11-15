@@ -66,12 +66,12 @@ fn all_skipped_clusters_have_an_empty_explanation_that_agrees_with_the_count(
         (
             "version: 1\nclusters: []\n",
             "0 clusters",
-            "Nothing is listed. The one cluster counted in the status bar is implicit: the one this window opened.",
+            "No clusters are listed. Freshkube is using the one cluster this window opened; that is the one counted in the status bar.",
         ),
         (
             "",
             "1 cluster",
-            "Nothing is listed. The one cluster counted in the status bar is implicit: the one this window opened.",
+            "No clusters are listed. Freshkube is using the one cluster this window opened; that is the one counted in the status bar.",
         ),
     ] {
         let directory = tempfile::tempdir().unwrap();

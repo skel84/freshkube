@@ -146,7 +146,7 @@ async fn without_a_build_namespace_nothing_is_listed() {
     let none = image_link(&trail);
     assert_eq!(none.confidence, Confidence::Unknown);
     assert!(
-        none.reason.contains("no build namespace is set"),
+        none.reason.contains("doesn't know where builds run"),
         "{}",
         none.reason
     );

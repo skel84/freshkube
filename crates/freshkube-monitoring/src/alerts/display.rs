@@ -236,29 +236,39 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
         Which::Silences => "silences",
     };
     match unknown {
-        Unknown::NotFound(reason) => State {
-            id: "alerts-not-found",
-            icon: StateIcon::Missing,
-            title: match which {
-                Which::Alerts => "No Alertmanager or vmalert found".into(),
-                Which::Rules => "No rules found".into(),
-                Which::Silences => "No Alertmanager found".into(),
-            },
-            description: format!(
-                "Looked for {}. Nothing answered, so nothing is known of {what}: this isn't \
-                 an empty list.",
-                match which {
-                    Which::Alerts => LOOKED_FOR,
-                    Which::Rules => LOOKED_FOR_RULES,
-                    Which::Silences => LOOKED_FOR_ALERTMANAGER,
-                }
-            )
-            .into(),
-            detail: Some(reason.clone())
-                .filter(|reason| !reason.is_empty())
-                .map(Into::into),
-            retry: true,
-        },
+        Unknown::NotFound(reason) => {
+            let tool = match which {
+                Which::Alerts => "an Alertmanager or vmalert",
+                Which::Rules => "a vmalert or any PrometheusRule objects",
+                Which::Silences => "an Alertmanager",
+            };
+            let looked_for = match which {
+                Which::Alerts => LOOKED_FOR,
+                Which::Rules => LOOKED_FOR_RULES,
+                Which::Silences => LOOKED_FOR_ALERTMANAGER,
+            };
+            let reason = Some(reason.as_str()).filter(|reason| !reason.is_empty());
+            State {
+                id: "alerts-not-found",
+                icon: StateIcon::Missing,
+                title: match which {
+                    Which::Alerts => "No Alertmanager or vmalert found".into(),
+                    Which::Rules => "No rules found".into(),
+                    Which::Silences => "No Alertmanager found".into(),
+                },
+                description: format!(
+                    "Looked for {tool} in this cluster and found none. Nothing answered, so \
+                     nothing is known of {what}: this isn't an empty list. It is optional; the \
+                     rest of Freshkube works without it."
+                )
+                .into(),
+                detail: Some(Into::into(match reason {
+                    Some(reason) => format!("Looked for {looked_for}.\n{reason}"),
+                    None => format!("Looked for {looked_for}."),
+                })),
+                retry: true,
+            }
+        }
         Unknown::Refused(reason) => State {
             id: "alerts-refused",
             icon: StateIcon::Refused,
@@ -269,7 +279,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             )
             .into(),
             detail: Some(reason.clone().into()),
-            retry: true,
+            retry: false,
         },
         Unknown::Unread(reason) => State {
             id: "alerts-failed",
@@ -285,8 +295,8 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             title: "The central store's alerts have no cluster label".into(),
             description: format!(
                 "Its alerts carry no \"{label}\" label, so none can be told to be this \
-                 cluster's, and none are shown. Add the label to the alerts, or name the \
-                 one they carry as metrics.label in the setup file."
+                 cluster's, and none are shown. Add the label to the alerts, or set the \
+                 label name Freshkube looks for in Settings › Monitoring."
             )
             .into(),
             detail: None,

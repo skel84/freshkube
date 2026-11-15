@@ -92,7 +92,7 @@ The values each knob takes and what each shape does are in [docs/DEBUG_KNOBS.md]
 | `FRESHKUBE_DB_EXPLORE` | Opens the database explorer and shapes how its connection ends, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_ETCD` | Reshapes etcd's example, with `--fixture`. | debug builds |
 | `FRESHKUBE_FIXTURE_HOLD` | Keeps example data from answering so pages stay on their loading rows. | debug and stress builds |
-| `FRESHKUBE_FOLLOWS` | Seeds the followed items and the bell, with `--fixture`. | debug and stress builds |
+| `FRESHKUBE_FOLLOWS` | Seeds the followed items and the bell, with `--fixture`; `banners` shows the system's banner permission as allowed. | debug and stress builds |
 | `FRESHKUBE_KIND` | Opens a Kubernetes kind on the Resources page. | debug and stress builds |
 | `FRESHKUBE_LINKS` | Forces the outcome of deep links or reshapes how example clusters identify themselves, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_LOG_SEARCH` | Types text into a log's search and steps to the first match. | debug and stress builds |

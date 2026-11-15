@@ -95,6 +95,7 @@ fn display_of(inv: &Inventory, mode: Mode) -> super::display::Display {
         &databases::coroot::Evidence::default(),
         mode,
         at(),
+        "prod-fra",
     )
 }
 fn field<'a>(

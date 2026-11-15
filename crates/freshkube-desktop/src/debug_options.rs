@@ -568,6 +568,7 @@ mod tests {
             ("full", Shape::Full),
             ("unwatched", Shape::Unwatched),
             ("grouped", Shape::Grouped),
+            ("banners", Shape::Banners),
         ] {
             assert_eq!(parse(&[("FRESHKUBE_FOLLOWS", value)]).follows, Some(shape));
         }

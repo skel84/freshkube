@@ -201,6 +201,7 @@ Read by: debug and stress builds. Keeps example data from answering so pages sta
 
 Read by: debug and stress builds. With `--fixture`, seeds the followed items and the bell; without it a follow plays a small story.
 
+- `banners`: the system allows banners (a scripted sink; the system shows nothing), so Settings › Notifications says Allowed.
 - `bell`: three follows with New and Earlier.
 - `full`: the 20 follows so the next is refused.
 - `grouped`: three landings told in a row, the first at once and the other two as one notice when the 2-minute window ends.
