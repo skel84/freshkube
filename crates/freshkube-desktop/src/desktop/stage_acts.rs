@@ -1,5 +1,5 @@
 //! A Stage action of the change page (#855): Refresh, Reverify, Promote,
-//! Abort. The page asked; this describes the action through
+//! Roll back (#845), Abort. The page asked; this describes the action through
 //! `freshkube_delivery::acts`, takes the levels (the stricter of the Kargo
 //! cluster's and the destination's), connects to Kargo's cluster, and hands
 //! the write to `write_flow`, where core's `write` module checks and sends it.

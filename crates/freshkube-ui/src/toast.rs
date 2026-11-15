@@ -10,11 +10,13 @@ use crate::page::STATUS_BAR_HEIGHT;
 use crate::ui::BASE_TEXT;
 
 /// The footer row a toast stays above, in dp. The change page's wrapped
-/// actions measure 38 at text size 13; `Inspector::render` (inspector/mod.rs)
-/// adds 6 above and below plus a 1 px hairline: 51 in all. The footer takes
-/// variable-height content, so it has no fixed height to share. A table's
-/// footer is 26.
-pub const FOOTER_ROW: f32 = 51.;
+/// actions measure 38 at text size 13, and a Stage's Roll back row (#845)
+/// adds a 16 row and a 6 gap above them: 60. `Inspector::render`
+/// (inspector/mod.rs) adds 6 above and below plus a 1 px hairline: 73 in
+/// all. The footer takes variable-height content, so it has no fixed height
+/// to share; a Roll back row that wraps (several unverified picks) can be
+/// taller. A table's footer is 26.
+pub const FOOTER_ROW: f32 = 73.;
 /// Between a toast and that row, in dp.
 pub const GAP: f32 = 8.;
 /// Between a toast and the window's right edge, in dp: Kit's 16 px at the
