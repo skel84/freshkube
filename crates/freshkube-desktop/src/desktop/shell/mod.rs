@@ -110,6 +110,35 @@ impl Pilot {
             .into_any_element()
     }
 
+    /// Notes that the menu of cluster `id` is open, so its row holds its
+    /// tooltip, and that it closed.
+    fn watch_cluster_menu(
+        pilot: &WeakEntity<Self>,
+        id: &str,
+        popover: &WeakEntity<gpui_kit::component::popover::PopoverState>,
+        window: &mut Window,
+        cx: &mut Context<gpui_kit::component::menu::PopupMenu>,
+    ) {
+        let set = {
+            let (pilot, popover) = (pilot.clone(), popover.clone());
+            move |open: Option<String>, cx: &mut App| {
+                _ = pilot.update(cx, |view, cx| {
+                    view.context_display.menu_cluster = open;
+                    cx.notify();
+                });
+                // The switcher draws its rows from its own entity.
+                _ = popover.update(cx, |_, cx| cx.notify());
+            }
+        };
+        set(Some(id.to_owned()), cx);
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            move |_, _, _: &DismissEvent, _, cx| set(None, cx),
+        )
+        .detach();
+    }
+
     /// After a pick in the switcher: the page has the keyboard again and the
     /// popover closes once this update ends.
     fn finish_cluster_pick(
@@ -152,6 +181,7 @@ impl Pilot {
                 format!("last known {}", super::switch::age_text(elapsed))
             });
         let menu_popover = popover.clone();
+        let menu_open = self.context_display.menu_cluster.as_deref() == Some(item.id.as_ref());
         let row = h_flex()
             .id(("cluster", ix))
             .test_support()
@@ -168,11 +198,11 @@ impl Pilot {
             .text_color(if current { p.ink } else { p.ink_2 })
             .when(current, |this| this.bg(p.accent_soft))
             .when(!current, |this| this.hover(|style| style.bg(p.hover)))
-            .tooltip({
+            .when(!menu_open, |this| {
                 let tip = item.tooltip.clone();
-                move |window, cx| {
+                this.tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
-                }
+                })
             })
             .child(
                 div()
@@ -216,8 +246,9 @@ impl Pilot {
         div()
             .id(("cluster-menu", ix))
             .child(row)
-            .context_menu(move |menu, _, _| {
+            .context_menu(move |menu, window, cx| {
                 let (pilot, id, popover) = (pilot.clone(), opened.clone(), menu_popover.clone());
+                Self::watch_cluster_menu(&pilot, &id, &popover, window, cx);
                 menu.item(
                     PopupMenuItem::new("Open in new tab").on_click(move |_, window, cx| {
                         _ = pilot.update(cx, |view, cx| {

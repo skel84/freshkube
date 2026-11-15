@@ -135,6 +135,12 @@ fn right_click_on_a_cluster_row_opens_it_in_a_new_tab(cx: &mut TestAppContext) {
     cx.run_until_parked();
     // Opening the menu changes nothing by itself.
     assert_eq!(entries(cx, &pilot), [Some("dev-fra".to_owned())]);
+    // The row holds its tooltip while its menu is open, so the tooltip
+    // cannot cover the menu's entry.
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).context_display.menu_cluster.clone()),
+        Some("prod-ams".to_owned())
+    );
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.within("popup-menu").click(0usize, cx);
@@ -147,6 +153,10 @@ fn right_click_on_a_cluster_row_opens_it_in_a_new_tab(cx: &mut TestAppContext) {
     );
     assert_eq!(active(cx, &pilot), SessionKey::Entry("prod-ams".into()));
     assert!(!cx.has_pending_prompt());
+    assert_eq!(
+        cx.read(|cx| pilot.read(cx).context_display.menu_cluster.clone()),
+        None
+    );
     // The switcher closed and the page has the keyboard, as after ⌘-click.
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
