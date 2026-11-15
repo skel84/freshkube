@@ -411,6 +411,12 @@ pub(crate) struct Dock {
     parked: Vec<saved::SavedTab>,
     /// Which of the parked tabs was the selected one.
     parked_selected: Option<usize>,
+    /// The tab that was selected when the dock opened with its saved selection
+    /// on a parked tab: that selection holds only while this one stays the
+    /// selected tab.
+    parked_guard: Option<u64>,
+    /// The day each context was last the shown one, as saved.
+    seen: std::collections::BTreeMap<String, u32>,
     save: Option<Task<()>>,
     /// The selected tab's least height when the dock last heard of it.
     last_least: Option<Pixels>,
@@ -484,6 +490,8 @@ impl Dock {
             restore: None,
             parked: Vec::new(),
             parked_selected: None,
+            parked_guard: None,
+            seen: Default::default(),
             save: None,
             last_least: None,
             dragged: false,

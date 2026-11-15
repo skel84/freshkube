@@ -2,7 +2,7 @@ use freshkube_core::resources::builtin;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px};
 
-use super::saved::{SavedDock, SavedTab};
+use super::saved::{MAX_SAVED_TABS, PARKED_DAYS, SavedDock, SavedTab, bounded};
 use super::{Dock, MAX_LOG_TABS, MAX_SHELL_TABS, TabKind};
 use crate::desktop::tests::{fixture, start_shell};
 use crate::desktop::{Page, Pilot};
