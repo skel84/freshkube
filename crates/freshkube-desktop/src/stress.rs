@@ -24,6 +24,12 @@ use crate::perf;
 /// the main thread spent on something else.
 const STALL_TICK: Duration = Duration::from_millis(4);
 
+/// How many seconds after the warm-up the summary keeps samples for. A run of
+/// hours (`scripts/soak.sh`) would otherwise keep millions of stall samples,
+/// and its own memory would read as the app's growth. A run of 30 s, or any
+/// under five minutes past its warm-up, is summarised whole, as before.
+const SUMMARY_WINDOW: u64 = 300;
+
 /// The window a terminal run asks for, from `FRESHKUBE_STRESS_APPEARANCE`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Appearance {
@@ -48,6 +54,9 @@ pub struct StressOptions {
     pub talos_rate: Option<u32>,
     /// `FRESHKUBE_STRESS_WORKLOAD_RATE`: a positive number, else none.
     pub workload_rate: Option<u32>,
+    /// `FRESHKUBE_STRESS_FAULTS`: the soak run's fault plan, as written;
+    /// empty when unset. The synthetic API parses it (`freshkube_probe::faults`).
+    pub faults: String,
 }
 
 impl Default for StressOptions {
@@ -87,6 +96,7 @@ impl StressOptions {
             },
             talos_rate: rate("FRESHKUBE_STRESS_TALOS_RATE"),
             workload_rate: rate("FRESHKUBE_STRESS_WORKLOAD_RATE"),
+            faults: text("FRESHKUBE_STRESS_FAULTS").unwrap_or_default(),
         }
     }
 }
@@ -216,7 +226,7 @@ pub(crate) fn start<V: 'static>(window: &mut Window, cx: &mut Context<V>) {
             usage = now;
             for (name, samples) in perf::drain() {
                 eprintln!("perf {second} {name} {}", stats(&samples));
-                if second > warmup {
+                if second > warmup && second <= warmup + SUMMARY_WINDOW {
                     kept.entry(name).or_default().extend(samples);
                 }
             }
@@ -224,7 +234,7 @@ pub(crate) fn start<V: 'static>(window: &mut Window, cx: &mut Context<V>) {
                 "perf {second} process cpu={share:.0}% rss={:.0}MB",
                 usage.resident as f64 / 1e6
             );
-            if second > warmup {
+            if second > warmup && second <= warmup + SUMMARY_WINDOW {
                 cpu.push(share);
             }
         }

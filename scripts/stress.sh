@@ -11,6 +11,7 @@
 # with the screen unlocked and leave the window in front. It takes the shared
 # screen lock (scripts/smoke/lock.sh) after building, so builds and other
 # worktrees' smoke tests don't run during the measurement.
+# FRESHKUBE_STRESS_SAMPLES=<csv> samples the process while it runs (soak.sh).
 # FRESHKUBE_STRESS_BINARY can select a saved release binary for comparisons.
 set -eu
 label=$1; shift
@@ -34,7 +35,16 @@ ROOT=$root
 . $root/scripts/smoke/lock.sh
 screen_acquire stress $$
 trap screen_release EXIT
-"$stress_binary" "$@" 2> $out/$label.log
+if [[ -n ${FRESHKUBE_STRESS_SAMPLES:-} ]]; then
+    # A soak run (scripts/soak.sh): sample the process while it runs.
+    . $root/scripts/soak/sample.sh
+    "$stress_binary" "$@" 2> $out/$label.log &
+    stress_pid=$!
+    soak_run $stress_pid $FRESHKUBE_STRESS_SAMPLES ${FRESHKUBE_STRESS_SAMPLE_EVERY:-30}
+    wait $stress_pid
+else
+    "$stress_binary" "$@" 2> $out/$label.log
+fi
 /usr/bin/grep -E '^(summary|stress server)' $out/$label.log || true
 if [[ $1 == monitoring ]]; then
     . $root/scripts/stress/report.sh

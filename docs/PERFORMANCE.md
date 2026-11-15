@@ -6,7 +6,34 @@ How Freshkube behaves under load, how to measure it, and what the numbers showed
 
 - With 20,000 rows, a filter keystroke or a watch batch costs the main thread under about 16 ms, one frame at 60 Hz.
 - A log writing 10,000 lines a second keeps up: the newest line on screen stays a bounded time behind the stream.
-- Memory stays flat under a sustained load.
+- Memory stays flat under a sustained load. `scripts/soak.sh` runs for hours with faults injected and fails on steady growth ([Soak](#soak)).
+
+## Soak
+
+A soak run is one stress scenario for hours, with faults injected into the synthetic API, while the process's memory, threads and open handles are sampled. It fails on steady growth. (#968, item 5.)
+
+```sh
+scripts/soak.sh <label> <hours> <scenario> [args...]
+scripts/soak.sh burst-4h 4 summary-burst 500
+SOAK_EVERY=10 SOAK_WARMUP=120 FRESHKUBE_STRESS_FAULTS='refuse=0.05,gone=120' scripts/soak.sh quick 0.5 summary-burst 500
+```
+
+It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and takes the same lock. The samples are kept in `target/soak/<label>.csv` (`second,rss_mb,threads,fds`) and the per-second report in `target/stress/soak-<label>.log`; the run ends with the faults it injected (`stress server faults …`) and a verdict.
+
+**Faults.** `FRESHKUBE_STRESS_FAULTS` is comma-separated `name=value`; `freshkube-probe`'s `faults.rs` parses it, from a seeded generator, so a run with the same seed meets the same faults. The default of `soak.sh` is `refuse=0.01,drop=0.01,slow=0.02@1500,gone=300`.
+
+| Name | Value | Fault |
+| --- | --- | --- |
+| `refuse` | chance 0–1 | the request is answered 403 Forbidden |
+| `drop` | chance 0–1 | the connection closes with no answer |
+| `slow` | `chance@milliseconds` | the answer waits that long |
+| `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
+| `after` | seconds, default 20 | no fault before this, so the app can start |
+| `seed` | integer, default 1 | the generator's seed |
+
+**Verdict.** `soak-verdict` (`freshkube-probe`'s `soak.rs`) drops the first `SOAK_WARMUP` seconds (default 600), cuts the rest into three equal parts and takes each part's median. A series grew steadily when both steps between the medians are at least half of what it must gain, and the whole gain passes an absolute and a relative limit: 20 MB and 10% for memory, 8 and 10% for threads, 16 and 10% for open handles. So a leak fails; noise, a sawtooth that returns to its baseline and one step up that then holds (a cache filling) pass. A step late in the run can't be told from the start of a leak, so run longer when in doubt. Exit 0 is no growth, 1 growth, 2 a run that can't be judged (fewer than 30 samples after the warm-up, a missing file or a bad line).
+
+**What it does not do.** It samples from outside, so it counts threads and handles, not Tokio tasks. The synthetic API runs in the same process, so its own growth counts too; a verdict that blames memory is first checked against a run with no faults (`FRESHKUBE_STRESS_FAULTS=`). Tests: `freshkube-probe`'s `soak` and `faults` unit tests, the `bin/stress` tests for each fault through a real socket, and `scripts/soak.test.sh` (the sampler and the verdict's exit codes). A real run has not been made: it needs a Mac and hours.
 
 ## Measuring
 
@@ -48,8 +75,11 @@ The stress binary reads these knobs once into `StressOptions`. Missing or invali
 | `FRESHKUBE_STRESS_APPEARANCE` | `light` or `dark`; default leaves the theme alone | Picks the terminal window's appearance. |
 | `FRESHKUBE_STRESS_TALOS_RATE` | positive integer lines/s; default no flood | Sets the example Talos log rate. |
 | `FRESHKUBE_STRESS_WORKLOAD_RATE` | positive integer lines/s; default no flood | Sets the example workload log rate. |
+| `FRESHKUBE_STRESS_FAULTS` | a fault plan; default none | Injects faults into the synthetic API: refused requests, dropped connections, slow answers and expired watches ([Soak](#soak)). |
 
 A unit test in `stress.rs` checks that this table names every knob `StressOptions::parse` reads and no other. GPUI stops drawing a covered window or one on a locked screen, so keep the window in front; the script refuses to run on a locked screen.
+
+A run longer than five minutes past its warm-up summarises only those five minutes (`SUMMARY_WINDOW` in `stress.rs`), so a soak run's own bookkeeping doesn't grow with it. Shorter runs are summarised whole.
 
 The `stress` feature turns on spans around the work that matters (`freshkube_probe::perf`, which desktop reaches as `crate::perf`); without it they compile to nothing. Each second the run prints, for every span, its count, median, 99th percentile, maximum and total in milliseconds, then the process's CPU share and resident memory:
 

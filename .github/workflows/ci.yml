@@ -136,6 +136,7 @@ jobs:
           cargo clippy -p freshkube-desktop --features stress --all-targets --locked -- -D warnings
           cargo test -p freshkube-desktop --features stress --bin stress --locked
           scripts/stress.test.sh
+          scripts/soak.test.sh
       - name: Check builds leave the source tree clean
         run: test -z "$(git status --porcelain)"
 

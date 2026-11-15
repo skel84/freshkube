@@ -49,6 +49,10 @@ use tokio::sync::mpsc;
 mod summary;
 use summary::summary_list;
 
+use freshkube_probe::faults::{Fault, FaultPlan};
+
+type Failure = std::io::Error;
+
 type Body = UnsyncBoxBody<Bytes, Infallible>;
 
 const NAMESPACES: usize = 50;
@@ -275,7 +279,18 @@ fn main() -> color_eyre::Result<()> {
             runtime.handle().clone(),
         );
     }
-    let world = Arc::new(World::new(scenario));
+    let faults = if stress.faults.trim().is_empty() {
+        None
+    } else {
+        match FaultPlan::parse(&stress.faults) {
+            Ok(plan) => Some(plan),
+            Err(error) => {
+                eprintln!("stress: FRESHKUBE_STRESS_FAULTS: {error}");
+                std::process::exit(2);
+            }
+        }
+    };
+    let world = Arc::new(World::new(scenario, faults));
     let address = runtime.block_on(serve(world.clone(), stress.seconds))?;
     std::fs::create_dir_all(&dir)?;
     let kubeconfig = dir.join("kubeconfig");
@@ -301,6 +316,13 @@ fn main() -> color_eyre::Result<()> {
     }
     let result = freshkube_desktop::run(options, runtime.handle().clone());
     world.summary.report();
+    if let Some(plan) = world.faults.lock().expect("faults").as_ref() {
+        let c = plan.counts();
+        eprintln!(
+            "stress server faults refused={} dropped={} slow={} gone={}",
+            c.refused, c.dropped, c.slow, c.gone
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
     result
 }
@@ -310,6 +332,8 @@ struct World {
     scenario: Scenario,
     pods: Mutex<Pods>,
     summary: summary::State,
+    /// The soak run's faults, when `FRESHKUBE_STRESS_FAULTS` names some.
+    faults: Mutex<Option<FaultPlan>>,
     started: Instant,
     created: chrono::DateTime<Utc>,
 }
@@ -361,7 +385,7 @@ impl Pods {
 }
 
 impl World {
-    fn new(scenario: Scenario) -> Self {
+    fn new(scenario: Scenario, faults: Option<FaultPlan>) -> Self {
         let count = match scenario {
             Scenario::Summary | Scenario::SummaryBurst { .. } => 20_000,
             Scenario::Table { pods } | Scenario::Burst { pods, .. } => pods,
@@ -387,6 +411,7 @@ impl World {
             scenario,
             pods: Mutex::new(pods),
             summary: summary::State::default(),
+            faults: Mutex::new(faults),
             started: Instant::now(),
             created: Utc::now(),
         }
@@ -403,7 +428,7 @@ async fn serve(world: Arc<World>, seconds: u64) -> std::io::Result<std::net::Soc
             tokio::spawn(async move {
                 let service = service_fn(move |request| {
                     let world = world.clone();
-                    async move { Ok::<_, Infallible>(respond(&world, request)) }
+                    async move { answer(&world, request).await }
                 });
                 let _ = http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), service)
@@ -412,6 +437,41 @@ async fn serve(world: Arc<World>, seconds: u64) -> std::io::Result<std::net::Soc
         }
     });
     Ok(address)
+}
+
+/// `respond`, after the soak run's fault for this request, if any. A dropped
+/// connection is a service error, which closes the connection unanswered.
+async fn answer(
+    world: &Arc<World>,
+    request: Request<hyper::body::Incoming>,
+) -> Result<Response<Body>, Failure> {
+    let watching = request.uri().query().is_some_and(|query| {
+        query
+            .split('&')
+            .any(|p| matches!(p, "watch=1" | "watch=true"))
+    });
+    let fault = match world.faults.lock().expect("faults").as_mut() {
+        Some(plan) => plan.decide(world.started.elapsed(), watching),
+        None => Fault::None,
+    };
+    match fault {
+        Fault::None => {}
+        Fault::Drop => return Err(std::io::Error::other("fault: connection dropped")),
+        Fault::Slow(delay) => tokio::time::sleep(delay).await,
+        Fault::Refuse => return Ok(failure_status(StatusCode::FORBIDDEN, "Forbidden")),
+        Fault::Gone => return Ok(failure_status(StatusCode::GONE, "Expired")),
+    }
+    Ok(respond(world, request))
+}
+
+/// A Kubernetes `Status` failure with that HTTP status.
+fn failure_status(code: StatusCode, reason: &str) -> Response<Body> {
+    let mut response = json_response(json!({
+        "kind": "Status", "apiVersion": "v1", "status": "Failure",
+        "reason": reason, "code": code.as_u16(), "message": "injected by the soak run"
+    }));
+    *response.status_mut() = code;
+    response
 }
 
 fn respond(world: &Arc<World>, request: Request<hyper::body::Incoming>) -> Response<Body> {
@@ -804,4 +864,82 @@ fn metric_name(expr: &str) -> &str {
         .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
         .map_or(0, |ix| ix + 1);
     &head[start..]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    /// The status line's code of a plain GET, or `None` when the connection
+    /// closed without an answer.
+    async fn get(address: std::net::SocketAddr, path: &str) -> Option<u16> {
+        let mut stream = tokio::net::TcpStream::connect(address).await.ok()?;
+        let request = format!("GET {path} HTTP/1.1\r\nHost: stress\r\nConnection: close\r\n\r\n");
+        stream.write_all(request.as_bytes()).await.ok()?;
+        let mut answer = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut answer)).await;
+        let text = String::from_utf8_lossy(&answer);
+        text.split_whitespace().nth(1)?.parse().ok()
+    }
+
+    async fn server(faults: &str) -> (Arc<World>, std::net::SocketAddr) {
+        let plan = FaultPlan::parse(faults).expect("a plan");
+        let world = Arc::new(World::new(Scenario::Table { pods: 3 }, Some(plan)));
+        let address = serve(world.clone(), 30).await.expect("a server");
+        (world, address)
+    }
+
+    fn counts(world: &World) -> freshkube_probe::faults::Counts {
+        world.faults.lock().unwrap().as_ref().unwrap().counts()
+    }
+
+    #[tokio::test]
+    async fn without_a_plan_every_request_is_answered() {
+        let world = Arc::new(World::new(Scenario::Table { pods: 3 }, None));
+        let address = serve(world, 30).await.unwrap();
+        assert_eq!(get(address, "/version").await, Some(200));
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_a_403_status() {
+        let (world, address) = server("refuse=1,after=0").await;
+        assert_eq!(get(address, "/version").await, Some(403));
+        assert_eq!(counts(&world).refused, 1);
+    }
+
+    #[tokio::test]
+    async fn a_dropped_connection_gets_no_answer() {
+        let (world, address) = server("drop=1,after=0").await;
+        assert_eq!(get(address, "/version").await, None);
+        assert_eq!(counts(&world).dropped, 1);
+    }
+
+    #[tokio::test]
+    async fn only_a_watch_is_answered_gone() {
+        let (world, address) = server("gone=1,after=0").await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert_eq!(get(address, "/api/v1/pods").await, Some(200));
+        assert_eq!(get(address, "/api/v1/pods?watch=true").await, Some(410));
+        assert_eq!(counts(&world).gone, 1);
+    }
+
+    #[tokio::test]
+    async fn a_slow_answer_waits_and_then_comes() {
+        let (world, address) = server("slow=1@300,after=0").await;
+        let started = Instant::now();
+        assert_eq!(get(address, "/version").await, Some(200));
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        assert_eq!(counts(&world).slow, 1);
+    }
+
+    #[tokio::test]
+    async fn nothing_is_injected_before_the_grace_period() {
+        let (world, address) = server("drop=1,refuse=1,after=60").await;
+        assert_eq!(get(address, "/version").await, Some(200));
+        assert_eq!(counts(&world), freshkube_probe::faults::Counts::default());
+    }
 }
