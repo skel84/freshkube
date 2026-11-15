@@ -378,6 +378,9 @@ impl ChangePage {
             Fetch::Live { kubeconfig, .. } => kubeconfig.clone(),
             Fetch::Example { .. } => None,
         };
+        // The dialog this opens covers the button: its tooltip waits.
+        self.tips_held = true;
+        cx.notify();
         cx.emit(ChangeEvent::Act(Box::new(StageAct {
             kind,
             stage: stage.to_owned(),

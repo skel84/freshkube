@@ -390,3 +390,30 @@ fn no_rollback_is_offered_while_a_promotion_runs(cx: &mut TestAppContext) {
     press(cx, handle, 5);
     assert!(events.borrow().is_empty(), "Abort takes over");
 }
+
+#[gpui_kit::test]
+fn a_pressed_action_holds_the_buttons_tooltips_until_the_pointer_moves_on_the_page(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert!(!cx.read(|cx| page.read(cx).tips_held));
+    // Copy sends nothing and opens no dialog: it holds nothing.
+    press(cx, handle, 6);
+    assert!(!cx.read(|cx| page.read(cx).tips_held));
+    // An action that opens a dialog does: its tooltip waits, so it can't be
+    // drawn over the dialog.
+    press(cx, handle, 5);
+    assert!(cx.read(|cx| page.read(cx).tips_held));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("change-action-2", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| page.read(cx).tips_held),
+        "the pointer moving lets the tooltips back"
+    );
+}

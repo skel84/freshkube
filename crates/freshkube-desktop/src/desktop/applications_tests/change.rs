@@ -2593,6 +2593,7 @@ fn a_toast_covers_neither_the_header_nor_the_inspector_actions(cx: &mut TestAppC
             let roomy = width == 1280. && text == 13.;
             for id in [
                 "change-detail-actions",
+                "change-detail-rollback",
                 "change-copy-link",
                 "change-follow-trigger",
             ] {

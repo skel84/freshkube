@@ -652,6 +652,7 @@ impl ChangePage {
             // never covers its neighbour's.
             let wrap = div().id(SharedString::from(format!("change-action-{ix}-tip")));
             match (action.why.clone(), action.tooltip.clone()) {
+                _ if self.tips_held => wrap.child(button.disabled(action.why.is_some())),
                 (Some(why), _) => wrap.child(button.disabled(true)).follow_tooltip(why),
                 (None, Some(tooltip)) => wrap.child(button).follow_tooltip(tooltip),
                 (None, None) => wrap.child(button),
