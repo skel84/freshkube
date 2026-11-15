@@ -214,8 +214,14 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 25. A protected cluster's Operations action needs the node's name, and nothing runs under `read-only` or on a name that is not typed exactly
+
+- `safety_g25_protected_operations_refuse_a_missing_or_wrong_name_and_accept_the_exact_one` (`crates/freshkube-core/src/operations/gate/tests.rs`)
+- `safety_g25_a_protected_cluster_starts_no_operation_until_the_node_is_named` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+
 ## Known gaps
 
+- Guarantees 10 and 25 read the level the app holds at send time. The app defers reading a changed `freshkube.yaml` while a dialog is open (`startup/setup.rs`), so a guarded dialog confirmed after the file was edited to `read-only` or `protected` outside the app still runs. Reading the file again in `start_run` is a follow-up.
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).
