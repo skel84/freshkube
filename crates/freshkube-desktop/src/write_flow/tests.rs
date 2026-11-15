@@ -312,6 +312,17 @@ fn the_dialog_names_the_tier_and_the_level_at_every_level_that_asks(cx: &mut Tes
             h.click(cx, "write-cancel");
             h.drive(cx, Duration::from_secs(1));
         }
+        // A reversible action with no way back says so (Restart's case).
+        let h = harness(cx, level);
+        let mut no_way_back = fake::annotate_web();
+        no_way_back.no_confirmation = false;
+        h.begin(cx, no_way_back);
+        assert_eq!(
+            h.label(cx, "write-kind-and-level"),
+            format!("Reversible, no Undo · {} cluster", level.label())
+        );
+        h.click(cx, "write-cancel");
+        h.drive(cx, Duration::from_secs(1));
         let h = harness(cx, level);
         h.begin(cx, fake::set_image("registry.example/web:2"));
         assert_eq!(h.label(cx, "write-kind-and-level"), edit_line);

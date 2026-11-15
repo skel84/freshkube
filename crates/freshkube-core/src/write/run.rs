@@ -315,7 +315,7 @@ impl Runner {
             protection: level.key().to_owned(),
             undo: Some(
                 if action.changes.iter().any(|change| change.inverse.is_some()) {
-                    "offered"
+                    "available"
                 } else {
                     "none"
                 }

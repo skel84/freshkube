@@ -942,10 +942,10 @@ mod tests {
         }
     }
 
-    /// The audit line says whether Undo was offered, apart from the tier
+    /// The audit line says whether the action has a way back, apart from the tier
     /// (#1056): Scale has a way back, Restart is the same tier with none.
     #[tokio::test(start_paused = true)]
-    async fn the_audit_says_whether_undo_was_offered_apart_from_the_tier() {
+    async fn the_audit_says_whether_there_is_a_way_back_apart_from_the_tier() {
         let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
         let scaled = scale(&subject(&cluster, fake::DEPLOYMENT), 5).unwrap();
         send(
@@ -979,7 +979,7 @@ mod tests {
         };
         assert_eq!(
             undo_of("scale"),
-            [("reversible".to_owned(), Some("offered".to_owned()))]
+            [("reversible".to_owned(), Some("available".to_owned()))]
         );
         assert_eq!(
             undo_of("restart"),

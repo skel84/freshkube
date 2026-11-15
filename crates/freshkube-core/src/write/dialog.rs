@@ -129,7 +129,15 @@ fn ask(prepared: &Prepared, entry: &str) -> Ask {
             .collect(),
         kind_and_level: format!(
             "{} · {} cluster",
-            action.tier.label(),
+            // A reversible action with no way back says so, beside the line
+            // that says nothing can be undone (Restart).
+            if action.tier == super::Tier::Reversible
+                && action.changes.iter().all(|change| change.inverse.is_none())
+            {
+                "Reversible, no Undo".to_owned()
+            } else {
+                action.tier.label().to_owned()
+            },
             prepared.level.label()
         ),
     }
