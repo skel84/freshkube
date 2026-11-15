@@ -14,7 +14,8 @@
 #   FRESHKUBE_STRESS_FAULTS  the fault plan; default drops, refuses, slows
 #                            and expires watches (docs/PERFORMANCE.md)
 #   SOAK_EVERY               seconds between samples; default 30
-#   SOAK_WARMUP              seconds left out of the verdict; default 600
+#   SOAK_WARMUP              seconds left out of the verdict; default 600, or
+#                            longer while a burst scenario's replay buffer fills
 #
 # Like scripts/stress.sh this needs the unlocked screen of a Mac; the run
 # takes its lock. The samples are kept in target/soak/<label>.csv.
@@ -29,7 +30,9 @@ export FRESHKUBE_STRESS_SECONDS=${secs%.*}
 export FRESHKUBE_STRESS_FAULTS=${FRESHKUBE_STRESS_FAULTS-refuse=0.01,drop=0.01,slow=0.02@1500,gone=300,cut=120}
 export FRESHKUBE_STRESS_SAMPLES=$out/$label.csv
 export FRESHKUBE_STRESS_SAMPLE_EVERY=${SOAK_EVERY:-30}
-warmup=${SOAK_WARMUP:-600}
+# The scenario's own replay buffer fills during the warm-up (sample.sh).
+. $root/scripts/soak/sample.sh
+warmup=${SOAK_WARMUP:-$(soak_default_warmup "$@")}
 export FRESHKUBE_STRESS_WARMUP=$warmup
 rc=0
 $root/scripts/stress.sh soak-$label "$@" || rc=$?

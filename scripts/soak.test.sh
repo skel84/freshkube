@@ -58,6 +58,12 @@ soak_exec "$work/ok.csv" 30 "$work/ok.log" true || rc=$?
 [ "$rc" = 0 ]; check "soak_exec returns 0 for a command that succeeds" $?
 trap 'rm -rf "$work"' EXIT  # soak_exec set its own
 
+# The default warm-up covers the burst scenarios' replay buffer filling.
+[ "$(soak_default_warmup summary-burst 500)" = 600 ]; check "500 changes/s: the buffer fills in 200 s, warm-up stays 600" $?
+[ "$(soak_default_warmup summary-burst 100)" = 1120 ]; check "100 changes/s: the buffer takes 1000 s, warm-up 1120" $?
+[ "$(soak_default_warmup burst 20000 50)" = 2120 ]; check "burst takes its rate from the third argument (2120)" $?
+[ "$(soak_default_warmup table 20000)" = 600 ]; check "a scenario without a replay buffer keeps 600" $?
+
 cargo build --quiet --manifest-path "$root/Cargo.toml" -p freshkube-probe --bin soak-verdict
 verdict="$root/target/debug/soak-verdict"
 

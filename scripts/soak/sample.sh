@@ -63,3 +63,23 @@ soak_exec() {
     wait $SOAK_PID || rc=$?
     return $rc
 }
+
+# soak_default_warmup <scenario> [args...]
+#   Prints the seconds a soak run leaves out before judging growth: 600, or
+#   longer when the scenario's own in-process generator is still filling its
+#   replay buffer. `burst` and `summary-burst` keep the last 100,000 changes
+#   (REPLAY_LIMIT in bin/stress/summary.rs, about 26 MB), which fills in
+#   100,000 / rate seconds; the warm-up covers that and two minutes more.
+soak_default_warmup() {
+    local rate=""
+    case ${1:-} in
+        summary-burst | summary-410) rate=${2:-2000} ;;
+        burst) rate=${3:-2000} ;;
+    esac
+    local warm=600
+    if [ -n "$rate" ] && [ "$rate" -gt 0 ] 2>/dev/null; then
+        local fill=$((100000 / rate + 120))
+        [ "$fill" -gt "$warm" ] && warm=$fill
+    fi
+    echo "$warm"
+}
