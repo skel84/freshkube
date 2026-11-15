@@ -128,6 +128,20 @@ pub struct State {
     pub retry: bool,
 }
 
+impl State {
+    /// Whether the detail is the server's words after a failed or refused
+    /// read, drawn as an error; otherwise it is what was looked for.
+    pub fn detail_is_error(&self) -> bool {
+        matches!(self.icon, StateIcon::Refused | StateIcon::Broken)
+    }
+
+    /// Whether Settings › Monitoring holds the fix: where the alerts source
+    /// is looked for and which label names this cluster.
+    pub fn offers_settings(&self) -> bool {
+        matches!(self.id, "alerts-not-found" | "alerts-no-label")
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateIcon {
     Quiet,

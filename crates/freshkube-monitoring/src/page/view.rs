@@ -693,12 +693,5 @@ fn scrolled(scroll: &ScrollHandle, unit: Pixels) -> f32 {
 
 /// An Open Settings button: the app's own Settings action.
 fn open_settings_button(id: &'static str) -> AnyElement {
-    Button::new(id)
-        .outline()
-        .small()
-        .label("Open Settings")
-        .on_click(|_, window, cx| {
-            window.dispatch_action(Box::new(freshkube_ui::platform::OpenSettings), cx);
-        })
-        .into_any_element()
+    freshkube_ui::read_state::open_settings_button(id)
 }

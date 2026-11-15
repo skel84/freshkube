@@ -235,6 +235,20 @@ pub fn read_state(
     .into_any_element()
 }
 
+/// An Open Settings button: the app's own Settings action. A state offers it
+/// through [`ReadActions::open_settings`] where Settings holds the fix.
+pub fn open_settings_button(id: &'static str) -> AnyElement {
+    use gpui_kit::component::{Sizable as _, button::Button};
+    Button::new(id)
+        .outline()
+        .small()
+        .label("Open Settings")
+        .on_click(|_, window, cx| {
+            window.dispatch_action(Box::new(crate::platform::OpenSettings), cx);
+        })
+        .into_any_element()
+}
+
 /// The mono box of a state: what was looked for is a note, and only the
 /// server's own words after a refusal or a failed read look like an error.
 fn details_for(state: &ReadState, details: Option<String>) -> Option<ui::EmptyDetails> {

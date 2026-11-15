@@ -272,6 +272,22 @@ fn what_was_not_read_is_never_no_alerts(cx: &mut TestAppContext) {
             shape != Shape::Refused,
             "{shape:?}"
         );
+        // The details are an error only when the read was refused.
+        cx.read(|cx| match &page.read(cx).display().body {
+            Body::State(state) => assert_eq!(
+                state.detail_is_error(),
+                shape == Shape::Refused,
+                "{shape:?}"
+            ),
+            other => panic!("{other:?}"),
+        });
+        // Settings holds the fix where the source is looked for or the label
+        // named: the sentence there gets a button, not only the words.
+        assert_eq!(
+            shown(cx, handle, "alerts-open-settings"),
+            matches!(shape, Shape::NotFound | Shape::NoLabel),
+            "{shape:?}"
+        );
     }
     let (_runtime, handle, page) =
         mount(cx, Which::Alerts, Some(example_source("a")), Shape::Quiet);
