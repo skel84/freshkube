@@ -78,7 +78,24 @@ impl Pilot {
                     Ok(client) => {
                         let runner = Arc::new(Runner::new(client, audit, who).following(cell));
                         let runtime = this.runtime.clone();
-                        start(runner, runtime, pressed.action, &pressed.identity, window, cx);
+                        // The edit's own write ends the edit: the editor was
+                        // based on a version this write has replaced.
+                        let screen = this.pages.resources.downgrade();
+                        let written = pressed.identity.clone();
+                        let after: write_flow::After = Box::new(move |taken, cx| {
+                            if taken {
+                                _ = screen.update(cx, |screen, cx| screen.edit_written(&written, cx));
+                            }
+                        });
+                        start_then(
+                            runner,
+                            runtime,
+                            pressed.action,
+                            &pressed.identity,
+                            Some(after),
+                            window,
+                            cx,
+                        );
                     }
                     Err(why) => window.push_notification(
                         format!("Couldn't review the edit of {what}: {why} Nothing was sent."),

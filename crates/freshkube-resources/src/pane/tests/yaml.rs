@@ -129,3 +129,33 @@ fn lines_select_and_copy_and_copy_yaml_takes_the_whole_document(cx: &mut TestApp
     assert!(!name.contains('/'));
     assert_eq!(clipboard(cx), name);
 }
+
+/// A click on the YAML tab switches to it, at every pane width and text size
+/// the tabs fit in whole (#1056, which reported two clicks doing nothing).
+/// Narrower than that, the strip's fade over its cut end takes the click and
+/// pages the strip instead; the keys still switch.
+#[gpui_kit::test]
+fn a_click_on_the_yaml_tab_switches_to_it_at_every_width_the_tabs_fit(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    cx.update(|cx| crate::text_size::install(None, cx));
+    let mut failed = vec![];
+    for text in [13., 16.] {
+        cx.update(|cx| crate::text_size::set(text, cx));
+        for width in (300..=700).step_by(40) {
+            cx.simulate_window_resize(handle, size(px(width as f32), px(820.)));
+            cx.update_window(handle, |_, window, cx| {
+                open(&pane, &pod, Duration::ZERO, cx);
+                pane.update(cx, |pane, cx| pane.set_tab(Tab::Overview, cx));
+                settle(window, cx);
+                window.click("detail-tab-yaml", cx);
+                settle(window, cx);
+                if window.find("detail-tab-yaml").selected() != Some(true) {
+                    failed.push((text, width));
+                }
+            })
+            .unwrap();
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}

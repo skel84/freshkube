@@ -508,6 +508,68 @@ fn undo_that_has_expired_says_so_in_the_button_place(cx: &mut TestAppContext) {
     assert_eq!(h.label(cx, "write-undo-note"), "Undo is no longer offered.");
 }
 
+/// A write seen to take effect leaves its toast once Undo's window is over
+/// (#1056): the first Scale's toast used to stay for the whole session,
+/// because it never stopped offering Undo and so never autohid.
+#[gpui_kit::test]
+fn a_toast_leaves_once_undos_window_is_over(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Guarded);
+    h.begin(cx, fake::scale(3));
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert!(h.present(cx, "write-toast"));
+    h.advance(cx, Duration::from_secs(20));
+    assert!(h.present(cx, "write-toast"), "still inside the window");
+    h.advance(cx, Duration::from_secs(12));
+    assert_eq!(h.label(cx, "write-undo-note"), "Undo is no longer offered.");
+    // Its own few seconds, as any finished toast has.
+    h.advance(cx, Duration::from_secs(8));
+    assert!(!h.present(cx, "write-toast"), "it stayed on screen");
+}
+
+/// What the page that started a write hears when it has ended (#1056: an
+/// edit's own write closes its editor): told once, and that the cluster took
+/// it, only when it did.
+#[gpui_kit::test]
+fn the_page_that_started_a_write_is_told_once_that_the_cluster_took_it(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Guarded);
+    let told = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let flow = h.begin(cx, fake::scale(3));
+    let sink = told.clone();
+    flow.update(cx, |flow, _| {
+        flow.then(Box::new(move |taken, _| sink.borrow_mut().push(taken)))
+    });
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.replicas(), 3);
+    assert_eq!(*told.borrow(), [true]);
+}
+
+#[gpui_kit::test]
+fn the_page_is_told_nothing_was_taken_when_the_cluster_refuses(cx: &mut TestAppContext) {
+    let h = harness(cx, Protection::Guarded);
+    let told = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let flow = h.begin(cx, fake::scale(3));
+    let sink = told.clone();
+    flow.update(cx, |flow, _| {
+        flow.then(Box::new(move |taken, _| sink.borrow_mut().push(taken)))
+    });
+    // Someone else moves the object between the dialog and the confirm.
+    h.cluster.foreign_write(
+        fake::DEPLOYMENT,
+        "hpa",
+        &serde_json::json!({"spec": {"replicas": 5}}),
+    );
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.cluster.writes().len(), 1, "only the foreign write");
+    assert!(
+        told.borrow().iter().all(|taken| !taken),
+        "{:?}",
+        told.borrow()
+    );
+}
+
 #[gpui_kit::test]
 fn a_submitted_write_outlives_its_flow_and_is_sent_once(cx: &mut TestAppContext) {
     let h = harness(cx, Protection::Guarded);

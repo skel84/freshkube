@@ -288,6 +288,28 @@ impl Impact {
         !self.complete || self.dependents.iter().any(Dependents::may_own)
     }
 
+    /// The kinds looked at, when every one was read in full and none of them
+    /// holds anything the object owns, yet the kind may own others that were
+    /// not looked at. The propagation choice stays for that, and the picker
+    /// says why instead of speaking of what was found.
+    pub fn none_found_among(&self) -> Option<String> {
+        let nothing = !self.dependents.is_empty()
+            && self.dependents.iter().all(|dependents| {
+                matches!(
+                    &dependents.found,
+                    Found::Read {
+                        total: 0,
+                        at_least: false,
+                        ..
+                    }
+                )
+            });
+        (!self.complete && nothing).then(|| {
+            let kinds: Vec<&str> = self.dependents.iter().map(|d| d.kind).collect();
+            kinds.join(", ")
+        })
+    }
+
     /// The finalizers it carries.
     pub fn finalizers(&self) -> Vec<String> {
         super::outcome::finalizers_of(&self.object)

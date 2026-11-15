@@ -50,6 +50,10 @@ pub(crate) enum Undo {
         at: Instant,
     },
     Running,
+    /// The window ended without Undo being used: the toast says so and, like
+    /// any finished one, goes away by itself when the write was seen to take
+    /// effect.
+    Expired,
     /// Undo continues in its own dialog and notice.
     Handed,
     /// What came of it, and how to tone it.
@@ -140,22 +144,43 @@ impl WriteReport {
         }
     }
 
-    /// Redraws once a second while Undo counts down.
+    /// Redraws once a second while Undo counts down, and ends the offer when
+    /// its window is over. A toast that kept `Offered` for good would never
+    /// autohide, and would stay on the first write for the whole session
+    /// (#1056).
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self._ticker = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let offered = this
-                    .update(cx, |report, cx| {
-                        cx.notify();
-                        matches!(report.undo, Undo::Offered { .. })
-                    })
+                    .update_in(cx, |report, window, cx| report.undo_ticked(window, cx))
                     .unwrap_or(false);
                 if !offered {
                     break;
                 }
             }
         }));
+    }
+
+    /// One second of the countdown has passed; whether Undo is still offered.
+    fn undo_ticked(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Undo::Offered { at, .. } = &self.undo else {
+            return false;
+        };
+        let spent = cx
+            .background_executor()
+            .now()
+            .saturating_duration_since(*at);
+        if spent >= UNDO_WINDOW {
+            self.undo = Undo::Expired;
+            // Re-pushed under the same id, now with the autohide its result
+            // calls for.
+            self.push(window, cx);
+            cx.notify();
+            return false;
+        }
+        cx.notify();
+        true
     }
 
     fn goes_away_by_itself(&self) -> bool {
@@ -383,6 +408,11 @@ impl WriteReport {
                     )
                 }
             }
+            Undo::Expired => Some(note(
+                "write-undo-note",
+                "Undo is no longer offered.",
+                p.muted,
+            )),
             Undo::Running => Some(note("write-undo-note", "Undoing…", p.muted)),
             Undo::Handed => Some(note(
                 "write-undo-note",
