@@ -306,30 +306,49 @@ async fn syncs(reader: &impl Reader, scope: &Place, now: i64, since: i64) -> Sou
     }
     let mut items = Vec::new();
     let mut cuts = Vec::new();
+    let mut failures = Vec::new();
+    let mut listed_any = false;
     for (namespace, names) in scope.argo.iter().take(MAX_NAMESPACES) {
-        let (listed, cut) = match argocd::read_applications(reader, namespace).await {
+        let (listed, cap) = match argocd::read_applications(reader, namespace).await {
             Listing::Read(list) => (list, None),
-            Listing::Capped(list, cap) => (
-                list,
-                Some(format!(
-                    "cut after {} Applications in {namespace}",
-                    cap.read
-                )),
-            ),
-            Listing::NotInstalled(_) => return gone("Argo CD's Applications are not served here"),
-            Listing::Refused(_) => return gone("Forbidden: can't list Applications"),
-            Listing::Unreadable(_) => return gone("can't list Applications"),
+            Listing::Capped(list, cap) => (list, Some(cap.read)),
+            failed => {
+                // One namespace that can't be listed leaves the others
+                // standing; it is named in the cut.
+                let why = match failed {
+                    Listing::NotInstalled(_) => "Argo CD's Applications are not served here".into(),
+                    Listing::Refused(_) => "Forbidden: can't list Applications".to_owned(),
+                    Listing::Unreadable(why) => format!("can't list Applications: {why}"),
+                    Listing::Read(_) | Listing::Capped(..) => unreachable!(),
+                };
+                cuts.push(format!("{namespace} not read: {why}"));
+                failures.push(why);
+                continue;
+            }
         };
-        cuts.extend(cut);
+        listed_any = true;
+        if let Some(read) = cap {
+            cuts.push(format!("cut after {read} Applications in {namespace}"));
+        }
         for name in names {
             match listed
                 .iter()
                 .find(|app| app.namespace == *namespace && app.name == *name)
             {
-                Some(app) => items.extend(sync_item(app, since)),
-                None => cuts.push(format!("Application {name} not found in {namespace}")),
+                Some(app) => items.extend(sync_item(app, since, now)),
+                // In a capped listing it may only be past the cap.
+                None => cuts.push(match cap {
+                    Some(read) => {
+                        format!("Application {name} not in the first {read} listed in {namespace}")
+                    }
+                    None => format!("Application {name} not found in {namespace}"),
+                }),
             }
         }
+    }
+    // Nothing read at all is not read, with the failure's own reason.
+    if !listed_any && let Some(why) = failures.into_iter().next() {
+        return gone(&why);
     }
     let skipped = scope.argo.len().saturating_sub(MAX_NAMESPACES);
     if skipped > 0 {
@@ -339,10 +358,11 @@ async fn syncs(reader: &impl Reader, scope: &Place, now: i64, since: i64) -> Sou
         ));
     }
     if scope.argo_elsewhere > 0 {
-        cuts.push(format!(
-            "{} Argo CD Applications are read through another connection",
-            scope.argo_elsewhere
-        ));
+        let (count, are) = match scope.argo_elsewhere {
+            1 => ("1 Argo CD Application", "is"),
+            n => (&*format!("{n} Argo CD Applications"), "are"),
+        };
+        cuts.push(format!("{count} {are} read through another connection"));
     }
     let mut read = SourceRead::read(Source::Syncs, from, now, items).state_only();
     if !cuts.is_empty() {
@@ -351,25 +371,36 @@ async fn syncs(reader: &impl Reader, scope: &Place, now: i64, since: i64) -> Sou
     read
 }
 
-/// An Application's last operation, when it ran in the window.
-fn sync_item(app: &argocd::Application, since: i64) -> Option<Item> {
+/// An Application's last operation, when it ran in the window, or is
+/// running now whenever it started.
+fn sync_item(app: &argocd::Application, since: i64, now: i64) -> Option<Item> {
     let operation = app.operation.as_ref()?;
     let stamp = |text: &Option<String>| {
         text.as_deref()
             .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
             .map(|time| time.timestamp())
     };
-    let at = stamp(&operation.finished_at).or_else(|| stamp(&operation.started_at))?;
-    if at < since {
+    let phase = operation.phase.as_deref().unwrap_or("Unknown");
+    let running = matches!(phase, "Running" | "Terminating");
+    let at = stamp(&operation.finished_at).or_else(|| stamp(&operation.started_at));
+    // A sync still running is syncing now, however long ago it started.
+    let at = if running { at.unwrap_or(now) } else { at? };
+    if at < since && !running {
         return None;
     }
-    let phase = operation.phase.as_deref().unwrap_or("Unknown");
+    // The list holds only the window, so one that started before it sits at
+    // its start and says so.
+    let early = at < since;
+    let at = at.max(since);
     let severity = match phase {
         "Failed" | "Error" => Severity::Bad,
         "Running" | "Terminating" => Severity::Warn,
         _ => Severity::Info,
     };
     let mut detail = Vec::new();
+    if early {
+        detail.push("started before this window".to_owned());
+    }
     let revisions: Vec<String> = operation
         .revisions
         .iter()

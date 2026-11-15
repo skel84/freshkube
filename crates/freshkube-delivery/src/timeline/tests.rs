@@ -425,6 +425,14 @@ mod live {
                     "startedAt": stamp(ago + 30), "finishedAt": stamp(ago)}}})
     }
 
+    fn running_app(name: &str, started_ago: i64) -> Value {
+        json!({"metadata": {"name": name, "namespace": "argocd"},
+            "status": {"operationState": {"phase": "Running",
+                "message": "waiting for healthy state",
+                "operation": {"sync": {"revision": "feedfacefeedfacefeedfacefeedfacefeedface"}},
+                "startedAt": stamp(started_ago)}}})
+    }
+
     fn with_argo(names: &[&str]) -> Place {
         Place {
             argo: vec![(
@@ -487,30 +495,35 @@ mod live {
     #[tokio::test]
     async fn applications_read_through_another_connection_cut_the_syncs() {
         let reader = argo_cluster(vec![argo_app("shop-prod", "Succeeded", 60)]);
-        let place = Place {
+        let two_elsewhere = Place {
             argo_elsewhere: 2,
             ..with_argo(&["shop-prod"])
         };
-        let reads = live::read(&reader, &place, NOW, 3).await;
+        let reads = live::read(&reader, &two_elsewhere, NOW, 3).await;
         let read = syncs(&reads);
         assert_eq!(read.outcome.as_ref().unwrap().len(), 1);
         assert_eq!(
             read.cut.as_deref(),
             Some("2 Argo CD Applications are read through another connection")
         );
+        let one = Place {
+            argo_elsewhere: 1,
+            ..with_argo(&["shop-prod"])
+        };
+        let reads = live::read(&reader, &one, NOW, 3).await;
+        assert_eq!(
+            syncs(&reads).cut.as_deref(),
+            Some("1 Argo CD Application is read through another connection")
+        );
         let only_elsewhere = Place {
             argo_elsewhere: 1,
-            ..place_without_argo()
+            ..place()
         };
         let reads = live::read(&reader, &only_elsewhere, NOW, 3).await;
         assert_eq!(
             syncs(&reads).outcome,
             Err("its Argo CD Applications are read through another connection".into())
         );
-    }
-
-    fn place_without_argo() -> Place {
-        place()
     }
 
     #[tokio::test]
@@ -583,6 +596,76 @@ mod live {
                 .as_deref()
                 .unwrap()
                 .contains("only the first 5 of 6 Argo CD namespaces were read")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_running_sync_is_kept_whenever_it_started() {
+        let reader = argo_cluster(vec![running_app("shop-prod", 5 * 3600)]);
+        let reads = live::read(&reader, &with_argo(&["shop-prod"]), NOW, 3).await;
+        let items = syncs(&reads).outcome.as_ref().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Sync Running: shop-prod");
+        assert_eq!(items[0].severity, Severity::Warn);
+        // It sits at the window's start and says it began earlier.
+        assert_eq!(items[0].at, NOW - 3 * 3600);
+        assert!(items[0].detail.starts_with("started before this window"));
+        let timeline = derive(&reads, NOW, 3);
+        assert!(timeline.rows.iter().any(
+            |row| matches!(row, Row::Entry(entry) if entry.source == Source::Syncs
+                && entry.title == "Sync Running: shop-prod")
+        ));
+        // One that began inside the window sits where it began, with no
+        // finish time.
+        let reader = argo_cluster(vec![running_app("shop-prod", 600)]);
+        let reads = live::read(&reader, &with_argo(&["shop-prod"]), NOW, 3).await;
+        let items = syncs(&reads).outcome.as_ref().unwrap();
+        assert_eq!(items[0].at, NOW - 600);
+        assert!(!items[0].detail.contains("before this window"));
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_listing_says_why_as_the_failure_words_it() {
+        let slow = argo_cluster(Vec::new()).failing_in(
+            "applications",
+            "argocd",
+            Failure::new(FailureKind::Timeout, "slow"),
+        );
+        let reads = live::read(&slow, &with_argo(&["shop-prod"]), NOW, 3).await;
+        assert_eq!(
+            syncs(&reads).outcome,
+            Err("can't list Applications: the request timed out".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn one_namespace_failing_keeps_the_ones_already_read() {
+        let reader = argo_cluster(vec![
+            argo_app("shop-prod", "Succeeded", 60),
+            json!({"metadata": {"name": "shop-eu", "namespace": "argo-eu"},
+                "status": {"operationState": {"phase": "Failed", "message": "x",
+                    "startedAt": stamp(90), "finishedAt": stamp(30)}}}),
+        ])
+        .failing_in(
+            "applications",
+            "argo-eu",
+            Failure::new(FailureKind::Timeout, "slow"),
+        );
+        let place = Place {
+            argo: vec![
+                ("argocd".into(), vec!["shop-prod".into()]),
+                ("argo-eu".into(), vec!["shop-eu".into()]),
+            ],
+            ..place()
+        };
+        let reads = live::read(&reader, &place, NOW, 3).await;
+        let read = syncs(&reads);
+        let items = read.outcome.as_ref().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Sync Succeeded: shop-prod");
+        assert_eq!(
+            read.cut.as_deref(),
+            Some("argo-eu not read: can't list Applications: the request timed out")
         );
     }
 
