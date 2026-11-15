@@ -4,9 +4,9 @@ use super::*;
 fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
     for (shape, words) in [
-        ("not-installed", "No database operator is installed"),
-        ("refused", "Not permitted"),
-        ("empty", "No clusters"),
+        ("not-installed", "No database operators found"),
+        ("refused", "Not allowed to read clusters"),
+        ("empty", "No clusters found"),
         ("unsupported", "Unsupported"),
     ] {
         cx.update_window(window.into(), |_, window, cx| {
@@ -17,13 +17,12 @@ fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppCo
                 cx.notify();
             });
             window.render_frame(cx);
-            assert!(
-                window
-                    .find("databases-empty-state")
-                    .label()
-                    .unwrap()
-                    .contains(words)
-            );
+            let label = window
+                .find("databases-empty-state")
+                .label()
+                .unwrap()
+                .to_owned();
+            assert!(label.contains(words), "{shape}: {label}");
         })
         .unwrap();
     }
@@ -151,16 +150,54 @@ fn initial_failures_offer_retry_without_claiming_retained_data(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
+fn a_refusal_or_a_missing_operator_offers_no_retry(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    for shape in ["not-installed", "refused"] {
+        cx.update_window(window.into(), |_, window, cx| {
+            page.update(cx, |page, cx| {
+                let identity = page.identity().unwrap();
+                page.loader
+                    .resolve(identity, Ok(databases::example::shaped(at(), shape)));
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                window.try_find("databases-empty-state").is_some(),
+                "{shape}"
+            );
+            assert!(
+                window.try_find("databases-retry").is_none(),
+                "{shape}: asking again can't change the answer"
+            );
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn a_first_read_that_fails_says_it_couldnt_reach_and_offers_retry(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| {
+            let id = page.identity().unwrap();
+            page.loader.reset();
+            let request = page.loader.start(id);
+            page.loader
+                .land(&request, Err("Invented read failed".into()), cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("databases-retry").is_some());
+        assert!(window.try_find("databases-empty-state").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn read_failure_retry_is_button_sized_at_both_text_sizes(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
     for text in [13., 20.] {
-        for shape in [
-            "not-installed",
-            "refused",
-            "unsupported",
-            "failed",
-            "backup-refused",
-        ] {
+        for shape in ["unsupported", "failed"] {
             cx.update_window(window.into(), |_, window, cx| {
                 crate::text_size::set(text, cx);
                 page.update(cx, |page, cx| {
@@ -214,6 +251,6 @@ fn both_operators_failing_differently_say_one_line_each() {
         notice.contains("MariaDB · MariaDB operator: Not permitted"),
         "{notice}"
     );
-    assert!(notice.contains("Backups: Partial / capped"), "{notice}");
+    assert!(notice.contains("Backups: Partly read"), "{notice}");
     assert!(!notice.contains("PostgreSQL"), "{notice}");
 }

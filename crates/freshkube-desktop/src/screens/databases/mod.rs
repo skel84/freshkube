@@ -434,7 +434,13 @@ impl DatabasesScreen {
         let empty = Evidence::default();
         let evidence = self.evidence.data().unwrap_or(&empty);
         let shown = self.display.engine_shown();
-        self.display = Display::new(self.loader.data(), evidence, self.mode, Utc::now());
+        self.display = Display::new(
+            self.loader.data(),
+            evidence,
+            self.mode,
+            Utc::now(),
+            &self.cluster_name(),
+        );
         self.display.set_engine_shown(shown);
         self.prepared = now;
         let filter = self.filter_text.clone();

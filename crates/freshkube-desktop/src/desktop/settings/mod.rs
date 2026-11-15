@@ -554,7 +554,7 @@ impl SettingsPage {
         self.status_parts = match self.origin {
             Origin::Alone | Origin::Refused(_) => vec![
                 Part::new("1 cluster"),
-                Part::new("implicit: the one this window opened").minor(),
+                Part::new("the one this window opened").minor(),
             ],
             Origin::Example | Origin::File => {
                 let count = self.rows.len();

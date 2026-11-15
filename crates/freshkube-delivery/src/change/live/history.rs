@@ -153,7 +153,7 @@ pub(super) fn decorate(hop: &mut Hop, evidence: &Evidence, link: &Link, entry: &
 /// a Role.
 fn not_set_up(hop: &mut Hop) {
     let cause = Cause::not_set_up(
-        "a build namespace that resolves for this project, to look for the build",
+        "Freshkube doesn't know where builds run. Builds are optional; set it in Settings › Delivery sources",
         SettingsField::BUILD_NAMESPACE,
     );
     let replaces = |was: &Option<Cause>| matches!(was, None | Some(Cause::CantRead { .. }));

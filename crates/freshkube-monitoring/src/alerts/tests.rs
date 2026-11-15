@@ -265,8 +265,13 @@ fn what_was_not_read_is_never_no_alerts(cx: &mut TestAppContext) {
         assert!(shown(cx, handle, id), "{shape:?} says {id}");
         assert!(!shown(cx, handle, "alerts-quiet"), "{shape:?} isn't quiet");
         assert!(lines(cx, &page).is_empty(), "{shape:?} shows no rows");
-        // Retrying is offered, since asking again can help.
-        assert!(shown(cx, handle, "alerts-retry"), "{shape:?}");
+        // Retrying is offered where asking again can help, never after a
+        // refusal.
+        assert_eq!(
+            shown(cx, handle, "alerts-retry"),
+            shape != Shape::Refused,
+            "{shape:?}"
+        );
     }
     let (_runtime, handle, page) =
         mount(cx, Which::Alerts, Some(example_source("a")), Shape::Quiet);
@@ -283,6 +288,27 @@ fn what_was_not_read_is_never_no_alerts(cx: &mut TestAppContext) {
         words.contains("Alertmanager 0.27.0 (3 replicas)") && words.contains("vmalert"),
         "it names what was read: {words}"
     );
+}
+
+#[gpui_kit::test]
+fn a_missing_alertmanager_keeps_service_names_in_the_details(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(
+        cx,
+        Which::Alerts,
+        Some(example_source("a")),
+        Shape::NotFound,
+    );
+    show(cx, handle, &page);
+    let (description, detail) = cx.read(|cx| match &page.read(cx).display().body {
+        Body::State(state) => (
+            state.description.to_string(),
+            state.detail.as_ref().map(ToString::to_string),
+        ),
+        other => panic!("{other:?}"),
+    });
+    assert!(!description.contains("Service named"), "{description}");
+    assert!(description.contains("optional"), "{description}");
+    assert!(detail.unwrap().contains("Service named"));
 }
 
 #[gpui_kit::test]

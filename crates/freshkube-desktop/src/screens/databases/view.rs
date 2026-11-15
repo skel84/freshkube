@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::read_state::{ReadActions, ReadState, read_state};
 use freshkube_ui::{
     inspector::{self, Inspector},
     page::{self, PageHeader},
@@ -276,6 +277,25 @@ impl DatabasesScreen {
             .label("Retry")
             .on_click(cx.listener(|this, _, _, cx| this.read(cx)))
     }
+    pub(super) fn cluster_name(&self) -> String {
+        self.source.as_ref().map_or_else(
+            || "this cluster".to_owned(),
+            |source| source.context.clone(),
+        )
+    }
+    /// A state through the shared words: Retry only where the state allows it.
+    pub(super) fn state_view(
+        &self,
+        id: &'static str,
+        state: &ReadState,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let actions = ReadActions {
+            retry: Some(self.retry(cx).into_any_element()),
+            ..ReadActions::default()
+        };
+        read_state(id, state, actions, cx)
+    }
     fn body(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let table = div()
             .id("databases-table")
@@ -308,15 +328,25 @@ impl Render for DatabasesScreen {
         let loading = self.loader.is_loading() && self.loader.data().is_none();
         self.loading.show(loading);
         let header = self.header(window, cx);
+        let cluster = self.cluster_name();
         let state = if self.source.is_none() {
-            Some("Not connected".to_owned())
+            Some(ReadState::NotSetUp {
+                what: "A cluster connection".into(),
+                gap: "Freshkube isn't connected to a cluster, so it hasn't read any databases."
+                    .into(),
+                setting: Some("Clusters".into()),
+            })
         } else if self.loader.data().is_none() && !loading {
-            Some(
-                self.loader
-                    .error()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| "Waiting to read databases".into()),
-            )
+            Some(match self.loader.error() {
+                Some(error) => ReadState::Unreachable {
+                    what: "databases".into(),
+                    cluster,
+                    reason: Some(error.to_string()),
+                },
+                None => ReadState::NotReadYet {
+                    what: "databases".into(),
+                },
+            })
         } else {
             None
         };
@@ -359,23 +389,9 @@ impl Render for DatabasesScreen {
                 .flex_col()
                 .child(explorer)
                 .into_any_element()
-        } else if let Some(words) = state {
+        } else if let Some(state) = state {
             page::inset()
-                .child(
-                    ui::empty_state(
-                        IconName::Database,
-                        "Databases",
-                        words,
-                        None,
-                        if self.loader.error().is_some() && self.source.is_some() {
-                            vec![self.retry(cx).into_any_element()]
-                        } else {
-                            Vec::new()
-                        },
-                        cx,
-                    )
-                    .h_auto(),
-                )
+                .child(self.state_view("databases-state", &state, cx))
                 .into_any_element()
         } else if empty {
             // Let the state and its Retry contribute their full height to

@@ -26,7 +26,9 @@ fn display_uses_both_engines_and_keeps_orphans_visible() {
     assert!(orphan.verdict.headline.contains("archive-db"));
     assert!(orphan.cells[2] == "Completed");
     let partial = Inventory::unavailable(Coverage::Refused, at());
-    assert!(!display_of(&partial, Mode::Backups).empty.starts_with("No "));
+    let state = display_of(&partial, Mode::Backups).empty;
+    assert!(!state.title().starts_with("No "), "{}", state.title());
+    assert!(!state.allows_retry());
 }
 
 #[gpui_kit::test]

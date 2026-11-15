@@ -134,7 +134,7 @@ impl SourcesList {
             ),
             Chosen::Open => (
                 "The open cluster".to_owned(),
-                "Workspace of one".to_owned(),
+                "Only the open cluster".to_owned(),
                 true,
             ),
             Chosen::NoEntry(roles) => (
@@ -149,7 +149,7 @@ impl SourcesList {
                 ),
                 false,
             ),
-            Chosen::Gone(id) => (id.clone(), "Pinned, not listed".to_owned(), false),
+            Chosen::Gone(id) => (id.clone(), "Chosen, but no longer listed".to_owned(), false),
             Chosen::Skipped(row) => (row.label(), "Selected row skipped".to_owned(), false),
         };
         // In a sentence, the open cluster isn't a name.
@@ -218,7 +218,10 @@ impl SourcesList {
         let ids: Vec<String> = chosen.iter().map(workload_id).collect();
         let (entry, why) = match (chosen.is_empty(), open) {
             (true, _) => ("None".to_owned(), "No destinations".to_owned()),
-            (_, true) => ("The open cluster".to_owned(), "Workspace of one".to_owned()),
+            (_, true) => (
+                "The open cluster".to_owned(),
+                "Only the open cluster".to_owned(),
+            ),
             _ => (ids.join(", "), "Argo CD destinations".to_owned()),
         };
         let answers: Vec<Option<Reach>> = chosen
@@ -382,7 +385,7 @@ fn counted(reaches: &[&Reach]) -> String {
         [
             "Readable",
             "Refused",
-            "Not served",
+            "Not installed",
             "Unreachable",
             "Not in the workspace",
         ]
