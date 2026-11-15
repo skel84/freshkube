@@ -40,27 +40,13 @@ impl TableColumn for Column {
 /// What a Team or Yours chip adds to the Cluster column, in dp.
 const CHIP_ROOM: f32 = 64.;
 
-/// The Protection column's least width, in dp.
-const PROTECTION_LEAST: f32 = 170.;
-
-/// What the Protection tag adds to its words, in dp: its padding, mark and
-/// the gap before the note beside it.
-const TAG_ROOM: f32 = 28.;
-
-/// The room the Protection column needs for the widest level and note ("Protected
-/// · team floor"), the least being the room it always had.
-fn protection_width(rows: &[ClusterRow]) -> f32 {
-    let words: Vec<SharedString> = rows
-        .iter()
-        .map(|row| {
-            let note = super::team::level_note(row.level, row.level_source)
-                .map(|(_, note, _)| note)
-                .unwrap_or_default();
-            format!("{} {note}", row.level.label()).into()
-        })
-        .collect();
-    (table::fit("Protection", words.iter(), table::WIDEST) + TAG_ROOM).max(PROTECTION_LEAST)
-}
+/// The Protection column's width, in dp: the tag and "· default" whole beside
+/// it (#1052). Role gives up the same room, so the table is no wider than it
+/// was and a row's centre stays in view in a narrow window; "environment", its
+/// longest word, still fits. A longer note ("· team floor") is cut at a word
+/// and whole in its tooltip.
+const PROTECTION: f32 = 182.;
+const ROLE: f32 = 108.;
 
 /// Derives widths using the shared table's DESIGN.md sizing rules.
 /// `chips` leaves the Cluster column room for a Team or Yours chip.
@@ -70,11 +56,6 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
         label: label.to_owned().into(),
         width,
     };
-    // The note's room comes out of Talosconfig, a muted path that truncates
-    // anyway, so the table is no wider than it was: a row's centre stays in
-    // view in a narrow window.
-    let protection = protection_width(rows);
-    let talosconfig = (240. - (protection - PROTECTION_LEAST)).max(160.);
     let columns = vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(
@@ -83,8 +64,8 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
             table::fit("Cluster", rows.iter().map(|row| &row.id), table::WIDEST)
                 + if chips { CHIP_ROOM } else { 0. },
         ),
-        column(Field::Role, "Role", 120.),
-        column(Field::Protection, "Protection", protection),
+        column(Field::Role, "Role", ROLE),
+        column(Field::Protection, "Protection", PROTECTION),
         column(
             Field::Context,
             "Context",
@@ -94,7 +75,7 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
                 table::WIDEST,
             ),
         ),
-        column(Field::Talosconfig, "Talosconfig", talosconfig),
+        column(Field::Talosconfig, "Talosconfig", 240.),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
