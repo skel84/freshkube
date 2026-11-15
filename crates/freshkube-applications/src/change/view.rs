@@ -182,34 +182,13 @@ impl ChangePage {
                 .test_support()
                 .role(Role::Status)
         });
-        // The placeholder for the pull request card: a plain banner, in the
-        // shared look, until the card is designed.
-        let pull = self.pull.line().map(|line| {
-            // Whole where there is room; in a short window without its
-            // secondary parts, so it wraps in a line or two and is never
-            // cut by the capped block. The label keeps all of it.
-            let shown = if short { &line.short } else { &line.text };
-            ui::banner(line.tone, None, shown.clone(), None, cx)
-                .id("change-pull")
-                .aria_label(line.text.clone())
-                .test_support()
-                .role(Role::Status)
-        });
-        if refresh.is_none() && missing.is_none() && pull.is_none() {
+        if refresh.is_none() && missing.is_none() {
             return None;
         }
-        let banners = usize::from(refresh.is_some())
-            + usize::from(missing.is_some())
-            + usize::from(pull.is_some());
-        // A lone pull request banner is never capped (#981): it fits whole in
-        // a line or two, so there is nothing to scroll and nothing to cut.
-        // Any other banner, which can be long, and several together share the
-        // capped block.
-        let lone_pull = banners == 1 && pull.is_some();
-        let capped = short && !lone_pull;
+        let capped = short;
         let children = [v_flex()
             .gap(dp(page::PANE_PADDING_Y))
-            .children(refresh.into_iter().chain(missing).chain(pull))];
+            .children(refresh.into_iter().chain(missing))];
         // A short window caps the block, so the banners leave the trail
         // its room; any other shows every banner whole.
         let notes = if capped {

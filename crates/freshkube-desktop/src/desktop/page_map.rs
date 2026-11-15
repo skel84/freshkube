@@ -215,6 +215,13 @@ impl Pages {
         applications.update(cx, |page, _| {
             page.set_timeline_shape(options.debug.timeline)
         });
+        // A live session keeps the avatars of a pull request's people on
+        // disk; example data installs none and draws initials.
+        if !options.starts_with_examples()
+            && let Some(dir) = crate::avatars_path()
+        {
+            crate::applications::install_avatar_folder(dir, cx);
+        }
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
         settings_page.update(cx, |page, _| {
             page.set_example_labels_capped(options.debug.metrics_labels_capped)
