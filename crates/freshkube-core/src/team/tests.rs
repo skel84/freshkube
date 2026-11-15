@@ -308,7 +308,14 @@ fn the_git_command_runs_nothing_from_the_repo() {
     let empty = std::path::Path::new("/app/empty");
     let cmd = GitFetch::new(&git, mirror, empty, false);
     assert_eq!(cmd.program, "git");
-    assert_eq!(cmd.env, vec![("GIT_TERMINAL_PROMPT", "0")]);
+    assert_eq!(
+        cmd.env,
+        vec![
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes"),
+            ("GIT_LITERAL_PATHSPECS", "1"),
+        ]
+    );
     // Every flag, in order. The address comes after `--`, so it can never be
     // read as an option. The person's credential helper is left alone.
     assert_eq!(
@@ -335,6 +342,7 @@ fn the_git_command_runs_nothing_from_the_repo() {
             "fetch",
             "--no-recurse-submodules",
             "--no-tags",
+            "--depth=1",
             "--force",
             "--",
             "git@example.test:team/setup.git",

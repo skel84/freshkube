@@ -214,9 +214,18 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 25. A team fetch runs no repository code, follows no link out of the repository, and sends its token only to the host it was saved for
+
+The shared team setup file ([features/settings.md](features/settings.md#team-setup), `freshkube-core`'s `team/fetch/`). Git runs as the person's own command into an app-owned bare mirror with an empty hooks directory, and the file and its key file are read through git objects, never from a checkout, so no hook, filter or file of the repository runs. A key file whose tree entry is a link (mode 120000), a path with `..`, an absolute path or an empty segment, and a link on the way to it are refused. An HTTPS fetch follows a redirect only to the same host, so the token never goes anywhere else; a redirect to another host or to plain HTTP is refused.
+
+- `safety_g25_a_hook_of_the_mirror_does_not_run` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g25_a_key_file_that_is_a_link_is_refused` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g25_a_key_file_path_leaving_the_repository_is_refused` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g25_a_redirect_to_another_host_is_refused_and_no_token_follows` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+
 ## Known gaps
 
-- Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
+- Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data in the page (a fetch is real in core, but nothing yet joins from the app or saves), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).
 - Guarantee 21 has a Windows gap: the Teleport child has no parent-death watcher there (macOS and Linux have one, tested by `the_group_ends_when_the_parent_dies_without_ending_it`), so a crash or a force quit can leave `tsh proxy db` running until its Teleport certificate expires; a clean quit still ends it. A job object, as `freshkube-agent` uses for the agent, would close it.
