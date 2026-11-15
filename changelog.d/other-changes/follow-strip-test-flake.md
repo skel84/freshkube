@@ -1,0 +1,1 @@
+- **Tests:** the follow strip test for a maximized dock no longer fails on a slow machine when the example question lands after the place is read.
