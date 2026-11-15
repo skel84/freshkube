@@ -625,7 +625,17 @@ fn a_banner_click_about_another_cluster_names_it_and_changes_nothing(cx: &mut Te
     let f = following(cx, Shape::Bell);
     let page = cx.read(|cx| f.pilot.read(cx).navigation.page);
     let before = notices(cx, f.handle);
+    let told = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let heard = told.clone();
+    cx.update(|cx| {
+        cx.subscribe(&f.pilot, move |_, notice: &super::switch::Notice, _| {
+            heard.borrow_mut().push(notice.0.clone());
+        })
+        .detach();
+    });
     emit_open(cx, &f, "retired-ams");
+    // It names the cluster and never the pod, whatever Hide details says.
+    assert_eq!(*told.borrow(), ["Open retired-ams to see this."]);
     assert_eq!(cx.read(|cx| f.pilot.read(cx).navigation.page), page);
     assert_eq!(notices(cx, f.handle), before + 1);
 }

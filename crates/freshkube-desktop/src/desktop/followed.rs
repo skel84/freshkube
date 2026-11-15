@@ -162,11 +162,8 @@ impl Pilot {
             .kube
             .is_some_and(|kube| kube.context == context);
         if !here {
-            self.tell(
-                format!("Open {context} to see this: {}", subject.title()),
-                window,
-                cx,
-            );
+            // Never the item's name: Hide details covers a banner's click too.
+            self.tell(format!("Open {context} to see this."), window, cx);
             return;
         }
         let Some(view) = view_for(subject) else {

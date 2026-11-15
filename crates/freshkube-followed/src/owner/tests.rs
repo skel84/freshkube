@@ -1010,3 +1010,58 @@ fn the_permission_answer_is_saved_and_a_pending_question_is_not(cx: &mut TestApp
     assert_eq!(saved.permission, Permission::Granted);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[gpui_kit::test]
+fn a_banner_hands_the_system_no_cluster_or_object_name(cx: &mut TestAppContext) {
+    let h = harness(cx, None);
+    let sink = with_sink(cx, &h);
+    h.follow(cx, pod("api"), connection("prod-ams", true))
+        .unwrap();
+    answer(cx, &h, true);
+    set_front(cx, &h, false);
+    h.deliver(
+        cx,
+        &key(
+            "prod-ams",
+            WatchKey::Pod {
+                namespace: "shop".into(),
+                name: "api".into(),
+            },
+        ),
+        crash(false, true),
+    );
+    let banner = &sink.shown()[0];
+    assert!(banner.thread.starts_with("follow-"), "{}", banner.thread);
+    assert!(!banner.thread.contains("prod-ams"));
+}
+
+#[gpui_kit::test]
+fn a_launch_with_saved_follows_does_not_ask_the_system(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("freshkube-launch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let prefs = dir.join("preferences.json");
+    let saved = crate::saved::Saved {
+        follows: vec![crate::model::Follow {
+            id: 1,
+            subject: pod("api"),
+            context: "dev-fra".into(),
+            sensitive: false,
+            since: chrono::Utc::now(),
+        }],
+        next_id: 2,
+        ..Default::default()
+    };
+    crate::saved::document(&prefs).save(&saved).expect("saved");
+    let h = harness(cx, Some(prefs));
+    let sink = with_sink(cx, &h);
+    cx.update(|cx| {
+        h.followed
+            .update(cx, |f, cx| f.offer(connection("dev-fra", false), cx))
+    });
+    assert_eq!(sink.asked(), 0, "not at launch, though a follow is saved");
+    assert_eq!(permission(cx, &h), Permission::NotAsked);
+    h.follow(cx, pod("web"), connection("dev-fra", false))
+        .unwrap();
+    assert_eq!(sink.asked(), 1, "asked when a follow is made");
+    let _ = std::fs::remove_dir_all(&dir);
+}

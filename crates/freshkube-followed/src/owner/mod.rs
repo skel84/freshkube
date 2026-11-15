@@ -534,7 +534,8 @@ impl Followed {
             .updates
             .first()
             .and_then(|u| self.items.iter().find(|i| i.follow.id == u.follow));
-        let thread = first.map_or_else(String::new, |i| i.follow.context.clone());
+        // Opaque: the system is never handed a cluster or object name here.
+        let thread = first.map_or_else(String::new, |i| format!("follow-{}", i.follow.id));
         if let Some(item) = first {
             self.targets.push_back((
                 notice.id,
@@ -553,10 +554,10 @@ impl Followed {
         });
     }
 
-    /// Uses `notifier` for banners from now on.
+    /// Uses `notifier` for banners from now on. It asks nothing: the system
+    /// is asked only when a follow is made (`follow_in`), never at launch.
     pub fn set_notifier(&mut self, notifier: Arc<dyn Notifier>, cx: &mut Context<Self>) {
         self.notifier = notifier;
-        self.ask_permission();
         cx.notify();
     }
 
