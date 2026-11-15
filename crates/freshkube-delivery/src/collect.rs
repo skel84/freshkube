@@ -49,6 +49,10 @@ pub struct Plan {
     /// The commit; empty when the change is followed from a Freight that
     /// names none, and then no build is read.
     pub sha: String,
+    /// The first line of the commit's message, when the Freight carries it:
+    /// a squash merge's title ends `(#418)`, which names the pull request
+    /// when GitHub can't be searched.
+    pub subject: Option<String>,
     /// The image digests of the Freight followed, searched for among the
     /// results of the builds in `build_namespace` (and of its archive). A
     /// Freight that names no commit is joined to its build by these alone;
@@ -444,7 +448,27 @@ async fn read_pull_requests<K: Reader, A: Reader, T: Reader, G: GitHub>(
     if plan.sha.is_empty() {
         return;
     }
-    let read = Source::from_result(clusters.github.pulls_for_commit(repo, &plan.sha).await);
+    // With calls scarce, the number a squash-merge title ends with is read
+    // directly; one that isn't there, or isn't answered, falls back to the
+    // search as before.
+    let titled = match plan.subject.as_deref().and_then(number_in_title) {
+        Some(number) if clusters.github.is_sparing() => {
+            match clusters.github.pull(repo, number).await {
+                Ok(mut pull) => {
+                    if let Some(summary) = &mut pull.summary {
+                        summary.from_title = true;
+                    }
+                    Some(Source::Read(vec![pull]))
+                }
+                Err(_) => None,
+            }
+        }
+        _ => None,
+    };
+    let read = match titled {
+        Some(read) => read,
+        None => Source::from_result(clusters.github.pulls_for_commit(repo, &plan.sha).await),
+    };
     if let Some(prs) = read.read() {
         for pr in prs
             .iter()
@@ -462,6 +486,17 @@ async fn read_pull_requests<K: Reader, A: Reader, T: Reader, G: GitHub>(
         }
     }
     evidence.pull_requests = Some(read);
+}
+
+/// The pull request number a squash-merge title ends with: `Retry keys
+/// (#418)`. Anything else, including a number in the middle, is none.
+pub(crate) fn number_in_title(subject: &str) -> Option<u64> {
+    let rest = subject.trim_end().strip_suffix(')')?;
+    let (_, digits) = rest.rsplit_once("(#")?;
+    (!digits.is_empty() && digits.len() <= 9 && digits.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| digits.parse().ok())
+        .flatten()
+        .filter(|number| *number > 0)
 }
 
 /// The commit a pull request leads to: its merge commit once merged, its head

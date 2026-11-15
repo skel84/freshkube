@@ -39,6 +39,10 @@ impl GitHub for Pulls<'_> {
             Self::On(github) => github.pull(repo, number).await,
         }
     }
+
+    fn is_sparing(&self) -> bool {
+        matches!(self, Self::On(github) if github.is_sparing())
+    }
 }
 
 /// The pull request that names the change: the one a build's annotations
@@ -148,10 +152,18 @@ mod tests {
 
     /// A world whose Freight is a commit on GitHub, read with `github`.
     async fn change_on_github(github: Option<Handle>) -> Change {
+        change_titled(github, None).await
+    }
+
+    /// The same, the commit's message being `message`.
+    async fn change_titled(github: Option<Handle>, message: Option<&str>) -> Change {
         let reader = one_cluster(|world| {
             let on_github = |name: &str, digest: &str, commit: &str| {
                 let mut value = freight(name, digest, commit);
                 value["commits"][0]["repoURL"] = json!("https://github.com/acme/shop.git");
+                if let Some(message) = message {
+                    value["commits"][0]["message"] = json!(message);
+                }
                 value
             };
             world.kargo = std::mem::take(&mut world.kargo).with(
@@ -231,5 +243,93 @@ mod tests {
             "{:?}",
             change.missing
         );
+    }
+
+    /// The pull request 418, as `pulls/418` answers it: one object.
+    fn pull_418() -> serde_json::Value {
+        pulls_of(SHA)[0].clone()
+    }
+
+    #[tokio::test]
+    async fn without_a_token_the_number_in_a_squash_title_is_read_directly() {
+        let api = Server::new(|request| {
+            assert_eq!(request.path, "/repos/acme/shop/pulls/418", "no search");
+            Reply::json(200, "", &pull_418())
+        });
+        let change = change_titled(
+            Some(Handle::trusting(&api.address, None)),
+            Some("Retry idempotency keys (#418)\n\nbody (#7)"),
+        )
+        .await;
+        let pull = change.origin.pull.expect("read directly");
+        assert_eq!((pull.number, pull.from_title), (418, true));
+        assert_eq!(change.origin.pull_request, Some(418));
+        assert_eq!(api.seen().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_title_without_a_number_or_a_client_with_calls_to_spare_searches() {
+        // No number at the end of the title: the search, as before.
+        let api = Server::new(|request| {
+            assert!(request.path.contains("/commits/"), "{}", request.path);
+            Reply::json(200, "", &pulls_of(SHA))
+        });
+        let change = change_titled(
+            Some(Handle::trusting(&api.address, None)),
+            Some("Retry (#418) idempotency keys"),
+        )
+        .await;
+        assert_eq!(change.origin.pull.map(|p| p.from_title), Some(false));
+        // A token with calls to spare searches though the title has a number.
+        let api = Server::new(|request| {
+            assert!(request.path.contains("/commits/"), "{}", request.path);
+            Reply::json(200, "", &pulls_of(SHA))
+        });
+        let change = change_titled(
+            Some(Handle::trusting(&api.address, Some("ghp_x"))),
+            Some("Retry idempotency keys (#418)"),
+        )
+        .await;
+        assert_eq!(change.origin.pull.map(|p| p.from_title), Some(false));
+    }
+
+    #[tokio::test]
+    async fn a_title_number_github_doesnt_answer_falls_back_to_the_search() {
+        let api = Server::new(|request| {
+            if request.path.contains("/commits/") {
+                Reply::json(200, "", &pulls_of(SHA))
+            } else {
+                Reply::empty(404, "")
+            }
+        });
+        let change = change_titled(
+            Some(Handle::trusting(&api.address, None)),
+            Some("Retry idempotency keys (#999)"),
+        )
+        .await;
+        assert_eq!(
+            change.origin.pull.map(|p| (p.number, p.from_title)),
+            Some((418, false))
+        );
+    }
+
+    #[test]
+    fn only_a_number_at_the_end_of_the_title_names_a_pull_request() {
+        use crate::collect::number_in_title;
+        assert_eq!(number_in_title("Retry keys (#418)"), Some(418));
+        assert_eq!(number_in_title("Retry keys (#418)  "), Some(418));
+        for no in [
+            "Retry keys",
+            "Retry (#418) keys",
+            "Retry keys (#)",
+            "Retry keys (#0)",
+            "Retry keys (#41x)",
+            "Retry keys (#1234567890)",
+            "Retry keys #418",
+            "(#418) Retry keys",
+            "",
+        ] {
+            assert_eq!(number_in_title(no), None, "{no}");
+        }
     }
 }

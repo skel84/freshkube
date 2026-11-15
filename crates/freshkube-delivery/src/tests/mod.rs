@@ -29,6 +29,7 @@ pub(super) fn observed_at() -> chrono::DateTime<chrono::Utc> {
 pub(super) fn plan(contexts: &[(&str, &str)]) -> Plan {
     Plan {
         sha: SHA.into(),
+        subject: None,
         digests: Vec::new(),
         followed: None,
         kargo_project: "storefront".into(),
