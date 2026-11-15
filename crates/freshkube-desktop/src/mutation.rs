@@ -550,6 +550,23 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                 .aria_label(text)
                 .child(ui::warning_banner(None, text, None, cx))
         });
+        let typed_field = request
+            .type_name
+            .as_ref()
+            .zip(input.as_ref())
+            .map(|(name, input)| {
+                let prompt = name.prompt();
+                v_flex()
+                    .gap(dp(4.))
+                    .child(
+                        div()
+                            .id("confirm-type-prompt")
+                            .test_support()
+                            .aria_label(prompt.clone())
+                            .child(prompt),
+                    )
+                    .child(Input::new(input).small().id("confirm-type-name"))
+            });
         let enter = enter.clone();
         dialog
             .w(ui::dp_px(480., window))
@@ -574,21 +591,6 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     .gap_3()
                     .text_size(dp(13.))
                     .child(request.summary.clone())
-                    .children(request.type_name.as_ref().zip(input.as_ref()).map(
-                        |(name, input)| {
-                            let prompt = name.prompt();
-                            v_flex()
-                                .gap(dp(4.))
-                                .child(
-                                    div()
-                                        .id("confirm-type-prompt")
-                                        .test_support()
-                                        .aria_label(prompt.clone())
-                                        .child(prompt),
-                                )
-                                .child(Input::new(input).small().id("confirm-type-name"))
-                        },
-                    ))
                     .when(!request.facts.is_empty(), |this| {
                         this.child(v_flex().gap_1p5().children(request.facts.iter().map(
                             |(label, value)| {
@@ -610,7 +612,14 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     }))
                     .children(notice),
             )
-            .footer(form::actions(ok, cancel))
+            .footer(
+                v_flex()
+                    .gap(dp(12.))
+                    // The name sits with the button it unlocks, outside the
+                    // body that a short window cuts off.
+                    .children(typed_field)
+                    .child(form::actions(ok, cancel)),
+            )
     });
     // The name is the one thing a protected dialog wants: focus it after the
     // dialog opens, since Kit remembers what had focus before.

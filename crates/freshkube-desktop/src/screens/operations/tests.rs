@@ -42,6 +42,16 @@ fn mount(
     context: &str,
     step_ms: u64,
 ) -> (Runtime, Entity<OperationsScreen>, WindowHandle<Root>) {
+    mount_sized(cx, context, step_ms, 1500., 1000.)
+}
+
+fn mount_sized(
+    cx: &mut TestAppContext,
+    context: &str,
+    step_ms: u64,
+    width: f32,
+    height: f32,
+) -> (Runtime, Entity<OperationsScreen>, WindowHandle<Root>) {
     // The example run pauses on Tokio's clock between its steps. A paused
     // current-thread runtime makes that clock virtual and runs the worker
     // only when the test drives it (`step`), on the test's own thread, so no
@@ -58,7 +68,7 @@ fn mount(
     });
     let source = source(context, 0);
     let mut screen = None;
-    let handle = cx.open_window(size(px(1500.), px(1000.)), |window, cx| {
+    let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
             let mut view = OperationsScreen::new(runtime.handle().clone(), window, cx);
             view.step = Duration::from_millis(step_ms);
@@ -1257,6 +1267,48 @@ fn the_name_field_starts_focused_and_enter_confirms_only_the_exact_name(cx: &mut
         )
     });
     wait_until_finished(cx, &runtime, &screen, 200, "a run confirmed with Enter");
+}
+
+/// At 760 by 560 and text size 20 the name field and the button it unlocks
+/// both stay inside the window, with the field right above the footer: a
+/// short dialog cuts its body off, never the name.
+#[gpui_kit::test]
+fn the_name_field_stays_with_confirm_at_the_smallest_window(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_sized(cx, "prod-fra", 25, 760., 560.);
+    cx.update(|cx| {
+        crate::text_size::set(20., cx);
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    // The page itself scrolls at this size, so open the dialog directly.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        screen.update(cx, |screen, cx| screen.open_confirmation(window, cx));
+    })
+    .unwrap();
+    crate::mutation::settle_confirmation(cx, handle.into());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let window_bounds = window.bounds();
+        let field = window.find("confirm-type-name").bounds();
+        let prompt = window.find("confirm-type-prompt").bounds();
+        let ok = window.find("confirm-ok").bounds();
+        for (what, bounds) in [("field", field), ("prompt", prompt), ("confirm", ok)] {
+            assert!(
+                bounds.top() >= window_bounds.top() && bounds.bottom() <= window_bounds.bottom(),
+                "the {what} {bounds:?} leaves the window {window_bounds:?}"
+            );
+        }
+        assert!(prompt.bottom() <= field.top() + gpui_kit::px(1.));
+        assert!(field.bottom() <= ok.top() + gpui_kit::px(1.));
+        // Right above the footer's buttons, not up in the body past the
+        // facts and warnings that a short window cuts off.
+        let gap = ok.top() - field.bottom();
+        assert!(
+            gap <= crate::ui::dp_px(24., window),
+            "the field is {gap:?} above Confirm"
+        );
+    })
+    .unwrap();
 }
 
 /// Several nodes on a protected cluster are typed once, by the entry's id:
