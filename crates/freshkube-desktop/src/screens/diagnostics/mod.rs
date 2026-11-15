@@ -549,6 +549,7 @@ impl DiagnosticsScreen {
                         .upgrade()
                         .and_then(|view| view.read(cx).fix_fingerprint(&current_key))
                 }),
+                type_name: None,
                 on_confirm: Rc::new(move |window: &mut Window, cx: &mut App| {
                     if let Some(view) = run.upgrade() {
                         let check_key = run_key.clone();
