@@ -445,6 +445,9 @@ fn a_protected_rollback_asks_for_the_stage_name_and_send_waits_for_it(cx: &mut T
         h.cluster.assert_nothing_written();
         assert!(h.present(cx, "write-dialog"), "{wrong:?}");
     }
+    // In a dialog of its own, the exact name unlocks the send.
+    let h = harness_on(cx, Protection::Guarded, kargo);
+    h.begin(cx, rollback(Protection::Protected));
     h.type_name(cx, "prod-ams");
     h.click(cx, "write-confirm");
     h.drive(cx, Duration::from_secs(3));
