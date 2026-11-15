@@ -166,7 +166,7 @@ impl GitSource {
                 return Err(Refused::NotAnAddress);
             }
         } else if url
-            .rsplit_once('@')
+            .split_once('@')
             .is_some_and(|(user, _)| user.contains(':'))
         {
             // `user:token@host:path`: a password in an scp-like address.

@@ -318,12 +318,14 @@ impl GitRunner {
         let mut child = command
             .spawn()
             .map_err(|_| Self::failed("git couldn’t be started; is it installed?"))?;
-        let mut group = Group::new(&child);
         let stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
+        // The group owns the child, so that on a kill it can reap it before
+        // it asks whether the group is gone.
+        let mut group = Group::new(child);
         let work = async {
             let (out, err) = tokio::join!(capped(stdout, cap), capped(stderr, 4096));
-            let status = child.wait().await;
+            let status = group.wait().await;
             (out, err, status)
         };
         let guard = async {
@@ -384,62 +386,68 @@ impl Blob {
     }
 }
 
-/// The process group of a running git. While armed, dropping it kills every
-/// process in the group and waits briefly for them to go, so a download that
+/// A running git and its process group. While armed, dropping it kills every
+/// process in the group and waits briefly for them to go (reaping git itself
+/// on each pass, since a zombie keeps its group "there"), so a download that
 /// `git` started stops with it. Disarmed once git has finished by itself.
 struct Group {
-    #[cfg(unix)]
-    pgid: Option<i32>,
-    #[cfg(windows)]
-    pid: Option<u32>,
+    child: tokio::process::Child,
+    armed: bool,
 }
 
 impl Group {
-    fn new(child: &tokio::process::Child) -> Self {
-        Self {
-            #[cfg(unix)]
-            pgid: child.id().map(|pid| pid as i32),
-            #[cfg(windows)]
-            pid: child.id(),
-        }
+    fn new(child: tokio::process::Child) -> Self {
+        Self { child, armed: true }
+    }
+
+    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.child.wait().await
     }
 
     fn disarm(&mut self) {
-        #[cfg(unix)]
-        {
-            self.pgid = None;
-        }
-        #[cfg(windows)]
-        {
-            self.pid = None;
-        }
+        self.armed = false;
     }
 }
 
 impl Drop for Group {
     fn drop(&mut self) {
+        if !std::mem::take(&mut self.armed) {
+            return;
+        }
         #[cfg(unix)]
-        if let Some(pgid) = self.pgid.take() {
+        if let Some(pgid) = self.child.id().map(|pid| pid as i32) {
             // SAFETY: kill(2) with a negative pid signals a process group,
             // here the one git was started as the leader of.
             unsafe { libc::kill(-pgid, libc::SIGKILL) };
             for _ in 0..200 {
+                // Reap git, so a zombie doesn't hold its group open.
+                let _ = self.child.try_wait();
                 // SAFETY: signal 0 only checks that the group exists.
-                let gone = unsafe { libc::kill(-pgid, 0) } != 0;
-                if gone {
+                if unsafe { libc::kill(-pgid, 0) } != 0 {
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
         #[cfg(windows)]
-        if let Some(pid) = self.pid.take() {
-            // The whole tree: git and the helpers it started.
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+        if let Some(pid) = self.child.id() {
+            use std::os::windows::process::CommandExt;
+            // The tree under git, by the system's own taskkill, with no
+            // environment and no console window. `/T` follows parent links,
+            // so a helper whose parent already exited is missed: a stopgap
+            // for a job object.
+            let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+            let _ = std::process::Command::new(
+                std::path::Path::new(&root)
+                    .join("System32")
+                    .join("taskkill.exe"),
+            )
+            .args(["/T", "/F", "/PID", &pid.to_string()])
+            .env_clear()
+            .creation_flags(0x0800_0000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
         }
     }
 }

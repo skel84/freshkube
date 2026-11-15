@@ -372,6 +372,16 @@ fn the_git_command_runs_nothing_from_the_repo() {
 }
 
 #[test]
+fn an_scp_address_with_an_at_sign_in_its_path_is_accepted() {
+    for url in [
+        "git@example.test:org/a@b.git",
+        "git@example.test:team/setup.git",
+    ] {
+        assert_eq!(GitSource::new(url, "", "").map(|_| ()), Ok(()), "{url}");
+    }
+}
+
+#[test]
 fn an_address_with_credentials_is_refused_and_never_shown() {
     for url in [
         "https://user:secret@example.test/team.git",
