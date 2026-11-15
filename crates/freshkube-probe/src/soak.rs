@@ -31,7 +31,7 @@ pub struct Limit {
 /// Limits for memory in MB, threads and handles.
 pub const RSS: Limit = Limit {
     absolute: 20.,
-    relative: 0.10,
+    relative: 0.05,
 };
 pub const THREADS: Limit = Limit {
     absolute: 8.,
@@ -196,6 +196,30 @@ mod tests {
     fn a_steady_leak_fails_even_under_noise() {
         let samples = series(|ix| 300. + ix as f64 * 2. + noise(ix));
         assert_eq!(grew(&samples), ["memory (MB)"]);
+    }
+
+    /// 90 samples with no warm-up: `low` for the first `step`, then `high`.
+    fn stepped(step: usize, low: f64, high: f64) -> Vec<Sample> {
+        (0..90)
+            .map(|ix| Sample {
+                second: ix as u64 + 1,
+                rss_mb: if ix < step { low } else { high },
+                threads: 40.,
+                fds: 60.,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_single_step_is_called_growth_only_when_it_falls_in_the_middle_third_s_middle() {
+        // Three parts of 30. The middle part's median is its 15th and 16th
+        // value averaged, so a step at the exact middle of the run reads as
+        // half a gain in each step and is called growth; a step a little
+        // before or after it is a step that holds, and passes.
+        let grown = |step| check(&stepped(step, 300., 400.), 0).unwrap().len();
+        assert_eq!(grown(45), 1, "a step at 50% of the run");
+        assert_eq!(grown(40), 0, "a step at 44%");
+        assert_eq!(grown(50), 0, "a step at 55%");
     }
 
     #[test]

@@ -19,7 +19,9 @@ soak_sample() {
         fds=$(ls "/proc/$pid/fd" 2>/dev/null | wc -l)
     else
         threads=$(ps -M -p "$pid" 2>/dev/null | tail -n +2 | wc -l)
-        fds=$(lsof -p "$pid" 2>/dev/null | tail -n +2 | wc -l)
+        # Numeric descriptors only: mapped libraries would lift the baseline
+        # and hide a leaked socket.
+        fds=$(lsof -n -P -a -p "$pid" -d 0-65535 2>/dev/null | tail -n +2 | wc -l)
     fi
     printf '%s,%s,%s\n' "$((rss / 1024))" "$(echo $threads)" "$(echo $fds)"
 }

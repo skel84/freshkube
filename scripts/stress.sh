@@ -40,6 +40,11 @@ if [[ -n ${FRESHKUBE_STRESS_SAMPLES:-} ]]; then
     . $root/scripts/soak/sample.sh
     "$stress_binary" "$@" 2> $out/$label.log &
     stress_pid=$!
+    # A background command ignores SIGINT here, so Ctrl-C must end the app
+    # itself, or it keeps drawing for hours after the lock is given up.
+    trap 'kill $stress_pid 2>/dev/null; screen_release' EXIT INT TERM
+    # Keep the display and the machine awake for as long as the run lasts.
+    if command -v caffeinate >/dev/null; then caffeinate -dimsu -w $stress_pid & fi
     soak_run $stress_pid $FRESHKUBE_STRESS_SAMPLES ${FRESHKUBE_STRESS_SAMPLE_EVERY:-30}
     wait $stress_pid
 else

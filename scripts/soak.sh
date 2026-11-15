@@ -23,7 +23,9 @@ label=$1 hours=$2; shift 2
 root=${0:A:h:h}
 out=$root/target/soak
 mkdir -p $out
-export FRESHKUBE_STRESS_SECONDS=$(( hours * 3600 ))
+# zsh prints a fractional product as `360.`, which the stress binary can't read.
+secs=$(( hours * 3600 ))
+export FRESHKUBE_STRESS_SECONDS=${secs%.*}
 export FRESHKUBE_STRESS_FAULTS=${FRESHKUBE_STRESS_FAULTS-refuse=0.01,drop=0.01,slow=0.02@1500,gone=300}
 export FRESHKUBE_STRESS_SAMPLES=$out/$label.csv
 export FRESHKUBE_STRESS_SAMPLE_EVERY=${SOAK_EVERY:-30}
