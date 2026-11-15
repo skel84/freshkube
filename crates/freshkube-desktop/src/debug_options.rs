@@ -51,6 +51,9 @@ pub(crate) enum TabsShape {
     Clusters,
     /// A second tab bound to a cluster entry the example file does not list.
     Missing,
+    /// A running shell on `dev-fra` (open), with `stage-fra` (read-only)
+    /// shown: the shell's own header names the cluster it is on.
+    ShellOther,
 }
 
 /// `FRESHKUBE_CRASH`: the crash notice and the panics that lead to it (#953).
@@ -128,6 +131,7 @@ const LINKS: &Words<LinkShape> = &[
 const TABS: &Words<TabsShape> = &[
     ("clusters", TabsShape::Clusters),
     ("missing", TabsShape::Missing),
+    ("shell-other", TabsShape::ShellOther),
 ];
 /// `FRESHKUBE_CRASH`'s words.
 const CRASHES: &Words<CrashShape> = &[
@@ -581,6 +585,7 @@ mod tests {
         for (value, shape) in [
             ("clusters", TabsShape::Clusters),
             ("missing", TabsShape::Missing),
+            ("shell-other", TabsShape::ShellOther),
         ] {
             assert_eq!(parse(&[("FRESHKUBE_TABS", value)]).tabs, Some(shape));
         }

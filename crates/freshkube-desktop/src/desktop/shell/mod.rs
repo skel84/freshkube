@@ -18,6 +18,7 @@ use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, TitleBar,
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
+    menu::{ContextMenuExt as _, PopupMenuItem},
     popover::Popover,
     scroll::{Scrollbar, ScrollbarMode},
     status_bar::StatusBar,
@@ -133,7 +134,7 @@ impl Pilot {
                     .unwrap_or_default();
                 format!("last known {}", super::switch::age_text(elapsed))
             });
-        h_flex()
+        let row = h_flex()
             .id(("cluster", ix))
             .test_support()
             .role(Role::Tab)
@@ -196,7 +197,25 @@ impl Pilot {
                         _ = popover.update(cx, |state, cx| state.dismiss(window, cx));
                     });
                 });
-            }))
+            }));
+        // Right-click offers what ⌘-click does, for a person who doesn't know
+        // the gesture (#878).
+        let pilot = cx.weak_entity();
+        let opened = item.id.to_string();
+        div()
+            .id(("cluster-menu", ix))
+            .child(row)
+            .context_menu(move |menu, _, _| {
+                let pilot = pilot.clone();
+                let id = opened.clone();
+                menu.item(
+                    PopupMenuItem::new("Open in new tab").on_click(move |_, window, cx| {
+                        _ = pilot.update(cx, |view, cx| {
+                            view.open_cluster_in_new_tab(id.clone(), window, cx)
+                        });
+                    }),
+                )
+            })
             .into_any_element()
     }
 }
