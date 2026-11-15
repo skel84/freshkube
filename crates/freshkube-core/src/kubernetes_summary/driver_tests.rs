@@ -44,6 +44,16 @@ fn api_with_nodes_status(
     nodes_status: Option<u16>,
     page_delay: Duration,
 ) -> (Client, ApiLog) {
+    api_refusing_nodes(http_gone, nodes_status, usize::MAX, page_delay)
+}
+/// Like `api_with_nodes_status`, but the nodes answer `nodes_status` only for
+/// the first `refusals` node requests and are served after that.
+fn api_refusing_nodes(
+    http_gone: bool,
+    nodes_status: Option<u16>,
+    refusals: usize,
+    page_delay: Duration,
+) -> (Client, ApiLog) {
     let log = ApiLog {
         calls: Default::default(),
         mutations: Default::default(),
@@ -71,6 +81,10 @@ fn api_with_nodes_status(
                     && !u.contains("continue=")
             })
             .count();
+        let node_requests = calls
+            .iter()
+            .filter(|u| u.starts_with("/api/v1/nodes?"))
+            .count();
         let pod_watches = calls
             .iter()
             .filter(|u| u.starts_with("/api/v1/pods?") && u.contains("watch=true"))
@@ -82,7 +96,9 @@ fn api_with_nodes_status(
                 200,
                 full(json!({"major":"1","minor":"32","gitVersion":"v1.32.3"})),
             )
-        } else if let Some(code) = nodes_status.filter(|_| kind == "nodes") {
+        } else if let Some(code) =
+            nodes_status.filter(|_| kind == "nodes" && node_requests <= refusals)
+        {
             (code, full(status(code)))
         } else if uri.contains("watch=true") {
             if kind == "pods" && http_gone && pod_watches == 1 {
@@ -395,6 +411,50 @@ async fn refused_nodes_do_not_stop_other_kinds_and_refresh_retries_all_once() {
             .count(),
         2
     );
+    task.abort();
+    let _ = task.await;
+}
+
+/// A refusal that can pass (503, the soak run's `refuse` fault) is retried
+/// with backoff and the kind recovers on its own; only Forbidden and Not
+/// found stop a kind's read until a Refresh (the test above).
+#[tokio::test(start_paused = true)]
+async fn a_transient_refusal_of_the_first_list_is_retried_and_recovers() {
+    let (client, log) = api_refusing_nodes(false, Some(503), 2, Duration::ZERO);
+    let session = session();
+    let worker = session.clone();
+    let task = tokio::spawn(async move { worker.run(client).await });
+    until(|| {
+        session.derive(chrono::Utc::now()).summary.observations[&Source::Nodes]
+            .failure()
+            .is_some()
+    })
+    .await;
+    assert!(!matches!(
+        session.derive(chrono::Utc::now()).summary.nodes,
+        Part::Loaded(..)
+    ));
+    // Backoff is 1 s, then 2 s; the third list is served.
+    for _ in 0..6 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+    }
+    until(|| {
+        session
+            .derive(chrono::Utc::now())
+            .summary
+            .nodes
+            .is_current()
+    })
+    .await;
+    let node_lists = log
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|u| u.starts_with("/api/v1/nodes?") && !u.contains("watch=true"))
+        .count();
+    assert_eq!(node_lists, 3, "two refusals, then the list that was served");
     task.abort();
     let _ = task.await;
 }

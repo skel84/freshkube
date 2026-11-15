@@ -7,7 +7,7 @@
 //!
 //! | Name | Value | Fault |
 //! | --- | --- | --- |
-//! | `refuse` | chance 0–1 | the request is answered 403 Forbidden |
+//! | `refuse` | chance 0–1 | the request is answered 503 Service Unavailable |
 //! | `drop` | chance 0–1 | the connection closes with no answer |
 //! | `slow` | `chance@milliseconds` | the answer waits that long |
 //! | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |

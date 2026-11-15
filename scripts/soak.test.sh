@@ -41,6 +41,23 @@ begin=$SECONDS
 soak_run "$sleeper" "$work/quick.csv" 30
 [ $((SECONDS - begin)) -le 5 ]; check "a run that ends is noticed at once ($((SECONDS - begin)) s)" $?
 
+# soak_exec keeps a failing command's status and its log, as stress.sh calls it
+# (`|| run_rc=$?`, so the caller shows the log before it exits with the status).
+cat >"$work/fails.sh" <<'FAKE'
+#!/usr/bin/env bash
+echo "stress: FRESHKUBE_STRESS_FAULTS: unknown fault \`bogus\`" >&2
+exit 2
+FAKE
+chmod +x "$work/fails.sh"
+rc=0
+soak_exec "$work/fails.csv" 30 "$work/fails.log" "$work/fails.sh" || rc=$?
+[ "$rc" = 2 ]; check "soak_exec returns the command's status ($rc)" $?
+grep -q "^stress: .*unknown fault" "$work/fails.log"; check "soak_exec keeps the command's stress: line in the log" $?
+rc=0
+soak_exec "$work/ok.csv" 30 "$work/ok.log" true || rc=$?
+[ "$rc" = 0 ]; check "soak_exec returns 0 for a command that succeeds" $?
+trap 'rm -rf "$work"' EXIT  # soak_exec set its own
+
 cargo build --quiet --manifest-path "$root/Cargo.toml" -p freshkube-probe --bin soak-verdict
 verdict="$root/target/debug/soak-verdict"
 

@@ -462,7 +462,14 @@ async fn answer(
         Fault::None => {}
         Fault::Drop => return Err(std::io::Error::other("fault: connection dropped")),
         Fault::Slow(delay) => tokio::time::sleep(delay).await,
-        Fault::Refuse => return Ok(failure_status(StatusCode::FORBIDDEN, "Forbidden")),
+        // 503, not 403: the app treats Forbidden as permanent and stops that
+        // read until a Refresh, so a 403 would end the soak's own load.
+        Fault::Refuse => {
+            return Ok(failure_status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "ServiceUnavailable",
+            ));
+        }
         Fault::Gone => return Ok(failure_status(StatusCode::GONE, "Expired")),
     }
     let response = respond(world, request);
@@ -943,9 +950,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refusal_is_a_403_status() {
+    async fn a_refusal_is_a_503_status() {
         let (world, address) = server("refuse=1,after=0").await;
-        assert_eq!(get(address, "/version").await, Some(403));
+        assert_eq!(get(address, "/version").await, Some(503));
         assert_eq!(counts(&world).refused, 1);
     }
 

@@ -43,3 +43,23 @@ soak_run() {
         done
     done
 }
+
+# soak_exec <csv> <every-seconds> <log> <command...>
+#   Runs the command with its stderr in <log>, samples it into <csv> until it
+#   ends, and returns its exit status (never stopping the caller's `set -e`
+#   before the caller has shown the log). Ctrl-C or a terminated script ends
+#   the command too: a background command ignores SIGINT in non-interactive
+#   zsh, so it would otherwise run on, drawing, for hours. SOAK_RELEASE names
+#   a command to run last (stress.sh gives the screen lock's release). The
+#   machine is kept awake for the run when `caffeinate` exists.
+soak_exec() {
+    local csv=$1 every=$2 log=$3 rc=0
+    shift 3
+    "$@" 2>"$log" &
+    SOAK_PID=$!
+    trap 'kill $SOAK_PID 2>/dev/null || true; ${SOAK_RELEASE:-:}' EXIT INT TERM
+    if command -v caffeinate >/dev/null; then caffeinate -dimsu -w $SOAK_PID & fi
+    soak_run "$SOAK_PID" "$csv" "$every"
+    wait $SOAK_PID || rc=$?
+    return $rc
+}

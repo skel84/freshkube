@@ -36,22 +36,13 @@ ROOT=$root
 screen_acquire stress $$
 trap screen_release EXIT
 if [[ -n ${FRESHKUBE_STRESS_SAMPLES:-} ]]; then
-    # A soak run (scripts/soak.sh): sample the process while it runs.
+    # A soak run (scripts/soak.sh): sample the process while it runs. Its
+    # status is kept, so the log's messages (a bad FRESHKUBE_STRESS_FAULTS)
+    # are shown below before the script exits with it.
     . $root/scripts/soak/sample.sh
-    "$stress_binary" "$@" 2> $out/$label.log &
-    stress_pid=$!
-    # A background command ignores SIGINT here, so Ctrl-C must end the app
-    # itself, or it keeps drawing for hours after the lock is given up.
-    # `|| true`: the app has usually ended already, and a failed kill must not
-    # stop the trap before the lock is released (set -e).
-    trap 'kill $stress_pid 2>/dev/null || true; screen_release' EXIT INT TERM
-    # Keep the display and the machine awake for as long as the run lasts.
-    if command -v caffeinate >/dev/null; then caffeinate -dimsu -w $stress_pid & fi
-    soak_run $stress_pid $FRESHKUBE_STRESS_SAMPLES ${FRESHKUBE_STRESS_SAMPLE_EVERY:-30}
-    # Not `wait` alone: under set -e a failing app would end the script before
-    # its messages (a bad FRESHKUBE_STRESS_FAULTS) are shown below.
+    SOAK_RELEASE=screen_release
     run_rc=0
-    wait $stress_pid || run_rc=$?
+    soak_exec $FRESHKUBE_STRESS_SAMPLES ${FRESHKUBE_STRESS_SAMPLE_EVERY:-30} $out/$label.log "$stress_binary" "$@" || run_rc=$?
 else
     "$stress_binary" "$@" 2> $out/$label.log
 fi
