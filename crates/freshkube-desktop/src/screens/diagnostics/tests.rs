@@ -833,7 +833,7 @@ fn confirm_fix_after_edit(
 }
 
 #[gpui_kit::test]
-fn safety_g27_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_open(
+fn safety_g28_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_open(
     cx: &mut TestAppContext,
 ) {
     use freshkube_core::write::Protection;
@@ -845,7 +845,7 @@ fn safety_g27_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_
 }
 
 #[gpui_kit::test]
-fn safety_g27_apply_fix_refuses_when_the_file_cannot_say(cx: &mut TestAppContext) {
+fn safety_g28_apply_fix_refuses_when_the_file_cannot_say(cx: &mut TestAppContext) {
     confirm_fix_after_edit(
         cx,
         |setup| setup.remove(),
@@ -872,4 +872,35 @@ fn a_looser_file_changes_nothing_for_apply_fix_until_reviewed_again(cx: &mut Tes
             notice.text
         );
     });
+}
+
+/// The fix applied is the one the dialog was confirmed on: a refresh that
+/// replaces the snapshot while the file is read can't change which check or
+/// which fix is sent (guarantee 10).
+#[gpui_kit::test]
+fn apply_fix_uses_the_check_confirmed_when_a_refresh_lands_during_the_read(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    let _setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    open_fix(cx, handle, &screen, KUBELET);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
+    // The read hasn't answered; the check is healthy in the next snapshot, so
+    // it has no fix any more.
+    edit_snapshot(cx, &screen, |snapshot| {
+        let check = check_mut(snapshot, KUBELET);
+        check.status = CheckStatus::Pass;
+        check.fix = None;
+    });
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(notice.ok, "{}", notice.text);
+        assert_eq!(notice.key, KUBELET);
+        assert!(notice.text.contains("Restart kubelet"), "{}", notice.text);
+    });
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
 }

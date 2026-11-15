@@ -538,7 +538,7 @@ impl DiagnosticsScreen {
         let (current_key, run_key) = (check_key.clone(), check_key);
         // The setup file the send step reads again, for the identity the
         // dialog is for (#1055).
-        let guard = mutation::send_guard(&source.target.context, cx);
+        let guard = mutation::send_guard(&source.target.context, source.is_example(), cx);
         mutation::confirm(
             Confirmation {
                 title: format!("Apply fix: {}", fix.description).into(),
@@ -586,9 +586,13 @@ impl DiagnosticsScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.source.is_none() {
+        // The source, the check and the fix are resolved here, before the
+        // setup file is read again, and the send runs against them: a refresh
+        // while the read is in flight can't make it apply a different fix
+        // (guarantee 10, "only against the preview shown").
+        let Some(source) = self.source.clone() else {
             return;
-        }
+        };
         let Some(check) = self
             .loader
             .data()
@@ -599,6 +603,7 @@ impl DiagnosticsScreen {
         let Some(fix) = Self::applicable_fix(check).cloned() else {
             return;
         };
+        let check_id = check.id.clone();
         let operations = Operations::global(cx);
         let label = format!("Applying fix: {}", fix.description);
         let ticket = match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
@@ -620,68 +625,67 @@ impl DiagnosticsScreen {
                 return;
             }
         };
+        let plan = FixPlan {
+            check_key,
+            check_id,
+            fix,
+            source,
+        };
         let Some(guard) = guard else {
-            self.run_fix(check_key, ticket, window, cx);
+            self.run_fix(plan, ticket, window, cx);
             return;
         };
         // The slot is held while the setup file is read again off the UI
-        // thread; a file that got stricter, or can't say, sends nothing and
-        // gives the slot back (#1055).
+        // thread; a file that got stricter, can't say, or a window that moved
+        // meanwhile sends nothing and gives the slot back (#1055).
         let held = mutation::level(cx);
         cx.spawn_in(window, async move |this, cx| {
             let decided =
                 mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
-            match decided {
-                Ok(_) => {
-                    _ = this.update_in(cx, |view, window, cx| {
-                        view.run_fix(check_key, ticket, window, cx)
-                    });
-                }
-                Err(refusal) => {
-                    _ = this.update(cx, |view, cx| {
-                        view.set_notice(
-                            &check_key,
-                            false,
-                            format!("{} Nothing was started.", refusal.text()),
-                            cx,
-                        )
-                    });
-                    _ = cx.update(|_, cx| {
-                        operations.update(cx, |operations, cx| operations.finish(ticket, cx))
-                    });
-                }
-            }
+            let refused = match decided {
+                Err(refusal) => cx.update(|_, cx| mutation::refused_text(refusal, cx)).ok(),
+                Ok(_) => cx
+                    .update(|_, cx| mutation::moved_during_read(held, cx))
+                    .ok()
+                    .flatten(),
+            };
+            let Some(text) = refused else {
+                _ = this.update_in(cx, |view, window, cx| {
+                    view.run_fix(plan, ticket, window, cx)
+                });
+                return;
+            };
+            _ = this.update(cx, |view, cx| {
+                view.set_notice(
+                    &plan.check_key,
+                    false,
+                    format!("{text} Nothing was started."),
+                    cx,
+                )
+            });
+            _ = cx.update(|_, cx| {
+                operations.update(cx, |operations, cx| operations.finish(ticket, cx))
+            });
         })
         .detach();
     }
 
-    /// Applies the fix once the setup file has been read again. The slot is
-    /// held from here to the end.
+    /// Applies the fix the plan describes once the setup file has been read
+    /// again. The slot is held from here to the end.
     fn run_fix(
         &mut self,
-        check_key: String,
+        plan: FixPlan,
         ticket: OperationTicket,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let FixPlan {
+            check_key,
+            check_id,
+            fix,
+            source,
+        } = plan;
         let operations = Operations::global(cx);
-        let Some(source) = self.source.clone() else {
-            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
-            return;
-        };
-        let Some(check) = self
-            .loader
-            .data()
-            .and_then(|snapshot| snapshot.checks.iter().find(|check| key(check) == check_key))
-        else {
-            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
-            return;
-        };
-        let Some(fix) = Self::applicable_fix(check).cloned() else {
-            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
-            return;
-        };
-        let check_id = check.id.clone();
         let Some(live) = source.live.clone() else {
             // Offline: no client, no network, nothing written.
             self.set_notice(&check_key, true, actions::simulated(&fix), cx);
@@ -758,6 +762,14 @@ impl DiagnosticsScreen {
         self.shown = shown;
         cx.notify();
     }
+}
+
+/// What Apply fix was asked to do, resolved when it was confirmed.
+struct FixPlan {
+    check_key: String,
+    check_id: String,
+    fix: DiagnosticFix,
+    source: ScreenSource,
 }
 
 mod example;

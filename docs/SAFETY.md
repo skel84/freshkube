@@ -106,7 +106,7 @@ scripts/check-safety-suite.sh                  # fails if a guarantee has no tes
 - `safety_g10_confirmation_runs_only_against_the_preview_shown` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
 - `safety_g10_the_table_chooses_nodes_and_review_still_asks_before_any_step` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
 
-Guarantee 27 extends this one: the level a confirmation is sent under is read from `freshkube.yaml` again at Confirm.
+Guarantee 28 extends this one: the level a confirmation is sent under is read from `freshkube.yaml` again at Confirm.
 
 ### 11. Your access only lists namespaces and creates reviews, for the rows in view, and only while shown
 
@@ -221,27 +221,28 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g25_protected_operations_refuse_a_missing_or_wrong_name_and_accept_the_exact_one` (`crates/freshkube-core/src/operations/gate/tests.rs`)
 - `safety_g25_a_protected_cluster_starts_no_operation_until_the_node_is_named` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
 
-Guarantee 27 extends this one: a file edited to `protected` while a dialog is open is seen at Confirm.
+Guarantee 28 extends this one: a file edited to `protected` while a dialog is open is seen at Confirm.
 
-### 27. A write is sent under the stricter of the level the app holds and the one `freshkube.yaml` holds at that moment, and nothing is sent when the file can't say
+### 28. A write is sent under the stricter of the level the app holds and the one `freshkube.yaml` holds at that moment, and nothing is sent when the file can't say
 
-- `safety_g27_the_file_only_ever_tightens_the_level_a_write_is_sent_under` (`crates/freshkube-core/src/write/fresh/tests.rs`)
-- `safety_g27_a_file_that_cannot_say_refuses_at_every_held_level` (`crates/freshkube-core/src/write/fresh/tests.rs`)
-- `safety_g27_a_context_whose_row_was_skipped_reads_as_read_only` (`crates/freshkube-core/src/write/fresh/tests.rs`)
-- `safety_g27_a_context_subject_sees_an_entry_that_now_names_it` (`crates/freshkube-core/src/write/fresh/tests.rs`)
-- `safety_g27_operations_refuse_when_the_file_got_stricter_while_the_dialog_was_open` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
-- `safety_g27_operations_refuse_a_file_edited_to_protected_though_no_name_was_asked` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
-- `safety_g27_operations_refuse_when_the_file_cannot_say` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
-- `safety_g27_operations_refuse_an_unparsable_file` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
-- `safety_g27_operations_refuse_when_the_file_no_longer_lists_the_cluster` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
-- `safety_g27_restart_refuses_when_the_file_got_stricter_while_the_dialog_was_open` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
-- `safety_g27_restart_refuses_when_the_file_cannot_say` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
-- `safety_g27_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_open` (`crates/freshkube-desktop/src/screens/diagnostics/tests.rs`)
-- `safety_g27_apply_fix_refuses_when_the_file_cannot_say` (`crates/freshkube-desktop/src/screens/diagnostics/tests.rs`)
+- `safety_g28_the_file_only_ever_tightens_the_level_a_write_is_sent_under` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g28_a_file_that_cannot_say_refuses_at_every_held_level` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g28_a_context_whose_row_was_skipped_reads_as_read_only` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g28_a_context_subject_sees_an_entry_that_now_names_it` (`crates/freshkube-core/src/write/fresh/tests.rs`)
+- `safety_g28_operations_refuse_when_the_file_got_stricter_while_the_dialog_was_open` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+- `safety_g28_operations_refuse_a_file_edited_to_protected_though_no_name_was_asked` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+- `safety_g28_operations_refuse_when_the_file_cannot_say` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+- `safety_g28_operations_refuse_an_unparsable_file` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+- `safety_g28_operations_refuse_when_the_file_no_longer_lists_the_cluster` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+- `safety_g28_restart_refuses_when_the_file_got_stricter_while_the_dialog_was_open` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
+- `safety_g28_restart_refuses_when_the_file_cannot_say` (`crates/freshkube-desktop/src/desktop/tests/operations.rs`)
+- `safety_g28_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_open` (`crates/freshkube-desktop/src/screens/diagnostics/tests.rs`)
+- `safety_g28_apply_fix_refuses_when_the_file_cannot_say` (`crates/freshkube-desktop/src/screens/diagnostics/tests.rs`)
+- `safety_g28_a_live_send_with_no_setup_file_refuses_and_only_example_data_goes_unread` (`crates/freshkube-desktop/src/mutation.rs`)
 
 ## Known gaps
 
-- Guarantee 27 re-reads the setup file for the Talos writers (Operations, a service's Restart and Diagnostics' Apply fix). The write framework's own send step (everyday actions, Edit YAML, Delete, the Stage actions and Undo) still reads the level the app holds; reading the file there is the next pull request of #1055.
+- Guarantee 28 re-reads the setup file for the Talos writers (Operations, a service's Restart and Diagnostics' Apply fix). The write framework's own send step (everyday actions, Edit YAML, Delete, the Stage actions and Undo) still reads the level the app holds; reading the file there is the next pull request of #1055.
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).

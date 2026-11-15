@@ -85,7 +85,7 @@ impl Pilot {
         let (current_id, run_id) = (service_id.clone(), service_id.clone());
         // The setup file the send step reads again, for the identity the
         // dialog is for (#1055).
-        let guard = crate::mutation::send_guard(&cluster, cx);
+        let guard = crate::mutation::send_guard(&cluster, self.mode().is_example(), cx);
         let mut warnings: Vec<SharedString> = actions::critical_warning(&service_id)
             .map(|warning| vec![SharedString::from(warning)])
             .unwrap_or_default();
@@ -139,17 +139,16 @@ impl Pilot {
         else {
             return;
         };
-        cx.set_global(RestartNotices(Some(RestartNotice {
-            context: cluster.name.clone(),
-            node,
-            service: service.to_owned(),
-            ok,
-            text,
-        })));
+        notice_for(&cluster.name, &node, service, ok, text, cx);
     }
 
     /// Takes the operation slot and restarts `service_id` on the target node.
     /// Example data only simulates it.
+    ///
+    /// The node, cluster, client and fix are resolved here, before the setup
+    /// file is read again, and the send runs against them: a refresh or a node
+    /// change while the read is in flight can't point it at another node
+    /// (guarantee 10, "only against the preview shown").
     fn start_restart(
         &mut self,
         service_id: String,
@@ -157,7 +156,10 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(node) = self.target.summary().cloned() else {
+        let (Some(node), Some(cluster)) = (
+            self.target.summary().cloned(),
+            self.overview.data().map(|cluster| cluster.name.clone()),
+        ) else {
             return;
         };
         if let Some(why) = crate::mutation::refusal(cx) {
@@ -195,77 +197,105 @@ impl Pilot {
                 return;
             }
         };
+        let plan = RestartPlan {
+            fix: DiagnosticFix {
+                description: format!("Restart {service_id}"),
+                action: DiagnosticFixAction::RestartService {
+                    service_id: service_id.clone(),
+                },
+            },
+            service_id,
+            node,
+            cluster,
+            example: self.mode().is_example(),
+            client: self
+                .overview
+                .data()
+                .and_then(|cluster| cluster.client.clone()),
+            epoch: self.epoch,
+        };
         let Some(guard) = guard else {
-            self.run_restart(service_id, ticket, window, cx);
+            self.run_restart(plan, ticket, window, cx);
             return;
         };
         // The slot is held while the setup file is read again off the UI
-        // thread; a file that got stricter, or can't say, sends nothing and
-        // gives the slot back (#1055).
+        // thread; a file that got stricter, can't say, or a window that moved
+        // meanwhile sends nothing and gives the slot back (#1055).
         let held = crate::mutation::level(cx);
         cx.spawn_in(window, async move |this, cx| {
             let decided =
                 crate::mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
-            match decided {
-                Ok(_) => {
-                    _ = this.update_in(cx, |view, window, cx| {
-                        view.run_restart(service_id, ticket, window, cx)
-                    });
-                }
-                Err(refusal) => {
-                    _ = this.update(cx, |view, cx| {
-                        view.set_restart_notice(
-                            &service_id,
-                            false,
-                            format!("{} Nothing was started.", refusal.text()),
-                            cx,
-                        )
-                    });
-                    _ = cx.update(|_, cx| {
-                        operations.update(cx, |operations, cx| operations.finish(ticket, cx))
-                    });
-                }
-            }
+            let refused = match decided {
+                Err(refusal) => cx
+                    .update(|_, cx| crate::mutation::refused_text(refusal, cx))
+                    .ok(),
+                Ok(_) => cx
+                    .update(|_, cx| crate::mutation::moved_during_read(held, cx))
+                    .ok()
+                    .flatten(),
+            };
+            let Some(text) = refused else {
+                _ = this.update_in(cx, |view, window, cx| {
+                    view.run_restart(plan, ticket, window, cx)
+                });
+                return;
+            };
+            // The notice names the node the person was asked about, not the
+            // one that is selected now.
+            _ = cx.update(|_, cx| {
+                notice_for(
+                    &plan.cluster,
+                    &plan.node.name,
+                    &plan.service_id,
+                    false,
+                    format!("{text} Nothing was started."),
+                    cx,
+                );
+                operations.update(cx, |operations, cx| operations.finish(ticket, cx));
+            });
         })
         .detach();
     }
 
-    /// Sends the restart once the setup file has been read again. The slot is
-    /// held from here to the end.
+    /// Sends the restart the plan describes once the setup file has been
+    /// read again. The slot is held from here to the end.
     fn run_restart(
         &mut self,
-        service_id: String,
+        plan: RestartPlan,
         ticket: OperationTicket,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (Some(node), Some(cluster)) = (
-            self.target.summary().cloned(),
-            self.overview.data().map(|cluster| cluster.name.clone()),
-        ) else {
-            Operations::global(cx).update(cx, |operations, cx| operations.finish(ticket, cx));
-            return;
-        };
+        let RestartPlan {
+            service_id,
+            node,
+            cluster,
+            fix,
+            example,
+            client,
+            epoch,
+        } = plan;
         let operations = Operations::global(cx);
-        let fix = DiagnosticFix {
-            description: format!("Restart {service_id}"),
-            action: DiagnosticFixAction::RestartService {
-                service_id: service_id.clone(),
-            },
-        };
-        if self.mode().is_example() {
+        if example {
             // Offline: no client, no audit file, no network.
-            self.set_restart_notice(&service_id, true, actions::simulated(&fix), cx);
+            notice_for(
+                &cluster,
+                &node.name,
+                &service_id,
+                true,
+                actions::simulated(&fix),
+                cx,
+            );
             operations.update(cx, |operations, cx| operations.finish(ticket, cx));
-            self.refresh_services(window, cx);
+            if self.epoch == epoch {
+                self.refresh_services(window, cx);
+            }
             return;
         }
-        let Some(client) = self
-            .overview
-            .data()
-            .and_then(|cluster| cluster.client.clone())
-        else {
-            self.set_restart_notice(
+        let Some(client) = client else {
+            notice_for(
+                &cluster,
+                &node.name,
                 &service_id,
                 false,
                 "No Talos connection is available for this context.".into(),
@@ -281,7 +311,6 @@ impl Pilot {
                 cx,
             )
         });
-        let epoch = self.epoch;
         let target = DiagnosticTarget::new(&node.name, &node.address, "node", &cluster);
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
@@ -310,7 +339,7 @@ impl Pilot {
                     Ok(text) => (true, format!("{service_id} on {}: {text}", node.name)),
                     Err(error) => (false, format!("{service_id} on {}: {error}", node.name)),
                 };
-                view.set_restart_notice(&service_id, ok, text, cx);
+                notice_for(&cluster, &node.name, &service_id, ok, text, cx);
                 if view.epoch == epoch {
                     view.refresh_services(window, cx);
                 }
@@ -319,4 +348,27 @@ impl Pilot {
         .detach();
         cx.notify();
     }
+}
+
+/// What a restart was asked to do, resolved when it was confirmed.
+struct RestartPlan {
+    service_id: String,
+    node: crate::presentation::NodeSummary,
+    cluster: String,
+    fix: DiagnosticFix,
+    example: bool,
+    client: Option<talos_rs::TalosClient>,
+    epoch: u64,
+}
+
+/// Leaves the notice under `service` on `node` of `cluster`; the tab hears
+/// it itself. The identity is the restart's own, not the page's now.
+fn notice_for(cluster: &str, node: &str, service: &str, ok: bool, text: String, cx: &mut App) {
+    cx.set_global(RestartNotices(Some(RestartNotice {
+        context: cluster.to_owned(),
+        node: node.to_owned(),
+        service: service.to_owned(),
+        ok,
+        text,
+    })));
 }

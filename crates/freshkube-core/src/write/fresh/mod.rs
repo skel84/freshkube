@@ -73,14 +73,25 @@ impl SendRefusal {
 /// The setup file and the identity whose level is read from it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetupLevels {
-    file: PathBuf,
+    /// `None` when a live window has no setup file to read: it can't say, so
+    /// a send refuses (never "send without reading").
+    file: Option<PathBuf>,
     subject: Subject,
 }
 
 impl SetupLevels {
     pub fn new(file: impl Into<PathBuf>, subject: Subject) -> Self {
         Self {
-            file: file.into(),
+            file: Some(file.into()),
+            subject,
+        }
+    }
+
+    /// A live window with no setup file behind it: [`Self::read`] can't say,
+    /// so nothing is sent.
+    pub fn unavailable(subject: Subject) -> Self {
+        Self {
+            file: None,
             subject,
         }
     }
@@ -94,7 +105,10 @@ impl SetupLevels {
     /// skipped unrelated row doesn't refuse everything. Blocking: call it off
     /// the UI thread.
     pub fn read(&self) -> Result<Protection, Unreadable> {
-        let bytes = match read_bounded_regular_file(&self.file, MAX_BYTES) {
+        let Some(file) = &self.file else {
+            return Err(Unreadable::NotReadable);
+        };
+        let bytes = match read_bounded_regular_file(file, MAX_BYTES) {
             Ok(bytes) => Some(bytes),
             Err(BoundedReadError::NotFound) => None,
             Err(_) => return Err(Unreadable::NotReadable),
