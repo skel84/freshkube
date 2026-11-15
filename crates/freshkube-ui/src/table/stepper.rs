@@ -150,6 +150,9 @@ pub struct Step {
     pub tooltip: SharedString,
     /// The cell is the page's selection: marked with the accent's tint.
     pub selected: bool,
+    /// The cell holds the keyboard: a ring in the accent's colour, drawn
+    /// over the cell's edge so it moves nothing.
+    pub ring: bool,
 }
 
 /// A stepper cell for `column`, two lines in the row's 40 dp: the track
@@ -220,6 +223,20 @@ pub fn stepper_cell(column: &impl TableColumn, step: Step, cx: &App) -> Observed
         .follow_tooltip(step.tooltip)
         .child(first)
         .child(word)
+        .when(step.ring, |this| {
+            this.relative().child(
+                div()
+                    .id(sub("ring"))
+                    .test_support()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .border_2()
+                    .border_color(p.accent)
+                    .rounded(px(3.)),
+            )
+        })
 }
 
 /// A line across `extent` of its own box, in `tone`'s colour and `track`'s
