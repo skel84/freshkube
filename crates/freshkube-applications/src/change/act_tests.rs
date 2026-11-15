@@ -316,12 +316,12 @@ fn a_stage_lists_the_last_verified_freight_first_and_pressing_it_asks_for_that_r
     select(cx, handle, &page, "prod-ams-promotion");
     assert_eq!(
         label(cx, handle, 5).as_deref(),
-        Some("Roll back to calm-heron (verified in Kargo)"),
+        Some("Roll back to calm-heron (verified)"),
         "the newest Freight Kargo verified is the first line"
     );
     assert_eq!(
         label(cx, handle, 6).as_deref(),
-        Some("Roll back to swift-wren (not verified)"),
+        Some("Roll back to swift-wren (unverified)"),
         "an unverified one can be picked, after it"
     );
     press(cx, handle, 5);
@@ -349,7 +349,7 @@ fn with_nothing_verified_the_first_line_is_greyed_and_a_pick_is_never_the_main_a
     );
     assert_eq!(
         label(cx, handle, 6).as_deref(),
-        Some("Roll back to swift-wren (not verified)")
+        Some("Roll back to swift-wren (unverified)")
     );
     press(cx, handle, 6);
     assert_eq!(events.borrow()[0].kind, ActKind::Rollback(0));

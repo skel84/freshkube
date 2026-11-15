@@ -259,7 +259,7 @@ impl ChangePage {
     }
 
     /// The Stage's Roll back lines (#845): the last Freight Kargo verified
-    /// first, then up to three more earlier Freight to pick, each saying
+    /// first, then more earlier Freight to pick, each saying
     /// what Kargo recorded. An unverified Freight can be picked, but is never
     /// the first line. Greyed out with why when there is none, when none was
     /// verified, or while a Promotion runs.
@@ -271,7 +271,7 @@ impl ChangePage {
     ) -> Vec<ActionLine> {
         use freshkube_delivery::acts::rollback::{Evidence, last_verified};
         /// How many earlier Freight the Inspector lists.
-        const SHOWN: usize = 4;
+        const SHOWN: usize = 2;
         let running = matches!(acts.slot(), Slot::Abort(_));
         let blocked = no_kargo.or_else(|| {
             running.then(|| "A Promotion is running on this Stage; abort it first.".into())
@@ -303,7 +303,7 @@ impl ChangePage {
             let earlier = &acts.earlier[at];
             let (label, tooltip) = match &earlier.evidence {
                 Evidence::Verified { .. } => (
-                    format!("Roll back to {} (verified in Kargo)", earlier.freight),
+                    format!("Roll back to {} (verified)", earlier.freight),
                     if Some(&earlier.freight) == best.as_ref() {
                         "The newest earlier Freight Kargo verified in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
                             .to_owned()
@@ -313,7 +313,7 @@ impl ChangePage {
                     },
                 ),
                 Evidence::Unknown(why) => (
-                    format!("Roll back to {} (not verified)", earlier.freight),
+                    format!("Roll back to {} (unverified)", earlier.freight),
                     format!(
                         "{why} Argo CD's health and Coroot's outcome weren't recorded for it either."
                     ),
