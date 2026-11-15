@@ -40,6 +40,9 @@ impl TableColumn for Column {
 /// What a Team or Yours chip adds to the Cluster column, in dp.
 const CHIP_ROOM: f32 = 64.;
 
+/// The Protection column's least width, in dp.
+const PROTECTION_LEAST: f32 = 170.;
+
 /// What the Protection tag adds to its words, in dp: its padding, mark and
 /// the gap before the note beside it.
 const TAG_ROOM: f32 = 28.;
@@ -56,7 +59,7 @@ fn protection_width(rows: &[ClusterRow]) -> f32 {
             format!("{} {note}", row.level.label()).into()
         })
         .collect();
-    (table::fit("Protection", words.iter(), table::WIDEST) + TAG_ROOM).max(170.)
+    (table::fit("Protection", words.iter(), table::WIDEST) + TAG_ROOM).max(PROTECTION_LEAST)
 }
 
 /// Derives widths using the shared table's DESIGN.md sizing rules.
@@ -67,6 +70,11 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
         label: label.to_owned().into(),
         width,
     };
+    // The note's room comes out of Talosconfig, a muted path that truncates
+    // anyway, so the table is no wider than it was: a row's centre stays in
+    // view in a narrow window.
+    let protection = protection_width(rows);
+    let talosconfig = (240. - (protection - PROTECTION_LEAST)).max(160.);
     let columns = vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(
@@ -76,7 +84,7 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
                 + if chips { CHIP_ROOM } else { 0. },
         ),
         column(Field::Role, "Role", 120.),
-        column(Field::Protection, "Protection", protection_width(rows)),
+        column(Field::Protection, "Protection", protection),
         column(
             Field::Context,
             "Context",
@@ -86,7 +94,7 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
                 table::WIDEST,
             ),
         ),
-        column(Field::Talosconfig, "Talosconfig", 240.),
+        column(Field::Talosconfig, "Talosconfig", talosconfig),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
