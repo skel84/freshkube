@@ -25,6 +25,13 @@ const PASS: &[&str] = &[
     "APPDATA",
     "SYSTEMROOT",
     "LANG",
+    // How the person's own git reaches their remote: a proxy and a CA.
+    "HTTPS_PROXY",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "GIT_SSL_CAINFO",
+    "SSL_CERT_FILE",
 ];
 
 pub struct GitRunner {
@@ -34,6 +41,19 @@ pub struct GitRunner {
     /// the allowed protocols refuse; only they set this.
     #[cfg(test)]
     allow_file: bool,
+    /// A test's own home, so no global git config of the developer applies.
+    #[cfg(test)]
+    home: Option<PathBuf>,
+    /// A test passes config that would allow every transport; only the
+    /// environment may then still refuse one.
+    #[cfg(test)]
+    loosen_config: bool,
+    /// A test's own `PATH`, to run a stand-in for git.
+    #[cfg(test)]
+    path: Option<PathBuf>,
+    /// How many blobs `cat-file` was asked for.
+    #[cfg(test)]
+    pub(crate) blobs_read: std::sync::atomic::AtomicUsize,
 }
 
 /// One entry `git ls-tree` printed.
@@ -51,6 +71,14 @@ impl GitRunner {
             limits,
             #[cfg(test)]
             allow_file: false,
+            #[cfg(test)]
+            home: None,
+            #[cfg(test)]
+            loosen_config: false,
+            #[cfg(test)]
+            path: None,
+            #[cfg(test)]
+            blobs_read: Default::default(),
         }
     }
 
@@ -60,11 +88,49 @@ impl GitRunner {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_home_for_test(mut self, home: PathBuf) -> Self {
+        self.home = Some(home);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_path_for_test(mut self, dir: PathBuf) -> Self {
+        self.path = Some(dir);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn loosening_config_for_test(mut self) -> Self {
+        self.loosen_config = true;
+        self
+    }
+
     fn failed(what: &str) -> FetchFailed {
         FetchFailed(what.to_string())
     }
 
+    /// The whole fetch, under one deadline. A failed or cut-short fetch
+    /// deletes the mirror: it is a cache, and a killed git leaves lock files
+    /// that would fail every later fetch.
     pub async fn fetch(&self, source: &GitSource) -> Result<Version, FetchFailed> {
+        let result =
+            match tokio::time::timeout(self.limits.deadline, self.fetch_in_time(source)).await {
+                Ok(result) => result,
+                Err(_) => Err(Self::failed("git took too long")),
+            };
+        if result.is_err() {
+            self.forget_mirror().await;
+        }
+        result
+    }
+
+    async fn forget_mirror(&self) {
+        let mirror = GitFetch::mirror_dir(&self.app_dir);
+        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(mirror)).await;
+    }
+
+    async fn fetch_in_time(&self, source: &GitSource) -> Result<Version, FetchFailed> {
         let mirror = GitFetch::mirror_dir(&self.app_dir);
         let hooks = self.app_dir.join("team-setup").join("no-hooks");
         std::fs::create_dir_all(&hooks)
@@ -72,15 +138,16 @@ impl GitRunner {
         if !mirror.join("HEAD").is_file() {
             self.init(&mirror, &hooks).await?;
         }
-        let fetch = GitFetch::new(source, &mirror, &hooks, false);
-        let fetched = self.run(&fetch.args, 64 * 1024, Some(&mirror)).await;
-        // A mirror past its limit is forgotten, so it never grows on disk.
-        let too_big = dir_size(&mirror) > self.limits.mirror_bytes;
-        if too_big {
-            let _ = std::fs::remove_dir_all(&mirror);
+        #[allow(unused_mut)]
+        let mut fetch = GitFetch::new(source, &mirror, &hooks, false);
+        #[cfg(test)]
+        if self.loosen_config {
+            fetch.loosen_for_test();
+        }
+        self.run(&fetch.args, 64 * 1024, Some(&mirror)).await?;
+        if self.mirror_size(&mirror).await > self.limits.mirror_bytes {
             return Err(Self::failed("the repository is larger than the limit"));
         }
-        fetched?;
 
         let commit = self
             .read(
@@ -100,23 +167,36 @@ impl GitRunner {
                 &hooks,
                 &commit,
                 source.path(),
+                Blob::TeamFile,
                 self.limits.file_bytes,
             )
-            .await
-            .map_err(|error| FetchFailed(format!("the team file: {error}")))?;
+            .await?;
         // The key file the file names, if any, is read at the same commit.
         let first = Version::parse(&commit[..12], &text, Default::default())?;
         let mut prints = std::collections::BTreeMap::new();
         if let Some(path) = first.values().get(KEY_FILE).and_then(|v| v.as_str()) {
             let pem = self
-                .blob(&mirror, &hooks, &commit, path, self.limits.key_bytes)
-                .await
-                .map_err(|error| FetchFailed(format!("the key file: {error}")))?;
+                .blob(
+                    &mirror,
+                    &hooks,
+                    &commit,
+                    path,
+                    Blob::KeyFile,
+                    self.limits.key_bytes,
+                )
+                .await?;
             let print = keyfile::fingerprint(&pem)
                 .map_err(|error| FetchFailed(format!("the key file: {error}")))?;
             prints.insert(path.to_string(), print);
         }
         Ok(Version::parse(&commit[..12], &text, prints)?)
+    }
+
+    async fn mirror_size(&self, mirror: &Path) -> u64 {
+        let mirror = mirror.to_path_buf();
+        tokio::task::spawn_blocking(move || dir_size(&mirror))
+            .await
+            .unwrap_or(0)
     }
 
     async fn init(&self, mirror: &Path, hooks: &Path) -> Result<(), FetchFailed> {
@@ -151,45 +231,47 @@ impl GitRunner {
     }
 
     /// The bytes of the plain file at `path` in `commit`, by its tree entry.
+    /// `what` says which file it is, so every refusal names it.
     async fn blob(
         &self,
         mirror: &Path,
         hooks: &Path,
         commit: &str,
         path: &str,
+        what: Blob,
         most: u64,
-    ) -> Result<Vec<u8>, KeyFileError> {
-        keyfile::check_repo_path(path)?;
+    ) -> Result<Vec<u8>, FetchFailed> {
+        let refuse = |error: KeyFileError| FetchFailed(what.words(&error, most));
+        keyfile::check_repo_path(path).map_err(refuse)?;
         let mut args = GitFetch::read(mirror, hooks, &["ls-tree", "-l", "-z", commit, "--"]);
         args.push(path.to_string());
-        let out = self
-            .run(&args, 4096, None)
-            .await
-            .map_err(|_| KeyFileError::NotFound)?;
-        let entry = parse_entry(&out)?;
+        // A git that fails or runs out of time is not "not in the repository".
+        let out = self.run(&args, 4096, None).await?;
+        let entry = parse_entry(&out).map_err(refuse)?;
         match (entry.mode.as_str(), entry.kind.as_str()) {
-            ("120000", _) => return Err(KeyFileError::Symlink),
+            ("120000", _) => return Err(refuse(KeyFileError::Symlink)),
             ("100644" | "100755", "blob") => {}
-            _ => return Err(KeyFileError::NotAFile),
+            _ => return Err(refuse(KeyFileError::NotAFile)),
         }
         // The size is known before a byte is read.
         if entry.size.is_none_or(|size| size > most) {
-            return Err(KeyFileError::TooLarge);
+            return Err(refuse(KeyFileError::TooLarge));
         }
+        #[cfg(test)]
+        self.blobs_read
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let args = GitFetch::read(mirror, hooks, &["cat-file", "blob", &entry.id]);
-        let bytes = self
-            .run(&args, most + 1, None)
-            .await
-            .map_err(|_| KeyFileError::NotFound)?;
+        let bytes = self.run(&args, most + 1, None).await?;
         if bytes.len() as u64 > most {
-            return Err(KeyFileError::TooLarge);
+            return Err(refuse(KeyFileError::TooLarge));
         }
         Ok(bytes)
     }
 
-    /// Runs git, reading at most `cap` bytes of its output, for at most the
-    /// deadline, and (for a fetch) until the mirror outgrows its limit. A
-    /// dropped future kills the child.
+    /// Runs git in a process group of its own, reading at most `cap` bytes of
+    /// its output. A fetch (`watch`) also ends when the mirror outgrows its
+    /// limit. Whatever ends it first, dropped future included, the whole
+    /// group is killed, so `git-remote-https` and `index-pack` stop too.
     async fn run(
         &self,
         args: &[String],
@@ -205,6 +287,8 @@ impl GitRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(unix)]
+        command.process_group(0);
         for name in PASS {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
@@ -214,14 +298,27 @@ impl GitRunner {
             command.env(name, value);
         }
         // A test fetches from a repository in its own temporary directory, a
-        // `file` transport the shipped environment refuses.
+        // `file` transport the shipped environment refuses, under its own
+        // home so the developer's git config never applies.
         #[cfg(test)]
-        if self.allow_file {
-            command.env("GIT_ALLOW_PROTOCOL", "https:ssh:file");
+        {
+            if self.allow_file {
+                command.env("GIT_ALLOW_PROTOCOL", "https:ssh:file");
+            }
+            if let Some(dir) = &self.path {
+                command.env("PATH", format!("{}:/usr/bin:/bin", dir.display()));
+            }
+            if let Some(home) = &self.home {
+                command
+                    .env("HOME", home)
+                    .env("XDG_CONFIG_HOME", home)
+                    .env("GIT_CONFIG_NOSYSTEM", "1");
+            }
         }
         let mut child = command
             .spawn()
             .map_err(|_| Self::failed("git couldn’t be started; is it installed?"))?;
+        let mut group = Group::new(&child);
         let stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
         let work = async {
@@ -235,13 +332,14 @@ impl GitRunner {
             };
             loop {
                 tokio::time::sleep(Duration::from_millis(50)).await;
-                if dir_size(mirror) > self.limits.mirror_bytes {
+                if self.mirror_size(mirror).await > self.limits.mirror_bytes {
                     return;
                 }
             }
         };
         tokio::select! {
             (out, err, status) = work => {
+                group.disarm();
                 if status.is_ok_and(|s| s.success()) && out.len() as u64 <= cap {
                     Ok(out)
                 } else {
@@ -254,7 +352,94 @@ impl GitRunner {
                 }
             }
             () = guard => Err(Self::failed("the repository is larger than the limit")),
-            () = tokio::time::sleep(self.limits.deadline) => Err(Self::failed("git took too long")),
+        }
+    }
+}
+
+/// Which file a blob read is, for the words of its refusal.
+#[derive(Clone, Copy)]
+enum Blob {
+    TeamFile,
+    KeyFile,
+}
+
+impl Blob {
+    fn words(self, error: &KeyFileError, most: u64) -> String {
+        match self {
+            Blob::KeyFile => format!("the key file: {error}"),
+            Blob::TeamFile => format!(
+                "the team file: {}",
+                match error {
+                    KeyFileError::NotFound => "it isn’t in the repository at that path".to_string(),
+                    KeyFileError::NotAFile => "it isn’t a regular file".to_string(),
+                    KeyFileError::Symlink => "it is a link, which is refused".to_string(),
+                    KeyFileError::TooLarge => format!("it is larger than {} KiB", most / 1024),
+                    KeyFileError::Absolute
+                    | KeyFileError::ParentSegment
+                    | KeyFileError::Escapes => "its path leaves the repository".to_string(),
+                    KeyFileError::NotAKey => "it isn’t readable".to_string(),
+                }
+            ),
+        }
+    }
+}
+
+/// The process group of a running git. While armed, dropping it kills every
+/// process in the group and waits briefly for them to go, so a download that
+/// `git` started stops with it. Disarmed once git has finished by itself.
+struct Group {
+    #[cfg(unix)]
+    pgid: Option<i32>,
+    #[cfg(windows)]
+    pid: Option<u32>,
+}
+
+impl Group {
+    fn new(child: &tokio::process::Child) -> Self {
+        Self {
+            #[cfg(unix)]
+            pgid: child.id().map(|pid| pid as i32),
+            #[cfg(windows)]
+            pid: child.id(),
+        }
+    }
+
+    fn disarm(&mut self) {
+        #[cfg(unix)]
+        {
+            self.pgid = None;
+        }
+        #[cfg(windows)]
+        {
+            self.pid = None;
+        }
+    }
+}
+
+impl Drop for Group {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid.take() {
+            // SAFETY: kill(2) with a negative pid signals a process group,
+            // here the one git was started as the leader of.
+            unsafe { libc::kill(-pgid, libc::SIGKILL) };
+            for _ in 0..200 {
+                // SAFETY: signal 0 only checks that the group exists.
+                let gone = unsafe { libc::kill(-pgid, 0) } != 0;
+                if gone {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        #[cfg(windows)]
+        if let Some(pid) = self.pid.take() {
+            // The whole tree: git and the helpers it started.
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
     }
 }

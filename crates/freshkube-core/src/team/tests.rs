@@ -322,8 +322,7 @@ fn the_git_command_runs_nothing_from_the_repo() {
     assert_eq!(
         cmd.args,
         [
-            "-C",
-            "/app/mirror.git",
+            "--git-dir=/app/mirror.git",
             "-c",
             "core.hooksPath=/app/empty",
             "-c",
@@ -340,6 +339,8 @@ fn the_git_command_runs_nothing_from_the_repo() {
             "protocol.ext.allow=never",
             "-c",
             "submodule.recurse=false",
+            "-c",
+            "transfer.fsckObjects=true",
             "fetch",
             "--no-recurse-submodules",
             "--no-tags",
@@ -376,6 +377,8 @@ fn an_address_with_credentials_is_refused_and_never_shown() {
         "https://user:secret@example.test/team.git",
         "https://token@example.test/team.git",
         "ssh://user:secret@example.test/team.git",
+        "user:tok3n@example.test:team/setup.git",
+        "git:tok3n@example.test:team/setup.git",
     ] {
         assert_eq!(
             GitSource::new(url, "", ""),

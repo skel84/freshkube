@@ -77,6 +77,12 @@ impl TeamFetcher {
 /// Text a child printed, as an error may show it: every address cut to what
 /// [`redact`] allows, and short.
 pub(crate) fn redact_text(text: &str) -> String {
+    // What the server printed (`remote:` lines) is its own words, not ours.
+    let ours: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("remote:"))
+        .collect();
+    let text = ours.join("\n");
     let words: Vec<String> = text
         .split_whitespace()
         .map(|word| {

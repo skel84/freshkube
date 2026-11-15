@@ -214,15 +214,16 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
-### 25. A team fetch runs no repository code, follows no link out of the repository, and sends its token only to the host it was saved for
+### 27. A team fetch runs no repository code, follows no link out of the repository, and sends its token only to the host it was saved for
 
-The shared team setup file ([features/settings.md](features/settings.md#team-setup), `freshkube-core`'s `team/fetch/`). Git runs as the person's own command, with only `https` and `ssh` allowed as transports (`GIT_ALLOW_PROTOCOL`), into an app-owned bare mirror with an empty hooks directory, and the file and its key file are read through git objects, never from a checkout, so no hook, filter or file of the repository runs. A key file whose tree entry is a link (mode 120000), a path with `..`, an absolute path or an empty segment, and a link on the way to it are refused. An HTTPS fetch follows a redirect only to the same host, so the token never goes anywhere else; a redirect to another host or to plain HTTP is refused.
+The shared team setup file ([features/settings.md](features/settings.md#team-setup), `freshkube-core`'s `team/fetch/`). Git runs as the person's own command, in a process group of its own that is killed whole on a deadline, a size cap or a dropped read (so `git-remote-https` and `index-pack` stop too), with only `https` and `ssh` allowed as transports (`GIT_ALLOW_PROTOCOL`), into an app-owned bare mirror with an empty hooks directory, and the file and its key file are read through git objects, never from a checkout, so no hook, filter or file of the repository runs. A key file whose tree entry is a link (mode 120000), a path with `..`, an absolute path or an empty segment, and a link on the way to it are refused. An HTTPS fetch follows a redirect only to the same host, so the token never goes anywhere else; a redirect to another host or to plain HTTP is refused.
 
-- `safety_g25_a_hook_of_the_mirror_does_not_run` (`crates/freshkube-core/src/team/fetch/tests.rs`)
-- `safety_g25_a_key_file_that_is_a_link_is_refused` (`crates/freshkube-core/src/team/fetch/tests.rs`)
-- `safety_g25_a_key_file_path_leaving_the_repository_is_refused` (`crates/freshkube-core/src/team/fetch/tests.rs`)
-- `safety_g25_a_source_cannot_use_a_transport_other_than_https_and_ssh` (`crates/freshkube-core/src/team/fetch/tests.rs`)
-- `safety_g25_a_redirect_to_another_host_is_refused_and_no_token_follows` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g27_a_hook_of_the_mirror_does_not_run` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g27_a_key_file_that_is_a_link_is_refused` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g27_a_key_file_path_leaving_the_repository_is_refused` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g27_the_deadline_ends_the_helpers_git_started_too` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g27_a_source_cannot_use_a_transport_other_than_https_and_ssh` (`crates/freshkube-core/src/team/fetch/tests.rs`)
+- `safety_g27_a_redirect_to_another_host_is_refused_and_no_token_follows` (`crates/freshkube-core/src/team/fetch/tests.rs`)
 
 ## Known gaps
 

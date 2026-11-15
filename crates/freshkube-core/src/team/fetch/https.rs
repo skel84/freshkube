@@ -94,8 +94,12 @@ impl HttpsFetch {
     }
 
     pub async fn fetch(&self, source: &HttpsSource) -> Result<Version, FetchFailed> {
-        let token = self.token(source).await?;
-        match tokio::time::timeout(self.limits.deadline, self.get(source, token)).await {
+        // The key-store read is inside the deadline too.
+        let work = async {
+            let token = self.token(source).await?;
+            self.get(source, token).await
+        };
+        match tokio::time::timeout(self.limits.deadline, work).await {
             Ok(result) => result,
             Err(_) => Err(Self::failed("the host took too long")),
         }
@@ -110,7 +114,8 @@ impl HttpsFetch {
         for _ in 0..=MOST_REDIRECTS {
             let mut request = self.client.get(url.clone());
             if let Some(token) = &token {
-                let mut value = HeaderValue::from_str(&format!("Bearer {}", token.0.as_str()))
+                let line = Zeroizing::new(format!("Bearer {}", token.0.as_str()));
+                let mut value = HeaderValue::from_str(line.as_str())
                     .map_err(|_| Self::failed("the token can’t be sent as a header"))?;
                 value.set_sensitive(true);
                 request = request.header(AUTHORIZATION, value);
@@ -171,8 +176,10 @@ impl HttpsFetch {
     }
 }
 
-/// An address without a fragment, as a request is sent to it.
+/// An address without user info or a fragment, as a request is sent to it.
 fn strip(mut url: Url) -> Url {
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
     url.set_fragment(None);
     url
 }

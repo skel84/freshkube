@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use super::fake::{CERT, Reply, Server};
@@ -19,6 +20,9 @@ fn git(dir: &Path, args: &[&str]) {
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(dir)
+        .env("HOME", dir)
+        .env("XDG_CONFIG_HOME", dir)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .args([
             "-c",
             "user.name=T",
@@ -52,8 +56,12 @@ fn source(work: &Path) -> GitSource {
     GitSource::local_for_test(work.to_str().unwrap(), "main", "freshkube.yaml")
 }
 
+/// A runner that fetches a local repository, under a home of its own so no
+/// global git config of the developer applies.
 fn runner(app: &Path) -> GitRunner {
-    GitRunner::new(app.join("app"), Limits::default()).allowing_file_for_test()
+    GitRunner::new(app.join("app"), Limits::default())
+        .allowing_file_for_test()
+        .with_home_for_test(app.join("home"))
 }
 
 #[tokio::test]
@@ -81,7 +89,7 @@ async fn a_repository_is_read_through_its_objects_with_its_key_file() {
 }
 
 #[tokio::test]
-async fn safety_g25_a_hook_of_the_mirror_does_not_run() {
+async fn safety_g27_a_hook_of_the_mirror_does_not_run() {
     let tmp = tempfile::tempdir().unwrap();
     let work = repo(tmp.path(), &[("freshkube.yaml", "version: 1\n")]);
     let app = tmp.path().join("app");
@@ -107,7 +115,7 @@ async fn safety_g25_a_hook_of_the_mirror_does_not_run() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn safety_g25_a_key_file_that_is_a_link_is_refused() {
+async fn safety_g27_a_key_file_that_is_a_link_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
     let outside = tmp.path().join("outside.pub");
     std::fs::write(&outside, PEM).unwrap();
@@ -116,9 +124,12 @@ async fn safety_g25_a_key_file_that_is_a_link_is_refused() {
     std::os::unix::fs::symlink(&outside, work.join("keys/cosign.pub")).unwrap();
     git(&work, &["add", "-A"]);
     git(&work, &["commit", "-q", "-m", "link"]);
-    let error = runner(tmp.path()).fetch(&source(&work)).await.unwrap_err();
+    let runner = runner(tmp.path());
+    let error = runner.fetch(&source(&work)).await.unwrap_err();
     assert!(error.0.contains("link"), "{error:?}");
     assert!(!error.0.contains("outside"), "{error:?}");
+    // Only the team file was read; the link's target never was.
+    assert_eq!(runner.blobs_read.load(Ordering::SeqCst), 1);
 }
 
 #[cfg(unix)]
@@ -137,7 +148,7 @@ async fn a_link_on_the_way_to_a_key_file_is_not_followed() {
 }
 
 #[tokio::test]
-async fn safety_g25_a_key_file_path_leaving_the_repository_is_refused() {
+async fn safety_g27_a_key_file_path_leaving_the_repository_is_refused() {
     for (path, words) in [
         ("../outside.pub", "may not contain"),
         ("keys/../../x", "may not contain"),
@@ -148,11 +159,11 @@ async fn safety_g25_a_key_file_path_leaving_the_repository_is_refused() {
         let tmp = tempfile::tempdir().unwrap();
         let team = format!("version: 1\nsupply_chain:\n  public_key_file: \"{path}\"\n");
         let work = repo(tmp.path(), &[("freshkube.yaml", team.as_str())]);
-        let error = runner(tmp.path())
-            .fetch(&source(&work))
-            .await
-            .expect_err(path);
+        let runner = runner(tmp.path());
+        let error = runner.fetch(&source(&work)).await.expect_err(path);
         assert!(error.0.contains(words), "{path}: {error:?}");
+        // The team file only: no key file object was ever asked for.
+        assert_eq!(runner.blobs_read.load(Ordering::SeqCst), 1, "{path}");
     }
 }
 
@@ -203,12 +214,21 @@ async fn the_shipped_command_allows_only_https_and_ssh() {
 }
 
 #[tokio::test]
-async fn safety_g25_a_source_cannot_use_a_transport_other_than_https_and_ssh() {
+async fn safety_g27_a_source_cannot_use_a_transport_other_than_https_and_ssh() {
     let tmp = tempfile::tempdir().unwrap();
     let work = repo(tmp.path(), &[("freshkube.yaml", "version: 1\n")]);
     // The shipped runner, without the test's `file` allowance.
-    let shipped = GitRunner::new(tmp.path().join("app"), Limits::default());
+    let shipped = GitRunner::new(tmp.path().join("app"), Limits::default())
+        .with_home_for_test(tmp.path().join("home"));
     let error = shipped.fetch(&source(&work)).await.unwrap_err();
+    assert!(error.0.contains("not allowed"), "{error:?}");
+
+    // Even with config that allows every transport, the environment alone
+    // still refuses `file` (`GIT_ALLOW_PROTOCOL` outranks `protocol.*.allow`).
+    let loosened = GitRunner::new(tmp.path().join("app2"), Limits::default())
+        .with_home_for_test(tmp.path().join("home"))
+        .loosening_config_for_test();
+    let error = loosened.fetch(&source(&work)).await.unwrap_err();
     assert!(error.0.contains("not allowed"), "{error:?}");
     assert!(
         !GitFetch::mirror_dir(&tmp.path().join("app"))
@@ -239,7 +259,9 @@ async fn a_repository_larger_than_the_limit_is_refused_and_forgotten() {
         mirror_bytes: 4 * 1024,
         ..Limits::default()
     };
-    let fetch = GitRunner::new(tmp.path().join("app"), limits).allowing_file_for_test();
+    let fetch = GitRunner::new(tmp.path().join("app"), limits)
+        .allowing_file_for_test()
+        .with_home_for_test(tmp.path().join("home"));
     let error = fetch.fetch(&source(&work)).await.unwrap_err();
     assert!(error.0.contains("larger than the limit"), "{error:?}");
     assert!(!GitFetch::mirror_dir(&tmp.path().join("app")).exists());
@@ -253,7 +275,9 @@ async fn a_fetch_past_its_deadline_stops() {
         deadline: Duration::from_millis(1),
         ..Limits::default()
     };
-    let fetch = GitRunner::new(tmp.path().join("app"), limits).allowing_file_for_test();
+    let fetch = GitRunner::new(tmp.path().join("app"), limits)
+        .allowing_file_for_test()
+        .with_home_for_test(tmp.path().join("home"));
     let error = fetch.fetch(&source(&work)).await.unwrap_err();
     assert!(error.0.contains("too long"), "{error:?}");
 }
@@ -329,7 +353,7 @@ async fn a_redirect_on_the_same_host_is_followed() {
 }
 
 #[tokio::test]
-async fn safety_g25_a_redirect_to_another_host_is_refused_and_no_token_follows() {
+async fn safety_g27_a_redirect_to_another_host_is_refused_and_no_token_follows() {
     let other = Server::new(|_| Reply::ok("version: 1\n"));
     let port = other.port;
     let server = Server::new(move |_| Reply::redirect(&format!("https://localhost:{port}/x.yaml")));
@@ -414,11 +438,81 @@ async fn the_fetcher_works_on_either_kind_of_source_and_fails_in_words() {
     // words only, never the address.
     let error = fetcher.clone().work(https_source).await.unwrap_err();
     assert!(!error.contains("127.0.0.1"), "{error}");
+}
 
-    // A repository that can't be reached fails in words, with no address.
-    let unreachable = Source::Git(
-        GitSource::new("ssh://git@unreachable.invalid/team/setup.git", "main", "").unwrap(),
+#[tokio::test]
+async fn a_failed_fetch_forgets_the_mirror_so_the_next_one_starts_clean() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = repo(tmp.path(), &[("freshkube.yaml", "version: 1\n")]);
+    let mirror = GitFetch::mirror_dir(&tmp.path().join("app"));
+    let bad = GitSource::local_for_test(work.to_str().unwrap(), "nope", "freshkube.yaml");
+    let runner = runner(tmp.path());
+    runner.fetch(&bad).await.unwrap_err();
+    assert!(!mirror.exists(), "a failed fetch left its mirror");
+    runner.fetch(&source(&work)).await.unwrap();
+}
+
+#[tokio::test]
+async fn the_setup_file_is_named_in_its_own_refusals() {
+    let tmp = tempfile::tempdir().unwrap();
+    let big = format!("version: 1\n# {}\n", "x".repeat(300 * 1024));
+    let work = repo(tmp.path(), &[("freshkube.yaml", big.as_str())]);
+    let error = runner(tmp.path()).fetch(&source(&work)).await.unwrap_err();
+    assert!(
+        error.0.contains("team file") && error.0.contains("256 KiB"),
+        "{error:?}"
     );
-    let error = fetcher.work(unreachable).await.unwrap_err();
-    assert!(!error.contains("unreachable.invalid/team"), "{error}");
+    assert!(
+        !error.0.contains("key file") && !error.0.contains("8 KiB"),
+        "{error:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn alive(pid: u32) -> bool {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    let state = stat
+        .rsplit(')')
+        .next()
+        .and_then(|r| r.trim().chars().next());
+    !matches!(state, None | Some('Z') | Some('X'))
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn safety_g27_the_deadline_ends_the_helpers_git_started_too() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    // A stand-in for `git` that starts a helper of its own, as `git fetch`
+    // starts `git-remote-https` and `index-pack`, and waits for it.
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let pidfile = tmp.path().join("helper.pid");
+    let fake = bin.join("git");
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nsleep 300 &\necho $! > '{}'\nwait\n",
+            pidfile.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let limits = Limits {
+        deadline: Duration::from_millis(500),
+        ..Limits::default()
+    };
+    let work = repo(tmp.path(), &[("freshkube.yaml", "version: 1\n")]);
+    let runner = GitRunner::new(tmp.path().join("app"), limits)
+        .with_home_for_test(tmp.path().join("home"))
+        .with_path_for_test(bin);
+    let error = runner.fetch(&source(&work)).await.unwrap_err();
+    assert!(error.0.contains("too long"), "{error:?}");
+    let pid: u32 = std::fs::read_to_string(&pidfile)
+        .expect("the helper started")
+        .trim()
+        .parse()
+        .unwrap();
+    // Gone by the time the fetch said it gave up, not left downloading.
+    assert!(!alive(pid), "the helper git started is still running");
 }
