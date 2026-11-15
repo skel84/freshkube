@@ -143,7 +143,11 @@ impl Pilot {
         );
         crate::mutation::set_workspace_levels(&workspace, &recovery, cx);
         // The file a write's send step reads again.
-        let file = self.setup_file.read(cx).file().map(std::path::Path::to_path_buf);
+        let file = self
+            .setup_file
+            .read(cx)
+            .file()
+            .map(std::path::Path::to_path_buf);
         crate::mutation::set_setup_file(file, cx);
         // The dock's shells read their own entry's level, never the shown
         // one (#878); the dock learns the shown entry for the tabs it opens.

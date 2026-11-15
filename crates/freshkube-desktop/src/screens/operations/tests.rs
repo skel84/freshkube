@@ -1495,7 +1495,10 @@ fn confirm_after_edit(
         assert!(said.contains(notice), "{said}");
         assert!(said.contains("Nothing was started."), "{said}");
         // Only the level: no path and nothing of the file.
-        assert!(!said.contains(&setup.file().display().to_string()), "{said}");
+        assert!(
+            !said.contains(&setup.file().display().to_string()),
+            "{said}"
+        );
     });
 }
 
@@ -1529,18 +1532,24 @@ fn safety_g27_operations_refuse_a_file_edited_to_protected_though_no_name_was_as
 
 #[gpui_kit::test]
 fn safety_g27_operations_refuse_when_the_file_cannot_say(cx: &mut TestAppContext) {
-    confirm_after_edit(cx, |setup| setup.remove(), "can't be read from freshkube.yaml");
+    confirm_after_edit(
+        cx,
+        |setup| setup.remove(),
+        "can't be read from freshkube.yaml",
+    );
 }
 
 #[gpui_kit::test]
 fn safety_g27_operations_refuse_an_unparsable_file(cx: &mut TestAppContext) {
-    confirm_after_edit(cx, |setup| setup.garble(), "can't be read from freshkube.yaml");
+    confirm_after_edit(
+        cx,
+        |setup| setup.garble(),
+        "can't be read from freshkube.yaml",
+    );
 }
 
 #[gpui_kit::test]
-fn safety_g27_operations_refuse_when_the_file_no_longer_lists_the_cluster(
-    cx: &mut TestAppContext,
-) {
+fn safety_g27_operations_refuse_when_the_file_no_longer_lists_the_cluster(cx: &mut TestAppContext) {
     confirm_after_edit(
         cx,
         |setup| setup.drop_entry(),

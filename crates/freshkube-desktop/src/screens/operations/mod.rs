@@ -1540,7 +1540,8 @@ impl OperationsScreen {
         let held = mutation::level(cx);
         let operations = Operations::global(cx);
         cx.spawn(async move |this, cx| {
-            let decided = mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
+            let decided =
+                mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
             let Err(refusal) = decided else {
                 _ = this.update(cx, |screen, cx| {
                     screen.launch_run(plan, source, confirmation, ticket, cx)

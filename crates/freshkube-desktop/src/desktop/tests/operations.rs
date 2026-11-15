@@ -467,7 +467,10 @@ fn safety_g27_restart_refuses_when_the_file_got_stricter_while_the_dialog_was_op
     let said = confirm_restart_after_edit(cx, |setup| {
         setup.level(freshkube_core::write::Protection::ReadOnly)
     });
-    assert!(said.contains("This cluster is now read-only; review again."), "{said}");
+    assert!(
+        said.contains("This cluster is now read-only; review again."),
+        "{said}"
+    );
     assert!(said.contains("Nothing was started."), "{said}");
     assert!(!said.contains("Example data"), "{said}");
 }

@@ -812,15 +812,21 @@ fn confirm_fix_after_edit(
     })
     .unwrap();
     edit(&setup);
-    cx.update_window(handle.into(), |_, window, cx| window.click("confirm-ok", cx))
-        .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
     cx.run_until_parked();
     assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
     cx.read(|cx| {
         let notice = screen.read(cx).notice.as_ref().expect("a notice");
         assert!(!notice.ok, "{}", notice.text);
         assert!(notice.text.contains(expected), "{}", notice.text);
-        assert!(notice.text.contains("Nothing was started."), "{}", notice.text);
+        assert!(
+            notice.text.contains("Nothing was started."),
+            "{}",
+            notice.text
+        );
         // Not the simulated apply that a confirmed example fix reports.
         assert!(!notice.text.contains("Example data"), "{}", notice.text);
     });
@@ -840,7 +846,11 @@ fn safety_g27_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_
 
 #[gpui_kit::test]
 fn safety_g27_apply_fix_refuses_when_the_file_cannot_say(cx: &mut TestAppContext) {
-    confirm_fix_after_edit(cx, |setup| setup.remove(), "can't be read from freshkube.yaml");
+    confirm_fix_after_edit(
+        cx,
+        |setup| setup.remove(),
+        "can't be read from freshkube.yaml",
+    );
 }
 
 #[gpui_kit::test]
@@ -849,11 +859,17 @@ fn a_looser_file_changes_nothing_for_apply_fix_until_reviewed_again(cx: &mut Tes
     let setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
     open_fix(cx, handle, &screen, KUBELET);
     setup.level(freshkube_core::write::Protection::Open);
-    cx.update_window(handle.into(), |_, window, cx| window.click("confirm-ok", cx))
-        .unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
     cx.run_until_parked();
     cx.read(|cx| {
         let notice = screen.read(cx).notice.as_ref().expect("a notice");
-        assert!(notice.ok && notice.text.contains("Example data"), "{}", notice.text);
+        assert!(
+            notice.ok && notice.text.contains("Example data"),
+            "{}",
+            notice.text
+        );
     });
 }

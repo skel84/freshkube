@@ -133,10 +133,7 @@ pub(crate) fn set_setup_file(file: Option<std::path::PathBuf>, cx: &mut App) {
 /// `context`. Taken when the dialog opens, so the re-read is against the same
 /// identity however the window moves after. `None` when no setup file backs
 /// the window (example data), where nothing is sent either.
-pub(crate) fn send_guard(
-    context: &str,
-    cx: &App,
-) -> Option<freshkube_core::write::SetupLevels> {
+pub(crate) fn send_guard(context: &str, cx: &App) -> Option<freshkube_core::write::SetupLevels> {
     let global = cx.try_global::<GlobalProtection>()?;
     let file = global.4.clone()?;
     let subject = match &global.3 {

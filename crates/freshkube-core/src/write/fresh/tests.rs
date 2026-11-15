@@ -28,7 +28,11 @@ fn safety_g27_the_file_only_ever_tightens_the_level_a_write_is_sent_under() {
             assert_eq!(fresh, Ok(file));
             let decided = at_send(held, fresh);
             if file < held {
-                assert_eq!(decided, Err(SendRefusal::Stricter(file)), "{held:?} {file:?}");
+                assert_eq!(
+                    decided,
+                    Err(SendRefusal::Stricter(file)),
+                    "{held:?} {file:?}"
+                );
             } else {
                 assert_eq!(decided, Ok(held), "{held:?} {file:?}");
             }
@@ -42,8 +46,16 @@ fn safety_g27_the_file_only_ever_tightens_the_level_a_write_is_sent_under() {
 fn safety_g27_a_file_that_cannot_say_refuses_at_every_held_level() {
     let cases = [
         (None, entry("prod"), Unreadable::Missing),
-        (Some("clusters: [[[".to_owned()), entry("prod"), Unreadable::Invalid),
-        (Some(file_with(Protection::Open)), entry("gone"), Unreadable::EntryGone),
+        (
+            Some("clusters: [[[".to_owned()),
+            entry("prod"),
+            Unreadable::Invalid,
+        ),
+        (
+            Some(file_with(Protection::Open)),
+            entry("gone"),
+            Unreadable::EntryGone,
+        ),
         // A typo on the entry's own row skips it, so it is not listed.
         (
             Some(file_with(Protection::Open).replace("open", "opne")),
@@ -52,7 +64,8 @@ fn safety_g27_a_file_that_cannot_say_refuses_at_every_held_level() {
         ),
     ];
     for (text, subject, why) in cases {
-        let fresh = SetupLevels::new("freshkube.yaml", subject).level_in(text.as_deref().map(str::as_bytes));
+        let fresh = SetupLevels::new("freshkube.yaml", subject)
+            .level_in(text.as_deref().map(str::as_bytes));
         assert_eq!(fresh, Err(why));
         for held in LEVELS {
             assert_eq!(at_send(held, fresh), Err(SendRefusal::Unreadable(why)));
@@ -70,7 +83,10 @@ fn safety_g27_a_context_whose_row_was_skipped_reads_as_read_only() {
         Ok(Protection::ReadOnly)
     );
     assert_eq!(
-        at_send(Protection::Open, in_file(&text, Subject::Context("prod-ctx".into()))),
+        at_send(
+            Protection::Open,
+            in_file(&text, Subject::Context("prod-ctx".into()))
+        ),
         Err(SendRefusal::Stricter(Protection::ReadOnly))
     );
 }
@@ -95,7 +111,10 @@ fn safety_g27_a_context_subject_sees_an_entry_that_now_names_it() {
     }
     // Another entry's context, and a missing file, are guarded.
     assert_eq!(
-        in_file(&file_with(Protection::ReadOnly), Subject::Context("elsewhere".into())),
+        in_file(
+            &file_with(Protection::ReadOnly),
+            Subject::Context("elsewhere".into())
+        ),
         Ok(Protection::Guarded)
     );
     assert_eq!(
@@ -137,7 +156,11 @@ fn the_notice_names_the_level_only() {
         SendRefusal::Stricter(Protection::ReadOnly).text(),
         "This cluster is now read-only; review again."
     );
-    for why in [Unreadable::Missing, Unreadable::NotReadable, Unreadable::Invalid] {
+    for why in [
+        Unreadable::Missing,
+        Unreadable::NotReadable,
+        Unreadable::Invalid,
+    ] {
         let text = SendRefusal::Unreadable(why).text();
         assert_eq!(
             text,

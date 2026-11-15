@@ -9,13 +9,13 @@
 //! arrives as an unknown check (and is named in the partial notice), never as
 //! a failure, and a Kubernetes failure never hides the Talos checks.
 use freshkube_core::HasHealth;
-use freshkube_core::write::SetupLevels;
 use freshkube_core::diagnostic_runner::{
     AddonPresence, AddonSnapshot, DiagnosticCheck, DiagnosticCollector, DiagnosticFix,
     DiagnosticFixAction, DiagnosticSnapshot, DiagnosticTarget, EtcdSnapshot, FileProbe,
     KubernetesAccess, SourceState, SourceUnavailable,
 };
 use freshkube_core::diagnostics::{CheckCategory, CheckStatus, CniType};
+use freshkube_core::write::SetupLevels;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Sizable,
