@@ -107,21 +107,20 @@ fn safety_g28_an_undo_sends_nothing_when_the_file_went_read_only(cx: &mut TestAp
     assert_eq!(h.replicas(), 3);
 }
 
-/// A file that is unchanged, or looser, still sends: it only tightens. The
-/// same setup then refuses a file that can't be read, which proves the file
-/// was read at all.
+/// A file that is unchanged, or looser, still sends: it only tightens. In the
+/// same setup a file that can't be read refuses first, which proves the file
+/// is read at all.
 #[gpui_kit::test]
 fn a_looser_file_changes_nothing_for_a_write_until_reviewed_again(cx: &mut TestAppContext) {
     let h = harness_rechecked(cx, Protection::Guarded, Cluster::new);
     h.begin(cx, fake::scale(3));
-    h.edit_setup(Some(Protection::Open));
+    h.edit_setup(None);
     h.click(cx, "write-confirm");
     h.drive(cx, Duration::from_secs(3));
-    assert_eq!(h.cluster.writes().len(), 1);
-    // The guard is live: the same harness, a file that can't be read, and the
-    // next write sends nothing.
-    h.begin(cx, fake::scale(4));
-    h.edit_setup(None);
+    h.cluster.assert_nothing_written();
+    // The file back, looser: the same harness sends.
+    h.begin(cx, fake::scale(3));
+    h.edit_setup(Some(Protection::Open));
     h.click(cx, "write-confirm");
     h.drive(cx, Duration::from_secs(3));
     assert_eq!(h.cluster.writes().len(), 1);

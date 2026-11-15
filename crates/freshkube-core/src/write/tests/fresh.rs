@@ -117,30 +117,29 @@ async fn safety_g28_a_file_that_cannot_say_sends_nothing_at_every_held_level() {
 }
 
 /// An unchanged file, and a looser one, send as before: the file only ever
-/// tightens. The same setup then refuses a file that can't be read, which
-/// proves the file was read at all.
+/// tightens. In the same setup a file that can't be read refuses first, which
+/// proves the file is read at all.
 #[tokio::test(start_paused = true)]
 async fn an_unchanged_or_looser_file_sends_as_before() {
     for to in [Protection::Guarded, Protection::Open] {
         let (cluster, dir) = (Cluster::new(), tmp());
         let (runner, path) = runner(&cluster, dir.path(), Protection::Guarded);
-        let prepared = ready(&runner, fake::scale(3)).await;
-        file(dir.path(), &[("prod-fra", to)]);
-        let finished = run(&runner, prepared, Confirmation::Confirmed).await;
-        assert_eq!(finished.headline(), Headline::Done, "{to:?}");
-        assert_eq!(runner.level_for(&fake::scale(3)), Protection::Guarded);
-        // The guard is live: the same runner, a garbled file, nothing more is
-        // written.
-        let writes = cluster.writes().len();
-        let prepared = ready(&runner, fake::scale(4)).await;
+        let unread = ready(&runner, fake::scale(3)).await;
+        let sent = ready(&runner, fake::scale(3)).await;
+        // The guard is live: a file that can't be read sends nothing.
         std::fs::write(&path, "clusters: [[[").unwrap();
-        let refused = run(&runner, prepared, Confirmation::Confirmed).await;
+        let refused = run(&runner, unread, Confirmation::Confirmed).await;
         assert!(
             matches!(refused.status, Status::NotSent(NotSent::Unchecked(_))),
             "{:?}",
             refused.status
         );
-        assert_eq!(cluster.writes().len(), writes);
+        cluster.assert_nothing_written();
+        // The file back, unchanged or looser: the same setup sends.
+        file(dir.path(), &[("prod-fra", to)]);
+        let finished = run(&runner, sent, Confirmation::Confirmed).await;
+        assert_eq!(finished.headline(), Headline::Done, "{to:?}");
+        assert_eq!(runner.level_for(&fake::scale(3)), Protection::Guarded);
     }
 }
 
