@@ -454,7 +454,11 @@ impl ChangePage {
         let after = detail.after.as_ref().map(|section| section.render(cx));
         let inspector = Inspector::new("change-detail")
             .track_scroll(&self.detail_scroll)
-            .heading(heading(detail, cx))
+            .heading(heading(
+                detail,
+                self.pull_selected() && self.pull.card().is_some_and(|c| c.old.is_some()),
+                cx,
+            ))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
                     .id("change-detail-notice")
@@ -1051,7 +1055,7 @@ fn render_stage(inspector: Inspector, body: &Body, cx: &App) -> Inspector {
 }
 
 /// The kind as a caption over the name in monospace and its state.
-fn heading(detail: &Detail, cx: &App) -> impl IntoElement {
+fn heading(detail: &Detail, old: bool, cx: &App) -> impl IntoElement {
     let Detail {
         kind,
         title,
@@ -1079,7 +1083,12 @@ fn heading(detail: &Detail, cx: &App) -> impl IntoElement {
                         .truncate()
                         .child(title.clone()),
                 )
-                .child(ui::tag(*tone, None, state.clone(), cx)),
+                .child(ui::tag(
+                    if old { Tone::Warn } else { *tone },
+                    None,
+                    state.clone(),
+                    cx,
+                )),
         )
 }
 
