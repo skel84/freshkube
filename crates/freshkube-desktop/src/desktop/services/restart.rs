@@ -5,6 +5,7 @@ use crate::actions;
 use crate::backend;
 use crate::mutation::{self, Confirmation, Operations, Refused};
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
+use freshkube_core::write::SetupLevels;
 use gpui_kit::*;
 use std::rc::Rc;
 use std::time::Duration;
@@ -82,6 +83,9 @@ impl Pilot {
         let this = cx.weak_entity();
         let (current, run) = (this.clone(), this);
         let (current_id, run_id) = (service_id.clone(), service_id.clone());
+        // The setup file the send step reads again, for the identity the
+        // dialog is for (#1055).
+        let guard = crate::mutation::send_guard(&cluster, cx);
         let mut warnings: Vec<SharedString> = actions::critical_warning(&service_id)
             .map(|warning| vec![SharedString::from(warning)])
             .unwrap_or_default();
@@ -118,7 +122,9 @@ impl Pilot {
                 on_confirm: Rc::new(move |window: &mut Window, cx: &mut App| {
                     if let Some(view) = run.upgrade() {
                         let service = run_id.clone();
-                        view.update(cx, |view, cx| view.start_restart(service, window, cx));
+                        view.update(cx, |view, cx| {
+                            view.start_restart(service, guard.clone(), window, cx)
+                        });
                     }
                 }),
             },
@@ -144,7 +150,13 @@ impl Pilot {
 
     /// Takes the operation slot and restarts `service_id` on the target node.
     /// Example data only simulates it.
-    fn start_restart(&mut self, service_id: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_restart(
+        &mut self,
+        service_id: String,
+        guard: Option<SetupLevels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(node), Some(cluster)) = (
             self.target.summary().cloned(),
             self.overview.data().map(|cluster| cluster.name.clone()),
@@ -222,19 +234,39 @@ impl Pilot {
         });
         let epoch = self.epoch;
         let target = DiagnosticTarget::new(&node.name, &node.address, "node", &cluster);
-        let (job, receiver) = backend::spawn_job(
-            &self.runtime,
-            RESTART_DEADLINE,
-            format!("Restarting {service_id} timed out"),
-            actions::apply_fix(
-                client,
-                target,
-                "service_restart".to_owned(),
-                fix,
-                ticket.cancellation(),
-            ),
-        );
+        let runtime = self.runtime.clone();
+        let held = crate::mutation::level(cx);
         cx.spawn_in(window, async move |this, cx| {
+            // The slot is held while the setup file is read again off the UI
+            // thread; a file that got stricter, or can't say, sends nothing
+            // (#1055).
+            let decided = crate::mutation::level_at_send(guard, held, cx.background_executor()).await;
+            if let Err(refusal) = decided {
+                _ = cx.update(|_, cx| {
+                    operations.update(cx, |operations, cx| operations.finish(ticket, cx))
+                });
+                _ = this.update(cx, |view, cx| {
+                    view.set_restart_notice(
+                        &service_id,
+                        false,
+                        format!("{} Nothing was started.", refusal.text()),
+                        cx,
+                    )
+                });
+                return;
+            }
+            let (job, receiver) = backend::spawn_job(
+                &runtime,
+                RESTART_DEADLINE,
+                format!("Restarting {service_id} timed out"),
+                actions::apply_fix(
+                    client,
+                    target,
+                    "service_restart".to_owned(),
+                    fix,
+                    ticket.cancellation(),
+                ),
+            );
             // The job lives exactly as long as this task.
             let _job = job;
             let result = receiver

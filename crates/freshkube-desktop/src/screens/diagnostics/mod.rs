@@ -9,6 +9,7 @@
 //! arrives as an unknown check (and is named in the partial notice), never as
 //! a failure, and a Kubernetes failure never hides the Talos checks.
 use freshkube_core::HasHealth;
+use freshkube_core::write::SetupLevels;
 use freshkube_core::diagnostic_runner::{
     AddonPresence, AddonSnapshot, DiagnosticCheck, DiagnosticCollector, DiagnosticFix,
     DiagnosticFixAction, DiagnosticSnapshot, DiagnosticTarget, EtcdSnapshot, FileProbe,
@@ -535,6 +536,9 @@ impl DiagnosticsScreen {
         let this = cx.weak_entity();
         let (current, run) = (this.clone(), this);
         let (current_key, run_key) = (check_key.clone(), check_key);
+        // The setup file the send step reads again, for the identity the
+        // dialog is for (#1055).
+        let guard = mutation::send_guard(&source.target.context, cx);
         mutation::confirm(
             Confirmation {
                 title: format!("Apply fix: {}", fix.description).into(),
@@ -553,7 +557,9 @@ impl DiagnosticsScreen {
                 on_confirm: Rc::new(move |window: &mut Window, cx: &mut App| {
                     if let Some(view) = run.upgrade() {
                         let check_key = run_key.clone();
-                        view.update(cx, |view, cx| view.start_fix(check_key, window, cx));
+                        view.update(cx, |view, cx| {
+                            view.start_fix(check_key, guard.clone(), window, cx)
+                        });
                     }
                 }),
             },
@@ -573,7 +579,13 @@ impl DiagnosticsScreen {
 
     /// Takes the operation slot, applies the fix, and re-runs the diagnostics.
     /// Example data only simulates it.
-    fn start_fix(&mut self, check_key: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_fix(
+        &mut self,
+        check_key: String,
+        guard: Option<SetupLevels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(source) = self.source.clone() else {
             return;
         };
@@ -630,13 +642,33 @@ impl DiagnosticsScreen {
             role,
             &source.target.context,
         );
-        let (job, receiver) = spawn_job(
-            &self.runtime,
-            FIX_DEADLINE,
-            "Applying the fix timed out".to_owned(),
-            actions::apply_fix(live.client, target, check_id, fix, ticket.cancellation()),
-        );
+        let runtime = self.runtime.clone();
+        let held = mutation::level(cx);
         cx.spawn_in(window, async move |this, cx| {
+            // The slot is held while the setup file is read again off the UI
+            // thread; a file that got stricter, or can't say, sends nothing
+            // (#1055).
+            let decided = mutation::level_at_send(guard, held, cx.background_executor()).await;
+            if let Err(refusal) = decided {
+                _ = cx.update(|_, cx| {
+                    operations.update(cx, |operations, cx| operations.finish(ticket, cx))
+                });
+                _ = this.update(cx, |view, cx| {
+                    view.set_notice(
+                        &check_key,
+                        false,
+                        format!("{} Nothing was started.", refusal.text()),
+                        cx,
+                    )
+                });
+                return;
+            }
+            let (job, receiver) = spawn_job(
+                &runtime,
+                FIX_DEADLINE,
+                "Applying the fix timed out".to_owned(),
+                actions::apply_fix(live.client, target, check_id, fix, ticket.cancellation()),
+            );
             // The job lives exactly as long as this task.
             let _job = job;
             let result = receiver

@@ -92,6 +92,10 @@ pub(crate) struct GlobalProtection(
     /// The id of the workspace entry the window is on, `None` with no entry
     /// active. What a protected action on several objects asks to be typed.
     Option<String>,
+    /// The setup file the levels come from, `None` for example data and a
+    /// window with no preferences: a write's send step reads it again
+    /// ([`send_guard`]).
+    Option<std::path::PathBuf>,
 );
 
 impl Default for GlobalProtection {
@@ -99,6 +103,7 @@ impl Default for GlobalProtection {
         Self(
             LevelCell::new(Protection::default()),
             Default::default(),
+            None,
             None,
             None,
         )
@@ -115,6 +120,45 @@ pub(crate) fn set_protection(level: Protection, cx: &mut App) {
 /// Sets the id of the workspace entry the window is on.
 pub(crate) fn set_active_entry(entry: Option<String>, cx: &mut App) {
     cx.default_global::<GlobalProtection>().3 = entry;
+}
+
+/// Sets the setup file the levels are read from, for a write's send step to
+/// read again (#1055). `None` has no file to read, as for example data.
+pub(crate) fn set_setup_file(file: Option<std::path::PathBuf>, cx: &mut App) {
+    cx.default_global::<GlobalProtection>().4 = file;
+}
+
+/// What a write reads again from the setup file at its send step, for the
+/// identity the dialog is for: the active entry, else the kubeconfig context
+/// `context`. Taken when the dialog opens, so the re-read is against the same
+/// identity however the window moves after. `None` when no setup file backs
+/// the window (example data), where nothing is sent either.
+pub(crate) fn send_guard(
+    context: &str,
+    cx: &App,
+) -> Option<freshkube_core::write::SetupLevels> {
+    let global = cx.try_global::<GlobalProtection>()?;
+    let file = global.4.clone()?;
+    let subject = match &global.3 {
+        Some(entry) => freshkube_core::write::Subject::Entry(entry.clone()),
+        None => freshkube_core::write::Subject::Context(context.to_owned()),
+    };
+    Some(freshkube_core::write::SetupLevels::new(file, subject))
+}
+
+/// Reads the setup file again off the UI thread and decides the level a write
+/// is sent under: the stricter of `held` and the file's, refusing when the
+/// file got stricter or can't say. `Ok(held)` with no guard (no setup file).
+pub(crate) async fn level_at_send(
+    guard: Option<freshkube_core::write::SetupLevels>,
+    held: Protection,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<Protection, freshkube_core::write::SendRefusal> {
+    let Some(guard) = guard else {
+        return Ok(held);
+    };
+    let fresh = executor.spawn(async move { guard.read() }).await;
+    freshkube_core::write::at_send(held, fresh)
 }
 
 /// The id of the workspace entry the window is on, if one is active.
