@@ -66,24 +66,36 @@ fn dns_subdomain(value: &str) -> bool {
 
 text!(
     /// A cluster entry's id.
-    EntryId, MAX_ENTRY_ID_BYTES, |v| v.bytes().all(|b| b.is_ascii_graphic())
+    EntryId,
+    MAX_ENTRY_ID_BYTES,
+    |v| v.bytes().all(|b| b.is_ascii_graphic())
 );
 text!(
     /// What kubectl takes for a kind: `pods`, `Deployment`, `deploy.apps`.
-    KindName, 253, |v| v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+    KindName,
+    253,
+    |v| v
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
         && ends_alphanumeric(v.as_bytes())
 );
 text!(
     /// A namespace: a DNS label.
-    Namespace, 63, dns_label
+    Namespace,
+    63,
+    dns_label
 );
 text!(
     /// An object's name: a DNS subdomain.
-    Name, 253, dns_subdomain
+    Name,
+    253,
+    dns_subdomain
 );
 text!(
     /// A container's name: a DNS label.
-    Container, 63, dns_label
+    Container,
+    63,
+    dns_label
 );
 
 /// `list_objects`.
