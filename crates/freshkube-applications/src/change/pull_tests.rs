@@ -130,7 +130,10 @@ fn kept_answers_say_only_that_they_are_old_and_a_refused_token_says_not_read(
         assert!(text.starts_with("Merged · "), "{text}");
         // Old is on the strip's line too, in a warning tone: never green and
         // current.
-        assert!(text.ends_with(" · stale, read at 13:12 UTC"), "{text}");
+        assert!(
+            text.starts_with("Merged · stale, read at 13:12 UTC · "),
+            "{text}"
+        );
         assert_eq!(
             cx.read(|cx| page.read(cx).pull.card().unwrap().tone),
             freshkube_ui::ui::Tone::Warn

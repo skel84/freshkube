@@ -8,7 +8,7 @@ use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::avatar::Avatar;
 use gpui_kit::component::{Sizable as _, button::Button, h_flex, v_flex};
 
-use super::detail::{field, section};
+use super::detail::field;
 use super::pull_card::{Check, Person, PullCard};
 use super::*;
 use crate::ui::{self, dp};
@@ -130,7 +130,11 @@ impl ChangePage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let p = palette(cx);
-        let state = card.state.map(|(word, tone)| ui::tag(tone, None, word, cx));
+        // An old answer's tag is a warning too, never a green current one.
+        let state = card.state.map(|(word, tone)| {
+            let tone = if card.old.is_some() { Tone::Warn } else { tone };
+            ui::tag(tone, None, word, cx)
+        });
         let lack = card.lack.as_ref().map(|lack| {
             let connect = lack.connect.then(|| {
                 Button::new("change-pull-connect")
@@ -178,7 +182,10 @@ impl ChangePage {
             .labels
             .clone()
             .map(|labels| field("Labels", div().child(labels), cx));
-        section("Pull request", cx)
+        // The Inspector's own heading names the section; no second caption.
+        v_flex()
+            .gap(dp(7.))
+            .text_size(dp(12.))
             .id("change-pull")
             .test_support()
             .aria_label(format!("{} · {}", card.title, card.compact))
@@ -217,7 +224,11 @@ impl ChangePage {
                     .id(SharedString::from(format!("change-pull-note-{ix}")))
                     .test_support()
                     .text_size(dp(11.))
-                    .text_color(p.muted)
+                    .text_color(if card.old.as_ref() == Some(note) {
+                        p.warn_ink
+                    } else {
+                        p.muted
+                    })
                     .child(note.clone())
             }))
             .children(links)

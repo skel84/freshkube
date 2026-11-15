@@ -276,6 +276,10 @@ fn compact_of(card: &PullCard, detail: Option<&PullDetail>) -> String {
             .unwrap_or_default();
     };
     let mut parts = vec![state.to_owned()];
+    // Old answers say so first: a narrow strip cuts the end of the line.
+    if let Some(old) = &card.old {
+        parts.push(old.to_string());
+    }
     if let Some(detail) = detail {
         let approved = detail
             .reviews
@@ -303,9 +307,6 @@ fn compact_of(card: &PullCard, detail: Option<&PullDetail>) -> String {
     }
     if let Some(lack) = &card.lack {
         parts.push(format!("{}: {}", lack.lead, lack.text));
-    }
-    if let Some(old) = &card.old {
-        parts.push(old.to_string());
     }
     parts.join(" · ")
 }
@@ -703,7 +704,8 @@ mod tests {
         let card = derive(&known(), Some(&summary), Some(&detail), None, Reading::Held);
         assert_eq!(card.tone, Tone::Warn);
         assert!(
-            card.compact.ends_with(" · stale, read at 08:53 UTC"),
+            card.compact
+                .starts_with("Merged · stale, read at 08:53 UTC · "),
             "{}",
             card.compact
         );
@@ -721,7 +723,7 @@ mod tests {
         );
         assert_eq!(card.tone, Tone::Warn);
         assert!(
-            card.compact.ends_with(" · couldn't read again"),
+            card.compact.starts_with("Merged · couldn't read again · "),
             "{}",
             card.compact
         );
