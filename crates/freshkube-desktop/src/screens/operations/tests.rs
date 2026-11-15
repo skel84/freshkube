@@ -1211,6 +1211,54 @@ fn the_exact_node_name_starts_the_operation_on_a_protected_cluster(cx: &mut Test
     wait_until_finished(cx, &runtime, &screen, 200, "a run on a protected cluster");
 }
 
+/// The name field has focus when the dialog opens, and Enter presses Confirm:
+/// a wrong name leaves the dialog open and starts nothing, the exact name
+/// starts the run.
+#[gpui_kit::test]
+fn the_name_field_starts_focused_and_enter_confirms_only_the_exact_name(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    cx.update(|cx| {
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    let node = names(&screen, cx).remove(0);
+    review(cx, handle);
+    // Typing straight after Review, with no click on the field.
+    let type_now = |cx: &mut TestAppContext, text: &str| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.input(text, cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        render(cx, handle);
+    };
+    type_now(cx, &node.to_uppercase());
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(
+            window.find("confirm-dialog").visible(),
+            "a wrong name keeps it open"
+        );
+    })
+    .unwrap();
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    // Clear it and type the exact name.
+    cx.update_window(handle.into(), |_, window, cx| {
+        for _ in 0..node.len() {
+            window.press("backspace", cx);
+        }
+    })
+    .unwrap();
+    type_now(cx, &node);
+    cx.read(|cx| {
+        assert!(
+            screen.read(cx).run.is_some(),
+            "Enter on the exact name starts a run"
+        )
+    });
+    wait_until_finished(cx, &runtime, &screen, 200, "a run confirmed with Enter");
+}
+
 /// Several nodes on a protected cluster are typed once, by the entry's id:
 /// a node's name no longer does, and the prompt says what it asks for.
 #[gpui_kit::test]

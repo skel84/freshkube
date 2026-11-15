@@ -423,6 +423,14 @@ impl TypeName {
         }
     }
 
+    fn placeholder(&self) -> &'static str {
+        if self.entry_id {
+            "Type the entry's id"
+        } else {
+            "Type the name"
+        }
+    }
+
     fn prompt(&self) -> String {
         if self.entry_id {
             format!(
@@ -447,7 +455,8 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
     let request = Rc::new(request);
     let blocked = Rc::new(Cell::new(None::<Blocked>));
     let input = request.type_name.as_ref().map(|name| {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Type the name"));
+        let placeholder = name.placeholder();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         let typed = name.typed.clone();
         typed.borrow_mut().clear();
         window
@@ -464,6 +473,10 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
             .detach();
         input
     });
+    // Enter on a typed dialog presses Confirm, which checks the name, and
+    // never closes the dialog by itself.
+    let enter: Rc<std::cell::RefCell<Option<OnConfirm>>> = Rc::default();
+    let focus = input.clone();
     window.open_dialog(cx, move |dialog, window, cx| {
         let p = palette(cx);
         let reason = blocked.get();
@@ -477,10 +490,8 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                 .as_ref()
                 .zip(input.as_ref())
                 .is_some_and(|(name, input)| input.read(cx).value().as_ref() != name.expected.as_ref());
-            let action = Action::new(
-                "confirm-ok",
-                request.confirm_label.clone(),
-                move |_, window, cx| {
+            let confirm_label = request.confirm_label.clone();
+            let press: OnConfirm = Rc::new(move |window, cx| {
                     if let (Some(name), Some(input)) = (&request.type_name, &input) {
                         // Confirm is disabled until the name matches; this
                         // keeps a stray key from getting past it.
@@ -504,9 +515,20 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                         }
                         return;
                     }
+                    // What the person typed, as it is now: the change event
+                    // that fills the sink can lag a key pressed with it.
+                    if let (Some(name), Some(input)) = (&request.type_name, &input) {
+                        *name.typed.borrow_mut() = input.read(cx).value().to_string();
+                    }
                     window.close_dialog(cx);
                     (request.on_confirm)(window, cx);
-                },
+            });
+            let on_enter = press.clone();
+            *enter.borrow_mut() = Some(on_enter);
+            let action = Action::new(
+                "confirm-ok",
+                confirm_label,
+                move |_, window, cx| press(window, cx),
             )
             .disabled(reason == Some(Blocked::Stale) || name_missing);
             if destructive { action.danger() } else { action }
@@ -528,9 +550,20 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                 .aria_label(text)
                 .child(ui::warning_banner(None, text, None, cx))
         });
+        let enter = enter.clone();
         dialog
             .w(ui::dp_px(480., window))
             .overlay_closable(false)
+            .when(request.type_name.is_some(), |dialog| {
+                dialog.on_ok(move |_, window, cx| {
+                    let press = enter.borrow().clone();
+                    if let Some(press) = press {
+                        press(window, cx);
+                    }
+                    // Confirm closes the dialog itself; a wrong name leaves it open.
+                    false
+                })
+            })
             .title(request.title.clone())
             .child(
                 v_flex()
@@ -541,6 +574,21 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     .gap_3()
                     .text_size(dp(13.))
                     .child(request.summary.clone())
+                    .children(request.type_name.as_ref().zip(input.as_ref()).map(
+                        |(name, input)| {
+                            let prompt = name.prompt();
+                            v_flex()
+                                .gap(dp(4.))
+                                .child(
+                                    div()
+                                        .id("confirm-type-prompt")
+                                        .test_support()
+                                        .aria_label(prompt.clone())
+                                        .child(prompt),
+                                )
+                                .child(Input::new(input).small().id("confirm-type-name"))
+                        },
+                    ))
                     .when(!request.facts.is_empty(), |this| {
                         this.child(v_flex().gap_1p5().children(request.facts.iter().map(
                             |(label, value)| {
@@ -560,25 +608,16 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     .children(request.warnings.iter().map(|warning| {
                         ui::tag(Tone::Warn, None, warning.clone(), cx)
                     }))
-                    .children(request.type_name.as_ref().zip(input.as_ref()).map(
-                        |(name, input)| {
-                            let prompt = name.prompt();
-                            v_flex()
-                                .gap(dp(4.))
-                                .child(
-                                    div()
-                                        .id("confirm-type-prompt")
-                                        .test_support()
-                                        .aria_label(prompt.clone())
-                                        .child(prompt),
-                                )
-                                .child(Input::new(input).small().id("confirm-type-name"))
-                        },
-                    ))
                     .children(notice),
             )
             .footer(form::actions(ok, cancel))
     });
+    // The name is the one thing a protected dialog wants: focus it after the
+    // dialog opens, since Kit remembers what had focus before.
+    if let Some(input) = focus {
+        let handle = input.read(cx).focus_handle(cx);
+        window.focus(&handle, cx);
+    }
 }
 
 /// Waits for the confirmation dialog to finish opening. Its animation runs on
