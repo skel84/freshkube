@@ -587,6 +587,9 @@ fn deployed(
 }
 
 fn build(now: DateTime<Utc>) -> Vec<Hop> {
+    let merged = crate::github::example::pull(418)
+        .and_then(|pull| pull.merged_at)
+        .unwrap_or_else(|| at(now, 12));
     let pull_request = Hop {
         cause: None,
         key: "pr".into(),
@@ -605,11 +608,13 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             notice: None,
             fields: vec![
                 text("Title", "Retry idempotency keys"),
-                mono("Repository", &format!("{GIT}/acme/checkout")),
-                when("Merged", at(now, 12)),
+                // The pull request card's own example (`github::example`), so
+                // the card and these fields agree.
+                mono("Repository", &format!("{GIT}/acme/shop")),
+                when("Merged", merged),
                 text("Merged by", "mira, into main"),
-                text("Checks", "6 of 6 passed"),
-                text("Reviews", "2 approved"),
+                text("Checks", "3 of 3 passed"),
+                text("Reviews", "1 approved, 1 commented"),
                 mono("Head commit", HEAD),
                 mono("Merge commit", COMMIT),
             ],
