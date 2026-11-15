@@ -687,7 +687,14 @@ async fn live(
             let own = cluster_client(access).await.ok();
             alerts::rules_page(&found.sources, scope, own.as_ref())
                 .await
-                .map(Data::Rules)
+                .map(|mut rules| {
+                    // Definitions with no evaluator because the evaluator
+                    // couldn't be read: say why, not that none exists.
+                    if !rules.evaluated {
+                        rules.unread = connect_reason.clone();
+                    }
+                    Data::Rules(rules)
+                })
         }
     };
     match data {

@@ -381,18 +381,21 @@ pub fn rules_page(shape: Shape, now: DateTime<Utc>) -> Result<RulesData, Unknown
                  cluster's PrometheusRule objects are shown"
                     .into(),
             ),
+            unread: None,
         }),
         Shape::RulesOnly => Ok(RulesData {
             groups: rule_groups(now, false),
             evaluated: false,
             read: Vec::new(),
             note: None,
+            unread: None,
         }),
         _ => Ok(RulesData {
             groups: rule_groups(now, true),
             evaluated: true,
             read: read(),
             note: None,
+            unread: None,
         }),
     }
 }

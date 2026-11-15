@@ -788,13 +788,27 @@ fn rules(data: &RulesData, filter: &Filter, now: DateTime<Utc>) -> Display {
         display
             .status
             .push(("health unknown".into(), Some(Tone::Unknown)));
-        display.notes.push(Note {
-            id: "rules-unevaluated",
-            tone: Tone::Info,
-            lead: Some("Health is Unknown".into()),
-            text: "These are definitions. Nothing here evaluates them, so whether a rule is \
-                   healthy isn't known."
+        display.notes.push(match &data.unread {
+            // The evaluator was looked for and answered with an error: that
+            // is the cause, not that nothing evaluates the rules.
+            Some(reason) => Note {
+                id: "rules-unread",
+                tone: Tone::Warn,
+                lead: Some("Couldn't read whether any rule is healthy".into()),
+                text: format!(
+                    "The server that evaluates rules wasn't read: {reason}. These are the \
+                     PrometheusRule definitions only; whether a rule is healthy isn't known."
+                )
                 .into(),
+            },
+            None => Note {
+                id: "rules-unevaluated",
+                tone: Tone::Info,
+                lead: Some("Health is Unknown".into()),
+                text: "These are definitions. Nothing here evaluates them, so whether a rule is \
+                       healthy isn't known."
+                    .into(),
+            },
         });
     }
     if let Some(note) = &data.note {

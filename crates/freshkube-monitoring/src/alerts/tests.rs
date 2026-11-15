@@ -719,6 +719,7 @@ fn a_rule_group_is_good_only_when_every_rule_is_known_to_be_ok() {
             evaluated: true,
             read: Vec::new(),
             note: None,
+            unread: None,
         };
         super::display::derive(
             Which::Rules,
@@ -811,4 +812,96 @@ fn open_settings_on_alerts_asks_for_the_monitoring_section(cx: &mut TestAppConte
     .unwrap();
     cx.run_until_parked();
     assert_eq!((monitoring.get(), last_shown.get()), (1, 0));
+}
+
+/// Rules found as PrometheusRule objects with an evaluator that answered with
+/// an error (a Service that looks right but isn't one): the data keeps what it
+/// said (through `live()`, so `keep_reason` is wired in), and the page draws it
+/// as a warning in place of "nothing evaluates them". A refusal is its own
+/// page state already.
+#[test]
+fn rules_with_an_evaluator_that_failed_say_so() {
+    use crate::alerts::{Answer, Data};
+    use freshkube_core::monitoring::alerts::{Remembered, RulesData};
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _enter = runtime.enter();
+    let refused = Arc::new(AtomicU16::new(404));
+    let (client, _recorder) = fake_api::client(move |request| {
+        let path = request.path.as_str();
+        if path == "/api/v1/services" || path == "/api/v1/namespaces/monitoring/services" {
+            return Some(fake_api::json(
+                200,
+                json!({"kind": "ServiceList", "apiVersion": "v1", "metadata": {},
+                       "items": [service("alertmanager-operated", json!({"name": "web", "port": 9093}))]}),
+            ));
+        }
+        if path
+            .starts_with("/api/v1/namespaces/monitoring/services/alertmanager-operated:9093/proxy/")
+        {
+            return Some(fake_api::json(
+                refused.load(SeqCst),
+                json!({"message": "forbidden"}),
+            ));
+        }
+        if path == "/apis/monitoring.coreos.com/v1/prometheusrules" {
+            return Some(fake_api::json(
+                200,
+                json!({"kind": "PrometheusRuleList", "apiVersion": "monitoring.coreos.com/v1",
+                       "metadata": {},
+                       "items": [{"apiVersion": "monitoring.coreos.com/v1", "kind": "PrometheusRule",
+                                  "metadata": {"name": "app", "namespace": "monitoring"},
+                                  "spec": {"groups": [{"name": "errors", "rules": [
+                                      {"alert": "HighErrors", "expr": "up == 0"}]}]}}]}),
+            ));
+        }
+        None
+    });
+    let access = ClusterAccess::Live(Arc::new(InMemory(client)));
+    let answer = runtime.block_on(super::live(
+        Which::Rules,
+        &access,
+        None,
+        &Scope::Cluster,
+        &Remembered::default(),
+    ));
+    let rules = match answer {
+        Ok(Answer::Read(Data::Rules(rules))) => rules,
+        other => panic!("{other:?}"),
+    };
+    assert!(!rules.evaluated);
+    assert!(!rules.groups.is_empty(), "the definitions are still shown");
+    let reason = rules.unread.clone().expect("the refusal is kept");
+    assert!(reason.contains("said"), "{reason}");
+    let display = super::display::derive(
+        Which::Rules,
+        Some(&Answer::Read(Data::Rules(rules))),
+        None,
+        &super::display::Filter::default(),
+        None,
+        Utc::now(),
+    );
+    let ids: Vec<_> = display.notes.iter().map(|note| note.id).collect();
+    assert!(ids.contains(&"rules-unread"), "{ids:?}");
+    assert!(!ids.contains(&"rules-unevaluated"), "{ids:?}");
+    // With nothing refused, the old words stand.
+    let calm = RulesData {
+        groups: Vec::new(),
+        evaluated: false,
+        read: Vec::new(),
+        note: None,
+        unread: None,
+    };
+    let display = super::display::derive(
+        Which::Rules,
+        Some(&Answer::Read(Data::Rules(calm))),
+        None,
+        &super::display::Filter::default(),
+        None,
+        Utc::now(),
+    );
+    let ids: Vec<_> = display.notes.iter().map(|note| note.id).collect();
+    assert!(
+        ids.contains(&"rules-unevaluated") || display.rows.is_empty(),
+        "{ids:?}"
+    );
 }
