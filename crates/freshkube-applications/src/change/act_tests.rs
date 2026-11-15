@@ -304,3 +304,75 @@ fn a_buttons_tooltip_does_not_draw_once_the_pointer_is_on_its_neighbour(cx: &mut
         "the neighbour's"
     );
 }
+
+// ---- #845: the rollback helper ----
+
+#[gpui_kit::test]
+fn a_stage_lists_the_last_verified_freight_first_and_pressing_it_asks_for_that_rollback(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert_eq!(
+        label(cx, handle, 5).as_deref(),
+        Some("Roll back to calm-heron (verified in Kargo)"),
+        "the newest Freight Kargo verified is the first line"
+    );
+    assert_eq!(
+        label(cx, handle, 6).as_deref(),
+        Some("Roll back to swift-wren (not verified)"),
+        "an unverified one can be picked, after it"
+    );
+    press(cx, handle, 5);
+    let events = events.borrow();
+    assert_eq!(events.len(), 1);
+    // `calm-heron` is the second earlier Freight of prod-ams's history.
+    assert_eq!(
+        (events[0].kind, events[0].stage.as_str()),
+        (ActKind::Rollback(1), "prod-ams")
+    );
+}
+
+#[gpui_kit::test]
+fn with_nothing_verified_the_first_line_is_greyed_and_a_pick_is_never_the_main_action(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = open(cx, 1280., 880., Shape::RollbackUnknown, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert_eq!(label(cx, handle, 5).as_deref(), Some("Roll back…"));
+    press(cx, handle, 5);
+    assert!(
+        events.borrow().is_empty(),
+        "no healthy Freight: asks nothing"
+    );
+    assert_eq!(
+        label(cx, handle, 6).as_deref(),
+        Some("Roll back to swift-wren (not verified)")
+    );
+    press(cx, handle, 6);
+    assert_eq!(events.borrow()[0].kind, ActKind::Rollback(0));
+}
+
+#[gpui_kit::test]
+fn a_stage_with_no_earlier_freight_offers_no_rollback(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::RollbackNone, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert_eq!(label(cx, handle, 5).as_deref(), Some("Roll back…"));
+    assert_eq!(label(cx, handle, 6), None);
+    press(cx, handle, 5);
+    assert!(events.borrow().is_empty());
+}
+
+#[gpui_kit::test]
+fn no_rollback_is_offered_while_a_promotion_runs(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Promoting, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert!(label(cx, handle, 5).is_some_and(|l| l.starts_with("Roll back")));
+    press(cx, handle, 5);
+    press(cx, handle, 6);
+    assert!(events.borrow().is_empty(), "Abort takes over");
+}

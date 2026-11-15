@@ -214,6 +214,14 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 25. A rollback promotes only an earlier Freight the Stage's own history records, and sends nothing under `read-only`, without the typed name on `protected`, or when the Stage or its history moved
+
+- `safety_g25_read_only_blocks_a_rollback_with_no_request` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g25_a_protected_destination_needs_the_exact_stage_name_to_roll_back` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g25_a_stage_whose_history_moved_since_the_page_sends_no_rollback` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g25_a_history_that_moves_while_the_dialog_is_open_sends_nothing` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g25_a_rollback_is_offered_only_for_an_earlier_freight_of_the_stage_and_not_while_one_runs` (`crates/freshkube-delivery/src/acts/tests.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.

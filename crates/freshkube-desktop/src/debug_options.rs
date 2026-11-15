@@ -773,6 +773,8 @@ mod tests {
             ("github-offline", Variant::GitHubOffline),
             ("causes", Variant::Causes),
             ("promoting", Variant::Promoting),
+            ("rollback-unknown", Variant::RollbackUnknown),
+            ("rollback-none", Variant::RollbackNone),
         ] {
             assert_eq!(
                 parse(&[("FRESHKUBE_APPLICATIONS", value)]).applications,

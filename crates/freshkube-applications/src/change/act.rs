@@ -84,6 +84,8 @@ impl ChangePage {
             ActKind::RefreshWarehouse,
             ActKind::Reverify,
             ActKind::Promote,
+            // A rollback asks what a Promote asks: one entry stands for all.
+            ActKind::Rollback(0),
             ActKind::Abort,
         ]
         .into_iter()
@@ -155,6 +157,10 @@ impl ChangePage {
             let Some(Leads::Act(kind, _)) = &button.leads else {
                 continue;
             };
+            let kind = match kind {
+                ActKind::Rollback(_) => &ActKind::Rollback(0),
+                other => other,
+            };
             let Some((_, offer)) = self.stage_offers.iter().find(|(asked, _)| asked == kind) else {
                 continue;
             };
@@ -222,6 +228,7 @@ impl ChangePage {
                     .then(|| "No verification of this Freight was read to repeat.".into())
             }),
         ));
+        let rollback = self.rollback_buttons(stage, acts, no_kargo.clone());
         // Promote becomes Abort while any promotion runs, someone else's too.
         buttons.push(match acts.slot() {
             Slot::Promote => line(
@@ -247,7 +254,81 @@ impl ChangePage {
                 Some(why.into()),
             ),
         });
+        buttons.extend(rollback);
         buttons
+    }
+
+    /// The Stage's Roll back lines (#845): the last Freight Kargo verified
+    /// first, then up to three more earlier Freight to pick, each saying
+    /// what Kargo recorded. An unverified Freight can be picked, but is never
+    /// the first line. Greyed out with why when there is none, when none was
+    /// verified, or while a Promotion runs.
+    fn rollback_buttons(
+        &self,
+        stage: &Stage,
+        acts: &freshkube_delivery::acts::StageActs,
+        no_kargo: Option<SharedString>,
+    ) -> Vec<ActionLine> {
+        use freshkube_delivery::acts::rollback::{Evidence, last_verified};
+        /// How many earlier Freight the Inspector lists.
+        const SHOWN: usize = 4;
+        let running = matches!(acts.slot(), Slot::Abort(_));
+        let blocked = no_kargo.or_else(|| {
+            running.then(|| "A Promotion is running on this Stage; abort it first.".into())
+        });
+        let grey = |label: String, why: &str| ActionLine {
+            label: label.into(),
+            why: Some(blocked.clone().unwrap_or_else(|| why.to_owned().into())),
+            tooltip: None,
+            leads: None,
+        };
+        if acts.earlier.is_empty() {
+            return vec![grey(
+                "Roll back…".to_owned(),
+                "The Stage's history holds no earlier Freight to go back to.",
+            )];
+        }
+        let best = last_verified(&acts.earlier).map(|e| e.freight.clone());
+        let mut lines = Vec::new();
+        if best.is_none() {
+            lines.push(grey(
+                "Roll back…".to_owned(),
+                "No earlier Freight has a successful verification recorded in Kargo.",
+            ));
+        }
+        // The best one first, then the others in history order.
+        let mut order: Vec<usize> = (0..acts.earlier.len()).collect();
+        order.sort_by_key(|&at| Some(&acts.earlier[at].freight) != best.as_ref());
+        for at in order.into_iter().take(SHOWN) {
+            let earlier = &acts.earlier[at];
+            let (label, tooltip) = match &earlier.evidence {
+                Evidence::Verified { .. } => (
+                    format!("Roll back to {} (verified in Kargo)", earlier.freight),
+                    if Some(&earlier.freight) == best.as_ref() {
+                        "The newest earlier Freight Kargo verified in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
+                            .to_owned()
+                    } else {
+                        "Kargo verified it in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
+                            .to_owned()
+                    },
+                ),
+                Evidence::Unknown(why) => (
+                    format!("Roll back to {} (not verified)", earlier.freight),
+                    format!(
+                        "{why} Argo CD's health and Coroot's outcome weren't recorded for it either."
+                    ),
+                ),
+            };
+            lines.push(ActionLine {
+                label: label.into(),
+                why: blocked.clone(),
+                tooltip: Some(tooltip.into()),
+                leads: blocked
+                    .is_none()
+                    .then(|| Leads::Act(ActKind::Rollback(at), stage.name.clone())),
+            });
+        }
+        lines
     }
 
     /// Asks the shell to describe and run the action for `stage`.
