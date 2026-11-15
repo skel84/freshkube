@@ -552,45 +552,45 @@ fn open_settings_notifications(cx: &mut TestAppContext, f: &Following) {
         .unwrap();
 }
 
-fn permission_words(cx: &mut TestAppContext, f: &Following) -> String {
-    cx.update_window(f.handle, |_, window, cx| {
-        window.render_frame(cx);
-        window
-            .find("notifications-permission")
-            .label()
-            .unwrap_or_default()
-            .to_owned()
+fn permission(cx: &mut TestAppContext, f: &Following) -> (bool, freshkube_followed::Permission) {
+    cx.read(|cx| {
+        let owner = f.followed.read(cx);
+        (owner.banners_native(), owner.permission())
     })
-    .unwrap()
 }
 
 #[gpui_kit::test]
-fn settings_says_banners_are_not_available_where_there_is_no_native_sink(cx: &mut TestAppContext) {
+fn settings_has_the_banners_row_and_a_system_with_no_native_sink_is_never_asked(
+    cx: &mut TestAppContext,
+) {
     let f = following(cx, Shape::States);
     open_settings_notifications(cx, &f);
     assert!(present(cx, f.handle, "notifications-permission-row"));
-    let words = permission_words(cx, &f);
-    assert!(words.starts_with("Not available"), "{words}");
+    assert_eq!(
+        permission(cx, &f),
+        (false, freshkube_followed::Permission::NotAsked)
+    );
 }
 
 #[gpui_kit::test]
-fn settings_says_allowed_once_the_system_allows_banners(cx: &mut TestAppContext) {
+fn the_banners_example_is_allowed_and_a_refusal_is_kept(cx: &mut TestAppContext) {
     let f = following(cx, Shape::Banners);
     open_settings_notifications(cx, &f);
-    let words = permission_words(cx, &f);
-    assert!(words.starts_with("Allowed"), "{words}");
-}
-
-#[gpui_kit::test]
-fn settings_says_a_refusal_keeps_notices_in_the_app(cx: &mut TestAppContext) {
-    let f = following(cx, Shape::Banners);
+    assert!(present(cx, f.handle, "notifications-permission-row"));
+    assert_eq!(
+        permission(cx, &f),
+        (true, freshkube_followed::Permission::Granted)
+    );
     cx.update(|cx| {
         f.followed
             .update(cx, |followed, cx| followed.permission_answered(false, cx))
     });
     open_settings_notifications(cx, &f);
-    let words = permission_words(cx, &f);
-    assert!(words.starts_with("Refused"), "{words}");
+    assert!(present(cx, f.handle, "notifications-permission-row"));
+    assert_eq!(
+        permission(cx, &f),
+        (true, freshkube_followed::Permission::Denied)
+    );
 }
 
 fn emit_open(cx: &mut TestAppContext, f: &Following, context: &str) {

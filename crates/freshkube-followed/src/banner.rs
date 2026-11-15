@@ -153,4 +153,17 @@ mod tests {
         assert_eq!(Permission::Asking.saved(), Permission::NotAsked);
         assert_eq!(Permission::Denied.saved(), Permission::Denied);
     }
+
+    #[test]
+    fn settings_words_each_state() {
+        assert!(
+            Permission::NotAsked
+                .label(false)
+                .starts_with("Not available")
+        );
+        assert!(Permission::Granted.label(true).starts_with("Allowed"));
+        assert!(Permission::Denied.label(true).starts_with("Refused"));
+        assert!(Permission::Asking.label(true).starts_with("Waiting"));
+        assert!(Permission::NotAsked.label(true).starts_with("Asked when"));
+    }
 }
