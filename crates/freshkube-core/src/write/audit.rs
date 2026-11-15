@@ -92,6 +92,11 @@ pub struct Record {
     pub tier: String,
     /// The level at that moment.
     pub protection: String,
+    /// Whether Undo was offered for it: `offered`, or `none` when the action
+    /// has no way back (Restart). It is separate from the tier, which decides
+    /// what the level asks. Absent on lines written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub undo: Option<String>,
     pub objects: Vec<AuditObject>,
     pub request: AuditRequest,
     pub phase: Phase,
@@ -356,6 +361,7 @@ mod tests {
             action: "scale".into(),
             tier: "reversible".into(),
             protection: "guarded".into(),
+            undo: None,
             objects: vec![AuditObject {
                 group: "apps".into(),
                 resource: "deployments".into(),

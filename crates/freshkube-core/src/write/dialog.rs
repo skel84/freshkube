@@ -50,6 +50,11 @@ pub struct Ask {
     pub protected: Vec<String>,
     /// The subjects the typed name is for.
     pub subjects: Vec<String>,
+    /// The tier and the level it is held to, for a muted line that tells
+    /// the person what kind of write this is and how strictly the cluster
+    /// treats it: `Spec change · Guarded cluster`. Display only; what the
+    /// dialog asks comes from the requirement.
+    pub kind_and_level: String,
 }
 
 /// What the dialog is, from the person's side.
@@ -122,6 +127,11 @@ fn ask(prepared: &Prepared, entry: &str) -> Ask {
             .into_iter()
             .map(str::to_owned)
             .collect(),
+        kind_and_level: format!(
+            "{} · {} cluster",
+            action.tier.label(),
+            prepared.level.label()
+        ),
     }
 }
 

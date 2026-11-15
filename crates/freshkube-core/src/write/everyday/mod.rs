@@ -931,7 +931,60 @@ mod tests {
                 "{}",
                 write.content_type
             );
+            // The wire matches WRITE_MODEL.md: a merge patch under the field
+            // manager `freshkube`, never forced (#1056).
+            assert!(
+                write.query.contains("fieldManager=freshkube"),
+                "{}",
+                write.query
+            );
+            assert!(!write.query.contains("force"), "{}", write.query);
         }
+    }
+
+    /// The audit line says whether Undo was offered, apart from the tier
+    /// (#1056): Scale has a way back, Restart is the same tier with none.
+    #[tokio::test(start_paused = true)]
+    async fn the_audit_says_whether_undo_was_offered_apart_from_the_tier() {
+        let (cluster, dir) = (Cluster::new(), tempfile::tempdir().unwrap());
+        let scaled = scale(&subject(&cluster, fake::DEPLOYMENT), 5).unwrap();
+        send(
+            &cluster,
+            dir.path(),
+            Protection::Open,
+            scaled,
+            Confirmation::NotAsked,
+        )
+        .await;
+        let restarted = restart(&subject(&cluster, fake::DEPLOYMENT), "t").unwrap();
+        send(
+            &cluster,
+            dir.path(),
+            Protection::Open,
+            restarted,
+            Confirmation::Confirmed,
+        )
+        .await;
+        let read = crate::write::AuditStore::new(dir.path().join("audit"))
+            .read()
+            .unwrap();
+        let undo_of = |action: &str| {
+            let lines: std::collections::BTreeSet<_> = read
+                .records
+                .iter()
+                .filter(|record| record.action == action)
+                .map(|record| (record.tier.clone(), record.undo.clone()))
+                .collect();
+            lines.into_iter().collect::<Vec<_>>()
+        };
+        assert_eq!(
+            undo_of("scale"),
+            [("reversible".to_owned(), Some("offered".to_owned()))]
+        );
+        assert_eq!(
+            undo_of("restart"),
+            [("reversible".to_owned(), Some("none".to_owned()))]
+        );
     }
 
     /// The fake models what server-side apply does with a field a manager
