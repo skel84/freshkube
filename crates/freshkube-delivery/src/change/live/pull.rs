@@ -332,4 +332,53 @@ mod tests {
             assert_eq!(number_in_title(no), None, "{no}");
         }
     }
+
+    #[tokio::test]
+    async fn a_title_number_whose_merge_commit_is_another_commit_is_not_kept() {
+        // A cherry-pick or backport titled `(#418)`: #418 merged as another
+        // commit, so it is not this commit's pull request. The search decides.
+        let other = "c".repeat(40);
+        let api = Server::new(move |request| {
+            if request.path.contains("/commits/") {
+                Reply::json(200, "", &json!([]))
+            } else {
+                Reply::json(200, "", &pulls_of(&other)[0])
+            }
+        });
+        let change = change_titled(
+            Some(Handle::trusting(&api.address, None)),
+            Some("Backport retry keys (#418)"),
+        )
+        .await;
+        assert!(change.origin.pull.is_none(), "{:?}", change.origin.pull);
+        assert!(change.origin.pull_request.is_none());
+        let paths: Vec<String> = api.seen().iter().map(|r| r.path.clone()).collect();
+        assert!(
+            paths.iter().any(|p| p.contains("/commits/")),
+            "searched after the title's number didn't match: {paths:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_token_whose_limit_is_nearly_spent_reads_the_title_number_directly() {
+        // The first answer reports 5 calls left of 5000, under the token's
+        // reserve; the next change reads `pulls/418` and doesn't search.
+        let api = Server::new(|request| {
+            let limit = "x-ratelimit-limit: 5000\r\nx-ratelimit-remaining: 5\r\n\
+                         x-ratelimit-reset: 4102444800\r\nx-ratelimit-resource: core\r\n";
+            if request.path.contains("/commits/") {
+                Reply::json(200, limit, &pulls_of(SHA))
+            } else {
+                Reply::json(200, limit, &pull_418())
+            }
+        });
+        let handle = Handle::trusting(&api.address, Some("ghp_x"));
+        // Calls to spare so far: the first change searches.
+        let first = change_titled(Some(handle.clone()), Some("Retry keys (#418)")).await;
+        assert_eq!(first.origin.pull.map(|p| p.from_title), Some(false));
+        let second = change_titled(Some(handle), Some("Retry keys (#418)")).await;
+        assert_eq!(second.origin.pull.map(|p| p.from_title), Some(true));
+        let last = api.seen().last().unwrap().path.clone();
+        assert_eq!(last, "/repos/acme/shop/pulls/418");
+    }
 }

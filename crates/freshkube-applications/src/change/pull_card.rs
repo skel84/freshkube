@@ -320,7 +320,9 @@ pub(super) fn derive(
     error: Option<&str>,
     reading: Reading,
 ) -> PullCard {
-    let from_title = summary.is_some_and(|pull| pull.from_title);
+    let titled = summary
+        .filter(|pull| pull.from_title)
+        .map(|pull| pull.number);
     let summary = detail.map(|detail| &detail.summary).or(summary);
     let title: SharedString = match (summary, known) {
         (Some(pull), _) => match &pull.title {
@@ -355,7 +357,9 @@ pub(super) fn derive(
         // The link says where its number came from when it wasn't found by
         // searching GitHub for the commit. The list's summary knows; the
         // card's own read parses `pulls/{n}` afresh and doesn't.
-        let from_title = from_title || summary.from_title;
+        // Only for the number the title gave: a card that shows another
+        // (a build annotation named #417) is not that read.
+        let from_title = summary.from_title || titled == Some(summary.number);
         card.links
             .extend(summary.page.clone().map(|address| CardLink {
                 id: "open",
@@ -763,6 +767,21 @@ mod tests {
         // Found by searching: no such words.
         let (summary, detail) = held(418);
         let card = derive(&known(), Some(&summary), Some(&detail), None, Reading::Held);
+        assert_eq!(card.links[0].label, "Open on GitHub");
+        assert!(card.notes.iter().all(|n| !n.contains("commit's title")));
+    }
+
+    #[test]
+    fn the_title_label_is_only_for_the_number_the_title_gave() {
+        let (mut summary, detail) = held(418);
+        summary.from_title = true;
+        // The card shows #418 and the title gave #418: labelled.
+        let card = derive(&known(), Some(&summary), Some(&detail), None, Reading::Held);
+        assert!(card.links[0].label.contains("commit title"));
+        // The card's own read is of another number: not labelled.
+        let mut other = detail.clone();
+        other.summary.number = 417;
+        let card = derive(&known(), Some(&summary), Some(&other), None, Reading::Held);
         assert_eq!(card.links[0].label, "Open on GitHub");
         assert!(card.notes.iter().all(|n| !n.contains("commit's title")));
     }

@@ -454,13 +454,24 @@ async fn read_pull_requests<K: Reader, A: Reader, T: Reader, G: GitHub>(
     let titled = match plan.subject.as_deref().and_then(number_in_title) {
         Some(number) if clusters.github.is_sparing() => {
             match clusters.github.pull(repo, number).await {
-                Ok(mut pull) => {
+                // Kept only when the pull request is this commit's: its merge
+                // commit is the commit. A cherry-pick, a backport, an open or
+                // closed one with that number, or a repository that imports
+                // another's numbers is not, and the search decides.
+                Ok(mut pull)
+                    if pull
+                        .merge_sha
+                        .as_deref()
+                        .is_some_and(|merge| merge.eq_ignore_ascii_case(&plan.sha)) =>
+                {
                     if let Some(summary) = &mut pull.summary {
                         summary.from_title = true;
                     }
                     Some(Source::Read(vec![pull]))
                 }
-                Err(_) => None,
+                // Any other answer, an error included, is the search's to
+                // meet again: it asks the same host and says the same.
+                Ok(_) | Err(_) => None,
             }
         }
         _ => None,
