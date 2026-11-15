@@ -4,7 +4,9 @@
 //! `freshkube_ui::split_size`), and saving them keeps it. Saved tabs
 //! come back only for the context they were opened in, and read nothing
 //! until one shows; a shell tab comes back idle, and runs nothing until
-//! Start.
+//! Start. The tabs of every other context are parked: kept as saved, read
+//! and connected to nothing, written again with the next save, and opened
+//! (idle) when their context is the one shown (#1044).
 
 use serde::{Deserialize, Serialize};
 
@@ -88,18 +90,29 @@ impl Dock {
 
     /// The dock as it saves: its state and tabs by name.
     pub(super) fn saved(&self, cx: &App) -> SavedDock {
+        let open_tabs = self.tabs.iter().filter(|tab| self.is_saved(tab)).count();
         SavedDock {
             open: self.open,
             maximized: self.maximized,
             // An agent tab is user-started and saved nowhere: a session
             // never comes back on its own. Nor is the log tab that following
-            // owns, until the person uses it.
-            selected: self.selected.and_then(|id| {
-                self.tabs
-                    .iter()
-                    .filter(|tab| self.is_saved(tab))
-                    .position(|tab| tab.id == id)
-            }),
+            // owns, until the person uses it. The parked tabs follow the open
+            // ones in the list; when the open dock has no selection, the one
+            // that was selected among the parked still is.
+            selected: self
+                .selected
+                .and_then(|id| {
+                    self.tabs
+                        .iter()
+                        .filter(|tab| self.is_saved(tab))
+                        .position(|tab| tab.id == id)
+                })
+                .or_else(|| {
+                    if self.selected.is_some() {
+                        return None;
+                    }
+                    self.parked_selected.map(|ix| open_tabs + ix)
+                }),
             tabs: self
                 .tabs
                 .iter()
@@ -136,33 +149,53 @@ impl Dock {
                         shell,
                     }
                 })
+                .chain(self.parked.iter().cloned())
                 .collect(),
         }
     }
 
-    /// Opens the saved tabs that belong to this connection's context. They
-    /// read nothing until one shows: the selected one, when the dock is
-    /// open, or another when the user selects it.
+    /// Takes the saved dock: the tabs of this connection's context open, and
+    /// the rest are parked until their own context is shown.
     pub(super) fn restore_tabs(
         &mut self,
         restore: SavedDock,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.parked = restore.tabs;
+        // The saved position counts every context's tabs.
+        self.parked_selected = restore.selected;
+        self.open_parked(window, cx);
+    }
+
+    /// Opens the parked tabs that belong to this connection's context. They
+    /// read nothing until one shows: the selected one, when the dock is
+    /// open, or another when the user selects it. The others stay parked,
+    /// with the selection if it was on one of them.
+    pub(super) fn open_parked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(origin) = self.current_origin() else {
             return;
         };
         let source = origin.source.clone();
+        if !self.parked.iter().any(|tab| tab.context == source.context) {
+            return;
+        }
+        let parked = std::mem::take(&mut self.parked);
+        let parked_selected = self.parked_selected.take();
+        let (mut logs, mut shells) = (self.log_tabs(), self.shell_tabs());
         let mut ids = Vec::new();
-        let (mut logs, mut shells) = (0, 0);
-        // The selected tab, if it is one that comes back; the saved
-        // position counts every context's tabs.
+        let mut kept = Vec::new();
+        // The selected tab, if it is one that comes back or stays parked.
         let mut selected = None;
-        for (ix, saved) in restore.tabs.into_iter().enumerate() {
-            if saved.context != source.context
-                || (!saved.shell && logs >= MAX_LOG_TABS)
-                || (saved.shell && shells >= MAX_SHELL_TABS)
-            {
+        for (ix, saved) in parked.into_iter().enumerate() {
+            if saved.context != source.context {
+                if parked_selected == Some(ix) {
+                    self.parked_selected = Some(kept.len());
+                }
+                kept.push(saved);
+                continue;
+            }
+            if (!saved.shell && logs >= MAX_LOG_TABS) || (saved.shell && shells >= MAX_SHELL_TABS) {
                 continue;
             }
             let Some(kind) = log_kind(&saved.kind) else {
@@ -208,12 +241,16 @@ impl Dock {
                 });
                 self.add_tab(origin.clone(), target, at, window, cx)
             };
-            if restore.selected == Some(ix) {
+            if parked_selected == Some(ix) {
                 selected = Some(id);
             }
             ids.push(id);
         }
-        self.selected = selected.or(ids.first().copied());
+        self.parked = kept;
+        // Tabs opened later never take the selection from the shown one.
+        if self.selected.is_none() {
+            self.selected = selected.or(ids.first().copied());
+        }
         self.sync_shown(cx);
         cx.notify();
     }

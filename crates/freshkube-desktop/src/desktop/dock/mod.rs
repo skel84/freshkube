@@ -405,6 +405,12 @@ pub(crate) struct Dock {
     return_focus: Option<FocusHandle>,
     /// The saved dock, until the first connection says whether it applies.
     restore: Option<saved::SavedDock>,
+    /// The saved tabs of contexts not shown yet: kept as saved, connected to
+    /// nothing, written again with every save, and opened idle when their
+    /// context is shown (#1044).
+    parked: Vec<saved::SavedTab>,
+    /// Which of the parked tabs was the selected one.
+    parked_selected: Option<usize>,
     save: Option<Task<()>>,
     /// The selected tab's least height when the dock last heard of it.
     last_least: Option<Pixels>,
@@ -476,6 +482,8 @@ impl Dock {
             focus: cx.focus_handle(),
             return_focus: None,
             restore: None,
+            parked: Vec::new(),
+            parked_selected: None,
             save: None,
             last_least: None,
             dragged: false,
@@ -1491,7 +1499,8 @@ impl Dock {
     /// none while another context loads, closes nothing, and only the same
     /// connection's tabs take its refreshed handle. A source missing for a
     /// while keeps the tabs and their shells. The first source restores the
-    /// saved tabs when its context is theirs.
+    /// saved tabs when its context is theirs; the tabs of other contexts wait
+    /// parked, kept in the next save, until their context is shown.
     pub(crate) fn set_source(
         &mut self,
         source: Option<ClusterSource>,
@@ -1533,6 +1542,9 @@ impl Dock {
         self.source = Some(source);
         if first && let Some(restore) = self.restore.take() {
             self.restore_tabs(restore, window, cx);
+        } else {
+            // Tabs parked for this context open now, idle.
+            self.open_parked(window, cx);
         }
         // Which tabs are the shown cluster's depends on this source.
         self.refresh_gates(cx);

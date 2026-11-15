@@ -1,0 +1,1 @@
+- **Dock tabs of other clusters are kept:** quitting with log or shell tabs open on several clusters and starting on one of them no longer drops the others from the saved dock. They stay saved, read nothing, and come back, idle, when their cluster is the one shown.

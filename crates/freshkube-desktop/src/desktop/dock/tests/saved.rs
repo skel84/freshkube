@@ -345,3 +345,143 @@ fn navigation_json_is_what_the_setters_write(cx: &mut TestAppContext) {
         include_str!("../../../../../freshkube-prefs/src/examples/navigation.json")
     );
 }
+
+/// Opens the dock as the app does: the saved dock waits for the first
+/// connection, which is this window's context.
+fn open_with(
+    saved: &SavedDock,
+    handle: AnyWindowHandle,
+    pilot: &Entity<Pilot>,
+    dock: &Entity<Dock>,
+    cx: &mut TestAppContext,
+) {
+    cx.update_window(handle, |_, window, cx| {
+        let source = pilot.read(cx).source().kube;
+        dock.update(cx, |dock, cx| {
+            dock.tabs.clear();
+            dock.selected = None;
+            dock.set_source(None, None, window, cx);
+            dock.open = saved.open;
+            dock.restore = Some(saved.clone());
+            dock.set_source(source, None, window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+}
+
+fn log_tab(pod: &ResourceIdentity, context: &str) -> SavedTab {
+    SavedTab {
+        kind: "pods".into(),
+        context: context.into(),
+        namespace: pod.namespace.clone(),
+        name: pod.name.clone(),
+        container: None,
+        previous: false,
+        all_containers: false,
+        shell: false,
+    }
+}
+
+/// #1044: a dock holds tabs of several clusters. Restoring on one of them
+/// shows only its tabs, and saving again keeps the others as they were, with
+/// the selection on the tab it was on, so they come back with their cluster.
+#[gpui_kit::test]
+fn tabs_of_another_context_survive_a_restore_and_the_next_save(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let saved = SavedDock {
+        open: true,
+        maximized: false,
+        selected: Some(1),
+        tabs: vec![
+            log_tab(&pods[2], "another-context"),
+            log_tab(&pods[0], &context),
+            log_tab(&pods[1], "third-context"),
+        ],
+    };
+    open_with(&saved, handle, &pilot, &dock, cx);
+    assert_eq!(titles(&dock, cx), [format!("Pod {}", pods[0].name)]);
+    let again = cx.update(|cx| dock.read(cx).saved(cx));
+    let mut names: Vec<_> = again
+        .tabs
+        .iter()
+        .map(|tab| (tab.context.as_str(), tab.name.as_str()))
+        .collect();
+    names.sort();
+    let mut expected = vec![
+        ("another-context", pods[2].name.as_str()),
+        (context.as_str(), pods[0].name.as_str()),
+        ("third-context", pods[1].name.as_str()),
+    ];
+    expected.sort();
+    assert_eq!(names, expected, "no context's tab is dropped by a save");
+    let selected = again.selected.map(|ix| &again.tabs[ix]);
+    assert_eq!(
+        selected.map(|tab| tab.context.as_str()),
+        Some(context.as_str())
+    );
+    // Saved to the file and read again, they are still there.
+    let json = serde_json::to_string(&again).unwrap();
+    assert_eq!(serde_json::from_str::<SavedDock>(&json).unwrap(), again);
+}
+
+/// A tab of another context comes back only when that context is shown, and
+/// then idle: nothing read for a cluster the person had not opened.
+#[gpui_kit::test]
+fn tabs_of_another_context_come_back_idle_when_it_is_shown(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let other = cx.update(|cx| {
+        let pilot = pilot.read(cx);
+        pilot
+            .contexts
+            .iter()
+            .find(|name| Some(*name) != pilot.applied.context.as_ref())
+            .cloned()
+            .unwrap()
+    });
+    let saved = SavedDock {
+        open: true,
+        maximized: false,
+        selected: Some(0),
+        tabs: vec![log_tab(&pods[0], &context), log_tab(&pods[1], &other)],
+    };
+    open_with(&saved, handle, &pilot, &dock, cx);
+    assert_eq!(titles(&dock, cx).len(), 1);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.select_context(other.clone(), window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert_eq!(titles(&dock, cx).len(), 2, "{:?}", titles(&dock, cx));
+    // The first tab is still the shown one; the other has read nothing.
+    let started: Vec<bool> =
+        cx.update(|cx| dock.read(cx).tabs.iter().map(|tab| tab.started).collect());
+    assert_eq!(started.len(), 2);
+    assert!(
+        !started[1],
+        "a restored tab of another context reads nothing"
+    );
+    let again = cx.update(|cx| dock.read(cx).saved(cx));
+    assert_eq!(again.tabs.len(), 2);
+}
+
+/// A file the current build wrote (one list, one `selected`, a context on
+/// each tab) still reads, and its other-context tabs are carried through.
+#[test]
+fn a_file_written_by_the_current_build_still_reads() {
+    let json = r#"{"open":true,"maximized":false,"selected":1,"tabs":[{"kind":"pods","context":"dev-fra","namespace":"web","name":"gateway-0"},{"kind":"pods","context":"prod-ams","namespace":"web","name":"gateway-1"}]}"#;
+    let saved: SavedDock = serde_json::from_str(json).unwrap();
+    assert_eq!(saved.selected, Some(1));
+    assert_eq!(saved.tabs.len(), 2);
+    assert_eq!(serde_json::to_string(&saved).unwrap(), json);
+}
