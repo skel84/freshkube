@@ -2,7 +2,7 @@
 use super::*;
 use crate::observability::Destination;
 use gpui_kit::component::{
-    Placement, WindowExt,
+    Placement,
     menu::{DropdownMenu, PopupMenuItem},
 };
 

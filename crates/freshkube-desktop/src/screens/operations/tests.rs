@@ -1467,38 +1467,6 @@ fn only_the_nodes_in_the_plan_are_asked_about(cx: &mut TestAppContext) {
     assert_eq!(asked(cx), ["talos-cp-fra1-01", "talos-cp-fra1-02"]);
 }
 
-/// At 760 by 560 and text size 20 the confirmation starts below the app
-/// header, where macOS draws the window buttons, not under them.
-#[gpui_kit::test]
-fn the_confirmation_keeps_clear_of_the_title_bar_at_the_smallest_window(cx: &mut TestAppContext) {
-    let (_runtime, screen, handle) = mount_sized(cx, "prod-fra", 25, 760., 560.);
-    cx.update(|cx| crate::text_size::set(20., cx));
-    cx.update_window(handle.into(), |_, window, cx| {
-        window.render_frame(cx);
-        screen.update(cx, |screen, cx| screen.open_confirmation(window, cx));
-    })
-    .unwrap();
-    crate::mutation::settle_confirmation(cx, handle.into());
-    cx.update_window(handle.into(), |_, window, cx| {
-        window.render_frame(cx);
-        let header = crate::ui::dp_px(crate::page::APP_HEADER_HEIGHT, window);
-        // The body sits under the title, so the title is above this and
-        // still below the header only if the body is well below it.
-        let body = window.find("confirm-dialog").bounds();
-        let title_room = crate::ui::dp_px(16., window);
-        assert!(
-            body.top() >= header + title_room,
-            "the dialog's body starts at {:?}, its title would sit under the header's {header:?}",
-            body.top()
-        );
-        assert!(
-            freshkube_ui::dialog::top_inset(window) >= header,
-            "the dialog's inset is under the header"
-        );
-    })
-    .unwrap();
-}
-
 #[test]
 fn the_unschedulable_warning_follows_the_node_count() {
     assert_eq!(

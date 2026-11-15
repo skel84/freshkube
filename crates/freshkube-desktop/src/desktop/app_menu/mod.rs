@@ -9,7 +9,6 @@ use std::sync::Arc;
 use freshkube_ui::menu::{self as shared, Find, FindNext, FindPrevious, MenuAction};
 use freshkube_ui::platform::{self, About, AppMenu, OpenSettings, Platform, SystemMenu};
 use freshkube_ui::text_size::{DefaultText, LargerText, SmallerText};
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::popover::Popover;

@@ -485,51 +485,52 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
             let blocked = blocked.clone();
             let destructive = request.destructive;
             let input = input.clone();
-            let name_missing = request
-                .type_name
-                .as_ref()
-                .zip(input.as_ref())
-                .is_some_and(|(name, input)| input.read(cx).value().as_ref() != name.expected.as_ref());
+            let name_missing =
+                request
+                    .type_name
+                    .as_ref()
+                    .zip(input.as_ref())
+                    .is_some_and(|(name, input)| {
+                        input.read(cx).value().as_ref() != name.expected.as_ref()
+                    });
             let confirm_label = request.confirm_label.clone();
             let press: OnConfirm = Rc::new(move |window, cx| {
-                    if let (Some(name), Some(input)) = (&request.type_name, &input) {
-                        // Confirm is disabled until the name matches; this
-                        // keeps a stray key from getting past it.
-                        if input.read(cx).value().as_ref() != name.expected.as_ref() {
-                            return;
-                        }
-                    }
-                    let refusal = if Operations::current(cx).is_some() {
-                        Some(Blocked::Busy)
-                    } else if (request.current)(cx) != Some(request.fingerprint) {
-                        Some(Blocked::Stale)
-                    } else {
-                        None
-                    };
-                    if refusal.is_some() {
-                        blocked.set(refusal);
-                        // The dialog renders inside the root view, which is
-                        // cached until notified.
-                        if let Some(Some(root)) = window.root::<Root>() {
-                            root.update(cx, |_, cx| cx.notify());
-                        }
+                if let (Some(name), Some(input)) = (&request.type_name, &input) {
+                    // Confirm is disabled until the name matches; this
+                    // keeps a stray key from getting past it.
+                    if input.read(cx).value().as_ref() != name.expected.as_ref() {
                         return;
                     }
-                    // What the person typed, as it is now: the change event
-                    // that fills the sink can lag a key pressed with it.
-                    if let (Some(name), Some(input)) = (&request.type_name, &input) {
-                        *name.typed.borrow_mut() = input.read(cx).value().to_string();
+                }
+                let refusal = if Operations::current(cx).is_some() {
+                    Some(Blocked::Busy)
+                } else if (request.current)(cx) != Some(request.fingerprint) {
+                    Some(Blocked::Stale)
+                } else {
+                    None
+                };
+                if refusal.is_some() {
+                    blocked.set(refusal);
+                    // The dialog renders inside the root view, which is
+                    // cached until notified.
+                    if let Some(Some(root)) = window.root::<Root>() {
+                        root.update(cx, |_, cx| cx.notify());
                     }
-                    window.close_dialog(cx);
-                    (request.on_confirm)(window, cx);
+                    return;
+                }
+                // What the person typed, as it is now: the change event
+                // that fills the sink can lag a key pressed with it.
+                if let (Some(name), Some(input)) = (&request.type_name, &input) {
+                    *name.typed.borrow_mut() = input.read(cx).value().to_string();
+                }
+                window.close_dialog(cx);
+                (request.on_confirm)(window, cx);
             });
             let on_enter = press.clone();
             *enter.borrow_mut() = Some(on_enter);
-            let action = Action::new(
-                "confirm-ok",
-                confirm_label,
-                move |_, window, cx| press(window, cx),
-            )
+            let action = Action::new("confirm-ok", confirm_label, move |_, window, cx| {
+                press(window, cx)
+            })
             .disabled(reason == Some(Blocked::Stale) || name_missing);
             if destructive { action.danger() } else { action }
         };
@@ -607,9 +608,12 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                             },
                         )))
                     })
-                    .children(request.warnings.iter().map(|warning| {
-                        ui::tag(Tone::Warn, None, warning.clone(), cx)
-                    }))
+                    .children(
+                        request
+                            .warnings
+                            .iter()
+                            .map(|warning| ui::tag(Tone::Warn, None, warning.clone(), cx)),
+                    )
                     .children(notice),
             )
             .footer(

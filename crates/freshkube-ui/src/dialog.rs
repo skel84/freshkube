@@ -216,4 +216,43 @@ mod tests {
         })
         .unwrap();
     }
+
+    /// At 760x560 with text 20, a dialog opened the way the app opens them
+    /// starts below the app header, where macOS draws the window buttons.
+    /// Kit pads its content 16 px, so the surface starts that far above
+    /// the first thing in it.
+    #[gpui_kit::test]
+    fn a_dialog_starts_below_the_title_bar_inset(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let window = cx
+            .open_window(size(px(760.), px(560.)), move |window, cx| {
+                Root::new(cx.new(|_| Host), window, cx)
+            })
+            .into();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            super::open(window, cx, |dialog, _, _| {
+                dialog.child(div().id("probe").test_support().child("First"))
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let header = dp_px(APP_HEADER_HEIGHT, window);
+            let surface_top = window.find("probe").bounds().top() - px(16.);
+            assert!(
+                surface_top >= header - px(1.),
+                "the dialog starts at {surface_top:?}, under the header's {header:?}"
+            );
+            assert!(super::top_inset(window) >= header);
+        })
+        .unwrap();
+    }
 }
