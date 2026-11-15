@@ -882,7 +882,7 @@ mod tests {
     /// A live window with no setup file can't say, so its send refuses; only
     /// example data with no file is sent without reading.
     #[gpui_kit::test]
-    fn a_live_send_with_no_setup_file_refuses_and_only_example_data_goes_unread(
+    fn safety_g28_a_live_send_with_no_setup_file_refuses_and_only_example_data_goes_unread(
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
