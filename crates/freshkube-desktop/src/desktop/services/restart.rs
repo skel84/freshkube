@@ -157,10 +157,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (Some(node), Some(cluster)) = (
-            self.target.summary().cloned(),
-            self.overview.data().map(|cluster| cluster.name.clone()),
-        ) else {
+        let Some(node) = self.target.summary().cloned() else {
             return;
         };
         if let Some(why) = crate::mutation::refusal(cx) {

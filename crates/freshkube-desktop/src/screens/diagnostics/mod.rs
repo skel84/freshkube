@@ -586,9 +586,9 @@ impl DiagnosticsScreen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(source) = self.source.clone() else {
+        if self.source.is_none() {
             return;
-        };
+        }
         let Some(check) = self
             .loader
             .data()
@@ -599,7 +599,6 @@ impl DiagnosticsScreen {
         let Some(fix) = Self::applicable_fix(check).cloned() else {
             return;
         };
-        let check_id = check.id.clone();
         let operations = Operations::global(cx);
         let label = format!("Applying fix: {}", fix.description);
         let ticket = match operations.update(cx, |operations, cx| operations.begin(label, cx)) {
