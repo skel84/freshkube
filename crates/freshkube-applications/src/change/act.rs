@@ -259,8 +259,8 @@ impl ChangePage {
     }
 
     /// The Stage's Roll back lines (#845): the last Freight Kargo verified
-    /// first, then more earlier Freight to pick, each saying
-    /// what Kargo recorded. An unverified Freight can be picked, but is never
+    /// alone, or with none, a greyed line and up to two earlier Freight to
+    /// pick, each saying what Kargo recorded. An unverified Freight can be picked, but is never
     /// the first line. Greyed out with why when there is none, when none was
     /// verified, or while a Promotion runs.
     fn rollback_buttons(
@@ -299,21 +299,24 @@ impl ChangePage {
         // The best one first, then the others in history order.
         let mut order: Vec<usize> = (0..acts.earlier.len()).collect();
         order.sort_by_key(|&at| Some(&acts.earlier[at].freight) != best.as_ref());
-        for at in order.into_iter().take(SHOWN) {
+        // With a verified Freight, it is the one line: more would grow the
+        // Inspector's action block. With none, the picks are all there is.
+        let shown = if best.is_some() { 1 } else { SHOWN };
+        for at in order.into_iter().take(shown) {
             let earlier = &acts.earlier[at];
             let (label, tooltip) = match &earlier.evidence {
                 Evidence::Verified { .. } => (
-                    format!("Roll back to {} (verified)", earlier.freight),
+                    format!("Roll back {}", earlier.freight),
                     if Some(&earlier.freight) == best.as_ref() {
-                        "The newest earlier Freight Kargo verified in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
+                        "Verified in Kargo: the newest earlier Freight Kargo verified in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
                             .to_owned()
                     } else {
-                        "Kargo verified it in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
+                        "Verified in Kargo in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
                             .to_owned()
                     },
                 ),
                 Evidence::Unknown(why) => (
-                    format!("Roll back to {} (unverified)", earlier.freight),
+                    format!("Roll back {} (unverified)", earlier.freight),
                     format!(
                         "{why} Argo CD's health and Coroot's outcome weren't recorded for it either."
                     ),

@@ -308,7 +308,7 @@ fn a_buttons_tooltip_does_not_draw_once_the_pointer_is_on_its_neighbour(cx: &mut
 // ---- #845: the rollback helper ----
 
 #[gpui_kit::test]
-fn a_stage_lists_the_last_verified_freight_first_and_pressing_it_asks_for_that_rollback(
+fn a_stage_with_a_verified_earlier_freight_lists_it_alone_and_pressing_it_asks_for_that_rollback(
     cx: &mut TestAppContext,
 ) {
     let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
@@ -316,13 +316,13 @@ fn a_stage_lists_the_last_verified_freight_first_and_pressing_it_asks_for_that_r
     select(cx, handle, &page, "prod-ams-promotion");
     assert_eq!(
         label(cx, handle, 5).as_deref(),
-        Some("Roll back to calm-heron (verified)"),
-        "the newest Freight Kargo verified is the first line"
+        Some("Roll back calm-heron"),
+        "the newest Freight Kargo verified"
     );
     assert_eq!(
-        label(cx, handle, 6).as_deref(),
-        Some("Roll back to swift-wren (unverified)"),
-        "an unverified one can be picked, after it"
+        label(cx, handle, 6),
+        None,
+        "with a verified Freight it is the one line"
     );
     press(cx, handle, 5);
     let events = events.borrow();
@@ -349,7 +349,7 @@ fn with_nothing_verified_the_first_line_is_greyed_and_a_pick_is_never_the_main_a
     );
     assert_eq!(
         label(cx, handle, 6).as_deref(),
-        Some("Roll back to swift-wren (unverified)")
+        Some("Roll back swift-wren (unverified)")
     );
     press(cx, handle, 6);
     assert_eq!(events.borrow()[0].kind, ActKind::Rollback(0));
@@ -373,6 +373,5 @@ fn no_rollback_is_offered_while_a_promotion_runs(cx: &mut TestAppContext) {
     select(cx, handle, &page, "prod-ams-promotion");
     assert!(label(cx, handle, 5).is_some_and(|l| l.starts_with("Roll back")));
     press(cx, handle, 5);
-    press(cx, handle, 6);
     assert!(events.borrow().is_empty(), "Abort takes over");
 }
