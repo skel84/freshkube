@@ -257,7 +257,7 @@ pub fn resolve_build_namespace(template: &str, project: &str) -> Result<String, 
     let name = template.replace("{project}", project);
     namespace_name(&name, "delivery.build_namespace".into()).map_err(|_| {
         format!(
-            "delivery.build_namespace resolves to \"{name}\" for project {project}, which isn't a namespace name"
+            "The build namespace in the setup file resolves to \"{name}\" for project {project}, which isn't a namespace name"
         )
     })?;
     Ok(name)

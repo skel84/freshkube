@@ -201,7 +201,7 @@ fn build_namespace_resolution_checks_each_projects_result() {
         assert_eq!(
             resolve_build_namespace("{project}-ci", &project),
             Err(format!(
-                "delivery.build_namespace resolves to \"{name}\" for project {project}, which isn't a namespace name"
+                "The build namespace in the setup file resolves to \"{name}\" for project {project}, which isn't a namespace name"
             ))
         );
     }

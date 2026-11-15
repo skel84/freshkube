@@ -923,3 +923,47 @@ async fn a_refresh_that_fails_leaves_the_last_read_as_stale_evidence() {
     assert!(matches!(first, State::Stale { .. }), "{first:?}");
     assert!(first.evidence().is_some());
 }
+
+#[test]
+fn a_candidates_error_is_never_shown_as_rules_only() {
+    use super::{Scope, Unknown, keep_reason, nothing_read};
+    use crate::monitoring::{ErrorKind, QueryError};
+    let tried = vec![(
+        "monitoring/alertmanager".to_owned(),
+        QueryError::new(ErrorKind::Refused, "no access to the service"),
+    )];
+    // Objects exist and nothing answered with an error: rules only.
+    assert_eq!(nothing_read(true, &Scope::Cluster, &[]), Unknown::RulesOnly);
+    // A candidate answered with an error: a not-found with its reason, which
+    // draws as an error.
+    match nothing_read(true, &Scope::Cluster, &tried) {
+        Unknown::NotFound(reason) => {
+            assert!(reason.contains("monitoring/alertmanager said"), "{reason}");
+            assert!(reason.contains("no access to the service"), "{reason}");
+        }
+        other => panic!("{other:?}"),
+    }
+    // No objects and no candidates: an empty not-found.
+    assert_eq!(
+        nothing_read(false, &Scope::Cluster, &[]),
+        Unknown::NotFound(String::new())
+    );
+    // A page with nothing of its own keeps the connect step's reason; one
+    // that has its own, or no reason to keep, is left alone.
+    assert_eq!(
+        keep_reason(Unknown::NotFound(String::new()), Some("a said: no")),
+        Unknown::NotFound("a said: no".into())
+    );
+    assert_eq!(
+        keep_reason(Unknown::NotFound("its own".into()), Some("a said: no")),
+        Unknown::NotFound("its own".into())
+    );
+    assert_eq!(
+        keep_reason(Unknown::NotFound(String::new()), None),
+        Unknown::NotFound(String::new())
+    );
+    assert_eq!(
+        keep_reason(Unknown::RulesOnly, Some("a said: no")),
+        Unknown::RulesOnly
+    );
+}
