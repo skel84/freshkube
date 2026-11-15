@@ -80,6 +80,9 @@ impl std::fmt::Display for Unjudged {
     }
 }
 
+/// A named series, its limit and where to read it from a sample.
+type Series = (&'static str, Limit, fn(&Sample) -> f64);
+
 /// The series that grew, from `samples` in time order, leaving out those in
 /// the first `warmup` seconds.
 pub fn check(samples: &[Sample], warmup: u64) -> Result<Vec<Growth>, Unjudged> {
@@ -87,7 +90,7 @@ pub fn check(samples: &[Sample], warmup: u64) -> Result<Vec<Growth>, Unjudged> {
     if kept.len() < MIN_SAMPLES {
         return Err(Unjudged::TooFew { have: kept.len() });
     }
-    let series: [(&'static str, Limit, fn(&Sample) -> f64); 3] = [
+    let series: [Series; 3] = [
         ("memory (MB)", RSS, |s| s.rss_mb),
         ("threads", THREADS, |s| s.threads),
         ("open handles", FDS, |s| s.fds),
@@ -119,7 +122,7 @@ fn median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2.
     } else {
         sorted[mid]
