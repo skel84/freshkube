@@ -23,7 +23,9 @@ use freshkube_core::workloads::WorkloadKind;
 use serde_json::Value;
 
 use super::{EVENT_RETENTION, Item, Severity, Source, SourceRead};
+use crate::argocd;
 use crate::read::{ListRequest, Reader, Resource, Scope};
+use crate::source::Source as Listing;
 use freshkube_core::resources::Failure;
 
 /// Namespaces read at most; the rest are named in the sources' words.
@@ -55,6 +57,12 @@ pub struct Place {
     pub cluster: String,
     /// The workloads' namespaces, each with its workloads.
     pub workloads: Vec<(String, Vec<Workload>)>,
+    /// The application's Argo CD Applications in the open connection: each
+    /// namespace with the names in it.
+    pub argo: Vec<(String, Vec<String>)>,
+    /// How many of its Argo CD Applications are read through another
+    /// connection, so not here.
+    pub argo_elsewhere: usize,
 }
 
 /// What belongs to the application in one namespace, from its owners.
@@ -167,15 +175,20 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
     let from = scope.cluster.as_str();
     let namespaces: Vec<_> = scope.workloads.iter().take(MAX_NAMESPACES).collect();
     let skipped = scope.workloads.len().saturating_sub(MAX_NAMESPACES);
+    let synced = syncs(reader, scope, now, since).await;
     if namespaces.is_empty() {
+        let mut synced = Some(synced);
         return Source::ALL
             .into_iter()
-            .map(|source| {
-                let why = match source {
-                    Source::Promotions | Source::Syncs | Source::Incidents => NOT_YET,
-                    _ => "the application has no workload in this cluster",
-                };
-                SourceRead::not_read(source, from, now, why)
+            .map(|source| match source {
+                Source::Syncs => synced.take().unwrap_or_else(|| not_read(source, now)),
+                Source::Promotions | Source::Incidents => not_read(source, now),
+                _ => SourceRead::not_read(
+                    source,
+                    from,
+                    now,
+                    "the application has no workload in this cluster",
+                ),
             })
             .collect();
     }
@@ -265,13 +278,121 @@ pub async fn read(reader: &impl Reader, scope: &Place, now: i64, hours: u32) -> 
     };
     vec![
         not_read(Source::Promotions, now),
-        not_read(Source::Syncs, now),
+        synced,
         not_read(Source::Incidents, now),
         read(Source::Deploys, deploys).state_only(),
         read(Source::Events, events).kept_from(kept_from),
         read(Source::Restarts, restarts).state_only(),
         read(Source::Nodes, nodes).state_only(),
     ]
+}
+
+/// Syncs: the last operation of each of the application's Argo CD
+/// Applications, read from the Applications themselves. An Application keeps
+/// only its last operation (a failed one is gone once the next runs), so the
+/// source shows the latest state and vouches for no quiet hour. What it
+/// couldn't see is said: Applications read through another connection, a
+/// listing cut at the page cap, namespaces past the cap, a name the listing
+/// lacks.
+async fn syncs(reader: &impl Reader, scope: &Place, now: i64, since: i64) -> SourceRead {
+    let from = scope.cluster.as_str();
+    let gone = |why: &str| SourceRead::not_read(Source::Syncs, from, now, why);
+    if scope.argo.is_empty() {
+        return gone(if scope.argo_elsewhere > 0 {
+            "its Argo CD Applications are read through another connection"
+        } else {
+            "no Argo CD Application belongs to it"
+        });
+    }
+    let mut items = Vec::new();
+    let mut cuts = Vec::new();
+    for (namespace, names) in scope.argo.iter().take(MAX_NAMESPACES) {
+        let (listed, cut) = match argocd::read_applications(reader, namespace).await {
+            Listing::Read(list) => (list, None),
+            Listing::Capped(list, cap) => (
+                list,
+                Some(format!(
+                    "cut after {} Applications in {namespace}",
+                    cap.read
+                )),
+            ),
+            Listing::NotInstalled(_) => return gone("Argo CD's Applications are not served here"),
+            Listing::Refused(_) => return gone("Forbidden: can't list Applications"),
+            Listing::Unreadable(_) => return gone("can't list Applications"),
+        };
+        cuts.extend(cut);
+        for name in names {
+            match listed
+                .iter()
+                .find(|app| app.namespace == *namespace && app.name == *name)
+            {
+                Some(app) => items.extend(sync_item(app, since)),
+                None => cuts.push(format!("Application {name} not found in {namespace}")),
+            }
+        }
+    }
+    let skipped = scope.argo.len().saturating_sub(MAX_NAMESPACES);
+    if skipped > 0 {
+        cuts.push(format!(
+            "only the first {MAX_NAMESPACES} of {} Argo CD namespaces were read",
+            scope.argo.len()
+        ));
+    }
+    if scope.argo_elsewhere > 0 {
+        cuts.push(format!(
+            "{} Argo CD Applications are read through another connection",
+            scope.argo_elsewhere
+        ));
+    }
+    let mut read = SourceRead::read(Source::Syncs, from, now, items).state_only();
+    if !cuts.is_empty() {
+        read = read.cut(&cuts.join("; "));
+    }
+    read
+}
+
+/// An Application's last operation, when it ran in the window.
+fn sync_item(app: &argocd::Application, since: i64) -> Option<Item> {
+    let operation = app.operation.as_ref()?;
+    let stamp = |text: &Option<String>| {
+        text.as_deref()
+            .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+            .map(|time| time.timestamp())
+    };
+    let at = stamp(&operation.finished_at).or_else(|| stamp(&operation.started_at))?;
+    if at < since {
+        return None;
+    }
+    let phase = operation.phase.as_deref().unwrap_or("Unknown");
+    let severity = match phase {
+        "Failed" | "Error" => Severity::Bad,
+        "Running" | "Terminating" => Severity::Warn,
+        _ => Severity::Info,
+    };
+    let mut detail = Vec::new();
+    let revisions: Vec<String> = operation
+        .revisions
+        .iter()
+        .map(|revision| revision.chars().take(12).collect())
+        .collect();
+    if !revisions.is_empty() {
+        detail.push(format!("revision {}", revisions.join(", ")));
+    }
+    if let Some(retries) = operation.retry_count.filter(|count| *count > 0) {
+        detail.push(format!("retry {retries}"));
+    }
+    detail.extend(
+        operation
+            .message
+            .clone()
+            .filter(|message| !message.is_empty()),
+    );
+    Some(Item {
+        at,
+        severity,
+        title: format!("Sync {phase}: {}", app.name),
+        detail: detail.join(" · "),
+    })
 }
 
 fn not_read(source: Source, now: i64) -> SourceRead {

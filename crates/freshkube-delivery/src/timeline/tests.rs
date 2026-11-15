@@ -272,6 +272,7 @@ mod live {
                 "shop".into(),
                 vec![Workload::new("api", WorkloadKind::Deployment)],
             )],
+            ..Default::default()
         }
     }
 
@@ -405,13 +406,198 @@ mod live {
             Err("Forbidden: can't list events".into())
         );
         assert!(outcome(Source::Restarts).is_ok());
-        for source in [Source::Promotions, Source::Syncs, Source::Incidents] {
+        for source in [Source::Promotions, Source::Incidents] {
             assert_eq!(outcome(source), Err(live::NOT_YET.into()));
         }
         let timeline = derive(&reads, NOW, 3);
         assert!(timeline.chips.iter().any(
             |chip| chip.source == Source::Events && matches!(chip.state, ChipState::NotRead(_))
         ));
+    }
+
+    fn argo_app(name: &str, phase: &str, ago: i64) -> Value {
+        json!({"metadata": {"name": name, "namespace": "argocd"},
+            "spec": {"project": "shop", "destination": {"name": "in-cluster", "namespace": "shop"}},
+            "status": {"sync": {"status": "Synced"},
+                "operationState": {"phase": phase, "message": "one or more tasks failed",
+                    "retryCount": 2,
+                    "syncResult": {"revision": "0123456789abcdef0123456789abcdef01234567"},
+                    "startedAt": stamp(ago + 30), "finishedAt": stamp(ago)}}})
+    }
+
+    fn with_argo(names: &[&str]) -> Place {
+        Place {
+            argo: vec![(
+                "argocd".into(),
+                names.iter().map(|name| (*name).to_owned()).collect(),
+            )],
+            ..place()
+        }
+    }
+
+    fn argo_cluster(apps: Vec<Value>) -> FixtureReader {
+        cluster()
+            .serves("argoproj.io", "v1alpha1", &["applications"])
+            .with("applications", apps)
+    }
+
+    fn syncs(reads: &[SourceRead]) -> &SourceRead {
+        reads.iter().find(|r| r.source == Source::Syncs).unwrap()
+    }
+
+    #[tokio::test]
+    async fn syncs_are_the_applications_last_operation_inside_the_window() {
+        let reader = argo_cluster(vec![
+            argo_app("shop-prod", "Failed", 600),
+            argo_app("shop-old", "Succeeded", 5 * 3600),
+            argo_app("other", "Succeeded", 60),
+        ]);
+        let reads = live::read(&reader, &with_argo(&["shop-prod", "shop-old"]), NOW, 3).await;
+        let read = syncs(&reads);
+        let items = read.outcome.as_ref().unwrap();
+        // Only the application's own, and only the one inside the window.
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Sync Failed: shop-prod");
+        assert_eq!(items[0].severity, Severity::Bad);
+        assert_eq!(items[0].at, NOW - 600);
+        assert!(items[0].detail.contains("revision 0123456789ab"));
+        assert!(items[0].detail.contains("retry 2"));
+        assert_eq!(read.from, "core-fra");
+        // An Application keeps its last operation only.
+        assert!(read.state_only);
+        assert_eq!(read.cut, None);
+    }
+
+    #[tokio::test]
+    async fn syncs_vouch_for_no_quiet_hour_and_the_row_lists_them_apart() {
+        let reader = argo_cluster(vec![argo_app("shop-prod", "Succeeded", 5 * 3600)]);
+        let reads = live::read(&reader, &with_argo(&["shop-prod"]), NOW, 3).await;
+        let timeline = derive(&reads, NOW, 3);
+        for row in &timeline.rows {
+            if let Row::Quiet {
+                read, state_only, ..
+            } = row
+            {
+                assert!(!read.contains(&Source::Syncs));
+                assert!(state_only.contains(&Source::Syncs));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn applications_read_through_another_connection_cut_the_syncs() {
+        let reader = argo_cluster(vec![argo_app("shop-prod", "Succeeded", 60)]);
+        let place = Place {
+            argo_elsewhere: 2,
+            ..with_argo(&["shop-prod"])
+        };
+        let reads = live::read(&reader, &place, NOW, 3).await;
+        let read = syncs(&reads);
+        assert_eq!(read.outcome.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            read.cut.as_deref(),
+            Some("2 Argo CD Applications are read through another connection")
+        );
+        let only_elsewhere = Place {
+            argo_elsewhere: 1,
+            ..place_without_argo()
+        };
+        let reads = live::read(&reader, &only_elsewhere, NOW, 3).await;
+        assert_eq!(
+            syncs(&reads).outcome,
+            Err("its Argo CD Applications are read through another connection".into())
+        );
+    }
+
+    fn place_without_argo() -> Place {
+        place()
+    }
+
+    #[tokio::test]
+    async fn an_application_none_belongs_to_asks_argo_cd_nothing() {
+        let reader = argo_cluster(vec![argo_app("shop-prod", "Failed", 60)]);
+        let reads = live::read(&reader, &place(), NOW, 3).await;
+        assert_eq!(
+            syncs(&reads).outcome,
+            Err("no Argo CD Application belongs to it".into())
+        );
+        assert!(
+            !reader
+                .requests
+                .borrow()
+                .iter()
+                .any(|r| r.contains("applications")),
+            "{:?}",
+            reader.requests.borrow()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_or_unserved_listing_is_not_read_and_the_others_stand() {
+        let refused = argo_cluster(Vec::new()).refusing("applications");
+        let reads = live::read(&refused, &with_argo(&["shop-prod"]), NOW, 3).await;
+        assert_eq!(
+            syncs(&reads).outcome,
+            Err("Forbidden: can't list Applications".into())
+        );
+        let events = reads.iter().find(|r| r.source == Source::Events).unwrap();
+        assert!(events.outcome.is_ok());
+        // Argo CD's API isn't served by this cluster.
+        let unserved = cluster();
+        let reads = live::read(&unserved, &with_argo(&["shop-prod"]), NOW, 3).await;
+        assert!(syncs(&reads).outcome.is_err());
+        let timeline = derive(&reads, NOW, 3);
+        assert!(timeline.chips.iter().any(
+            |chip| chip.source == Source::Syncs && matches!(chip.state, ChipState::NotRead(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_missing_application_a_capped_listing_and_extra_namespaces_cut_the_syncs() {
+        let reader = argo_cluster(vec![argo_app("shop-prod", "Succeeded", 60)]);
+        let reads = live::read(&reader, &with_argo(&["shop-prod", "shop-gone"]), NOW, 3).await;
+        assert_eq!(
+            syncs(&reads).cut.as_deref(),
+            Some("Application shop-gone not found in argocd")
+        );
+        let capped =
+            argo_cluster(vec![argo_app("shop-prod", "Succeeded", 60)]).capped("applications");
+        let reads = live::read(&capped, &with_argo(&["shop-prod"]), NOW, 3).await;
+        assert!(
+            syncs(&reads)
+                .cut
+                .as_deref()
+                .unwrap()
+                .starts_with("cut after")
+        );
+        let many = Place {
+            argo: (0..live::MAX_NAMESPACES + 1)
+                .map(|ix| (format!("argo-{ix}"), vec!["shop-prod".to_owned()]))
+                .collect(),
+            ..place()
+        };
+        let reads = live::read(&reader, &many, NOW, 3).await;
+        assert!(
+            syncs(&reads)
+                .cut
+                .as_deref()
+                .unwrap()
+                .contains("only the first 5 of 6 Argo CD namespaces were read")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_workloadless_application_still_reads_its_syncs() {
+        let reader = argo_cluster(vec![argo_app("shop-prod", "Succeeded", 60)]);
+        let place = Place {
+            cluster: "core-fra".into(),
+            argo: vec![("argocd".into(), vec!["shop-prod".into()])],
+            ..Default::default()
+        };
+        let reads = live::read(&reader, &place, NOW, 3).await;
+        assert_eq!(syncs(&reads).outcome.as_ref().unwrap().len(), 1);
+        let events = reads.iter().find(|r| r.source == Source::Events).unwrap();
+        assert!(events.outcome.is_err());
     }
 
     #[tokio::test]
@@ -490,6 +676,7 @@ mod live {
                     Workload::new("db", WorkloadKind::StatefulSet),
                 ],
             )],
+            ..Default::default()
         };
         let reads = live::read(&reader, &place, NOW, 3).await;
         let mut events = titles(&reads, Source::Events);
@@ -589,6 +776,7 @@ mod live {
                     )
                 })
                 .collect(),
+            ..Default::default()
         };
         let reads = live::read(&cluster(), &many, NOW, 3).await;
         for source in [
@@ -612,6 +800,7 @@ mod live {
         let nowhere = Place {
             cluster: "core-fra".into(),
             workloads: Vec::new(),
+            ..Default::default()
         };
         let reads = live::read(&reader, &nowhere, NOW, 3).await;
         assert!(reads.iter().all(|read| read.outcome.is_err()));
