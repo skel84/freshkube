@@ -108,7 +108,7 @@ Observability no longer holds the connection: with none, its card is one line, "
 
 ## Notifications
 
-`desktop/settings/notifications.rs`. An immediate-save form over the app's `Followed` owner ([followed.md](followed.md)), saved in `follows.json` beside the preferences as each control changes: **Group updates** (on by default), **Quiet hours** (off by default; a start and an end in half hours, and failures still come through), **Hide details** (Default is on for protected and read-only clusters, On, Off), and **Followed**, every followed item with what it reads, when it ends and its state, and Stop. A follow that can't be read says "Not watching" and why. The macOS permission row arrives with banners.
+`desktop/settings/notifications.rs`. An immediate-save form over the app's `Followed` owner ([followed.md](followed.md)), saved in `follows.json` beside the preferences as each control changes: **Group updates** (on by default), **Quiet hours** (off by default; a start and an end in half hours, and failures still come through), **Hide details** (Default is on for protected and read-only clusters, On, Off), and **Followed**, every followed item with what it reads, when it ends and its state, and Stop. A follow that can't be read says "Not watching" and why. **Banners** says where the system's permission stands: not available (no native sink on this system), asked at the first follow, waiting, allowed, or refused. Banners show only while the app isn't in front; the native macOS call is a later step, so today every system shows toasts.
 
 ## About and the crash log
 
