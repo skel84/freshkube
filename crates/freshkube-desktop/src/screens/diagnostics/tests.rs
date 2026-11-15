@@ -900,7 +900,7 @@ fn apply_fix_uses_the_check_confirmed_when_a_refresh_lands_during_the_read(
         let notice = screen.read(cx).notice.as_ref().expect("a notice");
         assert!(notice.ok, "{}", notice.text);
         assert_eq!(notice.key, KUBELET);
-        assert!(notice.text.contains("Restart kubelet"), "{}", notice.text);
+        assert!(notice.text.contains("restart kubelet"), "{}", notice.text);
     });
     assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
 }
