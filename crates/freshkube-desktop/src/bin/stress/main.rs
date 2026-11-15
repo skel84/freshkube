@@ -465,15 +465,40 @@ async fn answer(
         Fault::Refuse => return Ok(failure_status(StatusCode::FORBIDDEN, "Forbidden")),
         Fault::Gone => return Ok(failure_status(StatusCode::GONE, "Expired")),
     }
-    Ok(respond(world, request))
+    let response = respond(world, request);
+    // A watch the plan cuts is ended by the server after its time, as a
+    // proxy or a restarted API server would end it. The app opens the next.
+    let cut = world
+        .faults
+        .lock()
+        .expect("faults")
+        .as_mut()
+        .and_then(|plan| plan.cut(world.started.elapsed(), watching));
+    Ok(match cut {
+        Some(after) => cut_stream(response, after),
+        None => response,
+    })
+}
+
+/// `response` with its body ended after `after`.
+fn cut_stream(response: Response<Body>, after: Duration) -> Response<Body> {
+    let (parts, body) = response.into_parts();
+    let stream = body
+        .into_data_stream()
+        .take_until(tokio::time::sleep(after))
+        .map(|chunk| match chunk {
+            Ok(bytes) => Ok::<_, Infallible>(Frame::data(bytes)),
+            Err(never) => match never {},
+        });
+    Response::from_parts(parts, StreamBody::new(stream.boxed()).boxed_unsync())
 }
 
 /// The faults injected so far, cumulative.
 fn faults_line(plan: &FaultPlan) -> String {
     let c = plan.counts();
     format!(
-        "stress server faults refused={} dropped={} slow={} gone={}",
-        c.refused, c.dropped, c.slow, c.gone
+        "stress server faults refused={} dropped={} slow={} gone={} cut={}",
+        c.refused, c.dropped, c.slow, c.gone, c.cut
     )
 }
 
@@ -938,6 +963,18 @@ mod tests {
         assert_eq!(get(address, "/api/v1/pods").await, Some(200));
         assert_eq!(get(address, "/api/v1/pods?watch=true").await, Some(410));
         assert_eq!(counts(&world).gone, 1);
+    }
+
+    #[tokio::test]
+    async fn a_watch_is_ended_by_the_server_after_its_cut_time() {
+        let (world, address) = server("cut=1,after=0").await;
+        let started = Instant::now();
+        // The pods watch stays open; the read ends only because it is cut.
+        assert_eq!(get(address, "/api/v1/pods?watch=true").await, Some(200));
+        let open = started.elapsed();
+        assert!(open >= Duration::from_millis(900), "{open:?}");
+        assert!(open < Duration::from_secs(4), "{open:?}");
+        assert_eq!(counts(&world).cut, 1);
     }
 
     #[tokio::test]

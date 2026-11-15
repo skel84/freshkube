@@ -11,6 +11,7 @@
 //! | `drop` | chance 0–1 | the connection closes with no answer |
 //! | `slow` | `chance@milliseconds` | the answer waits that long |
 //! | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
+//! | `cut` | seconds | every watch that starts is ended by the server after this long, so the app opens the next one |
 //! | `after` | seconds, default 20 | no fault before this, so the app can start |
 //! | `seed` | integer, default 1 | the generator's seed |
 
@@ -33,6 +34,7 @@ pub struct Counts {
     pub dropped: u64,
     pub slow: u64,
     pub gone: u64,
+    pub cut: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -42,6 +44,7 @@ pub struct FaultPlan {
     slow: f64,
     slow_for: Duration,
     gone_every: Option<Duration>,
+    cut_after: Option<Duration>,
     after: Duration,
     state: u64,
     next_gone: Option<Duration>,
@@ -58,6 +61,7 @@ impl FaultPlan {
             slow: 0.,
             slow_for: Duration::ZERO,
             gone_every: None,
+            cut_after: None,
             after: Duration::from_secs(20),
             state: 1,
             next_gone: None,
@@ -92,6 +96,10 @@ impl FaultPlan {
                 "gone" => {
                     let seconds = whole(name, value)?;
                     plan.gone_every = (seconds > 0).then(|| Duration::from_secs(seconds));
+                }
+                "cut" => {
+                    let seconds = whole(name, value)?;
+                    plan.cut_after = (seconds > 0).then(|| Duration::from_secs(seconds));
                 }
                 "after" => plan.after = Duration::from_secs(whole(name, value)?),
                 "seed" => plan.state = whole(name, value)?,
@@ -131,6 +139,16 @@ impl FaultPlan {
         } else {
             Fault::None
         }
+    }
+
+    /// How long a watch that starts `elapsed` into the run may stay open, if
+    /// the plan cuts watches. Only a watch is cut, and not before `after`.
+    pub fn cut(&mut self, elapsed: Duration, watching: bool) -> Option<Duration> {
+        let cut = self.cut_after?;
+        (watching && elapsed >= self.after).then(|| {
+            self.counts.cut += 1;
+            cut
+        })
     }
 
     pub fn counts(&self) -> Counts {
@@ -230,12 +248,24 @@ mod tests {
     }
 
     #[test]
+    fn only_a_watch_after_the_grace_period_is_cut() {
+        let mut plan = FaultPlan::parse("cut=90,after=10").unwrap();
+        let at = |s| Duration::from_secs(s);
+        assert_eq!(plan.cut(at(5), true), None, "before the grace period");
+        assert_eq!(plan.cut(at(50), false), None, "a list is never cut");
+        assert_eq!(plan.cut(at(50), true), Some(at(90)));
+        assert_eq!(plan.counts().cut, 1);
+        assert_eq!(FaultPlan::parse("").unwrap().cut(at(50), true), None);
+    }
+
+    #[test]
     fn bad_text_is_refused_with_its_name() {
         for (text, wanted) in [
             ("drop=2", "drop"),
             ("refuse=x", "refuse"),
             ("slow=0.5", "chance@milliseconds"),
             ("gone=-1", "gone"),
+            ("cut=x", "cut"),
             ("flood=1", "unknown fault `flood`"),
             ("drop", "name=value"),
         ] {

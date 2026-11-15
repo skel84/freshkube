@@ -48,7 +48,10 @@ if [[ -n ${FRESHKUBE_STRESS_SAMPLES:-} ]]; then
     # Keep the display and the machine awake for as long as the run lasts.
     if command -v caffeinate >/dev/null; then caffeinate -dimsu -w $stress_pid & fi
     soak_run $stress_pid $FRESHKUBE_STRESS_SAMPLES ${FRESHKUBE_STRESS_SAMPLE_EVERY:-30}
-    wait $stress_pid
+    # Not `wait` alone: under set -e a failing app would end the script before
+    # its messages (a bad FRESHKUBE_STRESS_FAULTS) are shown below.
+    run_rc=0
+    wait $stress_pid || run_rc=$?
 else
     "$stress_binary" "$@" 2> $out/$label.log
 fi
@@ -56,6 +59,7 @@ fi
 # doesn't return through main), so only the last of them is shown.
 /usr/bin/grep -E '^(summary|stress:|stress server)' $out/$label.log | /usr/bin/grep -v '^stress server faults' || true
 /usr/bin/grep '^stress server faults' $out/$label.log | tail -1 || true
+if [[ ${run_rc:-0} != 0 ]]; then exit $run_rc; fi
 if [[ $1 == monitoring ]]; then
     . $root/scripts/stress/report.sh
     monitoring_verdict $out/$label.log "${FRESHKUBE_STRESS_KEYS:-}"

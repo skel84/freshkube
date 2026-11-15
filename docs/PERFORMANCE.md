@@ -20,7 +20,7 @@ SOAK_EVERY=10 SOAK_WARMUP=120 FRESHKUBE_STRESS_FAULTS='refuse=0.05,gone=120' scr
 
 It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and takes the same lock. The samples are kept in `target/soak/<label>.csv` (`second,rss_mb,threads,fds`) and the per-second report in `target/stress/soak-<label>.log`; the faults injected so far are logged as they happen (`stress server faults …`; a Mac's native quit doesn't return through `main`) and the last line is shown at the end, then the verdict.
 
-**Faults.** `FRESHKUBE_STRESS_FAULTS` is comma-separated `name=value`; `freshkube-probe`'s `faults.rs` parses it, from a seeded generator, so a run with the same seed meets the same faults. The default of `soak.sh` is `refuse=0.01,drop=0.01,slow=0.02@1500,gone=300`.
+**Faults.** `FRESHKUBE_STRESS_FAULTS` is comma-separated `name=value`; `freshkube-probe`'s `faults.rs` parses it, from a seeded generator, so a run with the same seed meets the same faults. The default of `soak.sh` is `refuse=0.01,drop=0.01,slow=0.02@1500,gone=300,cut=120`.
 
 | Name | Value | Fault |
 | --- | --- | --- |
@@ -28,6 +28,7 @@ It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and take
 | `drop` | chance 0–1 | the connection closes with no answer |
 | `slow` | `chance@milliseconds` | the answer waits that long |
 | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
+| `cut` | seconds | every watch that starts is ended by the server after this long; the app opens the next one, which meets the other faults |
 | `after` | seconds, default 20 | no fault before this, so the app can start |
 | `seed` | integer, default 1 | the generator's seed |
 
@@ -35,7 +36,7 @@ It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and take
 
 **Detection floor.** The gain that counts is between the first and last third's medians, about two thirds of the run apart. It must pass the larger of the absolute and the relative limit, so memory growth under 20 MB over those two thirds is never reported, and on a process over 400 MB the 5% limit wins (at 1 GB, 50 MB). In a 4-hour run that is about 8 MB an hour at best; a slower leak needs a longer run. Threads under 8 and handles under 16 are missed the same way.
 
-**Faults hit at the start of a request only.** An answer is refused, dropped, slowed or made Gone before it begins, so a watch that is already open is never cut mid-stream; the app meets the cut only when it opens its next watch. A mid-stream drop can be added later.
+**Faults hit at the start of a request.** An answer is refused, dropped, slowed or made Gone before it begins. A quiet scenario makes few requests after the app has synced (`summary-burst` makes about 45, all in the first seconds), so without `cut` a short run injects nothing past the `after` grace period. `cut` ends every open watch after that many seconds, with the stream closing cleanly, so the app opens the next one and the faults keep landing for the length of the run. A watch is never dropped with an error mid-stream.
 
 **Care of the run.** `stress.sh` ends the app itself on Ctrl-C or a terminated script (a background command ignores SIGINT in non-interactive zsh, so the app would otherwise draw on for hours) and runs `caffeinate -dimsu` for the length of the run, so the display can't sleep. Handles are counted with `lsof -n -P -a -d 0-65535`, numeric descriptors only, so mapped libraries don't lift the baseline.
 
