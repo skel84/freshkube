@@ -67,6 +67,17 @@ impl SettingsField {
         section: "settings-destinations",
         field: "destinations",
     };
+
+    /// What the setting decides, in plain words that finish "Set …". The
+    /// file's key goes in a tooltip or the Inspector, after this.
+    pub fn means(&self) -> &'static str {
+        match self.field {
+            "delivery.build_namespace" => "where builds run",
+            "delivery.stage_naming" => "how an Application's name gives its Stage",
+            "destinations" => "which cluster each Argo CD destination is",
+            _ => "this setting",
+        }
+    }
 }
 
 /// The one next step a cause offers. None changes anything in a cluster.

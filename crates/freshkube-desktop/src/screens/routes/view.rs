@@ -297,7 +297,11 @@ impl Render for RoutesScreen {
                         this.child(
                             page::capped_notes(
                                 "routes-notices",
-                                if short { dp(60.).into() } else { Length::Auto },
+                                if short {
+                                    page::banner_lines_cap(3, window).into()
+                                } else {
+                                    Length::Auto
+                                },
                                 &self.notes_scroll,
                                 notices.into_iter().chain(failure),
                                 Some(palette(cx).line),

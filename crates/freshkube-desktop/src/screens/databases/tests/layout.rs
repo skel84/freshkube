@@ -300,9 +300,12 @@ fn the_stacked_inspector_stays_reachable_under_a_long_coverage_banner(cx: &mut T
             assert_eq!(window.rem_size(), px(20.));
             let banner = window.find("databases-notices").bounds();
             assert!(
-                // The cap's content box and padding, and the 1 px edge
-                // outside the cap.
-                banner.size.height <= px(80. * 20. / 13.) + px(2.),
+                // The cap's content box (three whole lines under the
+                // banner's frame), its padding, and the 1 px edge outside it.
+                banner.size.height
+                    <= freshkube_ui::page::banner_lines_cap(3, window)
+                        + crate::ui::dp_px(20., window)
+                        + px(2.),
                 "{shape}: banner {banner:?}"
             );
             let before = window.find("databases-detail").bounds().origin.y;
@@ -330,6 +333,52 @@ fn the_stacked_inspector_stays_reachable_under_a_long_coverage_banner(cx: &mut T
                 verdict.top() >= px(0.) && verdict.bottom() <= px(560.),
                 "{shape}: the verdict is out of the window: {verdict:?}"
             );
+        })
+        .unwrap();
+    }
+}
+
+/// A short window's capped coverage banner ends between two lines of its
+/// words, at every text size, never through one (#1052).
+#[gpui_kit::test]
+fn a_capped_coverage_banner_ends_between_lines(cx: &mut TestAppContext) {
+    for text in [13., 20.] {
+        let (_runtime, window, pilot) = crate::desktop::tests::fixture(cx, 760., 560.);
+        cx.update_window(window, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            window.press("secondary-shift-d", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let page = cx.read(|cx| pilot.read(cx).databases());
+        cx.update_window(window, |_, window, cx| {
+            page.update(cx, |page, cx| {
+                page.shape = "stale".into();
+                page.loader.reset();
+                page.read(cx);
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let scroll = page.read(cx).notes_scroll.clone();
+            assert!(
+                scroll.max_offset().y > px(0.),
+                "{text}: the long banner scrolls"
+            );
+            let shown = scroll.bounds().size.height;
+            let cap = freshkube_ui::page::banner_lines_cap(3, window);
+            assert!(
+                (shown - cap).abs() <= px(1.),
+                "{text}: {shown:?} is not {cap:?}"
+            );
+            let banner = window.find("databases-coverage").bounds();
+            // The viewport shows the lead and two lines of words whole: its
+            // bottom is the banner's top plus the frame plus three lines.
+            let lines = (shown - (cap - px(0.))).abs();
+            assert!(lines <= px(1.), "{text}: {lines:?} off in {banner:?}");
         })
         .unwrap();
     }

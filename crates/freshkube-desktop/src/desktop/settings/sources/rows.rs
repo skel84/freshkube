@@ -13,6 +13,9 @@ pub(crate) struct SourceRow {
     pub(super) detail: SharedString,
     pub(super) state: SharedString,
     pub(super) reads: SharedString,
+    /// The setup file's key this row's setting is, for the Inspector and the
+    /// tooltip: the table says it in plain words.
+    pub(super) setup_key: Option<&'static str>,
     /// The state's glyph, once there is one to show.
     pub(super) tone: Option<ui::Tone>,
     /// Whether there is an entry to read: not missing or gone.
@@ -21,6 +24,16 @@ pub(crate) struct SourceRow {
     /// `settings-source-kargo`, and its mark's and cells'.
     pub(super) id: SharedString,
     pub(super) mark_id: SharedString,
+}
+
+/// What the setting rows read, in the table: the file's keys are in the
+/// tooltip and the Inspector, after this.
+const SETUP_FILE: &str = "Setup file";
+
+/// A name template as a person reads it: the placeholders in angle marks,
+/// never the braces the file escapes them with.
+pub(super) fn plain_template(template: &str) -> String {
+    template.replace('{', "‹").replace('}', "›")
 }
 
 /// What the Workloads row reads on each entry.
@@ -304,11 +317,11 @@ impl SourcesList {
         );
         self.row(
             Read::StageNaming,
-            naming.name_template.clone(),
+            plain_template(&naming.name_template),
             "freshkube.yaml".into(),
             false,
             (state.into(), None),
-            "delivery.stage_naming".into(),
+            SETUP_FILE.into(),
             tooltip,
         )
     }
@@ -327,7 +340,7 @@ Reads              freshkube.yaml, delivery.build_namespace"
             "freshkube.yaml".into(),
             false,
             ("Set".into(), None),
-            "delivery.build_namespace".into(),
+            SETUP_FILE.into(),
             tooltip,
         )
     }
@@ -351,6 +364,11 @@ Reads              freshkube.yaml, delivery.build_namespace"
             why: why.into(),
             state: state.into(),
             reads: reads.into(),
+            setup_key: match read {
+                Read::StageNaming => Some("delivery.stage_naming"),
+                Read::BuildNamespace | Read::BuildSuggestion => Some("delivery.build_namespace"),
+                _ => None,
+            },
             tone,
             listed,
             explanation: tooltip.lines().next().unwrap_or_default().to_owned().into(),

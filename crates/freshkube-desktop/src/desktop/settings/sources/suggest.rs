@@ -320,7 +320,7 @@ impl SourcesList {
                     } => {
                         let partial = !unexplained.is_empty();
                         (
-                            template.clone(),
+                            super::rows::plain_template(template),
                             match partial {
                                 true => "Partial fit",
                                 false => "Suggested",
@@ -387,7 +387,7 @@ impl SourcesList {
                     item.found_from.clone(),
                     true,
                     (state.to_owned(), tone),
-                    "delivery.build_namespace".to_owned(),
+                    "Setup file".to_owned(),
                     tooltip,
                 );
                 self.finder.accept = accept;

@@ -295,7 +295,7 @@ pub(super) fn next_words(next: &Next) -> String {
         Next::Retry => "Read it again.".into(),
         Next::OpenSettings(field) => format!(
             "Set {} in Settings › {}.",
-            field.field,
+            field.means(),
             settings_title(field.section)
         ),
         Next::CheckSources => format!(
