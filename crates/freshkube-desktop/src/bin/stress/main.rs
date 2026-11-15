@@ -479,20 +479,28 @@ async fn answer(
         .faults
         .lock()
         .expect("faults")
-        .as_mut()
+        .as_ref()
         .and_then(|plan| plan.cut(world.started.elapsed(), watching));
     Ok(match cut {
-        Some(after) => cut_stream(response, after),
+        Some(after) => cut_stream(world.clone(), response, after),
         None => response,
     })
 }
 
-/// `response` with its body ended after `after`.
-fn cut_stream(response: Response<Body>, after: Duration) -> Response<Body> {
+/// `response` with its body ended after `after`. The cut is counted and
+/// logged when it happens, not when it is scheduled.
+fn cut_stream(world: Arc<World>, response: Response<Body>, after: Duration) -> Response<Body> {
     let (parts, body) = response.into_parts();
+    let cut = async move {
+        tokio::time::sleep(after).await;
+        if let Some(plan) = world.faults.lock().expect("faults").as_mut() {
+            plan.record_cut();
+            eprintln!("{}", faults_line(plan));
+        }
+    };
     let stream = body
         .into_data_stream()
-        .take_until(tokio::time::sleep(after))
+        .take_until(cut)
         .map(|chunk| match chunk {
             Ok(bytes) => Ok::<_, Infallible>(Frame::data(bytes)),
             Err(never) => match never {},
@@ -982,6 +990,18 @@ mod tests {
         assert!(open >= Duration::from_millis(900), "{open:?}");
         assert!(open < Duration::from_secs(4), "{open:?}");
         assert_eq!(counts(&world).cut, 1);
+    }
+
+    #[tokio::test]
+    async fn a_watch_opened_in_the_grace_period_is_cut_when_it_ends() {
+        let (world, address) = server("cut=1,after=2").await;
+        let started = Instant::now();
+        assert_eq!(get(address, "/api/v1/pods?watch=true").await, Some(200));
+        let open = started.elapsed();
+        // Cut at after + cut = 3 s into the run, not 1 s after it opened.
+        assert!(open >= Duration::from_millis(2800), "{open:?}");
+        assert!(open < Duration::from_secs(5), "{open:?}");
+        assert_eq!(counts(&world).cut, 1, "counted once it ended");
     }
 
     #[tokio::test]

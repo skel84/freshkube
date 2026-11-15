@@ -142,13 +142,20 @@ impl FaultPlan {
     }
 
     /// How long a watch that starts `elapsed` into the run may stay open, if
-    /// the plan cuts watches. Only a watch is cut, and not before `after`.
-    pub fn cut(&mut self, elapsed: Duration, watching: bool) -> Option<Duration> {
+    /// the plan cuts watches. Only a watch is cut. One that opens inside the
+    /// grace period is cut `cut` after the period ends, so the watches every
+    /// app opens at start are cut too, and the app's next ones meet the faults.
+    pub fn cut(&self, elapsed: Duration, watching: bool) -> Option<Duration> {
         let cut = self.cut_after?;
-        (watching && elapsed >= self.after).then(|| {
-            self.counts.cut += 1;
-            cut
+        watching.then(|| match elapsed < self.after {
+            true => self.after + cut - elapsed,
+            false => cut,
         })
+    }
+
+    /// Counts a watch the server has just ended.
+    pub fn record_cut(&mut self) {
+        self.counts.cut += 1;
     }
 
     pub fn counts(&self) -> Counts {
@@ -248,14 +255,24 @@ mod tests {
     }
 
     #[test]
-    fn only_a_watch_after_the_grace_period_is_cut() {
+    fn a_watch_is_cut_a_cut_time_after_it_opens_or_after_the_grace_period() {
         let mut plan = FaultPlan::parse("cut=90,after=10").unwrap();
         let at = |s| Duration::from_secs(s);
-        assert_eq!(plan.cut(at(5), true), None, "before the grace period");
         assert_eq!(plan.cut(at(50), false), None, "a list is never cut");
-        assert_eq!(plan.cut(at(50), true), Some(at(90)));
-        assert_eq!(plan.counts().cut, 1);
+        assert_eq!(
+            plan.cut(at(50), true),
+            Some(at(90)),
+            "after the grace period"
+        );
+        assert_eq!(
+            plan.cut(at(2), true),
+            Some(at(98)),
+            "opened inside it: cut at after + cut, 100 s into the run"
+        );
         assert_eq!(FaultPlan::parse("").unwrap().cut(at(50), true), None);
+        assert_eq!(plan.counts().cut, 0, "only a watch actually ended counts");
+        plan.record_cut();
+        assert_eq!(plan.counts().cut, 1);
     }
 
     #[test]

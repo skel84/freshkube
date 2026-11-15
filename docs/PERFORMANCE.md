@@ -28,7 +28,7 @@ It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and take
 | `drop` | chance 0–1 | the connection closes with no answer |
 | `slow` | `chance@milliseconds` | the answer waits that long |
 | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
-| `cut` | seconds | every watch that starts is ended by the server after this long; the app opens the next one, which meets the other faults |
+| `cut` | seconds | every watch is ended by the server `cut` seconds after it opens, or `cut` seconds after the `after` grace period ends if it opened inside it; the app opens the next one, which meets the other faults. The count and the log line come when the watch ends |
 | `after` | seconds, default 20 | no fault before this, so the app can start |
 | `seed` | integer, default 1 | the generator's seed |
 
@@ -36,7 +36,7 @@ It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and take
 
 **Detection floor.** The gain that counts is between the first and last third's medians, about two thirds of the run apart. It must pass the larger of the absolute and the relative limit, so memory growth under 20 MB over those two thirds is never reported, and on a process over 400 MB the 5% limit wins (at 1 GB, 50 MB). In a 4-hour run that is about 8 MB an hour at best; a slower leak needs a longer run. Threads under 8 and handles under 16 are missed the same way.
 
-**Faults hit at the start of a request.** An answer is refused, dropped, slowed or made Gone before it begins. A quiet scenario makes few requests after the app has synced (`summary-burst` makes about 45, all in the first seconds), so without `cut` a short run injects nothing past the `after` grace period. `cut` ends every open watch after that many seconds, with the stream closing cleanly, so the app opens the next one and the faults keep landing for the length of the run. A watch is never dropped with an error mid-stream.
+**Faults hit at the start of a request.** An answer is refused, dropped, slowed or made Gone before it begins. A quiet scenario makes few requests after the app has synced (`summary-burst` makes about 45, all in the first seconds), so without `cut` a short run injects nothing past the `after` grace period. `cut` ends every watch after that many seconds (those opened at start, inside the grace period, `cut` seconds after it ends: 140 s with the default plan), with the stream closing cleanly, so the app opens the next one and the faults keep landing for the length of the run. A watch is never dropped with an error mid-stream.
 
 **Care of the run.** `stress.sh` ends the app itself on Ctrl-C or a terminated script (a background command ignores SIGINT in non-interactive zsh, so the app would otherwise draw on for hours) and runs `caffeinate -dimsu` for the length of the run, so the display can't sleep. Handles are counted with `lsof -n -P -a -d 0-65535`, numeric descriptors only, so mapped libraries don't lift the baseline.
 
