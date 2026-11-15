@@ -117,17 +117,30 @@ async fn safety_g28_a_file_that_cannot_say_sends_nothing_at_every_held_level() {
 }
 
 /// An unchanged file, and a looser one, send as before: the file only ever
-/// tightens.
+/// tightens. The same setup then refuses a file that can't be read, which
+/// proves the file was read at all.
 #[tokio::test(start_paused = true)]
 async fn an_unchanged_or_looser_file_sends_as_before() {
     for to in [Protection::Guarded, Protection::Open] {
         let (cluster, dir) = (Cluster::new(), tmp());
-        let (runner, _) = runner(&cluster, dir.path(), Protection::Guarded);
+        let (runner, path) = runner(&cluster, dir.path(), Protection::Guarded);
         let prepared = ready(&runner, fake::scale(3)).await;
         file(dir.path(), &[("prod-fra", to)]);
         let finished = run(&runner, prepared, Confirmation::Confirmed).await;
         assert_eq!(finished.headline(), Headline::Done, "{to:?}");
         assert_eq!(runner.level_for(&fake::scale(3)), Protection::Guarded);
+        // The guard is live: the same runner, a garbled file, nothing more is
+        // written.
+        let writes = cluster.writes().len();
+        let prepared = ready(&runner, fake::scale(4)).await;
+        std::fs::write(&path, "clusters: [[[").unwrap();
+        let refused = run(&runner, prepared, Confirmation::Confirmed).await;
+        assert!(
+            matches!(refused.status, Status::NotSent(NotSent::Unchecked(_))),
+            "{:?}",
+            refused.status
+        );
+        assert_eq!(cluster.writes().len(), writes);
     }
 }
 
