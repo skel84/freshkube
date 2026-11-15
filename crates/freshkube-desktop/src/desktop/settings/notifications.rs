@@ -101,6 +101,10 @@ impl SettingsPage {
     ) -> impl IntoElement {
         let settings = owner.read(cx).settings();
         let default_hides = owner.read(cx).hides_by_default();
+        let permission = owner
+            .read(cx)
+            .permission()
+            .label(owner.read(cx).banners_native());
         // Said once, on the first group, and only where something is saved.
         let saves = owner.read(cx).saves();
         let saved_once = move |group: form::Group| match saves {
@@ -336,6 +340,18 @@ impl SettingsPage {
                         time("notifications-until", settings.quiet.until, |s, by| {
                             s.quiet.until = shifted(s.quiet.until, by);
                         }),
+                    ))
+                    .render(cx),
+            )
+            .child(
+                form::group("notifications-permission-group", "Banners")
+                    .narrow(narrow)
+                    .row(form::row(
+                        "notifications-permission-row",
+                        "System permission",
+                        div()
+                            .id("notifications-permission")
+                            .child(permission),
                     ))
                     .render(cx),
             )

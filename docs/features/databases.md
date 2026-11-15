@@ -160,8 +160,8 @@ unsupported version, refusal, timeout, connection failure, successful empty
 lists and capped/partial lists are distinct. A refused list never proves no
 backups or no schedule; the Inspector says schedule coverage is Unknown. On a same-identity refresh a failed kind retains its
 last records marked stale, with its original timestamp and the new failure.
-Other kinds can still answer. Complete initial discovery absence of both operators says no database operator
-is installed (API not served); refused discovery says Unknown.
+Other kinds can still answer. Complete initial discovery absence of both operators says no database operators were
+found (they are optional); refused discovery says Unknown.
 
 A cluster's newest observed backup attempt is separate from its last observed
 completed backup. Freshness compares the completed backup's time with the

@@ -29,6 +29,9 @@ pub(in crate::desktop) struct ContextDisplay {
     /// prepared with the level.
     pub(in crate::desktop) level_words: SharedString,
     pub(in crate::desktop) open: bool,
+    /// The cluster row of the switcher whose menu is open: its tooltip waits,
+    /// so it does not draw over the menu's only entry (#878).
+    pub(in crate::desktop) menu_cluster: Option<String>,
     pub(in crate::desktop) counts: std::collections::BTreeMap<String, SharedString>,
 }
 

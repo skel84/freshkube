@@ -4,10 +4,10 @@ use super::*;
 fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
     for (shape, words) in [
-        ("not-installed", "No database operator is installed"),
-        ("refused", "Not permitted"),
-        ("empty", "No clusters"),
-        ("unsupported", "Unsupported"),
+        ("not-installed", "No database operators found"),
+        ("refused", "Not allowed to read clusters"),
+        ("empty", "No database clusters found"),
+        ("unsupported", "Can't read this operator version"),
     ] {
         cx.update_window(window.into(), |_, window, cx| {
             page.update(cx, |page, cx| {
@@ -17,13 +17,12 @@ fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppCo
                 cx.notify();
             });
             window.render_frame(cx);
-            assert!(
-                window
-                    .find("databases-empty-state")
-                    .label()
-                    .unwrap()
-                    .contains(words)
-            );
+            let label = window
+                .find("databases-empty-state")
+                .label()
+                .unwrap()
+                .to_owned();
+            assert!(label.contains(words), "{shape}: {label}");
         })
         .unwrap();
     }
@@ -151,16 +150,114 @@ fn initial_failures_offer_retry_without_claiming_retained_data(cx: &mut TestAppC
 }
 
 #[gpui_kit::test]
+fn a_refusal_or_a_missing_operator_offers_no_retry(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    for shape in ["not-installed", "refused", "unsupported"] {
+        cx.update_window(window.into(), |_, window, cx| {
+            page.update(cx, |page, cx| {
+                let identity = page.identity().unwrap();
+                page.loader
+                    .resolve(identity, Ok(databases::example::shaped(at(), shape)));
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                window.try_find("databases-empty-state").is_some(),
+                "{shape}"
+            );
+            assert!(
+                window.try_find("databases-retry").is_none(),
+                "{shape}: asking again can't change the answer"
+            );
+        })
+        .unwrap();
+    }
+}
+
+fn gap_words(page: &DatabasesScreen) -> String {
+    let state = page.read_gap(false).unwrap();
+    format!("{}. {}", state.title(), state.description())
+}
+
+#[gpui_kit::test]
+fn nothing_read_is_not_counted_as_zero_clusters_in_the_status_bar(cx: &mut TestAppContext) {
+    use freshkube_ui::status::Segment;
+    let (_runtime, page, window) = mount(cx, 1280.);
+    for (shape, words) in [
+        ("refused", "Nothing read"),
+        ("unsupported", "Nothing read"),
+        ("not-installed", "No database operators"),
+    ] {
+        cx.update_window(window.into(), |_, _, cx| {
+            let text = page.update(cx, |page, cx| {
+                let identity = page.identity().unwrap();
+                page.loader
+                    .resolve(identity, Ok(databases::example::shaped(at(), shape)));
+                let segment: Segment = page.status(cx).unwrap();
+                segment.text(None).to_string()
+            });
+            assert!(text.contains(words), "{shape}: {text}");
+            assert!(!text.contains("0 clusters"), "{shape}: {text}");
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn a_dropped_connection_names_the_cluster_and_a_missing_one_points_to_settings(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        // A cluster is chosen but its connection is down: no Settings advice,
+        // no Retry that has no connection to read through.
+        page.update(cx, |page, cx| {
+            let dropped = PageSource {
+                entry: Some("prod-fra".into()),
+                ..PageSource::default()
+            };
+            page.set_page_source(dropped, window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("databases-retry").is_none());
+        let text = gap_words(page.read(cx));
+        assert!(text.contains("Couldn't reach databases"), "{text}");
+        assert!(text.contains("prod-fra"), "{text}");
+        assert!(!text.contains("Settings"), "{text}");
+        // No cluster at all: the page says what isn't set up.
+        page.update(cx, |page, cx| {
+            page.set_page_source(PageSource::default(), window, cx);
+        });
+        let text = gap_words(page.read(cx));
+        assert!(text.contains("Settings › Clusters"), "{text}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_first_read_that_fails_says_it_couldnt_reach_and_offers_retry(cx: &mut TestAppContext) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        page.update(cx, |page, cx| {
+            let id = page.identity().unwrap();
+            page.loader.reset();
+            let request = page.loader.start(id);
+            page.loader
+                .land(&request, Err("Invented read failed".into()), cx);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("databases-retry").is_some());
+        assert!(window.try_find("databases-empty-state").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn read_failure_retry_is_button_sized_at_both_text_sizes(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
     for text in [13., 20.] {
-        for shape in [
-            "not-installed",
-            "refused",
-            "unsupported",
-            "failed",
-            "backup-refused",
-        ] {
+        for shape in std::iter::once("failed") {
             cx.update_window(window.into(), |_, window, cx| {
                 crate::text_size::set(text, cx);
                 page.update(cx, |page, cx| {
@@ -214,6 +311,6 @@ fn both_operators_failing_differently_say_one_line_each() {
         notice.contains("MariaDB · MariaDB operator: Not permitted"),
         "{notice}"
     );
-    assert!(notice.contains("Backups: Partial / capped"), "{notice}");
+    assert!(notice.contains("Backups: Partly read"), "{notice}");
     assert!(!notice.contains("PostgreSQL"), "{notice}");
 }

@@ -92,7 +92,7 @@ The values each knob takes and what each shape does are in [docs/DEBUG_KNOBS.md]
 | `FRESHKUBE_DB_EXPLORE` | Opens the database explorer and shapes how its connection ends, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_ETCD` | Reshapes etcd's example, with `--fixture`. | debug builds |
 | `FRESHKUBE_FIXTURE_HOLD` | Keeps example data from answering so pages stay on their loading rows. | debug and stress builds |
-| `FRESHKUBE_FOLLOWS` | Seeds the followed items and the bell, with `--fixture`. | debug and stress builds |
+| `FRESHKUBE_FOLLOWS` | Seeds the followed items and the bell, with `--fixture`; `banners` shows the system's banner permission as allowed. | debug and stress builds |
 | `FRESHKUBE_KIND` | Opens a Kubernetes kind on the Resources page. | debug and stress builds |
 | `FRESHKUBE_LINKS` | Forces the outcome of deep links or reshapes how example clusters identify themselves, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_LOG_SEARCH` | Types text into a log's search and steps to the first match. | debug and stress builds |
@@ -103,7 +103,7 @@ The values each knob takes and what each shape does are in [docs/DEBUG_KNOBS.md]
 | `FRESHKUBE_ROUTES` | Shapes the Routes, Gateway pages and route trace example, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_SERVICES` | Shapes the Service pane's endpoints and a workload's traffic chain example, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_SIDEBAR` | Starts the sidebar collapsed or expanded. | debug and stress builds |
-| `FRESHKUBE_TABS` | Opens the view tabs on invented clusters, with `--fixture`. | debug and stress builds |
+| `FRESHKUBE_TABS` | Opens the view tabs on invented clusters, or a shell on one while another is shown, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_TEAM` | Shapes Settings › Team setup, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_TEXT_SIZE` | Starts at a text size without saving it. | debug builds |
 | `FRESHKUBE_THEME` | Selects light or dark without changing saved settings. | debug and stress builds |
