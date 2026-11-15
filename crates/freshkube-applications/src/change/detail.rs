@@ -454,11 +454,7 @@ impl ChangePage {
         let after = detail.after.as_ref().map(|section| section.render(cx));
         let inspector = Inspector::new("change-detail")
             .track_scroll(&self.detail_scroll)
-            .heading(heading(
-                detail,
-                self.pull_selected() && self.pull.card().is_some_and(|c| c.old.is_some()),
-                cx,
-            ))
+            .heading(heading(detail, self.pull_is_old(), cx))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
                     .id("change-detail-notice")

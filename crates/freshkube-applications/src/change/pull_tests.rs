@@ -540,3 +540,18 @@ fn the_card_stays_inside_the_inspector_at_both_sizes(cx: &mut TestAppContext) {
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn the_inspectors_header_tag_is_a_warning_only_while_the_answer_is_old(cx: &mut TestAppContext) {
+    for (shape, old) in [
+        (Shape::Whole, false),
+        (Shape::GitHubLimited, true),
+        (Shape::GitHubOffline, true),
+    ] {
+        let (handle, page) = open(cx, shape);
+        // Nothing selected: the header isn't the pull request's.
+        assert!(!cx.read(|cx| page.read(cx).pull_is_old()));
+        select_pull(cx, handle, &page);
+        assert_eq!(cx.read(|cx| page.read(cx).pull_is_old()), old, "{shape:?}");
+    }
+}

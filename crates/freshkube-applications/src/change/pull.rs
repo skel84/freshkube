@@ -115,6 +115,12 @@ impl Card {
 }
 
 impl ChangePage {
+    /// Whether the pull request's hop is selected and its answer is old: the
+    /// Inspector's header tag is then a warning, by the card's own rule.
+    pub(super) fn pull_is_old(&self) -> bool {
+        self.pull_selected() && self.pull.card().is_some_and(|card| card.old.is_some())
+    }
+
     /// Whether the selection is the pull request's hop, where the full card
     /// shows.
     pub(super) fn pull_selected(&self) -> bool {
