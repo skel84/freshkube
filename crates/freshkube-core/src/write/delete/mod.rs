@@ -533,3 +533,64 @@ pub fn delete(impact: &Impact, propagation: Propagation) -> Result<ActionDescrip
         }],
     })
 }
+
+#[cfg(test)]
+mod none_found_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn row(group: &str, kind: &str, namespace: Option<&str>) -> Row {
+        Row {
+            group: group.into(),
+            version: "v1".into(),
+            kind: kind.into(),
+            resource: format!("{}s", kind.to_lowercase()),
+            namespace: namespace.map(str::to_owned),
+            name: "x".into(),
+            uid: "u".into(),
+        }
+    }
+
+    fn impact(row: &Row, dependents: Vec<Dependents>) -> Impact {
+        let object = json!({"metadata": {"name": "x", "uid": "u", "resourceVersion": "1"}});
+        Impact::new(row, &object, dependents).unwrap()
+    }
+
+    #[test]
+    fn it_names_the_kinds_looked_at_only_when_all_were_read_in_full_and_none_owned() {
+        let cm = row("", "ConfigMap", Some("shop"));
+        let clean = || {
+            ["Pod", "ReplicaSet", "Job"]
+                .map(|kind| Dependents::of(kind, "u", &[], false))
+                .to_vec()
+        };
+        assert_eq!(
+            impact(&cm, clean()).none_found_among().as_deref(),
+            Some("Pod, ReplicaSet, Job")
+        );
+        // One owned, one list cut at a page, or one unread: not "none found".
+        let owned = json!({"metadata": {"name": "p", "ownerReferences": [{"uid": "u"}]}});
+        let mut some = clean();
+        some[0] = Dependents::of("Pod", "u", &[owned], false);
+        assert_eq!(impact(&cm, some).none_found_among(), None);
+        let mut cut = clean();
+        cut[1] = Dependents::of("ReplicaSet", "u", &[], true);
+        assert_eq!(impact(&cm, cut).none_found_among(), None);
+        let mut unread = clean();
+        unread[2] = Dependents::unknown("Job", "refused");
+        assert_eq!(impact(&cm, unread).none_found_among(), None);
+    }
+
+    #[test]
+    fn a_kind_whose_dependents_are_all_known_never_says_it() {
+        let deployment = row("apps", "Deployment", Some("shop"));
+        let none = vec![Dependents::of("ReplicaSet", "u", &[], false)];
+        assert_eq!(impact(&deployment, none).none_found_among(), None);
+    }
+
+    #[test]
+    fn a_cluster_scoped_custom_resource_with_no_dependents_looked_at_says_nothing() {
+        let custom = row("example.dev", "Widget", None);
+        assert_eq!(impact(&custom, vec![]).none_found_among(), None);
+    }
+}

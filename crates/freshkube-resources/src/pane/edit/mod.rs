@@ -219,6 +219,18 @@ impl DetailPane {
         }
     }
 
+    /// The resourceVersion the text being edited is based on.
+    #[cfg(test)]
+    pub(super) fn edit_based_on(&self) -> Option<String> {
+        match &self.edit {
+            Some(Edit {
+                phase: Phase::Editing(editing),
+                ..
+            }) => Some(editing.session.target().resource_version.clone()),
+            _ => None,
+        }
+    }
+
     /// The editor's state, while a text is edited.
     #[cfg(test)]
     pub(super) fn edit_state(&self) -> Option<Entity<EditorState>> {
@@ -240,10 +252,21 @@ impl DetailPane {
     /// version that write has replaced, so the editor closes and the YAML
     /// view reads the object again. Another writer's change is not this:
     /// that leaves the editor open with its note (`edit_view`).
-    pub(crate) fn edit_written(&mut self, identity: &ResourceIdentity, cx: &mut Context<Self>) {
+    ///
+    /// `version` is the resourceVersion the written edit was based on. Only
+    /// an editor whose session started from it closes: one the person has
+    /// since cancelled and opened again, on a newer version, holds new text
+    /// this write knows nothing about.
+    pub(crate) fn edit_written(
+        &mut self,
+        identity: &ResourceIdentity,
+        version: &str,
+        cx: &mut Context<Self>,
+    ) {
         let ours = matches!(
             &self.edit,
-            Some(Edit { identity: at, phase: Phase::Editing(_) }) if at == identity
+            Some(Edit { identity: at, phase: Phase::Editing(editing) })
+                if at == identity && editing.session.target().resource_version == version
         );
         if !ours {
             return;

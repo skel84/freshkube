@@ -1257,16 +1257,14 @@ fn an_object_that_owns_something_asks_the_propagation_first(cx: &mut TestAppCont
 /// A kind whose dependents aren't all known keeps the choice, but the picker
 /// says why when nothing was found, instead of speaking of "them" (#1056).
 #[gpui_kit::test]
-fn the_picker_for_an_object_that_owns_nothing_found_says_why_it_is_still_asked(
-    cx: &mut TestAppContext,
-) {
+fn the_picker_for_an_object_with_none_found_says_why_it_is_still_asked(cx: &mut TestAppContext) {
     let w = world_on(cx, "core-fra", Cluster::with_owned);
     w.press(cx, Everyday::Delete, "secrets", "db", "uid-db");
     w.drive(cx, Duration::from_millis(500));
     assert!(w.present(cx, "delete-dialog"));
     let intro = w.label(cx, "delete-intro");
     assert!(
-        intro.starts_with("Nothing it owns was found among Pod, ReplicaSet, Job.")
+        intro.starts_with("None found among Pod, ReplicaSet, Job.")
             && intro.contains("Other kinds weren't looked at"),
         "{intro}"
     );

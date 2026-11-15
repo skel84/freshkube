@@ -237,16 +237,20 @@ impl WriteReport {
                 .unwrap_or_else(|_| Err("Checking stopped unexpectedly. Nothing was sent.".into()));
             _ = this.update_in(cx, |report, window, cx| match prepared {
                 Ok(Ok(prepared)) => report.run_undo(prepared, source, window, cx),
-                Ok(Err(refused)) => report.undone(refused.text(), false, cx),
-                Err(text) => report.undone(format!("Can't undo: {text}"), false, cx),
+                Ok(Err(refused)) => report.undone(refused.text(), false, window, cx),
+                Err(text) => report.undone(format!("Can't undo: {text}"), false, window, cx),
             });
         })
         .detach();
         cx.notify();
     }
 
-    fn undone(&mut self, text: String, good: bool, cx: &mut Context<Self>) {
+    fn undone(&mut self, text: String, good: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.undo = Undo::Result { text, good };
+        // Pushed again: the toast got `autohide(false)` while Undo was on
+        // offer, and only a new push gives it the autohide its result calls
+        // for.
+        self.push(window, cx);
         cx.notify();
     }
 
@@ -268,6 +272,7 @@ impl WriteReport {
         };
         start_prepared(request, prepared, window, cx);
         self.undo = Undo::Handed;
+        self.push(window, cx);
         cx.notify();
     }
 

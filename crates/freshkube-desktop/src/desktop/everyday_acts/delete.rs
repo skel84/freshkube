@@ -250,7 +250,7 @@ impl Render for DeleteDialog {
             // Nothing was found, so there is nothing to "choose for"; the
             // choice stays only because other kinds weren't looked at.
             Some(looked) => format!(
-                "Nothing it owns was found among {looked}. Other kinds weren't looked at, \
+                "None found among {looked}. Other kinds weren't looked at, \
                  so choose what happens to anything else it owns; the next step shows the rest."
             ),
             None => format!(

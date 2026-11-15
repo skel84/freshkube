@@ -590,9 +590,14 @@ impl ResourcesScreen {
         self.detail.read(cx).target_identity()
     }
     /// The write of an edit of `identity` was taken by the cluster.
-    pub fn edit_written(&mut self, identity: &ResourceIdentity, cx: &mut Context<Self>) {
+    pub fn edit_written(
+        &mut self,
+        identity: &ResourceIdentity,
+        version: &str,
+        cx: &mut Context<Self>,
+    ) {
         self.detail
-            .update(cx, |pane, cx| pane.edit_written(identity, cx));
+            .update(cx, |pane, cx| pane.edit_written(identity, version, cx));
     }
     pub fn showing(&self, identity: &ResourceIdentity, cx: &App) -> bool {
         self.detail.read(cx).target_identity() == Some(identity)

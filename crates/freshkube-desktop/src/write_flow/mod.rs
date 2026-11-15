@@ -143,14 +143,16 @@ pub(crate) struct WriteFlow {
     /// The dialog body's scroll, kept between draws so its scrollbar and
     /// position stay.
     scroll: ScrollHandle,
-    /// What the page that started this write does once it has ended, told
-    /// whether the cluster took the write. Run once, and not for a run that
+    /// What the page that started this write does once the cluster has taken
+    /// it (told `true` when its first object is accepted), or when the run
+    /// ends without that (told `false`). Run once, and not for a run that
     /// sent nothing and asks again under a stricter level.
     after: Option<After>,
     _subscriptions: Vec<Subscription>,
 }
 
-/// What a page does when its write has ended: `true` when the cluster took it.
+/// What a page does about its write: `true` once the cluster took it, `false`
+/// when the run ended without that.
 pub(crate) type After = Box<dyn FnOnce(bool, &mut App)>;
 
 /// Whether the cluster took the write: the first object was accepted, so
@@ -491,6 +493,16 @@ impl WriteFlow {
                             .update_in(cx, |flow, window, cx| flow.sending(&report, window, cx));
                     }
                     Msg::Event(event) => {
+                        // The first object accepted is when whatever the page
+                        // read before it is out of date: the page hears at
+                        // once, not when observation ends (a value the server
+                        // normalises would show "changed since you opened it"
+                        // for up to 30 s).
+                        if matches!(event, Event::Accepted(0))
+                            && let Some(after) = after.take()
+                        {
+                            _ = cx.update(|_, cx| after(true, cx));
+                        }
                         report.update(cx, |report, cx| report.event(event, cx));
                     }
                     Msg::Done(done) => {

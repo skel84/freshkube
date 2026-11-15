@@ -82,9 +82,17 @@ impl Pilot {
                         // based on a version this write has replaced.
                         let screen = this.pages.resources.downgrade();
                         let written = pressed.identity.clone();
+                        let based_on = pressed
+                            .action
+                            .changes
+                            .first()
+                            .map(|change| change.target.resource_version.clone())
+                            .unwrap_or_default();
                         let after: write_flow::After = Box::new(move |taken, cx| {
                             if taken {
-                                _ = screen.update(cx, |screen, cx| screen.edit_written(&written, cx));
+                                _ = screen.update(cx, |screen, cx| {
+                                    screen.edit_written(&written, &based_on, cx)
+                                });
                             }
                         });
                         start_then(
