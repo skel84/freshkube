@@ -485,3 +485,51 @@ fn a_file_written_by_the_current_build_still_reads() {
     assert_eq!(saved.tabs.len(), 2);
     assert_eq!(serde_json::to_string(&saved).unwrap(), json);
 }
+
+/// The tabs kept for contexts that are not shown are bounded: restoring on a
+/// context drops the oldest beyond `MAX_PARKED`, and a selection among those
+/// dropped goes with them while a later one keeps its place.
+#[gpui_kit::test]
+fn the_parked_tabs_of_contexts_not_shown_are_bounded(cx: &mut TestAppContext) {
+    use super::super::saved::MAX_PARKED;
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let others = MAX_PARKED + 10;
+    let mut tabs: Vec<SavedTab> = (0..others)
+        .map(|ix| {
+            let mut tab = log_tab(&pods[0], &format!("gone-{ix}"));
+            tab.name = format!("old-{ix}");
+            tab
+        })
+        .collect();
+    tabs.push(log_tab(&pods[1], &context));
+    // The selected tab is the open one, last in the list.
+    let saved = SavedDock {
+        open: true,
+        maximized: false,
+        selected: Some(others),
+        tabs,
+    };
+    open_with(&saved, handle, &pilot, &dock, cx);
+    assert_eq!(titles(&dock, cx), [format!("Pod {}", pods[1].name)]);
+    let again = cx.update(|cx| dock.read(cx).saved(cx));
+    assert_eq!(again.tabs.len(), MAX_PARKED + 1, "the oldest are dropped");
+    assert_eq!(
+        again
+            .tabs
+            .iter()
+            .filter(|tab| tab.context == context)
+            .count(),
+        1
+    );
+    // The kept ones are the newest of the others, in order.
+    let first = again
+        .tabs
+        .iter()
+        .find(|tab| tab.context.starts_with("gone-"))
+        .unwrap();
+    assert_eq!(first.name, format!("old-{}", others - MAX_PARKED));
+    assert!(again.tabs.iter().any(|tab| tab.context == context));
+}

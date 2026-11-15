@@ -56,6 +56,13 @@ fn yes() -> bool {
     true
 }
 
+/// The most tabs the file keeps for contexts that are not shown. Tabs of other
+/// contexts are carried through each save, so without a bound a context that is
+/// never opened again, or a cluster gone from the setup, would keep its tabs
+/// forever: with this one, the oldest are dropped first when the dock is
+/// restored, after the shown context's tabs are open. The open tabs are bounded as ever (8 log and 8 shell tabs).
+pub(super) const MAX_PARKED: usize = 32;
+
 impl SavedDock {
     pub(super) fn read(cx: &App) -> Option<Self> {
         NavigationFile::global(cx).dock()
@@ -166,6 +173,15 @@ impl Dock {
         // The saved position counts every context's tabs.
         self.parked_selected = restore.selected;
         self.open_parked(window, cx);
+        // A context that is never shown again must not keep its tabs forever:
+        // what is left parked is bounded to the newest `MAX_PARKED` (the saved
+        // list is oldest first), and a selection among those dropped goes
+        // with them.
+        let dropped = self.parked.len().saturating_sub(MAX_PARKED);
+        if dropped > 0 {
+            self.parked.drain(..dropped);
+            self.parked_selected = self.parked_selected.and_then(|ix| ix.checked_sub(dropped));
+        }
     }
 
     /// Opens the parked tabs that belong to this connection's context. They
