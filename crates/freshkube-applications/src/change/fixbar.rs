@@ -52,11 +52,9 @@ impl ChangePage {
                                 .aria_label(self.headline.clone())
                                 .w_full()
                                 .min_w_0()
-                                // GPUI wraps every line but the last at the
-                                // width; the ellipsis makes the last one
-                                // wrap and end there too.
-                                .text_ellipsis()
-                                .line_clamp(2)
+                                // The sentence is bounded where it is made (three
+                                // clauses, then a count), so it wraps whole at
+                                // any width instead of ending in "…".
                                 .text_size(dp(12.5))
                                 .text_color(p.ink_2)
                                 .child(self.headline.clone()),

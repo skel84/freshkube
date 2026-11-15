@@ -68,6 +68,17 @@ impl SettingsField {
         field: "destinations",
     };
 
+    /// The setting's name as Settings shows it, lowercase, for a short clause
+    /// such as "stage naming not set".
+    pub fn name(&self) -> &'static str {
+        match self.field {
+            "delivery.build_namespace" => "build namespace",
+            "delivery.stage_naming" => "stage naming",
+            "destinations" => "destinations",
+            _ => "setting",
+        }
+    }
+
     /// What the setting decides, in plain words that finish "Set …". The
     /// file's key goes in a tooltip or the Inspector, after this.
     pub fn means(&self) -> &'static str {

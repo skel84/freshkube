@@ -13,7 +13,7 @@ use std::time::Duration;
 
 const FOUR: &str = "Runs in dev, stage and prod-lon. prod-lon failed (verification failed); \
     the build can't be confirmed (run not found, policy not found); \
-    stage can't be confirmed (delivery.stage_naming not set); and 2 more.";
+    stage can't be confirmed (stage naming not set); and 2 more.";
 
 /// The page's change with nothing unconfirmed, waiting or failing.
 fn healthy(page: &Entity<ChangePage>, window: &mut Window, cx: &mut gpui_kit::App) {
@@ -181,28 +181,57 @@ fn chips_that_do_not_fit_fold_into_a_menu_that_selects_the_rest(cx: &mut TestApp
     .unwrap();
 }
 
+/// #1052: the summary wraps whole at the narrowest window and text size 20;
+/// it is never cut with an ellipsis after two lines.
 #[gpui_kit::test]
-fn the_headline_stays_within_two_lines_at_the_narrowest_window_and_text_20(
-    cx: &mut TestAppContext,
-) {
-    let (handle, _page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
+fn the_headline_wraps_whole_at_the_narrowest_window_and_text_20(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let headline = window.find("change-headline").bounds();
-        // 12.5 dp text at 20 on 1.4 line height, two lines at most.
-        let line = 12.5 * (20. / 13.) * 1.6;
+        let words = page.read(cx).headline().to_owned();
+        // Shape the sentence at the headline's width: its box holds every line.
+        let size = crate::ui::dp_px(12.5, window);
+        let run = gpui_kit::TextRun {
+            len: words.len(),
+            font: window.text_style().font(),
+            color: Default::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let wrapped = window
+            .text_system()
+            .shape_text(
+                words.clone().into(),
+                size,
+                &[run],
+                Some(headline.size.width),
+                None,
+            )
+            .expect("shaped");
+        let lines: usize = wrapped
+            .iter()
+            .map(|line| line.wrap_boundaries().len() + 1)
+            .sum();
+        let height = f32::from(headline.size.height);
         assert!(
-            f32::from(headline.size.height) <= 2. * line + 2.,
-            "{:?}",
-            headline.size.height
+            lines >= 3,
+            "the check needs a sentence over two lines: {words}"
+        );
+        // Three lines or more of the line height fit its box.
+        assert!(
+            height >= 3. * f32::from(size) * 1.2,
+            "{height} for {lines} lines"
         );
         assert!(window.find("change-fixbar").visible());
-        // Neither runs past the page's column.
+        // Neither runs past the page's column, nor the bar under the sentence.
         let column = window.find("change-page").bounds().right();
         for id in ["change-headline", "change-fixbar"] {
             let right = window.find(id).bounds().right();
             assert!(right <= column, "{id} ends at {right:?}, past {column:?}");
         }
+        assert!(window.find("change-fixbar").bounds().top() >= headline.bottom());
         assert!(column <= window.viewport_size().width);
     })
     .unwrap();

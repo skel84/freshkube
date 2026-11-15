@@ -541,7 +541,7 @@ Every state is written to the same nine rules (issue 952). `freshkube_ui::read_s
 5. **Optional means optional.** When Kargo, Argo CD, Tekton, Coroot or Prometheus isn't installed, say what it would add and that the rest of Freshkube works without it. That is a note (Info), never a warning.
 6. **Never blame the user.** Name the gap ("Freshkube doesn't know where builds run"), not the person.
 7. **Unknown is never green, and a refusal isn't an empty list.** No Retry after a refusal.
-8. **The title carries the meaning:** four to eight words. A page name alone is not a title. Details go in the description, and raw errors in the mono box.
+8. **The title carries the meaning:** four to eight words. A page name alone is not a title. Details go in the description, and raw errors in the mono box. The box is drawn in the error colours only when a read failed (`ui::EmptyDetails::Failure`); what was looked for is a neutral note (`Note`). A setting's file key is never the plain sentence: it waits in a tooltip or the Inspector, after the words.
 9. **A tool's nouns only where the tool exists.** Freight, Stage and Project are fine when Kargo is there. Without it, say "deploy" or "version".
 
 ### Tooltips
