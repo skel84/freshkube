@@ -463,12 +463,59 @@ pub fn skeleton(
         .rounded(px(5.))
 }
 
-/// A centered empty state with an icon, a title, optional detail and actions.
+/// The mono box under an empty state's description. It looks like an error
+/// only when one happened: a note, such as what was looked for, is neutral.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmptyDetails {
+    /// The server's own words after a failed or refused read.
+    Failure(String),
+    /// What was looked for or found, when nothing failed.
+    Note(String),
+}
+
+impl EmptyDetails {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Failure(text) | Self::Note(text) => text,
+        }
+    }
+
+    /// The box's fill and ink: the error colours only for a failure.
+    pub fn look(&self, p: &Palette) -> (Hsla, Hsla) {
+        match self {
+            Self::Failure(_) => (p.crit_soft, p.crit_ink),
+            Self::Note(_) => (p.hover, p.muted),
+        }
+    }
+}
+
+/// A centered empty state with an icon, a title, an optional error and
+/// actions. The error is drawn in the error style; see [`empty_state_with`]
+/// for details that are no error.
 pub fn empty_state(
     icon: IconName,
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     error: Option<String>,
+    actions: Vec<AnyElement>,
+    cx: &App,
+) -> Div {
+    empty_state_with(
+        icon,
+        title,
+        description,
+        error.map(EmptyDetails::Failure),
+        actions,
+        cx,
+    )
+}
+
+/// [`empty_state`] with details that say whether anything failed.
+pub fn empty_state_with(
+    icon: IconName,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    details: Option<EmptyDetails>,
     actions: Vec<AnyElement>,
     cx: &App,
 ) -> Div {
@@ -524,18 +571,21 @@ pub fn empty_state(
                                     ),
                                 ),
                         )
-                        .when_some(error, |this, error| {
+                        .when_some(details, |this, details| {
+                            let (fill, ink) = details.look(&p);
                             this.child(
                                 div()
+                                    .id("empty-state-details")
+                                    .test_support()
                                     .mt_2()
                                     .px_2p5()
                                     .py_1p5()
                                     .rounded(px(6.))
-                                    .bg(p.crit_soft)
-                                    .text_color(p.crit_ink)
+                                    .bg(fill)
+                                    .text_color(ink)
                                     .font_family(MONO_FONT)
                                     .text_size(dp(12.))
-                                    .child(error),
+                                    .child(details.text().to_owned()),
                             )
                         })
                         .when(!actions.is_empty(), |this| {

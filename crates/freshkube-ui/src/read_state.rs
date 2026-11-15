@@ -220,16 +220,29 @@ pub fn read_state(
             .into_any_element();
     }
     let buttons = actions.for_state(state);
-    ui::empty_state(
+    // What was looked for is a note; only the server's words after a
+    // refusal or a failed read are drawn as an error.
+    let details = details_for(state, details);
+    ui::empty_state_with(
         state.icon(),
         state.title(),
         state.description(),
-        details.or_else(|| state.reason().map(str::to_owned)),
+        details,
         buttons,
         cx,
     )
     .id(id)
     .into_any_element()
+}
+
+/// The mono box of a state: what was looked for is a note, and only the
+/// server's own words after a refusal or a failed read look like an error.
+fn details_for(state: &ReadState, details: Option<String>) -> Option<ui::EmptyDetails> {
+    details.map(ui::EmptyDetails::Note).or_else(|| {
+        state
+            .reason()
+            .map(|reason| ui::EmptyDetails::Failure(reason.to_owned()))
+    })
 }
 
 #[cfg(test)]
@@ -359,6 +372,43 @@ mod tests {
         };
         assert_eq!(state.tone(), Tone::Warn);
         assert!(state.allows_retry());
+    }
+
+    #[test]
+    fn details_look_like_an_error_only_when_a_read_failed() {
+        let looked = Some("Looked for: alertmanager, vmalert".to_owned());
+        let empty = ReadState::Empty {
+            looked_for: "alerts".into(),
+            cluster: "prod-fra".into(),
+            hint: None,
+        };
+        // Nothing failed: what was looked for is a note, even on a refusal.
+        for state in [&empty, &not_installed(), &refused()] {
+            let note = details_for(state, looked.clone()).unwrap();
+            assert!(matches!(note, ui::EmptyDetails::Note(_)), "{state:?}");
+        }
+        // The server's words after a refusal are the error.
+        assert_eq!(
+            details_for(&refused(), None),
+            Some(ui::EmptyDetails::Failure("forbidden".into()))
+        );
+        assert_eq!(details_for(&empty, None), None);
+    }
+
+    #[test]
+    fn the_note_box_does_not_use_the_error_colours() {
+        for dark in [false, true] {
+            let p = if dark {
+                crate::palette::dark()
+            } else {
+                crate::palette::light()
+            };
+            let note = ui::EmptyDetails::Note("x".into()).look(&p);
+            let failure = ui::EmptyDetails::Failure("x".into()).look(&p);
+            assert_ne!(note, failure);
+            assert_ne!(note.0, p.crit_soft);
+            assert_ne!(note.1, p.crit_ink);
+        }
     }
 }
 
