@@ -421,7 +421,7 @@ fn safety_g10_a_read_only_cluster_refuses_a_restart_and_takes_no_slot(cx: &mut T
 fn confirm_restart_after_edit(
     cx: &mut TestAppContext,
     edit: impl FnOnce(&crate::mutation::TestSetup),
-) -> String {
+) -> (String, freshkube_core::write::Protection) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -447,6 +447,7 @@ fn confirm_restart_after_edit(
         .unwrap();
     cx.run_until_parked();
     let mut text = String::new();
+    let mut shown = freshkube_core::write::Protection::default();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(crate::mutation::Operations::current(cx).is_none());
@@ -455,18 +456,22 @@ fn confirm_restart_after_edit(
             .label()
             .map(str::to_owned)
             .expect("a result");
+        shown = root_pilot(window, cx).read(cx).context_display.level;
     })
     .unwrap();
-    text
+    (text, shown)
 }
 
 #[gpui_kit::test]
-fn safety_g27_restart_refuses_when_the_file_got_stricter_while_the_dialog_was_open(
+fn safety_g28_restart_refuses_when_the_file_got_stricter_while_the_dialog_was_open(
     cx: &mut TestAppContext,
 ) {
-    let said = confirm_restart_after_edit(cx, |setup| {
+    let (said, shown) = confirm_restart_after_edit(cx, |setup| {
         setup.level(freshkube_core::write::Protection::ReadOnly)
     });
+    // The app's own read of the file stays pending while a dialog is open, so
+    // the refusal itself puts the stricter level in the header.
+    assert_eq!(shown, freshkube_core::write::Protection::ReadOnly);
     assert!(
         said.contains("This cluster is now read-only; review again."),
         "{said}"
@@ -476,8 +481,50 @@ fn safety_g27_restart_refuses_when_the_file_got_stricter_while_the_dialog_was_op
 }
 
 #[gpui_kit::test]
-fn safety_g27_restart_refuses_when_the_file_cannot_say(cx: &mut TestAppContext) {
-    let said = confirm_restart_after_edit(cx, |setup| setup.garble());
+fn safety_g28_restart_refuses_when_the_file_cannot_say(cx: &mut TestAppContext) {
+    let (said, _) = confirm_restart_after_edit(cx, |setup| setup.garble());
     assert!(said.contains("can't be read from freshkube.yaml"), "{said}");
     assert!(said.contains("Nothing was started."), "{said}");
+}
+
+/// The restart is for the node and service the dialog was confirmed on: a
+/// selection that moves while the file is read (a refresh, another node)
+/// doesn't point it anywhere else (guarantee 10).
+#[gpui_kit::test]
+fn a_restart_runs_against_the_node_confirmed_when_the_selection_moves_during_the_read(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        open_services_with_room(window, cx);
+        window.render_frame(cx);
+        window.within("services-region").click("containerd", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    let _setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    cx.update_window(handle, |_, window, cx| window.click("service-restart", cx))
+        .unwrap();
+    crate::mutation::settle_confirmation(cx, handle);
+    // Confirm, and move the selection before the read answers.
+    let mut selected = None;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("confirm-ok", cx);
+        let pilot = root_pilot(window, cx);
+        pilot.update(cx, |pilot, _| {
+            selected = pilot.target.selected_node.take();
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // The restart that was confirmed ran for the node and service it was
+    // confirmed on, though the page had none selected when the read answered.
+    let notice = cx
+        .read(crate::desktop::services::restart::last_notice)
+        .expect("a result");
+    assert_eq!(notice.2, "containerd");
+    assert_eq!(Some(notice.1.as_str()), selected.as_deref());
+    assert!(notice.3 && notice.4.contains("Example data"), "{notice:?}");
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
 }

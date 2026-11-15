@@ -1507,7 +1507,7 @@ fn confirm_after_edit(
 /// cluster. Operations is the first writer of the guarantee that a write is
 /// sent under the stricter of the level the app holds and the file's.
 #[gpui_kit::test]
-fn safety_g27_operations_refuse_when_the_file_got_stricter_while_the_dialog_was_open(
+fn safety_g28_operations_refuse_when_the_file_got_stricter_while_the_dialog_was_open(
     cx: &mut TestAppContext,
 ) {
     use freshkube_core::write::Protection;
@@ -1519,7 +1519,7 @@ fn safety_g27_operations_refuse_when_the_file_got_stricter_while_the_dialog_was_
 }
 
 #[gpui_kit::test]
-fn safety_g27_operations_refuse_a_file_edited_to_protected_though_no_name_was_asked(
+fn safety_g28_operations_refuse_a_file_edited_to_protected_though_no_name_was_asked(
     cx: &mut TestAppContext,
 ) {
     use freshkube_core::write::Protection;
@@ -1531,7 +1531,7 @@ fn safety_g27_operations_refuse_a_file_edited_to_protected_though_no_name_was_as
 }
 
 #[gpui_kit::test]
-fn safety_g27_operations_refuse_when_the_file_cannot_say(cx: &mut TestAppContext) {
+fn safety_g28_operations_refuse_when_the_file_cannot_say(cx: &mut TestAppContext) {
     confirm_after_edit(
         cx,
         |setup| setup.remove(),
@@ -1540,7 +1540,7 @@ fn safety_g27_operations_refuse_when_the_file_cannot_say(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
-fn safety_g27_operations_refuse_an_unparsable_file(cx: &mut TestAppContext) {
+fn safety_g28_operations_refuse_an_unparsable_file(cx: &mut TestAppContext) {
     confirm_after_edit(
         cx,
         |setup| setup.garble(),
@@ -1549,7 +1549,7 @@ fn safety_g27_operations_refuse_an_unparsable_file(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn safety_g27_operations_refuse_when_the_file_no_longer_lists_the_cluster(cx: &mut TestAppContext) {
+fn safety_g28_operations_refuse_when_the_file_no_longer_lists_the_cluster(cx: &mut TestAppContext) {
     confirm_after_edit(
         cx,
         |setup| setup.drop_entry(),
@@ -1558,7 +1558,8 @@ fn safety_g27_operations_refuse_when_the_file_no_longer_lists_the_cluster(cx: &m
 }
 
 /// The re-read only ever tightens: an unchanged file, and one edited to a
-/// looser level, start the run as before.
+/// looser level, start the run as before. The same setup then refuses a
+/// garbled file, which proves the file was read at all.
 fn starts_with_the_file_at(cx: &mut TestAppContext, file: freshkube_core::write::Protection) {
     use freshkube_core::write::Protection;
     let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
@@ -1569,6 +1570,25 @@ fn starts_with_the_file_at(cx: &mut TestAppContext, file: freshkube_core::write:
     cx.run_until_parked();
     cx.read(|cx| assert!(screen.read(cx).run.is_some(), "{file:?} started no run"));
     wait_until_finished(cx, &runtime, &screen, 200, "a run under an unchanged file");
+    // The guard is live: the same setup, a file that can't be read, and
+    // nothing starts. The finished run dropped the preview; read it again.
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_source(Some(source("prod-fra", 0)), window, cx);
+            screen.activate(window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    review(cx, handle);
+    setup.garble();
+    confirm(cx, handle);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        let said = screen.read(cx).notice.clone().unwrap_or_default();
+        assert!(said.contains("can't be read from freshkube.yaml"), "{said}");
+    });
 }
 
 #[gpui_kit::test]
@@ -1579,4 +1599,91 @@ fn a_file_that_is_unchanged_starts_the_run_as_before(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_file_edited_to_a_looser_level_changes_nothing_until_reviewed_again(cx: &mut TestAppContext) {
     starts_with_the_file_at(cx, freshkube_core::write::Protection::Open);
+}
+
+/// A legacy `workspace.json` user has no `freshkube.yaml`: the run starts, and
+/// no notice blames a file that was never there.
+#[gpui_kit::test]
+fn a_legacy_user_with_no_setup_file_starts_the_run(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let _setup = crate::mutation::TestSetup::legacy(cx);
+    review(cx, handle);
+    confirm(cx, handle);
+    cx.run_until_parked();
+    cx.read(|cx| assert!(screen.read(cx).run.is_some(), "no run started"));
+    wait_until_finished(cx, &runtime, &screen, 200, "a run for a legacy user");
+}
+
+/// Presses Confirm and returns before the setup file's read has answered.
+fn confirm_without_waiting(cx: &mut TestAppContext, handle: WindowHandle<Root>) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        assert!(window.find("confirm-dialog").visible());
+        window.click("confirm-dialog", cx);
+        window.click("confirm-ok", cx);
+    })
+    .unwrap();
+}
+
+/// The slot is held from Confirm, while the file is read: a second press
+/// finds it busy, and when the read is done the run is the only one.
+#[gpui_kit::test]
+fn the_slot_is_held_while_the_setup_file_is_read(cx: &mut TestAppContext) {
+    use freshkube_core::write::Protection;
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let _setup = crate::mutation::TestSetup::new(Protection::Guarded, cx);
+    review(cx, handle);
+    confirm_without_waiting(cx, handle);
+    // Nothing has answered yet, and the slot is already taken.
+    cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    assert!(cx.read(|cx| Operations::current(cx).is_some()));
+    let second = cx.update(|cx| {
+        let operations = Operations::global(cx);
+        operations.update(cx, |operations, cx| operations.begin("a second press", cx))
+    });
+    assert!(second.is_err(), "a second press found the slot free");
+    drop(second);
+    cx.run_until_parked();
+    cx.read(|cx| assert!(screen.read(cx).run.is_some()));
+    wait_until_finished(cx, &runtime, &screen, 200, "the one run");
+}
+
+/// A screen that is gone while the file is read starts nothing and gives
+/// the slot back.
+#[gpui_kit::test]
+fn a_screen_dropped_while_the_file_is_read_gives_the_slot_back(cx: &mut TestAppContext) {
+    use freshkube_core::write::Protection;
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let _setup = crate::mutation::TestSetup::new(Protection::Guarded, cx);
+    review(cx, handle);
+    confirm_without_waiting(cx, handle);
+    assert!(cx.read(|cx| Operations::current(cx).is_some()));
+    let weak = screen.downgrade();
+    cx.update_window(handle.into(), |_, window, _| window.remove_window())
+        .unwrap();
+    drop(screen);
+    cx.run_until_parked();
+    assert!(weak.upgrade().is_none(), "the screen is still alive");
+    assert!(
+        cx.read(|cx| Operations::current(cx).is_none()),
+        "the slot stayed held"
+    );
+}
+
+/// The app's own level can change while the file is read: a cluster that
+/// became read-only in that time sends nothing.
+#[gpui_kit::test]
+fn a_cluster_that_became_read_only_while_the_file_was_read_starts_nothing(cx: &mut TestAppContext) {
+    use freshkube_core::write::Protection;
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let _setup = crate::mutation::TestSetup::new(Protection::Guarded, cx);
+    review(cx, handle);
+    confirm_without_waiting(cx, handle);
+    cx.update(|cx| crate::mutation::set_protection(Protection::ReadOnly, cx));
+    cx.run_until_parked();
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        assert!(screen.read(cx).run.is_none());
+        let said = screen.read(cx).notice.clone().unwrap_or_default();
+        assert!(said.contains("read-only"), "{said}");
+    });
 }

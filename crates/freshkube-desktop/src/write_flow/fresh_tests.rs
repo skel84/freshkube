@@ -30,7 +30,7 @@ fn nothing_sent(h: &Harness, cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn safety_g27_an_everyday_action_sends_nothing_when_the_file_got_stricter(cx: &mut TestAppContext) {
+fn safety_g28_an_everyday_action_sends_nothing_when_the_file_got_stricter(cx: &mut TestAppContext) {
     for to in [
         Some(Protection::ReadOnly),
         Some(Protection::Protected),
@@ -44,14 +44,16 @@ fn safety_g27_an_everyday_action_sends_nothing_when_the_file_got_stricter(cx: &m
         assert_eq!(h.replicas(), 2, "{to:?}");
         nothing_sent(&h, cx);
         if to == Some(Protection::Protected) {
-            // Review again: the dialog is asked under the level the file holds.
+            // Review again: the dialog is asked under the level the file holds,
+            // and so is the window's level, for the header and the next write.
             assert!(h.present(cx, "write-type-name"));
+            assert_eq!(cx.read(crate::mutation::level), Protection::Protected);
         }
     }
 }
 
 #[gpui_kit::test]
-fn safety_g27_an_edit_of_the_yaml_sends_nothing_when_the_file_got_stricter(
+fn safety_g28_an_edit_of_the_yaml_sends_nothing_when_the_file_got_stricter(
     cx: &mut TestAppContext,
 ) {
     let h = harness_rechecked(cx, Protection::Guarded, Cluster::new);
@@ -65,7 +67,7 @@ fn safety_g27_an_edit_of_the_yaml_sends_nothing_when_the_file_got_stricter(
 /// A delete is read again once more after its countdown: a file edited while
 /// the five seconds ran stops it.
 #[gpui_kit::test]
-fn safety_g27_a_delete_sends_nothing_when_the_file_got_stricter_even_during_its_countdown(
+fn safety_g28_a_delete_sends_nothing_when_the_file_got_stricter_even_during_its_countdown(
     cx: &mut TestAppContext,
 ) {
     // Edited before Confirm.
@@ -89,7 +91,7 @@ fn safety_g27_a_delete_sends_nothing_when_the_file_got_stricter_even_during_its_
 }
 
 #[gpui_kit::test]
-fn safety_g27_an_undo_sends_nothing_when_the_file_went_read_only(cx: &mut TestAppContext) {
+fn safety_g28_an_undo_sends_nothing_when_the_file_went_read_only(cx: &mut TestAppContext) {
     let h = harness_rechecked(cx, Protection::Guarded, Cluster::new);
     h.begin(cx, fake::scale(3));
     h.click(cx, "write-confirm");

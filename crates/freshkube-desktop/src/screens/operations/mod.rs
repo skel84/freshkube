@@ -1382,7 +1382,7 @@ impl OperationsScreen {
         let current = weak.clone();
         // The setup file this send step reads again, for the identity the
         // dialog is for (#1055).
-        let guard = mutation::send_guard(&plan.context, cx);
+        let guard = mutation::send_guard(&plan.context, source.is_example(), cx);
         let type_name = match self.gate(&plan, cx) {
             OperationGate::TypeName { expected } => {
                 Some(mutation::TypeName::new(expected, plan.targets.len() != 1))
@@ -1542,14 +1542,23 @@ impl OperationsScreen {
         cx.spawn(async move |this, cx| {
             let decided =
                 mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
-            let Err(refusal) = decided else {
+            let refused = match decided {
+                // A stricter level is kept too, so the next dialog is asked
+                // under it.
+                Err(refusal) => Some(cx.update(|cx| mutation::refused_text(refusal, cx))),
+                // The window may have moved while the file was read.
+                Ok(_) => cx.update(|cx| mutation::moved_during_read(held, cx)),
+            };
+            let Some(text) = refused else {
+                // A screen that is gone drops the ticket with this closure,
+                // which gives the slot back.
                 _ = this.update(cx, |screen, cx| {
                     screen.launch_run(plan, source, confirmation, ticket, cx)
                 });
                 return;
             };
             _ = this.update(cx, |screen, cx| {
-                screen.notice = Some(format!("{} Nothing was started.", refusal.text()));
+                screen.notice = Some(format!("{text} Nothing was started."));
                 cx.notify();
             });
             operations.update(cx, |operations, cx| operations.finish(ticket, cx));

@@ -396,7 +396,7 @@ fn a_stage_that_moves_while_the_dialog_is_open_stops_the_send(cx: &mut TestAppCo
 /// A Stage action's dialog, with `freshkube.yaml` edited while it is open
 /// (#1055): Confirm reads the file again, and nothing reaches Kargo.
 #[gpui_kit::test]
-fn safety_g27_a_stage_action_sends_nothing_when_the_file_got_stricter(cx: &mut TestAppContext) {
+fn safety_g28_a_stage_action_sends_nothing_when_the_file_got_stricter(cx: &mut TestAppContext) {
     let h = harness_rechecked(cx, Protection::Guarded, kargo);
     h.begin(cx, promote(Protection::Guarded));
     assert!(!h.present(cx, "write-type-name"));

@@ -21,7 +21,7 @@ fn in_file(text: &str, subject: Subject) -> Result<Protection, Unreadable> {
 /// stricter file refuses with its own level and anything else sends under
 /// the held one, never a looser file's.
 #[test]
-fn safety_g27_the_file_only_ever_tightens_the_level_a_write_is_sent_under() {
+fn safety_g28_the_file_only_ever_tightens_the_level_a_write_is_sent_under() {
     for held in LEVELS {
         for file in LEVELS {
             let fresh = in_file(&file_with(file), entry("prod"));
@@ -43,7 +43,7 @@ fn safety_g27_the_file_only_ever_tightens_the_level_a_write_is_sent_under() {
 /// A file that can't say refuses at every held level, `open` included: it
 /// never falls back to the held level.
 #[test]
-fn safety_g27_a_file_that_cannot_say_refuses_at_every_held_level() {
+fn safety_g28_a_file_that_cannot_say_refuses_at_every_held_level() {
     let cases = [
         (None, entry("prod"), Unreadable::Missing),
         (
@@ -71,12 +71,33 @@ fn safety_g27_a_file_that_cannot_say_refuses_at_every_held_level() {
             assert_eq!(at_send(held, fresh), Err(SendRefusal::Unreadable(why)));
         }
     }
+    // A file too large, one that is not a regular file, and a live window with
+    // no file at all can't say either.
+    let dir = tempfile::tempdir().unwrap();
+    let large = dir.path().join("large.yaml");
+    std::fs::write(&large, vec![b'#'; MAX_BYTES as usize + 1]).unwrap();
+    let directory = dir.path().join("directory");
+    std::fs::create_dir(&directory).unwrap();
+    for levels in [
+        SetupLevels::new(large, entry("prod")),
+        SetupLevels::new(directory, entry("prod")),
+        SetupLevels::unavailable(entry("prod")),
+    ] {
+        let fresh = levels.read();
+        assert_eq!(fresh, Err(Unreadable::NotReadable));
+        for held in LEVELS {
+            assert_eq!(
+                at_send(held, fresh),
+                Err(SendRefusal::Unreadable(Unreadable::NotReadable))
+            );
+        }
+    }
 }
 
 /// A row skipped for a wrong `protection` locks its context read-only, so a
 /// window on that context is refused, not left at `guarded`.
 #[test]
-fn safety_g27_a_context_whose_row_was_skipped_reads_as_read_only() {
+fn safety_g28_a_context_whose_row_was_skipped_reads_as_read_only() {
     let text = file_with(Protection::Open).replace("open", "opne");
     assert_eq!(
         in_file(&text, Subject::Context("prod-ctx".into())),
@@ -95,7 +116,7 @@ fn safety_g27_a_context_whose_row_was_skipped_reads_as_read_only() {
 /// naming it, at every file level, and stays `guarded` when none does or the
 /// file is missing.
 #[test]
-fn safety_g27_a_context_subject_sees_an_entry_that_now_names_it() {
+fn safety_g28_a_context_subject_sees_an_entry_that_now_names_it() {
     let context = || Subject::Context("prod-ctx".into());
     for held in LEVELS {
         for file in LEVELS {
@@ -191,6 +212,13 @@ fn read_follows_the_file_on_disk() {
     std::fs::remove_file(&file).unwrap();
     std::fs::create_dir(&file).unwrap();
     assert_eq!(levels.read(), Err(Unreadable::NotReadable));
+    // A live window with no setup file can't say, for an entry or a context.
+    for subject in [entry("prod"), Subject::Context("prod-ctx".into())] {
+        assert_eq!(
+            SetupLevels::unavailable(subject).read(),
+            Err(Unreadable::NotReadable)
+        );
+    }
     // A directory is no file for a context either: not "missing".
     assert_eq!(
         SetupLevels::new(&file, Subject::Context("prod-ctx".into())).read(),

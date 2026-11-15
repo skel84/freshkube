@@ -456,6 +456,7 @@ impl WriteFlow {
             &ticket,
         );
         let flow = cx.entity().downgrade();
+        let runner = self.request.runner.clone();
         // Detached on purpose: it owns the ticket, so the slot is freed only
         // when the runner has really ended, whatever became of the page, the
         // dialog or the window.
@@ -480,6 +481,17 @@ impl WriteFlow {
             // A level that got stricter sends nothing and asks again; there
             // is nothing to report.
             let again = matches!(done.status, Status::NotSent(NotSent::LevelChanged(_)));
+            // A stricter level the send found in the setup file is also the
+            // window's, so the header shows it and the next dialog asks under
+            // it; the app's own read of the file stays pending meanwhile.
+            if let Status::NotSent(NotSent::LevelChanged(level)) = &done.status {
+                let level = *level;
+                _ = cx.update(|_, cx| {
+                    if runner.follows(&crate::mutation::level_cell(cx)) {
+                        crate::mutation::raise_level(level, cx);
+                    }
+                });
+            }
             _ = flow.update_in(cx, |flow, window, cx| {
                 flow.finished(&report, again, window, cx)
             });

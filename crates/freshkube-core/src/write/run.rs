@@ -284,6 +284,11 @@ impl Runner {
         self
     }
 
+    /// Whether this runner follows `cell`, the level cell of a window.
+    pub fn follows(&self, cell: &LevelCell) -> bool {
+        &self.level == cell
+    }
+
     /// Reads the setup file again at the send step and refuses a level that
     /// got stricter there, or a file that can't say (#1055).
     pub fn rechecking(mut self, setup: Option<SetupLevels>) -> Self {

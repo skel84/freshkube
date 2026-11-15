@@ -43,7 +43,7 @@ fn typed(level: Protection, action: &ActionDescription) -> Confirmation {
 /// stricter level after the dialog was prepared sends nothing, and the level
 /// the app holds follows it, so the next dialog is asked under it.
 #[tokio::test(start_paused = true)]
-async fn safety_g27_a_file_edited_stricter_after_the_dialog_sends_nothing_for_every_tier() {
+async fn safety_g28_a_file_edited_stricter_after_the_dialog_sends_nothing_for_every_tier() {
     for (action, to) in [
         (fake::scale(3), Protection::ReadOnly),
         (fake::scale(3), Protection::Protected),
@@ -82,7 +82,7 @@ async fn safety_g27_a_file_edited_stricter_after_the_dialog_sends_nothing_for_ev
 
 /// A file that can't say sends nothing, at every held level.
 #[tokio::test(start_paused = true)]
-async fn safety_g27_a_file_that_cannot_say_sends_nothing_at_every_held_level() {
+async fn safety_g28_a_file_that_cannot_say_sends_nothing_at_every_held_level() {
     for held in Protection::ALL {
         for edit in ["gone", "garbled", "no entry"] {
             let (cluster, dir) = (Cluster::new(), tmp());
@@ -134,7 +134,7 @@ async fn an_unchanged_or_looser_file_sends_as_before() {
 /// The destination an action also reaches is read from the same parse: its
 /// entry edited stricter, or dropped, sends nothing.
 #[tokio::test(start_paused = true)]
-async fn safety_g27_a_destination_edited_stricter_or_dropped_sends_nothing() {
+async fn safety_g28_a_destination_edited_stricter_or_dropped_sends_nothing() {
     let cell = LevelCell::new(Protection::Guarded);
     let action = || {
         let mut action = fake::scale(3);
@@ -188,7 +188,7 @@ async fn safety_g27_a_destination_edited_stricter_or_dropped_sends_nothing() {
 /// Undo is a write like any other: a file edited to `read-only` while its
 /// toast was up refuses it.
 #[tokio::test(start_paused = true)]
-async fn safety_g27_an_undo_after_the_file_went_read_only_sends_nothing() {
+async fn safety_g28_an_undo_after_the_file_went_read_only_sends_nothing() {
     let (cluster, dir) = (Cluster::new(), tmp());
     let (runner, _) = runner(&cluster, dir.path(), Protection::Guarded);
     let prepared = ready(&runner, fake::scale(3)).await;
