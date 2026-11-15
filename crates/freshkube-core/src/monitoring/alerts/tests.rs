@@ -1017,8 +1017,12 @@ mod object_tests {
 
     #[test]
     fn unread_refused_and_missing_sources_are_unknown_never_none() {
+        assert_eq!(
+            section(&State::Reading, Subject::Pod, "shop", "any"),
+            Section::Reading,
+            "before the first answer it says so, and no alert"
+        );
         for unknown in [
-            State::Reading,
             State::Unknown(Unknown::NotFound(String::new())),
             State::Unknown(Unknown::Refused("no".into())),
             State::Unknown(Unknown::RulesOnly),
@@ -1069,5 +1073,89 @@ mod object_tests {
             section(&State::Known(active), Subject::Node, "", "worker-9"),
             Section::Unknown(_)
         ));
+    }
+
+    fn pod_alert(namespace: &str, pod: &str) -> Alert {
+        let State::Known(mut active) = state() else {
+            unreachable!()
+        };
+        let mut alert = active.alerts.remove(0);
+        alert.labels.clear();
+        alert.labels.insert("namespace".into(), namespace.into());
+        alert.labels.insert("pod".into(), pod.into());
+        alert
+    }
+
+    /// Which pods of which names a workload of each kind may claim: only the
+    /// names its own controller generates, in the generated alphabet.
+    #[test]
+    fn a_workload_claims_only_the_pod_names_its_controller_generates() {
+        let cases: &[(&str, &str, &str, bool)] = &[
+            // The same-prefix collisions that must not match.
+            ("Deployment", "api", "api-migrate-x2k4q", false),
+            ("Deployment", "node", "node-exporter-x2k4q", false),
+            ("Deployment", "api", "api-gateway-7d9f8c6b5-x2k4q", false),
+            // What each kind's pods look like.
+            ("Deployment", "api", "api-7d9f8c6b5-x2k4q", true),
+            ("StatefulSet", "db", "db-0", true),
+            ("StatefulSet", "db", "db-12", true),
+            ("StatefulSet", "db", "db-", false),
+            ("StatefulSet", "db", "db-primary", false),
+            ("DaemonSet", "node-exporter", "node-exporter-x2k4q", true),
+            ("DaemonSet", "node", "node-exporter-x2k4q", false),
+            ("ReplicaSet", "api-7d9f8c6b5", "api-7d9f8c6b5-x2k4q", true),
+            ("ReplicaSet", "api", "api-7d9f8c6b5-x2k4q", false),
+            ("Job", "api-migrate", "api-migrate-x2k4q", true),
+            ("Job", "api", "api-migrate-x2k4q", false),
+            ("CronJob", "report", "report-28450123-x2k4q", true),
+            // An empty timestamp isn't one.
+            ("CronJob", "api", "api--x2k4q", false),
+            ("CronJob", "report", "report-nightly-x2k4q", false),
+            // A letter outside the generated alphabet, or a wrong length.
+            ("Job", "api", "api-axk4q", false),
+            ("Job", "api", "api-x2k4", false),
+        ];
+        for (kind, workload, pod, wanted) in cases {
+            let alert = pod_alert("shop", pod);
+            assert_eq!(
+                names(&alert, Subject::Workload(kind), "shop", workload),
+                *wanted,
+                "{kind} {workload} and pod {pod}"
+            );
+            // Never in another namespace.
+            assert!(
+                !names(&alert, Subject::Workload(kind), "other", workload),
+                "{kind} {workload} in another namespace"
+            );
+        }
+    }
+
+    #[test]
+    fn a_workload_is_also_named_by_its_kinds_own_label() {
+        let State::Known(mut active) = state() else {
+            unreachable!()
+        };
+        let mut alert = active.alerts.remove(0);
+        alert.labels.clear();
+        alert.labels.insert("namespace".into(), "shop".into());
+        for (kind, label) in [
+            ("Deployment", "deployment"),
+            ("StatefulSet", "statefulset"),
+            ("DaemonSet", "daemonset"),
+            ("ReplicaSet", "replicaset"),
+            ("Job", "job_name"),
+            ("CronJob", "cronjob"),
+        ] {
+            alert.labels.insert(label.into(), "thing".into());
+            assert!(
+                names(&alert, Subject::Workload(kind), "shop", "thing"),
+                "{kind}"
+            );
+            assert!(
+                !names(&alert, Subject::Workload(kind), "shop", "other"),
+                "{kind}"
+            );
+            alert.labels.remove(label);
+        }
     }
 }

@@ -158,7 +158,13 @@ impl Pilot {
     /// Hands the Resources panes the session's state, or none once the read
     /// is gone: their Alerts section reads it and starts no read of its own.
     fn push_alerts(&mut self, cx: &mut Context<Self>) {
-        let state = self.alert_state().cloned();
+        let state = self
+            .switch
+            .registry
+            .active()
+            .alerts
+            .as_ref()
+            .map(|read| (read.identity.1.clone(), read.state.clone()));
         self.pages
             .resources
             .update(cx, |resources, cx| resources.set_alerts(state, cx));

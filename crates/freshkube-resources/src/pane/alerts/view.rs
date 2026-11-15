@@ -30,6 +30,9 @@ impl DetailPane {
                 .child(text)
         };
         let body = match body {
+            Body::Reading => {
+                note("alerts-reading", "Reading alerts…".into(), cx).into_any_element()
+            }
             Body::Unknown(why) => h_flex()
                 .id("alerts-unknown")
                 .test_support()
@@ -68,6 +71,8 @@ impl DetailPane {
                     v_flex()
                         .id(line.id.clone())
                         .test_support()
+                        .role(Role::Status)
+                        .aria_label(line.aria.clone())
                         .gap_1()
                         .child(
                             h_flex()
@@ -75,12 +80,12 @@ impl DetailPane {
                                 .flex_wrap()
                                 .child(ui::tag(line.tone, None, line.severity, cx))
                                 .child(div().min_w_0().child(line.title.clone()))
-                                .child(div().text_size(dp(12.)).text_color(p.muted).child(
-                                    match &line.since {
-                                        Some(since) => format!("{} {since}", line.state),
-                                        None => line.state.to_owned(),
-                                    },
-                                )),
+                                .child(
+                                    div()
+                                        .text_size(dp(12.))
+                                        .text_color(p.muted)
+                                        .child(line.meta.clone()),
+                                ),
                         )
                         .children(line.text.clone().map(|text| {
                             div()

@@ -185,6 +185,11 @@ pub struct ResourcesScreen {
     embedded: bool,
     runtime: Handle,
     source: Option<ClusterSource>,
+    /// The session's alert state and the connection it was read for.
+    alerts: Option<(
+        String,
+        std::sync::Arc<freshkube_core::monitoring::alerts::State>,
+    )>,
     kind: ResourceKind,
     /// `None` lists every namespace. Kept across kinds and ignored for
     /// cluster-scoped ones.
@@ -437,6 +442,7 @@ impl ResourcesScreen {
             embedded: false,
             runtime,
             source: None,
+            alerts: None,
             kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             namespace: None,
             namespaces: Vec::new(),
@@ -573,12 +579,29 @@ impl ResourcesScreen {
         self.detail
             .update(cx, |pane, cx| pane.set_node_facts(nodes, cx));
     }
-    /// The session's latest alert state, for the pane's Alerts section.
+    /// The session's latest alert state with the connection it was read for,
+    /// or `None` when no read runs. The pane gets it only while that is the
+    /// source this screen shows, so a state read for another cluster never
+    /// matches an object of this one by namespace and name.
     pub fn set_alerts(
         &mut self,
-        state: Option<std::sync::Arc<freshkube_core::monitoring::alerts::State>>,
+        state: Option<(
+            String,
+            std::sync::Arc<freshkube_core::monitoring::alerts::State>,
+        )>,
         cx: &mut Context<Self>,
     ) {
+        self.alerts = state;
+        self.sync_alerts(cx);
+    }
+
+    fn sync_alerts(&mut self, cx: &mut Context<Self>) {
+        let own = self.source.as_ref().map(|source| &source.id);
+        let state = self
+            .alerts
+            .as_ref()
+            .filter(|(id, _)| Some(id) == own)
+            .map(|(_, state)| state.clone());
         self.detail
             .update(cx, |pane, cx| pane.set_alerts(state, cx));
     }
@@ -672,6 +695,8 @@ impl ResourcesScreen {
         let same = self.source.as_ref().map(|source| &source.id)
             == source.as_ref().map(|source| &source.id);
         self.source = source;
+        // A state read for another connection leaves the pane at once.
+        self.sync_alerts(cx);
         if !self.embedded {
             let source = self.source.clone();
             self.offers

@@ -8,7 +8,7 @@
 use super::*;
 use crate::ui::Tone;
 use freshkube_core::monitoring::alerts::object::{self as named, Section};
-use freshkube_core::monitoring::alerts::{Alert, AlertState, Severity, State};
+use freshkube_core::monitoring::alerts::{Alert, State};
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -22,13 +22,16 @@ pub(super) struct AlertLine {
     pub(super) id: SharedString,
     pub(super) tone: Tone,
     pub(super) severity: &'static str,
-    pub(super) state: &'static str,
     pub(super) title: SharedString,
-    pub(super) since: Option<SharedString>,
+    /// The state and since when, built with the line, not in render.
+    pub(super) meta: SharedString,
     pub(super) text: Option<SharedString>,
+    pub(super) aria: SharedString,
 }
 
 pub(super) enum Body {
+    /// The session's first read hasn't answered.
+    Reading,
     /// Nothing is known, and why.
     Unknown(SharedString),
     /// A current read, and none names this object.
@@ -50,23 +53,18 @@ pub(super) struct AlertsView {
 }
 
 fn line(alert: &Alert) -> AlertLine {
-    let tone = match alert.severity {
-        Severity::Critical => Tone::Crit,
-        Severity::Warning => Tone::Warn,
-        Severity::Info | Severity::Other => Tone::Unknown,
+    let state = alert.state.label();
+    let meta = match alert.since {
+        Some(since) => format!("{state} since {}", local_time(since)),
+        None => state.to_owned(),
     };
     AlertLine {
         id: format!("alert-{}", alert.fingerprint).into(),
-        tone,
+        tone: freshkube_monitoring::alerts::severity_tone(alert.severity),
         severity: alert.severity.label(),
-        state: match alert.state {
-            AlertState::Pending => "Pending",
-            _ => "Firing",
-        },
+        aria: format!("{} alert {}: {meta}", alert.severity.label(), alert.name).into(),
+        meta: meta.into(),
         title: alert.name.clone().into(),
-        since: alert
-            .since
-            .map(|since| format!("since {}", local_time(since)).into()),
         text: alert
             .summary
             .clone()
@@ -76,14 +74,23 @@ fn line(alert: &Alert) -> AlertLine {
 }
 
 impl DetailPane {
+    /// Whether the pane holds an Alerts section for its object, for the
+    /// screen's tests.
+    #[cfg(test)]
+    pub(crate) fn has_alerts_section(&self) -> bool {
+        self.alerts.body.is_some()
+    }
+
     /// The session's latest alert state, or `None` when no read runs.
     pub(crate) fn set_alerts(&mut self, state: Option<Arc<State>>, cx: &mut Context<Self>) {
         if self.alerts.state == state {
             return;
         }
+        let drawn = self.alerts.body.is_some();
         self.alerts.state = state;
         self.derive_alerts();
-        if self.active && self.alerts.body.is_some() {
+        // Going from a section to none redraws too, or the old one stays.
+        if self.active && (drawn || self.alerts.body.is_some()) {
             cx.notify();
         }
     }
@@ -100,6 +107,7 @@ impl DetailPane {
         let identity = &target.identity;
         Some(
             match named::section(state, subject, &identity.namespace, &identity.name) {
+                Section::Reading => Body::Reading,
                 Section::Unknown(why) => Body::Unknown(why.into()),
                 Section::Quiet(text) => Body::Quiet(text.into()),
                 Section::StaleQuiet(text) => Body::StaleQuiet(text.into()),

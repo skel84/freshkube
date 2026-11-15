@@ -36,6 +36,8 @@ impl<'a> Subject<'a> {
 /// What the section says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Section {
+    /// The session's first read hasn't answered yet.
+    Reading,
     /// Nothing is known of the alerts, and why. Never "none".
     Unknown(String),
     /// A current read with no active alert that names this object.
@@ -58,11 +60,13 @@ impl Section {
 
 /// The section for one object under the session's state.
 pub fn section(state: &State, subject: Subject<'_>, namespace: &str, name: &str) -> Section {
-    let health = state.health();
+    if matches!(state, State::Reading) {
+        return Section::Reading;
+    }
     let Some(active) = state.evidence() else {
-        return match health {
+        return match state.health() {
             super::state::Health::Unknown(why) => Section::Unknown(why),
-            _ => Section::Unknown("Alerts haven't been read yet".into()),
+            _ => Section::Unknown("Alerts weren't read".into()),
         };
     };
     let stale = state.current().is_none();
@@ -132,9 +136,20 @@ pub fn names(alert: &Alert, subject: Subject<'_>, namespace: &str, name: &str) -
     }
 }
 
+/// The letters and digits Kubernetes's generated names use
+/// (`rand.SafeEncodeString`): no vowels, no `y`, no `0`, `1` or `3`, so a
+/// word such as `migrate` is never a template hash.
+const GENERATED: &[u8] = b"bcdfghjklmnpqrstvwxz2456789";
+
+/// A name suffix of this many characters from the generated alphabet.
+fn generated(text: &str, from: usize, to: usize) -> bool {
+    (from..=to).contains(&text.len()) && text.bytes().all(|byte| GENERATED.contains(&byte))
+}
+
 /// Whether a pod's name can only be one of this workload's own: the suffix
-/// the controller adds has the shape it gives, so `api-gateway-7d9f8-x2k4q`
-/// is not a pod of the Deployment `api`.
+/// the controller adds has the shape and the alphabet it gives, so
+/// `api-gateway-7d9f8-x2k4q` is not a pod of the Deployment `api`, nor
+/// `api-migrate-x2k4q` of a Job's pods.
 fn pod_of_workload(kind: &str, workload: &str, pod: &str) -> bool {
     let Some(rest) = pod
         .strip_prefix(workload)
@@ -142,25 +157,25 @@ fn pod_of_workload(kind: &str, workload: &str, pod: &str) -> bool {
     else {
         return false;
     };
-    let token = |text: &str, from: usize, to: usize| {
-        (from..=to).contains(&text.len())
-            && text
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-    };
     match kind {
         // `<name>-<template hash>-<5 characters>`.
         "Deployment" => rest
             .split_once('-')
-            .is_some_and(|(hash, id)| token(hash, 6, 10) && token(id, 5, 5)),
+            .is_some_and(|(hash, id)| generated(hash, 6, 10) && generated(id, 5, 5)),
         // `<name>-<ordinal>`.
         "StatefulSet" => !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit()),
         // `<name>-<5 characters>`.
-        "DaemonSet" | "ReplicaSet" => token(rest, 5, 5) && kind == "DaemonSet",
-        "Job" => token(rest, 5, 5),
-        // `<name>-<job timestamp>-<5 characters>`.
+        "DaemonSet" => generated(rest, 5, 5),
+        // A ReplicaSet's name already holds the template hash: its pods add
+        // the 5 characters.
+        "ReplicaSet" => generated(rest, 5, 5),
+        // `<name>-<5 characters>`.
+        "Job" => generated(rest, 5, 5),
+        // `<name>-<job's scheduled minute>-<5 characters>`.
         "CronJob" => rest.split_once('-').is_some_and(|(stamp, id)| {
-            stamp.bytes().all(|b| b.is_ascii_digit()) && token(id, 5, 5)
+            !stamp.is_empty()
+                && stamp.bytes().all(|byte| byte.is_ascii_digit())
+                && generated(id, 5, 5)
         }),
         _ => false,
     }
