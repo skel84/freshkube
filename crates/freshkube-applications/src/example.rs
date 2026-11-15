@@ -76,6 +76,11 @@ pub enum Variant {
     /// Someone else's Promotion of the Freight to `prod-ams` is running, so
     /// its Stage offers Abort in place of Promote.
     Promoting,
+    /// No earlier Freight of any Stage has a successful verification
+    /// recorded: a rollback is only a pick, never the main action.
+    RollbackUnknown,
+    /// No Stage has an earlier Freight in its history.
+    RollbackNone,
     /// Every Deployment hop of a change shows one outcome of what Coroot
     /// found after its deploy, so a capture can show each.
     Outcome(crate::change::OutcomeKind),
@@ -130,6 +135,8 @@ impl Variant {
         ("github-title", Self::GitHubTitle),
         ("causes", Self::Causes),
         ("promoting", Self::Promoting),
+        ("rollback-unknown", Self::RollbackUnknown),
+        ("rollback-none", Self::RollbackNone),
     ];
 
     /// The outcome every Deployment hop shows, in the shape that says one.
@@ -157,6 +164,8 @@ impl Variant {
             Self::GitHubTitle => Shape::GitHubTitle,
             Self::Causes => Shape::Causes,
             Self::Promoting => Shape::Promoting,
+            Self::RollbackUnknown => Shape::RollbackUnknown,
+            Self::RollbackNone => Shape::RollbackNone,
             _ => Shape::Whole,
         }
     }
@@ -197,6 +206,8 @@ pub fn inputs(variant: Variant) -> Inputs {
         | Variant::ImageOnly
         | Variant::Causes
         | Variant::Promoting
+        | Variant::RollbackUnknown
+        | Variant::RollbackNone
         | Variant::GitHubLimited
         | Variant::GitHubRefused
         | Variant::GitHubOffline

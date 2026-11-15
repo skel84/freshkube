@@ -389,6 +389,56 @@ pub fn example_acts(name: &str) -> crate::acts::StageActs {
             format!("Image {REGISTRY}/acme/checkout-api:1.14.2 @ {DIGEST}"),
             format!("Commit {COMMIT}: {TITLE}"),
         ],
+        earlier: example_earlier(name),
+    }
+}
+
+/// The earlier Freight of an example Stage's history, newest first. History
+/// entry 0 is what it runs now, so these start at 1. The first is verified in
+/// Kargo; the second has no verification recorded, so it can be picked but is
+/// never the main action. prod-ams runs an older Freight, so its are older
+/// still, the newer of them one whose verification failed.
+fn example_earlier(name: &str) -> Vec<crate::acts::rollback::Earlier> {
+    use crate::acts::rollback::{Earlier, Evidence};
+    let at = |index: usize| {
+        format!("/status/freightHistory/{index}/items/Warehouse~1checkout-images/name")
+    };
+    let line = |tag: &str, digest: &str| {
+        format!("Image {REGISTRY}/acme/checkout-api:{tag} @ sha256:{digest}…")
+    };
+    let verified = Evidence::Verified {
+        finished: Some("2026-10-14T09:12:00Z".into()),
+    };
+    if name == "prod-ams" {
+        vec![
+            Earlier {
+                freight: "swift-wren".into(),
+                pointer: at(1),
+                evidence: Evidence::Unknown("Kargo's verification of it ended Failed.".into()),
+                would_run: vec![line("1.13.9", "4b7d")],
+            },
+            Earlier {
+                freight: "calm-heron".into(),
+                pointer: at(2),
+                evidence: verified,
+                would_run: vec![line("1.13.8", "e03a")],
+            },
+        ]
+    } else {
+        vec![
+            Earlier {
+                freight: PREVIOUS.into(),
+                pointer: at(1),
+                evidence: verified,
+                would_run: vec![line("1.14.1", "71c9")],
+            },
+            Earlier {
+                freight: "calm-heron".into(),
+                pointer: at(2),
+                evidence: Evidence::Unknown("No verification of it was recorded.".into()),
+                would_run: vec![line("1.13.8", "e03a")],
+            },
+        ]
     }
 }
 
@@ -1032,6 +1082,20 @@ fn name_causes(hops: &mut [Hop]) {
     }
 }
 
+/// [`Shape::RollbackUnknown`] and [`Shape::RollbackNone`]: what every Stage's
+/// history holds for a rollback to pick from.
+fn rollback_shape(change: &mut Change, none: bool) {
+    use crate::acts::rollback::Evidence;
+    for acts in change.stages.iter_mut().filter_map(|s| s.acts.as_mut()) {
+        if none {
+            acts.earlier.clear();
+        }
+        for earlier in &mut acts.earlier {
+            earlier.evidence = Evidence::Unknown("No verification of it was recorded.".into());
+        }
+    }
+}
+
 /// [`Shape::Promoting`]: a Promotion of the Freight to `prod-ams`, made by
 /// someone else, is running.
 fn promoting(change: &mut Change) {
@@ -1299,6 +1363,12 @@ pub enum Shape {
     /// Someone else's Promotion of the Freight to `prod-ams` is running, so
     /// the Stage offers Abort in place of Promote.
     Promoting,
+    /// No earlier Freight of any Stage has a successful verification
+    /// recorded, so a rollback is only offered as a pick, never as the main
+    /// action.
+    RollbackUnknown,
+    /// No Stage has an earlier Freight in its history.
+    RollbackNone,
 }
 
 impl Shape {
@@ -1328,6 +1398,8 @@ impl Shape {
             | Self::ImageOnly
             | Self::Causes
             | Self::Promoting
+            | Self::RollbackUnknown
+            | Self::RollbackNone
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline
@@ -1376,6 +1448,10 @@ impl Shape {
             }
             return Ok(change);
         }
+        if matches!(self, Self::RollbackUnknown | Self::RollbackNone) {
+            rollback_shape(&mut change, self == Self::RollbackNone);
+            return Ok(change);
+        }
         if let Some(trouble) = self.github() {
             github(&mut change, trouble);
             return Ok(change);
@@ -1389,6 +1465,8 @@ impl Shape {
             | Self::ImageOnly
             | Self::Causes
             | Self::Promoting
+            | Self::RollbackUnknown
+            | Self::RollbackNone
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline

@@ -508,6 +508,7 @@ impl MaintenanceView {
                         .upgrade()
                         .and_then(|view| view.read(cx).apply_fingerprint())
                 }),
+                type_name: None,
                 on_confirm: std::rc::Rc::new(move |window: &mut Window, cx: &mut App| {
                     if let Some(view) = run.upgrade() {
                         view.update(cx, |view, cx| view.begin_apply(window, cx));
@@ -577,6 +578,7 @@ impl MaintenanceView {
                         .upgrade()
                         .and_then(|view| view.read(cx).bootstrap_fingerprint())
                 }),
+                type_name: None,
                 on_confirm: std::rc::Rc::new(move |window: &mut Window, cx: &mut App| {
                     if let Some(view) = run.upgrade() {
                         view.update(cx, |view, cx| view.begin_bootstrap(window, cx));

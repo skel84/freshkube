@@ -15,9 +15,12 @@
 //! | Refresh | the Stage or the Warehouse | `kargo.akuity.io/refresh` annotation, any token (a changed value reconciles) | reversible, no confirmation |
 //! | Reverify | the Stage | `kargo.akuity.io/reverify` annotation, the id of the verification to repeat | reversible, no confirmation |
 //! | Promote | a new Promotion per Stage | create `spec.stage`, `spec.freight` | spec change |
+//! | Roll back | a new Promotion per Stage, of an earlier Freight the Stage's history records | create `spec.stage`, `spec.freight` | spec change |
 //! | Abort | the running Promotion | `kargo.akuity.io/abort` annotation, `{"action":"terminate"}` | destructive |
 //!
 //! Approvals stay in Kargo, and so does everything else these don't do.
+
+pub mod rollback;
 
 #[cfg(test)]
 mod tests;
@@ -93,6 +96,9 @@ pub struct StageActs {
     pub current: Vec<(String, String)>,
     /// What the Freight holds, one line each (image and commit).
     pub would_run: Vec<String>,
+    /// The earlier Freight of the Stage's history a rollback could name,
+    /// newest first (`rollback::earlier`).
+    pub earlier: Vec<rollback::Earlier>,
 }
 
 /// Why an action is not offered, or what the Promote slot offers.
@@ -334,6 +340,8 @@ pub enum Kind {
     RefreshWarehouse,
     Reverify,
     Promote,
+    /// Promote the earlier Freight at this index of `StageActs::earlier`.
+    Rollback(usize),
     Abort,
 }
 
@@ -364,6 +372,18 @@ pub fn describe(
                 return None;
             }
             promote(change, &[Pick { acts, destination }], ulid)
+        }
+        Kind::Rollback(at) => {
+            // A running Promotion turns the slot into Abort; going back waits.
+            if matches!(acts.slot(), Slot::Abort(_)) {
+                return None;
+            }
+            rollback(
+                change,
+                &Pick { acts, destination },
+                acts.earlier.get(at)?,
+                ulid,
+            )
         }
     })
 }
@@ -531,14 +551,133 @@ pub fn promote(change: &change::Change, picks: &[Pick<'_>], ulid: &str) -> Actio
     }
 }
 
+/// Roll back: promotes an earlier Freight of the Stage's own history again,
+/// as a Promotion like any other (`promote`), with what a rollback adds.
+/// Its Stage dependency also holds that the Stage's history still names the
+/// target where the page saw it, so a Stage that has moved on since (a new
+/// Promotion shifts every entry down) sends nothing. There is no Undo: going
+/// back again is promoting the Freight it came from.
+pub fn rollback(
+    change: &change::Change,
+    pick: &Pick<'_>,
+    to: &rollback::Earlier,
+    ulid: &str,
+) -> ActionDescription {
+    let mut target_acts = pick.acts.clone();
+    target_acts.freight = to.freight.clone();
+    target_acts.would_run = to.would_run.clone();
+    let target_pick = Pick {
+        acts: &target_acts,
+        destination: pick.destination.clone(),
+    };
+    let mut action = promote(change, std::slice::from_ref(&target_pick), ulid);
+    for object in &mut action.changes {
+        for depends in &mut object.depends {
+            depends.holds.push((to.pointer.clone(), json!(to.freight)));
+        }
+    }
+    let stage = &pick.acts.stage.name;
+    action.kind = "rollback-stage".into();
+    action.verb = "Roll back".into();
+    action.sentence = format!(
+        "Roll {stage} back to Freight {}: create a Promotion of it.",
+        to.freight
+    );
+    action.title = Some(format!("Roll {stage} back to {}", to.freight));
+    action.preview = rollback_preview(&target_pick, pick.acts, to, change);
+    action
+}
+
+/// What a rollback shows: the two Freights, what Kargo recorded about the
+/// target, what it holds, and what this doesn't show.
+fn rollback_preview(
+    pick: &Pick<'_>,
+    from: &StageActs,
+    to: &rollback::Earlier,
+    change: &change::Change,
+) -> Vec<Preview> {
+    let stage = &pick.acts.stage.name;
+    let now: Vec<&str> = from.current.iter().map(|(_, name)| name.as_str()).collect();
+    let now_words = if now.is_empty() {
+        "the Freight it runs now".to_owned()
+    } else {
+        format!("Freight {}", now.join(", "))
+    };
+    let mut out = stage_previews(change, std::slice::from_ref(pick), &now.join(", "));
+    let evidence = match &to.evidence {
+        rollback::Evidence::Verified { finished } => vec![
+            format!(
+                "Verified in Kargo: its verification in {stage} ended Successful{}.",
+                finished
+                    .as_deref()
+                    .map(|at| format!(" ({at})"))
+                    .unwrap_or_default()
+            ),
+            "Argo CD's health and Coroot's outcome weren't recorded for it.".to_owned(),
+        ],
+        rollback::Evidence::Unknown(why) => vec![
+            format!("Not verified in Kargo: {why}"),
+            "Argo CD's health and Coroot's outcome weren't recorded for it either.".to_owned(),
+        ],
+    };
+    out.push(Preview {
+        title: format!("Freight {}", to.freight),
+        lines: evidence,
+    });
+    out.push(Preview {
+        title: "What this doesn't show".into(),
+        lines: vec![
+            "The commits and pull requests between the two Freights are not read.".into(),
+            "Only the Stage's own history is searched; older Freight isn't guessed at.".into(),
+        ],
+    });
+    out.push(Preview {
+        title: "Going back".into(),
+        lines: vec![
+            format!("There is no Undo. To come back, promote {now_words} again."),
+            format!(
+                "The same with the kargo CLI: {}",
+                rollback::cli_line(&from.project, &to.freight, stage)
+            ),
+        ],
+    });
+    out
+}
+
 /// What the Stages run now against what they would run, the change, and the
 /// steps and checks that follow.
 fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
+    let mut out = stage_previews(change, picks, "");
+    let mut between = vec![];
+    if let Some(pr) = change.origin.pull_request {
+        let title = change.origin.title.as_deref().unwrap_or("");
+        between.push(format!("Pull request {pr}: {title}").trim_end().to_owned());
+    }
+    if let Some(commit) = &change.origin.commit {
+        between.push(format!("Commit {}", &commit[..commit.len().min(7)]));
+    }
+    between.push("Commits between this Freight and what runs now are not read.".to_owned());
+    out.push(Preview {
+        title: "This change".into(),
+        lines: between,
+    });
+    out.push(Preview {
+        title: "Going back".into(),
+        lines: vec!["There is no Undo. To go back, promote the previous Freight again.".into()],
+    });
+    out
+}
+
+/// One block for each Stage: what it runs now (`running` when given, else
+/// what the change read), what it would run, where it deploys, and its steps
+/// and checks.
+fn stage_previews(change: &change::Change, picks: &[Pick<'_>], running: &str) -> Vec<Preview> {
     let mut out = vec![];
     for pick in picks {
         let stage = &pick.acts.stage.name;
         let model = change.stages.iter().find(|s| &s.name == stage);
         let runs_now = match model.and_then(|s| s.running.as_deref()) {
+            _ if !running.is_empty() => format!("Freight {running}"),
             Some(running) => format!("Freight {running}"),
             None => "Nothing else is recorded.".to_owned(),
         };
@@ -546,6 +685,9 @@ fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
             format!("Runs now: {runs_now}"),
             format!("Would run: Freight {}", pick.acts.freight),
         ];
+        if pick.acts.would_run.is_empty() {
+            lines.push("  What it holds wasn't recorded in the Stage's history.".to_owned());
+        }
         lines.extend(pick.acts.would_run.iter().map(|line| format!("  {line}")));
         match &pick.destination {
             Some(destination) => {
@@ -573,23 +715,6 @@ fn preview(change: &change::Change, picks: &[Pick<'_>]) -> Vec<Preview> {
             lines,
         });
     }
-    let mut between = vec![];
-    if let Some(pr) = change.origin.pull_request {
-        let title = change.origin.title.as_deref().unwrap_or("");
-        between.push(format!("Pull request {pr}: {title}").trim_end().to_owned());
-    }
-    if let Some(commit) = &change.origin.commit {
-        between.push(format!("Commit {}", &commit[..commit.len().min(7)]));
-    }
-    between.push("Commits between this Freight and what runs now are not read.".to_owned());
-    out.push(Preview {
-        title: "This change".into(),
-        lines: between,
-    });
-    out.push(Preview {
-        title: "Going back".into(),
-        lines: vec!["There is no Undo. To go back, promote the previous Freight again.".into()],
-    });
     out
 }
 
@@ -600,8 +725,15 @@ fn short(name: &str) -> String {
 
 /// The lines a Freight holds, for the preview: each image and each commit.
 pub fn freight_lines(freight: &kargo::Freight) -> Vec<String> {
-    let mut lines: Vec<String> = freight
-        .images
+    contents_lines(&freight.images, &freight.commits)
+}
+
+/// The lines for images and commits, as the preview shows them.
+pub(crate) fn contents_lines(
+    images: &[kargo::FreightImage],
+    commits: &[kargo::FreightCommit],
+) -> Vec<String> {
+    let mut lines: Vec<String> = images
         .iter()
         .map(|image| {
             let tag = image.tag.as_deref().unwrap_or("no tag");
@@ -613,7 +745,7 @@ pub fn freight_lines(freight: &kargo::Freight) -> Vec<String> {
             }
         })
         .collect();
-    lines.extend(freight.commits.iter().map(|commit| {
+    lines.extend(commits.iter().map(|commit| {
         let id = &commit.id[..commit.id.len().min(7)];
         match commit.subject() {
             Some(subject) => format!("Commit {id}: {subject}"),
