@@ -73,6 +73,8 @@ pub struct Matrix {
     /// The selected Stage's row and, when a cell stands for the selected
     /// hop, its column.
     selected: Option<(SharedString, Option<Column>)>,
+    /// The page holds the keyboard: the selected cell wears the ring.
+    ring: bool,
     loading: Option<kit::LoadingRows>,
     /// The selected cell's column, to scroll into view once the table has
     /// laid out.
@@ -94,6 +96,7 @@ impl Matrix {
             loading: None,
             reveal: None,
             reveal_rows: 0,
+            ring: false,
         }
     }
 
@@ -102,8 +105,10 @@ impl Matrix {
         freight: &str,
         rows: &[&StageRow],
         selected: Option<(SharedString, Option<Column>)>,
+        ring: bool,
         loading: Option<kit::LoadingRows>,
     ) {
+        self.ring = ring;
         self.freight = freight.to_owned().into();
         if self.rows.len() != rows.len()
             || self.rows.iter().zip(rows).any(|(old, new)| **old != **new)
@@ -324,6 +329,7 @@ impl TableSource for Matrix {
                 onward_tone: next.map_or(Tone::Outline, |next| next.tone),
                 tooltip: cell.tooltip.clone(),
                 selected,
+                ring: selected && self.ring,
             },
             cx,
         )
