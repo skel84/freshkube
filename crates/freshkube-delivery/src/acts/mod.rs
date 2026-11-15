@@ -577,7 +577,7 @@ pub fn rollback(
         }
     }
     let stage = &pick.acts.stage.name;
-    action.kind = "rollback".into();
+    action.kind = "rollback-stage".into();
     action.verb = "Roll back".into();
     action.sentence = format!(
         "Roll {stage} back to Freight {}: create a Promotion of it.",
@@ -598,6 +598,11 @@ fn rollback_preview(
 ) -> Vec<Preview> {
     let stage = &pick.acts.stage.name;
     let now: Vec<&str> = from.current.iter().map(|(_, name)| name.as_str()).collect();
+    let now_words = if now.is_empty() {
+        "the Freight it runs now".to_owned()
+    } else {
+        format!("Freight {}", now.join(", "))
+    };
     let mut out = stage_previews(change, std::slice::from_ref(pick), &now.join(", "));
     let evidence = match &to.evidence {
         rollback::Evidence::Verified { finished } => vec![
@@ -629,13 +634,10 @@ fn rollback_preview(
     out.push(Preview {
         title: "Going back".into(),
         lines: vec![
+            format!("There is no Undo. To come back, promote {now_words} again."),
             format!(
-                "There is no Undo. To come back, promote Freight {} again.",
-                now.join(", ")
-            ),
-            format!(
-                "The same with the kargo CLI: kargo promote --project {} --freight {} --stage {stage}",
-                from.project, to.freight
+                "The same with the kargo CLI: {}",
+                rollback::cli_line(&from.project, &to.freight, stage)
             ),
         ],
     });

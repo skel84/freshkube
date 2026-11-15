@@ -115,6 +115,11 @@ pub fn earlier(stage: &kargo::Stage) -> Vec<Earlier> {
     found
 }
 
+/// The kargo CLI line that promotes `freight` to the Stage, to run by hand.
+pub fn cli_line(project: &str, freight: &str, stage: &str) -> String {
+    format!("kargo promote --project {project} --freight {freight} --stage {stage}")
+}
+
 /// The newest earlier Freight Kargo verified: the one the main action
 /// offers. `None` when none was, which is never "the last healthy".
 pub fn last_verified(earlier: &[Earlier]) -> Option<&Earlier> {
@@ -157,7 +162,7 @@ mod tests {
     const DAY2: &str = "2026-10-02T10:00:00Z";
 
     #[test]
-    fn the_newest_entry_is_what_runs_and_is_never_a_candidate() {
+    fn safety_g25_the_newest_entry_is_what_runs_and_is_never_a_candidate() {
         let stage = stage(vec![entry(&["now"], Some(("Successful", DAY2)))]);
         assert!(earlier(&stage).is_empty());
         assert!(earlier(&stage::empty()).is_empty());
@@ -212,7 +217,8 @@ mod tests {
     }
 
     #[test]
-    fn freight_the_stage_runs_again_further_back_is_not_a_candidate_and_one_is_listed_once() {
+    fn safety_g25_freight_the_stage_runs_again_further_back_is_not_a_candidate_and_one_is_listed_once()
+     {
         let stage = stage(vec![
             entry(&["now"], None),
             entry(&["other"], Some(("Successful", DAY2))),

@@ -199,9 +199,15 @@ fn a_stage_action_the_cluster_refuses_is_greyed_out_with_the_reason(cx: &mut Tes
         promote,
         Some(format!("Needs create on promotions in {project}"))
     );
+    // A rollback asks what a Promote asks: the one cluster answer covers it.
+    let (rollback, _) = words(cx, &page, 5);
+    assert_eq!(
+        rollback,
+        Some(format!("Needs create on promotions in {project}"))
+    );
     // Shown, not hidden, and none of them asks the shell.
     assert_eq!(label(cx, handle, 1).as_deref(), Some("Refresh prod-ams"));
-    for ix in 1..5 {
+    for ix in 1..6 {
         press(cx, handle, ix);
     }
     assert!(events.borrow().is_empty(), "{:?}", events.borrow());
@@ -316,13 +322,22 @@ fn a_stage_with_a_verified_earlier_freight_lists_it_alone_and_pressing_it_asks_f
     select(cx, handle, &page, "prod-ams-promotion");
     assert_eq!(
         label(cx, handle, 5).as_deref(),
-        Some("Roll back calm-heron"),
+        Some("Roll back calm-heron (verified)"),
         "the newest Freight Kargo verified"
     );
     assert_eq!(
-        label(cx, handle, 6),
-        None,
-        "with a verified Freight it is the one line"
+        label(cx, handle, 6).as_deref(),
+        Some("Copy kargo command"),
+        "with a verified Freight it is the one rollback line, then its copy"
+    );
+    assert_eq!(label(cx, handle, 7), None);
+    press(cx, handle, 6);
+    assert!(events.borrow().is_empty(), "copying asks the shell nothing");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some("kargo promote --project checkout --freight calm-heron --stage prod-ams")
     );
     press(cx, handle, 5);
     let events = events.borrow();

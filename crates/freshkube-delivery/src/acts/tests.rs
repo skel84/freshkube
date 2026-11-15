@@ -220,6 +220,7 @@ async fn safety_g01_read_only_blocks_every_stage_action_and_asks_the_cluster_not
         refresh_warehouse(&stage, "t").unwrap(),
         reverify(&example_acts("dev")).unwrap(),
         promote_action(Protection::Guarded),
+        rollback_action(VERIFIED, Protection::Guarded),
         abort(&stage, &running()),
     ];
     for action in all {
@@ -1030,7 +1031,7 @@ async fn a_rollback_creates_a_promotion_of_the_earlier_freight_through_the_write
         .unwrap()
         .records;
     assert_eq!(records[0].tier, "spec-change");
-    assert_eq!(records[0].action, "rollback");
+    assert_eq!(records[0].action, "rollback-stage");
 }
 
 #[tokio::test(start_paused = true)]

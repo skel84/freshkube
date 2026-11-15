@@ -221,6 +221,8 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g25_a_stage_whose_history_moved_since_the_page_sends_no_rollback` (`crates/freshkube-delivery/src/acts/tests.rs`)
 - `safety_g25_a_history_that_moves_while_the_dialog_is_open_sends_nothing` (`crates/freshkube-delivery/src/acts/tests.rs`)
 - `safety_g25_a_rollback_is_offered_only_for_an_earlier_freight_of_the_stage_and_not_while_one_runs` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g25_the_newest_entry_is_what_runs_and_is_never_a_candidate` (`crates/freshkube-delivery/src/acts/rollback.rs`)
+- `safety_g25_freight_the_stage_runs_again_further_back_is_not_a_candidate_and_one_is_listed_once` (`crates/freshkube-delivery/src/acts/rollback.rs`)
 
 ## Known gaps
 

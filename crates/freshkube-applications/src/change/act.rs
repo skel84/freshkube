@@ -1,5 +1,5 @@
-//! The Stage Inspector's actions (#855): Refresh, Reverify, Promote and
-//! Abort. The page only offers them and says which Stage and change they are
+//! The Stage Inspector's actions (#855): Refresh, Reverify, Promote, Roll
+//! back (#845) and Abort. The page only offers them and says which Stage and change they are
 //! for; the shell describes the write through `delivery::acts`, looks up the
 //! levels, and core's `write` module sends it. Nothing here builds a request.
 //!
@@ -149,6 +149,25 @@ impl ChangePage {
         self.with_offers(self.stage_buttons(stage))
     }
 
+    /// The Stage's Roll back lines (#845), in a block of their own in the
+    /// Inspector's body so the action footer keeps its height. Greyed out
+    /// with the same reason as the other actions when Kargo's cluster isn't
+    /// known or the Stage's handles weren't read.
+    pub(super) fn stage_rollback(&self, stage: &Stage) -> Vec<ActionLine> {
+        let Some(acts) = &stage.acts else {
+            let unread: SharedString =
+                "The Stage's UID and version weren't read, so a change to it couldn't be checked."
+                    .into();
+            return vec![ActionLine {
+                label: "Roll back…".into(),
+                why: Some(self.kargo_at().err().unwrap_or(unread)),
+                tooltip: Some("Promotes an earlier Freight of the Stage's history".into()),
+                leads: None,
+            }];
+        };
+        self.with_offers(self.rollback_buttons(stage, acts, self.kargo_at().err()))
+    }
+
     /// What the cluster said, on top of what the page knows: a refused
     /// action is greyed out with its reason (any reason the page already had
     /// outranks it), and one whose review didn't answer says so and stays on.
@@ -228,7 +247,6 @@ impl ChangePage {
                     .then(|| "No verification of this Freight was read to repeat.".into())
             }),
         ));
-        let rollback = self.rollback_buttons(stage, acts, no_kargo.clone());
         // Promote becomes Abort while any promotion runs, someone else's too.
         buttons.push(match acts.slot() {
             Slot::Promote => line(
@@ -254,7 +272,6 @@ impl ChangePage {
                 Some(why.into()),
             ),
         });
-        buttons.extend(rollback);
         buttons
     }
 
@@ -269,7 +286,7 @@ impl ChangePage {
         acts: &freshkube_delivery::acts::StageActs,
         no_kargo: Option<SharedString>,
     ) -> Vec<ActionLine> {
-        use freshkube_delivery::acts::rollback::{Evidence, last_verified};
+        use freshkube_delivery::acts::rollback::{Evidence, cli_line, last_verified};
         /// How many earlier Freight the Inspector lists.
         const SHOWN: usize = 2;
         let running = matches!(acts.slot(), Slot::Abort(_));
@@ -306,7 +323,7 @@ impl ChangePage {
             let earlier = &acts.earlier[at];
             let (label, tooltip) = match &earlier.evidence {
                 Evidence::Verified { .. } => (
-                    format!("Roll back {}", earlier.freight),
+                    format!("Roll back {} (verified)", earlier.freight),
                     if Some(&earlier.freight) == best.as_ref() {
                         "Verified in Kargo: the newest earlier Freight Kargo verified in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
                             .to_owned()
@@ -329,6 +346,24 @@ impl ChangePage {
                 leads: blocked
                     .is_none()
                     .then(|| Leads::Act(ActKind::Rollback(at), stage.name.clone())),
+            });
+        }
+        // The secondary action: the kargo line to run it by hand. It sends
+        // nothing, so it stays on whatever greys the rollback out.
+        if let Some(best) = last_verified(&acts.earlier) {
+            lines.push(ActionLine {
+                label: "Copy kargo command".into(),
+                why: None,
+                tooltip: Some(
+                    format!(
+                        "Copies: {}",
+                        cli_line(&acts.project, &best.freight, &stage.name)
+                    )
+                    .into(),
+                ),
+                leads: Some(Leads::Copy(
+                    cli_line(&acts.project, &best.freight, &stage.name).into(),
+                )),
             });
         }
         lines

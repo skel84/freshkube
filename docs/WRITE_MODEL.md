@@ -121,7 +121,7 @@ A submitted write outlives its page, is never replayed (after a transport error 
 
 ### Stage actions (#855)
 
-The change page's Stage Inspector offers four actions on today's Kargo, through the Kubernetes API (`freshkube-delivery`'s `acts` describes them; a later route through Kargo's own API is [#860](https://github.com/skel84/freshkube/issues/860)). The annotation keys and values follow Kargo's API package (`github.com/akuity/kargo/api/v1alpha1`: `AnnotationKeyRefresh`, `AnnotationKeyReverify`, `AnnotationKeyAbort`, `AbortPromotionRequest`).
+The change page's Stage Inspector offers five actions on today's Kargo (Refresh, Reverify, Promote, Roll back and Abort), through the Kubernetes API (`freshkube-delivery`'s `acts` describes them; a later route through Kargo's own API is [#860](https://github.com/skel84/freshkube/issues/860)). The annotation keys and values follow Kargo's API package (`github.com/akuity/kargo/api/v1alpha1`: `AnnotationKeyRefresh`, `AnnotationKeyReverify`, `AnnotationKeyAbort`, `AbortPromotionRequest`).
 
 | Action | Writes | Tier | Asked |
 |--------|--------|------|-------|
