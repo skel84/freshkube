@@ -123,9 +123,27 @@ fn the_stage_naming_of_the_setup_is_a_row_of_its_own_and_goes_when_removed(
         settle_sources(window, cx);
         assert_eq!(
             named(cx),
-            Some(("{stage}-{project}".into(), "By name only".into()))
+            Some(("‹stage›-‹project›".into(), "By name only".into()))
         );
         assert!(window.find("settings-source-stage-naming").visible());
+        // The table says where it reads in words; the file's key waits in
+        // the Inspector and the tooltip (#1052).
+        let (reads, key, tooltip) = sources
+            .read(cx)
+            .rows
+            .iter()
+            .find(|row| row.read == Read::StageNaming)
+            .map(|row| {
+                (
+                    row.reads.to_string(),
+                    row.setup_key,
+                    row.tooltip.to_string(),
+                )
+            })
+            .unwrap();
+        assert_eq!(reads, "Setup file");
+        assert_eq!(key, Some("delivery.stage_naming"));
+        assert!(tooltip.contains("delivery.stage_naming"), "{tooltip}");
         naming.project_key = Some("example.test/project".into());
         sources.update(cx, |list, cx| list.set_stage_naming(Some(naming), cx));
         assert_eq!(
