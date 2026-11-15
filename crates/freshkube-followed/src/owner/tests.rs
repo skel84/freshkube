@@ -782,7 +782,10 @@ fn grouped_tells_the_first_landing_at_once_and_the_rest_as_one_notice(cx: &mut T
         events
             .borrow()
             .iter()
-            .map(|Event::Toast { words, .. }| words.title.clone())
+            .filter_map(|event| match event {
+                Event::Toast { words, .. } => Some(words.title.clone()),
+                Event::Open { .. } => None,
+            })
             .collect()
     };
     assert_eq!(titles(&events), ["wonky-otter reached prod-ams"]);
@@ -842,46 +845,48 @@ fn permission(cx: &mut TestAppContext, h: &Harness) -> Permission {
 }
 
 #[gpui_kit::test]
-fn the_system_is_asked_once_at_the_first_follow_and_never_after_a_refusal(
-    cx: &mut TestAppContext,
-) {
+fn the_system_is_asked_once_at_the_first_follow_and_never_after_a_refusal(cx: &mut TestAppContext) {
     let h = harness(cx, None);
     let sink = with_sink(cx, &h);
     assert_eq!(sink.asked(), 0, "nothing followed, nothing asked");
-    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
-    h.follow(cx, pod("web"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
+    h.follow(cx, pod("web"), connection("dev-fra", false))
+        .unwrap();
     assert_eq!(sink.asked(), 1);
     assert_eq!(permission(cx, &h), Permission::Asking);
     answer(cx, &h, false);
     assert_eq!(permission(cx, &h), Permission::Denied);
-    h.follow(cx, pod("db"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("db"), connection("dev-fra", false))
+        .unwrap();
     assert_eq!(sink.asked(), 1, "a refusal is not asked again");
 }
 
 #[gpui_kit::test]
 fn a_system_with_no_native_sink_is_never_asked_and_toasts(cx: &mut TestAppContext) {
     let h = harness(cx, None);
-    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
     assert_eq!(permission(cx, &h), Permission::NotAsked);
     h.deliver(cx, &pod_key("api"), crash(false, true));
     assert_eq!(h.toasts().len(), 1);
 }
 
 #[gpui_kit::test]
-fn a_granted_permission_shows_a_banner_only_while_the_app_is_not_in_front(
-    cx: &mut TestAppContext,
-) {
+fn a_granted_permission_shows_a_banner_only_while_the_app_is_not_in_front(cx: &mut TestAppContext) {
     let h = harness(cx, None);
     let sink = with_sink(cx, &h);
-    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
     answer(cx, &h, true);
     set_front(cx, &h, true);
     h.deliver(cx, &pod_key("api"), crash(false, true));
     assert_eq!(h.toasts().len(), 1, "in front: a toast");
     assert!(sink.shown().is_empty());
     set_front(cx, &h, false);
-    h.deliver(cx, &pod_key("api"), crash(true, false));
-    h.deliver(cx, &pod_key("api"), crash(false, true));
+    h.follow(cx, pod("web"), connection("dev-fra", false))
+        .unwrap();
+    h.deliver(cx, &pod_key("web"), crash(false, true));
     assert_eq!(h.toasts().len(), 1, "out of front: no second toast");
     let shown = sink.shown();
     assert_eq!(shown.len(), 1);
@@ -892,7 +897,8 @@ fn a_granted_permission_shows_a_banner_only_while_the_app_is_not_in_front(
 fn a_denied_permission_keeps_the_toast(cx: &mut TestAppContext) {
     let h = harness(cx, None);
     let sink = with_sink(cx, &h);
-    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
     answer(cx, &h, false);
     set_front(cx, &h, false);
     h.deliver(cx, &pod_key("api"), crash(false, true));
@@ -904,7 +910,8 @@ fn a_denied_permission_keeps_the_toast(cx: &mut TestAppContext) {
 fn a_banner_on_a_protected_cluster_hides_its_details(cx: &mut TestAppContext) {
     let h = harness(cx, None);
     let sink = with_sink(cx, &h);
-    h.follow(cx, pod("api"), connection("prod-ams", true)).unwrap();
+    h.follow(cx, pod("api"), connection("prod-ams", true))
+        .unwrap();
     answer(cx, &h, true);
     set_front(cx, &h, false);
     h.deliver(
@@ -929,7 +936,8 @@ fn quiet_hours_hold_a_banner_but_let_a_failure_through(cx: &mut TestAppContext) 
     let sink = with_sink(cx, &h);
     h.follow(cx, landing("wonky-otter"), connection("dev-fra", false))
         .unwrap();
-    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
     answer(cx, &h, true);
     set_front(cx, &h, false);
     cx.update(|cx| {
@@ -957,7 +965,8 @@ fn quiet_hours_hold_a_banner_but_let_a_failure_through(cx: &mut TestAppContext) 
 fn a_click_on_a_banner_asks_the_shell_to_open_its_item_once_known(cx: &mut TestAppContext) {
     let h = harness(cx, None);
     let sink = with_sink(cx, &h);
-    h.follow(cx, pod("api"), connection("dev-fra", false)).unwrap();
+    h.follow(cx, pod("api"), connection("dev-fra", false))
+        .unwrap();
     answer(cx, &h, true);
     set_front(cx, &h, false);
     h.deliver(cx, &pod_key("api"), crash(false, true));
@@ -991,7 +1000,11 @@ fn the_permission_answer_is_saved_and_a_pending_question_is_not(cx: &mut TestApp
         .follow(cx, pod("api"), connection("dev-fra", false))
         .unwrap();
     let saved = crate::saved::load(&crate::saved::document(&prefs));
-    assert_eq!(saved.permission, Permission::NotAsked, "Asking is not saved");
+    assert_eq!(
+        saved.permission,
+        Permission::NotAsked,
+        "Asking is not saved"
+    );
     answer(cx, &first, true);
     let saved = crate::saved::load(&crate::saved::document(&prefs));
     assert_eq!(saved.permission, Permission::Granted);

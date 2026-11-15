@@ -37,7 +37,9 @@ impl Permission {
                 "Asked when you first follow something. Notices show in the app until then."
             }
             (true, Permission::Asking) => "Waiting for your answer in the system's prompt.",
-            (true, Permission::Granted) => "Allowed. Notices show as banners when the app isn't in front.",
+            (true, Permission::Granted) => {
+                "Allowed. Notices show as banners when the app isn't in front."
+            }
             (true, Permission::Denied) => {
                 "Refused. Notices show in the app; allow Freshkube in the system's notification settings to get banners."
             }

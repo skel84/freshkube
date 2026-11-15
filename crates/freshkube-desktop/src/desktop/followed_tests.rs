@@ -195,7 +195,9 @@ fn a_protected_cluster_toasts_only_the_title(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(notices(cx, f.handle), told + 1, "a toast was pushed");
     let heard = heard.borrow();
-    let freshkube_followed::owner::Event::Toast { words, .. } = &heard[0];
+    let freshkube_followed::owner::Event::Toast { words, .. } = &heard[0] else {
+        panic!("a toast");
+    };
     assert_eq!(words.title, "Freshkube · 1 update");
     assert_eq!(words.body, None);
 }
@@ -563,9 +565,7 @@ fn permission_words(cx: &mut TestAppContext, f: &Following) -> String {
 }
 
 #[gpui_kit::test]
-fn settings_says_banners_are_not_available_where_there_is_no_native_sink(
-    cx: &mut TestAppContext,
-) {
+fn settings_says_banners_are_not_available_where_there_is_no_native_sink(cx: &mut TestAppContext) {
     let f = following(cx, Shape::States);
     open_settings_notifications(cx, &f);
     assert!(present(cx, f.handle, "notifications-permission-row"));
@@ -608,9 +608,7 @@ fn emit_open(cx: &mut TestAppContext, f: &Following, context: &str) {
 }
 
 #[gpui_kit::test]
-fn a_banner_click_in_the_open_cluster_opens_the_pod_and_says_where_from(
-    cx: &mut TestAppContext,
-) {
+fn a_banner_click_in_the_open_cluster_opens_the_pod_and_says_where_from(cx: &mut TestAppContext) {
     let f = following(cx, Shape::Bell);
     let context = cx.read(|cx| f.followed.read(cx).items()[0].follow.context.clone());
     let before = notices(cx, f.handle);
