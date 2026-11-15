@@ -19,7 +19,7 @@ mod feeds;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -29,6 +29,7 @@ use freshkube_prefs::Document;
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
+use crate::banner::{Absent, Banner, Delivery, Notifier, Permission, delivery};
 use crate::example::Script;
 use crate::live::Coroot;
 use crate::model::{Follow, MAX_FOLLOWS, Refused, Subject, WatchKey};
@@ -57,7 +58,13 @@ pub struct Connection {
 pub enum Event {
     /// Show this as a toast.
     Toast { words: Words, failure: bool },
+    /// A banner was clicked: open what it is about, marked as coming from
+    /// a notification. The shell navigates; it never acts.
+    Open { subject: Subject, context: String },
 }
+
+/// How many banner targets are kept to answer a click.
+const TARGETS_KEPT: usize = 30;
 
 /// One follow and where it stands.
 pub struct Item {
@@ -99,6 +106,12 @@ pub struct Followed {
     origin: Option<(Instant, DateTime<Utc>)>,
     flush: Option<Task<()>>,
     pub(crate) local_minute: Arc<dyn Fn() -> u16 + Send + Sync>,
+    notifier: Arc<dyn Notifier>,
+    permission: Permission,
+    /// Whether the app is the front app; banners show only when it isn't.
+    in_front: bool,
+    /// What each notice shown as a banner is about, to open on a click.
+    targets: VecDeque<(u64, Subject, String)>,
 }
 
 impl EventEmitter<Event> for Followed {}
@@ -147,6 +160,10 @@ impl Followed {
             next_id: saved.next_id.max(1),
             items,
             settings: saved.settings,
+            permission: saved.permission,
+            notifier: Arc::new(Absent),
+            in_front: true,
+            targets: VecDeque::new(),
             hub: Hub::default(),
             inbox: Inbox::default(),
             connections: HashMap::new(),
@@ -293,6 +310,7 @@ impl Followed {
         if open && !self.feeds.get(&key).is_some_and(|f| f.watch.is_running()) {
             self.start_feed(key, cx);
         }
+        self.ask_permission();
         self.save();
         cx.notify();
         Ok(id)
@@ -498,13 +516,100 @@ impl Followed {
         let quiet = self.settings.quiet.holds((self.local_minute)());
         notice.held = quiet && !notice.has_failure();
         if !notice.held {
-            cx.emit(Event::Toast {
-                words: notice.words(&self.settings),
-                failure: notice.has_failure(),
-            });
+            let words = notice.words(&self.settings);
+            let failure = notice.has_failure();
+            match delivery(self.notifier.native(), self.permission, self.in_front) {
+                Delivery::Banner => self.banner(&notice, words, failure),
+                Delivery::Toast => cx.emit(Event::Toast { words, failure }),
+            }
         }
         self.inbox.push(notice);
         cx.notify();
+    }
+
+    /// Hands a notice to the platform as a banner, and remembers what it is
+    /// about for a click.
+    fn banner(&mut self, notice: &Notice, words: Words, failure: bool) {
+        let first = notice
+            .updates
+            .first()
+            .and_then(|u| self.items.iter().find(|i| i.follow.id == u.follow));
+        // Opaque: the system is never handed a cluster or object name here.
+        let thread = first.map_or_else(String::new, |i| format!("follow-{}", i.follow.id));
+        if let Some(item) = first {
+            self.targets.push_back((
+                notice.id,
+                item.follow.subject.clone(),
+                item.follow.context.clone(),
+            ));
+            while self.targets.len() > TARGETS_KEPT {
+                self.targets.pop_front();
+            }
+        }
+        self.notifier.show(Banner {
+            notice: notice.id,
+            words,
+            failure,
+            thread,
+        });
+    }
+
+    /// Uses `notifier` for banners from now on. It asks nothing: the system
+    /// is asked only when a follow is made (`follow_in`), never at launch.
+    pub fn set_notifier(&mut self, notifier: Arc<dyn Notifier>, cx: &mut Context<Self>) {
+        self.notifier = notifier;
+        cx.notify();
+    }
+
+    /// Whether this system can show banners at all.
+    pub fn banners_native(&self) -> bool {
+        self.notifier.native()
+    }
+
+    pub fn permission(&self) -> Permission {
+        self.permission
+    }
+
+    /// The shell says whether the app is the front app.
+    pub fn set_in_front(&mut self, in_front: bool) {
+        self.in_front = in_front;
+    }
+
+    /// Asks the system once, when something is followed and it was never
+    /// asked. A refusal is never asked again, and no follow makes one more
+    /// question while the first is open.
+    fn ask_permission(&mut self) {
+        if self.stopped
+            || self.items.is_empty()
+            || self.permission != Permission::NotAsked
+            || !self.notifier.native()
+        {
+            return;
+        }
+        self.permission = Permission::Asking;
+        self.notifier.ask();
+    }
+
+    /// The system answered the question.
+    pub fn permission_answered(&mut self, granted: bool, cx: &mut Context<Self>) {
+        self.permission = if granted {
+            Permission::Granted
+        } else {
+            Permission::Denied
+        };
+        self.save();
+        cx.notify();
+    }
+
+    /// A banner was clicked: asks the shell to open what it was about, if
+    /// that is still known.
+    pub fn banner_clicked(&mut self, notice: u64, cx: &mut Context<Self>) {
+        if let Some((_, subject, context)) = self.targets.iter().find(|(id, ..)| *id == notice) {
+            cx.emit(Event::Open {
+                subject: subject.clone(),
+                context: context.clone(),
+            });
+        }
     }
 
     /// Wakes when the open group window ends, to tell what waited in it.
@@ -541,6 +646,7 @@ impl Followed {
             follows: self.items.iter().map(|i| i.follow.clone()).collect(),
             next_id: self.next_id,
             settings: self.settings,
+            permission: self.permission.saved(),
         };
         match file.save(&saved) {
             Ok(()) => self.save_failed = false,
