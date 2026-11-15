@@ -94,7 +94,8 @@ impl GitRunner {
         self
     }
 
-    #[cfg(test)]
+    // Only the unix test of the process group uses a stand-in `git`.
+    #[cfg(all(test, unix))]
     pub(crate) fn with_path_for_test(mut self, dir: PathBuf) -> Self {
         self.path = Some(dir);
         self
