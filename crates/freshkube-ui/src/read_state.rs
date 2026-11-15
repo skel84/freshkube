@@ -53,6 +53,10 @@ pub enum ReadState {
         cluster: String,
         hint: Option<String>,
     },
+    /// The tool answers in a version Freshkube doesn't read.
+    Unsupported { what: String, cluster: String },
+    /// The read answered but stopped at its limit, so part is unseen.
+    Partial { what: String, cluster: String },
     /// Data kept after a failed refresh; `at` is the time it was read.
     Stale { what: String, at: String },
 }
@@ -100,6 +104,8 @@ impl ReadState {
             Self::Unreachable { what, .. } => format!("Couldn't reach {what}"),
             Self::NotReadYet { what } => format!("Haven't read {what} yet"),
             Self::Empty { looked_for, .. } => format!("No {looked_for} found"),
+            Self::Unsupported { .. } => "Can't read this operator version".to_owned(),
+            Self::Partial { what, .. } => format!("Read only part of {what}"),
             Self::Stale { what, .. } => format!("Showing {what} as last seen"),
         }
     }
@@ -138,6 +144,12 @@ impl ReadState {
                     None => found,
                 }
             }
+            Self::Unsupported { what, cluster } => format!(
+                "The operator in {cluster} serves a version Freshkube doesn't read, so {what} can't be listed."
+            ),
+            Self::Partial { what, cluster } => format!(
+                "Freshkube stopped reading {what} in {cluster} at its limit. Nothing is shown as missing."
+            ),
             Self::Stale { at, .. } => format!("Read at {at}; the latest read failed."),
         }
     }
@@ -155,7 +167,11 @@ impl ReadState {
     pub fn tone(&self) -> Tone {
         match self {
             Self::NotInstalled { .. } | Self::NotSetUp { .. } | Self::Empty { .. } => Tone::Info,
-            Self::Refused { .. } | Self::Unreachable { .. } | Self::Stale { .. } => Tone::Warn,
+            Self::Refused { .. }
+            | Self::Unreachable { .. }
+            | Self::Unsupported { .. }
+            | Self::Partial { .. }
+            | Self::Stale { .. } => Tone::Warn,
             Self::NotReadYet { .. } => Tone::Waiting,
         }
     }
@@ -311,6 +327,28 @@ mod tests {
                 .description()
                 .ends_with("Set it in Settings › Monitoring.")
         );
+    }
+
+    #[test]
+    fn an_unsupported_version_is_a_warning_without_retry() {
+        let state = ReadState::Unsupported {
+            what: "clusters".into(),
+            cluster: "prod-fra".into(),
+        };
+        assert_eq!(state.tone(), Tone::Warn);
+        assert!(!state.allows_retry());
+        assert_eq!(state.title(), "Can't read this operator version");
+    }
+
+    #[test]
+    fn a_partial_read_is_a_warning_and_says_nothing_is_missing() {
+        let state = ReadState::Partial {
+            what: "backups".into(),
+            cluster: "prod-fra".into(),
+        };
+        assert_eq!(state.tone(), Tone::Warn);
+        assert!(!state.allows_retry());
+        assert!(state.description().contains("Nothing is shown as missing"));
     }
 
     #[test]

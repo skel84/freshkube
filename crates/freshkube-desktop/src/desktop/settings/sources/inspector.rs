@@ -76,7 +76,7 @@ impl SourcesList {
     }
 
     pub(super) fn follow_roles(&self, cx: &App) -> menu::MenuAction {
-        menu::MenuAction::new("Follow roles", PinSource { entry: None })
+        menu::MenuAction::new("Choose automatically", PinSource { entry: None })
             .enabled(self.pinned(cx) && self.editable(cx))
     }
 
@@ -194,7 +194,7 @@ impl SourcesList {
                 .outline()
                 .small()
                 .h(dp(ui::CONTROL_HEIGHT))
-                .label("Follow roles")
+                .label("Choose automatically")
                 .disabled(!editable || !self.pinned(cx))
                 .on_click(cx.listener(|this, _, _, cx| this.pin(None, cx)));
             detail = detail.child(

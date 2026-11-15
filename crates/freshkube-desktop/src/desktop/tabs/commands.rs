@@ -378,6 +378,8 @@ impl Pilot {
                 bound(freshkube_nav::LinkPage::Nodes, "prod-ams"),
                 bound(freshkube_nav::LinkPage::Etcd, "stage-fra"),
             ],
+            // Seeded by `seed_shell_on_other_cluster`, which needs a window.
+            TabsShape::ShellOther => return,
             TabsShape::Missing => vec![
                 (here, shown, None),
                 bound(freshkube_nav::LinkPage::Nodes, "retired-fra"),
@@ -385,6 +387,101 @@ impl Pilot {
         };
         self.tabs.set = TabSet::restored_bound(views, 0, overview());
         self.tabs_changed(cx);
+    }
+
+    /// `FRESHKUBE_TABS=shell-other`: shows `dev-fra`, starts a shell on a
+    /// running pod of its example, then shows `stage-fra`, so the shell runs
+    /// on a cluster other than the shown one. The steps wait for the window
+    /// to reach each cluster, as a person's clicks would.
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    pub(in crate::desktop) fn seed_shell_on_other_cluster(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use std::time::Duration;
+        self.switch_cluster("dev-fra".into(), window, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            // Until `dev-fra` is the cluster shown and the dock has its
+            // source, as long as a slow debug build needs, up to 30 s.
+            for _ in 0..150 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+                let ready = this
+                    .update_in(cx, |pilot, window, cx| {
+                        if pilot.switch.active_cluster() != Some("dev-fra")
+                            || !pilot.pages.dock.read(cx).shows_example()
+                        {
+                            return false;
+                        }
+                        if pilot.start_example_shell(window, cx) {
+                            pilot.switch_cluster("stage-fra".into(), window, cx);
+                        }
+                        true
+                    })
+                    .unwrap_or(true);
+                if ready {
+                    return;
+                }
+            }
+            tracing::warn!("FRESHKUBE_TABS=shell-other: dev-fra never became the shown cluster");
+        })
+        .detach();
+    }
+
+    /// A shell in the first running pod of the applied example context, as a
+    /// pick from the pane's Shell menu starts it.
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    /// Whether a shell was asked for; it starts only on an example cluster.
+    fn start_example_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use crate::resources::{ResourceLink, ShellRequest, detail::DetailTarget, example, live};
+        // Never a real exec, whatever launched this.
+        if !self.pages.dock.read(cx).shows_example() {
+            tracing::warn!("FRESHKUBE_TABS=shell-other: not an example cluster, no shell");
+            return false;
+        }
+        let Some(context) = self.applied.context.clone() else {
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no context applied, no shell");
+            return false;
+        };
+        let Some((_, rows)) = example::read(&context, "pods", None, live::now()) else {
+            return false;
+        };
+        let Some(pod) = rows
+            .into_iter()
+            .find(|row| row.cells.get(2).is_some_and(|phase| phase == "Running"))
+            .map(|row| row.identity)
+        else {
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no running example pod to open a shell in");
+            return false;
+        };
+        let Some(containers) =
+            example::document(&pod, live::now()).and_then(|doc| doc.overview.pod)
+        else {
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no running example pod to open a shell in");
+            return false;
+        };
+        let Some(choice) = crate::resources::shell::choices(&containers)
+            .into_iter()
+            .find(|choice| choice.enabled)
+        else {
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no running example pod to open a shell in");
+            return false;
+        };
+        let Some(kind) = freshkube_core::resources::builtin("pods") else {
+            return false;
+        };
+        let request = ShellRequest {
+            target: DetailTarget {
+                identity: pod,
+                kind,
+            },
+            container: choice.name,
+            containers: None,
+        };
+        self.resource_link(ResourceLink::Shell(request), window, cx);
+        true
     }
 
     /// The header switcher's pick of cluster `id` for the tab that is shown:

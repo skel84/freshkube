@@ -721,6 +721,46 @@ fn a_running_shell_names_its_own_cluster_after_a_switch(cx: &mut TestAppContext)
     .unwrap();
 }
 
+/// `FRESHKUBE_TABS=shell-other`, through the startup branch: a shell runs on
+/// `dev-fra` while `stage-fra` is shown, and its header says so.
+#[gpui_kit::test]
+fn the_shell_other_example_runs_a_shell_on_a_cluster_other_than_the_shown_one(
+    cx: &mut TestAppContext,
+) {
+    use crate::debug_options::TabsShape;
+    use crate::desktop::tests::mount;
+    use crate::{DebugOptions, GpuiOptions};
+    use std::time::Duration;
+    let options = GpuiOptions::fixture().with_debug(DebugOptions {
+        tabs: Some(TabsShape::ShellOther),
+        ..DebugOptions::default()
+    });
+    let (_runtime, handle, _pilot) = mount(cx, options, 1280., 880.);
+    cx.run_until_parked();
+    // The steps wait for the window to reach `dev-fra`, then show `stage-fra`.
+    for _ in 0..30 {
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        if !cx.read(shell::running_anywhere).is_empty() {
+            break;
+        }
+    }
+    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.run_until_parked();
+    assert_eq!(cx.read(shell::running_anywhere).len(), 1);
+    assert!(!cx.has_pending_prompt());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let label = window.find("dock-origin").label().unwrap().to_owned();
+        assert!(label.contains("Shell on dev-fra"), "{label}");
+        assert!(
+            label.contains("Not the shown cluster: you're looking at stage-fra"),
+            "{label}"
+        );
+    })
+    .unwrap();
+}
+
 /// A blocked shell on another cluster offers logs on its own cluster, and
 /// a stricter level reaches an open tab's Start at once.
 #[gpui_kit::test]

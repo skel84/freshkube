@@ -57,7 +57,8 @@ fn a_coroot_app_without_a_report_is_not_called_missing() {
             .map(|db| (db.identity.uid.clone(), CorootState::NoReport))
             .collect(),
     };
-    let display = super::display::Display::new(Some(&inv), &evidence, Mode::Clusters, at());
+    let display =
+        super::display::Display::new(Some(&inv), &evidence, Mode::Clusters, at(), "prod-fra");
     let row = display
         .rows
         .iter()

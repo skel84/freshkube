@@ -315,6 +315,7 @@ Read by: debug and stress builds. With `--fixture`, opens the view tabs on inven
 
 - `clusters`: three tabs each bound to another example cluster (`dev-fra`, `prod-ams`, `stage-fra`, so the strip shows the "cluster ·" prefix, each level's glyph and the caps).
 - `missing`: a second tab bound to an entry the file does not list (a dashed ring and "Choose a cluster").
+- `shell-other`: starts a shell on a running pod of `dev-fra` (open), then shows `stage-fra` (read-only): the shell keeps running and the dock tab's header names `dev-fra` and says "Not the shown cluster: you're looking at stage-fra".
 
 ## `FRESHKUBE_TEAM`
 
