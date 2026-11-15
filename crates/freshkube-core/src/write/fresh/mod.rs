@@ -127,7 +127,7 @@ impl SetupLevels {
 /// The file's bytes, parsed once.
 enum Parsed {
     Missing,
-    File(setup::Recovered),
+    File(Box<setup::Recovered>),
 }
 
 impl Parsed {
@@ -135,7 +135,7 @@ impl Parsed {
         match bytes {
             None => Ok(Parsed::Missing),
             Some(bytes) => setup::read(bytes)
-                .map(Parsed::File)
+                .map(|recovered| Parsed::File(Box::new(recovered)))
                 .map_err(|_| Unreadable::Invalid),
         }
     }
