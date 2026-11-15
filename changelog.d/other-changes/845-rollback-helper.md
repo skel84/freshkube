@@ -1,0 +1,1 @@
+- **Roll back a Stage:** the change page's Stage Inspector lists the last earlier Freight Kargo verified on that Stage, and promotes it again through the same preview, levels and typed Stage name as Promote, sending nothing if the Stage's history moved. Freight Kargo didn't verify can be picked but is labelled not verified, and nothing is called healthy for what wasn't read.

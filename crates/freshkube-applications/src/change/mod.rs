@@ -411,6 +411,10 @@ pub struct ChangePage {
     copied: bool,
     /// The hop whose access request Copy access request has copied.
     copied_request: Option<SharedString>,
+    /// An action button was pressed: the buttons hold their tooltips until
+    /// the pointer moves on this page again, so a tooltip never stays drawn
+    /// over the dialog the press opened (as the cluster row's does, #878).
+    tips_held: bool,
     connections: Connections,
     pub rows: Vec<HopRow>,
     pub groups: Vec<GroupLine>,
@@ -507,6 +511,7 @@ impl ChangePage {
             page_link: page_link(&change),
             copied: false,
             copied_request: None,
+            tips_held: false,
             change,
             fetch,
             loader,

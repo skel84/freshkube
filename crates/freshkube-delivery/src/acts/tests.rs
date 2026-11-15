@@ -27,9 +27,8 @@ fn kargo() -> Cluster {
     Cluster::with(vec![
         (format!("{NS}/stages/prod-ams"), {
             let mut stage = object("Stage", "prod-ams");
-            stage["status"] = json!({"freightHistory": [
-                {"items": {"Warehouse/checkout-images": {"name": "brave-lynx"}}}
-            ]});
+            stage["status"] =
+                json!({"freightHistory": history(&["brave-lynx", "swift-wren", "calm-heron"])});
             stage
         }),
         (format!("{NS}/stages/dev"), {
@@ -48,6 +47,16 @@ fn kargo() -> Cluster {
             object("Promotion", "prod-ams.01k8d2qx5f8c3h6j9m2n4p7r0t.wonky-o"),
         ),
     ])
+}
+
+/// A Stage's `freightHistory`, newest first, one Freight an entry.
+fn history(names: &[&str]) -> Value {
+    json!(
+        names
+            .iter()
+            .map(|name| json!({"items": {"Warehouse/checkout-images": {"name": name}}}))
+            .collect::<Vec<_>>()
+    )
 }
 
 fn kargo_runner(cluster: &Cluster, dir: &std::path::Path, level: Protection) -> Runner {
@@ -211,6 +220,7 @@ async fn safety_g01_read_only_blocks_every_stage_action_and_asks_the_cluster_not
         refresh_warehouse(&stage, "t").unwrap(),
         reverify(&example_acts("dev")).unwrap(),
         promote_action(Protection::Guarded),
+        rollback_action(VERIFIED, Protection::Guarded),
         abort(&stage, &running()),
     ];
     for action in all {
@@ -942,4 +952,285 @@ fn the_promoting_example_has_no_waiting_cause_on_the_promotion_row() {
     assert!(hop.detail.starts_with("Promoting: Kargo reports Running"));
     // The plain example still waits for someone to promote.
     assert!(change().hop("prod-ams-promotion").unwrap().cause.is_some());
+}
+
+// Rollback (#845): promoting an earlier Freight of the Stage's own history.
+
+/// A rollback of prod-ams to `acts().earlier[at]`, held to `level` there.
+fn rollback_action(at: usize, level: Protection) -> ActionDescription {
+    let acts = acts();
+    rollback(
+        &change(),
+        &Pick {
+            acts: &acts,
+            destination: Some(dest("prod-ams", level)),
+        },
+        &acts.earlier[at],
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
+    )
+}
+
+/// The example's earlier Freight of prod-ams: `swift-wren` (its verification
+/// failed) and `calm-heron` (verified in Kargo).
+const NOT_VERIFIED: usize = 0;
+const VERIFIED: usize = 1;
+
+#[tokio::test(start_paused = true)]
+async fn a_rollback_creates_a_promotion_of_the_earlier_freight_through_the_write_path() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner
+        .preflight(rollback_action(VERIFIED, Protection::Guarded))
+        .await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
+        panic!("asks");
+    };
+    assert_eq!(ask.type_name, None, "guarded shows the preview, no typing");
+    let titles: Vec<&str> = ask.preview.iter().map(|p| p.title.as_str()).collect();
+    assert!(titles.contains(&"Freight calm-heron"), "{titles:?}");
+    assert!(
+        !titles.contains(&"This change"),
+        "this change's pull request isn't the target's"
+    );
+    let all = ask
+        .preview
+        .iter()
+        .flat_map(|p| p.lines.iter())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(all.contains("Runs now: Freight brave-lynx"), "{all}");
+    assert!(all.contains("Would run: Freight calm-heron"), "{all}");
+    assert!(all.contains("Verified in Kargo"), "{all}");
+    assert!(all.contains("Coroot's outcome weren't recorded"), "{all}");
+    assert!(
+        all.contains("kargo promote --project checkout --freight calm-heron --stage prod-ams"),
+        "{all}"
+    );
+    assert!(all.contains("promote Freight brave-lynx again"), "{all}");
+    let Verdict::Ready(prepared) = verdict else {
+        panic!()
+    };
+    runner
+        .execute(*prepared, Confirmation::Confirmed, || false, |_| {})
+        .await;
+    let sent = writes(&cluster);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let body: Value = serde_json::from_str(&sent[0].body).unwrap();
+    assert_eq!(body["kind"], "Promotion");
+    assert_eq!(
+        body["spec"],
+        json!({"stage": "prod-ams", "freight": "calm-heron"})
+    );
+    assert_eq!(
+        body["metadata"]["name"],
+        "prod-ams.01k8d2qy4v9z3m6n7p8r5t0w1x.calm-he"
+    );
+    let records = AuditStore::new(dir.path().join("audit"))
+        .read()
+        .unwrap()
+        .records;
+    assert_eq!(records[0].tier, "spec-change");
+    assert_eq!(records[0].action, "rollback-stage");
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g26_read_only_blocks_a_rollback_with_no_request() {
+    for at in [NOT_VERIFIED, VERIFIED] {
+        for level in [Protection::ReadOnly, Protection::Open] {
+            let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+            // Kargo's cluster read-only, or the Stage's destination.
+            let (kargo_level, dest_level) = match level {
+                Protection::ReadOnly => (Protection::ReadOnly, Protection::Open),
+                _ => (Protection::Open, Protection::ReadOnly),
+            };
+            let runner = kargo_runner(&cluster, dir.path(), kargo_level);
+            let verdict = runner.preflight(rollback_action(at, dest_level)).await;
+            assert!(
+                matches!(verdict, Verdict::Blocked(Block::ReadOnly(_))),
+                "{at} {level:?}: {verdict:?}"
+            );
+            assert!(cluster.recorder.requests().is_empty());
+            assert!(phases(dir.path()).is_empty());
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g26_a_protected_destination_needs_the_exact_stage_name_to_roll_back() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner
+        .preflight(rollback_action(VERIFIED, Protection::Protected))
+        .await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
+        panic!("asks");
+    };
+    assert_eq!(ask.type_name.as_deref(), Some("prod-ams"));
+    assert!(matches!(verdict, Verdict::Ready(_)));
+    // Neither the Freight's name nor a bare confirmation sends it.
+    for wrong in [
+        Some("calm-heron"),
+        Some("prod-ams "),
+        Some("PROD-AMS"),
+        Some(""),
+        None,
+    ] {
+        let Verdict::Ready(prepared) = runner
+            .preflight(rollback_action(VERIFIED, Protection::Protected))
+            .await
+        else {
+            panic!()
+        };
+        let confirmation = match wrong {
+            Some(name) => Confirmation::Typed(name.into()),
+            None => Confirmation::Confirmed,
+        };
+        let finished = runner
+            .execute(*prepared, confirmation, || false, |_| {})
+            .await;
+        assert_eq!(
+            finished.status,
+            Status::NotSent(NotSent::Unconfirmed),
+            "{wrong:?}"
+        );
+    }
+    assert!(writes(&cluster).is_empty());
+    let Verdict::Ready(prepared) = runner
+        .preflight(rollback_action(VERIFIED, Protection::Protected))
+        .await
+    else {
+        panic!()
+    };
+    runner
+        .execute(
+            *prepared,
+            Confirmation::Typed("prod-ams".into()),
+            || false,
+            |_| {},
+        )
+        .await;
+    assert_eq!(writes(&cluster).len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g26_a_stage_whose_history_moved_since_the_page_sends_no_rollback() {
+    let stage = format!("{NS}/stages/prod-ams");
+    // Newer Freight was promoted: every entry shifts down one.
+    let moved = [
+        history(&["pale-heron", "brave-lynx", "swift-wren", "calm-heron"]),
+        // The target aged out of Kargo's history, the running one unchanged.
+        history(&["brave-lynx", "swift-wren"]),
+        // The target is no longer where the page saw it.
+        history(&["brave-lynx", "calm-heron", "swift-wren"]),
+    ];
+    for (n, entries) in moved.into_iter().enumerate() {
+        let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+        let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+        cluster.foreign_write(
+            &stage,
+            "kargo-controller",
+            &json!({"status": {"freightHistory": entries}}),
+        );
+        let verdict = runner
+            .preflight(rollback_action(VERIFIED, Protection::Guarded))
+            .await;
+        assert!(
+            matches!(
+                verdict,
+                Verdict::Blocked(Block::Changed {
+                    what: ChangedWhat::Moved,
+                    ..
+                })
+            ),
+            "{n}: {verdict:?}"
+        );
+        assert!(writes(&cluster).is_empty(), "{n}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn safety_g26_a_history_that_moves_while_the_dialog_is_open_sends_nothing() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner
+        .preflight(rollback_action(VERIFIED, Protection::Guarded))
+        .await;
+    let Verdict::Ready(prepared) = verdict else {
+        panic!("{verdict:?}")
+    };
+    // Someone promotes other Freight while the dialog stays open.
+    cluster.foreign_write(
+        &format!("{NS}/stages/prod-ams"),
+        "kargo-controller",
+        &json!({"status": {"freightHistory":
+            history(&["pale-heron", "brave-lynx", "swift-wren", "calm-heron"])}}),
+    );
+    let finished = runner
+        .execute(*prepared, Confirmation::Confirmed, || false, |_| {})
+        .await;
+    assert!(
+        matches!(finished.status, Status::NotSent(NotSent::Moved(_))),
+        "{:?}",
+        finished.status
+    );
+    assert!(writes(&cluster).is_empty());
+}
+
+#[test]
+fn safety_g26_a_rollback_is_offered_only_for_an_earlier_freight_of_the_stage_and_not_while_one_runs()
+ {
+    let change = change();
+    let acts = acts();
+    let describe = |kind, acts: &StageActs| {
+        describe(
+            kind,
+            acts,
+            &change,
+            Some(dest("prod-ams", Protection::Guarded)),
+            "t",
+            "u",
+        )
+    };
+    // The Freight prod-ams runs now, and one it never ran, are no target.
+    assert!(acts.earlier.iter().all(|e| e.freight != "brave-lynx"));
+    assert!(describe(Kind::Rollback(acts.earlier.len()), &acts).is_none());
+    assert!(describe(Kind::Rollback(0), &acts).is_some());
+    // A Promotion that runs turns the slot into Abort: going back waits.
+    let mut busy = acts.clone();
+    busy.promoting = vec![running()];
+    assert!(describe(Kind::Rollback(0), &busy).is_none());
+    assert!(describe(Kind::Abort, &busy).is_some());
+    // A Stage with no earlier Freight offers none.
+    let mut bare = acts.clone();
+    bare.earlier.clear();
+    assert!(describe(Kind::Rollback(0), &bare).is_none());
+    // The Stage that already runs this change's Freight can still go back.
+    let dev = example_acts("dev");
+    assert!(dev.holds);
+    assert!(describe(Kind::Rollback(0), &dev).is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unverified_freight_can_be_picked_and_the_dialog_says_it_is_not_verified() {
+    let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
+    let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
+    let verdict = runner
+        .preflight(rollback_action(NOT_VERIFIED, Protection::Guarded))
+        .await;
+    let Dialog::Ask(ask) = Dialog::for_verdict(&verdict, "cicd-fra") else {
+        panic!("asks");
+    };
+    let all = ask
+        .preview
+        .iter()
+        .flat_map(|p| p.lines.iter())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        all.contains("Not verified in Kargo: Kargo's verification of it ended Failed."),
+        "{all}"
+    );
+    assert!(!all.contains("Verified in Kargo"), "{all}");
 }
