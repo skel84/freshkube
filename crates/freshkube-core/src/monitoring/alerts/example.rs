@@ -139,10 +139,10 @@ pub fn alerts(now: DateTime<Utc>) -> Vec<Alert> {
             42,
             &[
                 ("namespace", "payments"),
-                ("pod", "payments-api-6d8f9c7b5-x2k4q"),
+                ("pod", "worker-6c4f8da0-bbbbh"),
                 ("container", "api"),
             ],
-            "Pod payments/payments-api-6d8f9c7b5-x2k4q is crash looping",
+            "Pod payments/worker-6c4f8da0-bbbbh is crash looping",
             true,
         ),
         alert(

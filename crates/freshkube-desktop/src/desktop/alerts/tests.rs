@@ -321,3 +321,37 @@ fn a_refresh_keeps_the_last_read_on_show(cx: &mut TestAppContext) {
     assert_eq!(rows(cx, &pilot).len(), 5, "Overview keeps its rows");
     assert_eq!(rail(cx, &pilot), Some(Tone::Crit));
 }
+
+/// The pod pane's Alerts section shows the session's alert that names the
+/// pod, from the one read the session already runs.
+#[gpui_kit::test]
+fn the_pod_pane_shows_the_session_alert_that_names_its_pod(cx: &mut TestAppContext) {
+    let options = GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| {
+        (name == "FRESHKUBE_ALERTS").then(|| Shape::Firing.name().into())
+    }));
+    let (_runtime, handle, pilot) = mount(cx, options, 1280., 880.);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(
+                &DebugOptions::default().with_page("pod-overview"),
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // It is drawn below the containers, so it may be past the fold of
+        // the pane's scroll: its being laid out is what this checks.
+        let drawn = |id: &'static str| window.find(id).bounds().size.height > gpui_kit::px(0.);
+        assert!(drawn("alerts-section"));
+        assert!(
+            drawn("alert-example-KubePodCrashLooping-3"),
+            "the crash-looping alert names this pod"
+        );
+    })
+    .unwrap();
+}

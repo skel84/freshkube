@@ -1,0 +1,1 @@
+- **Alerts in the panes:** a pod, workload or node pane's Overview now has an Alerts section listing the active alerts whose labels name that object, from the one alert read the session already runs. It says Unknown, never "none", when the alert source wasn't read, is stale, was refused or was cut at its bound. Read-only.

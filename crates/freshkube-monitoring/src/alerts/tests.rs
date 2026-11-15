@@ -207,7 +207,7 @@ fn selecting_an_alert_shows_its_runbook_and_its_labels_open_their_objects(cx: &m
         [AlertsEvent::Open(AlertObject {
             kind: "pods",
             namespace: "payments".into(),
-            name: "payments-api-6d8f9c7b5-x2k4q".into(),
+            name: "worker-6c4f8da0-bbbbh".into(),
         })]
     );
     // A label that names no object is plain text, never a link.

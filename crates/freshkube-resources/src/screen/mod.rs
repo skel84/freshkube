@@ -573,6 +573,15 @@ impl ResourcesScreen {
         self.detail
             .update(cx, |pane, cx| pane.set_node_facts(nodes, cx));
     }
+    /// The session's latest alert state, for the pane's Alerts section.
+    pub fn set_alerts(
+        &mut self,
+        state: Option<std::sync::Arc<freshkube_core::monitoring::alerts::State>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.detail
+            .update(cx, |pane, cx| pane.set_alerts(state, cx));
+    }
     pub fn close_for_link(&mut self, cx: &mut Context<Self>) {
         self.close_detail(cx);
     }
