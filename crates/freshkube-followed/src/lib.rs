@@ -17,11 +17,14 @@
 //!   once a minute. [`live`] is what reads the cluster, [`example`] is
 //!   scripted data for `--fixture`.
 //! - [`menu`] is the "Notify me" control a page offers its follows with.
+//! - [`banner`] is the second way to show a notice: the system's banner,
+//!   its permission and the platform sink behind [`banner::Notifier`].
 //! - [`bell`] is the status bar's "Notifying · n" and its list.
 //!
 //! The app shows what the owner emits as a toast; macOS banners and the
 //! firing alerts source plug into the same owner later (slice 2 and #889).
 
+pub mod banner;
 pub mod bell;
 pub mod example;
 pub mod live;
@@ -32,6 +35,7 @@ pub mod owner;
 pub mod rules;
 pub mod saved;
 
+pub use banner::{Banner, Delivery, Notifier, Permission};
 pub use bell::FollowedBell;
 pub use menu::{FollowMenu, Offer};
 pub use model::{Follow, Subject, WatchKey};

@@ -228,7 +228,7 @@ impl DigestSearch {
     pub(crate) fn cause(&self) -> Option<Cause> {
         match &self.outcome {
             DigestOutcome::NoNamespace => Some(Cause::not_set_up(
-                "a build namespace to search for a build that reports the image digest",
+                "where builds run (Settings › Delivery sources)",
                 SettingsField::BUILD_NAMESPACE,
             )),
             DigestOutcome::Failed(_) => None,
@@ -248,7 +248,7 @@ impl DigestSearch {
             .join(", ");
         match &self.outcome {
             DigestOutcome::NoNamespace => {
-                "no build namespace is set (delivery.build_namespace in freshkube.yaml), so builds can't be searched by image digest".to_owned()
+                "Freshkube doesn't know where builds run, so builds can't be searched by image digest. Builds are optional; set it in Settings › Delivery sources".to_owned()
             }
             DigestOutcome::Failed(why) => {
                 format!("builds couldn't be searched by image digest ({digests}): {why}")

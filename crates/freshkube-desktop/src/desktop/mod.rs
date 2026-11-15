@@ -825,7 +825,11 @@ impl Pilot {
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
         if examples && let Some(shape) = debug.tabs {
-            self.seed_tabs(shape, cx);
+            if shape == crate::debug_options::TabsShape::ShellOther {
+                self.seed_shell_on_other_cluster(window, cx);
+            } else {
+                self.seed_tabs(shape, cx);
+            }
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
         self.open_startup_page(&debug, window, cx);

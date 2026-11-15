@@ -35,6 +35,9 @@ pub enum Shape {
     /// Three landings told in a row: the first at once, the other two
     /// grouped into one notice when the 2-minute window ends.
     Grouped,
+    /// The system allows banners (a scripted sink, nothing is shown by the
+    /// system), so Settings says Allowed.
+    Banners,
 }
 
 impl Shape {
@@ -48,6 +51,7 @@ impl Shape {
         ("full", Self::Full),
         ("unwatched", Self::Unwatched),
         ("grouped", Self::Grouped),
+        ("banners", Self::Banners),
     ];
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -313,6 +317,11 @@ impl Followed {
                         cx,
                     );
                 }
+            }
+            Shape::Banners => {
+                self.set_notifier(std::sync::Arc::new(crate::banner::Scripted::default()), cx);
+                let _ = self.follow(pod("shop", "api-7c9"), connection.clone(), cx);
+                self.permission_answered(true, cx);
             }
             Shape::Full => {
                 for n in 0..MAX_FOLLOWS {
