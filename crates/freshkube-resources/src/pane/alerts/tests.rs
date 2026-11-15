@@ -1,4 +1,4 @@
-use super::{Arc, Body, DetailPane, SHOWN, Section, State, named};
+use super::{Arc, Body, DetailPane, SHOWN, State};
 use freshkube_core::monitoring::alerts::{Active, Unknown, example};
 use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt;
