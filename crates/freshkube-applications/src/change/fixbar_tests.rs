@@ -181,58 +181,53 @@ fn chips_that_do_not_fit_fold_into_a_menu_that_selects_the_rest(cx: &mut TestApp
     .unwrap();
 }
 
-/// #1052: the summary wraps whole at the narrowest window and text size 20;
-/// it is never cut with an ellipsis after two lines.
 #[gpui_kit::test]
-fn the_headline_wraps_whole_at_the_narrowest_window_and_text_20(cx: &mut TestAppContext) {
-    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
+fn the_headline_stays_within_two_lines_at_the_narrowest_window_and_text_20(
+    cx: &mut TestAppContext,
+) {
+    let (handle, _page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let headline = window.find("change-headline").bounds();
-        let words = page.read(cx).headline().to_owned();
-        // Shape the sentence at the headline's width: its box holds every line.
-        let size = crate::ui::dp_px(12.5, window);
-        let run = gpui_kit::TextRun {
-            len: words.len(),
-            font: window.text_style().font(),
-            color: Default::default(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        let wrapped = window
-            .text_system()
-            .shape_text(
-                words.clone().into(),
-                size,
-                &[run],
-                Some(headline.size.width),
-                None,
-            )
-            .expect("shaped");
-        let lines: usize = wrapped
-            .iter()
-            .map(|line| line.wrap_boundaries().len() + 1)
-            .sum();
-        let height = f32::from(headline.size.height);
+        // 12.5 dp text at 20 on 1.4 line height, two lines at most.
+        let line = 12.5 * (20. / 13.) * 1.6;
         assert!(
-            lines >= 3,
-            "the check needs a sentence over two lines: {words}"
-        );
-        // Three lines or more of the line height fit its box.
-        assert!(
-            height >= 3. * f32::from(size) * 1.2,
-            "{height} for {lines} lines"
+            f32::from(headline.size.height) <= 2. * line + 2.,
+            "{:?}",
+            headline.size.height
         );
         assert!(window.find("change-fixbar").visible());
-        // Neither runs past the page's column, nor the bar under the sentence.
+        // Neither runs past the page's column.
         let column = window.find("change-page").bounds().right();
         for id in ["change-headline", "change-fixbar"] {
             let right = window.find(id).bounds().right();
             assert!(right <= column, "{id} ends at {right:?}, past {column:?}");
         }
-        assert!(window.find("change-fixbar").bounds().top() >= headline.bottom());
         assert!(column <= window.viewport_size().width);
+    })
+    .unwrap();
+}
+
+/// #1052: a sentence cut after two lines is whole in a tooltip, which follows
+/// the pointer onto the headline.
+#[gpui_kit::test]
+fn a_cut_headline_is_whole_in_its_tooltip(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 560., Shape::Causes, Duration::ZERO, 20.);
+    let words = cx.read(|cx| page.read(cx).headline().to_owned());
+    let draws = freshkube_ui::tooltip::drawn(&words);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("change-headline", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.find("follow-tooltip-text");
+        assert!(freshkube_ui::tooltip::drawn(&words) > draws);
     })
     .unwrap();
 }

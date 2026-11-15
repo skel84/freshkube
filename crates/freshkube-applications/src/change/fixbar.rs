@@ -6,6 +6,7 @@ use super::*;
 use crate::ui::dp;
 use freshkube_ui::page;
 use freshkube_ui::palette::palette;
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::v_flex;
 
 /// A fix as a chip: its hop's key and its words.
@@ -52,11 +53,17 @@ impl ChangePage {
                                 .aria_label(self.headline.clone())
                                 .w_full()
                                 .min_w_0()
-                                // The sentence is bounded where it is made (three
-                                // clauses, then a count), so it wraps whole at
-                                // any width instead of ending in "…".
+                                // GPUI wraps every line but the last at the
+                                // width; the ellipsis makes the last one
+                                // wrap and end there too. The page's short
+                                // window budget (#1004) allows two lines, so a
+                                // longer sentence is cut here and whole in
+                                // the tooltip.
+                                .text_ellipsis()
+                                .line_clamp(2)
                                 .text_size(dp(12.5))
                                 .text_color(p.ink_2)
+                                .follow_tooltip(self.headline.clone())
                                 .child(self.headline.clone()),
                         )
                         .children(bar),
