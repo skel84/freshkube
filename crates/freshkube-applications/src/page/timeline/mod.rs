@@ -455,6 +455,7 @@ mod tests {
                     })
                     .collect(),
             )],
+            ..Default::default()
         };
         let key = |source: &str, place: &Place| super::live_identity(source, "checkout", place);
         let base = key("conn-a", &place("api", 1));
@@ -466,6 +467,12 @@ mod tests {
         );
         assert_ne!(base, key("conn-a", &place("api", 2)), "another count");
         assert_eq!(base, key("conn-a", &place("api", 1)));
+        let mut argo = place("api", 1);
+        argo.argo = vec![("argocd".into(), vec!["shop-prod".into()])];
+        assert_ne!(base, key("conn-a", &argo), "an Argo CD Application");
+        let mut elsewhere = place("api", 1);
+        elsewhere.argo_elsewhere = 1;
+        assert_ne!(base, key("conn-a", &elsewhere), "one read elsewhere");
     }
 
     #[test]
@@ -488,6 +495,40 @@ mod tests {
             chips
                 .iter()
                 .all(|chip| chip.text.ends_with("not read: Unreachable: no answer"))
+        );
+    }
+
+    #[test]
+    fn live_syncs_say_latest_state_only_what_was_cut_and_why_not_read() {
+        use freshkube_delivery::timeline::SourceRead;
+        let now = 1_800_000_000;
+        let syncs = |read: SourceRead| {
+            let timeline = timeline::derive(&[read], now, 3);
+            let chips = view::chips(&timeline);
+            let chip = chips
+                .iter()
+                .find(|chip| chip.id.ends_with("syncs"))
+                .unwrap();
+            (chip.text.to_string(), chip.label.to_string(), timeline)
+        };
+        let read = SourceRead::read(Source::Syncs, "core-fra", now, Vec::new()).state_only();
+        let (text, _, timeline) = syncs(read.clone());
+        assert!(text.contains("latest state only"), "{text}");
+        // It vouches for no hour: nothing is drawn quiet from it alone.
+        assert!(timeline.rows.is_empty());
+        let (text, label, _) =
+            syncs(read.cut("2 Argo CD Applications are read through another connection"));
+        assert!(text.contains("cut"), "{text}");
+        assert!(label.contains("another connection"), "{label}");
+        let (text, _, _) = syncs(SourceRead::not_read(
+            Source::Syncs,
+            "core-fra",
+            now,
+            "Forbidden: can't list Applications",
+        ));
+        assert!(
+            text.ends_with("not read: Forbidden: can't list Applications"),
+            "{text}"
         );
     }
 }

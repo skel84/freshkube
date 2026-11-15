@@ -71,6 +71,8 @@ pub(crate) struct CorootInput {
 pub(crate) struct DatabasesScreen {
     runtime: Handle,
     source: Option<ClusterSource>,
+    /// The workspace entry the page is for, kept while its connection is down.
+    entry: Option<String>,
     visible: bool,
     loader: Loader<Inventory, String>,
     /// What Coroot says of the inventory's databases; read after it.
@@ -152,6 +154,7 @@ impl DatabasesScreen {
         Self {
             runtime,
             source: None,
+            entry: None,
             visible: false,
             loader: Loader::default(),
             evidence: Loader::default(),
@@ -434,7 +437,13 @@ impl DatabasesScreen {
         let empty = Evidence::default();
         let evidence = self.evidence.data().unwrap_or(&empty);
         let shown = self.display.engine_shown();
-        self.display = Display::new(self.loader.data(), evidence, self.mode, Utc::now());
+        self.display = Display::new(
+            self.loader.data(),
+            evidence,
+            self.mode,
+            Utc::now(),
+            &self.cluster_name(),
+        );
         self.display.set_engine_shown(shown);
         self.prepared = now;
         let filter = self.filter_text.clone();
@@ -616,6 +625,7 @@ impl ScreenPanel for DatabasesScreen {
         let changed = self.source.as_ref().map(|source| &source.id)
             != source.kube.as_ref().map(|source| &source.id);
         self.source = source.kube;
+        self.entry = source.entry;
         if changed {
             self.loader.reset();
             self.evidence.reset();
@@ -660,7 +670,17 @@ impl ScreenPanel for DatabasesScreen {
         self.sync();
         // The count and the coverage warning are one toned part: a narrow
         // bar never drops it, so the warning never loses its count.
-        let counted = if self.display.notice.is_some() {
+        let counted = if self.display.lines.is_empty() && self.display.notice.is_some() {
+            // Nothing listed because nothing was read: not a count of none.
+            match &self.display.empty {
+                freshkube_ui::read_state::ReadState::Empty { looked_for, .. }
+                    if looked_for == "database operators" =>
+                {
+                    Part::new("No database operators")
+                }
+                _ => Part::new("Nothing read · coverage incomplete").tone(ui::Tone::Warn),
+            }
+        } else if self.display.notice.is_some() {
             Part::new(format!("{} · coverage incomplete", self.display.summary))
                 .tone(ui::Tone::Warn)
         } else {

@@ -84,10 +84,10 @@ impl Coverage {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Complete => "Read",
-            Self::Partial => "Partial / capped",
+            Self::Partial => "Partly read",
             Self::Refused => "Not permitted",
-            Self::NotServed => "API not served",
-            Self::Unsupported => "Unsupported API",
+            Self::NotServed => "Not installed",
+            Self::Unsupported => "Unsupported version",
             Self::TimedOut => "Timed out",
             Self::Unreachable => "Unreachable",
             Self::Failed => "Couldn't read",

@@ -43,6 +43,8 @@ pub struct FixtureReader {
     /// Kinds whose listing in a namespace never answers, by plural and
     /// namespace.
     hanging_lists: HashSet<(String, String)>,
+    /// Listings of a kind in one namespace that fail, by plural and namespace.
+    failing_lists: HashMap<(String, String), Failure>,
     /// How long every listing takes to answer, on Tokio's clock.
     slow: Option<std::time::Duration>,
     /// Answers carry an invented `uid` and `resourceVersion` where an item
@@ -130,6 +132,14 @@ impl FixtureReader {
     /// A listing of the kind in `namespace` never answers.
     pub fn hanging_list(mut self, plural: &str, namespace: &str) -> Self {
         self.hanging_lists.insert((plural.into(), namespace.into()));
+        self
+    }
+
+    /// A listing of the kind in `namespace` fails with `failure`; the other
+    /// namespaces answer.
+    pub fn failing_in(mut self, plural: &str, namespace: &str, failure: Failure) -> Self {
+        self.failing_lists
+            .insert((plural.into(), namespace.into()), failure);
         self
     }
 
@@ -246,6 +256,12 @@ impl Reader for FixtureReader {
         }
         if let Some(by) = self.slow {
             tokio::time::sleep(by).await;
+        }
+        if let Some(failure) = namespace.as_ref().and_then(|namespace| {
+            self.failing_lists
+                .get(&(request.resource.plural.clone(), namespace.clone()))
+        }) {
+            return Err(failure.clone());
         }
         if matches!(request.scope, Scope::Namespace(_))
             && self

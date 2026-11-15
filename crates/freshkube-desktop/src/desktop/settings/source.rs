@@ -294,7 +294,7 @@ impl TableSource for SettingsPage {
         let text = if self.source_recovery.all_clusters_skipped {
             "All configured clusters were skipped. Fix the skipped rows in freshkube.yaml and Reload to use them."
         } else {
-            "Nothing is listed. The one cluster counted in the status bar is implicit: the one this window opened."
+            "No clusters are listed. Freshkube is using the one cluster this window opened; that is the one counted in the status bar."
         };
         Some(
             div()
