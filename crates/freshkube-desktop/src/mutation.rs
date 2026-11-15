@@ -149,6 +149,12 @@ pub(crate) fn set_active_entry(entry: Option<String>, cx: &mut App) {
 /// read again (#1055), and whether the entries came from it. `None` has no
 /// file to read, as for example data.
 pub(crate) fn set_setup_file(file: Option<std::path::PathBuf>, from_file: bool, cx: &mut App) {
+    // A test that drives a live runner over a fake cluster has no preferences
+    // folder; its world installs a file for the shell to publish instead.
+    #[cfg(test)]
+    let (file, from_file) = TEST_SETUP
+        .with(|path| path.borrow().clone())
+        .map_or((file, from_file), |path| (Some(path), true));
     let global = cx.default_global::<GlobalProtection>();
     global.4 = file;
     global.6 = from_file;
@@ -515,6 +521,22 @@ pub(crate) fn write_audit_store() -> Option<freshkube_core::write::AuditStore> {
     crate::preferences_path()
         .and_then(|path| path.parent().map(|dir| dir.join("audit")))
         .map(freshkube_core::write::AuditStore::new)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The setup file a test's shell publishes for the send step to read
+    /// again, in place of the (absent) preferences folder's.
+    static TEST_SETUP: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Publishes `file` as this test's setup file, which the shell keeps
+/// publishing: tests that edit it write to the same path.
+#[cfg(test)]
+pub(crate) fn setup_file_under(file: std::path::PathBuf, cx: &mut App) {
+    TEST_SETUP.with(|slot| *slot.borrow_mut() = Some(file.clone()));
+    set_setup_file(Some(file), true, cx);
 }
 
 #[cfg(test)]

@@ -44,6 +44,14 @@ fn world_on(cx: &mut TestAppContext, entry: &str, make: impl FnOnce() -> Cluster
     let (runtime, handle, view) = fixture_stepped(cx, 1280., 880.);
     let dir = tempfile::tempdir().unwrap();
     crate::mutation::audit_under(dir.path().join("audit"));
+    // A send reads the setup file again (#1055): this world's is the example
+    // workspace, with the levels the example gives its entries.
+    let workspace = view.read_with(cx, |pilot, cx| {
+        pilot.settings_page.read(cx).workspace().clone()
+    });
+    let file = dir.path().join("freshkube.yaml");
+    std::fs::write(&file, freshkube_core::workspace::to_text(&workspace)).unwrap();
+    cx.update(|cx| crate::mutation::setup_file_under(file, cx));
     let cluster = {
         let _guard = runtime.enter();
         make()
