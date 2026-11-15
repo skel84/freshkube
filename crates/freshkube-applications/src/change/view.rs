@@ -388,6 +388,13 @@ impl Render for ChangePage {
                     cx.propagate();
                 }
             }))
+            // The pointer moving on the page lets the buttons' tooltips back.
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                if this.tips_held {
+                    this.tips_held = false;
+                    cx.notify();
+                }
+            }))
             .flex()
             .flex_col()
             .size_full()

@@ -9,14 +9,14 @@ The framework that sends changes to Kubernetes objects exists ([How a write goes
 | Writer | `read-only` | `protected`, `guarded`, `open` |
 |--------|-------------|--------------------------------|
 | Pod exec (`pods/exec`) | A shell tab's Start is disabled, with the reason "This cluster is read-only.", **by the level of the tab's own cluster entry** ([Exec follows the dock tab's own level](#exec-follows-the-dock-tabs-own-level-878)); a shell already running is left for its person to end | no change: the explicit Start, as before |
-| Talos Operations | Review is disabled with the same reason, and a confirmation already open when the level changed starts nothing | no change: their own preflight and confirmation |
+| Talos Operations | Review is disabled with the same reason, and a confirmation already open when the level changed starts nothing | `protected`: the confirmation also asks for the node's name ([Talos Operations](#talos-operations)); `guarded` and `open`: no change, their own preflight and confirmation |
 | Restarting a Talos service (System services) | Restart is disabled with the same reason | no change: its own confirmation |
 | Diagnostics' Apply fix (a machine-config patch, perhaps a reboot, or a service restart) | Apply fix is disabled with the same reason, and a confirmation already open starts nothing | no change: its own confirmation |
 | Port forwarding | allowed, see [Sessions](#sessions) | no change |
 
 Every Talos write takes the one operation slot through `Operations::begin`, which refuses under `read-only`; a control that forgot to ask still starts nothing. Maintenance mode is the one exemption, by name (`Operations::begin_maintenance`): it is not tied to a cluster entry (it works on a node before it is in one), so the level does not govern it; it keeps its own rules.
 
-`protected` and `guarded` change nothing for exec, Operations, Restart and Apply fix until [#853](https://github.com/skel84/freshkube/issues/853) adds the typed name to Operations; `open` changes nothing for them ever, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
+`protected` adds the typed name to Operations only; it changes nothing yet for exec, Restart and Apply fix. `guarded` changes nothing for any of them, and `open` never does, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
 
 ### Exec follows the dock tab's own level (#878)
 
@@ -71,7 +71,19 @@ Exec and port forwarding create `pods/exec` and `pods/portforward`, not changes 
 
 ### Talos Operations
 
-The level governs Operations as well. `read-only` blocks them. `protected` adds typing the node's name to the confirmation they already have, which comes with [#853](https://github.com/skel84/freshkube/issues/853). `guarded` and `open` leave them as they are.
+The level governs Operations as well, through the tier of each kind (`OperationKind::tier`, core's `operations/gate/`), read from the same table as every other write. `read-only` blocks them. `protected` adds typing to the confirmation they already have. `guarded` and `open` leave them as they are: `open` does not skip an Operations confirmation, which only the framework's reversible tier does.
+
+| Operation | Tier | `read-only` | `protected` | `guarded` and `open` |
+|-----------|------|-------------|-------------|----------------------|
+| Cordon | reversible | blocked | its confirmation, plus the node's name | its confirmation |
+| Uncordon | reversible | blocked | its confirmation, plus the node's name | its confirmation |
+| Drain | destructive | blocked | its confirmation, plus the node's name | its confirmation |
+| Reboot | destructive | blocked | its confirmation, plus the node's name | its confirmation |
+| Shutdown | destructive | blocked | its confirmation, plus the node's name | its confirmation |
+
+- **One node:** its name. **Several nodes** (a rolling run): the cluster entry's id, typed once, and the dialog says which. Matching is exact and case-sensitive; pasting is allowed.
+- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level the app holds at send time, so a dialog opened before the level became stricter starts nothing. A level changed by editing `freshkube.yaml` while the dialog is open is not seen until the app reads the file again ([SAFETY.md](SAFETY.md#known-gaps)). `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, never builds one (`Operations::begin_maintenance`).
+- **Not yet:** a service's Restart and Diagnostics' Apply fix are Talos writes on a node as well, and keep their own confirmation at `protected` for now.
 
 ## The visible level
 
@@ -121,13 +133,14 @@ A submitted write outlives its page, is never replayed (after a transport error 
 
 ### Stage actions (#855)
 
-The change page's Stage Inspector offers four actions on today's Kargo, through the Kubernetes API (`freshkube-delivery`'s `acts` describes them; a later route through Kargo's own API is [#860](https://github.com/skel84/freshkube/issues/860)). The annotation keys and values follow Kargo's API package (`github.com/akuity/kargo/api/v1alpha1`: `AnnotationKeyRefresh`, `AnnotationKeyReverify`, `AnnotationKeyAbort`, `AbortPromotionRequest`).
+The change page's Stage Inspector offers five actions on today's Kargo (Refresh, Reverify, Promote, Roll back and Abort), through the Kubernetes API (`freshkube-delivery`'s `acts` describes them; a later route through Kargo's own API is [#860](https://github.com/skel84/freshkube/issues/860)). The annotation keys and values follow Kargo's API package (`github.com/akuity/kargo/api/v1alpha1`: `AnnotationKeyRefresh`, `AnnotationKeyReverify`, `AnnotationKeyAbort`, `AbortPromotionRequest`).
 
 | Action | Writes | Tier | Asked |
 |--------|--------|------|-------|
 | Refresh (a Stage or its Warehouse) | merge patch: `kargo.akuity.io/refresh` annotation, a time as the token | reversible, no confirmation | nothing at any writable level |
 | Reverify (a Stage) | merge patch: `kargo.akuity.io/reverify` annotation, the id of the verification to repeat | reversible, no confirmation | nothing at any writable level; offered only for the Stage's current Freight, by its current verification id |
 | Promote (a Freight to a Stage) | creates a `Promotion` named `<stage>.<lowercase ULID>.<freight prefix>`, whose `spec` names the `stage` and the `freight` | spec change | the preview; `protected` adds the target Stage's name |
+| Roll back (a Stage to an earlier Freight, [#845](https://github.com/skel84/freshkube/issues/845)) | creates a `Promotion` as Promote does, naming the earlier Freight | spec change | the preview (the two Freights, what Kargo recorded about the target, what it holds); `protected` adds the Stage's name |
 | Abort (a running Promotion) | merge patch: `kargo.akuity.io/abort` annotation on the Promotion, `{"action":"terminate"}` (the only action Kargo's `AbortPromotionRequest` acts on) | destructive | the impact, what already ran, `protected` adds the Stage's name, then 5 s to cancel |
 
 - **The level is the stricter of the Kargo cluster's and the destination cluster's** (the cluster the Stage deploys to, when the workspace knows it); the dialog names the destination. A destination the workspace doesn't know counts as `guarded`, the level an entry with none gets, so it is held to the stricter of Kargo's cluster's level and `guarded`, never to nothing; Promote's and Abort's dialogs say so (Refresh and Reverify have no dialog). Each destination has its own level cell, which the runner follows as it follows Kargo's cluster's, so a level changed in Settings reaches a dialog already open.
@@ -136,6 +149,7 @@ The change page's Stage Inspector offers four actions on today's Kargo, through 
 - **Promote becomes Abort** while any Promotion of the Stage is Pending or Running, someone else's included. Abort acts on the one that is running, else the newest pending, never on a newer one still waiting in the queue. A Stage that already runs the Freight offers no Promote. Approvals stay in Kargo.
 - **No Undo for Promote or Abort.** Abort stops the Promotion at the step it is on; what already ran is not undone (a commit a step pushed stays, and the next sync deploys it).
 - **Promote checks the Stage first** (`ObjectChange::depends`): preflight asks whether the person may `promote` on the Stage (Kargo's verb, beside `create` on Promotions), reads the Stage, and finds it with the UID the page showed and still naming the Freight the page said it runs. A Stage that moved on, or was recreated, blocks the Promotion ("It is no longer as the page showed it") with only Close: a stale page can't quietly roll a Stage back. The Stage is read and checked **again just before the send**, beside the second read of the level: a dialog can stay open while someone else promotes the Stage, and a mismatch then sends nothing (`NotSent::Moved`) and says to open it again.
+- **Roll back is Promote of an earlier Freight** (`acts::rollback`, `rollback::earlier`; [#845](https://github.com/skel84/freshkube/issues/845)). The candidates come only from the Stage's own `status.freightHistory` (10 entries by default; older Freight isn't guessed at) and its `verificationHistory`. A Freight whose newest recorded verification ended `Successful` is **verified in Kargo**; any other, with no verification, a failed, aborted, inconclusive or unfinished one, is **not verified**, and says why. Argo CD's health and Coroot's outcome aren't recorded per earlier Freight, so none is ever called healthy, and the dialog says they weren't recorded. The Freight the Stage runs now is never a target, a Freight is listed once, and an entry holding Freight of several Warehouses (one Promotion can't name two) is left out. It is held to the same levels as Promote (the stricter of the Kargo cluster and the destination; `protected` types the Stage's name; `read-only` blocks it with no request). Its Stage dependency also holds that the history still names the target where the page saw it, in preflight and again just before the send: a Promotion made since shifts every entry, so a stale page sends nothing (guarantee 26). An unverified Freight can be picked but is never the first line. There is no Undo; the dialog names the Freight it came from, to promote again, and the kargo CLI line.
 - **Promotion names sort by time, as Kargo's do** and stay within a name's 253 characters: the Stage's part is cut to 218, as Kargo cuts it. Kargo orders Promotions by name; ours carry a lowercase ULID (`acts::new_ulid`), so a Promotion made later never reads as older than one Kargo made before it.
 - **What aborting stops** is the running Promotion's own steps and pushed commits (`status.stepExecutionMetadata`), not the change's.
 - **Handles:** a Stage action is offered only when the Stage's UID and resourceVersion were read, so the version check can hold; otherwise its button is greyed out with why.

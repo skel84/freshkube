@@ -108,6 +108,19 @@ pub struct Stage {
     pub verifications: Vec<Verification>,
     /// The Freight each `freightHistory` entry holds, newest first.
     pub history: Vec<Vec<String>>,
+    /// The same entries with where the Stage names each Freight and what it
+    /// holds, for a rollback to pick from.
+    pub history_items: Vec<Vec<HistoryItem>>,
+}
+
+/// One Freight of a `freightHistory` entry, as the Stage's status records it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryItem {
+    pub name: String,
+    /// The JSON pointer of its name in the Stage, which a write checks.
+    pub pointer: String,
+    pub commits: Vec<FreightCommit>,
+    pub images: Vec<FreightImage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -255,6 +268,33 @@ fn array<'a>(value: &'a Value, pointer: &str) -> impl Iterator<Item = &'a Value>
         .flatten()
 }
 
+/// The commits and images a Freight, or a Stage's history item, holds.
+fn parse_contents(body: &Value) -> (Vec<FreightCommit>, Vec<FreightImage>) {
+    let commits = array(body, "/commits")
+        .filter_map(|commit| {
+            Some(FreightCommit {
+                repo_url: text(commit, "/repoURL")?,
+                id: text(commit, "/id")?,
+                message: text(commit, "/message"),
+            })
+        })
+        .collect();
+    let images = array(body, "/images")
+        .filter_map(|image| {
+            Some(FreightImage {
+                repo_url: text(image, "/repoURL")?,
+                tag: text(image, "/tag"),
+                digest: text(image, "/digest").and_then(|digest| Digest::parse(&digest)),
+                revision: image
+                    .pointer("/annotations")
+                    .and_then(|annotations| annotations.get(IMAGE_REVISION))
+                    .and_then(commit_id),
+            })
+        })
+        .collect();
+    (commits, images)
+}
+
 pub(crate) fn parse_freight(value: &Value) -> Option<Freight> {
     // Older Kargo keeps the origin and contents under `spec`, newer at the top.
     let body = if value.get("images").is_some() || value.get("commits").is_some() {
@@ -267,6 +307,7 @@ pub(crate) fn parse_freight(value: &Value) -> Option<Freight> {
     } else {
         "/spec"
     };
+    let (commits, images) = parse_contents(body);
     Some(Freight {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
@@ -276,28 +317,8 @@ pub(crate) fn parse_freight(value: &Value) -> Option<Freight> {
         alias: text(value, "/metadata/labels/kargo.akuity.io~1alias")
             .or_else(|| text(value, "/alias")),
         warehouse: text(body, "/origin/name").or_else(|| text(value, "/origin/name")),
-        commits: array(body, "/commits")
-            .filter_map(|commit| {
-                Some(FreightCommit {
-                    repo_url: text(commit, "/repoURL")?,
-                    id: text(commit, "/id")?,
-                    message: text(commit, "/message"),
-                })
-            })
-            .collect(),
-        images: array(body, "/images")
-            .filter_map(|image| {
-                Some(FreightImage {
-                    repo_url: text(image, "/repoURL")?,
-                    tag: text(image, "/tag"),
-                    digest: text(image, "/digest").and_then(|digest| Digest::parse(&digest)),
-                    revision: image
-                        .pointer("/annotations")
-                        .and_then(|annotations| annotations.get(IMAGE_REVISION))
-                        .and_then(commit_id),
-                })
-            })
-            .collect(),
+        commits,
+        images,
         contents_at,
         verified_in: names(value, "/status/verifiedIn"),
         approved_for: names(value, "/status/approvedFor"),
@@ -395,6 +416,7 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
         phase: text(value, "/status/phase"),
         verifications: verifications(value),
         history: history(value),
+        history_items: history_items(value),
     })
 }
 
@@ -408,6 +430,31 @@ fn history(stage: &Value) -> Vec<Vec<String>> {
                 .into_iter()
                 .flat_map(|items| items.values())
                 .filter_map(|item| text(item, "/name"))
+                .collect()
+        })
+        .collect()
+}
+
+/// Each `freightHistory` entry's Freight with its pointer and contents.
+fn history_items(stage: &Value) -> Vec<Vec<HistoryItem>> {
+    array(stage, "/status/freightHistory")
+        .enumerate()
+        .map(|(index, entry)| {
+            entry
+                .get("items")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .filter_map(|(origin, item)| {
+                    let origin = origin.replace('~', "~0").replace('/', "~1");
+                    let (commits, images) = parse_contents(item);
+                    Some(HistoryItem {
+                        name: text(item, "/name")?,
+                        pointer: format!("/status/freightHistory/{index}/items/{origin}/name"),
+                        commits,
+                        images,
+                    })
+                })
                 .collect()
         })
         .collect()
