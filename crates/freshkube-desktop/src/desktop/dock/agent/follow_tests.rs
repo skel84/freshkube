@@ -1287,6 +1287,13 @@ fn a_restored_dock_keeps_ask_whole_when_the_follow_strip_arrives(cx: &mut TestAp
 
 fn ask_stays_whole_under_the_strip(maximized: bool, cx: &mut TestAppContext) {
     let tab = open(cx, "following", 760., 560.);
+    // The shape asks its question on opening, and the scripted session
+    // answers on a real runtime: its `Prompt` starts a new trail, which
+    // clears the follower and takes the strip away. Let it land before the
+    // place is read, or it can land after and undo the read.
+    tab.wait("the example question is recorded", cx, |view| {
+        !view.investigation.entries().is_empty()
+    });
     while cx
         .update_window(tab.handle, |_, window, _| window.rem_size())
         .unwrap()
