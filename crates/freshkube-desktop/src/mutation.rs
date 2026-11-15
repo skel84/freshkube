@@ -7,7 +7,11 @@ use crate::ui::{self, Tone, dp};
 use freshkube_core::operations::{AuditLog, default_audit_path};
 use freshkube_core::write::{LevelCell, Protection};
 use freshkube_ui::form::{self, Action};
-use gpui_kit::component::{Root, WindowExt, h_flex, v_flex};
+use gpui_kit::component::{
+    Root, Sizable, WindowExt, h_flex,
+    input::{Input, InputEvent, InputState},
+    v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::cell::Cell;
@@ -85,6 +89,9 @@ pub(crate) struct GlobalProtection(
         freshkube_core::workspace::Workspace,
         freshkube_core::workspace::SourceRecovery,
     )>,
+    /// The id of the workspace entry the window is on, `None` with no entry
+    /// active. What a protected action on several objects asks to be typed.
+    Option<String>,
 );
 
 impl Default for GlobalProtection {
@@ -92,6 +99,7 @@ impl Default for GlobalProtection {
         Self(
             LevelCell::new(Protection::default()),
             Default::default(),
+            None,
             None,
         )
     }
@@ -102,6 +110,23 @@ impl Global for GlobalProtection {}
 /// Sets the level the window's context has.
 pub(crate) fn set_protection(level: Protection, cx: &mut App) {
     cx.default_global::<GlobalProtection>().0.set(level);
+}
+
+/// Sets the id of the workspace entry the window is on.
+pub(crate) fn set_active_entry(entry: Option<String>, cx: &mut App) {
+    cx.default_global::<GlobalProtection>().3 = entry;
+}
+
+/// The id of the workspace entry the window is on, if one is active.
+pub(crate) fn active_entry(cx: &App) -> Option<String> {
+    cx.try_global::<GlobalProtection>()
+        .and_then(|global| global.3.clone())
+}
+
+/// The level of the context the window shows, as it is now.
+pub(crate) fn level(cx: &App) -> Protection {
+    cx.try_global::<GlobalProtection>()
+        .map_or_else(Protection::default, |global| global.0.get())
 }
 
 /// Sets the level each workspace entry has, by its id, so a runner writing to
@@ -374,6 +399,26 @@ pub(crate) struct Confirmation {
     /// user must have seen what will actually happen.
     pub(crate) current: Fingerprint,
     pub(crate) on_confirm: OnConfirm,
+    /// A name the person must type before Confirm is enabled (a protected
+    /// cluster, #852), or `None` for the operation's own confirmation.
+    pub(crate) type_name: Option<TypeName>,
+}
+
+/// The name a confirmation asks to be typed, and where the dialog leaves
+/// what was typed for `on_confirm` to read.
+#[derive(Clone)]
+pub(crate) struct TypeName {
+    pub(crate) expected: SharedString,
+    pub(crate) typed: Rc<std::cell::RefCell<String>>,
+}
+
+impl TypeName {
+    pub(crate) fn new(expected: impl Into<SharedString>) -> Self {
+        Self {
+            expected: expected.into(),
+            typed: Rc::default(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -387,6 +432,24 @@ enum Blocked {
 pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) {
     let request = Rc::new(request);
     let blocked = Rc::new(Cell::new(None::<Blocked>));
+    let input = request.type_name.as_ref().map(|name| {
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Type the name"));
+        let typed = name.typed.clone();
+        typed.borrow_mut().clear();
+        window
+            .subscribe(&input, cx, move |input, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    *typed.borrow_mut() = input.read(cx).value().to_string();
+                    // The dialog renders inside the root view, which is
+                    // cached until notified.
+                    if let Some(Some(root)) = window.root::<Root>() {
+                        root.update(cx, |_, cx| cx.notify());
+                    }
+                }
+            })
+            .detach();
+        input
+    });
     window.open_dialog(cx, move |dialog, window, cx| {
         let p = palette(cx);
         let reason = blocked.get();
@@ -394,10 +457,23 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
             let request = request.clone();
             let blocked = blocked.clone();
             let destructive = request.destructive;
+            let input = input.clone();
+            let name_missing = request
+                .type_name
+                .as_ref()
+                .zip(input.as_ref())
+                .is_some_and(|(name, input)| input.read(cx).value().as_ref() != name.expected.as_ref());
             let action = Action::new(
                 "confirm-ok",
                 request.confirm_label.clone(),
                 move |_, window, cx| {
+                    if let (Some(name), Some(input)) = (&request.type_name, &input) {
+                        // Confirm is disabled until the name matches; this
+                        // keeps a stray key from getting past it.
+                        if input.read(cx).value().as_ref() != name.expected.as_ref() {
+                            return;
+                        }
+                    }
                     let refusal = if Operations::current(cx).is_some() {
                         Some(Blocked::Busy)
                     } else if (request.current)(cx) != Some(request.fingerprint) {
@@ -418,7 +494,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     (request.on_confirm)(window, cx);
                 },
             )
-            .disabled(reason == Some(Blocked::Stale));
+            .disabled(reason == Some(Blocked::Stale) || name_missing);
             if destructive { action.danger() } else { action }
         };
         let cancel = Action::cancel("confirm-cancel");
@@ -470,6 +546,21 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     .children(request.warnings.iter().map(|warning| {
                         ui::tag(Tone::Warn, None, warning.clone(), cx)
                     }))
+                    .children(request.type_name.as_ref().zip(input.as_ref()).map(
+                        |(name, input)| {
+                            let prompt = format!("Type {} to confirm.", name.expected);
+                            v_flex()
+                                .gap(dp(4.))
+                                .child(
+                                    div()
+                                        .id("confirm-type-prompt")
+                                        .test_support()
+                                        .aria_label(prompt.clone())
+                                        .child(prompt),
+                                )
+                                .child(Input::new(input).small().id("confirm-type-name"))
+                        },
+                    ))
                     .children(notice),
             )
             .footer(form::actions(ok, cancel))

@@ -1126,6 +1126,89 @@ fn safety_g10_a_read_only_cluster_refuses_review_and_starts_nothing(cx: &mut Tes
     .unwrap();
 }
 
+/// Types into the confirmation's name field.
+fn type_node_name(cx: &mut TestAppContext, handle: WindowHandle<Root>, text: &str) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("confirm-type-name", cx);
+        window.input(text, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    render(cx, handle);
+}
+
+/// A protected cluster (#852) takes no operation slot and starts no run until
+/// the node is named exactly; a dialog opened while the cluster was guarded
+/// starts nothing once it became protected. Example data, so nothing is sent
+/// anywhere.
+#[gpui_kit::test]
+fn safety_g25_a_protected_cluster_starts_no_operation_until_the_node_is_named(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let level =
+        |cx: &mut TestAppContext, level| cx.update(|cx| crate::mutation::set_protection(level, cx));
+    let nothing_started = |cx: &mut TestAppContext| {
+        assert!(cx.read(|cx| Operations::current(cx).is_none()));
+        cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    };
+    let node = names(&screen, cx).remove(0);
+
+    // Opened while guarded (no name asked), then the cluster became protected:
+    // confirming starts nothing.
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("confirm-type-name").is_none());
+    })
+    .unwrap();
+    level(cx, freshkube_core::write::Protection::Protected);
+    confirm(cx, handle);
+    nothing_started(cx);
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.clone().unwrap_or_default();
+        assert!(notice.contains("Nothing was started."), "{notice}");
+    });
+
+    // Opened while protected, the dialog asks for the name.
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        let prompt = window
+            .find("confirm-type-prompt")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(prompt.contains(&node), "{prompt}");
+    })
+    .unwrap();
+    // No name, a wrong case and a neighbour's name start nothing.
+    press_ok(cx, handle);
+    nothing_started(cx);
+    for wrong in [node.to_uppercase(), format!("{node}x")] {
+        type_node_name(cx, handle, &wrong);
+        press_ok(cx, handle);
+        nothing_started(cx);
+        cx.update_window(handle.into(), |_, window, _| {
+            assert!(window.find("confirm-dialog").visible());
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn the_exact_node_name_starts_the_operation_on_a_protected_cluster(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    cx.update(|cx| {
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    let node = names(&screen, cx).remove(0);
+    review(cx, handle);
+    type_node_name(cx, handle, &node);
+    press_ok(cx, handle);
+    cx.read(|cx| assert!(screen.read(cx).run.is_some(), "the exact name starts a run"));
+    wait_until_finished(cx, &runtime, &screen, 200, "a run on a protected cluster");
+}
+
 // ---- #854: what the cluster says before an operation is offered ----
 
 /// The app's offer desk, bound to example data that answers `shape`.

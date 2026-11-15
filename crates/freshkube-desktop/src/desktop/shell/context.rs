@@ -129,6 +129,7 @@ impl Pilot {
     /// setup changes, never while drawing.
     pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
         let level = self.current_level(cx);
+        crate::mutation::set_active_entry(self.switch.active_cluster().map(str::to_owned), cx);
         // Every entry's level, so a write to an entry the window doesn't show
         // follows a change made in Settings as the window's own does.
         crate::mutation::set_entry_levels(self.entry_levels(cx), cx);

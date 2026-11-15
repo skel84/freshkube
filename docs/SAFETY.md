@@ -214,6 +214,11 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g24_refresh_after_the_object_moved_on_sends_nothing_even_after_review_the_new_version` (`crates/freshkube-core/src/write/everyday/nudges.rs`)
 - `safety_g24_read_only_sends_no_externalsecret_refresh_and_a_confirmed_one_reads_no_secret` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 25. A protected cluster's Operations action needs the node's name, and nothing runs under `read-only` or on a name that is not typed exactly
+
+- `safety_g25_protected_operations_refuse_a_missing_or_wrong_name_and_accept_the_exact_one` (`crates/freshkube-core/src/operations/gate/tests.rs`)
+- `safety_g25_a_protected_cluster_starts_no_operation_until_the_node_is_named` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
+
 ## Known gaps
 
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
