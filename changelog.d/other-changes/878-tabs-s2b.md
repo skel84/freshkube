@@ -1,1 +1,1 @@
-- **Tabs:** right-click a cluster in the header's switcher and choose Open in new tab, as ⌘-click does. `FRESHKUBE_TABS=shell-other` starts an example shell on one cluster while another is shown.
+- **Tabs:** right-click a cluster in the header's switcher and choose Open in new tab, as ⌘-click does.

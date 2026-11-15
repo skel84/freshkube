@@ -402,11 +402,30 @@ impl Pilot {
         use std::time::Duration;
         self.switch_cluster("dev-fra".into(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(2)).await;
-            _ = this.update_in(cx, |pilot, window, cx| {
-                pilot.start_example_shell(window, cx);
-                pilot.switch_cluster("stage-fra".into(), window, cx);
-            });
+            // Until `dev-fra` is the cluster shown and the dock has its
+            // source, as long as a slow debug build needs, up to 30 s.
+            for _ in 0..150 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+                let ready = this
+                    .update_in(cx, |pilot, window, cx| {
+                        if pilot.switch.active_cluster() != Some("dev-fra")
+                            || !pilot.pages.dock.read(cx).shows_example()
+                        {
+                            return false;
+                        }
+                        if pilot.start_example_shell(window, cx) {
+                            pilot.switch_cluster("stage-fra".into(), window, cx);
+                        }
+                        true
+                    })
+                    .unwrap_or(true);
+                if ready {
+                    return;
+                }
+            }
+            tracing::warn!("FRESHKUBE_TABS=shell-other: dev-fra never became the shown cluster");
         })
         .detach();
     }
@@ -414,34 +433,44 @@ impl Pilot {
     /// A shell in the first running pod of the applied example context, as a
     /// pick from the pane's Shell menu starts it.
     #[cfg(any(debug_assertions, feature = "stress"))]
-    fn start_example_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Whether a shell was asked for; it starts only on an example cluster.
+    fn start_example_shell(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         use crate::resources::{ResourceLink, ShellRequest, detail::DetailTarget, example, live};
+        // Never a real exec, whatever launched this.
+        if !self.pages.dock.read(cx).shows_example() {
+            tracing::warn!("FRESHKUBE_TABS=shell-other: not an example cluster, no shell");
+            return false;
+        }
         let Some(context) = self.applied.context.clone() else {
-            return;
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no context applied, no shell");
+            return false;
         };
         let Some((_, rows)) = example::read(&context, "pods", None, live::now()) else {
-            return;
+            return false;
         };
         let Some(pod) = rows
             .into_iter()
             .find(|row| row.cells.get(2).is_some_and(|phase| phase == "Running"))
             .map(|row| row.identity)
         else {
-            return;
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no running example pod to open a shell in");
+            return false;
         };
         let Some(containers) =
             example::document(&pod, live::now()).and_then(|doc| doc.overview.pod)
         else {
-            return;
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no running example pod to open a shell in");
+            return false;
         };
         let Some(choice) = crate::resources::shell::choices(&containers)
             .into_iter()
             .find(|choice| choice.enabled)
         else {
-            return;
+            tracing::warn!("FRESHKUBE_TABS=shell-other: no running example pod to open a shell in");
+            return false;
         };
         let Some(kind) = freshkube_core::resources::builtin("pods") else {
-            return;
+            return false;
         };
         let request = ShellRequest {
             target: DetailTarget {
@@ -452,6 +481,7 @@ impl Pilot {
             containers: None,
         };
         self.resource_link(ResourceLink::Shell(request), window, cx);
+        true
     }
 
     /// The header switcher's pick of cluster `id` for the tab that is shown:

@@ -147,6 +147,13 @@ fn right_click_on_a_cluster_row_opens_it_in_a_new_tab(cx: &mut TestAppContext) {
     );
     assert_eq!(active(cx, &pilot), SessionKey::Entry("prod-ams".into()));
     assert!(!cx.has_pending_prompt());
+    // The switcher closed and the page has the keyboard, as after ⌘-click.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("cluster", ix)).is_none());
+        assert!(pilot.read(cx).focus.is_focused(window));
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

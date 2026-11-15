@@ -110,6 +110,23 @@ impl Pilot {
             .into_any_element()
     }
 
+    /// After a pick in the switcher: the page has the keyboard again and the
+    /// popover closes once this update ends.
+    fn finish_cluster_pick(
+        &mut self,
+        popover: WeakEntity<gpui_kit::component::popover::PopoverState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_page(window, cx);
+        let handle = window.window_handle();
+        cx.defer(move |cx| {
+            _ = handle.update(cx, |_, window, cx| {
+                _ = popover.update(cx, |state, cx| state.dismiss(window, cx));
+            });
+        });
+    }
+
     /// One workspace entry in the switcher: a click opens it as the active
     /// cluster.
     fn cluster_item(
@@ -134,6 +151,7 @@ impl Pilot {
                     .unwrap_or_default();
                 format!("last known {}", super::switch::age_text(elapsed))
             });
+        let menu_popover = popover.clone();
         let row = h_flex()
             .id(("cluster", ix))
             .test_support()
@@ -189,14 +207,7 @@ impl Pilot {
                 } else {
                     view.retarget_shown_tab(chosen.clone(), window, cx);
                 }
-                view.focus_page(window, cx);
-                let handle = window.window_handle();
-                let popover = popover.clone();
-                cx.defer(move |cx| {
-                    _ = handle.update(cx, |_, window, cx| {
-                        _ = popover.update(cx, |state, cx| state.dismiss(window, cx));
-                    });
-                });
+                view.finish_cluster_pick(popover.clone(), window, cx);
             }));
         // Right-click offers what ⌘-click does, for a person who doesn't know
         // the gesture (#878).
@@ -206,12 +217,12 @@ impl Pilot {
             .id(("cluster-menu", ix))
             .child(row)
             .context_menu(move |menu, _, _| {
-                let pilot = pilot.clone();
-                let id = opened.clone();
+                let (pilot, id, popover) = (pilot.clone(), opened.clone(), menu_popover.clone());
                 menu.item(
                     PopupMenuItem::new("Open in new tab").on_click(move |_, window, cx| {
                         _ = pilot.update(cx, |view, cx| {
-                            view.open_cluster_in_new_tab(id.clone(), window, cx)
+                            view.open_cluster_in_new_tab(id.clone(), window, cx);
+                            view.finish_cluster_pick(popover.clone(), window, cx);
                         });
                     }),
                 )
