@@ -104,6 +104,11 @@ pub(crate) struct GlobalProtection(
     /// not, for a legacy `workspace.json` user, from the migration), so an
     /// entry subject is only read from a file that lists it.
     bool,
+    /// The kubeconfig context the window shows (what its level is held for
+    /// when no entry is active), published with the level so the name a send
+    /// reads from the setup file and the level it holds are about the same
+    /// context. Not the Talos cluster's name, which can differ.
+    Option<String>,
 );
 
 impl Default for GlobalProtection {
@@ -156,10 +161,9 @@ pub(crate) fn set_window_context(context: String, cx: &mut App) {
 
 /// What a write reads again from the setup file at its send step, for the
 /// identity the dialog is for: the active entry when the setup file lists
-/// the entries, else the kubeconfig context `context` (a legacy
-/// `workspace.json` user has no file to name an entry in) as the shell
-/// published it, else `context`, the caller's. Taken when the
-/// dialog opens, so the re-read is against the same identity however the
+/// the entries, else the kubeconfig context the window shows, as the shell
+/// published it (a legacy `workspace.json` user has no file to name an entry
+/// in), else `context`, the caller's. Taken when the dialog opens, so the re-read is against the same identity however the
 /// window moves after.
 ///
 /// `None` only for example data with no setup file behind it, where nothing
@@ -175,9 +179,12 @@ pub(crate) fn send_guard(
     let Some(file) = global.and_then(|global| global.4.clone()) else {
         return (!example).then(|| SetupLevels::unavailable(Subject::Context(context.to_owned())));
     };
+    let window = global
+        .and_then(|global| global.7.clone())
+        .unwrap_or_else(|| context.to_owned());
     let subject = match global.map(|global| (&global.3, global.6)) {
         Some((Some(entry), true)) => Subject::Entry(entry.clone()),
-        _ => Subject::Context(context.to_owned()),
+        _ => Subject::Context(window),
     };
     Some(SetupLevels::new(file, subject))
 }
@@ -912,7 +919,7 @@ mod tests {
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
     use super::{
         Protection, TestSetup, clear_level_floor, level, level_floor, moved_during_read,
-        raise_level, send_guard, set_protection, set_setup_file, set_window_context,
+        raise_level, send_guard, set_protection, set_setup_file,
     };
     use freshkube_core::write::{Subject, Unreadable};
     use gpui_kit::TestAppContext;
