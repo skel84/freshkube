@@ -154,7 +154,7 @@ fn a_filter_keeps_the_rows_that_match(cx: &mut TestAppContext) {
     show(cx, handle, &page);
     cx.update_window(handle, |_, window, cx| {
         window.click("alerts-filter", cx);
-        window.input("payments", cx);
+        window.input("bbbbh", cx);
     })
     .unwrap();
     cx.run_until_parked();

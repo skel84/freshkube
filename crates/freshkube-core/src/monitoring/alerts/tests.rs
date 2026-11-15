@@ -965,14 +965,14 @@ mod object_tests {
         assert!(names(
             mismatch,
             Subject::Workload("Deployment"),
-            "shop",
-            "shop-api"
+            "payments",
+            "worker"
         ));
         assert!(!names(
             mismatch,
             Subject::Workload("Deployment"),
-            "shop",
-            "shop"
+            "payments",
+            "work"
         ));
         let throttled = active
             .alerts
@@ -1003,9 +1003,9 @@ mod object_tests {
 
     #[test]
     fn a_node_is_named_by_its_node_label() {
-        let section = section(&state(), Subject::Node, "", "worker-1");
+        let section = section(&state(), Subject::Node, "", "talos-cp-fra1-01");
         let Section::Alerts { alerts, stale } = section else {
-            panic!("worker-1 has an alert")
+            panic!("the node has an alert")
         };
         assert!(!stale);
         assert_eq!(alerts[0].name, "NodeFilesystemSpaceFillingUp");
@@ -1058,7 +1058,7 @@ mod object_tests {
             },
             Subject::Node,
             "",
-            "worker-1",
+            "talos-cp-fra1-01",
         ) else {
             panic!()
         };

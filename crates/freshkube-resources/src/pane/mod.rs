@@ -36,7 +36,7 @@ use crate::backend::{self, OwnedJob};
 use freshkube_core::monitoring::history::Subject;
 use freshkube_monitoring::history::{HistorySource, HistoryView};
 
-mod alerts;
+pub(crate) mod alerts;
 mod cross_links;
 mod edit;
 mod events;

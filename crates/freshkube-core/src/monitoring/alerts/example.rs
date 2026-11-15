@@ -151,8 +151,8 @@ pub fn alerts(now: DateTime<Utc>) -> Vec<Alert> {
             Firing,
             "critical",
             130,
-            &[("node", "worker-1"), ("mountpoint", "/var")],
-            "Filesystem on worker-1 is filling up",
+            &[("node", "talos-cp-fra1-01"), ("mountpoint", "/var")],
+            "Filesystem on talos-cp-fra1-01 is filling up",
             true,
         ),
         alert(
@@ -161,8 +161,8 @@ pub fn alerts(now: DateTime<Utc>) -> Vec<Alert> {
             Firing,
             "warning",
             18,
-            &[("namespace", "shop"), ("deployment", "shop-api")],
-            "Deployment shop/shop-api has not matched the expected replicas",
+            &[("namespace", "payments"), ("deployment", "worker")],
+            "Deployment payments/worker has not matched the expected replicas",
             true,
         ),
         alert(

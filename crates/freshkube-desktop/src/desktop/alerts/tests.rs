@@ -355,3 +355,35 @@ fn the_pod_pane_shows_the_session_alert_that_names_its_pod(cx: &mut TestAppConte
     })
     .unwrap();
 }
+
+/// A node's Overview in the Nodes workspace has the Alerts section: the
+/// alert that names the node when there is one, and a plain state otherwise.
+#[gpui_kit::test]
+fn the_nodes_workspace_overview_shows_the_session_alerts_for_its_node(cx: &mut TestAppContext) {
+    let (_runtime, handle, _pilot) = shell(cx, Shape::Firing);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
+        window.render_frame(cx);
+        assert!(drawn(window, "alerts-section"));
+        assert!(
+            drawn(window, "alert-example-NodeFilesystemSpaceFillingUp-2"),
+            "the filesystem alert names this node"
+        );
+        crate::desktop::tests::click_node(window, cx, "node-talos-wk-fra1-02");
+        window.render_frame(cx);
+        assert!(
+            drawn(window, "alerts-quiet"),
+            "no alert names the other node"
+        );
+    })
+    .unwrap();
+}
+
+/// Whether the element is laid out, which a scrolled-off one is too.
+fn drawn(window: &mut gpui_kit::Window, id: &'static str) -> bool {
+    window.find(id).bounds().size.height > gpui_kit::px(0.)
+}

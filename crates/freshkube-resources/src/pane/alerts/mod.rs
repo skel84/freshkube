@@ -105,18 +105,37 @@ impl DetailPane {
         let target = &self.detail.as_ref()?.target;
         let subject = named::Subject::of(&target.kind.group, &target.kind.kind)?;
         let identity = &target.identity;
-        Some(
-            match named::section(state, subject, &identity.namespace, &identity.name) {
-                Section::Reading => Body::Reading,
-                Section::Unknown(why) => Body::Unknown(why.into()),
-                Section::Quiet(text) => Body::Quiet(text.into()),
-                Section::StaleQuiet(text) => Body::StaleQuiet(text.into()),
-                Section::Alerts { alerts, stale } => Body::Lines {
-                    hidden: alerts.len().saturating_sub(SHOWN),
-                    lines: alerts.iter().take(SHOWN).map(line).collect(),
-                    stale,
-                },
-            },
-        )
+        Some(body_of(state, subject, &identity.namespace, &identity.name))
+    }
+}
+
+/// The section's body for one object under the session's state.
+fn body_of(state: &State, subject: named::Subject<'_>, namespace: &str, name: &str) -> Body {
+    match named::section(state, subject, namespace, name) {
+        Section::Reading => Body::Reading,
+        Section::Unknown(why) => Body::Unknown(why.into()),
+        Section::Quiet(text) => Body::Quiet(text.into()),
+        Section::StaleQuiet(text) => Body::StaleQuiet(text.into()),
+        Section::Alerts { alerts, stale } => Body::Lines {
+            hidden: alerts.len().saturating_sub(SHOWN),
+            lines: alerts.iter().take(SHOWN).map(line).collect(),
+            stale,
+        },
+    }
+}
+
+/// The Alerts section of a Node in the Nodes workspace, whose own Overview
+/// isn't a detail pane: the same lines and the same words, derived once from
+/// the session's state and drawn by the caller.
+pub struct AlertsBlock(Body);
+
+impl AlertsBlock {
+    /// The section for the node named `node` under `state`.
+    pub fn for_node(state: &State, node: &str) -> Self {
+        Self(body_of(state, named::Subject::Node, "", node))
+    }
+
+    pub fn render(&self, cx: &App) -> AnyElement {
+        view::section(&self.0, cx)
     }
 }

@@ -166,6 +166,9 @@ impl Pilot {
             .as_ref()
             .map(|read| (read.identity.1.clone(), read.state.clone()));
         self.pages
+            .node_workspace
+            .update(cx, |nodes, cx| nodes.set_alerts(state.clone(), cx));
+        self.pages
             .resources
             .update(cx, |resources, cx| resources.set_alerts(state, cx));
     }
