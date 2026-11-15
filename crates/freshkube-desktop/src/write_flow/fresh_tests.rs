@@ -43,6 +43,10 @@ fn safety_g27_an_everyday_action_sends_nothing_when_the_file_got_stricter(cx: &m
         h.drive(cx, Duration::from_secs(3));
         assert_eq!(h.replicas(), 2, "{to:?}");
         nothing_sent(&h, cx);
+        if to == Some(Protection::Protected) {
+            // Review again: the dialog is asked under the level the file holds.
+            assert!(h.present(cx, "write-type-name"));
+        }
     }
 }
 
