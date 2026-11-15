@@ -1,0 +1,1 @@
+- **Installing with Homebrew:** the README and the packaging guide add `brew trust --tap skel84/tap`, which current Homebrew needs before it installs a cask from the tap.

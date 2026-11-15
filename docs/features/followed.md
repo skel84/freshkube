@@ -1,10 +1,10 @@
 # Followed items, toasts and the bell
 
-What the user turns on to be told about (issue #846), slice 1: the app-wide owner, the follows, toasts and the bell, and Settings › Notifications. macOS banners and their permission, firing alerts as a source and "Tell me when" come later and plug into the same owner.
+What the user turns on to be told about (issue #846), slices 1 and 2: the app-wide owner, the follows, toasts and the bell, Settings › Notifications, and the banner path (delivery decision, permission, click to open). The native macOS call behind `banner::Notifier`, firing alerts as a source and "Tell me when" come later and plug into the same owner.
 
 Code:
 
-- `crates/freshkube-followed/src/`: `model.rs` (a follow, its subject, the caps), `rules/` (what a read saw into updates), `notice/` (grouping, quiet hours, the words, the bell's lists), `saved.rs` (`follows.json`), `owner/` (`Followed` and its feeds), `live.rs` (the reads), `example.rs` (`FRESHKUBE_FOLLOWS` and the example script), `menu.rs` ("Notify me"), `bell.rs` (the status bar's entry).
+- `crates/freshkube-followed/src/`: `model.rs` (a follow, its subject, the caps), `rules/` (what a read saw into updates), `notice/` (grouping, quiet hours, the words, the bell's lists), `saved.rs` (`follows.json`), `owner/` (`Followed` and its feeds), `live.rs` (the reads), `example.rs` (`FRESHKUBE_FOLLOWS` and the example script), `menu.rs` ("Notify me"), `bell.rs` (the status bar's entry), `banner.rs` (banner or toast, the permission, the `Notifier` sink).
 - `crates/freshkube-desktop/src/desktop/followed.rs` (the shell offers connections and pushes toasts), `desktop/settings/notifications.rs`, `desktop/mod.rs` (`quit_app`).
 - Entry points: a pod's menu in `crates/freshkube-resources/src/screen/pods.rs` and `menu.rs`; the change page's header in `crates/freshkube-applications/src/change/`.
 
@@ -34,7 +34,8 @@ The shell offers the follows the connection of the cluster the window is on, wit
 - A change page's "reaches a Stage" and "verification fails" follows are about the cluster Kargo runs in (`Change.kargo_context`), not the one the window is on, and are saved with that context: the Kubernetes context of the workspace entry Kargo was read from (`At.context`), never the entry's id or the page's label, which differ from it. When that cluster isn't open they show "Not watching" and read once the shell offers its connection. The incident follow is about the window's cluster, whose Coroot project the shell offers. A confirmation toast about a follow in a cluster that isn't open hides what it is about, as an unknown level does: Hide details defaults to On until the shell offers that cluster.
 - A saved follow of a cluster that is not open stays "Not watching" until it is.
 - The rules' state (what was last told, a crash loop's re-arm, the incidents seen) is not saved. After a launch a follow can tell what it told before once more; that is accepted for now.
-- Clicking a toast does not open the item yet; that comes with banners.
+- Clicking a toast does not open the item. Clicking a banner does: `Followed::banner_clicked` emits `Event::Open`, and the shell opens a pod on its Events, or the Applications or Observability page, in the cluster that is open; another cluster is named in a toast, never switched to.
+- A banner shows only when the platform has a native sink, the permission is Granted and the app isn't in front. The system is asked once, at the first follow; a refusal is never asked again; only Granted and Denied are saved. Hide details, quiet hours and the once-only rules apply to banners as to toasts, since both come from the same notice.
 
 ## Connections and levels
 

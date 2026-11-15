@@ -74,6 +74,7 @@ A tab is bound to a cluster entry (`Tab::entry`, the workspace entry's id) and n
 - **A missing entry** (not in `freshkube.yaml`) shows a dashed ring on its tab and a "Choose a cluster" page (`tabs/choose.rs`) with no cluster column behind it, and nothing else. The shown cluster never stands in; a person's pick binds the tab and opens the tab's own page there, with its kind and namespace (`choose_cluster_for_tab`). The cluster buttons wrap inside the page.
 - **The level** (#852): every tab wears its own cluster's level glyph, and a 2 px cap when it is read-only, protected or open; the "cluster ·" prefix shows only when the tabs span clusters.
 - **Saved:** `navigation.json`'s `tabs.entries` holds each view's entry id and `tabs.contexts` each context-bound view's context with the kind of window (`talos`); a file without them binds nothing. A context-bound tab made in the other kind of window (a Talos context against a Kubernetes-only one, where the name means something else) is not reached by name: it shows "Choose a cluster", like a missing entry.
+- **A cluster row's menu** (right-click in the switcher) offers Open in new tab, which does what ⌘-click does (`open_cluster_in_new_tab`).
 - **Right-click** opens a tab's menu and does not make the tab the shown one; its Close closes that tab. The tab's tooltip waits while its menu is open.
 
 Dock shells and logs keep their own connection: see [resources](resources.md) and [pod exec](../POD_EXEC.md#a-shell-on-its-own-connection-878).

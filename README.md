@@ -13,10 +13,12 @@ Freshkube began as a fork of [talos-pilot](https://github.com/Handfish/talos-pil
 Freshkube needs macOS 15 or later, on Apple silicon or Intel. Install it with [Homebrew](https://brew.sh):
 
 ```bash
+brew tap skel84/tap
+brew trust --tap skel84/tap
 brew install --cask skel84/tap/freshkube
 ```
 
-This puts `Freshkube.app` in `/Applications` and links the `freshkube` command; `brew upgrade --cask freshkube` updates it. Builds are ad-hoc signed and not notarized, so macOS blocks the first open: open Freshkube once, then choose **System Settings → Privacy & Security → Open Anyway**. You can also download a ZIP from the [Releases page](https://github.com/skel84/freshkube/releases) ([installing by hand](docs/MACOS_PACKAGING.md#install-a-release)).
+Homebrew loads casks only from taps you trust, so `brew trust` comes before the first install. This puts `Freshkube.app` in `/Applications` and links the `freshkube` command; `brew upgrade --cask freshkube` updates it. Builds are ad-hoc signed and not notarized, so macOS blocks the first open: open Freshkube once, then choose **System Settings → Privacy & Security → Open Anyway**. You can also download a ZIP from the [Releases page](https://github.com/skel84/freshkube/releases) ([installing by hand](docs/MACOS_PACKAGING.md#install-a-release)).
 
 ## Features
 
