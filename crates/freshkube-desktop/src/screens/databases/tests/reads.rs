@@ -7,7 +7,7 @@ fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppCo
         ("not-installed", "No database operators found"),
         ("refused", "Not allowed to read clusters"),
         ("empty", "No clusters found"),
-        ("unsupported", "Unsupported"),
+        ("unsupported", "API version Freshkube doesn't read"),
     ] {
         cx.update_window(window.into(), |_, window, cx| {
             page.update(cx, |page, cx| {
@@ -152,7 +152,7 @@ fn initial_failures_offer_retry_without_claiming_retained_data(cx: &mut TestAppC
 #[gpui_kit::test]
 fn a_refusal_or_a_missing_operator_offers_no_retry(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
-    for shape in ["not-installed", "refused"] {
+    for shape in ["not-installed", "refused", "unsupported"] {
         cx.update_window(window.into(), |_, window, cx| {
             page.update(cx, |page, cx| {
                 let identity = page.identity().unwrap();
@@ -172,6 +172,42 @@ fn a_refusal_or_a_missing_operator_offers_no_retry(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+fn gap_words(page: &DatabasesScreen) -> String {
+    let state = page.read_gap(false).unwrap();
+    format!("{}. {}", state.title(), state.description())
+}
+
+#[gpui_kit::test]
+fn a_dropped_connection_names_the_cluster_and_a_missing_one_points_to_settings(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, page, window) = mount(cx, 1280.);
+    cx.update_window(window.into(), |_, window, cx| {
+        // A cluster is chosen but its connection is down: no Settings advice,
+        // no Retry that has no connection to read through.
+        page.update(cx, |page, cx| {
+            let dropped = PageSource {
+                entry: Some("prod-fra".into()),
+                ..PageSource::default()
+            };
+            page.set_page_source(dropped, window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("databases-retry").is_none());
+        let text = gap_words(page.read(cx));
+        assert!(text.contains("Couldn't reach databases"), "{text}");
+        assert!(text.contains("prod-fra"), "{text}");
+        assert!(!text.contains("Settings"), "{text}");
+        // No cluster at all: the page says what isn't set up.
+        page.update(cx, |page, cx| {
+            page.set_page_source(PageSource::default(), window, cx);
+        });
+        let text = gap_words(page.read(cx));
+        assert!(text.contains("Settings › Clusters"), "{text}");
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -197,7 +233,7 @@ fn a_first_read_that_fails_says_it_couldnt_reach_and_offers_retry(cx: &mut TestA
 fn read_failure_retry_is_button_sized_at_both_text_sizes(cx: &mut TestAppContext) {
     let (_runtime, page, window) = mount(cx, 1280.);
     for text in [13., 20.] {
-        for shape in ["unsupported", "failed"] {
+        for shape in std::iter::once("failed") {
             cx.update_window(window.into(), |_, window, cx| {
                 crate::text_size::set(text, cx);
                 page.update(cx, |page, cx| {

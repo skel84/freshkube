@@ -253,13 +253,9 @@ impl TableSource for DatabasesScreen {
     fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.display.lines.is_empty().then(|| {
             let state = &self.display.empty;
-            let mut label = format!("{}. {}", state.title(), state.description());
-            if let Some(reason) = state.reason() {
-                label = format!("{label} {reason}");
-            }
             div()
                 .id("databases-empty-state")
-                .aria_label(label)
+                .aria_label(self.display.empty_label.clone())
                 .test_support()
                 .child(self.state_view("databases-empty-card", state, cx))
                 .into_any_element()

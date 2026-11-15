@@ -71,6 +71,8 @@ pub(crate) struct CorootInput {
 pub(crate) struct DatabasesScreen {
     runtime: Handle,
     source: Option<ClusterSource>,
+    /// The workspace entry the page is for, kept while its connection is down.
+    entry: Option<String>,
     visible: bool,
     loader: Loader<Inventory, String>,
     /// What Coroot says of the inventory's databases; read after it.
@@ -152,6 +154,7 @@ impl DatabasesScreen {
         Self {
             runtime,
             source: None,
+            entry: None,
             visible: false,
             loader: Loader::default(),
             evidence: Loader::default(),
@@ -622,6 +625,7 @@ impl ScreenPanel for DatabasesScreen {
         let changed = self.source.as_ref().map(|source| &source.id)
             != source.kube.as_ref().map(|source| &source.id);
         self.source = source.kube;
+        self.entry = source.entry;
         if changed {
             self.loader.reset();
             self.evidence.reset();

@@ -239,7 +239,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
         Unknown::NotFound(reason) => {
             let tool = match which {
                 Which::Alerts => "an Alertmanager or vmalert",
-                Which::Rules => "a vmalert or PrometheusRule objects",
+                Which::Rules => "a vmalert or any PrometheusRule objects",
                 Which::Silences => "an Alertmanager",
             };
             let looked_for = match which {

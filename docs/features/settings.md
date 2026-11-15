@@ -67,7 +67,7 @@ Two groups. *Display*: Appearance (System, Light, Dark), which runs the app menu
 
 ## Clusters
 
-A table page of the workspace's entries, in file order with no sort: an unlabelled status column, Cluster (the id), Role, Context and Talosconfig. The status column shows a Warn mark when an entry did not open as defined, and the row's tooltip adds the note. With no file the table is empty, and the status bar counts the one cluster this window opened as an implicit workspace of one.
+A table page of the workspace's entries, in file order with no sort: an unlabelled status column, Cluster (the id), Role, Context and Talosconfig. The status column shows a Warn mark when an entry did not open as defined, and the row's tooltip adds the note. With no file the table is empty, and the status bar counts the one cluster this window opened.
 
 - **Toolbar, keys and row menu.** Add (`a`), Edit (Enter or `e`), Remove (Backspace), Move up and Move down (⌘⌥↑ and ⌘⌥↓, Control-Alt on Windows and Linux) and Reload (`r`); ↑ and ↓ move the selection, and Escape clears it. Edit opens no dialog: it puts the keyboard in the Inspector's Context field. The row menu holds Edit, Remove, Move up and Move down. A right-click selects the row and opens its menu at once; when no Inspector was open, it waits until the menu closes to open, keeping the row's popup in place.
 - **Add** is a small dialog, "Add a cluster": Role (Core, CI/CD, Environment; Environment by default) and the kubeconfig Context. The id is derived from the context (`Workspace::fresh_id`: lower case, other characters to `-`, `-2` and on for a taken one). The dialog stays open with what was typed if the save fails, and selects the new row once saved.
@@ -79,7 +79,7 @@ A table page of the workspace's entries, in file order with no sort: an unlabell
   - *Metrics*: the label value, the entry's value of the central store's label (its id unless set), and its own store, None, Service (namespace, Service, port, reached through this cluster's API server) or URL ("A store of its own wins under any mode."). A URL's token is never shown; a URL save keeps it, and choosing Service or None drops it from the block. After the YAML write succeeds, the replaced token is removed from `keys.json` unless another setup store or a context in `monitoring.json` still names that account.
   - Each Save writes only that entry's keys through `SetupFile::save_workspace`, keeping the rest of the setup and its unknown keys.
 - **Save, Discard or Stay.** Changing the selection (click, arrows, Escape, the row menu) or pressing Add while an Inspector group has changes asks through the platform's prompt (`window.prompt`): "Save the changes to {id}?", with Save, Discard and Stay. Save writes the groups first and stays on the entry if a field fails. Reload doesn't ask: it rebases the drafts on the file read again, and drops them only when a change on disk was waiting.
-- **Status.** "{n} clusters · {m} destinations mapped · freshkube.yaml · Kubeconfig: …" ("Example workspace" with example data; a part that would say 0 destinations is left out), or "1 cluster · implicit: the one this window opened".
+- **Status.** "{n} clusters · {m} destinations mapped · freshkube.yaml · Kubeconfig: …" ("Example workspace" with example data; a part that would say 0 destinations is left out), or "1 cluster · the one this window opened".
 
 ## Monitoring
 

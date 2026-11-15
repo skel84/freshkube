@@ -228,7 +228,7 @@ impl DigestSearch {
     pub(crate) fn cause(&self) -> Option<Cause> {
         match &self.outcome {
             DigestOutcome::NoNamespace => Some(Cause::not_set_up(
-                "Freshkube doesn't know where builds run. Builds are optional; set it in Settings › Delivery sources",
+                "where builds run (Settings › Delivery sources)",
                 SettingsField::BUILD_NAMESPACE,
             )),
             DigestOutcome::Failed(_) => None,

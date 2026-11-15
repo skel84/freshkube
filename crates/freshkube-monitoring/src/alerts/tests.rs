@@ -600,6 +600,13 @@ fn a_central_store_without_the_cluster_label_shows_nothing(cx: &mut TestAppConte
     landed(cx, &page);
     assert!(lines(cx, &page).is_empty());
     assert!(shown(cx, handle, "alerts-no-label"));
+    let words = cx.read(|cx| match &page.read(cx).display().body {
+        Body::State(state) => state.description.to_string(),
+        other => format!("{other:?}"),
+    });
+    assert!(words.contains("Settings › Monitoring"), "{words}");
+    assert!(!words.contains("metrics.label"), "{words}");
+    assert!(!words.contains("setup file"), "{words}");
 
     // With the label, the cluster's alerts show, in a cluster column.
     let (source, _recorder, _cluster) = cluster(Arc::new(AtomicU16::new(200)), true);

@@ -158,6 +158,8 @@ pub(super) struct Display {
     /// One line per kind or operator that was not read completely.
     pub notice: Option<SharedString>,
     pub empty: ReadState,
+    /// `empty` as one sentence, for the empty state's label.
+    pub empty_label: SharedString,
     pub columns: (Vec<table::Column>, f32),
     mode: Mode,
     filter: String,
@@ -260,6 +262,16 @@ fn empty_state(inv: &Inventory, mode: Mode, cluster: &str) -> ReadState {
             manifest: None,
             reason: None,
         }
+    } else if *coverage == Coverage::Unsupported {
+        ReadState::NotSetUp {
+            what: "Support for this API version".into(),
+            gap: format!(
+                "The operator serves an API version Freshkube doesn't read, so {what} can't be listed in {cluster}."
+            ),
+            setting: None,
+        }
+    } else if *coverage == Coverage::Partial {
+        ReadState::Partial { what, cluster }
     } else {
         ReadState::Unreachable {
             what,
@@ -312,6 +324,13 @@ impl Display {
             summary: SharedString::default(),
             attention: None,
             notice: (!notice.is_empty()).then(|| notice.join(" · ").into()),
+            empty_label: {
+                let mut label = format!("{}. {}", empty.title(), empty.description());
+                if let Some(reason) = empty.reason() {
+                    label = format!("{label} {reason}");
+                }
+                label.into()
+            },
             empty,
             columns: (Vec::new(), 0.),
             mode,
