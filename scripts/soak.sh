@@ -31,10 +31,10 @@ export FRESHKUBE_STRESS_SAMPLES=$out/$label.csv
 export FRESHKUBE_STRESS_SAMPLE_EVERY=${SOAK_EVERY:-30}
 warmup=${SOAK_WARMUP:-600}
 export FRESHKUBE_STRESS_WARMUP=$warmup
-status=0
-$root/scripts/stress.sh soak-$label "$@" || status=$?
-if [[ $status != 0 ]]; then
-    echo "soak: the run ended with status $status" >&2
+rc=0
+$root/scripts/stress.sh soak-$label "$@" || rc=$?
+if [[ $rc != 0 ]]; then
+    echo "soak: the run ended with status $rc" >&2
     exit 2
 fi
 cd $root

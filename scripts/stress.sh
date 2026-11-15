@@ -42,7 +42,9 @@ if [[ -n ${FRESHKUBE_STRESS_SAMPLES:-} ]]; then
     stress_pid=$!
     # A background command ignores SIGINT here, so Ctrl-C must end the app
     # itself, or it keeps drawing for hours after the lock is given up.
-    trap 'kill $stress_pid 2>/dev/null; screen_release' EXIT INT TERM
+    # `|| true`: the app has usually ended already, and a failed kill must not
+    # stop the trap before the lock is released (set -e).
+    trap 'kill $stress_pid 2>/dev/null || true; screen_release' EXIT INT TERM
     # Keep the display and the machine awake for as long as the run lasts.
     if command -v caffeinate >/dev/null; then caffeinate -dimsu -w $stress_pid & fi
     soak_run $stress_pid $FRESHKUBE_STRESS_SAMPLES ${FRESHKUBE_STRESS_SAMPLE_EVERY:-30}
@@ -50,7 +52,10 @@ if [[ -n ${FRESHKUBE_STRESS_SAMPLES:-} ]]; then
 else
     "$stress_binary" "$@" 2> $out/$label.log
 fi
-/usr/bin/grep -E '^(summary|stress server)' $out/$label.log || true
+# The fault counts are logged cumulatively as faults happen (a native quit
+# doesn't return through main), so only the last of them is shown.
+/usr/bin/grep -E '^(summary|stress:|stress server)' $out/$label.log | /usr/bin/grep -v '^stress server faults' || true
+/usr/bin/grep '^stress server faults' $out/$label.log | tail -1 || true
 if [[ $1 == monitoring ]]; then
     . $root/scripts/stress/report.sh
     monitoring_verdict $out/$label.log "${FRESHKUBE_STRESS_KEYS:-}"

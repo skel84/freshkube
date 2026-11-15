@@ -317,11 +317,7 @@ fn main() -> color_eyre::Result<()> {
     let result = freshkube_desktop::run(options, runtime.handle().clone());
     world.summary.report();
     if let Some(plan) = world.faults.lock().expect("faults").as_ref() {
-        let c = plan.counts();
-        eprintln!(
-            "stress server faults refused={} dropped={} slow={} gone={}",
-            c.refused, c.dropped, c.slow, c.gone
-        );
+        eprintln!("{}", faults_line(plan));
     }
     let _ = std::fs::remove_dir_all(&dir);
     result
@@ -451,7 +447,15 @@ async fn answer(
             .any(|p| matches!(p, "watch=1" | "watch=true"))
     });
     let fault = match world.faults.lock().expect("faults").as_mut() {
-        Some(plan) => plan.decide(world.started.elapsed(), watching),
+        Some(plan) => {
+            let fault = plan.decide(world.started.elapsed(), watching);
+            if fault != Fault::None {
+                // Logged as they happen: a native quit doesn't return
+                // through main, where the final line is printed.
+                eprintln!("{}", faults_line(plan));
+            }
+            fault
+        }
         None => Fault::None,
     };
     match fault {
@@ -462,6 +466,15 @@ async fn answer(
         Fault::Gone => return Ok(failure_status(StatusCode::GONE, "Expired")),
     }
     Ok(respond(world, request))
+}
+
+/// The faults injected so far, cumulative.
+fn faults_line(plan: &FaultPlan) -> String {
+    let c = plan.counts();
+    format!(
+        "stress server faults refused={} dropped={} slow={} gone={}",
+        c.refused, c.dropped, c.slow, c.gone
+    )
 }
 
 /// A Kubernetes `Status` failure with that HTTP status.

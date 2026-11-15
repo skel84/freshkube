@@ -27,7 +27,7 @@ soak_sample() {
 }
 
 soak_run() {
-    local pid=$1 csv=$2 every=$3 started now line
+    local pid=$1 csv=$2 every=$3 started now line waited
     started=$(date +%s)
     echo "second,rss_mb,threads,fds" >"$csv"
     while kill -0 "$pid" 2>/dev/null; do
@@ -35,6 +35,11 @@ soak_run() {
             now=$(date +%s)
             echo "$((now - started)),$line" >>"$csv"
         fi
-        sleep "$every"
+        # In one-second steps, so a run that ends is noticed at once.
+        waited=0
+        while [ "$waited" -lt "$every" ] && kill -0 "$pid" 2>/dev/null; do
+            sleep 1
+            waited=$((waited + 1))
+        done
     done
 }

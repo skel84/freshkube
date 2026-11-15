@@ -30,6 +30,17 @@ soak_run "$sleeper" "$work/run.csv" 1
 [ "$(head -1 "$work/run.csv")" = "second,rss_mb,threads,fds" ]; check "the CSV starts with its header" $?
 [ "$(wc -l <"$work/run.csv")" -ge 2 ]; check "the CSV has samples" $?
 
+# zsh runs soak.sh and stress.sh, where these names are read-only: assigning
+# one stops the script. This test runs under bash, which would not notice.
+! grep -nE '^[[:space:]]*(status|path|argv|pipestatus|options|commands)=' "$here/soak.sh" "$here/stress.sh"; check "no zsh read-only names are assigned" $?
+
+# soak_run notices its process ending within a second, not after its interval.
+sleep 2 &
+sleeper=$!
+begin=$SECONDS
+soak_run "$sleeper" "$work/quick.csv" 30
+[ $((SECONDS - begin)) -le 5 ]; check "a run that ends is noticed at once ($((SECONDS - begin)) s)" $?
+
 cargo build --quiet --manifest-path "$root/Cargo.toml" -p freshkube-probe --bin soak-verdict
 verdict="$root/target/debug/soak-verdict"
 
