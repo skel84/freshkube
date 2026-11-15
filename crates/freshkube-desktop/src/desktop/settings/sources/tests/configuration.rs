@@ -123,7 +123,7 @@ fn the_stage_naming_of_the_setup_is_a_row_of_its_own_and_goes_when_removed(
         settle_sources(window, cx);
         assert_eq!(
             named(cx),
-            Some(("‹stage›-‹project›".into(), "By name only".into()))
+            Some(("the stage-the project".into(), "By name only".into()))
         );
         assert!(window.find("settings-source-stage-naming").visible());
         // The table says where it reads in words; the file's key waits in
@@ -144,6 +144,18 @@ fn the_stage_naming_of_the_setup_is_a_row_of_its_own_and_goes_when_removed(
         assert_eq!(reads, "Setup file");
         assert_eq!(key, Some("delivery.stage_naming"));
         assert!(tooltip.contains("delivery.stage_naming"), "{tooltip}");
+        // A placeholder is never shown as the file writes it.
+        let entry = sources
+            .read(cx)
+            .rows
+            .iter()
+            .find(|row| row.read == Read::StageNaming)
+            .map(|row| row.entry.to_string())
+            .unwrap();
+        assert!(
+            !entry.contains('{') && !tooltip.contains("{project}"),
+            "{entry} / {tooltip}"
+        );
         naming.project_key = Some("example.test/project".into());
         sources.update(cx, |list, cx| list.set_stage_naming(Some(naming), cx));
         assert_eq!(

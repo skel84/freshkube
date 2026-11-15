@@ -328,9 +328,10 @@ impl SourcesList {
                             partial.then_some(ui::Tone::Warn),
                             Some(template.clone()),
                             format!(
-                                "Build namespace: the template {template} fits {} projects\n{}; \
+                                "Build namespace: the template {} fits {} projects\n{}; \
                                  Accept sets delivery.build_namespace to it\nReads \
                                  delivery.build_namespace",
+                                super::rows::plain_template(template),
                                 fits.len(),
                                 match partial {
                                     true => "Some namespaces with runs belong to no project",
@@ -347,7 +348,11 @@ impl SourcesList {
                         format!(
                             "Build namespace: {} fit equally; none is chosen\nReads \
                              delivery.build_namespace",
-                            templates.join(" and ")
+                            templates
+                                .iter()
+                                .map(|template| super::rows::plain_template(template))
+                                .collect::<Vec<_>>()
+                                .join(" and ")
                         ),
                     ),
                     BuildVerdict::Several { listed, more } => {

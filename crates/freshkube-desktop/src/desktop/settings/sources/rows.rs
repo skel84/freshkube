@@ -30,10 +30,13 @@ pub(crate) struct SourceRow {
 /// tooltip and the Inspector, after this.
 const SETUP_FILE: &str = "Setup file";
 
-/// A name template as a person reads it: the placeholders in angle marks,
-/// never the braces the file escapes them with.
+/// A name template as a person reads it: a placeholder is the word it stands
+/// for ("the project"), never the braces of the file; the template itself
+/// stays in the setup file.
 pub(super) fn plain_template(template: &str) -> String {
-    template.replace('{', "‹").replace('}', "›")
+    template
+        .replace("{project}", "the project")
+        .replace("{stage}", "the stage")
 }
 
 /// What the Workloads row reads on each entry.
@@ -313,7 +316,7 @@ impl SourcesList {
         };
         let tooltip = format!(
             "Stage naming: how an Application with no authorized-stage annotation names its Stage\n{}: {how}\nReads freshkube.yaml, delivery.stage_naming",
-            naming.name_template
+            plain_template(&naming.name_template)
         );
         self.row(
             Read::StageNaming,
@@ -329,6 +332,7 @@ impl SourcesList {
     /// Build namespace: where a build is searched for by its image digest, as
     /// `freshkube.yaml` says. Read from the file, so it needs no check.
     fn build_namespace_row(&self, namespace: &str) -> SourceRow {
+        let namespace = plain_template(namespace);
         let tooltip = format!(
             "Build namespace: where a build is searched for by its image digest
 {namespace}:              builds are found there by digest; elsewhere only a commit finds one
@@ -336,7 +340,7 @@ Reads              freshkube.yaml, delivery.build_namespace"
         );
         self.row(
             Read::BuildNamespace,
-            namespace.to_owned(),
+            namespace,
             "freshkube.yaml".into(),
             false,
             ("Set".into(), None),

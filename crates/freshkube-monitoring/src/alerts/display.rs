@@ -129,10 +129,13 @@ pub struct State {
 }
 
 impl State {
-    /// Whether the detail is the server's words after a failed or refused
-    /// read, drawn as an error; otherwise it is what was looked for.
+    /// Whether the detail is drawn as an error. Only a state where the read
+    /// succeeded and found nothing (`Missing`: no source, no cluster label,
+    /// rules with no evaluator) shows what was looked for as a calm note; a
+    /// refusal, a failed read and any state that can't tell keep the error
+    /// style.
     pub fn detail_is_error(&self) -> bool {
-        matches!(self.icon, StateIcon::Refused | StateIcon::Broken)
+        !matches!(self.icon, StateIcon::Missing)
     }
 
     /// Whether Settings › Monitoring holds the fix: where the alerts source

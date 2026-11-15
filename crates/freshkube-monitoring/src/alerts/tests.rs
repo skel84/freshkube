@@ -272,7 +272,8 @@ fn what_was_not_read_is_never_no_alerts(cx: &mut TestAppContext) {
             shape != Shape::Refused,
             "{shape:?}"
         );
-        // The details are an error only when the read was refused.
+        // The details are calm only where the read succeeded and found
+        // nothing; a refusal keeps the error style.
         cx.read(|cx| match &page.read(cx).display().body {
             Body::State(state) => assert_eq!(
                 state.detail_is_error(),
@@ -598,6 +599,11 @@ fn a_failed_refresh_keeps_the_last_read_as_stale_and_a_first_failure_is_not_quie
     frame(cx, handle);
     assert!(shown(cx, handle, "alerts-failed"));
     assert!(!shown(cx, handle, "alerts-quiet"));
+    // A read that failed keeps the error style for its reason.
+    cx.read(|cx| match &page.read(cx).display().body {
+        Body::State(state) => assert!(state.detail_is_error() && state.detail.is_some()),
+        other => panic!("{other:?}"),
+    });
 }
 
 #[gpui_kit::test]

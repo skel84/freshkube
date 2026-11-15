@@ -249,13 +249,21 @@ pub fn open_settings_button(id: &'static str) -> AnyElement {
         .into_any_element()
 }
 
-/// The mono box of a state: what was looked for is a note, and only the
-/// server's own words after a refusal or a failed read look like an error.
+/// The mono box of a state. It is a neutral note only where the read itself
+/// succeeded and there is nothing to find: not installed, not set up, or
+/// empty. Everywhere else, a refusal, a failed read, stale or partial data, or
+/// a read that never answered, it keeps the error style, so a failure is never
+/// made to look calm.
 fn details_for(state: &ReadState, details: Option<String>) -> Option<ui::EmptyDetails> {
-    details.map(ui::EmptyDetails::Note).or_else(|| {
-        state
-            .reason()
-            .map(|reason| ui::EmptyDetails::Failure(reason.to_owned()))
+    let succeeded = matches!(
+        state,
+        ReadState::NotInstalled { .. } | ReadState::NotSetUp { .. } | ReadState::Empty { .. }
+    );
+    let words = details.or_else(|| state.reason().map(str::to_owned))?;
+    Some(if succeeded {
+        ui::EmptyDetails::Note(words)
+    } else {
+        ui::EmptyDetails::Failure(words)
     })
 }
 
@@ -389,19 +397,65 @@ mod tests {
     }
 
     #[test]
-    fn details_look_like_an_error_only_when_a_read_failed() {
+    fn details_look_like_an_error_unless_the_read_succeeded_and_found_nothing() {
         let looked = Some("Looked for: alertmanager, vmalert".to_owned());
+        let note = |state: &ReadState| {
+            matches!(
+                details_for(state, looked.clone()),
+                Some(ui::EmptyDetails::Note(_))
+            )
+        };
         let empty = ReadState::Empty {
             looked_for: "alerts".into(),
             cluster: "prod-fra".into(),
             hint: None,
         };
-        // Nothing failed: what was looked for is a note, even on a refusal.
-        for state in [&empty, &not_installed(), &refused()] {
-            let note = details_for(state, looked.clone()).unwrap();
-            assert!(matches!(note, ui::EmptyDetails::Note(_)), "{state:?}");
+        let not_set_up = ReadState::NotSetUp {
+            what: "Prometheus".into(),
+            gap: "Freshkube doesn't know where Prometheus is.".into(),
+            setting: None,
+        };
+        // The read succeeded and nothing is there: neutral.
+        for state in [&empty, &not_installed(), &not_set_up] {
+            assert!(note(state), "{state:?}");
         }
-        // The server's words after a refusal are the error.
+        // A refusal, a failed read, partial or stale data, an unsupported
+        // version or a read that never answered keep the error style, with the
+        // page's details or the server's words.
+        let others = [
+            refused(),
+            ReadState::Unreachable {
+                what: "pods".into(),
+                cluster: "prod-fra".into(),
+                reason: None,
+            },
+            ReadState::NotReadYet {
+                what: "pods".into(),
+            },
+            ReadState::Unsupported {
+                what: "pods".into(),
+                cluster: "prod-fra".into(),
+            },
+            ReadState::Partial {
+                what: "pods".into(),
+                cluster: "prod-fra".into(),
+            },
+            ReadState::Stale {
+                what: "pods".into(),
+                at: "14:02:11".into(),
+            },
+        ];
+        for state in &others {
+            assert!(
+                matches!(
+                    details_for(state, looked.clone()),
+                    Some(ui::EmptyDetails::Failure(_))
+                ),
+                "{state:?}"
+            );
+        }
+        // The server's own words after a refusal are the error; with no
+        // details at all there is no box.
         assert_eq!(
             details_for(&refused(), None),
             Some(ui::EmptyDetails::Failure("forbidden".into()))
