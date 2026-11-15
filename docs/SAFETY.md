@@ -219,6 +219,16 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 - `safety_g25_protected_operations_refuse_a_missing_or_wrong_name_and_accept_the_exact_one` (`crates/freshkube-core/src/operations/gate/tests.rs`)
 - `safety_g25_a_protected_cluster_starts_no_operation_until_the_node_is_named` (`crates/freshkube-desktop/src/screens/operations/tests.rs`)
 
+### 26. A rollback promotes only an earlier Freight the Stage's own history records, and sends nothing under `read-only`, without the typed name on `protected`, or when the Stage or its history moved
+
+- `safety_g26_read_only_blocks_a_rollback_with_no_request` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g26_a_protected_destination_needs_the_exact_stage_name_to_roll_back` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g26_a_stage_whose_history_moved_since_the_page_sends_no_rollback` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g26_a_history_that_moves_while_the_dialog_is_open_sends_nothing` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g26_a_rollback_is_offered_only_for_an_earlier_freight_of_the_stage_and_not_while_one_runs` (`crates/freshkube-delivery/src/acts/tests.rs`)
+- `safety_g26_the_newest_entry_is_what_runs_and_is_never_a_candidate` (`crates/freshkube-delivery/src/acts/rollback.rs`)
+- `safety_g26_freight_the_stage_runs_again_further_back_is_not_a_candidate_and_one_is_listed_once` (`crates/freshkube-delivery/src/acts/rollback.rs`)
+
 ## Known gaps
 
 - Guarantees 10 and 25 read the level the app holds at send time. The app defers reading a changed `freshkube.yaml` while a dialog is open (`startup/setup.rs`), so a guarded dialog confirmed after the file was edited to `read-only` or `protected` outside the app still runs. Reading the file again in `start_run` is a follow-up.
