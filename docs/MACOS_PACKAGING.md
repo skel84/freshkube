@@ -317,10 +317,14 @@ Cargo metadata and artifact manifests refer to that destination.
 With [Homebrew](https://brew.sh):
 
 ```sh
+brew tap skel84/tap
+brew trust --tap skel84/tap
 brew install --cask skel84/tap/freshkube
 ```
 
 The cask lives in [skel84/homebrew-tap](https://github.com/skel84/homebrew-tap).
+Homebrew loads casks only from taps you trust, so `brew trust` comes before
+the first install.
 It installs `Freshkube.app` in `/Applications`, links the `freshkube` command
 and verifies the download against the release's checksum. `brew upgrade --cask
 freshkube` updates it, and `brew uninstall --zap --cask freshkube` also removes
