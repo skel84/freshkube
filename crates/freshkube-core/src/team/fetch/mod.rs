@@ -80,7 +80,7 @@ pub(crate) fn redact_text(text: &str) -> String {
     let words: Vec<String> = text
         .split_whitespace()
         .map(|word| {
-            let word = word.trim_matches(|c| matches!(c, '\'' | '"' | '`' | ',' | ';'));
+            let word = word.trim_matches(|c| matches!(c, '\'' | '"' | '`' | ',' | ';' | ':' | '.'));
             if word.contains("://") || word.contains('@') {
                 redact(word)
             } else {

@@ -31,7 +31,7 @@ pub struct GitRunner {
     app_dir: PathBuf,
     limits: Limits,
     /// Tests fetch from a bare repository in a temporary directory, which
-    /// `protocol.file.allow=never` refuses; only they set this.
+    /// the allowed protocols refuse; only they set this.
     #[cfg(test)]
     allow_file: bool,
 }
@@ -72,12 +72,7 @@ impl GitRunner {
         if !mirror.join("HEAD").is_file() {
             self.init(&mirror, &hooks).await?;
         }
-        #[allow(unused_mut)]
-        let mut fetch = GitFetch::new(source, &mirror, &hooks, false);
-        #[cfg(test)]
-        if self.allow_file {
-            fetch.allow_file_for_test();
-        }
+        let fetch = GitFetch::new(source, &mirror, &hooks, false);
         let fetched = self.run(&fetch.args, 64 * 1024, Some(&mirror)).await;
         // A mirror past its limit is forgotten, so it never grows on disk.
         let too_big = dir_size(&mirror) > self.limits.mirror_bytes;
@@ -217,6 +212,12 @@ impl GitRunner {
         }
         for (name, value) in ENV {
             command.env(name, value);
+        }
+        // A test fetches from a repository in its own temporary directory, a
+        // `file` transport the shipped environment refuses.
+        #[cfg(test)]
+        if self.allow_file {
+            command.env("GIT_ALLOW_PROTOCOL", "https:ssh:file");
         }
         let mut child = command
             .spawn()

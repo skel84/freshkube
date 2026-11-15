@@ -189,13 +189,42 @@ async fn a_missing_file_or_branch_fails_without_the_address() {
 }
 
 #[tokio::test]
-async fn the_shipped_command_does_not_allow_the_file_protocol() {
+async fn the_shipped_command_allows_only_https_and_ssh() {
     let git = GitSource::new("git@example.test:team/setup.git", "main", "").unwrap();
     let cmd = GitFetch::new(&git, Path::new("/m"), Path::new("/e"), false);
     let args = cmd.args.join(" ");
     assert!(args.contains("protocol.file.allow=never"));
-    assert!(!args.contains("allow=always protocol.file"));
     assert!(!args.contains("protocol.file.allow=always"));
+    // The environment names the only transports, and a test's `file`
+    // allowance is not in it.
+    assert!(cmd.env.contains(&("GIT_ALLOW_PROTOCOL", "https:ssh")));
+    assert!(cmd.env.contains(&("GIT_PROTOCOL_FROM_USER", "0")));
+    assert!(!cmd.env.iter().any(|(_, value)| value.contains("file")));
+}
+
+#[tokio::test]
+async fn safety_g25_a_source_cannot_use_a_transport_other_than_https_and_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let work = repo(tmp.path(), &[("freshkube.yaml", "version: 1\n")]);
+    // The shipped runner, without the test's `file` allowance.
+    let shipped = GitRunner::new(tmp.path().join("app"), Limits::default());
+    let error = shipped.fetch(&source(&work)).await.unwrap_err();
+    assert!(error.0.contains("not allowed"), "{error:?}");
+    assert!(
+        !GitFetch::mirror_dir(&tmp.path().join("app"))
+            .join("refs/freshkube")
+            .exists()
+    );
+}
+
+#[test]
+fn a_child_s_message_shows_no_user_info() {
+    let said = super::redact_text(
+        "fatal: unable to access 'https://user:tok3n@host.example.test/team/setup.git/': denied;          Permission denied (publickey) for git@host.example.test:team/setup.git",
+    );
+    assert!(!said.contains("tok3n") && !said.contains("user:"), "{said}");
+    assert!(said.contains("denied"), "{said}");
+    assert!(said.chars().count() <= 301);
 }
 
 #[tokio::test]

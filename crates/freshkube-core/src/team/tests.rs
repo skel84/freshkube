@@ -312,7 +312,8 @@ fn the_git_command_runs_nothing_from_the_repo() {
         cmd.env,
         vec![
             ("GIT_TERMINAL_PROMPT", "0"),
-            ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes"),
+            ("GIT_ALLOW_PROTOCOL", "https:ssh"),
+            ("GIT_PROTOCOL_FROM_USER", "0"),
             ("GIT_LITERAL_PATHSPECS", "1"),
         ]
     );

@@ -340,11 +340,14 @@ impl std::fmt::Debug for GitFetch {
 
 /// What every git command of a team fetch is given beyond what git needs to
 /// find the person's own config and sign-in (see `fetch::git`): no prompt on
-/// a terminal, ssh that never asks, and a path that is never a pathspec
-/// pattern.
+/// a terminal, only https and ssh whatever the address or `protocol.*.allow`
+/// says (`GIT_ALLOW_PROTOCOL` overrides them), no transport named by a
+/// submodule or a redirect (`GIT_PROTOCOL_FROM_USER=0`), and a path that is
+/// never a pathspec pattern.
 pub const ENV: &[(&str, &str)] = &[
     ("GIT_TERMINAL_PROMPT", "0"),
-    ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes"),
+    ("GIT_ALLOW_PROTOCOL", "https:ssh"),
+    ("GIT_PROTOCOL_FROM_USER", "0"),
     ("GIT_LITERAL_PATHSPECS", "1"),
 ];
 
@@ -419,20 +422,6 @@ impl GitFetch {
         ];
         args.extend(rest.iter().map(|part| part.to_string()));
         args
-    }
-
-    /// The same command with the `file` protocol allowed, for a test that
-    /// fetches from a bare repository in its own temporary directory. It
-    /// exists only in tests; the shipped command never carries it.
-    #[cfg(test)]
-    pub(crate) fn allow_file_for_test(&mut self) {
-        let at = self
-            .args
-            .iter()
-            .position(|arg| arg == "fetch")
-            .expect("a fetch command");
-        self.args.insert(at, "protocol.file.allow=always".into());
-        self.args.insert(at, "-c".into());
     }
 
     /// The command that reads the setup file at the fetched commit: the raw
