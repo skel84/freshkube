@@ -82,8 +82,24 @@ The level governs Operations as well, through the tier of each kind (`OperationK
 | Shutdown | destructive | blocked | its confirmation, plus the node's name | its confirmation |
 
 - **One node:** its name. **Several nodes** (a rolling run): the cluster entry's id, typed once, and the dialog says which. Matching is exact and case-sensitive; pasting is allowed.
-- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level the app holds at send time, so a dialog opened before the level became stricter starts nothing. A level changed by editing `freshkube.yaml` while the dialog is open is not seen until the app reads the file again ([SAFETY.md](SAFETY.md#known-gaps)). `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, never builds one (`Operations::begin_maintenance`).
+- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level the app holds at send time, so a dialog opened before the level became stricter starts nothing. A level changed by editing `freshkube.yaml` while the dialog is open is seen at Confirm ([The level at send time](#the-level-at-send-time-1055)). `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, never builds one (`Operations::begin_maintenance`).
 - **Not yet:** a service's Restart and Diagnostics' Apply fix are Talos writes on a node as well, and keep their own confirmation at `protected` for now.
+
+## The level at send time (#1055)
+
+The app defers reading a changed `freshkube.yaml` while a dialog is open, so a dialog opened under `guarded` and confirmed after the file was edited to `read-only` or `protected` would still send under the level the app held. At the send step a writer reads the file again and takes the stricter of what it says and the level the app holds (`freshkube_core::write::SetupLevels`, `at_send`).
+
+| The file says | The send |
+|---------------|----------|
+| a stricter level than the app holds | refused: "This cluster is now ⟨level⟩; review again. Nothing was started." |
+| the same level, or a looser one | sent under the held level. A looser file changes nothing until the person reviews again |
+| nothing it can be read for: missing for a cluster entry, too large, not a regular file, unreadable, unparsable, or no longer listing the entry (a skipped row counts as gone) | refused, at every level, `open` included, and never by falling back to the held level |
+
+- **Stricter** is the order `read-only`, `protected`, `guarded`, `open`: any move toward `read-only` refuses. A window on a context no entry named is `guarded`, and the file catches an entry that now names that context.
+- **One read, atomic, against the same identity.** The subject (the entry's id, or the kubeconfig context when the window has no entry) is fixed when the dialog opens. The file is read once, bounded to 256 KiB, and the same bytes are parsed once, as Settings parses them, so an unrelated bad row does not refuse the rest. The file is saved by rename, so a read sees the whole old file or the whole new one. It is read off the UI thread.
+- **The notice names the level only:** never the file, a path or a parse error's text.
+- **Which writers:** Operations, a service's Restart and Diagnostics' Apply fix take the operation slot first, so a second press finds it busy, then read the file, then run or give the slot back. Maintenance mode has no entry and is not governed. The write framework's own send step follows in the next pull request.
+- **A race that remains:** a file edited after the re-read and before the request is not seen. That window is milliseconds and no check can close it; the held level was valid when the person confirmed, and the server-side checks stay.
 
 ## The visible level
 
