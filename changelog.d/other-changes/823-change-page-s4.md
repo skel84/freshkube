@@ -1,0 +1,1 @@
+- The change page's pull request now has a card: compact in the start strip with the author's avatar, in full in the Inspector with authors and reviewers, checks, merge time, diff size, labels and links to GitHub. Without a GitHub token it shows the number and commit the cluster records and a way to connect GitHub, and the Overview matrix's selected cell has a keyboard ring.
