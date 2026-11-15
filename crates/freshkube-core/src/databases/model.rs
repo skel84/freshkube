@@ -87,7 +87,7 @@ impl Coverage {
             Self::Partial => "Partly read",
             Self::Refused => "Not permitted",
             Self::NotServed => "Not installed",
-            Self::Unsupported => "Unsupported API",
+            Self::Unsupported => "Unsupported version",
             Self::TimedOut => "Timed out",
             Self::Unreachable => "Unreachable",
             Self::Failed => "Couldn't read",

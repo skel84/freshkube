@@ -6,8 +6,8 @@ fn not_installed_refused_empty_partial_and_stale_are_distinct(cx: &mut TestAppCo
     for (shape, words) in [
         ("not-installed", "No database operators found"),
         ("refused", "Not allowed to read clusters"),
-        ("empty", "No clusters found"),
-        ("unsupported", "API version Freshkube doesn't read"),
+        ("empty", "No database clusters found"),
+        ("unsupported", "Can't read this operator version"),
     ] {
         cx.update_window(window.into(), |_, window, cx| {
             page.update(cx, |page, cx| {
@@ -177,6 +177,30 @@ fn a_refusal_or_a_missing_operator_offers_no_retry(cx: &mut TestAppContext) {
 fn gap_words(page: &DatabasesScreen) -> String {
     let state = page.read_gap(false).unwrap();
     format!("{}. {}", state.title(), state.description())
+}
+
+#[gpui_kit::test]
+fn nothing_read_is_not_counted_as_zero_clusters_in_the_status_bar(cx: &mut TestAppContext) {
+    use freshkube_ui::status::Segment;
+    let (_runtime, page, window) = mount(cx, 1280.);
+    for (shape, words) in [
+        ("refused", "Nothing read"),
+        ("unsupported", "Nothing read"),
+        ("not-installed", "No database operators"),
+    ] {
+        cx.update_window(window.into(), |_, _, cx| {
+            let text = page.update(cx, |page, cx| {
+                let identity = page.identity().unwrap();
+                page.loader
+                    .resolve(identity, Ok(databases::example::shaped(at(), shape)));
+                let segment: Segment = page.status(cx).unwrap();
+                segment.text(None).to_string()
+            });
+            assert!(text.contains(words), "{shape}: {text}");
+            assert!(!text.contains("0 clusters"), "{shape}: {text}");
+        })
+        .unwrap();
+    }
 }
 
 #[gpui_kit::test]

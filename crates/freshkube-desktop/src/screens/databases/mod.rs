@@ -670,7 +670,17 @@ impl ScreenPanel for DatabasesScreen {
         self.sync();
         // The count and the coverage warning are one toned part: a narrow
         // bar never drops it, so the warning never loses its count.
-        let counted = if self.display.notice.is_some() {
+        let counted = if self.display.lines.is_empty() && self.display.notice.is_some() {
+            // Nothing listed because nothing was read: not a count of none.
+            match &self.display.empty {
+                freshkube_ui::read_state::ReadState::Empty { looked_for, .. }
+                    if looked_for == "database operators" =>
+                {
+                    Part::new("No database operators")
+                }
+                _ => Part::new("Nothing read · coverage incomplete").tone(ui::Tone::Warn),
+            }
+        } else if self.display.notice.is_some() {
             Part::new(format!("{} · coverage incomplete", self.display.summary))
                 .tone(ui::Tone::Warn)
         } else {

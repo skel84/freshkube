@@ -251,7 +251,10 @@ fn empty_state(inv: &Inventory, mode: Mode, cluster: &str) -> ReadState {
         }
     } else if *coverage == Coverage::Complete || *coverage == Coverage::NotServed {
         ReadState::Empty {
-            looked_for: what,
+            looked_for: match mode {
+                Mode::Clusters => "database clusters".to_owned(),
+                _ => what,
+            },
             cluster,
             hint: None,
         }
@@ -263,13 +266,7 @@ fn empty_state(inv: &Inventory, mode: Mode, cluster: &str) -> ReadState {
             reason: None,
         }
     } else if *coverage == Coverage::Unsupported {
-        ReadState::NotSetUp {
-            what: "Support for this API version".into(),
-            gap: format!(
-                "The operator serves an API version Freshkube doesn't read, so {what} can't be listed in {cluster}."
-            ),
-            setting: None,
-        }
+        ReadState::Unsupported { what, cluster }
     } else if *coverage == Coverage::Partial {
         ReadState::Partial { what, cluster }
     } else {
