@@ -477,7 +477,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
     // never closes the dialog by itself.
     let enter: Rc<std::cell::RefCell<Option<OnConfirm>>> = Rc::default();
     let focus = input.clone();
-    window.open_dialog(cx, move |dialog, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         let p = palette(cx);
         let reason = blocked.get();
         let ok = {

@@ -435,7 +435,7 @@ pub(crate) fn open_about(window: &mut Window, cx: &mut App) {
         ImageFormat::Svg,
         include_bytes!("../../../../../packaging/icon/freshkube.svg").to_vec(),
     ));
-    window.open_dialog(cx, move |dialog, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         let muted = cx.theme().muted_foreground;
         dialog
             .w(ui::dp_px(340., window).min(window.viewport_size().width - ui::dp_px(32., window)))

@@ -382,7 +382,7 @@ impl Pilot {
             })
             .on_click(cx.listener(|this, _, window, cx| {
                 if this.mode().is_example() {
-                    window.open_dialog(cx, |dialog, _, _| dialog.title("Example data")
+                    freshkube_ui::dialog::open(window, cx, |dialog, _, _| dialog.title("Example data")
                         .child("Sanitized Coroot observations use the same presentation as live data. Later destinations and mutation controls are local previews."));
                 } else {
                     this.pages.observability.update(cx, |page, cx| page.show_connection(cx));

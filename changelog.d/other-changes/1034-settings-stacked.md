@@ -1,0 +1,1 @@
+- Settings › Clusters keeps one table row when its Inspector is stacked, now written as the one exception in the design notes and named through one shared constant that the layout tests use.
