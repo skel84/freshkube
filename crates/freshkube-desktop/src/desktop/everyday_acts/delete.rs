@@ -111,7 +111,10 @@ impl Pilot {
                 }
                 match read {
                     Ok((client, impact)) => {
-                        let runner = Runner::new(client, audit, who).following(cell);
+                        let guard = crate::mutation::runner_guard(&who.entry, &who.context, cx);
+                        let runner = Runner::new(client, audit, who)
+                            .following(cell)
+                            .rechecking(guard);
                         this.begin_delete(Arc::new(runner), impact, &identity, window, cx);
                     }
                     Err(why) => {

@@ -16,6 +16,8 @@ mod dialog;
 pub(crate) mod dismiss;
 #[cfg(test)]
 mod everyday_tests;
+#[cfg(test)]
+mod fresh_tests;
 mod report;
 #[cfg(test)]
 mod stage_tests;

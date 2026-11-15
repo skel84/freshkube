@@ -7,8 +7,9 @@
 use std::{io, sync::Mutex, time::Duration};
 
 use super::{
-    LevelCell, Phase, Protection,
-    action::{ActionDescription, Inverse, ObjectChange, Target},
+    LevelCell, Phase, Protection, SendRefusal, SetupLevels, Unreadable,
+    action::{ActionDescription, Destination, Inverse, ObjectChange, Target},
+    at_send,
     audit::{AuditObject, AuditRequest, AuditStore, Record, RunId, SCHEMA, scrub},
     outcome::{Accepted, Observed, Watching, observe},
     preflight::{Block, Prepared, Who},
@@ -26,6 +27,10 @@ pub struct Runner {
     /// The cluster's level as it is now. A write reads it again just before
     /// it is sent.
     pub(super) level: LevelCell,
+    /// The setup file read again just before a send (#1055): the app defers
+    /// reading a changed file while a dialog is open, so the level it holds
+    /// can be older than the file's.
+    pub(super) recheck: Option<SetupLevels>,
     /// Example data: it asks nothing of the cluster and sends nothing, so a
     /// dialog can be shown without one.
     pub(super) example: bool,
@@ -234,6 +239,7 @@ impl Runner {
             who,
             watching: Watching::default(),
             level,
+            recheck: None,
             example: false,
             example_objects: vec![],
         }
@@ -276,6 +282,53 @@ impl Runner {
     pub fn following(mut self, level: LevelCell) -> Self {
         self.level = level;
         self
+    }
+
+    /// Reads the setup file again at the send step and refuses a level that
+    /// got stricter there, or a file that can't say (#1055).
+    pub fn rechecking(mut self, setup: Option<SetupLevels>) -> Self {
+        self.recheck = setup;
+        self
+    }
+
+    /// What the setup file says at the send step, against what the app holds
+    /// for the cluster and each destination it keeps a level for: `None` when
+    /// nothing is stricter, else why nothing is sent. A stricter level is also
+    /// put into the level cell, so the person is asked again under it.
+    async fn setup_refusal(&self, action: &ActionDescription) -> Option<NotSent> {
+        let setup = self.recheck.clone().filter(|_| !self.example)?;
+        let known: Vec<&Destination> = action
+            .destinations
+            .iter()
+            .filter(|destination| destination.cell.is_some())
+            .collect();
+        let entries: Vec<String> = known.iter().map(|d| d.entry.clone()).collect();
+        let read = tokio::task::spawn_blocking(move || setup.read_with(&entries))
+            .await
+            .unwrap_or(Err(Unreadable::NotReadable));
+        let (own, others) = match read {
+            Ok(levels) => levels,
+            Err(why) => {
+                return Some(NotSent::Unchecked(format!(
+                    "{} Nothing was sent.",
+                    SendRefusal::Unreadable(why).text()
+                )));
+            }
+        };
+        let mut stricter = None;
+        if let Err(SendRefusal::Stricter(level)) = at_send(self.level.get(), Ok(own)) {
+            self.level.set(level);
+            stricter = Some(level);
+        }
+        for (destination, fresh) in known.into_iter().zip(others) {
+            if let Err(SendRefusal::Stricter(level)) = at_send(destination.level(), Ok(fresh))
+                && let Some(cell) = &destination.cell
+            {
+                cell.set(level);
+                stricter = Some(stricter.map_or(level, |held| held.stricter(level)));
+            }
+        }
+        stricter.map(NotSent::LevelChanged)
     }
 
     /// The level an action is held to now: the strictest of the cluster's
@@ -372,6 +425,10 @@ impl Runner {
         if let Some(not_sent) = refused_at(self.level_for(&description)) {
             return finished(Status::NotSent(not_sent), vec![], None, None);
         }
+        // The file as it is now, not as the app last read it.
+        if let Some(not_sent) = self.setup_refusal(&description).await {
+            return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
         if !requirement.satisfied_by(&confirmation, &description.subject_names(), &self.who.entry) {
             return finished(Status::NotSent(NotSent::Unconfirmed), vec![], None, None);
         }
@@ -403,6 +460,11 @@ impl Runner {
             return cancelled();
         }
         if let Some(not_sent) = refused_at(level) {
+            return finished(Status::NotSent(not_sent), vec![], None, None);
+        }
+        // Once more after the cancel window: a file edited while it counted
+        // down is seen.
+        if let Some(not_sent) = self.setup_refusal(&description).await {
             return finished(Status::NotSent(not_sent), vec![], None, None);
         }
         // What the write depends on is read again just before it is sent, as

@@ -143,6 +143,24 @@ pub(crate) fn send_guard(context: &str, cx: &App) -> Option<freshkube_core::writ
     Some(freshkube_core::write::SetupLevels::new(file, subject))
 }
 
+/// What a write runner reads again at its send step, for the cluster the
+/// runner writes to: the workspace entry `entry` when the setup lists one,
+/// else the kubeconfig context `context`. `None` with no setup file.
+pub(crate) fn runner_guard(
+    entry: &str,
+    context: &str,
+    cx: &App,
+) -> Option<freshkube_core::write::SetupLevels> {
+    let global = cx.try_global::<GlobalProtection>()?;
+    let file = global.4.clone()?;
+    let subject = if global.1.contains_key(entry) {
+        freshkube_core::write::Subject::Entry(entry.to_owned())
+    } else {
+        freshkube_core::write::Subject::Context(context.to_owned())
+    };
+    Some(freshkube_core::write::SetupLevels::new(file, subject))
+}
+
 /// Reads the setup file again off the UI thread and decides the level a write
 /// is sent under: the stricter of `held` and the file's, refusing when the
 /// file got stricter or can't say. `Ok(held)` with no guard (no setup file).

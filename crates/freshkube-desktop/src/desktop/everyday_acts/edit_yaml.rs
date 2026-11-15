@@ -76,7 +76,12 @@ impl Pilot {
                 }
                 match client {
                     Ok(client) => {
-                        let runner = Arc::new(Runner::new(client, audit, who).following(cell));
+                        let guard = crate::mutation::runner_guard(&who.entry, &who.context, cx);
+                        let runner = Arc::new(
+                            Runner::new(client, audit, who)
+                                .following(cell)
+                                .rechecking(guard),
+                        );
                         let runtime = this.runtime.clone();
                         start(runner, runtime, pressed.action, &pressed.identity, window, cx);
                     }

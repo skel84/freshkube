@@ -94,26 +94,62 @@ impl SetupLevels {
     /// skipped unrelated row doesn't refuse everything. Blocking: call it off
     /// the UI thread.
     pub fn read(&self) -> Result<Protection, Unreadable> {
+        self.read_with(&[]).map(|(own, _)| own)
+    }
+
+    /// [`Self::read`], and the level of each entry in `entries` from the same
+    /// parse, so the strictest of an action's cluster and its destinations is
+    /// decided on one reading. An entry the file doesn't list is gone.
+    pub fn read_with(
+        &self,
+        entries: &[String],
+    ) -> Result<(Protection, Vec<Protection>), Unreadable> {
         let bytes = match read_bounded_regular_file(&self.file, MAX_BYTES) {
             Ok(bytes) => Some(bytes),
             Err(BoundedReadError::NotFound) => None,
             Err(_) => return Err(Unreadable::NotReadable),
         };
-        self.level_in(bytes.as_deref())
+        let parsed = Parsed::of(bytes.as_deref())?;
+        let own = parsed.level(&self.subject)?;
+        let others = entries
+            .iter()
+            .map(|id| parsed.level(&Subject::Entry(id.clone())))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((own, others))
     }
 
     /// [`Self::read`] on bytes already read; `None` is a missing file.
     pub fn level_in(&self, bytes: Option<&[u8]>) -> Result<Protection, Unreadable> {
-        let Some(bytes) = bytes else {
-            return match self.subject {
+        Parsed::of(bytes)?.level(&self.subject)
+    }
+}
+
+/// The file's bytes, parsed once.
+enum Parsed {
+    Missing,
+    File(setup::Recovered),
+}
+
+impl Parsed {
+    fn of(bytes: Option<&[u8]>) -> Result<Self, Unreadable> {
+        match bytes {
+            None => Ok(Parsed::Missing),
+            Some(bytes) => setup::read(bytes)
+                .map(Parsed::File)
+                .map_err(|_| Unreadable::Invalid),
+        }
+    }
+
+    fn level(&self, subject: &Subject) -> Result<Protection, Unreadable> {
+        let Parsed::File(recovered) = self else {
+            return match subject {
                 // No file, no workspace: a context no entry names is guarded.
                 Subject::Context(_) => Ok(Protection::default()),
                 Subject::Entry(_) => Err(Unreadable::Missing),
             };
         };
-        let recovered = setup::read(bytes).map_err(|_| Unreadable::Invalid)?;
         let (workspace, recovery) = (&recovered.setup.workspace, &recovered.source_recovery);
-        match &self.subject {
+        match subject {
             Subject::Context(context) => Ok(workspace.level_of(context, recovery)),
             Subject::Entry(id) => {
                 let entry = workspace
