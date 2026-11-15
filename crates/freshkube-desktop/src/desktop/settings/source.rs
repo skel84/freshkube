@@ -40,6 +40,25 @@ impl TableColumn for Column {
 /// What a Team or Yours chip adds to the Cluster column, in dp.
 const CHIP_ROOM: f32 = 64.;
 
+/// What the Protection tag adds to its words, in dp: its padding, mark and
+/// the gap before the note beside it.
+const TAG_ROOM: f32 = 28.;
+
+/// The room the Protection column needs for the widest level and note ("Protected
+/// · team floor"), the least being the room it always had.
+fn protection_width(rows: &[ClusterRow]) -> f32 {
+    let words: Vec<SharedString> = rows
+        .iter()
+        .map(|row| {
+            let note = super::team::level_note(row.level, row.level_source)
+                .map(|(_, note, _)| note)
+                .unwrap_or_default();
+            format!("{} {note}", row.level.label()).into()
+        })
+        .collect();
+    (table::fit("Protection", words.iter(), table::WIDEST) + TAG_ROOM).max(170.)
+}
+
 /// Derives widths using the shared table's DESIGN.md sizing rules.
 /// `chips` leaves the Cluster column room for a Team or Yours chip.
 pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
@@ -57,7 +76,7 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
                 + if chips { CHIP_ROOM } else { 0. },
         ),
         column(Field::Role, "Role", 120.),
-        column(Field::Protection, "Protection", 170.),
+        column(Field::Protection, "Protection", protection_width(rows)),
         column(
             Field::Context,
             "Context",
