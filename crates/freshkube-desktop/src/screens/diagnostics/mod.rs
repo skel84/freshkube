@@ -33,7 +33,7 @@ use super::{
 };
 use crate::actions;
 use crate::backend::spawn_job;
-use crate::mutation::{self, Confirmation, Operations, Refused};
+use crate::mutation::{self, Confirmation, OperationTicket, Operations, Refused};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use freshkube_ui::table;
@@ -621,6 +621,68 @@ impl DiagnosticsScreen {
                 return;
             }
         };
+        let Some(guard) = guard else {
+            self.run_fix(check_key, ticket, window, cx);
+            return;
+        };
+        // The slot is held while the setup file is read again off the UI
+        // thread; a file that got stricter, or can't say, sends nothing and
+        // gives the slot back (#1055).
+        let held = mutation::level(cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let decided =
+                mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
+            match decided {
+                Ok(_) => {
+                    _ = this.update_in(cx, |view, window, cx| {
+                        view.run_fix(check_key, ticket, window, cx)
+                    });
+                }
+                Err(refusal) => {
+                    _ = this.update(cx, |view, cx| {
+                        view.set_notice(
+                            &check_key,
+                            false,
+                            format!("{} Nothing was started.", refusal.text()),
+                            cx,
+                        )
+                    });
+                    _ = cx.update(|_, cx| {
+                        operations.update(cx, |operations, cx| operations.finish(ticket, cx))
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Applies the fix once the setup file has been read again. The slot is
+    /// held from here to the end.
+    fn run_fix(
+        &mut self,
+        check_key: String,
+        ticket: OperationTicket,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let operations = Operations::global(cx);
+        let Some(source) = self.source.clone() else {
+            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
+            return;
+        };
+        let Some(check) = self
+            .loader
+            .data()
+            .and_then(|snapshot| snapshot.checks.iter().find(|check| key(check) == check_key))
+        else {
+            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
+            return;
+        };
+        let Some(fix) = Self::applicable_fix(check).cloned() else {
+            operations.update(cx, |operations, cx| operations.finish(ticket, cx));
+            return;
+        };
+        let check_id = check.id.clone();
         let Some(live) = source.live.clone() else {
             // Offline: no client, no network, nothing written.
             self.set_notice(&check_key, true, actions::simulated(&fix), cx);
@@ -642,33 +704,13 @@ impl DiagnosticsScreen {
             role,
             &source.target.context,
         );
-        let runtime = self.runtime.clone();
-        let held = mutation::level(cx);
+        let (job, receiver) = spawn_job(
+            &self.runtime,
+            FIX_DEADLINE,
+            "Applying the fix timed out".to_owned(),
+            actions::apply_fix(live.client, target, check_id, fix, ticket.cancellation()),
+        );
         cx.spawn_in(window, async move |this, cx| {
-            // The slot is held while the setup file is read again off the UI
-            // thread; a file that got stricter, or can't say, sends nothing
-            // (#1055).
-            let decided = mutation::level_at_send(guard, held, cx.background_executor()).await;
-            if let Err(refusal) = decided {
-                _ = cx.update(|_, cx| {
-                    operations.update(cx, |operations, cx| operations.finish(ticket, cx))
-                });
-                _ = this.update(cx, |view, cx| {
-                    view.set_notice(
-                        &check_key,
-                        false,
-                        format!("{} Nothing was started.", refusal.text()),
-                        cx,
-                    )
-                });
-                return;
-            }
-            let (job, receiver) = spawn_job(
-                &runtime,
-                FIX_DEADLINE,
-                "Applying the fix timed out".to_owned(),
-                actions::apply_fix(live.client, target, check_id, fix, ticket.cancellation()),
-            );
             // The job lives exactly as long as this task.
             let _job = job;
             let result = receiver

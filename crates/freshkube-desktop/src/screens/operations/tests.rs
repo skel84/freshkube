@@ -1466,3 +1466,108 @@ fn only_the_nodes_in_the_plan_are_asked_about(cx: &mut TestAppContext) {
     settle(cx);
     assert_eq!(asked(cx), ["talos-cp-fra1-01", "talos-cp-fra1-02"]);
 }
+
+/// What the dialog's Confirm does when `freshkube.yaml` is edited, outside
+/// the app, after the dialog opened under `guarded` (#1055): the app defers
+/// reading the file while a dialog is open, so only the send step's own
+/// re-read sees it. `edit` changes the file; the notice says why nothing ran.
+fn confirm_after_edit(
+    cx: &mut TestAppContext,
+    edit: impl FnOnce(&crate::mutation::TestSetup),
+    notice: &str,
+) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find("confirm-dialog").visible());
+    })
+    .unwrap();
+    edit(&setup);
+    confirm(cx, handle);
+    cx.run_until_parked();
+    // Nothing took the slot or started, and the dialog's person is told why.
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        let screen = screen.read(cx);
+        assert!(screen.run.is_none(), "a run started");
+        let said = screen.notice.clone().unwrap_or_default();
+        assert!(said.contains(notice), "{said}");
+        assert!(said.contains("Nothing was started."), "{said}");
+        // Only the level: no path and nothing of the file.
+        assert!(!said.contains(&setup.file().display().to_string()), "{said}");
+    });
+}
+
+/// A file edited to a stricter level while the dialog is open sends nothing,
+/// and so does one that can no longer say: gone, unparsable, or without the
+/// cluster. Operations is the first writer of the guarantee that a write is
+/// sent under the stricter of the level the app holds and the file's.
+#[gpui_kit::test]
+fn safety_g27_operations_refuse_when_the_file_got_stricter_while_the_dialog_was_open(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::write::Protection;
+    confirm_after_edit(
+        cx,
+        |setup| setup.level(Protection::ReadOnly),
+        "This cluster is now read-only; review again.",
+    );
+}
+
+#[gpui_kit::test]
+fn safety_g27_operations_refuse_a_file_edited_to_protected_though_no_name_was_asked(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::write::Protection;
+    confirm_after_edit(
+        cx,
+        |setup| setup.level(Protection::Protected),
+        "This cluster is now protected; review again.",
+    );
+}
+
+#[gpui_kit::test]
+fn safety_g27_operations_refuse_when_the_file_cannot_say(cx: &mut TestAppContext) {
+    confirm_after_edit(cx, |setup| setup.remove(), "can't be read from freshkube.yaml");
+}
+
+#[gpui_kit::test]
+fn safety_g27_operations_refuse_an_unparsable_file(cx: &mut TestAppContext) {
+    confirm_after_edit(cx, |setup| setup.garble(), "can't be read from freshkube.yaml");
+}
+
+#[gpui_kit::test]
+fn safety_g27_operations_refuse_when_the_file_no_longer_lists_the_cluster(
+    cx: &mut TestAppContext,
+) {
+    confirm_after_edit(
+        cx,
+        |setup| setup.drop_entry(),
+        "no longer in freshkube.yaml; review again.",
+    );
+}
+
+/// The re-read only ever tightens: an unchanged file, and one edited to a
+/// looser level, start the run as before.
+fn starts_with_the_file_at(cx: &mut TestAppContext, file: freshkube_core::write::Protection) {
+    use freshkube_core::write::Protection;
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let setup = crate::mutation::TestSetup::new(Protection::Guarded, cx);
+    review(cx, handle);
+    setup.level(file);
+    confirm(cx, handle);
+    cx.run_until_parked();
+    cx.read(|cx| assert!(screen.read(cx).run.is_some(), "{file:?} started no run"));
+    wait_until_finished(cx, &runtime, &screen, 200, "a run under an unchanged file");
+}
+
+#[gpui_kit::test]
+fn a_file_that_is_unchanged_starts_the_run_as_before(cx: &mut TestAppContext) {
+    starts_with_the_file_at(cx, freshkube_core::write::Protection::Guarded);
+}
+
+#[gpui_kit::test]
+fn a_file_edited_to_a_looser_level_changes_nothing_until_reviewed_again(cx: &mut TestAppContext) {
+    starts_with_the_file_at(cx, freshkube_core::write::Protection::Open);
+}

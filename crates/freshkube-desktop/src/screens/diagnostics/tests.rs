@@ -762,7 +762,7 @@ fn a_read_only_cluster_refuses_apply_fix_and_starts_nothing(cx: &mut TestAppCont
     // A confirmation that was open when the level changed.
     cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            screen.start_fix(KUBELET.into(), window, cx)
+            screen.start_fix(KUBELET.into(), None, window, cx)
         });
     })
     .unwrap();
@@ -794,4 +794,66 @@ fn a_read_only_cluster_refuses_apply_fix_and_starts_nothing(cx: &mut TestAppCont
         assert!(window.find("confirm-dialog").visible());
     })
     .unwrap();
+}
+
+/// A file edited, outside the app, while the Apply fix confirmation was open
+/// is read again at Confirm (#1055): a stricter level, or a file that can't
+/// say, sends nothing, takes no slot, and the notice names the level only.
+fn confirm_fix_after_edit(
+    cx: &mut TestAppContext,
+    edit: impl FnOnce(&crate::mutation::TestSetup),
+    expected: &str,
+) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    let setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    open_fix(cx, handle, &screen, KUBELET);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.find("confirm-dialog").visible());
+    })
+    .unwrap();
+    edit(&setup);
+    cx.update_window(handle.into(), |_, window, cx| window.click("confirm-ok", cx))
+        .unwrap();
+    cx.run_until_parked();
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(!notice.ok, "{}", notice.text);
+        assert!(notice.text.contains(expected), "{}", notice.text);
+        assert!(notice.text.contains("Nothing was started."), "{}", notice.text);
+        // Not the simulated apply that a confirmed example fix reports.
+        assert!(!notice.text.contains("Example data"), "{}", notice.text);
+    });
+}
+
+#[gpui_kit::test]
+fn safety_g27_apply_fix_refuses_when_the_file_got_stricter_while_the_dialog_was_open(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::write::Protection;
+    confirm_fix_after_edit(
+        cx,
+        |setup| setup.level(Protection::ReadOnly),
+        "This cluster is now read-only; review again.",
+    );
+}
+
+#[gpui_kit::test]
+fn safety_g27_apply_fix_refuses_when_the_file_cannot_say(cx: &mut TestAppContext) {
+    confirm_fix_after_edit(cx, |setup| setup.remove(), "can't be read from freshkube.yaml");
+}
+
+#[gpui_kit::test]
+fn a_looser_file_changes_nothing_for_apply_fix_until_reviewed_again(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
+    let setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    open_fix(cx, handle, &screen, KUBELET);
+    setup.level(freshkube_core::write::Protection::Open);
+    cx.update_window(handle.into(), |_, window, cx| window.click("confirm-ok", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(notice.ok && notice.text.contains("Example data"), "{}", notice.text);
+    });
 }

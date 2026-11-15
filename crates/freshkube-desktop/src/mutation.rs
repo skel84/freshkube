@@ -708,3 +708,61 @@ pub(crate) fn settle_confirmation(cx: &mut gpui_kit::TestAppContext, handle: Any
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
 }
+
+/// A setup file a test edits while a dialog is open (#1055): the entry `prod`
+/// at a level, in a fresh temporary directory, published as the file a write's
+/// send step reads again.
+#[cfg(test)]
+pub(crate) struct TestSetup {
+    dir: tempfile::TempDir,
+}
+
+#[cfg(test)]
+impl TestSetup {
+    /// Writes the file with `prod` at `level`, makes `prod` the window's
+    /// entry and publishes the file.
+    pub(crate) fn new(level: Protection, cx: &mut gpui_kit::TestAppContext) -> Self {
+        let setup = Self {
+            dir: tempfile::tempdir().expect("a temporary directory"),
+        };
+        setup.level(level);
+        let file = setup.file();
+        cx.update(|cx| {
+            set_active_entry(Some("prod".into()), cx);
+            set_setup_file(Some(file), cx);
+        });
+        setup
+    }
+
+    pub(crate) fn file(&self) -> std::path::PathBuf {
+        self.dir.path().join("freshkube.yaml")
+    }
+
+    /// Edits the file, as an editor outside the app would.
+    pub(crate) fn level(&self, level: Protection) {
+        let text = format!(
+            "version: 1\nclusters:\n  - id: prod\n    role: core\n    context: prod-fra\n    protection: {}\n",
+            level.key()
+        );
+        std::fs::write(self.file(), text).expect("the setup file is written");
+    }
+
+    /// The file is gone.
+    pub(crate) fn remove(&self) {
+        std::fs::remove_file(self.file()).expect("the setup file is removed");
+    }
+
+    /// The file no longer parses.
+    pub(crate) fn garble(&self) {
+        std::fs::write(self.file(), "clusters: [[[").expect("the setup file is written");
+    }
+
+    /// The file no longer lists `prod`.
+    pub(crate) fn drop_entry(&self) {
+        std::fs::write(
+            self.file(),
+            "version: 1\nclusters:\n  - id: other\n    role: core\n    context: other-ctx\n",
+        )
+        .expect("the setup file is written");
+    }
+}
