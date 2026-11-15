@@ -891,7 +891,7 @@ fn apply_fix_uses_the_check_confirmed_when_a_refresh_lands_during_the_read(
     // The read hasn't answered; the check is healthy in the next snapshot, so
     // it has no fix any more.
     edit_snapshot(cx, &screen, |snapshot| {
-        let check = check_mut(snapshot, KUBELET);
+        let check = check_mut(snapshot, "service_kubelet");
         check.status = CheckStatus::Pass;
         check.fix = None;
     });

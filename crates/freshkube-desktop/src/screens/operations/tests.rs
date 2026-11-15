@@ -1570,8 +1570,16 @@ fn starts_with_the_file_at(cx: &mut TestAppContext, file: freshkube_core::write:
     cx.run_until_parked();
     cx.read(|cx| assert!(screen.read(cx).run.is_some(), "{file:?} started no run"));
     wait_until_finished(cx, &runtime, &screen, 200, "a run under an unchanged file");
-    // The guard is live: the same dialog, the same setup, a file that can't
-    // be read, and nothing starts.
+    // The guard is live: the same setup, a file that can't be read, and
+    // nothing starts. The finished run dropped the preview; read it again.
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_source(Some(source("prod-fra", 0)), window, cx);
+            screen.activate(window, cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
     review(cx, handle);
     setup.garble();
     confirm(cx, handle);
@@ -1644,14 +1652,17 @@ fn the_slot_is_held_while_the_setup_file_is_read(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_screen_dropped_while_the_file_is_read_gives_the_slot_back(cx: &mut TestAppContext) {
     use freshkube_core::write::Protection;
-    let (_runtime, _screen, handle) = mount(cx, "prod-fra", 25);
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
     let _setup = crate::mutation::TestSetup::new(Protection::Guarded, cx);
     review(cx, handle);
     confirm_without_waiting(cx, handle);
     assert!(cx.read(|cx| Operations::current(cx).is_some()));
+    let weak = screen.downgrade();
     cx.update_window(handle.into(), |_, window, _| window.remove_window())
         .unwrap();
+    drop(screen);
     cx.run_until_parked();
+    assert!(weak.upgrade().is_none(), "the screen is still alive");
     assert!(
         cx.read(|cx| Operations::current(cx).is_none()),
         "the slot stayed held"

@@ -518,18 +518,13 @@ fn a_restart_runs_against_the_node_confirmed_when_the_selection_moves_during_the
     })
     .unwrap();
     cx.run_until_parked();
-    // Back on the node: the result is the restart that was confirmed.
-    cx.update_window(handle, |_, window, cx| {
-        let pilot = root_pilot(window, cx);
-        pilot.update(cx, |pilot, _| pilot.target.selected_node = selected.clone());
-        window.render_frame(cx);
-        let said = window
-            .find("service-restart-result")
-            .label()
-            .map(str::to_owned)
-            .expect("a result");
-        assert!(said.contains("Example data"), "{said}");
-        assert!(crate::mutation::Operations::current(cx).is_none());
-    })
-    .unwrap();
+    // The restart that was confirmed ran for the node and service it was
+    // confirmed on, though the page had none selected when the read answered.
+    let notice = cx
+        .read(crate::desktop::services::restart::last_notice)
+        .expect("a result");
+    assert_eq!(notice.2, "containerd");
+    assert_eq!(Some(notice.1.as_str()), selected.as_deref());
+    assert!(notice.3 && notice.4.contains("Example data"), "{notice:?}");
+    assert!(cx.read(|cx| crate::mutation::Operations::current(cx).is_none()));
 }

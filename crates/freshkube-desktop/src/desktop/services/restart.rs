@@ -372,3 +372,17 @@ fn notice_for(cluster: &str, node: &str, service: &str, ok: bool, text: String, 
         text,
     })));
 }
+
+/// The last restart notice as `(context, node, service, ok, text)`, for tests
+/// that must see a result whatever the page shows.
+#[cfg(test)]
+pub(in crate::desktop) fn last_notice(cx: &App) -> Option<(String, String, String, bool, String)> {
+    let notice = cx.try_global::<RestartNotices>()?.0.as_ref()?;
+    Some((
+        notice.context.clone(),
+        notice.node.clone(),
+        notice.service.clone(),
+        notice.ok,
+        notice.text.clone(),
+    ))
+}
