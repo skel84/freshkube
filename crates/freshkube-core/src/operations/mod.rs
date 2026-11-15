@@ -79,13 +79,6 @@ impl OperationConfirmation {
         Self { confirmed: true }
     }
 
-    /// The confirmation of maintenance mode, which no cluster entry's level
-    /// governs (`docs/WRITE_MODEL.md`). The one named way around
-    /// [`confirm_operation`].
-    pub const fn maintenance_confirmed() -> Self {
-        Self { confirmed: true }
-    }
-
     /// Construct a rejected confirmation, useful when a frontend dismisses a dialog.
     pub const fn rejected() -> Self {
         Self { confirmed: false }

@@ -221,6 +221,7 @@ The Certificates page (`freshkube-core`'s `resources/traffic/certs/`, [traffic.m
 
 ## Known gaps
 
+- Guarantees 10 and 25 read the level the app holds at send time. The app defers reading a changed `freshkube.yaml` while a dialog is open (`startup/setup.rs`), so a guarded dialog confirmed after the file was edited to `read-only` or `protected` outside the app still runs. Reading the file again in `start_run` is a follow-up.
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data (nothing is fetched or saved), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).
 - At the window's level the example runner sends nothing, so "no write reached the runner" in the link and search tests is read from the runner's scratch audit (`freshkube-example-audit`), which a write would add a line to. The fake cluster's request recorder is used where a runner is built on it (guarantees 1, 2 and 10).

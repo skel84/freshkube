@@ -1380,8 +1380,17 @@ impl OperationsScreen {
         let weak = cx.weak_entity();
         let current = weak.clone();
         let type_name = match self.gate(&plan, cx) {
-            OperationGate::TypeName { expected } => Some(mutation::TypeName::new(expected)),
-            OperationGate::Blocked(_) | OperationGate::Confirm => None,
+            OperationGate::TypeName { expected } => {
+                Some(mutation::TypeName::new(expected, plan.targets.len() != 1))
+            }
+            OperationGate::Confirm => None,
+            // Refused after the preview: no dialog to open, and `start_run`
+            // would refuse it anyway.
+            OperationGate::Blocked(why) => {
+                self.notice = Some(format!("{why} Nothing was started."));
+                cx.notify();
+                return;
+            }
         };
         let typed = type_name.as_ref().map(|name| name.typed.clone());
         let confirm_label = if count == 1 {
@@ -1414,12 +1423,9 @@ impl OperationsScreen {
                 }),
                 type_name,
                 on_confirm: Rc::new(move |window, cx| {
-                    let typed = typed
-                        .as_ref()
-                        .map(|typed| typed.borrow().clone())
-                        .unwrap_or_default();
+                    let typed = typed.as_ref().map(|typed| typed.borrow().clone());
                     _ = weak.update(cx, |screen, cx| {
-                        screen.start_run(plan.clone(), source.clone(), &typed, window, cx)
+                        screen.start_run(plan.clone(), source.clone(), typed.as_deref(), window, cx)
                     });
                 }),
             },
@@ -1452,7 +1458,7 @@ impl OperationsScreen {
         &mut self,
         plan: RunPlan,
         source: ScreenSource,
-        typed: &str,
+        typed: Option<&str>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1465,7 +1471,7 @@ impl OperationsScreen {
             mutation::level(cx),
             &plan.targets,
             &entry,
-            typed,
+            typed.unwrap_or_default(),
         ) {
             Ok(confirmation) => confirmation,
             Err(OperationRefusal::Blocked(why)) => {
@@ -1474,7 +1480,13 @@ impl OperationsScreen {
                 return;
             }
             Err(OperationRefusal::NameMismatch | OperationRefusal::NoTargets) => {
-                self.notice = Some("The name wasn't typed exactly. Nothing was started.".into());
+                // No field means the dialog asked for no name: the cluster
+                // became protected while it was open.
+                self.notice = Some(if typed.is_none() {
+                    "This cluster is now protected; review again. Nothing was started.".into()
+                } else {
+                    "The name wasn't typed exactly. Nothing was started.".into()
+                });
                 cx.notify();
                 return;
             }

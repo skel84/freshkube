@@ -409,14 +409,28 @@ pub(crate) struct Confirmation {
 #[derive(Clone)]
 pub(crate) struct TypeName {
     pub(crate) expected: SharedString,
+    /// Several objects are typed once by the entry's id, and the dialog says so.
+    pub(crate) entry_id: bool,
     pub(crate) typed: Rc<std::cell::RefCell<String>>,
 }
 
 impl TypeName {
-    pub(crate) fn new(expected: impl Into<SharedString>) -> Self {
+    pub(crate) fn new(expected: impl Into<SharedString>, entry_id: bool) -> Self {
         Self {
             expected: expected.into(),
+            entry_id,
             typed: Rc::default(),
+        }
+    }
+
+    fn prompt(&self) -> String {
+        if self.entry_id {
+            format!(
+                "Type the cluster entry's id, {}, to confirm.",
+                self.expected
+            )
+        } else {
+            format!("Type {} to confirm.", self.expected)
         }
     }
 }
@@ -548,7 +562,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     }))
                     .children(request.type_name.as_ref().zip(input.as_ref()).map(
                         |(name, input)| {
-                            let prompt = format!("Type {} to confirm.", name.expected);
+                            let prompt = name.prompt();
                             v_flex()
                                 .gap(dp(4.))
                                 .child(

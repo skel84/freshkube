@@ -82,7 +82,7 @@ The level governs Operations as well, through the tier of each kind (`OperationK
 | Shutdown | destructive | blocked | its confirmation, plus the node's name | its confirmation |
 
 - **One node:** its name. **Several nodes** (a rolling run): the cluster entry's id, typed once, and the dialog says which. Matching is exact and case-sensitive; pasting is allowed.
-- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level as it is at send time, so a dialog opened before the level became stricter starts nothing. `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, uses the named `maintenance_confirmed()`.
+- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level the app holds at send time, so a dialog opened before the level became stricter starts nothing. A level changed by editing `freshkube.yaml` while the dialog is open is not seen until the app reads the file again ([SAFETY.md](SAFETY.md#known-gaps)). `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, never builds one (`Operations::begin_maintenance`).
 - **Not yet:** a service's Restart and Diagnostics' Apply fix are Talos writes on a node as well, and keep their own confirmation at `protected` for now.
 
 ## The visible level

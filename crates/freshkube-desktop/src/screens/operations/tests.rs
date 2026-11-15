@@ -1168,6 +1168,8 @@ fn safety_g25_a_protected_cluster_starts_no_operation_until_the_node_is_named(
     cx.read(|cx| {
         let notice = screen.read(cx).notice.clone().unwrap_or_default();
         assert!(notice.contains("Nothing was started."), "{notice}");
+        // No name was asked, so it doesn't say one was mistyped.
+        assert!(notice.contains("now protected; review again"), "{notice}");
     });
 
     // Opened while protected, the dialog asks for the name.
@@ -1207,6 +1209,52 @@ fn the_exact_node_name_starts_the_operation_on_a_protected_cluster(cx: &mut Test
     press_ok(cx, handle);
     cx.read(|cx| assert!(screen.read(cx).run.is_some(), "the exact name starts a run"));
     wait_until_finished(cx, &runtime, &screen, 200, "a run on a protected cluster");
+}
+
+/// Several nodes on a protected cluster are typed once, by the entry's id:
+/// a node's name no longer does, and the prompt says what it asks for.
+#[gpui_kit::test]
+fn several_nodes_on_a_protected_cluster_are_typed_once_by_the_entry_id(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    cx.update(|cx| {
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx);
+        crate::mutation::set_active_entry(Some("prod-ams".into()), cx);
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row(1), cx);
+    })
+    .unwrap();
+    let selected = names(&screen, cx);
+    assert!(selected.len() > 1, "{selected:?}");
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        let prompt = window
+            .find("confirm-type-prompt")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert_eq!(prompt, "Type the cluster entry's id, prod-ams, to confirm.");
+    })
+    .unwrap();
+    // A node's name starts nothing.
+    type_node_name(cx, handle, &selected[0]);
+    press_ok(cx, handle);
+    cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    // The entry's id does.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-type-name", cx);
+        // Replace what was typed.
+        for _ in 0..selected[0].len() {
+            window.press("backspace", cx);
+        }
+    })
+    .unwrap();
+    type_node_name(cx, handle, "prod-ams");
+    press_ok(cx, handle);
+    cx.read(|cx| assert!(screen.read(cx).run.is_some(), "the entry id starts a run"));
+    wait_until_finished(cx, &runtime, &screen, 400, "a run on several nodes");
 }
 
 // ---- #854: what the cluster says before an operation is offered ----

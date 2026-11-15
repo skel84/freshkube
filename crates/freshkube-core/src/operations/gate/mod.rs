@@ -10,7 +10,7 @@
 use thiserror::Error;
 
 use super::{NodeTarget, OperationConfirmation, OperationKind};
-use crate::write::{Protection, Tier, requirement};
+use crate::write::{Protection, Tier, expected_name, requirement};
 
 impl OperationKind {
     /// The write model's tier for the operation. Cordon and uncordon are
@@ -65,13 +65,9 @@ pub fn operation_gate(
     if !needs.type_name {
         return OperationGate::Confirm;
     }
-    match targets {
-        [only] => OperationGate::TypeName {
-            expected: only.name.clone(),
-        },
-        _ => OperationGate::TypeName {
-            expected: entry_id.to_owned(),
-        },
+    let names: Vec<&str> = targets.iter().map(|target| target.name.as_str()).collect();
+    OperationGate::TypeName {
+        expected: expected_name(&names, entry_id).to_owned(),
     }
 }
 
