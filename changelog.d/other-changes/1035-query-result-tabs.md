@@ -1,1 +1,0 @@
-- **Query result tabs:** at a small window and a large text size the selected result's tab is always in view, no tab is cut at either edge, a label wider than the strip ends in an ellipsis, and the wheel, trackpad and the ‹ › buttons move by whole tabs.
