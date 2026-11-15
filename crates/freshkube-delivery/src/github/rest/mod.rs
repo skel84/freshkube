@@ -45,7 +45,7 @@ use memo::Memo;
 pub use budget::RateLimit;
 pub use detail::{
     Capped, Changed, CheckRun, Checks, ChecksState, DetailKey, Label, PullDetail, Review,
-    ReviewState, RunState,
+    ReviewState, RunState, StatusState,
 };
 pub use error::{Cause, Error, NotSetUp};
 pub use types::{AVATAR_HOST, AvatarUrl, Person, PullState, PullSummary, Reviewer, Stale};

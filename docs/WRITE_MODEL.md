@@ -9,14 +9,14 @@ The framework that sends changes to Kubernetes objects exists ([How a write goes
 | Writer | `read-only` | `protected`, `guarded`, `open` |
 |--------|-------------|--------------------------------|
 | Pod exec (`pods/exec`) | A shell tab's Start is disabled, with the reason "This cluster is read-only.", **by the level of the tab's own cluster entry** ([Exec follows the dock tab's own level](#exec-follows-the-dock-tabs-own-level-878)); a shell already running is left for its person to end | no change: the explicit Start, as before |
-| Talos Operations | Review is disabled with the same reason, and a confirmation already open when the level changed starts nothing | no change: their own preflight and confirmation |
+| Talos Operations | Review is disabled with the same reason, and a confirmation already open when the level changed starts nothing | `protected`: the confirmation also asks for the node's name ([Talos Operations](#talos-operations)); `guarded` and `open`: no change, their own preflight and confirmation |
 | Restarting a Talos service (System services) | Restart is disabled with the same reason | no change: its own confirmation |
 | Diagnostics' Apply fix (a machine-config patch, perhaps a reboot, or a service restart) | Apply fix is disabled with the same reason, and a confirmation already open starts nothing | no change: its own confirmation |
 | Port forwarding | allowed, see [Sessions](#sessions) | no change |
 
 Every Talos write takes the one operation slot through `Operations::begin`, which refuses under `read-only`; a control that forgot to ask still starts nothing. Maintenance mode is the one exemption, by name (`Operations::begin_maintenance`): it is not tied to a cluster entry (it works on a node before it is in one), so the level does not govern it; it keeps its own rules.
 
-`protected` and `guarded` change nothing for exec, Operations, Restart and Apply fix until [#853](https://github.com/skel84/freshkube/issues/853) adds the typed name to Operations; `open` changes nothing for them ever, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
+`protected` adds the typed name to Operations only; it changes nothing yet for exec, Restart and Apply fix. `guarded` changes nothing for any of them, and `open` never does, since only the reversible tier skips its confirmation. The level is shown on every page whatever it enforces ([The visible level](#the-visible-level)).
 
 ### Exec follows the dock tab's own level (#878)
 
@@ -72,7 +72,19 @@ Exec and port forwarding create `pods/exec` and `pods/portforward`, not changes 
 
 ### Talos Operations
 
-The level governs Operations as well. `read-only` blocks them. `protected` adds typing the node's name to the confirmation they already have, which comes with [#853](https://github.com/skel84/freshkube/issues/853). `guarded` and `open` leave them as they are.
+The level governs Operations as well, through the tier of each kind (`OperationKind::tier`, core's `operations/gate/`), read from the same table as every other write. `read-only` blocks them. `protected` adds typing to the confirmation they already have. `guarded` and `open` leave them as they are: `open` does not skip an Operations confirmation, which only the framework's reversible tier does.
+
+| Operation | Tier | `read-only` | `protected` | `guarded` and `open` |
+|-----------|------|-------------|-------------|----------------------|
+| Cordon | reversible | blocked | its confirmation, plus the node's name | its confirmation |
+| Uncordon | reversible | blocked | its confirmation, plus the node's name | its confirmation |
+| Drain | destructive | blocked | its confirmation, plus the node's name | its confirmation |
+| Reboot | destructive | blocked | its confirmation, plus the node's name | its confirmation |
+| Shutdown | destructive | blocked | its confirmation, plus the node's name | its confirmation |
+
+- **One node:** its name. **Several nodes** (a rolling run): the cluster entry's id, typed once, and the dialog says which. Matching is exact and case-sensitive; pasting is allowed.
+- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level the app holds at send time, so a dialog opened before the level became stricter starts nothing. A level changed by editing `freshkube.yaml` while the dialog is open is not seen until the app reads the file again ([SAFETY.md](SAFETY.md#known-gaps)). `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, never builds one (`Operations::begin_maintenance`).
+- **Not yet:** a service's Restart and Diagnostics' Apply fix are Talos writes on a node as well, and keep their own confirmation at `protected` for now.
 
 ## The visible level
 

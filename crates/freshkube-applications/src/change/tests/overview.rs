@@ -555,3 +555,42 @@ fn the_strip_stays_in_the_pane_beside_the_inspector(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_focused_cell_wears_the_keyboard_ring_and_loses_it_with_the_focus(cx: &mut TestAppContext) {
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.select("stage-pods", window, cx);
+            page.focus(window, cx);
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("change-cell-stage-running-ring").is_some(),
+            "the focused page's selected cell has the ring"
+        );
+        // Clicking away: another element takes the focus, and the ring goes.
+        window.blur(cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("change-cell-stage-running-ring").is_none(),
+            "no ring without the keyboard"
+        );
+        // Only the selected cell has one.
+        page.update(cx, |page, cx| page.focus(window, cx));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let rings = Column::ALL
+            .iter()
+            .filter(|column| {
+                window
+                    .try_find(format!("change-cell-stage-{}-ring", column.id()))
+                    .is_some()
+            })
+            .count();
+        assert_eq!(rings, 1);
+    })
+    .unwrap();
+}

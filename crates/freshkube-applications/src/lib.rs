@@ -113,6 +113,7 @@ use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
 pub use change::{
     ActKind, KargoAt, Links as CorootLinks, Live as CorootLive, OutcomeKind, StageAct,
+    install_avatar_folder,
 };
 use change::{ChangeEvent, ChangePage, Changes, Coroot};
 use changes::ChangesEvent;
