@@ -214,6 +214,10 @@ pub(crate) struct Origin {
     pub(crate) entry: Option<String>,
     /// What the tab says it belongs to: the entry's id, else its context.
     pub(crate) cluster: SharedString,
+    /// A key for the cluster that holds across runs, saved with a tab of a
+    /// window that has no entry (the source's own id when none was given, as
+    /// with example data).
+    pub(crate) connection: String,
 }
 
 impl Origin {
@@ -415,6 +419,9 @@ pub(crate) struct Dock {
     /// on a parked tab: that selection holds only while this one stays the
     /// selected tab.
     parked_guard: Option<u64>,
+    /// The stable key of the shown cluster, as the shell hands it with each
+    /// source, for a window on no listed entry.
+    connection_key: Option<String>,
     /// The day each context was last the shown one, as saved.
     seen: std::collections::BTreeMap<String, u32>,
     save: Option<Task<()>>,
@@ -491,6 +498,7 @@ impl Dock {
             parked: Vec::new(),
             parked_selected: None,
             parked_guard: None,
+            connection_key: None,
             seen: Default::default(),
             save: None,
             last_least: None,
@@ -1437,10 +1445,15 @@ impl Dock {
             .shown_entry
             .clone()
             .unwrap_or_else(|| source.context.clone());
+        let connection = self
+            .connection_key
+            .clone()
+            .unwrap_or_else(|| source.id.clone());
         Some(Origin {
             source,
             entry: self.shown_entry.clone(),
             cluster: cluster.into(),
+            connection,
         })
     }
 
@@ -1556,6 +1569,12 @@ impl Dock {
         }
         // Which tabs are the shown cluster's depends on this source.
         self.refresh_gates(cx);
+    }
+
+    /// Sets the shown cluster's stable key, before its source: tabs started
+    /// from now save it as their connection when the window has no entry.
+    pub(crate) fn set_connection_key(&mut self, key: Option<String>) {
+        self.connection_key = key;
     }
 
     /// Derives the titles: a title another tab already has gets "(2)".

@@ -240,7 +240,7 @@ impl Dock {
                     entry: tab.origin.entry.clone().unwrap_or_default(),
                     connection: match tab.origin.entry {
                         Some(_) => String::new(),
-                        None => tab.origin.source.id.clone(),
+                        None => tab.origin.connection.clone(),
                     },
                     namespace: tab.target.identity.namespace.clone(),
                     name: tab.target.identity.name.clone(),
@@ -311,13 +311,25 @@ impl Dock {
         };
         let source = origin.source.clone();
         self.seen.insert(source.context.clone(), today());
-        // The same context name, and the same cluster behind it: the entry the
-        // tab was opened on, or for a window on no entry its connection. A tab
-        // saved with neither (an older file) matches by the name alone.
+        // The same context name, and the same cluster behind it. In a window
+        // on an entry: the entry the tab was opened on (a tab saved without
+        // one, by an older build, matches by the name) and no connection. In a
+        // window on no entry: the connection key, which must be there and
+        // match, so a tab of an older build or of another kubeconfig stays
+        // parked and ages out.
         let mine = |saved: &SavedTab| {
             saved.context == source.context
-                && (saved.entry.is_empty() || Some(saved.entry.as_str()) == origin.entry.as_deref())
-                && (saved.connection.is_empty() || saved.connection == source.id)
+                && match origin.entry.as_deref() {
+                    Some(entry) => {
+                        saved.connection.is_empty()
+                            && (saved.entry.is_empty() || saved.entry == entry)
+                    }
+                    None => {
+                        saved.entry.is_empty()
+                            && !saved.connection.is_empty()
+                            && saved.connection == origin.connection
+                    }
+                }
         };
         if !self.parked.iter().any(mine) {
             return;

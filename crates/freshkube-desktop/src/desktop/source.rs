@@ -198,6 +198,31 @@ impl Pilot {
         }
     }
 
+    /// A key for the cluster this window shows that holds across runs, for
+    /// what the dock saves when the window is on no listed entry
+    /// ([`freshkube_core::stable_connection_key`]): the kubeconfig files and
+    /// the context, hashed. `None` for example data, whose connection id is
+    /// already fixed, and before a context is chosen.
+    pub(super) fn connection_key(&self) -> Option<String> {
+        let mode = self.mode();
+        if mode.example().is_some() {
+            return None;
+        }
+        if let Some(kubernetes_only) = mode.kubernetes_only() {
+            let access = kubernetes_only.access()?;
+            return Some(freshkube_core::stable_connection_key(
+                access.sources(),
+                access.context(),
+            ));
+        }
+        let context = self.applied.context.as_deref()?;
+        Some(freshkube_core::talos_connection_key(
+            self.applied.path.as_deref(),
+            &self.kubeconfig,
+            context,
+        ))
+    }
+
     /// The selected node of the last overview, with `live` Talos access or
     /// none for example data. `None` until a target exists.
     fn screen_on(&self, live: Option<LiveSource>) -> Option<ScreenSource> {

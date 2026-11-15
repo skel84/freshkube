@@ -275,6 +275,64 @@ impl AccessIdentity {
     }
 }
 
+/// A key for the cluster behind a connection that holds across runs, for what
+/// is saved: `kc:` and 16 hex digits of a SHA-256 over the absolute kubeconfig
+/// files and the context's name. It holds no path and no credential, and
+/// unlike [`AccessIdentity::key`] it is the same in the next run, after a token
+/// refresh rewrites a file, and in another window on the same files. Another
+/// kubeconfig with the same context name gives another key. Pure: it reads no
+/// file.
+pub fn stable_connection_key(files: &[PathBuf], context: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for file in files {
+        let file = std::path::absolute(file).unwrap_or_else(|_| file.clone());
+        hash.update(file.as_os_str().as_encoded_bytes());
+        hash.update([0]);
+    }
+    hash.update([1]);
+    hash.update(context.as_bytes());
+    let digest = hash.finalize();
+    let hex: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("kc:{hex}")
+}
+
+/// [`stable_connection_key`] for a Talos window: its talosconfig, the files
+/// the Kubernetes access is read from (a chosen file, the ambient ones, or
+/// none when the control plane serves it) and the context.
+pub fn talos_connection_key(
+    config: Option<&Path>,
+    selection: &KubeconfigSelection,
+    context: &str,
+) -> String {
+    let mut files: Vec<PathBuf> = config
+        .map(Path::to_path_buf)
+        .or_else(|| crate::ambient::default_talosconfig_path().ok())
+        .into_iter()
+        .collect();
+    match selection {
+        KubeconfigSelection::Automatic => {
+            let ambient = crate::ambient::get();
+            match &ambient.kubeconfig {
+                Some(value) if !value.is_empty() => files.extend(std::env::split_paths(value)),
+                _ => files.extend(
+                    ambient
+                        .home
+                        .as_ref()
+                        .map(|home| home.join(".kube").join("config")),
+                ),
+            }
+        }
+        KubeconfigSelection::TalosControlPlane => {}
+        KubeconfigSelection::File { path, .. } => files.push(path.clone()),
+    }
+    stable_connection_key(&files, context)
+}
+
 /// Everything that determines a Talos connection.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TalosKey {
@@ -696,5 +754,58 @@ mod tests {
         assert_eq!(cache.get(&key("a", b"2"), base), None);
         cache.remove(&key("a", b"1"));
         assert_eq!(cache.get(&key("a", b"1"), base), None);
+    }
+}
+
+#[cfg(test)]
+mod stable_key_tests {
+    use super::*;
+
+    #[test]
+    fn the_stable_key_holds_across_runs_and_tells_kubeconfigs_apart() {
+        let a = [PathBuf::from("/home/pat/.kube/a.yaml")];
+        let b = [PathBuf::from("/home/pat/.kube/b.yaml")];
+        let key = stable_connection_key(&a, "default");
+        // Fixed: a SHA-256 of the files and the context, not a per-process hash.
+        assert_eq!(key, stable_connection_key(&a, "default"));
+        assert!(key.starts_with("kc:") && key.len() == 19, "{key}");
+        assert!(key[3..].chars().all(|c| c.is_ascii_hexdigit()));
+        // Another kubeconfig, or another context, is another key.
+        assert_ne!(key, stable_connection_key(&b, "default"));
+        assert_ne!(key, stable_connection_key(&a, "other"));
+        // Merge order and file lists count; no path is in the key.
+        let both = [a[0].clone(), b[0].clone()];
+        assert_ne!(key, stable_connection_key(&both, "default"));
+        assert!(!key.contains("pat") && !key.contains("kube"));
+    }
+
+    #[test]
+    fn a_talos_window_is_keyed_by_its_files_and_context() {
+        let config = PathBuf::from("/home/pat/.talos/config");
+        let file = |name: &str| KubeconfigSelection::File {
+            path: PathBuf::from(name),
+            context: None,
+        };
+        let plane = talos_connection_key(
+            Some(&config),
+            &KubeconfigSelection::TalosControlPlane,
+            "lab",
+        );
+        assert_eq!(
+            plane,
+            talos_connection_key(
+                Some(&config),
+                &KubeconfigSelection::TalosControlPlane,
+                "lab"
+            )
+        );
+        assert_ne!(
+            talos_connection_key(Some(&config), &file("/k/a.yaml"), "lab"),
+            talos_connection_key(Some(&config), &file("/k/b.yaml"), "lab")
+        );
+        assert_ne!(
+            plane,
+            talos_connection_key(Some(&config), &file("/k/a.yaml"), "lab")
+        );
     }
 }
