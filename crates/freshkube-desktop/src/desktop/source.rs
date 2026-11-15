@@ -201,12 +201,16 @@ impl Pilot {
     /// A key for the cluster this window shows that holds across runs, for
     /// what the dock saves when the window is on no listed entry
     /// ([`freshkube_core::stable_connection_key`]): the kubeconfig files and
-    /// the context, hashed. `None` for example data, whose connection id is
-    /// already fixed, and before a context is chosen.
+    /// the context, hashed. Example data's own fixed id; `None` before a context is chosen.
     pub(super) fn connection_key(&self) -> Option<String> {
         let mode = self.mode();
         if mode.example().is_some() {
-            return None;
+            // Example data's connection id is fixed already.
+            return self
+                .applied
+                .context
+                .as_deref()
+                .map(resources::example::connection);
         }
         if let Some(kubernetes_only) = mode.kubernetes_only() {
             let access = kubernetes_only.access()?;

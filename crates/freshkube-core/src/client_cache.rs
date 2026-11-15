@@ -309,6 +309,14 @@ pub fn talos_connection_key(
     selection: &KubeconfigSelection,
     context: &str,
 ) -> String {
+    // The Kubernetes context a chosen file is read with counts too.
+    let kube_context = match selection {
+        KubeconfigSelection::File {
+            context: Some(chosen),
+            ..
+        } => Some(chosen.as_str()),
+        _ => None,
+    };
     let mut files: Vec<PathBuf> = config
         .map(Path::to_path_buf)
         .or_else(|| crate::ambient::default_talosconfig_path().ok())
@@ -330,7 +338,10 @@ pub fn talos_connection_key(
         KubeconfigSelection::TalosControlPlane => {}
         KubeconfigSelection::File { path, .. } => files.push(path.clone()),
     }
-    stable_connection_key(&files, context)
+    match kube_context {
+        Some(chosen) => stable_connection_key(&files, &format!("{context}\n{chosen}")),
+        None => stable_connection_key(&files, context),
+    }
 }
 
 /// Everything that determines a Talos connection.
@@ -766,6 +777,10 @@ mod stable_key_tests {
         let a = [PathBuf::from("/home/pat/.kube/a.yaml")];
         let b = [PathBuf::from("/home/pat/.kube/b.yaml")];
         let key = stable_connection_key(&a, "default");
+        // Pinned: the same value in every process and build, so a per-process
+        // key (a random hasher) or a changed recipe fails here, not only in
+        // a restart. Changing the recipe drops every saved tab's key.
+        assert_eq!(key, "kc:f2cc382528d30ead");
         // Fixed: a SHA-256 of the files and the context, not a per-process hash.
         assert_eq!(key, stable_connection_key(&a, "default"));
         assert!(key.starts_with("kc:") && key.len() == 19, "{key}");

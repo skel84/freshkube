@@ -215,8 +215,7 @@ pub(crate) struct Origin {
     /// What the tab says it belongs to: the entry's id, else its context.
     pub(crate) cluster: SharedString,
     /// A key for the cluster that holds across runs, saved with a tab of a
-    /// window that has no entry (the source's own id when none was given, as
-    /// with example data).
+    /// window that has no entry (empty when there is none).
     pub(crate) connection: String,
 }
 
@@ -1445,10 +1444,9 @@ impl Dock {
             .shown_entry
             .clone()
             .unwrap_or_else(|| source.context.clone());
-        let connection = self
-            .connection_key
-            .clone()
-            .unwrap_or_else(|| source.id.clone());
+        // No key means no way to tell the cluster: empty, so a tab saved from
+        // here never matches in a window on no entry.
+        let connection = self.connection_key.clone().unwrap_or_default();
         Some(Origin {
             source,
             entry: self.shown_entry.clone(),
