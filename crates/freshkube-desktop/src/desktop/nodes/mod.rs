@@ -183,8 +183,6 @@ pub(super) enum NodesEvent {
 impl EventEmitter<NodesEvent> for Nodes {}
 impl EventEmitter<crate::screens::ScreenEvent> for Nodes {}
 
-/// Nodes draws the rows and status line the shell hands it, and reads its
-/// nodes' use itself while its page shows.
 /// The Alerts section drawn for one node: for which node and which state.
 struct AlertsDrawn {
     node: SharedString,
@@ -233,6 +231,8 @@ impl Nodes {
     }
 }
 
+/// Nodes draws the rows and status line the shell hands it, and reads its
+/// nodes' use itself while its page shows.
 impl crate::screens::ScreenPanel for Nodes {
     /// Nodes reads no Talos target; the shell picks it from Nodes' events.
     fn set_source(

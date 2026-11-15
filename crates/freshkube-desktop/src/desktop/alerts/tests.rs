@@ -387,3 +387,29 @@ fn the_nodes_workspace_overview_shows_the_session_alerts_for_its_node(cx: &mut T
 fn drawn(window: &mut gpui_kit::Window, id: &'static str) -> bool {
     window.find(id).bounds().size.height > gpui_kit::px(0.)
 }
+
+/// A state read for another connection never reaches the node Overview, even
+/// for a node whose name the alert carries.
+#[gpui_kit::test]
+fn a_state_read_for_another_connection_never_reaches_the_node_overview(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = shell(cx, Shape::Firing);
+    let state = state(cx, &pilot).expect("example data read at once");
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.pages.node_workspace.update(cx, |nodes, cx| {
+                nodes.set_alerts(Some(("another-connection".into(), state.clone())), cx)
+            })
+        });
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
+        window.render_frame(cx);
+        assert!(
+            window.try_find("alerts-section").is_none(),
+            "another cluster's state draws no section"
+        );
+    })
+    .unwrap();
+}
