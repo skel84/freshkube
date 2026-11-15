@@ -27,6 +27,11 @@ impl ChangePage {
         }
         let p = palette(cx);
         let this = cx.entity().downgrade();
+        // The sentence is cut after two lines when it is longer than two lines
+        // of the page's width at about half the text size per character: then
+        // its tooltip has the whole of it. A sentence that fits has none.
+        let may_cut =
+            self.headline.chars().count() as f32 * (0.52 * 12.5) > 2. * page::inset_width(window);
         let bar = kit::fix_bar(
             "change-fixbar",
             &self.fix_items,
@@ -63,7 +68,7 @@ impl ChangePage {
                                 .line_clamp(2)
                                 .text_size(dp(12.5))
                                 .text_color(p.ink_2)
-                                .follow_tooltip(self.headline.clone())
+                                .when(may_cut, |this| this.follow_tooltip(self.headline.clone()))
                                 .child(self.headline.clone()),
                         )
                         .children(bar),

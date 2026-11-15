@@ -616,3 +616,25 @@ fn the_folded_copy_kargo_link_says_why_it_is_greyed_out(cx: &mut TestAppContext)
             .is_none_or(|item| item.text().is_none_or(|t| !t.contains("kargo")))
     );
 }
+
+/// A sentence that fits has no tooltip: nothing is cut, so nothing to add.
+#[gpui_kit::test]
+fn a_headline_that_fits_has_no_tooltip(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
+    let words = cx.read(|cx| page.read(cx).headline().to_owned());
+    let draws = freshkube_ui::tooltip::drawn(&words);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("change-headline", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(freshkube_ui::tooltip::drawn(&words), draws);
+    })
+    .unwrap();
+}

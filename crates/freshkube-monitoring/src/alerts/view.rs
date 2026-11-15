@@ -105,8 +105,9 @@ impl AlertsPage {
         let retrying = self.loader.is_loading();
         let mut actions: Vec<AnyElement> = Vec::new();
         if state.offers_settings() {
-            actions.push(freshkube_ui::read_state::open_settings_button(
+            actions.push(freshkube_ui::read_state::open_settings_button_to(
                 "alerts-open-settings",
+                || Box::new(freshkube_ui::platform::OpenMonitoringSettings),
             ));
         }
         if state.retry {

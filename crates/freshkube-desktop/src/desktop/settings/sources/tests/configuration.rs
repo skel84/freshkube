@@ -128,7 +128,7 @@ fn the_stage_naming_of_the_setup_is_a_row_of_its_own_and_goes_when_removed(
         assert!(window.find("settings-source-stage-naming").visible());
         // The table says where it reads in words; the file's key waits in
         // the Inspector and the tooltip (#1052).
-        let (reads, key, tooltip) = sources
+        let (reads, hint, tooltip) = sources
             .read(cx)
             .rows
             .iter()
@@ -136,13 +136,16 @@ fn the_stage_naming_of_the_setup_is_a_row_of_its_own_and_goes_when_removed(
             .map(|row| {
                 (
                     row.reads.to_string(),
-                    row.setup_key,
+                    row.setup_hint.as_ref().map(ToString::to_string),
                     row.tooltip.to_string(),
                 )
             })
             .unwrap();
         assert_eq!(reads, "Setup file");
-        assert_eq!(key, Some("delivery.stage_naming"));
+        assert_eq!(
+            hint.as_deref(),
+            Some("In freshkube.yaml as delivery.stage_naming")
+        );
         assert!(tooltip.contains("delivery.stage_naming"), "{tooltip}");
         // A placeholder is never shown as the file writes it.
         let entry = sources

@@ -484,7 +484,7 @@ impl EmptyDetails {
     pub fn look(&self, p: &Palette) -> (Hsla, Hsla) {
         match self {
             Self::Failure(_) => (p.crit_soft, p.crit_ink),
-            Self::Note(_) => (p.hover, p.muted),
+            Self::Note(_) => (p.surface_2, p.ink_2),
         }
     }
 }

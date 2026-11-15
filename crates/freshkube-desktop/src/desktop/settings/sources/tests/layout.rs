@@ -237,6 +237,7 @@ fn entry_and_chosen_by_keep_their_headers_at_the_narrowest_and_largest(cx: &mut 
         crate::text_size::set(20., cx);
         open(window, cx, &view);
         layout_check::settle_header(window, cx);
+        assert_eq!(window.rem_size(), gpui_kit::px(20.));
         for label in ["Entry", "Chosen by"] {
             let header = gpui_kit::base::test_support::snapshots(window)
                 .into_iter()

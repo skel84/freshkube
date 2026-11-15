@@ -718,7 +718,7 @@ impl ChangePage {
                     tooltip: Some(
                         format!(
                             "Set {} ({}) in Settings › {}",
-                            field.means(),
+                            field.means,
                             field.field,
                             settings_title(field.section)
                         )
@@ -726,7 +726,7 @@ impl ChangePage {
                     ),
                     why: opens
                         .is_none()
-                        .then(|| format!("Settings has no section for {}", field.means()).into()),
+                        .then(|| format!("Settings has no section for {}", field.name).into()),
                     words,
                     does: opens.map_or(Does::Nothing, Does::Settings),
                 }

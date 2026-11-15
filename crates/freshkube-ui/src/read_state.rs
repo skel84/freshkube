@@ -73,7 +73,7 @@ pub struct ReadActions {
     pub extra: Vec<AnyElement>,
     /// Details for the mono box, such as what was looked for; the state's
     /// own reason is shown when there are none.
-    pub details: Option<String>,
+    pub details: Option<ui::EmptyDetails>,
 }
 
 impl ReadActions {
@@ -235,36 +235,45 @@ pub fn read_state(
     .into_any_element()
 }
 
-/// An Open Settings button: the app's own Settings action. A state offers it
-/// through [`ReadActions::open_settings`] where Settings holds the fix.
+/// An Open Settings button: the app's own Settings action, which opens the
+/// section shown last. Where one section holds the fix, use
+/// [`open_settings_button_to`].
 pub fn open_settings_button(id: &'static str) -> AnyElement {
+    open_settings_button_to(id, || Box::new(crate::platform::OpenSettings))
+}
+
+/// An Open Settings button that lands on the section that holds the fix:
+/// `section` makes its action (`platform::OpenMonitoringSettings`, …).
+pub fn open_settings_button_to(
+    id: &'static str,
+    section: fn() -> Box<dyn gpui_kit::Action>,
+) -> AnyElement {
     use gpui_kit::component::{Sizable as _, button::Button};
     Button::new(id)
         .outline()
         .small()
         .label("Open Settings")
-        .on_click(|_, window, cx| {
-            window.dispatch_action(Box::new(crate::platform::OpenSettings), cx);
-        })
+        .on_click(move |_, window, cx| window.dispatch_action(section(), cx))
         .into_any_element()
 }
 
-/// The mono box of a state. It is a neutral note only where the read itself
-/// succeeded and there is nothing to find: not installed, not set up, or
-/// empty. Everywhere else, a refusal, a failed read, stale or partial data, or
-/// a read that never answered, it keeps the error style, so a failure is never
-/// made to look calm.
-fn details_for(state: &ReadState, details: Option<String>) -> Option<ui::EmptyDetails> {
+/// The mono box of a state. A page says whether its details are a calm note
+/// or an error, but only a state where the read succeeded and found nothing
+/// (not installed, not set up, empty) may draw a note: for a refusal, a failed
+/// read, stale or partial data, or a read that never answered, whatever the
+/// page passes is drawn as an error, so a failure is never made to look calm.
+fn details_for(state: &ReadState, details: Option<ui::EmptyDetails>) -> Option<ui::EmptyDetails> {
     let succeeded = matches!(
         state,
         ReadState::NotInstalled { .. } | ReadState::NotSetUp { .. } | ReadState::Empty { .. }
     );
-    let words = details.or_else(|| state.reason().map(str::to_owned))?;
-    Some(if succeeded {
-        ui::EmptyDetails::Note(words)
-    } else {
-        ui::EmptyDetails::Failure(words)
-    })
+    match details {
+        Some(ui::EmptyDetails::Note(text)) if succeeded => Some(ui::EmptyDetails::Note(text)),
+        Some(details) => Some(ui::EmptyDetails::Failure(details.text().to_owned())),
+        None => state
+            .reason()
+            .map(|reason| ui::EmptyDetails::Failure(reason.to_owned())),
+    }
 }
 
 #[cfg(test)]
@@ -398,7 +407,9 @@ mod tests {
 
     #[test]
     fn details_look_like_an_error_unless_the_read_succeeded_and_found_nothing() {
-        let looked = Some("Looked for: alertmanager, vmalert".to_owned());
+        let looked = Some(ui::EmptyDetails::Note(
+            "Looked for: alertmanager, vmalert".to_owned(),
+        ));
         let note = |state: &ReadState| {
             matches!(
                 details_for(state, looked.clone()),
@@ -476,6 +487,29 @@ mod tests {
             assert_ne!(note, failure);
             assert_ne!(note.0, p.crit_soft);
             assert_ne!(note.1, p.crit_ink);
+        }
+    }
+
+    /// WCAG relative luminance of an opaque colour.
+    fn luminance(color: gpui_kit::Hsla) -> f32 {
+        let rgb = color.to_rgb();
+        let channel = |c: f32| {
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b)
+    }
+
+    #[test]
+    fn the_note_box_reads_at_aa_contrast_in_both_themes() {
+        for p in [crate::palette::light(), crate::palette::dark()] {
+            let (fill, ink) = ui::EmptyDetails::Note("x".into()).look(&p);
+            let (a, b) = (luminance(fill), luminance(ink));
+            let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+            assert!(ratio >= 4.5, "{ratio}");
         }
     }
 }

@@ -13,9 +13,8 @@ pub(crate) struct SourceRow {
     pub(super) detail: SharedString,
     pub(super) state: SharedString,
     pub(super) reads: SharedString,
-    /// The setup file's key this row's setting is, for the Inspector and the
-    /// tooltip: the table says it in plain words.
-    pub(super) setup_key: Option<&'static str>,
+    /// The Inspector's hint under Reads, built once with the row.
+    pub(super) setup_hint: Option<SharedString>,
     /// The state's glyph, once there is one to show.
     pub(super) tone: Option<ui::Tone>,
     /// Whether there is an entry to read: not missing or gone.
@@ -30,14 +29,8 @@ pub(crate) struct SourceRow {
 /// tooltip and the Inspector, after this.
 const SETUP_FILE: &str = "Setup file";
 
-/// A name template as a person reads it: a placeholder is the word it stands
-/// for ("the project"), never the braces of the file; the template itself
-/// stays in the setup file.
-pub(super) fn plain_template(template: &str) -> String {
-    template
-        .replace("{project}", "the project")
-        .replace("{stage}", "the stage")
-}
+/// A name template as a person reads it ([`freshkube_core::setup::plain_template`]).
+pub(super) use freshkube_core::setup::plain_template;
 
 /// What the Workloads row reads on each entry.
 const WORKLOADS_READ: &str = "Deployments, Rollouts, ReplicaSets, pods";
@@ -316,11 +309,11 @@ impl SourcesList {
         };
         let tooltip = format!(
             "Stage naming: how an Application with no authorized-stage annotation names its Stage\n{}: {how}\nReads freshkube.yaml, delivery.stage_naming",
-            plain_template(&naming.name_template)
+            naming.name_template
         );
         self.row(
             Read::StageNaming,
-            plain_template(&naming.name_template),
+            naming.name_template.clone(),
             "freshkube.yaml".into(),
             false,
             (state.into(), None),
@@ -332,7 +325,6 @@ impl SourcesList {
     /// Build namespace: where a build is searched for by its image digest, as
     /// `freshkube.yaml` says. Read from the file, so it needs no check.
     fn build_namespace_row(&self, namespace: &str) -> SourceRow {
-        let namespace = plain_template(namespace);
         let tooltip = format!(
             "Build namespace: where a build is searched for by its image digest
 {namespace}:              builds are found there by digest; elsewhere only a commit finds one
@@ -340,7 +332,7 @@ Reads              freshkube.yaml, delivery.build_namespace"
         );
         self.row(
             Read::BuildNamespace,
-            namespace,
+            namespace.to_owned(),
             "freshkube.yaml".into(),
             false,
             ("Set".into(), None),
@@ -361,6 +353,18 @@ Reads              freshkube.yaml, delivery.build_namespace"
         tooltip: String,
     ) -> SourceRow {
         let key = read.key();
+        let setup_key = match read {
+            Read::StageNaming => Some("delivery.stage_naming"),
+            Read::BuildNamespace | Read::BuildSuggestion => Some("delivery.build_namespace"),
+            _ => None,
+        };
+        // A placeholder of a name template is words wherever it is shown.
+        let (entry, why, state, tooltip) = (
+            plain_template(&entry),
+            plain_template(&why),
+            plain_template(&state),
+            plain_template(&tooltip),
+        );
         SourceRow {
             read,
             label: read.label().into(),
@@ -368,11 +372,7 @@ Reads              freshkube.yaml, delivery.build_namespace"
             why: why.into(),
             state: state.into(),
             reads: reads.into(),
-            setup_key: match read {
-                Read::StageNaming => Some("delivery.stage_naming"),
-                Read::BuildNamespace | Read::BuildSuggestion => Some("delivery.build_namespace"),
-                _ => None,
-            },
+            setup_hint: setup_key.map(|key| format!("In freshkube.yaml as {key}").into()),
             tone,
             listed,
             explanation: tooltip.lines().next().unwrap_or_default().to_owned().into(),

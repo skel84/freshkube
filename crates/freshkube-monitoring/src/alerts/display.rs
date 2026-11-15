@@ -126,16 +126,18 @@ pub struct State {
     pub description: SharedString,
     pub detail: Option<SharedString>,
     pub retry: bool,
+    /// Whether the detail is drawn as an error: set where the state is built.
+    /// Only a state where the read succeeded and found nothing shows what was
+    /// looked for as a calm note; a refusal, a failed read, a source that
+    /// answered with an error (a not-found carrying a candidate's reason) and
+    /// any state that can't tell keep the error style.
+    pub error: bool,
 }
 
 impl State {
-    /// Whether the detail is drawn as an error. Only a state where the read
-    /// succeeded and found nothing (`Missing`: no source, no cluster label,
-    /// rules with no evaluator) shows what was looked for as a calm note; a
-    /// refusal, a failed read and any state that can't tell keep the error
-    /// style.
+    /// Whether the detail is drawn as an error (see [`State::error`]).
     pub fn detail_is_error(&self) -> bool {
-        !matches!(self.icon, StateIcon::Missing)
+        self.error
     }
 
     /// Whether Settings › Monitoring holds the fix: where the alerts source
@@ -246,7 +248,7 @@ pub fn derive(
 }
 
 /// The state for an answer that says nothing is known, in the page's words.
-fn unknown_state(which: Which, unknown: &Unknown) -> State {
+pub(super) fn unknown_state(which: Which, unknown: &Unknown) -> State {
     let what = match which {
         Which::Alerts => "alerts",
         Which::Rules => "rules",
@@ -284,6 +286,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
                     None => format!("Looked for {looked_for}."),
                 })),
                 retry: true,
+                error: reason.is_some(),
             }
         }
         Unknown::Refused(reason) => State {
@@ -297,6 +300,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             .into(),
             detail: Some(reason.clone().into()),
             retry: false,
+            error: true,
         },
         Unknown::Unread(reason) => State {
             id: "alerts-failed",
@@ -305,6 +309,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             description: format!("Nothing is known of {what} until a read answers.").into(),
             detail: Some(reason.clone().into()),
             retry: true,
+            error: true,
         },
         Unknown::NoClusterLabel(label) => State {
             id: "alerts-no-label",
@@ -318,6 +323,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             .into(),
             detail: None,
             retry: true,
+            error: false,
         },
         Unknown::RulesOnly => State {
             id: "alerts-rules-only",
@@ -328,6 +334,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
                 .into(),
             detail: None,
             retry: true,
+            error: false,
         },
     }
 }
@@ -597,6 +604,7 @@ fn filtered(what: &str) -> State {
         description: format!("The filter hides every one of the {what} read.").into(),
         detail: None,
         retry: false,
+        error: false,
     }
 }
 
@@ -626,6 +634,7 @@ fn quiet(
         .into(),
         detail: None,
         retry: false,
+        error: false,
     }
 }
 
@@ -805,6 +814,7 @@ fn rules(data: &RulesData, filter: &Filter, now: DateTime<Utc>) -> Display {
                 description: "The source answered and holds no rule groups.".into(),
                 detail: None,
                 retry: false,
+                error: false,
             }
         } else {
             filtered("rules")
@@ -946,6 +956,7 @@ fn silences(data: &SilencesData, filter: &Filter, now: DateTime<Utc>) -> Display
                 .into(),
                 detail: None,
                 retry: false,
+                error: false,
             }
         } else {
             filtered("silences")

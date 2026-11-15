@@ -242,6 +242,15 @@ pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
     Ok(())
 }
 
+/// A name template as a person reads it: a placeholder is the word it stands
+/// for, never the braces of the setup file ("ci-{project}" is "ci-the
+/// project"). The file keeps the template; this is only for the screen.
+pub fn plain_template(template: &str) -> String {
+    template
+        .replace("{project}", "the project")
+        .replace("{stage}", "the stage")
+}
+
 /// Resolves a build namespace for one Kargo project and checks the result.
 /// A bad result refuses this change's build reads, not the setup file.
 pub fn resolve_build_namespace(template: &str, project: &str) -> Result<String, String> {

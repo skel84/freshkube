@@ -747,3 +747,68 @@ fn a_rule_group_is_good_only_when_every_rule_is_known_to_be_ok() {
         Tone::Crit
     );
 }
+
+/// A not-found where a candidate answered with an error keeps the error style
+/// for its details; one where nothing answered is a calm note.
+#[test]
+fn a_not_found_with_a_candidates_error_keeps_the_error_style() {
+    use super::display::unknown_state;
+    use freshkube_core::monitoring::alerts::Unknown;
+    for which in [Which::Alerts, Which::Rules, Which::Silences] {
+        let calm = unknown_state(which, &Unknown::NotFound(String::new()));
+        assert!(!calm.detail_is_error(), "{which:?}: nothing answered");
+        let failed = unknown_state(
+            which,
+            &Unknown::NotFound("`monitoring/alertmanager` said: connection refused".into()),
+        );
+        assert!(failed.detail_is_error(), "{which:?}: a candidate's error");
+        assert!(
+            failed
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.contains("connection refused"))
+        );
+    }
+    for unknown in [
+        Unknown::Refused("forbidden".into()),
+        Unknown::Unread("timed out".into()),
+    ] {
+        assert!(unknown_state(Which::Alerts, &unknown).detail_is_error());
+    }
+    for unknown in [
+        Unknown::NoClusterLabel("cluster".into()),
+        Unknown::RulesOnly,
+    ] {
+        assert!(!unknown_state(Which::Alerts, &unknown).detail_is_error());
+    }
+}
+
+/// Open Settings on Alerts asks for Monitoring's own section, not whichever
+/// section was shown last.
+#[gpui_kit::test]
+fn open_settings_on_alerts_asks_for_the_monitoring_section(cx: &mut TestAppContext) {
+    use freshkube_ui::platform::{OpenMonitoringSettings, OpenSettings};
+    use std::cell::Cell;
+    let monitoring = Rc::new(Cell::new(0));
+    let last_shown = Rc::new(Cell::new(0));
+    let (_runtime, handle, page) = mount(
+        cx,
+        Which::Alerts,
+        Some(example_source("a")),
+        Shape::NotFound,
+    );
+    cx.update(|cx| {
+        let monitoring = monitoring.clone();
+        cx.on_action(move |_: &OpenMonitoringSettings, _| monitoring.set(monitoring.get() + 1));
+        let last_shown = last_shown.clone();
+        cx.on_action(move |_: &OpenSettings, _| last_shown.set(last_shown.get() + 1));
+    });
+    show(cx, handle, &page);
+    assert!(shown(cx, handle, "alerts-open-settings"));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("alerts-open-settings", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!((monitoring.get(), last_shown.get()), (1, 0));
+}

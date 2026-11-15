@@ -208,3 +208,11 @@ fn build_namespace_resolution_checks_each_projects_result() {
     // A valid file can produce a bad name for one project without refusing the file.
     ok("version: 1\ndelivery:\n  build_namespace: '{project}-ci'\n");
 }
+
+#[test]
+fn a_template_is_shown_without_its_placeholders_braces() {
+    use crate::setup::plain_template;
+    assert_eq!(plain_template("ci-{project}"), "ci-the project");
+    assert_eq!(plain_template("{stage}-{project}"), "the stage-the project");
+    assert_eq!(plain_template("shop-ci"), "shop-ci");
+}

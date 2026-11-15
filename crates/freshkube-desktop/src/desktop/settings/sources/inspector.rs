@@ -136,8 +136,8 @@ impl SourcesList {
             )
             .row({
                 let reads = form::row("settings-source-reads", "Reads", row.reads.clone());
-                match row.setup_key {
-                    Some(key) => reads.hint(format!("In freshkube.yaml as {key}")),
+                match &row.setup_hint {
+                    Some(hint) => reads.hint(hint.clone()),
                     None => reads,
                 }
             });
