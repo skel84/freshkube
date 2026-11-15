@@ -373,6 +373,13 @@ pub fn preferences_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join(folder).join("preferences.json"))
 }
 
+/// Where the app keeps the avatars of the people on a pull request's card:
+/// `avatars` in the cache folder, beside the preferences' folder name.
+pub fn avatars_path() -> Option<PathBuf> {
+    let folder = freshkube_ui::platform::Platform::current().preferences_folder();
+    Some(dirs::cache_dir()?.join(folder).join("avatars"))
+}
+
 pub fn run(options: GpuiOptions, runtime: tokio::runtime::Handle) -> color_eyre::Result<()> {
     desktop::run(options, runtime)
 }

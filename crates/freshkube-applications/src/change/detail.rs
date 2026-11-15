@@ -461,6 +461,13 @@ impl ChangePage {
                     .aria_label(body.clone())
                     .test_support()
             }));
+        // The pull request's own card leads its hop, before the Why.
+        let pull = self
+            .pull
+            .card()
+            .filter(|_| self.pull_selected())
+            .map(|card| self.render_pull_card(card, cx));
+        let inspector = inspector.children(pull);
         let fix = detail.fix.as_ref().map(|fix| self.render_fix(fix, cx));
         let inspector = inspector.children(fix);
         let inspector = inspector.children(
@@ -1077,7 +1084,7 @@ fn heading(detail: &Detail, cx: &App) -> impl IntoElement {
 }
 
 /// A labelled value.
-fn field(label: &str, value: Div, cx: &App) -> Div {
+pub(super) fn field(label: &str, value: Div, cx: &App) -> Div {
     h_flex()
         .gap_3()
         .items_start()
@@ -1101,7 +1108,7 @@ fn render_field(line: &FieldLine, cx: &App) -> Div {
 }
 
 /// A section of the body under its caption.
-fn section(title: &str, cx: &App) -> Div {
+pub(super) fn section(title: &str, cx: &App) -> Div {
     v_flex()
         .gap(dp(7.))
         .text_size(dp(12.))
