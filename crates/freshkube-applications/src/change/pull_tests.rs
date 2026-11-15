@@ -128,6 +128,13 @@ fn kept_answers_say_only_that_they_are_old_and_a_refused_token_says_not_read(
         let (handle, page) = open(cx, shape);
         let text = line(cx, &page).expect("the kept answer");
         assert!(text.starts_with("Merged · "), "{text}");
+        // Old is on the strip's line too, in a warning tone: never green and
+        // current.
+        assert!(text.ends_with(" · stale, read at 13:12 UTC"), "{text}");
+        assert_eq!(
+            cx.read(|cx| page.read(cx).pull.card().unwrap().tone),
+            freshkube_ui::ui::Tone::Warn
+        );
         // The banner of what may be missing gives the reason; the card says
         // only that it is old, so the two never repeat each other.
         let notes: Vec<String> = cx.read(|cx| {

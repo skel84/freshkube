@@ -49,6 +49,8 @@ pub(super) struct Card {
     /// Avatars on disk for the people on the card, and the one job that
     /// fetches what is missing; dropped with the card and on hide.
     avatars: HashMap<AvatarUrl, PathBuf>,
+    /// The avatars asked for for this card, so none is asked for twice.
+    avatars_tried: std::collections::HashSet<AvatarUrl>,
     avatar_job: Option<(backend::OwnedJob, Task<()>)>,
 }
 
@@ -255,8 +257,12 @@ impl ChangePage {
         cx.notify();
     }
 
-    /// Takes the avatars the card's people have from the disk and fetches
-    /// the ones missing or old, in one job on the page's own lifetime.
+    /// Fetches the avatars of the card's people that aren't held yet, in one
+    /// job on the page's own lifetime. The disk is asked inside the job,
+    /// never on the UI thread, and each avatar is tried once per card: a
+    /// failure isn't asked for again until the card is forgotten (the client
+    /// backs it off for five minutes besides). When a job lands, people
+    /// who were added meanwhile get theirs.
     fn load_avatars(&mut self, cx: &mut Context<Self>) {
         let (Some(AvatarCache(avatars)), Fetch::Live { runtime, .. }) =
             (cx.try_global::<AvatarCache>().cloned(), &self.fetch)
@@ -266,31 +272,25 @@ impl ChangePage {
         let Some(card) = self.pull.card.as_ref() else {
             return;
         };
+        if !self.visible || self.pull.avatar_job.is_some() {
+            return;
+        }
         let mut wanted: Vec<AvatarUrl> = Vec::new();
         for url in card.people.iter().filter_map(|person| person.avatar) {
-            if !wanted.contains(&url) {
+            if !wanted.contains(&url) && !self.pull.avatars_tried.contains(&url) {
                 wanted.push(url);
             }
         }
-        let size = super::pull_view::AVATAR_PX;
-        let mut fetch = Vec::new();
-        for url in wanted {
-            match avatars.cached(&url, size) {
-                Some(held) => {
-                    if held.stale {
-                        fetch.push(url);
-                    }
-                    self.pull.avatars.insert(url, held.path);
-                }
-                None => fetch.push(url),
-            }
-        }
-        if fetch.is_empty() || !self.visible || self.pull.avatar_job.is_some() {
+        if wanted.is_empty() {
             return;
         }
+        self.pull.avatars_tried.extend(wanted.iter().copied());
+        let size = super::pull_view::AVATAR_PX;
         let (job, receiver) = backend::spawn_job(runtime, DEADLINE, (), async move {
             let mut got = Vec::new();
-            for url in fetch {
+            for url in wanted {
+                // A fresh file is the answer; an old one is replaced by one
+                // fetch, and stands if that fails.
                 if let Ok(avatar) = avatars.ensure(&url, size).await {
                     got.push((url, avatar.path));
                 }
@@ -302,6 +302,7 @@ impl ChangePage {
             _ = this.update(cx, |page, cx| {
                 page.pull.avatar_job = None;
                 page.pull.avatars.extend(got);
+                page.load_avatars(cx);
                 cx.notify();
             });
         });

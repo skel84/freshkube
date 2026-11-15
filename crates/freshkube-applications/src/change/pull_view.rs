@@ -4,6 +4,7 @@
 use freshkube_delivery::github::AvatarUrl;
 use freshkube_ui::palette::palette;
 use freshkube_ui::platform::OpenSourcesSettings;
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::avatar::Avatar;
 use gpui_kit::component::{Sizable as _, button::Button, h_flex, v_flex};
 
@@ -98,6 +99,7 @@ impl ChangePage {
 
     fn render_check(&self, ix: usize, check: &Check, cx: &App) -> impl IntoElement {
         let p = palette(cx);
+        let address = check.page.as_ref().map(|page| page.as_str().to_owned());
         h_flex()
             .id(SharedString::from(format!("change-pull-check-{ix}")))
             .test_support()
@@ -105,6 +107,11 @@ impl ChangePage {
             .gap(dp(6.))
             .items_center()
             .text_size(dp(11.5))
+            .when_some(address, |this, address| {
+                this.cursor_pointer()
+                    .follow_tooltip(address.clone())
+                    .on_click(move |_, _, cx| cx.open_url(&address))
+            })
             .child(div().flex_none().children(ui::status_glyph(check.tone, cx)))
             .child(
                 div()
@@ -167,19 +174,10 @@ impl ChangePage {
         .into_iter()
         .filter_map(|(label, value)| value.map(|value| (label, value)))
         .map(|(label, value)| field(label, div().child(value), cx));
-        let labels = (!card.labels.is_empty()).then(|| {
-            field(
-                "Labels",
-                div().child(
-                    card.labels
-                        .iter()
-                        .map(|l| l.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
-                cx,
-            )
-        });
+        let labels = card
+            .labels
+            .clone()
+            .map(|labels| field("Labels", div().child(labels), cx));
         section("Pull request", cx)
             .id("change-pull")
             .test_support()

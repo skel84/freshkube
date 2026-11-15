@@ -97,7 +97,11 @@ pub(super) struct PullCard {
     pub merged: Option<SharedString>,
     /// `+84 −12 · 5 files`.
     pub changed: Option<SharedString>,
-    pub labels: Vec<SharedString>,
+    /// The labels, joined once here: `reliability, urgent`.
+    pub labels: Option<SharedString>,
+    /// Set when what the card shows is old, or couldn't be read again: its
+    /// tone is Warn and the compact line says so (never green and current).
+    pub old: Option<SharedString>,
     pub links: Vec<CardLink>,
     /// `checks are of the head commit, not the deployed one`, old answers
     /// and the like.
@@ -300,6 +304,9 @@ fn compact_of(card: &PullCard, detail: Option<&PullDetail>) -> String {
     if let Some(lack) = &card.lack {
         parts.push(format!("{}: {}", lack.lead, lack.text));
     }
+    if let Some(old) = &card.old {
+        parts.push(old.to_string());
+    }
     parts.join(" · ")
 }
 
@@ -367,11 +374,15 @@ pub(super) fn derive(
             )
             .into()
         });
-        card.labels = detail
-            .labels
-            .iter()
-            .map(|l| l.name.clone().into())
-            .collect();
+        card.labels = (!detail.labels.is_empty()).then(|| {
+            detail
+                .labels
+                .iter()
+                .map(|label| label.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+                .into()
+        });
         if let Some(address) = detail
             .merge_commit
             .as_deref()
@@ -402,6 +413,9 @@ pub(super) fn derive(
         .or(summary.and_then(|pull| pull.stale.as_ref()));
     if let Some(stale) = stale {
         card.notes.push(stale.read_words().into());
+        card.old = Some(stale.read_words().into());
+    } else if detail.is_some() && error.is_some() {
+        card.old = Some("couldn't read again".into());
     }
     // What can't be had says why, whatever else is held.
     card.lack = match (detail, reading) {
@@ -433,10 +447,12 @@ pub(super) fn derive(
             connect: false,
         }),
     };
-    card.tone = match (&card.lack, card.state) {
-        (Some(lack), _) => lack.tone,
-        (None, Some((_, tone))) => tone,
-        (None, None) => Tone::Unknown,
+    card.tone = match (&card.lack, card.state, &card.old) {
+        (Some(lack), ..) => lack.tone,
+        // Old or unread-again data is never drawn as current and fine.
+        (None, Some(_), Some(_)) => Tone::Warn,
+        (None, Some((_, tone)), None) => tone,
+        (None, None, _) => Tone::Unknown,
     };
     card.compact = match (reading, detail, &card.lack) {
         (Reading::Loading, None, _) => "reading GitHub…".to_owned(),
@@ -497,7 +513,8 @@ mod tests {
         assert_eq!(&*checks.words, "3 of 3 passed");
         assert_eq!(checks.list.len(), 3);
         assert_eq!(card.changed.as_deref(), Some("+84 −12 · 5 files"));
-        assert_eq!(card.labels, ["reliability"]);
+        assert_eq!(card.labels.as_deref(), Some("reliability"));
+        assert!(card.old.is_none() && card.tone == Tone::Good);
         assert!(
             card.merged
                 .as_deref()
@@ -673,5 +690,40 @@ mod tests {
         detail.checks.state = ChecksState::None;
         detail.checks.runs.clear();
         assert_eq!(words(&detail).0, "No checks");
+    }
+
+    #[test]
+    fn a_kept_answer_is_never_green_and_current() {
+        use freshkube_delivery::github::{Stale, example_detail};
+        let (summary, mut detail) = held(418);
+        detail.stale = Some(Stale {
+            read_at: chrono::DateTime::from_timestamp(1_760_000_000, 0).unwrap(),
+            why: "GitHub's rate limit is reached".into(),
+        });
+        let card = derive(&known(), Some(&summary), Some(&detail), None, Reading::Held);
+        assert_eq!(card.tone, Tone::Warn);
+        assert!(
+            card.compact.ends_with(" · stale, read at 08:53 UTC"),
+            "{}",
+            card.compact
+        );
+        // Why is the banner's, not the card's.
+        assert!(!card.compact.contains("rate limit"));
+        // An error beside held data reads the same way.
+        let (summary, detail) = held(418);
+        let _ = example_detail;
+        let card = derive(
+            &known(),
+            Some(&summary),
+            Some(&detail),
+            Some("GitHub didn't answer"),
+            Reading::Held,
+        );
+        assert_eq!(card.tone, Tone::Warn);
+        assert!(
+            card.compact.ends_with(" · couldn't read again"),
+            "{}",
+            card.compact
+        );
     }
 }

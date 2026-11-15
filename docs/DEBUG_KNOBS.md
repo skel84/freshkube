@@ -69,9 +69,9 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `causes`: `checkout`'s change page gives all four causes of an Unknown at once (Waiting on prod-ams's gates, Can't read on its pods, Not found on the policy, Not set up on the stage Application).
 - `destination`: the destination `dev-fra` unreachable.
 - `failed`: no cluster answering.
-- `github-limited`: GitHub's pull requests not readable because the rate limit is reached; the pull requests read before are kept, marked stale, and Waiting to ship also shows its two newest as `not read (rate limit)`; on the change page the pull request line (`Pull request #418 · Merged · …`) reads as kept and stale.
-- `github-offline`: GitHub's pull requests not readable because it gives no answer; the pull requests read before are kept, marked stale, and the change page's pull request line reads as kept and stale.
-- `github-refused`: GitHub's pull requests not readable because the token is refused, so none is shown and the change page's pull request line reads as refused.
+- `github-limited`: GitHub's pull requests not readable because the rate limit is reached; the pull requests read before are kept, marked stale, and Waiting to ship also shows its two newest as `not read (rate limit)`; on the change page the pull request card reads as kept and stale (a warning tone and `stale, read at …` in its compact line).
+- `github-offline`: GitHub's pull requests not readable because it gives no answer; the pull requests read before are kept, marked stale, and the change page's pull request card reads as kept and stale.
+- `github-refused`: GitHub's pull requests not readable because the token is refused, so none is shown and the change page's pull request card says `Not read`, with the token refusal in the banner of what may be missing.
 - `image-only`: `checkout`'s Freight names an image and no commit, so its build is joined by the image digest.
 - `not-found`: Argo CD's namespace not found.
 - `outcome-<name>`: every Deployment hop of the change page shows one outcome of what Coroot found after its deploy (`found`, `ends-early`, `no-revision`, `no-application`, `no-project`, `no-connection`, `not-linked`, `no-project-for-entry`, `refused`, `refused-window`, `no-data`, `failed`, `not-deployment`, `not-looked`, `stale`; `applications/change/outcome/example.rs`), where the other shapes show what Coroot's example keeps for the hop's hash.
