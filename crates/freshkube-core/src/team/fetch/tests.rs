@@ -468,17 +468,20 @@ async fn the_setup_file_is_named_in_its_own_refusals() {
     );
 }
 
-#[cfg(target_os = "linux")]
+/// Whether the process is running: `ps` prints its state, and nothing or `Z`
+/// (a zombie) means it is gone. Works on Linux and macOS.
+#[cfg(unix)]
 fn alive(pid: u32) -> bool {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
-    let state = stat
-        .rsplit(')')
-        .next()
-        .and_then(|r| r.trim().chars().next());
-    !matches!(state, None | Some('Z') | Some('X'))
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .expect("ps runs");
+    let state = String::from_utf8_lossy(&out.stdout);
+    let state = state.trim();
+    !(state.is_empty() || state.starts_with('Z'))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 #[tokio::test]
 async fn safety_g27_the_deadline_ends_the_helpers_git_started_too() {
     use std::os::unix::fs::PermissionsExt;
