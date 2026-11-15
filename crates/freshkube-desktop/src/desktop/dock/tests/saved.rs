@@ -74,6 +74,7 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
     let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
     let saved_tab = |pod: &ResourceIdentity, context: &str| SavedTab {
         entry: String::new(),
+        connection: String::new(),
         kind: "pods".into(),
         context: context.into(),
         namespace: pod.namespace.clone(),
@@ -148,6 +149,7 @@ fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
         selected: Some(1),
         tabs: vec![SavedTab {
             entry: String::new(),
+            connection: String::new(),
             kind: "pods".into(),
             context: "lab".into(),
             namespace: "payments".into(),
@@ -180,6 +182,7 @@ fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
         cx.update(|cx| view.read(cx).container().unwrap().to_owned())
     };
     let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let connection = cx.update(|cx| dock.read(cx).source.as_ref().unwrap().id.clone());
     let saved = SavedDock {
         seen: Default::default(),
         open: true,
@@ -187,6 +190,8 @@ fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
         selected: Some(0),
         tabs: vec![SavedTab {
             entry: String::new(),
+            // A window on no listed entry saves its connection with the tab.
+            connection,
             kind: "pods".into(),
             context,
             namespace: pods[0].namespace.clone(),
@@ -249,6 +254,7 @@ fn a_tab_saved_before_all_containers_loads_on_its_container() {
 
     let all = SavedTab {
         entry: String::new(),
+        connection: String::new(),
         all_containers: true,
         previous: false,
         ..tab.clone()
@@ -277,6 +283,7 @@ fn a_tab_saved_on_all_containers_comes_back_on_all_of_them(cx: &mut TestAppConte
         selected: Some(0),
         tabs: vec![SavedTab {
             entry: String::new(),
+            connection: String::new(),
             kind: "pods".into(),
             context,
             namespace: gateway.namespace.clone(),
@@ -331,6 +338,7 @@ fn navigation_json_is_what_the_setters_write(cx: &mut TestAppContext) {
         selected: None,
         tabs: vec![SavedTab {
             entry: String::new(),
+            connection: String::new(),
             kind: "pods".into(),
             context: "lab".into(),
             namespace: "payments".into(),
@@ -385,6 +393,7 @@ fn open_with(
 fn log_tab(pod: &ResourceIdentity, context: &str) -> SavedTab {
     SavedTab {
         entry: String::new(),
+        connection: String::new(),
         kind: "pods".into(),
         context: context.into(),
         namespace: pod.namespace.clone(),
@@ -498,7 +507,12 @@ fn a_file_saved_by_an_older_build_still_reads() {
     let saved: SavedDock = serde_json::from_str(json).unwrap();
     assert_eq!(saved.selected, Some(1));
     assert_eq!(saved.tabs.len(), 2);
-    assert!(saved.tabs.iter().all(|tab| tab.entry.is_empty()));
+    assert!(
+        saved
+            .tabs
+            .iter()
+            .all(|tab| tab.entry.is_empty() && tab.connection.is_empty())
+    );
     assert!(saved.seen.is_empty());
     assert_eq!(serde_json::to_string(&saved).unwrap(), json);
     // A file written now, with an entry and the days, reads back as it was.
@@ -517,6 +531,7 @@ fn a_file_saved_by_an_older_build_still_reads() {
 fn tab_in(pod: &str, context: &str, entry: &str) -> SavedTab {
     SavedTab {
         entry: entry.into(),
+        connection: String::new(),
         kind: "pods".into(),
         context: context.into(),
         namespace: "web".into(),
@@ -823,4 +838,83 @@ fn the_days_bound_parked_tabs_on_load_and_on_save(cx: &mut TestAppContext) {
     let names: Vec<_> = later.tabs.iter().map(|tab| tab.name.as_str()).collect();
     assert_eq!(names, ["shown-0"]);
     super::super::saved::TODAY.with(|day| day.set(None));
+}
+
+/// A window on no listed entry saves the connection its tabs were opened on,
+/// and a tab reopens only on the same one: two kubeconfigs can share a context
+/// name (`default`, `kind-kind`).
+#[gpui_kit::test]
+fn a_tab_saved_under_one_kubeconfig_does_not_reopen_under_another(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
+    let (connection, entry) = cx.update(|cx| {
+        let dock = dock.read(cx);
+        (
+            dock.source.as_ref().map(|source| source.id.clone()),
+            dock.shown_entry.clone(),
+        )
+    });
+    let connection = connection.expect("a source");
+    assert_eq!(entry, None, "the example window is on no listed entry");
+    let on = |pod: &str, connection: &str| {
+        let mut tab = tab_in(pod, &context, "");
+        tab.connection = connection.into();
+        tab
+    };
+    let saved = SavedDock {
+        open: true,
+        maximized: false,
+        selected: Some(0),
+        tabs: vec![
+            on("here-0", &connection),
+            on("elsewhere-0", "another-kubeconfig.yaml"),
+            on("older-0", ""),
+        ],
+        seen: Default::default(),
+    };
+    open_with(&saved, handle, &pilot, &dock, cx);
+    let names = cx.update(|cx| {
+        dock.read(cx)
+            .tabs
+            .iter()
+            .map(|tab| tab.target.identity.name.clone())
+            .collect::<Vec<_>>()
+    });
+    // This connection's tab and the older one without a connection (a name
+    // match) open; the other kubeconfig's stays parked, as saved.
+    assert_eq!(names, ["here-0", "older-0"]);
+    let again = cx.update(|cx| dock.read(cx).saved(cx));
+    let elsewhere = again
+        .tabs
+        .iter()
+        .find(|tab| tab.name == "elsewhere-0")
+        .unwrap();
+    assert_eq!(elsewhere.connection, "another-kubeconfig.yaml");
+    // The tabs that opened now carry this connection, so they stay with it.
+    let here = again.tabs.iter().find(|tab| tab.name == "here-0").unwrap();
+    assert_eq!(here.connection, connection);
+    let older = again.tabs.iter().find(|tab| tab.name == "older-0").unwrap();
+    assert_eq!(older.connection, connection);
+}
+
+/// The caps are per cluster, not per name: eight tabs of one entry don't drop
+/// a parked tab of another entry (or connection) under the same context name.
+#[test]
+fn the_caps_count_a_cluster_not_a_context_name() {
+    let seen = Default::default();
+    let mut tabs: Vec<SavedTab> = (0..MAX_LOG_TABS)
+        .map(|ix| tab_in(&format!("a-{ix}"), "default", "entry-a"))
+        .collect();
+    tabs.push(tab_in("b-0", "default", "entry-b"));
+    let mut elsewhere = tab_in("c-0", "default", "");
+    elsewhere.connection = "other.yaml".into();
+    tabs.push(elsewhere);
+    let (kept, _) = bounded(tabs, 0, None, &seen, 0);
+    let names: Vec<_> = kept.iter().map(|tab| tab.name.as_str()).collect();
+    assert!(
+        names.contains(&"b-0") && names.contains(&"c-0"),
+        "{names:?}"
+    );
+    assert_eq!(kept.len(), MAX_LOG_TABS + 2);
 }

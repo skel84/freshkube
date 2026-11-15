@@ -51,6 +51,12 @@ pub(crate) struct SavedTab {
     /// without one matches by the context's name alone.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(super) entry: String,
+    /// The connection the tab was opened on, for a window that is on no listed
+    /// entry (a `--kubeconfig` of its own): two kubeconfigs can share a
+    /// context name, so such a tab reopens only on the same connection. Empty
+    /// when `entry` says where the tab belongs.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(super) connection: String,
     #[serde(default)]
     pub(super) namespace: String,
     pub(super) name: String,
@@ -111,7 +117,9 @@ pub(super) fn bounded(
     seen: &BTreeMap<String, u32>,
     today: u32,
 ) -> (Vec<SavedTab>, Option<usize>) {
-    let mut per: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    // The caps are per cluster: a context's name, and the entry or connection
+    // it was opened on, since one name can be two clusters.
+    let mut per: BTreeMap<(&str, &str, &str), (usize, usize)> = BTreeMap::new();
     let mut keep = Vec::new();
     let mut kept_selected = None;
     let expired = |context: &str| {
@@ -121,7 +129,13 @@ pub(super) fn bounded(
     let mut kept = 0;
     let mut out = Vec::with_capacity(tabs.len());
     for (ix, tab) in tabs.iter().enumerate() {
-        let counts = per.entry(tab.context.as_str()).or_default();
+        let counts = per
+            .entry((
+                tab.context.as_str(),
+                tab.entry.as_str(),
+                tab.connection.as_str(),
+            ))
+            .or_default();
         let (count, cap) = match tab.shell {
             true => (&mut counts.1, MAX_SHELL_TABS),
             false => (&mut counts.0, MAX_LOG_TABS),
@@ -224,6 +238,10 @@ impl Dock {
                     kind: tab.target.kind.key(),
                     context: tab.origin.source.context.clone(),
                     entry: tab.origin.entry.clone().unwrap_or_default(),
+                    connection: match tab.origin.entry {
+                        Some(_) => String::new(),
+                        None => tab.origin.source.id.clone(),
+                    },
                     namespace: tab.target.identity.namespace.clone(),
                     name: tab.target.identity.name.clone(),
                     container,
@@ -293,9 +311,13 @@ impl Dock {
         };
         let source = origin.source.clone();
         self.seen.insert(source.context.clone(), today());
+        // The same context name, and the same cluster behind it: the entry the
+        // tab was opened on, or for a window on no entry its connection. A tab
+        // saved with neither (an older file) matches by the name alone.
         let mine = |saved: &SavedTab| {
             saved.context == source.context
                 && (saved.entry.is_empty() || Some(saved.entry.as_str()) == origin.entry.as_deref())
+                && (saved.connection.is_empty() || saved.connection == source.id)
         };
         if !self.parked.iter().any(mine) {
             return;
