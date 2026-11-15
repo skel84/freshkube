@@ -176,32 +176,3 @@ impl Pilot {
         self.tell("Opened from a notification".into(), window, cx);
     }
 }
-
-#[cfg(test)]
-mod view_tests {
-    use super::*;
-
-    #[test]
-    fn a_crash_loop_opens_its_pod_on_events() {
-        let view = view_for(&Subject::CrashLoop {
-            namespace: "shop".into(),
-            pod: "api-1".into(),
-        })
-        .expect("a view");
-        assert_eq!(view.page, LinkPage::Resources);
-        assert_eq!(view.tab, ViewTab::Events);
-        assert_eq!(view.object.expect("object").name.as_str(), "api-1");
-    }
-
-    #[test]
-    fn a_landing_and_an_incident_open_their_pages() {
-        let landing = Subject::Landing {
-            project: "p".into(),
-            stage: "s".into(),
-            freight: "f".into(),
-        };
-        assert_eq!(view_for(&landing).unwrap().page, LinkPage::Applications);
-        let incident = Subject::Incident { application: None };
-        assert_eq!(view_for(&incident).unwrap().page, LinkPage::Observability);
-    }
-}

@@ -629,3 +629,31 @@ fn a_banner_click_about_another_cluster_names_it_and_changes_nothing(cx: &mut Te
     assert_eq!(cx.read(|cx| f.pilot.read(cx).navigation.page), page);
     assert_eq!(notices(cx, f.handle), before + 1);
 }
+
+#[test]
+fn a_crash_loop_opens_its_pod_on_events() {
+    use freshkube_nav::{LinkPage, ViewTab};
+    let view = super::followed::view_for(&freshkube_followed::Subject::CrashLoop {
+        namespace: "shop".into(),
+        pod: "api-1".into(),
+    })
+    .expect("a view");
+    assert_eq!(view.page, LinkPage::Resources);
+    assert_eq!(view.tab, ViewTab::Events);
+    assert_eq!(view.object.expect("object").name.as_str(), "api-1");
+}
+
+#[test]
+fn a_landing_and_an_incident_open_their_pages() {
+    use freshkube_followed::Subject;
+    use freshkube_nav::LinkPage;
+    let landing = Subject::Landing {
+        project: "p".into(),
+        stage: "s".into(),
+        freight: "f".into(),
+    };
+    let view = super::followed::view_for;
+    assert_eq!(view(&landing).unwrap().page, LinkPage::Applications);
+    let incident = Subject::Incident { application: None };
+    assert_eq!(view(&incident).unwrap().page, LinkPage::Observability);
+}
