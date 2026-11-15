@@ -853,12 +853,33 @@ fn safety_g28_apply_fix_refuses_when_the_file_cannot_say(cx: &mut TestAppContext
     );
 }
 
+/// A looser file changes nothing: the fix is applied as confirmed. In the same
+/// setup a file that can't be read refuses first, which proves the file is
+/// read at all.
 #[gpui_kit::test]
 fn a_looser_file_changes_nothing_for_apply_fix_until_reviewed_again(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", "talos-wk-fra1-02");
     let setup = crate::mutation::TestSetup::new(freshkube_core::write::Protection::Guarded, cx);
+    // The guard is live: a file that can't be read sends nothing.
     open_fix(cx, handle, &screen, KUBELET);
+    setup.garble();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-ok", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.as_ref().expect("a notice");
+        assert!(!notice.ok, "{}", notice.text);
+        assert!(
+            notice.text.contains("can't be read from freshkube.yaml"),
+            "{}",
+            notice.text
+        );
+    });
+    // The file back, looser: the same setup applies the fix.
     setup.level(freshkube_core::write::Protection::Open);
+    open_fix(cx, handle, &screen, KUBELET);
     cx.update_window(handle.into(), |_, window, cx| {
         window.click("confirm-ok", cx)
     })

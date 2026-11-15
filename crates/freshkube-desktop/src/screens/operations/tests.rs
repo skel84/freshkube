@@ -1687,3 +1687,22 @@ fn a_cluster_that_became_read_only_while_the_file_was_read_starts_nothing(cx: &m
         assert!(said.contains("read-only"), "{said}");
     });
 }
+
+/// With no entry active, the file is read for the context the window shows,
+/// not the Talos cluster's name the plan carries: the file makes the shown
+/// context read-only, and the plan's own name ("prod-fra") is not in it.
+#[gpui_kit::test]
+fn a_window_with_no_entry_is_read_by_the_context_it_shows(cx: &mut TestAppContext) {
+    use freshkube_core::write::Protection;
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let _setup = crate::mutation::TestSetup::by_context("display-ctx", Protection::ReadOnly, cx);
+    review(cx, handle);
+    confirm(cx, handle);
+    cx.run_until_parked();
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| {
+        assert!(screen.read(cx).run.is_none());
+        let said = screen.read(cx).notice.clone().unwrap_or_default();
+        assert!(said.contains("now read-only; review again"), "{said}");
+    });
+}
