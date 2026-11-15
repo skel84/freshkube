@@ -78,6 +78,8 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `partial`: Kargo refused in `cicd-fra`.
 - `promoting`: a Promotion of `wonky-otter` to `prod-ams` is running, made by someone else, so that Stage's Promote is Abort promotion (the Stage actions' dialogs open in every shape, with a runner that sends nothing).
 - `refused`: every source refused.
+- `rollback-none`: no Stage has an earlier Freight in its history, so Roll back… is greyed out and says so.
+- `rollback-unknown`: no earlier Freight of any Stage has a successful verification recorded, so the Roll back… lines offer a pick and never the main action, and the dialog says it isn't verified.
 - `single`: `core-fra` alone.
 - `spread`: Argo CD found in five namespaces with two past the cap.
 - `stages`: `checkout`'s Stages not answering.
