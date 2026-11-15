@@ -2,7 +2,29 @@
 
 Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilot's.
 
-## Unreleased
+## 0.23.0 (2026-11-15)
+
+### Other changes
+
+- **Banners and Edit YAML:** a capped block of banners is never shorter than two lines, so none is cut at 760x560 with the largest text, and Edit YAML's "Nothing was changed." note clears on the next edit.
+- The CNI check no longer fails when Talos file reads error with "not found" text while the node is unreachable; only a real not-found counts as a missing file, so the check says unknown.
+- **Clearer connection failures:** a Talos connection that can't be made now names the endpoints it tried (host and port only), the Overview's "Couldn't connect" shows the whole reason as a tooltip, its cards say "Couldn't read …" instead of staying on loading placeholders, and the Agent transcript shows a scrollbar while it scrolls.
+- On the Topology graph, selecting a box lists only that box's calls and scrolls its detail into view, and the calls list has a scrollbar; a stacked Inspector keeps three whole table rows at a small window and a row clicked low in the table stays in view when it opens; and the database explorer's strip puts its actions on their own line when narrow.
+- **A refused action says why wherever it is shown:** the row menu and the "…" overflow menu (and the change page's folded Copy Kargo link) now show the reason under a disabled action, the same words as the toolbar tooltip, and the item stays unclickable. A refused toolbar button shows its reason when hovered even though the button is disabled. On the change page, a button's tooltip no longer draws over its neighbour's.
+- **An open row menu or "…" menu shows an access answer that lands while it is open:** a refused action now gets its reason line under it without closing and reopening the menu. A review still pending greys nothing, and a menu opened for a row that is no longer selected is left alone.
+- Fixed the Agent dock's question box and Ask button being cut off by the status bar when the dock is fitted to the window under the "Following agent" bar or the view tabs; the dock now keeps to the page cell as laid out, in every tab.
+- **Query result tabs:** at a small window and a large text size the selected result's tab is always in view, no tab is cut at either edge, a label wider than the strip ends in an ellipsis, and the wheel, trackpad and the ‹ › buttons move by whole tabs.
+- **ExternalSecret Refresh:** Resources can ask External Secrets Operator to sync the selected ExternalSecret now, from the toolbar, the row menu or Shift-R. It sets the operator's `force-sync` annotation after a confirmation at every writable level, is blocked on a read-only cluster, and reports whether `status.refreshTime` moved within 30 seconds.
+- **Access before an action is offered:** an action the cluster would refuse (Scale, Restart, Roll back, Suspend or resume, Run now, Delete, Edit YAML, Renew, the Stage actions and the node operations) now shows disabled with why, such as "Needs patch on deployments in shop", instead of failing when you press it. Only the selection's actions are checked, a check that doesn't answer leaves the action on, and the check before each write is unchanged ([access](docs/features/access.md#before-an-action-is-offered-slice-2)).
+- **Database explorer through Teleport (off until the team setup supplies its settings):** a database can be explored through `tsh proxy db`, with the same read-only session. Each state says what to do and shows the command to run yourself: `tsh` not installed, not signed in, no role allows it, no database under the name pattern, or the proxy failed. The proxy listens on this computer only and ends with the tab. Freshkube never signs in for you and never reads `tsh`'s certificates.
+- **Certificates:** the Networking column's Traffic section gains Certificates. It lists each TLS Secret a Gateway listener or Ingress serves, with its names, its expiry (under 14 days reads Expiring) and any host served under it that the certificate doesn't name. Where cert-manager keeps the Secret, the facts come from its Certificate and no Secret is read; any other Secret is read only when you press Read Secret, and only the certificate's names, issuer and dates are kept, never the key. A Certificate that isn't issued shows its chain (Certificate, CertificateRequest, Order, Challenge) and where it stopped, and a route's trace links to the certificate its listener serves. Read-only.
+- **Page states:** Overview explains when the data shown was last read and that the latest read failed; Operations and Lifecycle name the missing Talos or Kubernetes node list in plain words.
+- **Expired logins:** when a cluster login lapses mid-session (an exec plugin such as `kubelogin` that can no longer give a token), the status now reads "Unauthorized" with a plain message to sign in again, instead of "Unreachable" followed by the plugin's command line and error output.
+- **Login programs from the Dock:** a kubeconfig's `exec` login program (`tsh`, `kubelogin`, `aws`, `az`) is also looked for in `~/.local/bin` and in your login shell's `PATH`, and a missing one names every place it was looked for and how to fix it.
+- The database explorer's Teleport route now finds `tsh` where a kubeconfig's login programs are found (Homebrew's and `/usr/local/bin`, `~/.local/bin`, the login shell's `PATH`), so an app started from the Dock finds it; a missing `tsh` names the places looked in.
+- **After sleep, streams pick up where they were:** Resources lists, pod logs, followed items and the pod and event watches that were open when the machine slept now start again on waking, from their last version or last log line, instead of waiting out a dead connection; no row or log line is repeated.
+- **Waking from sleep:** after the machine sleeps, the status bar now says "Reconnecting…" and the cluster reads start again instead of sitting on old data until the next refresh, and Talos read-only calls get a 30-second deadline.
+- **Tests:** a port forward test no longer fails when the port is released a moment after the forward ends.
 
 ## 0.22.0 (2026-11-10)
 
