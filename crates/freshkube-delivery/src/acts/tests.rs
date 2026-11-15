@@ -1035,7 +1035,7 @@ async fn a_rollback_creates_a_promotion_of_the_earlier_freight_through_the_write
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g25_read_only_blocks_a_rollback_with_no_request() {
+async fn safety_g26_read_only_blocks_a_rollback_with_no_request() {
     for at in [NOT_VERIFIED, VERIFIED] {
         for level in [Protection::ReadOnly, Protection::Open] {
             let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
@@ -1057,7 +1057,7 @@ async fn safety_g25_read_only_blocks_a_rollback_with_no_request() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g25_a_protected_destination_needs_the_exact_stage_name_to_roll_back() {
+async fn safety_g26_a_protected_destination_needs_the_exact_stage_name_to_roll_back() {
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
     let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let verdict = runner
@@ -1114,7 +1114,7 @@ async fn safety_g25_a_protected_destination_needs_the_exact_stage_name_to_roll_b
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g25_a_stage_whose_history_moved_since_the_page_sends_no_rollback() {
+async fn safety_g26_a_stage_whose_history_moved_since_the_page_sends_no_rollback() {
     let stage = format!("{NS}/stages/prod-ams");
     // Newer Freight was promoted: every entry shifts down one.
     let moved = [
@@ -1150,7 +1150,7 @@ async fn safety_g25_a_stage_whose_history_moved_since_the_page_sends_no_rollback
 }
 
 #[tokio::test(start_paused = true)]
-async fn safety_g25_a_history_that_moves_while_the_dialog_is_open_sends_nothing() {
+async fn safety_g26_a_history_that_moves_while_the_dialog_is_open_sends_nothing() {
     let (cluster, dir) = (kargo(), tempfile::tempdir().unwrap());
     let runner = kargo_runner(&cluster, dir.path(), Protection::Guarded);
     let verdict = runner
@@ -1178,7 +1178,7 @@ async fn safety_g25_a_history_that_moves_while_the_dialog_is_open_sends_nothing(
 }
 
 #[test]
-fn safety_g25_a_rollback_is_offered_only_for_an_earlier_freight_of_the_stage_and_not_while_one_runs()
+fn safety_g26_a_rollback_is_offered_only_for_an_earlier_freight_of_the_stage_and_not_while_one_runs()
  {
     let change = change();
     let acts = acts();

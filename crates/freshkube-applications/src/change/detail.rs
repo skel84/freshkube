@@ -461,13 +461,20 @@ impl ChangePage {
         let after = detail.after.as_ref().map(|section| section.render(cx));
         let inspector = Inspector::new("change-detail")
             .track_scroll(&self.detail_scroll)
-            .heading(heading(detail, cx))
+            .heading(heading(detail, self.pull_is_old(), cx))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
                     .id("change-detail-notice")
                     .aria_label(body.clone())
                     .test_support()
             }));
+        // The pull request's own card leads its hop, before the Why.
+        let pull = self
+            .pull
+            .card()
+            .filter(|_| self.pull_selected())
+            .map(|card| self.render_pull_card(card, cx));
+        let inspector = inspector.children(pull);
         let fix = detail.fix.as_ref().map(|fix| self.render_fix(fix, cx));
         let inspector = inspector.children(fix);
         let inspector = inspector.children(
@@ -1080,7 +1087,7 @@ fn render_stage(inspector: Inspector, body: &Body, cx: &App) -> Inspector {
 }
 
 /// The kind as a caption over the name in monospace and its state.
-fn heading(detail: &Detail, cx: &App) -> impl IntoElement {
+fn heading(detail: &Detail, old: bool, cx: &App) -> impl IntoElement {
     let Detail {
         kind,
         title,
@@ -1108,12 +1115,17 @@ fn heading(detail: &Detail, cx: &App) -> impl IntoElement {
                         .truncate()
                         .child(title.clone()),
                 )
-                .child(ui::tag(*tone, None, state.clone(), cx)),
+                .child(ui::tag(
+                    if old { Tone::Warn } else { *tone },
+                    None,
+                    state.clone(),
+                    cx,
+                )),
         )
 }
 
 /// A labelled value.
-fn field(label: &str, value: Div, cx: &App) -> Div {
+pub(super) fn field(label: &str, value: Div, cx: &App) -> Div {
     h_flex()
         .gap_3()
         .items_start()
@@ -1137,7 +1149,7 @@ fn render_field(line: &FieldLine, cx: &App) -> Div {
 }
 
 /// A section of the body under its caption.
-fn section(title: &str, cx: &App) -> Div {
+pub(super) fn section(title: &str, cx: &App) -> Div {
     v_flex()
         .gap(dp(7.))
         .text_size(dp(12.))

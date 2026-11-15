@@ -162,7 +162,7 @@ mod tests {
     const DAY2: &str = "2026-10-02T10:00:00Z";
 
     #[test]
-    fn safety_g25_the_newest_entry_is_what_runs_and_is_never_a_candidate() {
+    fn safety_g26_the_newest_entry_is_what_runs_and_is_never_a_candidate() {
         let stage = stage(vec![entry(&["now"], Some(("Successful", DAY2)))]);
         assert!(earlier(&stage).is_empty());
         assert!(earlier(&stage::empty()).is_empty());
@@ -217,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn safety_g25_freight_the_stage_runs_again_further_back_is_not_a_candidate_and_one_is_listed_once()
+    fn safety_g26_freight_the_stage_runs_again_further_back_is_not_a_candidate_and_one_is_listed_once()
      {
         let stage = stage(vec![
             entry(&["now"], None),

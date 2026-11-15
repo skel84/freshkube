@@ -285,6 +285,7 @@ impl TableSource for StepperStory {
                 onward_tone: next.map_or(Tone::Outline, |(tone, _)| tone),
                 tooltip: format!("{name} · {}: {word}", STEPS[at]).into(),
                 selected: self.picked.as_ref() == Some(&id),
+                ring: self.picked.as_ref() == Some(&id),
             },
             cx,
         )

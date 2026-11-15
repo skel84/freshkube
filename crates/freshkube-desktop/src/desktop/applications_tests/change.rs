@@ -2236,13 +2236,13 @@ fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut Test
             }
             window.render_frame(cx);
             assert!(freshkube_ui::page::is_short(window));
-            for id in ["change-missing", "change-pull"] {
-                let banner = window.find(id);
-                assert!(
-                    banner.label().is_some_and(|words| !words.is_empty()),
-                    "{id}"
-                );
-            }
+            assert!(
+                window
+                    .find("change-missing")
+                    .label()
+                    .is_some_and(|words| !words.is_empty()),
+                "change-missing"
+            );
             let notes = window.find("change-notes").bounds();
             let table = window.find("change-table-scroll").bounds();
             if stale {
@@ -2265,7 +2265,7 @@ fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut Test
             assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
             // The notes keep their content's height: the last banner ends within
             // the block's padding, never past it.
-            let last = window.find("change-pull").bounds();
+            let last = window.find("change-missing").bounds();
             assert!(
                 notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
                 "{notes:?} taller than its banners, last {last:?}"
@@ -2355,12 +2355,12 @@ fn the_capped_block_shows_two_measured_lines_at_760_by_560_and_text_20(cx: &mut 
     .unwrap();
 }
 
-/// #981: at 760x560 with text 20 the pull request banner drops its secondary
-/// parts and wraps: it is never cut by the block, which shows no scroll thumb
-/// of its own, and its label still says everything.
+/// #823 slice 4: at 760x560 with text 20 the pull request's card, shown in
+/// the Inspector when its strip card is pressed, stays inside the Inspector
+/// and its label still says everything.
 #[gpui_kit::test]
-fn the_pull_request_banner_fits_whole_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = on_stage_of(cx, 760., 560., Variant::Acme);
+fn the_pull_request_card_fits_the_inspector_at_760_by_560_and_text_20(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::Acme);
     cx.update_window(handle, |_, window, cx| {
         crate::text_size::set(20., cx);
         window.press("f", cx);
@@ -2370,41 +2370,32 @@ fn the_pull_request_banner_fits_whole_at_760_by_560_and_text_20(cx: &mut TestApp
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        change(&view, cx)
+            .unwrap()
+            .update(cx, |page, cx| page.select("pr", window, cx));
         for _ in 0..10 {
             if window.simulate_next_frame(cx) == 0 {
                 break;
             }
         }
         window.render_frame(cx);
-        assert!(freshkube_ui::page::is_short(window));
-        let notes = window.find("change-notes").bounds();
-        let banner = window.find("change-pull");
-        let at = banner.bounds();
+        let inspector = window.find("change-detail").bounds();
+        let card = window.find("change-pull");
+        let at = card.bounds();
         assert!(
-            at.is_contained_within(&notes),
-            "the banner {at:?} is cut by {notes:?}"
+            at.left() >= inspector.left() && at.right() <= inspector.right(),
+            "the card {at:?} is cut by {inspector:?}"
         );
-        let words = banner.label().unwrap_or_default().to_owned();
-        assert!(words.starts_with("Pull request #"), "{words}");
-        assert!(
-            words.matches('·').count() >= 2,
-            "the label says it all: {words}"
-        );
-        // The block is the banner's own height plus its padding: nothing is
-        // left to scroll to.
-        assert!(
-            notes.bottom() - at.bottom() <= freshkube_ui::ui::dp_px(24., window),
-            "{notes:?} taller than its banner {at:?}"
-        );
+        let words = card.label().unwrap_or_default().to_owned();
+        assert!(words.starts_with('#') && words.contains(" · "), "{words}");
     })
     .unwrap();
 }
 
-/// #981: only a lone pull request banner is left uncapped. A lone banner of
-/// another kind, here a long refresh failure with no pull request to show,
-/// stays in the capped block, which scrolls instead of growing.
+/// #981: a lone long banner, here a refresh failure, stays in the capped
+/// block, which scrolls instead of growing.
 #[gpui_kit::test]
-fn a_lone_banner_that_is_not_the_pull_request_stays_capped(cx: &mut TestAppContext) {
+fn a_lone_long_banner_stays_capped(cx: &mut TestAppContext) {
     let why = "connection refused by core-fra.example.test:6443 ".repeat(8);
     let (_runtime, handle, view) = on_stage_of(cx, 760., 560., Variant::ImageOnly);
     cx.update_window(handle, |_, window, cx| {
@@ -2464,17 +2455,15 @@ fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
         assert!(!freshkube_ui::page::is_short(window));
         let notes = window.find("change-notes").bounds();
         let table = window.find("change-table-scroll").bounds();
-        for id in ["change-missing", "change-pull"] {
-            let banner = window.find(id).bounds();
-            assert!(
-                banner.top() >= notes.top() && banner.bottom() <= notes.bottom(),
-                "{id} {banner:?} cut by {notes:?}"
-            );
-        }
+        let banner = window.find("change-missing").bounds();
+        assert!(
+            banner.top() >= notes.top() && banner.bottom() <= notes.bottom(),
+            "change-missing {banner:?} cut by {notes:?}"
+        );
         assert!(notes.bottom() <= table.top(), "{notes:?} over {table:?}");
         // The notes keep their content's height: the last banner ends within
         // the block's padding, never past it.
-        let last = window.find("change-pull").bounds();
+        let last = window.find("change-missing").bounds();
         assert!(
             notes.bottom() - last.bottom() <= freshkube_ui::ui::dp_px(24., window),
             "{notes:?} taller than its banners, last {last:?}"
