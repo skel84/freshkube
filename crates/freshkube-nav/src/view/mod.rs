@@ -116,25 +116,42 @@ fn is_uuid(value: &str) -> bool {
 token!(
     /// A kubectl resource key (`pods`, `deployments.apps`). It is checked
     /// against the cluster's discovery when the link opens and grants nothing.
-    KindKey, "kind", 253,
-    |v| v.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+    KindKey,
+    "kind",
+    253,
+    |v| v
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
 );
 token!(
     /// A namespace: a DNS label.
-    Namespace, "ns", 63, is_dns_label
+    Namespace,
+    "ns",
+    63,
+    is_dns_label
 );
 token!(
     /// An object or node name: a DNS subdomain.
-    Name, "name", 253, is_dns_subdomain
+    Name,
+    "name",
+    253,
+    is_dns_subdomain
 );
 token!(
     /// A canonical lower-case UUID.
-    ObjectUid, "uid", 36, is_uuid
+    ObjectUid,
+    "uid",
+    36,
+    is_uuid
 );
 token!(
     /// A cluster fingerprint: 26 characters of lower-case base32.
-    FingerprintToken, "cluster", TOKEN_LEN,
-    |v| v.len() == TOKEN_LEN && v.bytes().all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+    FingerprintToken,
+    "cluster",
+    TOKEN_LEN,
+    |v| v.len() == TOKEN_LEN
+        && v.bytes()
+            .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
 );
 
 /// The pages a link may open: the plain places. Not Settings, Operations or
