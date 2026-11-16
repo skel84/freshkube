@@ -299,6 +299,12 @@ impl SourcesList {
         (self.builds_entry()?.id == entry).then_some(found)
     }
 
+    /// Check sources, as its button and key do.
+    #[cfg(test)]
+    pub(super) fn run_check(&mut self, cx: &mut Context<Self>) {
+        self.check(cx);
+    }
+
     /// Takes a new workspace from the page: resolves where each part is
     /// read, and forgets a check of the old one.
     pub(super) fn set_recovered_workspace(
@@ -384,12 +390,6 @@ impl SourcesList {
     /// Check sources: one small read per part and per workloads entry, at
     /// once. While one runs, another press does nothing: a credential
     /// plugin waiting for a sign-in shouldn't be started again.
-    /// Check sources, as its button and key do.
-    #[cfg(test)]
-    pub(super) fn run_check(&mut self, cx: &mut Context<Self>) {
-        self.check(cx);
-    }
-
     fn check(&mut self, cx: &mut Context<Self>) {
         if self.check == Check::Running {
             return;
@@ -503,14 +503,25 @@ impl SourcesList {
             .map(|chosen| (rows::workload_id(chosen), reach(chosen, Read::Workloads)))
             .collect();
         let history = match self.sources.get(Part::Builds) {
-            Chosen::Entry { entry, .. } => Some(entry::HistoryReach {
-                chains: self.example_answer(&entry.id, Read::SupplyChain),
-                results: entry
+            // An entry Builds couldn't reach carries that failure, as the real
+            // check does.
+            Chosen::Entry { entry, .. } => {
+                let forwards = entry
                     .results
                     .as_deref()
-                    .is_some_and(|results| results.forward.is_some())
-                    .then(|| self.example_answer(&entry.id, Read::Results)),
-            }),
+                    .is_some_and(|results| results.forward.is_some());
+                let builds = self.example_answer(&entry.id, Read::Part(Part::Builds));
+                Some(match builds {
+                    Reach::Readable => entry::HistoryReach {
+                        chains: self.example_answer(&entry.id, Read::SupplyChain),
+                        results: forwards.then(|| self.example_answer(&entry.id, Read::Results)),
+                    },
+                    failed => entry::HistoryReach {
+                        results: forwards.then(|| failed.clone()),
+                        chains: failed,
+                    },
+                })
+            }
             _ => None,
         };
         let argocd_reached = self.sources.get(Part::ArgoCd).entry().is_some()

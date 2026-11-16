@@ -471,6 +471,10 @@ async fn an_open_connection_that_failed_says_why() {
         "{checked:?}"
     );
     assert_eq!(checked.workloads, vec![(OPEN.to_owned(), failed.clone())]);
+    // Chains and Results are not "not checked": they carry the failure.
+    let history = checked.history.expect("the failure is carried");
+    assert_eq!(history.chains, failed);
+    assert_eq!(history.results, None);
     assert_eq!(
         failed.words("Kargo", OPEN),
         "Couldn't reach the open cluster: its credential plugin failed"

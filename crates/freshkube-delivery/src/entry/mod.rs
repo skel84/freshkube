@@ -695,7 +695,8 @@ pub struct Checked {
     /// open connection is [`OPEN`].
     pub workloads: Vec<(String, Reach)>,
     /// What the Builds entry says about Tekton Chains and Tekton Results;
-    /// `None` when that entry wasn't reached.
+    /// when that entry couldn't be reached, its failure; `None` when no entry
+    /// holds Builds.
     pub history: Option<HistoryReach>,
 }
 
@@ -828,7 +829,15 @@ pub async fn check_all<R: Reader>(
     let history = match target(builds) {
         Ok(Target::Open(reader)) => Some(check_history(reader, None).await),
         Ok(Target::Entry(reader)) => Some(check_history(reader, results).await),
-        Err(_) => None,
+        // An entry that couldn't be reached says why on both of its rows;
+        // no entry at all has nothing to look at.
+        Err(Reach::Missing(_)) => None,
+        Err(reach) => Some(HistoryReach {
+            results: results
+                .is_some_and(|results| results.forward.is_some())
+                .then(|| reach.clone()),
+            chains: reach,
+        }),
     };
     let mut checked = Checked {
         workloads,

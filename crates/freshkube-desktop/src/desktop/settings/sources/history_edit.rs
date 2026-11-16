@@ -154,11 +154,6 @@ impl SourcesList {
 
     /// Off: the entry reads no Tekton Results.
     pub(super) fn turn_results_off(&mut self, cx: &mut Context<Self>) {
-        if let Some(input) = &self.results_input {
-            self.results_loaded = None;
-            // The input follows the file once it has saved.
-            _ = input;
-        }
         self.results_error = None;
         let Some(id) = self.builds_entry().map(|entry| entry.id.clone()) else {
             return;
@@ -260,7 +255,9 @@ impl SourcesList {
     pub(super) fn render_results_edit(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         let editable = self.editable(cx);
         let dirty = self.results_dirty(cx);
-        let off = history::route(self.current_results().as_ref()).0 == "Off";
+        let off = self
+            .current_results()
+            .is_none_or(|results| results.address.is_none() && results.forward.is_none());
         let Some(input) = &self.results_input else {
             return div().into_any_element();
         };

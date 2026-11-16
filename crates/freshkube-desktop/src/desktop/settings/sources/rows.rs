@@ -435,6 +435,9 @@ Reads              freshkube.yaml, delivery.build_namespace"
                 "Builds come from the cluster’s own PipelineRuns. Tekton Results would add builds that finished long ago; the rest of Freshkube works without it.".to_owned(),
             ),
         };
+        // The open cluster is read but isn't an entry, so nothing can be saved
+        // for it: the field is offered only where an entry holds Builds.
+        let listed = listed && self.builds_entry().is_some();
         let explanation = match listed {
             true => match kind {
                 "Address" => format!("Results: for {named}, reached at {what}"),
@@ -443,7 +446,8 @@ Reads              freshkube.yaml, delivery.build_namespace"
                 }
                 _ => format!("Results: for {named}, not read"),
             },
-            false => "Results: there is no Builds entry to reach it for".to_owned(),
+            false => "Results: there is no Builds entry to reach it for; add one under Clusters"
+                .to_owned(),
         };
         let tooltip = format!("{explanation}\n{looked}\nReads Tekton Results’ finished builds");
         self.row(

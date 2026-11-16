@@ -217,6 +217,7 @@ Left for later slices: a saved membership and the context mapping in your own fi
 
 - [#759](https://github.com/skel84/freshkube/issues/759): Settings dialogs overflow a small window at large text.
 - Slice 12, with [#269](https://github.com/skel84/freshkube/issues/269): the setup file already types the per-entry `coroot`, but Settings shows no Observability group or Coroot link per entry yet. (The Delivery group of the Clusters Inspector, which would repeat Delivery sources' pins, is not built.)
+- Later, from slice 11 ([#268](https://github.com/skel84/freshkube/issues/268)): editing each entry's Results route from the Clusters Inspector's Build history group (today only the Builds entry's, in Delivery sources), and the Supply chain Inspector's evidence result (the result's name and the commit and digest pointers, `supply_chain.evidence`).
 
 The file's complete safe diagnostic also appears on the Changes list and change page. `SetupFile` keeps accepted row warnings beside its effective setup, with original indexes; fatal edits show only the existing refusal sentence. Its diagnostic publication and effective `setup_revision` are separate: warnings and fatal reasons can change without restarting reads. Explicit successful Reload still invalidates reads for unchanged configuration. The owner tests live in `setup_file/tests.rs`; desktop's `applications_tests/setup.rs` covers both change-opening routes and notification deduplication. [Row recovery](../SETUP_FILE.md#row-recovery-on-disk-reads) defines which faults skip an item and which refuse the file.
 

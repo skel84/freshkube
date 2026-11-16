@@ -177,6 +177,59 @@ fn with_no_builds_entry_both_rows_say_so(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn an_entry_that_could_not_be_reached_says_why_on_both_rows(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        set_workspace(&view, forwarding(), true, cx);
+        open(window, cx, &view);
+        list(&view, cx).update(cx, |list, _| {
+            list.set_example_answer(
+                "cluster-b",
+                BUILDS,
+                Reach::unreachable("no answer within 5 s"),
+            )
+        });
+        checked(&view, window, cx);
+        assert_eq!(state(&view, RESULTS, cx), "Couldn’t reach");
+        for read in [SUPPLY, RESULTS] {
+            let said = tooltip(&view, read, cx);
+            assert!(said.contains("no answer within 5 s"), "{said}");
+            assert!(!said.contains("Not checked"), "{said}");
+        }
+        let found = list(&view, cx).read(cx).history_for("cluster-b").cloned();
+        assert!(matches!(
+            found.map(|found| found.chains),
+            Some(Reach::Unreachable(_))
+        ));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_open_cluster_holds_no_entry_so_results_offers_no_field(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.settings_page.update(cx, |page, cx| {
+                page.set_workspace(&Loaded::Missing, false, cx)
+            })
+        });
+        open(window, cx, &view);
+        window.click("settings-source-results", cx);
+        settle_sources(window, cx);
+        // Nothing to type into, and nothing that could silently do nothing.
+        assert!(window.try_find("settings-source-results-input").is_none());
+        assert!(window.try_find("settings-source-results-save").is_none());
+        assert!(tooltip(&view, RESULTS, cx).contains("no Builds entry"));
+        // The key is workspace-wide, so its edit is still offered.
+        window.click("settings-source-supply-chain", cx);
+        settle_sources(window, cx);
+        assert!(window.try_find("settings-source-key-browse").is_some());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn the_inspectors_fit_beside_and_stacked(cx: &mut TestAppContext) {
     for (width, height) in [(1280., 880.), (760., 560.)] {
         for read in [SUPPLY, RESULTS] {

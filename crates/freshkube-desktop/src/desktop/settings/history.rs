@@ -40,7 +40,12 @@ fn words(what: &str, would: &str, entry: &str, reach: &Reach) -> String {
         Reach::Refused(_) => {
             format!("{entry} doesn’t allow this account to read {what}.")
         }
-        Reach::Unreachable(_) => format!("Couldn’t reach {entry} to look for {what}."),
+        Reach::Unreachable(failure) => {
+            format!(
+                "Couldn’t reach {entry} to look for {what}: {}.",
+                failure.message
+            )
+        }
         Reach::Missing(_) => format!("There is no entry to look for {what} on."),
     }
 }
@@ -117,9 +122,15 @@ pub(super) fn parse(text: &str, current: Option<&Results>) -> Result<Results, &'
     if namespace.is_empty() || service.is_empty() || text.contains(char::is_whitespace) {
         return Err(shape);
     }
-    results.forward = Some(freshkube_core::setup::Forward::new(
-        namespace, service, port,
-    ));
+    // A forward already there keeps the keys this build doesn't know.
+    let mut forward = results
+        .forward
+        .take()
+        .unwrap_or_else(|| freshkube_core::setup::Forward::new(namespace, service, port));
+    forward.namespace = namespace.to_owned();
+    forward.service = service.to_owned();
+    forward.port = port;
+    results.forward = Some(forward);
     results.address = None;
     Ok(results)
 }
