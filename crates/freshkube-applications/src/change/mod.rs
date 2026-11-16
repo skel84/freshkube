@@ -263,7 +263,9 @@ pub(super) fn cause_word(confidence: Confidence, cause: Option<&Cause>) -> &'sta
 /// hasn't happened yet is Waiting whatever its state says.
 pub(super) fn hop_tone(hop: &Hop) -> Tone {
     match &hop.cause {
-        Some(cause) if !cause.is_problem() => Tone::Waiting,
+        Some(cause) if cause.is_waiting() => Tone::Waiting,
+        // Not expected here: dim, and counted nowhere.
+        Some(cause) if cause.is_not_used_here() => Tone::Outline,
         _ => tone(hop.state),
     }
 }
@@ -668,8 +670,15 @@ impl ChangePage {
             .enumerate()
             .map(|(ix, group)| {
                 let of: Vec<&HopRow> = rows.iter().filter(|row| row.group == ix).collect();
+                // What the application isn't expected to have counts for
+                // nothing, so a Stage's group is the weakest of the rest.
                 let tone = of
                     .iter()
+                    .filter(|row| {
+                        !row.cause
+                            .as_ref()
+                            .is_some_and(|cause| cause.is_not_used_here())
+                    })
                     .map(|row| status(row.tone))
                     .max_by_key(|tone| rank(*tone))
                     .unwrap_or(Tone::Good);

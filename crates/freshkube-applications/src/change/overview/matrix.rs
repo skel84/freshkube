@@ -10,7 +10,7 @@ use freshkube_ui::table::{
 };
 use gpui_kit::component::{h_flex, v_flex};
 
-use super::cells::{Column, StageRow};
+use super::cells::{self, Column, StageRow};
 use super::*;
 use crate::ui::dp;
 
@@ -52,14 +52,15 @@ impl TableColumn for MatrixColumn {
     }
 }
 
-pub fn columns() -> Vec<MatrixColumn> {
+/// The matrix's columns: the Stage, then every step in `shown`.
+pub fn columns(shown: &[Column]) -> Vec<MatrixColumn> {
     std::iter::once(MatrixColumn {
         kind: None,
         label: "Stage".into(),
         width: STAGE_WIDTH,
     })
-    .chain(Column::ALL.map(|kind| MatrixColumn {
-        kind: Some(kind),
+    .chain(shown.iter().map(|kind| MatrixColumn {
+        kind: Some(*kind),
         label: kind.label().into(),
         width: STEP_WIDTH,
     }))
@@ -101,7 +102,7 @@ impl Matrix {
             page,
             freight: SharedString::default(),
             rows: Vec::new(),
-            columns: columns(),
+            columns: columns(&Column::ALL),
             table: TableState::new(MATRIX),
             selected: None,
             loading: None,
@@ -125,6 +126,7 @@ impl Matrix {
             || self.rows.iter().zip(rows).any(|(old, new)| **old != **new)
         {
             self.rows = rows.iter().map(|row| Rc::new((*row).clone())).collect();
+            self.columns = columns(&cells::visible(rows.iter().copied()));
         }
         if self.selected != selected {
             self.reveal = selected.as_ref().and_then(|(_, column)| *column);
@@ -301,9 +303,11 @@ impl Render for Matrix {
             }
         }
         if let Some(column) = self.reveal {
-            let at = Column::ALL
+            let at = self
+                .columns
                 .iter()
-                .position(|c| *c == column)
+                .skip(1)
+                .position(|c| c.kind == Some(column))
                 .unwrap_or_default();
             let left = STAGE_WIDTH + at as f32 * STEP_WIDTH;
             if self
@@ -394,7 +398,12 @@ impl TableSource for Matrix {
             .position(|c| *c == kind)
             .unwrap_or_default();
         let cell = &row.cells[at];
-        let next = row.cells.get(at + 1);
+        // The track runs on into the next column that is drawn.
+        let next = Column::ALL[at + 1..]
+            .iter()
+            .zip(&row.cells[at + 1..])
+            .find(|(column, _)| self.columns.iter().any(|c| c.kind == Some(**column)))
+            .map(|(_, cell)| cell);
         let hop = cell.hop.clone();
         let selected = self
             .selected
@@ -412,6 +421,7 @@ impl TableSource for Matrix {
                 tooltip: cell.tooltip.clone(),
                 selected,
                 ring: selected && self.ring,
+                muted: cell.not_used,
             },
             cx,
         )
