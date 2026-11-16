@@ -29,8 +29,11 @@ fn kargo() -> Cluster {
     Cluster::with(vec![
         (format!("{NS}/stages/prod-ams"), {
             let mut stage = object("Stage", "prod-ams");
+            // What the example Stage's history records (`example_acts`).
             stage["status"] = json!({"freightHistory": [
-                {"items": {"Warehouse/checkout-images": {"name": "brave-lynx"}}}
+                {"items": {"Warehouse/checkout-images": {"name": "brave-lynx"}}},
+                {"items": {"Warehouse/checkout-images": {"name": "swift-wren"}}},
+                {"items": {"Warehouse/checkout-images": {"name": "calm-heron"}}}
             ]});
             stage
         }),
@@ -407,4 +410,62 @@ fn safety_g28_a_stage_action_sends_nothing_when_the_file_got_stricter(cx: &mut T
     assert!(audited(&h).is_empty());
     // Asked again, under the level the file now holds.
     assert!(h.present(cx, "write-type-name"));
+}
+
+/// A rollback of prod-ams to its verified earlier Freight, `calm-heron`.
+fn rollback(destination: Protection) -> freshkube_core::write::ActionDescription {
+    let stage = example_acts("prod-ams");
+    acts::rollback(
+        &change(),
+        &Pick {
+            acts: &stage,
+            destination: Some(dest("prod-ams", destination)),
+        },
+        &stage.earlier[1],
+        "01k8d2qy4v9z3m6n7p8r5t0w1x",
+    )
+}
+
+#[gpui_kit::test]
+fn a_rollback_on_a_guarded_pair_shows_what_kargo_recorded_and_asks_for_no_typing(
+    cx: &mut TestAppContext,
+) {
+    let h = harness_on(cx, Protection::Guarded, kargo);
+    h.begin(cx, rollback(Protection::Guarded));
+    assert!(h.present(cx, "write-dialog") && h.present(cx, "write-confirm"));
+    assert!(!h.present(cx, "write-type-name"), "guarded: no typing");
+    assert!(
+        h.label(cx, "write-preview-0")
+            .contains("Would run: Freight calm-heron")
+    );
+    h.cluster.assert_nothing_written();
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.cluster.writes().len(), 1);
+    assert!(h.cluster.exists(&format!(
+        "{NS}/promotions/prod-ams.01k8d2qy4v9z3m6n7p8r5t0w1x.calm-he"
+    )));
+}
+
+#[gpui_kit::test]
+fn a_protected_rollback_asks_for_the_stage_name_and_send_waits_for_it(cx: &mut TestAppContext) {
+    let h = harness_on(cx, Protection::Guarded, kargo);
+    h.begin(cx, rollback(Protection::Protected));
+    assert_eq!(h.label(cx, "write-type-prompt"), "Type prod-ams to confirm");
+    for wrong in [None, Some("calm-heron"), Some("Prod-ams")] {
+        if let Some(wrong) = wrong {
+            h.type_name(cx, wrong);
+        }
+        h.click(cx, "write-confirm");
+        h.drive(cx, Duration::from_secs(1));
+        h.cluster.assert_nothing_written();
+        assert!(h.present(cx, "write-dialog"), "{wrong:?}");
+    }
+    // In a dialog of its own, the exact name unlocks the send.
+    let h = harness_on(cx, Protection::Guarded, kargo);
+    h.begin(cx, rollback(Protection::Protected));
+    h.type_name(cx, "prod-ams");
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    assert_eq!(h.cluster.writes().len(), 1);
 }

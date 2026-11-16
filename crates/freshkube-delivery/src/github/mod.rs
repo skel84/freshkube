@@ -128,6 +128,12 @@ pub trait GitHub {
         sha: &str,
     ) -> impl Future<Output = Result<Vec<PullRequest>, Failure>>;
     fn pull(&self, repo: &str, number: u64) -> impl Future<Output = Result<PullRequest, Failure>>;
+    /// Whether calls are scarce: no token, or the limit nearly spent. A
+    /// change then reads the pull request a squash-merge title names,
+    /// directly, before it searches GitHub for the commit.
+    fn is_sparing(&self) -> bool {
+        false
+    }
 }
 
 fn check_repo(repo: &str) -> Result<(), Failure> {

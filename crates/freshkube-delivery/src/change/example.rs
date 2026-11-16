@@ -389,6 +389,56 @@ pub fn example_acts(name: &str) -> crate::acts::StageActs {
             format!("Image {REGISTRY}/acme/checkout-api:1.14.2 @ {DIGEST}"),
             format!("Commit {COMMIT}: {TITLE}"),
         ],
+        earlier: example_earlier(name),
+    }
+}
+
+/// The earlier Freight of an example Stage's history, newest first. History
+/// entry 0 is what it runs now, so these start at 1. The first is verified in
+/// Kargo; the second has no verification recorded, so it can be picked but is
+/// never the main action. prod-ams runs an older Freight, so its are older
+/// still, the newer of them one whose verification failed.
+fn example_earlier(name: &str) -> Vec<crate::acts::rollback::Earlier> {
+    use crate::acts::rollback::{Earlier, Evidence};
+    let at = |index: usize| {
+        format!("/status/freightHistory/{index}/items/Warehouse~1checkout-images/name")
+    };
+    let line = |tag: &str, digest: &str| {
+        format!("Image {REGISTRY}/acme/checkout-api:{tag} @ sha256:{digest}…")
+    };
+    let verified = Evidence::Verified {
+        finished: Some("2026-10-14T09:12:00Z".into()),
+    };
+    if name == "prod-ams" {
+        vec![
+            Earlier {
+                freight: "swift-wren".into(),
+                pointer: at(1),
+                evidence: Evidence::Unknown("Kargo's verification of it ended Failed.".into()),
+                would_run: vec![line("1.13.9", "4b7d")],
+            },
+            Earlier {
+                freight: "calm-heron".into(),
+                pointer: at(2),
+                evidence: verified,
+                would_run: vec![line("1.13.8", "e03a")],
+            },
+        ]
+    } else {
+        vec![
+            Earlier {
+                freight: PREVIOUS.into(),
+                pointer: at(1),
+                evidence: verified,
+                would_run: vec![line("1.14.1", "71c9")],
+            },
+            Earlier {
+                freight: "calm-heron".into(),
+                pointer: at(2),
+                evidence: Evidence::Unknown("No verification of it was recorded.".into()),
+                would_run: vec![line("1.13.8", "e03a")],
+            },
+        ]
     }
 }
 
@@ -587,6 +637,9 @@ fn deployed(
 }
 
 fn build(now: DateTime<Utc>) -> Vec<Hop> {
+    // The example's pull request is merged when the hop says, counted from
+    // `now` like every time here; the card's own example follows it.
+    let merged = at(now, 12);
     let pull_request = Hop {
         cause: None,
         key: "pr".into(),
@@ -595,7 +648,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         name: "PR #418".into(),
         detail: "Retry idempotency keys · merged by mira".into(),
         from: GIT.into(),
-        at: Some(at(now, 12)),
+        at: Some(merged),
         link: None,
         after: None,
         shows: Shows::Hop(Box::new(HopDetail {
@@ -605,11 +658,13 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             notice: None,
             fields: vec![
                 text("Title", "Retry idempotency keys"),
-                mono("Repository", &format!("{GIT}/acme/checkout")),
-                when("Merged", at(now, 12)),
+                // The pull request card's own example (`github::example`), so
+                // the card and these fields agree.
+                mono("Repository", "github.com/acme/shop"),
+                when("Merged", merged),
                 text("Merged by", "mira, into main"),
-                text("Checks", "6 of 6 passed"),
-                text("Reviews", "2 approved"),
+                text("Checks", "3 of 3 passed"),
+                text("Reviews", "1 approved, 1 commented"),
                 mono("Head commit", HEAD),
                 mono("Merge commit", COMMIT),
             ],
@@ -619,8 +674,8 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             ),
             actions: vec![browser(
                 "Open the pull request",
-                &format!("https://{GIT}"),
-                &["acme", "checkout", "pull", "418"],
+                "https://github.com",
+                &["acme", "shop", "pull", "418"],
             )],
         })),
     };
@@ -1027,6 +1082,20 @@ fn name_causes(hops: &mut [Hop]) {
     }
 }
 
+/// [`Shape::RollbackUnknown`] and [`Shape::RollbackNone`]: what every Stage's
+/// history holds for a rollback to pick from.
+fn rollback_shape(change: &mut Change, none: bool) {
+    use crate::acts::rollback::Evidence;
+    for acts in change.stages.iter_mut().filter_map(|s| s.acts.as_mut()) {
+        if none {
+            acts.earlier.clear();
+        }
+        for earlier in &mut acts.earlier {
+            earlier.evidence = Evidence::Unknown("No verification of it was recorded.".into());
+        }
+    }
+}
+
 /// [`Shape::Promoting`]: a Promotion of the Freight to `prod-ams`, made by
 /// someone else, is running.
 fn promoting(change: &mut Change) {
@@ -1243,7 +1312,11 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
             pull_request: Some(PULL_REQUEST),
             commit: Some(COMMIT.into()),
             title: Some(TITLE.into()),
-            pull: crate::github::example::pull(PULL_REQUEST),
+            pull: crate::github::example::pull(PULL_REQUEST).map(|mut pull| {
+                // Merged when the hop says, counted from `now`.
+                pull.merged_at = pull.merged_at.map(|_| at(now, 12));
+                pull
+            }),
         },
         missing: Vec::new(),
         groups,
@@ -1280,6 +1353,9 @@ pub enum Shape {
     /// GitHub didn't answer: the pull requests read before are kept,
     /// marked stale.
     GitHubOffline,
+    /// With no token the pull request's number came from the `(#418)` that
+    /// ends the commit's title, and was read directly: the card says so.
+    GitHubTitle,
     /// One change with all four causes of an Unknown: a Stage waiting for
     /// promotion, pods a user may not list, a policy result that isn't
     /// there, and an Application the setup never told how to find.
@@ -1287,6 +1363,12 @@ pub enum Shape {
     /// Someone else's Promotion of the Freight to `prod-ams` is running, so
     /// the Stage offers Abort in place of Promote.
     Promoting,
+    /// No earlier Freight of any Stage has a successful verification
+    /// recorded, so a rollback is only offered as a pick, never as the main
+    /// action.
+    RollbackUnknown,
+    /// No Stage has an earlier Freight in its history.
+    RollbackNone,
 }
 
 impl Shape {
@@ -1316,9 +1398,12 @@ impl Shape {
             | Self::ImageOnly
             | Self::Causes
             | Self::Promoting
+            | Self::RollbackUnknown
+            | Self::RollbackNone
             | Self::GitHubLimited
             | Self::GitHubRefused
-            | Self::GitHubOffline => None,
+            | Self::GitHubOffline
+            | Self::GitHubTitle => None,
             Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
@@ -1357,6 +1442,16 @@ impl Shape {
             promoting(&mut change);
             return Ok(change);
         }
+        if self == Self::GitHubTitle {
+            if let Some(pull) = &mut change.origin.pull {
+                pull.from_title = true;
+            }
+            return Ok(change);
+        }
+        if matches!(self, Self::RollbackUnknown | Self::RollbackNone) {
+            rollback_shape(&mut change, self == Self::RollbackNone);
+            return Ok(change);
+        }
         if let Some(trouble) = self.github() {
             github(&mut change, trouble);
             return Ok(change);
@@ -1370,9 +1465,12 @@ impl Shape {
             | Self::ImageOnly
             | Self::Causes
             | Self::Promoting
+            | Self::RollbackUnknown
+            | Self::RollbackNone
             | Self::GitHubLimited
             | Self::GitHubRefused
-            | Self::GitHubOffline => {}
+            | Self::GitHubOffline
+            | Self::GitHubTitle => {}
             Self::KargoUnreachable => {
                 return Err(Failure::new(
                     FailureKind::Unreachable,
@@ -2045,7 +2143,8 @@ mod tests {
         // The pull request's page and avatars are GitHub's own addresses,
         // with invented names in them.
         change.origin.pull = None;
-        let text = format!("{change:?}");
+        // The pull request hop is GitHub's too, with an invented repository.
+        let text = format!("{change:?}").replace("github.com", "");
         // API groups end in `.io`; hosts are all under example.test.
         for host in ["github", "harbor", ".com", "://"] {
             assert!(!text.contains(host), "{host}");

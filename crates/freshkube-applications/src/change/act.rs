@@ -1,5 +1,5 @@
-//! The Stage Inspector's actions (#855): Refresh, Reverify, Promote and
-//! Abort. The page only offers them and says which Stage and change they are
+//! The Stage Inspector's actions (#855): Refresh, Reverify, Promote, Roll
+//! back (#845) and Abort. The page only offers them and says which Stage and change they are
 //! for; the shell describes the write through `delivery::acts`, looks up the
 //! levels, and core's `write` module sends it. Nothing here builds a request.
 //!
@@ -84,6 +84,8 @@ impl ChangePage {
             ActKind::RefreshWarehouse,
             ActKind::Reverify,
             ActKind::Promote,
+            // A rollback asks what a Promote asks: one entry stands for all.
+            ActKind::Rollback(0),
             ActKind::Abort,
         ]
         .into_iter()
@@ -147,6 +149,25 @@ impl ChangePage {
         self.with_offers(self.stage_buttons(stage))
     }
 
+    /// The Stage's Roll back lines (#845), in a block of their own in the
+    /// Inspector's body so the action footer keeps its height. Greyed out
+    /// with the same reason as the other actions when Kargo's cluster isn't
+    /// known or the Stage's handles weren't read.
+    pub(super) fn stage_rollback(&self, stage: &Stage) -> Vec<ActionLine> {
+        let Some(acts) = &stage.acts else {
+            let unread: SharedString =
+                "The Stage's UID and version weren't read, so a change to it couldn't be checked."
+                    .into();
+            return vec![ActionLine {
+                label: "Roll back…".into(),
+                why: Some(self.kargo_at().err().unwrap_or(unread)),
+                tooltip: Some("Promotes an earlier Freight of the Stage's history".into()),
+                leads: None,
+            }];
+        };
+        self.with_offers(self.rollback_buttons(stage, acts, self.kargo_at().err()))
+    }
+
     /// What the cluster said, on top of what the page knows: a refused
     /// action is greyed out with its reason (any reason the page already had
     /// outranks it), and one whose review didn't answer says so and stays on.
@@ -154,6 +175,10 @@ impl ChangePage {
         for button in &mut buttons {
             let Some(Leads::Act(kind, _)) = &button.leads else {
                 continue;
+            };
+            let kind = match kind {
+                ActKind::Rollback(_) => &ActKind::Rollback(0),
+                other => other,
             };
             let Some((_, offer)) = self.stage_offers.iter().find(|(asked, _)| asked == kind) else {
                 continue;
@@ -250,6 +275,100 @@ impl ChangePage {
         buttons
     }
 
+    /// The Stage's Roll back lines (#845): the last Freight Kargo verified
+    /// alone, or with none, a greyed line and up to two earlier Freight to
+    /// pick, each saying what Kargo recorded. An unverified Freight can be picked, but is never
+    /// the first line. Greyed out with why when there is none, when none was
+    /// verified, or while a Promotion runs.
+    fn rollback_buttons(
+        &self,
+        stage: &Stage,
+        acts: &freshkube_delivery::acts::StageActs,
+        no_kargo: Option<SharedString>,
+    ) -> Vec<ActionLine> {
+        use freshkube_delivery::acts::rollback::{Evidence, cli_line, last_verified};
+        /// How many earlier Freight the Inspector lists.
+        const SHOWN: usize = 2;
+        let running = matches!(acts.slot(), Slot::Abort(_));
+        let blocked = no_kargo.or_else(|| {
+            running.then(|| "A Promotion is running on this Stage; abort it first.".into())
+        });
+        let grey = |label: String, why: &str| ActionLine {
+            label: label.into(),
+            why: Some(blocked.clone().unwrap_or_else(|| why.to_owned().into())),
+            tooltip: None,
+            leads: None,
+        };
+        if acts.earlier.is_empty() {
+            return vec![grey(
+                "Roll back…".to_owned(),
+                "The Stage's history holds no earlier Freight to go back to.",
+            )];
+        }
+        let best = last_verified(&acts.earlier).map(|e| e.freight.clone());
+        let mut lines = Vec::new();
+        if best.is_none() {
+            lines.push(grey(
+                "Roll back…".to_owned(),
+                "No earlier Freight has a successful verification recorded in Kargo.",
+            ));
+        }
+        // The best one first, then the others in history order.
+        let mut order: Vec<usize> = (0..acts.earlier.len()).collect();
+        order.sort_by_key(|&at| Some(&acts.earlier[at].freight) != best.as_ref());
+        // With a verified Freight, it is the one line: more would grow the
+        // Inspector's action block. With none, the picks are all there is.
+        let shown = if best.is_some() { 1 } else { SHOWN };
+        for at in order.into_iter().take(shown) {
+            let earlier = &acts.earlier[at];
+            let (label, tooltip) = match &earlier.evidence {
+                Evidence::Verified { .. } => (
+                    format!("Roll back {} (verified)", earlier.freight),
+                    if Some(&earlier.freight) == best.as_ref() {
+                        "Verified in Kargo: the newest earlier Freight Kargo verified in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
+                            .to_owned()
+                    } else {
+                        "Verified in Kargo in this Stage. Argo CD's health and Coroot's outcome weren't recorded for it."
+                            .to_owned()
+                    },
+                ),
+                Evidence::Unknown(why) => (
+                    format!("Roll back {} (unverified)", earlier.freight),
+                    format!(
+                        "{why} Argo CD's health and Coroot's outcome weren't recorded for it either."
+                    ),
+                ),
+            };
+            lines.push(ActionLine {
+                label: label.into(),
+                why: blocked.clone(),
+                tooltip: Some(tooltip.into()),
+                leads: blocked
+                    .is_none()
+                    .then(|| Leads::Act(ActKind::Rollback(at), stage.name.clone())),
+            });
+        }
+        // The secondary action: the kargo line to run it by hand. It sends
+        // nothing, so it stays on whatever greys the rollback out.
+        if let Some(best) = last_verified(&acts.earlier) {
+            lines.push(ActionLine {
+                label: "Copy kargo command".into(),
+                why: None,
+                tooltip: Some(
+                    format!(
+                        "Copies: {}",
+                        cli_line(&acts.project, &best.freight, &stage.name)
+                    )
+                    .into(),
+                ),
+                leads: Some(Leads::Copy(
+                    cli_line(&acts.project, &best.freight, &stage.name).into(),
+                )),
+            });
+        }
+        lines
+    }
+
     /// Asks the shell to describe and run the action for `stage`.
     pub(super) fn act(&mut self, kind: ActKind, stage: &str, cx: &mut Context<Self>) {
         let Ok(kargo) = self.kargo_at() else {
@@ -259,6 +378,9 @@ impl ChangePage {
             Fetch::Live { kubeconfig, .. } => kubeconfig.clone(),
             Fetch::Example { .. } => None,
         };
+        // The dialog this opens covers the button: its tooltip waits.
+        self.tips_held = true;
+        cx.notify();
         cx.emit(ChangeEvent::Act(Box::new(StageAct {
             kind,
             stage: stage.to_owned(),
