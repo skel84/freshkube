@@ -97,7 +97,7 @@ impl Panes {
     /// (the theme), as `Pages::notify_cached` does the shell's.
     pub(super) fn notify_second(&self, cx: &mut App) {
         if let Some(second) = &self.second {
-            App::notify(cx, second.screen.entity_id());
+            App::notify(cx, second.screen().view().entity_id());
         }
     }
 

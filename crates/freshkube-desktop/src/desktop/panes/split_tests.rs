@@ -50,7 +50,8 @@ fn closing_the_split_drops_the_second_screen(cx: &mut TestAppContext) {
                 .second
                 .as_ref()
                 .unwrap()
-                .screen
+                .screen()
+                .view()
                 .downgrade()
         })
         .unwrap();
@@ -129,8 +130,16 @@ fn a_notify_in_one_pane_does_not_draw_the_other(cx: &mut TestAppContext) {
     // And the other way.
     let (o, r) = (overview(), resources());
     cx.update_window(handle, |_, _, cx| {
-        let screen = pilot.read(cx).panes.second.as_ref().unwrap().screen.clone();
-        screen.update(cx, |_, cx| cx.notify());
+        let id = pilot
+            .read(cx)
+            .panes
+            .second
+            .as_ref()
+            .unwrap()
+            .screen()
+            .view()
+            .entity_id();
+        cx.notify(id);
     })
     .unwrap();
     draw(cx);
@@ -143,4 +152,85 @@ fn a_notify_in_one_pane_does_not_draw_the_other(cx: &mut TestAppContext) {
         assert!(!pilot.read(cx).panes.second_focused());
     })
     .unwrap();
+}
+
+/// A source that hands out a fake cluster's client.
+struct Fake(kube::Client);
+
+impl freshkube_core::cluster_source::KubeClientSource for Fake {
+    fn client(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>>
+    {
+        let client = self.0.clone();
+        Box::pin(async move { Ok(client) })
+    }
+}
+
+/// Pane 1's list reads while the split is open and nothing after it closes:
+/// the fake API's recorded requests stop growing, even as time passes.
+#[gpui_kit::test]
+fn closing_the_split_stops_pane_ones_reads(cx: &mut TestAppContext) {
+    use crate::desktop::testing::fixture_stepped;
+    use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
+    use freshkube_core::write::testing::Cluster;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let (runtime, handle, pilot) = fixture_stepped(cx, 1400., 880.);
+    let cluster = {
+        let _guard = runtime.enter();
+        Cluster::new()
+    };
+    let drive = |cx: &mut TestAppContext, seconds: u64| {
+        for _ in 0..seconds * 4 {
+            runtime.block_on(async { tokio::time::sleep(Duration::from_millis(250)).await });
+            cx.run_until_parked();
+        }
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    };
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("secondary-\\", cx);
+        window.render_frame(cx);
+        // Pane 1 only: the shell's own pages keep the example source.
+        let screen = pilot
+            .read(cx)
+            .panes
+            .second
+            .as_ref()
+            .unwrap()
+            .screen()
+            .clone();
+        let source = crate::screens::PageSource {
+            screen: None,
+            kube: Some(ClusterSource {
+                id: "split-test".into(),
+                context: "ctx-a".into(),
+                access: ClusterAccess::Live(Arc::new(Fake(cluster.client.clone()))),
+            }),
+            entry: Some("split-test".into()),
+            kube_identity: Some("split-test".into()),
+        };
+        screen.set_page_source(source, window, cx);
+    })
+    .unwrap();
+    drive(cx, 2);
+    let open = cluster.recorder.requests().len();
+    assert!(open > 0, "pane 1 reads while the split is open");
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-\\", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    drive(cx, 1);
+    let closed = cluster.recorder.requests().len();
+    drive(cx, 90);
+    assert_eq!(
+        cluster.recorder.requests().len(),
+        closed,
+        "nothing of pane 1 reads after it closed (open: {open})"
+    );
+    assert!(cluster.writes().is_empty());
 }

@@ -6,6 +6,8 @@
 //! kind and namespace the shell's Resources page shows, handed pane 1's own
 //! room and the session's source, and heard by the shell like any page.
 //! Closing the split drops the screen, its reads and its subscriptions.
+use std::collections::BTreeMap;
+
 use freshkube_ui::pane::Pane;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -14,6 +16,7 @@ use gpui_kit::{
 };
 
 use super::{PANE_CONTEXT, PaneId, Second, Split};
+use crate::desktop::PageId;
 use crate::desktop::Pilot;
 use crate::resources::ResourcesScreen;
 use crate::screens::ScreenHandle;
@@ -80,7 +83,8 @@ impl Pilot {
             id: PaneId::SECOND,
             split,
             room,
-            screen,
+            pages: BTreeMap::from([(PageId::Resources, handle)]),
+            shown: PageId::Resources,
             _events: events,
         });
     }
@@ -103,7 +107,7 @@ impl Pilot {
             .panes
             .second
             .as_ref()
-            .map(|second| second.screen.clone())
+            .map(|second| second.screen().clone())
         else {
             return;
         };
@@ -112,7 +116,7 @@ impl Pilot {
             self.focus_page(window, cx);
         } else {
             self.panes.focus_second();
-            screen.update(cx, |screen, cx| screen.focus(window, cx));
+            screen.focus(window, cx);
         }
         cx.notify();
     }
@@ -149,8 +153,8 @@ impl Pilot {
             .size_full()
             .child(
                 second
-                    .screen
-                    .clone()
+                    .screen()
+                    .view()
                     .cached(crate::desktop::cached_page_style()),
             );
         // A 1 px hairline; its 6 dp grab area comes with the drag (#879).

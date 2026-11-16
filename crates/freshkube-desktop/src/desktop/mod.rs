@@ -1212,8 +1212,9 @@ impl Pilot {
         }
         // Pane 1's list reads the same session.
         if let Some(second) = &self.panes.second {
-            let handle = crate::screens::ScreenHandle::new(second.screen.clone());
-            handle.set_page_source(source.clone(), window, cx);
+            for screen in second.pages.values() {
+                screen.set_page_source(source.clone(), window, cx);
+            }
         }
         if let Some(data) = self.switch.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);
