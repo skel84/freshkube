@@ -646,7 +646,9 @@ async fn build_history_keeps_not_installed_refused_and_unreachable_apart() {
     assert!(matches!(missing.chains, Reach::NotServed(_)));
     assert!(matches!(missing.results, Some(Reach::NotServed(_))));
 
-    let reader = FixtureReader::default().refusing("configmaps").unreachable("services");
+    let reader = FixtureReader::default()
+        .refusing("configmaps")
+        .unreachable("services");
     let found = check_history(&reader, Some(&forwarded())).await;
     assert!(matches!(found.chains, Reach::Refused(_)));
     assert!(matches!(found.results, Some(Reach::Unreachable(_))));

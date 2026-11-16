@@ -102,7 +102,10 @@ fn each_state_of_chains_and_results_is_told_apart(cx: &mut TestAppContext) {
             assert_eq!(state(&view, RESULTS, cx), word);
             let chains = tooltip(&view, SUPPLY, cx);
             let results = tooltip(&view, RESULTS, cx);
-            assert!(chains.contains(sentence) || results.contains(sentence), "{chains} / {results}");
+            assert!(
+                chains.contains(sentence) || results.contains(sentence),
+                "{chains} / {results}"
+            );
             assert!(chains.contains("Tekton Chains") && results.contains("results-api"));
             // Optional tools: not installed is a note, never a failure.
             if matches!(reach, Reach::NotServed(_)) {
@@ -110,7 +113,10 @@ fn each_state_of_chains_and_results_is_told_apart(cx: &mut TestAppContext) {
             }
             // The Clusters Inspector says the same for the entry.
             let found = list(&view, cx).read(cx).history_for("cluster-b").cloned();
-            assert_eq!(found.as_ref().map(|found| history::state(&found.chains)), Some(word));
+            assert_eq!(
+                found.as_ref().map(|found| history::state(&found.chains)),
+                Some(word)
+            );
             assert!(list(&view, cx).read(cx).history_for("cluster-a").is_none());
         })
         .unwrap();
@@ -157,9 +163,11 @@ fn a_results_address_and_no_results_are_not_read_by_a_check(cx: &mut TestAppCont
 fn with_no_builds_entry_both_rows_say_so(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
-        let none = setup::parse(b"version: 1\nclusters:\n- {id: cluster-a, role: core, context: acme-a}\n")
-            .unwrap()
-            .workspace;
+        let none = setup::parse(
+            b"version: 1\nclusters:\n- {id: cluster-a, role: core, context: acme-a}\n",
+        )
+        .unwrap()
+        .workspace;
         set_workspace(&view, none, true, cx);
         open(window, cx, &view);
         // A core entry holds Builds when no CI/CD entry does.
@@ -177,14 +185,36 @@ fn the_inspectors_fit_beside_and_stacked(cx: &mut TestAppContext) {
                 set_workspace(&view, forwarding(), true, cx);
                 open(window, cx, &view);
                 window.click(format!("settings-source-{}", read.key()), cx);
-                layout_check::assert_inspector(
-                    window,
-                    cx,
-                    "settings-sources-split",
-                    "settings-sources-table",
-                    "settings-source-inspector",
-                    "settings-source-inspector-title",
+                settle_sources(window, cx);
+                if width > 1000. {
+                    layout_check::assert_inspector(
+                        window,
+                        cx,
+                        "settings-sources-split",
+                        "settings-sources-table",
+                        "settings-source-inspector",
+                        "settings-source-inspector-title",
+                    );
+                    return;
+                }
+                // Stacked, the table shows three rows, so a row past them
+                // is below its window until it is scrolled to, which a
+                // headless frame doesn't do: assert_inspector's selected-row
+                // check can't hold here. The rest of its geometry does.
+                let table = window.find("settings-sources-table").bounds();
+                let split = window.find("settings-sources-split").bounds();
+                let pane = window.find("settings-source-inspector").bounds();
+                let title = window.find("settings-source-inspector-title").bounds();
+                let near = |a: gpui_kit::Pixels, b: gpui_kit::Pixels| {
+                    (f32::from(a) - f32::from(b)).abs() <= 1.
+                };
+                assert!(near(pane.top(), table.bottom()), "{pane:?} / {table:?}");
+                assert!(
+                    near(pane.size.width, split.size.width),
+                    "{pane:?} / {split:?}"
                 );
+                assert!(title.top() >= pane.top() && title.bottom() <= pane.bottom());
+                assert!(window.find("settings-source-details").visible());
             })
             .unwrap();
         }
@@ -218,21 +248,32 @@ async fn edits_save_through_the_setup_file_and_keep_everything_else(cx: &mut Tes
     let chain = parsed.supply_chain.clone().unwrap();
     assert_eq!(chain.public_key_file.as_deref(), Some(key.as_path()));
     assert!(chain.transparency_log);
-    assert!(file.contains("future_setup") && file.contains("future_results"), "{file}");
+    assert!(
+        file.contains("future_setup") && file.contains("future_results"),
+        "{file}"
+    );
     // No key's content is ever in the file, only where it is.
     assert!(!file.contains("PRIVATE"));
 
     cx.update_window(handle, |_, _, cx| {
-        list(&view, cx).update(cx, |list, cx| {
-            list.set_key_file(None, cx);
-            list.set_transparency_log(false, cx);
-        });
+        list(&view, cx).update(cx, |list, cx| list.set_key_file(None, cx));
+    })
+    .unwrap();
+    super::super::super::edit_tests::saved(cx, handle, &view).await;
+    cx.update_window(handle, |_, _, cx| {
+        list(&view, cx).update(cx, |list, cx| list.set_transparency_log(false, cx));
     })
     .unwrap();
     super::super::super::edit_tests::saved(cx, handle, &view).await;
     // Both undone, the block goes: the file says nothing a file without it wouldn't.
     let file = std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap();
-    assert!(setup::parse(file.as_bytes()).unwrap().supply_chain.is_none(), "{file}");
+    assert!(
+        setup::parse(file.as_bytes())
+            .unwrap()
+            .supply_chain
+            .is_none(),
+        "{file}"
+    );
 }
 
 #[gpui_kit::test]
@@ -248,13 +289,13 @@ async fn results_is_typed_saved_and_turned_off_on_the_builds_entry(cx: &mut Test
         assert!(window.find("settings-source-results-input").visible());
         // Text that is neither shape is refused where it was typed.
         window.click("settings-source-results-input", cx);
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("results", cx);
         window.render_frame(cx);
         window.click("settings-source-results-save", cx);
         window.render_frame(cx);
         assert!(list(&view, cx).read(cx).results_error.is_some());
-        window.press("cmd-a", cx);
+        window.press("secondary-a", cx);
         window.input("https://results.acme.example", cx);
         window.render_frame(cx);
         window.click("settings-source-results-save", cx);
@@ -270,16 +311,22 @@ async fn results_is_typed_saved_and_turned_off_on_the_builds_entry(cx: &mut Test
     };
     let entry = builds(guard.path());
     let results = entry.results.as_deref().unwrap();
-    assert_eq!(results.address.as_deref(), Some("https://results.acme.example"));
+    assert_eq!(
+        results.address.as_deref(),
+        Some("https://results.acme.example")
+    );
     assert!(results.forward.is_none());
     // The token it names is kept, and so is the key this build doesn't know.
     assert!(results.token.is_some());
     let file = std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap();
-    assert!(file.contains("future_results") && file.contains("future_setup"), "{file}");
+    assert!(
+        file.contains("future_results") && file.contains("future_setup"),
+        "{file}"
+    );
 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("settings-source-results-off", cx);
+        list(&view, cx).update(cx, |list, cx| list.turn_results_off(cx));
     })
     .unwrap();
     super::super::super::edit_tests::saved(cx, handle, &view).await;

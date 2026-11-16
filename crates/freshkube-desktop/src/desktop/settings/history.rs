@@ -33,7 +33,9 @@ fn words(what: &str, would: &str, entry: &str, reach: &Reach) -> String {
     match reach {
         Reach::Readable => format!("Found {what} on {entry}."),
         Reach::NotServed(_) => {
-            format!("{what} isn’t installed on {entry}. It would add {would}; the rest of Freshkube works without it.")
+            format!(
+                "{what} isn’t installed on {entry}. It would add {would}; the rest of Freshkube works without it."
+            )
         }
         Reach::Refused(_) => {
             format!("{entry} doesn’t allow this account to read {what}.")
@@ -71,10 +73,7 @@ pub(super) fn route(results: Option<&Results>) -> (&'static str, String) {
             ..
         }) => (
             "Port forward",
-            format!(
-                "{}/{}:{}",
-                forward.namespace, forward.service, forward.port
-            ),
+            format!("{}/{}:{}", forward.namespace, forward.service, forward.port),
         ),
         Some(Results {
             address: Some(address),
@@ -118,7 +117,9 @@ pub(super) fn parse(text: &str, current: Option<&Results>) -> Result<Results, &'
     if namespace.is_empty() || service.is_empty() || text.contains(char::is_whitespace) {
         return Err(shape);
     }
-    results.forward = Some(freshkube_core::setup::Forward::new(namespace, service, port));
+    results.forward = Some(freshkube_core::setup::Forward::new(
+        namespace, service, port,
+    ));
     results.address = None;
     Ok(results)
 }
@@ -133,12 +134,17 @@ mod tests {
         current.token = Some(freshkube_core::setup::KeysJson);
         current.ca_file = Some("/etc/acme/ca.pem".into());
         let address = parse(" https://results.acme.example ", Some(&current)).unwrap();
-        assert_eq!(address.address.as_deref(), Some("https://results.acme.example"));
+        assert_eq!(
+            address.address.as_deref(),
+            Some("https://results.acme.example")
+        );
         assert!(address.token.is_some() && address.ca_file.is_some());
         let forward = parse("tekton/results-api:8080", Some(&address)).unwrap();
         assert!(forward.address.is_none());
         assert_eq!(forward.forward.unwrap().port, 8080);
-        for bad in ["", "https://", "results", "ns/svc", "ns/svc:0", "/svc:80", "ns/svc:x"] {
+        for bad in [
+            "", "https://", "results", "ns/svc", "ns/svc:0", "/svc:80", "ns/svc:x",
+        ] {
             assert!(parse(bad, None).is_err(), "{bad}");
         }
     }
@@ -154,7 +160,12 @@ mod tests {
         let words: Vec<_> = all.iter().map(state).collect();
         assert_eq!(
             words,
-            ["Found", "Not installed", "Not allowed to read", "Couldn’t reach"]
+            [
+                "Found",
+                "Not installed",
+                "Not allowed to read",
+                "Couldn’t reach"
+            ]
         );
         assert!(chains_words("prod", &all[1]).contains("rest of Freshkube works"));
     }

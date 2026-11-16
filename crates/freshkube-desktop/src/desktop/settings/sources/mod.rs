@@ -18,8 +18,8 @@
 //! finds them: a Talos entry the app opens through its control plane's
 //! kubeconfig, its context in none of those files, reads as unreachable
 //! here (#564 PR 2).
-mod inspector;
 mod history_edit;
+mod inspector;
 mod rows;
 mod source;
 mod suggest;
@@ -53,6 +53,8 @@ use std::time::Duration;
 const PREFIX: &str = "settings-sources";
 /// The list's key context, around the table.
 pub(in crate::desktop) const CONTEXT: &str = "SettingsSources";
+/// The letter keys act on the list, never while a field has the keyboard.
+const LIST_KEYS: &str = "SettingsSources && !Input";
 /// How long a whole check may take: the connect deadline and a few
 /// requests, each under its own.
 const DEADLINE: Duration = Duration::from_secs(30);
@@ -382,6 +384,12 @@ impl SourcesList {
     /// Check sources: one small read per part and per workloads entry, at
     /// once. While one runs, another press does nothing: a credential
     /// plugin waiting for a sign-in shouldn't be started again.
+    /// Check sources, as its button and key do.
+    #[cfg(test)]
+    pub(super) fn run_check(&mut self, cx: &mut Context<Self>) {
+        self.check(cx);
+    }
+
     fn check(&mut self, cx: &mut Context<Self>) {
         if self.check == Check::Running {
             return;
@@ -724,11 +732,11 @@ impl Render for SourcesList {
 /// Enter accept it and Backspace ignores it.
 pub(in crate::desktop) fn key_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("c", CheckSources, Some(CONTEXT)),
-        KeyBinding::new("f", suggest::FindBuilds, Some(CONTEXT)),
-        KeyBinding::new("a", suggest::AcceptBuild, Some(CONTEXT)),
-        KeyBinding::new("enter", suggest::AcceptBuild, Some(CONTEXT)),
-        KeyBinding::new("backspace", suggest::IgnoreBuild, Some(CONTEXT)),
+        KeyBinding::new("c", CheckSources, Some(LIST_KEYS)),
+        KeyBinding::new("f", suggest::FindBuilds, Some(LIST_KEYS)),
+        KeyBinding::new("a", suggest::AcceptBuild, Some(LIST_KEYS)),
+        KeyBinding::new("enter", suggest::AcceptBuild, Some(LIST_KEYS)),
+        KeyBinding::new("backspace", suggest::IgnoreBuild, Some(LIST_KEYS)),
         KeyBinding::new("down", NextSource, Some(CONTEXT)),
         KeyBinding::new("up", PreviousSource, Some(CONTEXT)),
         KeyBinding::new("escape", CloseSource, Some(CONTEXT)),

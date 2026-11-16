@@ -369,7 +369,9 @@ Reads              freshkube.yaml, delivery.build_namespace"
         let looked = match (found, listed) {
             (Some(found), _) => history::chains_words(&named, &found.chains),
             (None, false) => "There is no Builds entry to look for Tekton Chains on.".to_owned(),
-            (None, true) => format!("Not checked: Check sources looks for Tekton Chains on {named}."),
+            (None, true) => {
+                format!("Not checked: Check sources looks for Tekton Chains on {named}.")
+            }
         };
         let explanation = format!(
             "Supply chain: attestations are read from Tekton Chains on {named}; the verifying key is {}",

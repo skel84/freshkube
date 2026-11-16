@@ -23,6 +23,7 @@ mod entry;
 pub(crate) use entry::FingerprintLine;
 mod find;
 mod form;
+mod history;
 mod kubeconfig_row;
 mod labels;
 mod metrics_tokens;
@@ -34,7 +35,6 @@ mod sections;
 #[cfg(test)]
 mod small_window_tests;
 mod source;
-mod history;
 pub(super) mod sources;
 mod team;
 #[cfg(test)]

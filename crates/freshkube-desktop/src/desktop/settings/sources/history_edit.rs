@@ -13,7 +13,11 @@ use gpui_kit::component::{button::ButtonGroup, h_flex};
 
 impl SourcesList {
     /// Chooses a public key file, or `None` to stop verifying with one.
-    pub(super) fn set_key_file(&mut self, path: Option<std::path::PathBuf>, cx: &mut Context<Self>) {
+    pub(super) fn set_key_file(
+        &mut self,
+        path: Option<std::path::PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
         if !self.editable(cx) {
             return;
         }
@@ -26,7 +30,11 @@ impl SourcesList {
 
     /// Turns reading the transparency log on or off.
     pub(super) fn set_transparency_log(&mut self, on: bool, cx: &mut Context<Self>) {
-        if !self.editable(cx) || self.supply_chain.as_ref().is_some_and(|c| c.transparency_log == on)
+        if !self.editable(cx)
+            || self
+                .supply_chain
+                .as_ref()
+                .is_some_and(|c| c.transparency_log == on)
         {
             return;
         }
@@ -161,7 +169,11 @@ impl SourcesList {
         });
     }
 
-    pub(super) fn render_supply_chain_edit(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_supply_chain_edit(
+        &self,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let editable = self.editable(cx);
         let chain = self.supply_chain.as_ref();
         let key = chain.and_then(|chain| chain.public_key_file.clone());
@@ -214,11 +226,15 @@ impl SourcesList {
             .small()
             .disabled(!editable)
             .child(ui::choice(
-                Button::new("settings-source-log-off").label("Off").disabled(!editable),
+                Button::new("settings-source-log-off")
+                    .label("Off")
+                    .disabled(!editable),
                 !on,
             ))
             .child(ui::choice(
-                Button::new("settings-source-log-on").label("On").disabled(!editable),
+                Button::new("settings-source-log-on")
+                    .label("On")
+                    .disabled(!editable),
                 on,
             ))
             .on_click(cx.listener(|this, selected: &Vec<usize>, _, cx| {
