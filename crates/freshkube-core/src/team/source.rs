@@ -125,6 +125,17 @@ impl GitSource {
         redact(&self.url)
     }
 
+    /// A repository in a temporary directory of a test: a local path, which
+    /// no real source may be.
+    #[cfg(test)]
+    pub(crate) fn local_for_test(path: &str, git_ref: &str, file: &str) -> Self {
+        Self {
+            url: path.to_string(),
+            git_ref: git_ref.to_string(),
+            path: file.to_string(),
+        }
+    }
+
     pub fn new(url: &str, git_ref: &str, path: &str) -> Result<Self, Refused> {
         let url = url.trim();
         if url.is_empty() || url.starts_with('-') || url.chars().any(|c| c.is_control() || c == ' ')
@@ -154,6 +165,12 @@ impl GitSource {
             {
                 return Err(Refused::NotAnAddress);
             }
+        } else if url
+            .split_once('@')
+            .is_some_and(|(user, _)| user.contains(':'))
+        {
+            // `user:token@host:path`: a password in an scp-like address.
+            return Err(Refused::Credentials);
         } else if !is_scp_like(url) {
             return Err(if url.starts_with('/') || url.starts_with('.') {
                 Refused::LocalPath
@@ -327,6 +344,19 @@ impl std::fmt::Debug for GitFetch {
     }
 }
 
+/// What every git command of a team fetch is given beyond what git needs to
+/// find the person's own config and sign-in (see `fetch::git`): no prompt on
+/// a terminal, only https and ssh whatever the address or `protocol.*.allow`
+/// says (`GIT_ALLOW_PROTOCOL` overrides them), no transport named by a
+/// submodule or a redirect (`GIT_PROTOCOL_FROM_USER=0`), and a path that is
+/// never a pathspec pattern.
+pub const ENV: &[(&str, &str)] = &[
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GIT_ALLOW_PROTOCOL", "https:ssh"),
+    ("GIT_PROTOCOL_FROM_USER", "0"),
+    ("GIT_LITERAL_PATHSPECS", "1"),
+];
+
 /// Where the fetch writes: one fixed ref in the app-owned mirror.
 pub const TRACKING_REF: &str = "refs/freshkube/team";
 
@@ -342,7 +372,8 @@ impl GitFetch {
         empty_hooks: &Path,
         token_from_store: bool,
     ) -> Self {
-        let mut args: Vec<String> = vec!["-C".into(), mirror.display().to_string()];
+        // `--git-dir`, never `-C`, so git never walks up into a parent repository.
+        let mut args: Vec<String> = vec![format!("--git-dir={}", mirror.display())];
         let mut config = |setting: String| {
             args.push("-c".into());
             args.push(setting);
@@ -357,6 +388,7 @@ impl GitFetch {
         config("protocol.file.allow=never".into());
         config("protocol.ext.allow=never".into());
         config("submodule.recurse=false".into());
+        config("transfer.fsckObjects=true".into());
         if token_from_store {
             config("credential.helper=".into());
         }
@@ -365,6 +397,7 @@ impl GitFetch {
                 "fetch",
                 "--no-recurse-submodules",
                 "--no-tags",
+                "--depth=1",
                 "--force",
                 "--",
             ]
@@ -376,9 +409,40 @@ impl GitFetch {
         Self {
             program: "git",
             args,
-            env: vec![("GIT_TERMINAL_PROMPT", "0")],
+            env: ENV.to_vec(),
             tracking_ref: TRACKING_REF,
             address_at,
+        }
+    }
+
+    /// A command that only reads the mirror: its hooks directory empty and
+    /// the same protocol limits as the fetch. `rest` is the subcommand.
+    pub fn read(mirror: &Path, empty_hooks: &Path, rest: &[&str]) -> Vec<String> {
+        let mut args: Vec<String> = vec![
+            format!("--git-dir={}", mirror.display()),
+            "-c".into(),
+            format!("core.hooksPath={}", empty_hooks.display()),
+            "-c".into(),
+            "protocol.file.allow=never".into(),
+            "-c".into(),
+            "protocol.ext.allow=never".into(),
+        ];
+        args.extend(rest.iter().map(|part| part.to_string()));
+        args
+    }
+
+    /// The same command with config that allows every transport, for a test
+    /// that shows the environment alone still refuses `file`. Tests only.
+    #[cfg(test)]
+    pub(crate) fn loosen_for_test(&mut self) {
+        let at = self
+            .args
+            .iter()
+            .position(|arg| arg == "fetch")
+            .expect("a fetch command");
+        for setting in ["protocol.file.allow=always", "protocol.allow=always"] {
+            self.args.insert(at, setting.into());
+            self.args.insert(at, "-c".into());
         }
     }
 
@@ -386,8 +450,7 @@ impl GitFetch {
     /// blob, so no `textconv` or filter driver runs.
     pub fn show(source: &GitSource, mirror: &Path, empty_hooks: &Path) -> Vec<String> {
         vec![
-            "-C".into(),
-            mirror.display().to_string(),
+            format!("--git-dir={}", mirror.display()),
             "-c".into(),
             format!("core.hooksPath={}", empty_hooks.display()),
             "cat-file".into(),
