@@ -31,7 +31,7 @@ fn open(
     (runtime, handle, view)
 }
 
-fn settle(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+pub(super) fn settle(cx: &mut TestAppContext, handle: AnyWindowHandle) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
@@ -74,7 +74,7 @@ fn label(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> 
     .unwrap()
 }
 
-fn page(
+pub(super) fn page(
     cx: &mut TestAppContext,
     view: &Entity<crate::desktop::Pilot>,
 ) -> Entity<super::SettingsPage> {
@@ -88,7 +88,7 @@ fn join_error(cx: &mut TestAppContext, view: &Entity<crate::desktop::Pilot>) -> 
 
 const ADDRESS: &str = "https://git.acme.example/ops/freshkube-setup";
 
-fn open_on(
+pub(super) fn open_on(
     cx: &mut TestAppContext,
     slug: &str,
 ) -> (
@@ -351,7 +351,16 @@ fn the_join_steps_keep_the_shared_frame_at_both_sizes(cx: &mut TestAppContext) {
             cx.run_until_parked();
             settle(cx, handle);
             if step > 0 {
-                join(cx, handle, ADDRESS);
+                // Enter in the address field joins: the button sits below the
+                // fold in a short window, where the page scrolls.
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    window.click("team-join-address-input", cx);
+                    window.input(ADDRESS, cx);
+                    window.press("enter", cx);
+                })
+                .unwrap();
+                settle(cx, handle);
             }
             if step > 1 {
                 // The button sits below the fold in a short window, where the
@@ -475,7 +484,7 @@ fn the_page_says_the_version_is_held_not_that_the_setup_uses_it(cx: &mut TestApp
         "{words}"
     );
     assert!(
-        words.contains("held for this session") && words.contains("doesn’t use its values yet"),
+        words.contains("saved") && words.contains("doesn’t use its values yet"),
         "{words}"
     );
     assert!(!words.contains(" applied "), "{words}");
@@ -492,7 +501,11 @@ fn the_review_while_joining_offers_cancel_not_review_later(cx: &mut TestAppConte
     // It reads as a join, not as an update that waits.
     let settings_for_lead = page(cx, &view);
     let lead = cx.update(|cx| settings_for_lead.read(cx).team.shown.lead().to_owned());
-    assert!(lead.starts_with("Joining the team"), "{lead}");
+    assert!(
+        lead.starts_with("Review the team’s setup before joining"),
+        "{lead}"
+    );
+    assert!(!lead.contains("new team version"), "{lead}");
     assert!(visible(cx, handle, "team-cancel-join"));
     assert!(!visible(cx, handle, "team-review-later"));
     // A joining review is not an update waiting: no status item, no banner.
@@ -603,4 +616,90 @@ fn a_live_apply_shows_no_team_floor_the_write_path_does_not_use(cx: &mut TestApp
             "{id}"
         );
     }
+}
+
+const FILE: &str = "https://setup.acme.example/team/freshkube.yaml";
+const TOKEN: &str = "tk-0123456789-secret";
+
+fn with_keys(
+    cx: &mut TestAppContext,
+    view: &Entity<crate::desktop::Pilot>,
+) -> Arc<freshkube_core::secrets::MemoryStore> {
+    let keys = Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let settings = page(cx, view);
+    let store: freshkube_core::secrets::Secrets = keys.clone();
+    cx.update(|cx| settings.update(cx, |page, _| page.team_use_secrets_for_test(store)));
+    keys
+}
+
+fn account() -> String {
+    match Source::parse(FILE, "", "").unwrap() {
+        Source::Https(https) => https.token_account(),
+        Source::Git(_) => unreachable!(),
+    }
+}
+
+fn keys_hold(keys: &freshkube_core::secrets::MemoryStore) -> Option<String> {
+    keys.keys.lock().unwrap().get(&account()).cloned()
+}
+
+#[gpui_kit::test]
+fn a_token_goes_to_the_key_store_and_nowhere_else(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    let keys = with_keys(cx, &view);
+    assert!(visible(cx, handle, "team-join-token-input"));
+    type_into(cx, handle, "team-join-token-input", TOKEN);
+    join(cx, handle, FILE);
+    assert_eq!(keys_hold(&keys).as_deref(), Some(TOKEN));
+    // The field is empty again and the page's words never carry it.
+    let settings = page(cx, &view);
+    assert_eq!(cx.update(|cx| settings.read(cx).team_token_text(cx)), "");
+    assert!(!join_error(cx, &view).contains(TOKEN));
+    // The join is on its first step; nothing it shows holds the token.
+    assert!(visible(cx, handle, "team-preview-step"));
+}
+
+#[gpui_kit::test]
+fn cancelling_a_join_forgets_its_token(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    let keys = with_keys(cx, &view);
+    type_into(cx, handle, "team-join-token-input", TOKEN);
+    join(cx, handle, FILE);
+    assert!(keys_hold(&keys).is_some());
+    click(cx, handle, "team-cancel-join");
+    assert_eq!(keys_hold(&keys), None);
+}
+
+#[gpui_kit::test]
+fn a_join_that_could_not_fetch_forgets_its_token(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::JoinFailed);
+    let keys = with_keys(cx, &view);
+    type_into(cx, handle, "team-join-token-input", TOKEN);
+    join(cx, handle, FILE);
+    assert!(visible(cx, handle, "team-join-error"));
+    assert_eq!(keys_hold(&keys), None);
+}
+
+#[gpui_kit::test]
+fn a_token_is_refused_for_a_git_repository_and_never_shown(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    let keys = with_keys(cx, &view);
+    type_into(cx, handle, "team-join-token-input", TOKEN);
+    join(cx, handle, "https://git.acme.example/ops/setup.git");
+    let words = join_error(cx, &view);
+    assert!(words.contains("only for an https://"), "{words}");
+    assert!(!words.contains(TOKEN));
+    assert!(keys.keys.lock().unwrap().is_empty());
+    assert!(!visible(cx, handle, "team-preview-step"));
+}
+
+#[gpui_kit::test]
+fn a_token_with_no_key_store_is_refused_not_kept_in_memory(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    type_into(cx, handle, "team-join-token-input", TOKEN);
+    join(cx, handle, FILE);
+    let words = join_error(cx, &view);
+    assert!(words.contains("no key store"), "{words}");
+    assert!(!words.contains(TOKEN));
+    assert!(!visible(cx, handle, "team-preview-step"));
 }

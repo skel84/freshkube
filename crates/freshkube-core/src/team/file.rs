@@ -57,7 +57,8 @@ impl std::fmt::Display for VersionError {
 impl std::error::Error for VersionError {}
 
 /// Why a key is ignored.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum IgnoredKey {
     Context,
     LocalPath,
@@ -93,7 +94,7 @@ impl IgnoredKey {
 }
 
 /// A key the file set that this app ignores, with where it was.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Ignored {
     pub at: String,
     pub why: IgnoredKey,
@@ -214,7 +215,7 @@ fn cluster_id_ok(id: &str) -> bool {
 
 /// One version of the team file: an id (a commit, or the content's hash), the
 /// values it sets and what it set that is ignored.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Version {
     id: String,
     values: Values,

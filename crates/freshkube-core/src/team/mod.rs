@@ -8,6 +8,7 @@
 //! Fetching runs nothing from the repository. [`source::GitFetch`] describes
 //! the git command and [`fetch`] runs it, or an HTTPS request, bounded.
 
+pub mod clear;
 pub mod example;
 pub mod fetch;
 pub mod file;
@@ -16,6 +17,7 @@ pub mod mapping;
 pub mod membership;
 pub mod merge;
 pub mod review;
+pub mod saved;
 pub mod source;
 
 #[cfg(test)]
@@ -30,4 +32,5 @@ pub use merge::{
     ClusterView, LevelSource, Origin, Resolved, allowed_levels, cluster_view, floor_words, resolve,
 };
 pub use review::{Change, ChangeKind, NotReviewed, Review, Step, TrustKind};
+pub use saved::{SavedMembership, SavedSource, SavedTeam, Unusable};
 pub use source::{GitFetch, GitSource, HttpsSource, Refused, Source, redact};

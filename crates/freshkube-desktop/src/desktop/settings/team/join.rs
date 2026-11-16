@@ -142,7 +142,15 @@ impl SettingsPage {
                     "team-join-path",
                     "Path",
                     field("team-join-path-input", &inputs.path),
-                ));
+                ))
+                .row(
+                    form::row(
+                        "team-join-token",
+                        "Token",
+                        field("team-join-token-input", &inputs.token),
+                    )
+                    .hint("Optional, for an https:// file that needs one. Kept in your key store, never in the address or in a file."),
+                );
         }
         let this = cx.entity();
         let label = if busy {

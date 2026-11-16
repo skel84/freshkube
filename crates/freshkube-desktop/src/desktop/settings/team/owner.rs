@@ -56,6 +56,8 @@ pub(super) struct JoinForm {
     pub(super) address: Entity<InputState>,
     pub(super) git_ref: Entity<InputState>,
     pub(super) path: Entity<InputState>,
+    /// Masked. Read once at Join, then cleared; kept only in the key store.
+    pub(super) token: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -72,6 +74,8 @@ pub(super) struct Owner {
     /// The contexts of the person's kubeconfig, for mapping.
     pub(super) contexts: Loader<Vec<String>, ()>,
     pub(super) form: Option<JoinForm>,
+    /// The key store a token goes in, in a live window.
+    pub(super) secrets: Option<freshkube_core::secrets::Secrets>,
 }
 
 impl Owner {
@@ -117,8 +121,18 @@ impl SettingsPage {
         runtime: Handle,
         app_dir: Option<std::path::PathBuf>,
         secrets: Option<freshkube_core::secrets::Secrets>,
+        preferences: Option<&std::path::Path>,
     ) {
+        if let Some(preferences) = preferences {
+            let store = super::store::Store::beside(preferences);
+            let restored = store.load();
+            self.team.membership = restored.membership;
+            self.team.notice = restored.unreadable;
+            self.team.store = Some(store);
+            self.team.derive();
+        }
         let owner = &mut self.team.owner;
+        owner.secrets = secrets.clone();
         owner.runtime = Some(runtime);
         owner.fetcher = app_dir
             .map(|dir| Fetcher::Live(Arc::new(TeamFetcher::new(dir, secrets, Default::default()))));
@@ -239,7 +253,11 @@ impl SettingsPage {
                     self.team.owner.join_error = None;
                     self.refit_columns();
                 }
-                Err(error) => self.team.owner.join_error = Some(error.0),
+                Err(error) => {
+                    // Nothing joined: the token typed for it goes too.
+                    self.team_forget_token(&source);
+                    self.team.owner.join_error = Some(error.0);
+                }
             }
         }
         self.team.derive();
@@ -261,8 +279,13 @@ impl SettingsPage {
         });
         let git_ref = cx.new(|cx| InputState::new(window, cx).placeholder("main"));
         let path = cx.new(|cx| InputState::new(window, cx).placeholder("freshkube.yaml"));
+        let token = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Only for an https:// file")
+                .masked(true)
+        });
         let mut subscriptions = Vec::new();
-        for input in [&address, &git_ref, &path] {
+        for input in [&address, &git_ref, &path, &token] {
             subscriptions.push(
                 cx.subscribe_in(input, window, |page, _, event, window, cx| match event {
                     InputEvent::PressEnter { .. } => page.team_join(window, cx),
@@ -279,6 +302,7 @@ impl SettingsPage {
             address,
             git_ref,
             path,
+            token,
             _subscriptions: subscriptions,
         });
         cx.notify();
@@ -294,6 +318,8 @@ impl SettingsPage {
             return;
         };
         let address = form.address.clone();
+        let token_input = form.token.clone();
+        let token = token_input.read(cx).value().to_string();
         let text = |input: &Entity<InputState>| input.read(cx).value().trim().to_owned();
         let parsed = Source::parse(
             &text(&form.address),
@@ -302,6 +328,15 @@ impl SettingsPage {
         );
         match parsed {
             Ok(source) => {
+                if !token.trim().is_empty() {
+                    if let Err(words) = self.team_keep_token(&source, token.trim()) {
+                        self.team.owner.join_error = Some(words.into());
+                        self.team.derive();
+                        cx.notify();
+                        return;
+                    }
+                    token_input.update(cx, |input, cx| input.set_value("", window, cx));
+                }
                 self.team.owner.join_error = None;
                 self.team.owner.joining = Some(source);
                 self.team.left = None;
@@ -317,6 +352,34 @@ impl SettingsPage {
                 self.team.derive();
                 cx.notify();
             }
+        }
+    }
+
+    /// Keeps the typed token in the key store, under the source's account,
+    /// before the first fetch reads it. Only an https:// file takes one: a
+    /// git repository uses the person's own sign-in. The words never repeat
+    /// the token or the address.
+    fn team_keep_token(&self, source: &Source, token: &str) -> Result<(), &'static str> {
+        let Source::Https(https) = source else {
+            return Err(
+                "A token is only for an https:// file; a git repository uses your own sign-in.",
+            );
+        };
+        let Some(secrets) = &self.team.owner.secrets else {
+            return Err("There is no key store here, so a token can’t be kept.");
+        };
+        secrets
+            .write(&https.token_account(), token)
+            .map_err(|_| "The token couldn’t be saved to your key store.")
+    }
+
+    /// Forgets the token a source's account holds: a join that didn't
+    /// finish, or leaving. Nothing to do for a git source.
+    pub(super) fn team_forget_token(&self, source: &Source) {
+        if let (Source::Https(https), Some(secrets)) = (source, &self.team.owner.secrets)
+            && let Err(error) = secrets.forget(&https.token_account())
+        {
+            tracing::warn!("a team token could not be removed from the key store: {error}");
         }
     }
 
@@ -346,6 +409,9 @@ impl SettingsPage {
             .as_ref()
             .is_some_and(|m| m.applied().is_none())
         {
+            if let Some(team) = &self.team.membership {
+                self.team_forget_token(team.source());
+            }
             self.team.membership = None;
             self.team.review = None;
             self.team.owner.stage = Stage::Preview;
@@ -478,6 +544,64 @@ impl SettingsPage {
             self.team_confirm_trust(&at, cx);
         }
         self.team_apply(cx);
+    }
+
+    /// Saves beside `preferences` from now on, for the tests of a live window.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_use_store_for_test(
+        &mut self,
+        preferences: &std::path::Path,
+    ) {
+        self.team.store = Some(super::store::Store::beside(preferences));
+    }
+
+    /// A key store for the token field, for the tests of a window on example
+    /// data, which has none.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_use_secrets_for_test(
+        &mut self,
+        secrets: freshkube_core::secrets::Secrets,
+    ) {
+        self.team.owner.secrets = Some(secrets);
+    }
+
+    /// What the Join form's token field holds, for the tests.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_token_text(&self, cx: &App) -> String {
+        self.team
+            .owner
+            .form
+            .as_ref()
+            .map(|form| form.token.read(cx).value().to_string())
+            .unwrap_or_default()
+    }
+
+    /// Sets one of your own values on the membership, for the tests.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_set_override_for_test(
+        &mut self,
+        key: &str,
+        value: serde_json::Value,
+    ) {
+        if let Some(team) = self.team.membership.as_mut() {
+            team.set_override(key, value);
+        }
+        self.team.derive();
+    }
+
+    /// Whether the membership still holds your value for `key`.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_has_override(&self, key: &str) -> bool {
+        self.team
+            .membership
+            .as_ref()
+            .is_some_and(|team| team.overrides().contains_key(key))
+    }
+
+    /// The notice above the section, for the tests.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_notice(&self) -> Option<String> {
+        self.team.notice.clone()
     }
 
     /// Whether the section is in the middle of joining.

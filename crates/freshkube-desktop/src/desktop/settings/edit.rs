@@ -339,6 +339,56 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// "Use the team's value" (#849): takes `key` out of the person's own
+    /// `freshkube.yaml` through the setup file's save, so the team's applies,
+    /// then drops the override from the membership. Refused as any save is;
+    /// a value the file doesn't hold only drops the override.
+    pub(super) fn use_team_value(&mut self, key: String, cx: &mut Context<Self>) {
+        use freshkube_core::team::clear::{NotCleared, without_key};
+        let refuse = |this: &mut Self, why: String, cx: &mut Context<Self>| {
+            this.notice = Some(Notice::Failed(capitalized(&why).into()));
+            cx.notify();
+        };
+        if !self.editable() {
+            let why = self.why_not_editable().to_owned();
+            return refuse(self, why, cx);
+        }
+        let Some(file) = self.setup_file.clone() else {
+            return refuse(self, "there is nowhere to save".to_owned(), cx);
+        };
+        let Some(setup) = file.read(cx).setup.clone() else {
+            return self.team_override_dropped(&key, cx);
+        };
+        let next = match without_key(&setup, &key) {
+            Ok(next) => next,
+            Err(NotCleared::Absent) => return self.team_override_dropped(&key, cx),
+            Err(NotCleared::Refused) => {
+                let why = "freshkube.yaml can’t go back to the team’s value for that, so nothing was written";
+                return refuse(self, why.to_owned(), cx);
+            }
+        };
+        let what = format!(
+            "Went back to the team’s value for {}.",
+            super::team::friendly(&key)
+        );
+        let seen = self.seen.clone();
+        let save = file.update(cx, |file, cx| {
+            file.save_with(seen, move |setup| *setup = next, cx)
+        });
+        self.notice = None;
+        self.saving = Some(cx.spawn(async move |this, cx| {
+            let outcome = save.await;
+            _ = this.update(cx, |this, cx| {
+                let saved = outcome.is_ok();
+                this.saved(what, outcome, cx);
+                if saved {
+                    this.team_override_dropped(&key, cx);
+                }
+            });
+        }));
+        cx.notify();
+    }
+
     /// Chooses the workspace's own kubeconfig, or `None` for automatic. It
     /// stands alone, so it saves at once.
     pub(super) fn set_kubeconfig(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {

@@ -10,6 +10,7 @@ use super::file::{Values, Version, VersionError};
 use super::mapping::{Choice, ContextMap, UnknownContext};
 use super::merge;
 use super::review::{NotReviewed, Review};
+use super::saved::{SavedMembership, SavedSource, Unusable};
 use super::source::Source;
 use crate::write::Protection;
 
@@ -56,6 +57,55 @@ pub struct Membership {
 }
 
 impl Membership {
+    /// What a restart keeps: only a membership with a reviewed version.
+    pub fn to_saved(&self) -> Option<SavedMembership> {
+        let applied = self.applied.clone()?;
+        Some(SavedMembership {
+            source: SavedSource::of(&self.source),
+            applied: Some(applied),
+            applied_at: self.applied_at,
+            overrides: self.overrides.clone(),
+            before_joining: self.before_joining.clone(),
+            held: self
+                .held
+                .iter()
+                .map(|(id, level)| (id.clone(), level.key().to_string()))
+                .collect(),
+            mapping: self.mapping.chosen(),
+        })
+    }
+
+    /// A membership as it was saved. Nothing waits and nothing failed; the
+    /// next fetch says. A held level is read as the stricter of what it says
+    /// and guarded when it isn't a level, so a damaged file never loosens one.
+    pub fn from_saved(saved: SavedMembership) -> Result<Self, Unusable> {
+        let source = saved.check()?;
+        let applied = saved.applied.ok_or(Unusable::NoVersion)?;
+        let mapping = ContextMap::restore(&applied, &saved.mapping);
+        let held = saved
+            .held
+            .into_iter()
+            .map(|(id, word)| {
+                let level = Protection::ALL
+                    .into_iter()
+                    .find(|level| level.key() == word)
+                    .unwrap_or(Protection::ReadOnly);
+                (id, level)
+            })
+            .collect();
+        Ok(Self {
+            source,
+            applied: Some(applied),
+            applied_at: saved.applied_at,
+            pending: None,
+            failure: None,
+            overrides: saved.overrides,
+            before_joining: saved.before_joining,
+            held,
+            mapping,
+        })
+    }
+
     /// Joins: remembers `overrides` as the copy to go back to.
     pub fn join(source: Source, overrides: Overrides) -> Self {
         Self {
@@ -98,6 +148,13 @@ impl Membership {
     /// Sets one of your own values.
     pub fn set_override(&mut self, key: impl Into<String>, value: Value) {
         self.overrides.insert(key.into(), value);
+    }
+
+    /// "Use the team's value": drops your override of `key`. True when you had
+    /// one. Never touches the team's values or a held floor, so the level a
+    /// floor holds stays where it is.
+    pub fn use_team_value(&mut self, key: &str) -> bool {
+        self.overrides.remove(key).is_some()
     }
 
     /// The team's applied values; none before the first review. A floor that
