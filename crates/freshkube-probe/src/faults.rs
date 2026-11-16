@@ -13,7 +13,7 @@
 //! | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
 //! | `cut` | seconds | every watch that starts is ended by the server after this long, so the app opens the next one |
 //! | `after` | seconds, default 20 | no fault before this, so the app can start |
-//! | `until` | seconds, default none, after `after` | no fault from this on, so a run can show the app recovering: `refuse=0.6,after=5,until=120` refuses for two minutes and then answers. A watch whose cut would land at or after it is not cut |
+//! | `until` | seconds, default none, after `after` | no fault from this on, so a run can show the app recovering: `refuse=0.6,after=0,until=120` refuses for two minutes and then answers. A watch whose cut would land at or after it is not cut |
 //! | `seed` | integer, default 1 | the generator's seed |
 
 use std::time::Duration;
