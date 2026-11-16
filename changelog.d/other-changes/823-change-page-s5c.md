@@ -1,0 +1,1 @@
+- A new setup key, `delivery.applications[].not_expected_in`, lists the Stages of a Kargo project that an application isn't expected in: what isn't found there reads Not used here on the change page instead of Not found. A bad row is skipped with a warning, and a name that isn't one of the change's Stages is warned about, never refused.
