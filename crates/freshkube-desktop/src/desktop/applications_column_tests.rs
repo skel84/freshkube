@@ -490,3 +490,31 @@ fn the_shown_applications_row_closes_a_change_followed_from_it(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+/// With no cluster open the column says what it couldn't look for, has no
+/// Retry, and one button opens Settings › Clusters.
+#[gpui_kit::test]
+fn the_column_offers_settings_when_no_cluster_is_open(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = applications(cx, Variant::Acme);
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
+    cx.update_window(handle, |_, _, cx| {
+        page.update(cx, |page, cx| page.set_source(None, None, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let note = page.read(cx).column().note.clone().expect("a note");
+        assert!(note.text.contains("No cluster is open"), "{}", note.text);
+        assert!(window.try_find("nav-applications-status").is_some());
+        assert!(window.try_find("nav-applications-status-retry").is_none());
+        window.click("nav-applications-open-clusters", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).navigation.page, Page::Settings);
+        assert_eq!(
+            view.read(cx).settings_page.read(cx).section(),
+            crate::desktop::settings::SettingsSection::Clusters
+        );
+    })
+    .unwrap();
+}

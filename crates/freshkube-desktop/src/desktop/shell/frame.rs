@@ -1,4 +1,5 @@
 use super::*;
+use crate::backend::OverviewError;
 use crate::logs::TalosPanel;
 use crate::mutation::Running;
 use freshkube_ui::status::Segment;
@@ -216,6 +217,7 @@ impl Pilot {
         let status = Self::status(&self.overview);
         let glyph = |tone: Tone| ui::status_glyph(tone, cx);
         let mut named = None;
+        let mut status = status;
         let (indicator, text) = if let Some(error) = &self.config_error {
             (
                 glyph(Tone::Crit),
@@ -254,9 +256,14 @@ impl Pilot {
             named = Some(context.to_owned());
             (glyph(Tone::Good), self.context_display.status.to_string())
         } else {
+            // The label says the cause too, in a few words; the reason waits
+            // in the tooltip.
+            if let Some(error) = self.overview.error() {
+                status = overview_lead(error).to_owned();
+            }
             (
                 glyph(Tone::Unknown),
-                overview_unavailable(self.overview.error().map(String::as_str)),
+                overview_unavailable(self.overview.error()),
             )
         };
         (
@@ -614,23 +621,68 @@ impl Pilot {
 
 /// The status bar's words when the overview has no data, isn't loading and
 /// isn't stale: a failure only when there is an error, otherwise Unknown.
-pub(super) fn overview_unavailable(error: Option<&str>) -> String {
+/// The cause is the error's kind, never its text: a refusal says "Not
+/// allowed", a cluster that didn't answer says "Couldn't reach", and the
+/// rest "Couldn't read".
+pub(super) fn overview_unavailable(error: Option<&OverviewError>) -> String {
     match error {
-        Some(error) => format!("Couldn't read the cluster: {error}"),
+        Some(error) => format!("{}: {error}", overview_lead(error)),
         None => "Haven't read the cluster yet".into(),
+    }
+}
+
+/// The cause in a few words, from the error's kind alone.
+fn overview_lead(error: &OverviewError) -> &'static str {
+    use freshkube_core::failure::FailureKind::*;
+    match error.kind {
+        Forbidden | Unauthorized => "Not allowed to read the cluster",
+        Unreachable | Timeout => "Couldn't reach the cluster",
+        Config | NotFound | Other => "Couldn't read the cluster",
     }
 }
 
 #[cfg(test)]
 mod words_tests {
     use super::overview_unavailable;
+    use crate::backend::OverviewError;
+    use freshkube_core::failure::FailureKind;
 
     #[test]
     fn the_status_bar_keeps_unknown_apart_from_failed() {
         assert_eq!(overview_unavailable(None), "Haven't read the cluster yet");
         assert_eq!(
-            overview_unavailable(Some("connection refused")),
+            overview_unavailable(Some(&"connection refused".into())),
             "Couldn't read the cluster: connection refused"
+        );
+    }
+
+    #[test]
+    fn the_status_bar_tells_not_allowed_from_couldnt_reach() {
+        let words = |kind| overview_unavailable(Some(&OverviewError::new(kind, "why")));
+        assert_eq!(
+            words(FailureKind::Forbidden),
+            "Not allowed to read the cluster: why"
+        );
+        assert_eq!(
+            words(FailureKind::Unauthorized),
+            "Not allowed to read the cluster: why"
+        );
+        assert_eq!(
+            words(FailureKind::Unreachable),
+            "Couldn't reach the cluster: why"
+        );
+        assert_eq!(
+            words(FailureKind::Timeout),
+            "Couldn't reach the cluster: why"
+        );
+        // The words never decide: a refusal whose text says "timed out"
+        // is still a refusal.
+        assert_eq!(
+            overview_unavailable(Some(&OverviewError::new(
+                FailureKind::Forbidden,
+                "timed out"
+            ))),
+            "Not allowed to read the cluster: timed out"
         );
     }
 }

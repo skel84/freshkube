@@ -7,6 +7,7 @@ use std::{
 
 use freshkube_core::BoundedReadError;
 use freshkube_core::cluster_overview::{ClusterOverviewCollector, KubeconfigSelection};
+use freshkube_core::failure::FailureKind;
 pub(crate) use freshkube_core::job::{OwnedJob, spawn_job};
 use freshkube_core::{
     cluster_overview::{ClusterOverview, ConfigIdentity},
@@ -176,10 +177,47 @@ pub(crate) fn load_contexts(
     (OwnedJob::new(task), receiver)
 }
 
+/// Why the Talos overview couldn't be read, kept as data: the status bar
+/// words a refusal apart from an unreachable cluster by `kind`, never by
+/// looking into `message`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OverviewError {
+    pub(crate) kind: FailureKind,
+    message: String,
+}
+
+impl OverviewError {
+    pub(crate) fn new(kind: FailureKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for OverviewError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+/// A failure that says no more than its words is of no particular kind.
+impl From<String> for OverviewError {
+    fn from(message: String) -> Self {
+        Self::new(FailureKind::Other, message)
+    }
+}
+
+impl From<&str> for OverviewError {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
 pub(crate) struct CollectedOverview {
     pub(crate) configuration: freshkube_core::ConfigurationRevision,
     pub(crate) access: Option<freshkube_core::AccessIdentity>,
-    pub(crate) cluster: Result<ClusterOverview, String>,
+    pub(crate) cluster: Result<ClusterOverview, OverviewError>,
 }
 
 pub(crate) struct ObservedNodes {
@@ -222,7 +260,7 @@ pub(crate) fn collect(
     nodes: Option<ObservedNodes>,
 ) -> (
     OwnedJob,
-    oneshot::Receiver<Result<CollectedOverview, String>>,
+    oneshot::Receiver<Result<CollectedOverview, OverviewError>>,
 ) {
     let (mut sender, receiver) = oneshot::channel();
     let worker_runtime = runtime.clone();
@@ -230,7 +268,7 @@ pub(crate) fn collect(
         let operation = async move {
             let configuration = configuration_revision(&config, &kubeconfig).await?;
             let mut access = None;
-            let cluster = async {
+            let cluster: Result<ClusterOverview, OverviewError> = async {
             let (path, loaded, catalog, identity) = read_config(&worker_runtime, config.clone(), false).await?;
             // Never refresh a previously populated snapshot: optional-source failures
             // in the shared collector retain data, which must not be labeled fresh here.
@@ -240,11 +278,11 @@ pub(crate) fn collect(
             // are unchanged, and dropped by the collector after transport failures.
             let mut snapshots = tokio::time::timeout(OPEN_DEADLINE, collector.connect_from_config_reusing(&loaded, identity))
                 .await
-                .map_err(|_| "Connecting to the Talos context timed out".to_string())?
-                .map_err(|error| error.to_string())?;
+                .map_err(|_| OverviewError::new(FailureKind::Timeout, "Connecting to the Talos context timed out"))?
+                .map_err(|error| OverviewError::new(FailureKind::Config, error.to_string()))?;
             let mut snapshot = snapshots.pop().ok_or_else(|| "No Talos context was loaded".to_string())?;
             if snapshot.client.is_none() {
-                return Err(snapshot.connection.error().unwrap_or("Talos context is disconnected").to_string());
+                return Err(OverviewError::new(FailureKind::Unreachable, snapshot.connection.error().unwrap_or("Talos context is disconnected")));
             }
             let current = freshkube_core::AccessIdentity::for_talos(snapshot.client.as_ref().unwrap(), &kubeconfig);
             access = Some(current);
@@ -266,7 +304,7 @@ pub(crate) fn collect(
             biased;
             _ = sender.closed() => {}
             result = tokio::time::timeout(COLLECT_DEADLINE, operation) => {
-                let result = result.unwrap_or_else(|_| Err("Refreshing the Talos overview timed out".into()));
+                let result = result.unwrap_or_else(|_| Err(OverviewError::new(FailureKind::Timeout, "Refreshing the Talos overview timed out")));
                 let _ = sender.send(result);
             }
         }
@@ -274,7 +312,7 @@ pub(crate) fn collect(
     (OwnedJob::new(task), receiver)
 }
 
-fn require_fresh_node_data(snapshot: ClusterOverview) -> Result<ClusterOverview, String> {
+fn require_fresh_node_data(snapshot: ClusterOverview) -> Result<ClusterOverview, OverviewError> {
     if snapshot.versions.is_empty() && snapshot.services.is_empty() {
         return Err("No fresh node version or service responses were received; roster data alone does not establish node health".into());
     }

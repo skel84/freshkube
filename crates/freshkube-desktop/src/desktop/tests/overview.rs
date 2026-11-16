@@ -247,3 +247,39 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
     })
     .unwrap();
 }
+
+/// The status bar reads the cause kept as data: a refusal says "Not allowed"
+/// and offers no Retry, a cluster that didn't answer says "Couldn't reach".
+#[gpui_kit::test]
+fn the_status_bar_tells_not_allowed_from_couldnt_reach(cx: &mut TestAppContext) {
+    use crate::backend::OverviewError;
+    use freshkube_core::failure::FailureKind;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    for (kind, lead) in [
+        (FailureKind::Forbidden, "Not allowed to read the cluster"),
+        (FailureKind::Unreachable, "Couldn't reach the cluster"),
+        (FailureKind::Other, "Couldn't read the cluster"),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.overview = crate::state::Snapshot::default();
+                let request = pilot.overview.begin(pilot.applied.clone());
+                pilot
+                    .overview
+                    .apply(&request, Err(OverviewError::new(kind, "why")));
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                window
+                    .find("overview-status")
+                    .label()
+                    .is_some_and(|label| label == lead),
+                "{kind:?}: {:?}",
+                window.find("overview-status").label()
+            );
+            assert!(window.try_find("overview-status-retry").is_none());
+        })
+        .unwrap();
+    }
+}

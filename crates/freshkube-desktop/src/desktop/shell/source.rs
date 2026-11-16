@@ -6,6 +6,7 @@ use super::*;
 use crate::monitoring::alerts::Which;
 use crate::monitoring::page::{EntryId, Section as Shown};
 use crate::observability::Destination;
+use freshkube_applications::ColumnAction;
 use freshkube_delivery::applications::Rule;
 use freshkube_ui::source_list::{Line, Menu, Note, Prose, Row, Section, SourceListHost};
 
@@ -547,6 +548,18 @@ impl Pilot {
             .current(here && page.waiting_shown());
         let mut lines: Vec<Line<ColumnKey>> = vec![changes.into(), waiting.into(), all.into()];
         if let Some(note) = &column.note {
+            if let Some(ColumnAction::OpenClusters) = note.action {
+                lines.push(
+                    Prose::new("nav-applications-status", note.text.clone())
+                        .action(
+                            "nav-applications-open-clusters",
+                            "Open Settings › Clusters",
+                            ColumnKey::SettingsSection(SettingsSection::Clusters),
+                        )
+                        .into(),
+                );
+                return lines;
+            }
             let mut line = Note::new("nav-applications-status", note.text.clone());
             if let Some(tooltip) = &note.tooltip {
                 line = line.tooltip(tooltip.clone());

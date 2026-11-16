@@ -120,7 +120,7 @@ use changes::ChangesEvent;
 pub use changes::ChangesPage;
 pub use column::Column;
 #[cfg(any(test, feature = "testing"))]
-pub use column::{ColumnApp, ColumnSection};
+pub use column::{ColumnAction, ColumnApp, ColumnSection};
 use display::{Body, Display, Labels, MARKS, Mark};
 pub use example::Variant;
 use links::Connections;

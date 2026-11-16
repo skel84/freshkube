@@ -251,7 +251,7 @@ impl super::Pilot {
         let unreachable = (self.mode().has_talos()
             && self.overview.data().is_none()
             && !self.overview.is_loading())
-        .then(|| self.overview.error().cloned())
+        .then(|| self.overview.error().map(ToString::to_string))
         .flatten();
         OverviewState {
             context: self.applied.context.clone().unwrap_or_default().into(),
@@ -282,7 +282,7 @@ impl super::Pilot {
                 _ => None,
             });
         kube.or_else(|| self.config_error.clone())
-            .or_else(|| self.overview.error().cloned())
+            .or_else(|| self.overview.error().map(ToString::to_string))
             .map(Into::into)
     }
 
@@ -291,13 +291,13 @@ impl super::Pilot {
     pub(super) fn attention_stale(&self) -> Option<SharedString> {
         let summary = &self.switch.registry.active().kubernetes_summary;
         let error = if self.overview.is_stale() {
-            self.overview.error()
+            self.overview.error().map(ToString::to_string)
         } else if summary.is_stale() {
-            summary.error()
+            summary.error().cloned()
         } else {
             None
         };
-        error.map(|error| error.clone().into())
+        error.map(Into::into)
     }
 
     /// Hands the node pane why its attention rows may be out of date; it

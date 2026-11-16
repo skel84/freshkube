@@ -33,7 +33,10 @@ impl Source {
     }
 
     /// `None` keeps the read in flight; a failure is consumed only once.
-    pub(crate) fn overview(&mut self, context: &str) -> Option<Result<ClusterOverview, String>> {
+    pub(crate) fn overview(
+        &mut self,
+        context: &str,
+    ) -> Option<Result<ClusterOverview, crate::backend::OverviewError>> {
         if std::mem::take(&mut self.fail_next) {
             return Some(Err(
                 "Example: the Talos API didn't answer within 10 s".into()
@@ -93,7 +96,10 @@ mod tests {
         source.fail_next_overview();
         assert!(source.has_pending_failure());
         let error = source.overview("prod-fra").unwrap().err().unwrap();
-        assert_eq!(error, "Example: the Talos API didn't answer within 10 s");
+        assert_eq!(
+            error.to_string(),
+            "Example: the Talos API didn't answer within 10 s"
+        );
         assert!(!source.has_pending_failure());
         assert!(source.overview("prod-fra").is_none());
         assert_eq!(source.tick, 0, "waiting and failures add no readings");
