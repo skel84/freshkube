@@ -377,8 +377,8 @@ mod team_floors {
         let held = levels(directory.path(), entry("prod")).with_team(floors.clone(), None);
         assert_eq!(held.read(), Ok(Protection::ReadOnly));
         // The same by context, where only `level_of` decides.
-        let by_context = levels(directory.path(), Subject::Context("prod-ctx".into()))
-            .with_team(floors, None);
+        let by_context =
+            levels(directory.path(), Subject::Context("prod-ctx".into())).with_team(floors, None);
         assert_eq!(by_context.read(), Ok(Protection::ReadOnly));
         // And the window's held level is never loosened by any of it.
         for held_level in LEVELS {

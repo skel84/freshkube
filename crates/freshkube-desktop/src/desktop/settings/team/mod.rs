@@ -899,7 +899,29 @@ impl SettingsPage {
         let version = Version::parse("t1", team_file.as_bytes(), Default::default())
             .expect("a valid team file");
         m.fetched(Ok(version), Utc::now());
-        example::map_by_name(&mut m);
+        // A team cluster is the entry with its id: mapped to that entry's
+        // context, as a person would; a floor binds to nothing else.
+        let available: Vec<String> = self
+            .rows
+            .iter()
+            .map(|row| row.context.to_string())
+            .collect();
+        let ids: Vec<String> = m
+            .mapping()
+            .clusters()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        for id in ids {
+            let choice = self
+                .rows
+                .iter()
+                .find(|row| row.id.as_ref() == id)
+                .map_or(freshkube_core::team::Choice::LeftOut, |row| {
+                    freshkube_core::team::Choice::Context(row.context.to_string())
+                });
+            m.map_context(&id, choice, &available)
+                .expect("a context of yours");
+        }
         let mut review = m.review().expect("a version waits");
         example::confirm_all(&mut review);
         m.apply(review, Utc::now()).expect("reviewed");
