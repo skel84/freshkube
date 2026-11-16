@@ -39,6 +39,8 @@ mod team;
 #[cfg(test)]
 mod team_join_tests;
 #[cfg(test)]
+mod team_saved_tests;
+#[cfg(test)]
 mod team_tests;
 #[cfg(test)]
 pub(super) mod tests;
@@ -382,6 +384,7 @@ impl SettingsPage {
     pub(super) fn new(
         runtime: tokio::runtime::Handle,
         metrics_secrets: Option<freshkube_core::secrets::Secrets>,
+        preferences: Option<&std::path::Path>,
         cx: &mut Context<Self>,
     ) -> Self {
         let (columns, width) = source::columns(&[], false);
@@ -470,6 +473,7 @@ impl SettingsPage {
             team_runtime,
             crate::preferences_path().and_then(|file| file.parent().map(|dir| dir.join("team"))),
             team_secrets,
+            preferences,
         );
         page.start_team_hidden(cx);
         page.derive_follows(cx);

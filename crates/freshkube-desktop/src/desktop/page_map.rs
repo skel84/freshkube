@@ -222,7 +222,14 @@ impl Pages {
         {
             crate::applications::install_avatar_folder(dir, cx);
         }
-        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
+        let settings_page = cx.new(|cx| {
+            settings::SettingsPage::new(
+                runtime.clone(),
+                secrets,
+                options.preferences.as_deref(),
+                cx,
+            )
+        });
         settings_page.update(cx, |page, _| {
             page.set_example_labels_capped(options.debug.metrics_labels_capped)
         });

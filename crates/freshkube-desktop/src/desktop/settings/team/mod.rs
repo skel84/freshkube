@@ -21,6 +21,7 @@ use freshkube_ui::tooltip::FollowTooltip as _;
 
 mod join;
 mod owner;
+mod store;
 
 use super::{SettingsPage, SettingsSection};
 use crate::ui::{self, Tone, dp};
@@ -49,6 +50,12 @@ pub(super) struct TeamState {
     /// team's values yet, so the header, the status bar and the write module
     /// still use the file's own level, and Settings must not show another.
     shows_floors: bool,
+    /// `team.json` beside the preferences, in a live window. Example data
+    /// never saves.
+    store: Option<store::Store>,
+    /// Why the saved team setup wasn't used, or why a save failed, in words
+    /// with no path or address. Cleared by the next save that works.
+    notice: Option<String>,
 }
 
 /// A change as the review lists it.
@@ -67,6 +74,8 @@ struct YoursRow {
     key: String,
     label: String,
     text: String,
+    /// "Use the team's value" does something: you set a key the team sets.
+    can_use_team: bool,
 }
 
 /// The failure banner's words.
@@ -83,6 +92,7 @@ pub(super) struct Shown {
     ignored: String,
     failure: Option<FailureWords>,
     refusal: Option<String>,
+    notice: Option<String>,
     yours: Vec<YoursRow>,
     /// Each cluster the team or you set something for, against the team.
     clusters: BTreeMap<String, ClusterView>,
@@ -169,7 +179,7 @@ impl TeamState {
             shown.applied = team.applied().map_or("None".to_string(), |v| {
                 let at = team.applied_at().map(when).unwrap_or_default();
                 format!(
-                    "{} · reviewed {at} · held for this session; your setup doesn’t use its values yet",
+                    "{} · reviewed {at} · saved; your setup doesn’t use its values yet",
                     v.id()
                 )
             });
@@ -206,8 +216,10 @@ impl TeamState {
                 .as_ref()
                 .is_some_and(|m| m.applied().is_none());
             shown.lead = match (joining, step) {
-                (true, Step::Trust) => "Joining the team: review trust changes first",
-                (true, Step::Rest) => "Joining the team: review the other changes",
+                (true, Step::Trust) => {
+                    "Review the team’s setup before joining: trust changes first"
+                }
+                (true, Step::Rest) => "Review the team’s setup before joining: the other changes",
                 (false, Step::Trust) => "A new team version waits: review trust changes first",
                 (false, Step::Rest) => "A new team version waits: review the other changes",
             };
@@ -248,6 +260,7 @@ impl TeamState {
             )
         });
         shown.refusal = self.refusal.map(|why| why.to_string());
+        shown.notice = self.notice.clone();
         shown.join = self.derive_join();
         self.shown = shown;
     }
@@ -350,13 +363,16 @@ fn yours_rows(team: &Membership) -> Vec<YoursRow> {
                 key: key.clone(),
                 label: friendly(key),
                 text,
+                // A level is never taken out of your setup (`team::clear`).
+                can_use_team: resolved.origin.can_use_team()
+                    && !freshkube_core::team::clear::is_level_key(key),
             }
         })
         .collect()
 }
 
 /// `clusters[core-fra].protection` as `core-fra · protection`.
-fn friendly(key: &str) -> String {
+pub(super) fn friendly(key: &str) -> String {
     match key
         .strip_prefix("clusters[")
         .and_then(|rest| rest.split_once("]."))
@@ -446,13 +462,53 @@ impl SettingsPage {
             (None, Some(_)) => self.team_joined(narrow, cx),
             (None, None) => self.team_empty(narrow, cx),
         };
+        let notice = self.team.shown.notice.clone().map(|words| {
+            div()
+                .id("team-notice")
+                .test_support()
+                .child(contained(ui::banner(
+                    Tone::Warn,
+                    Some("Team setup isn’t kept".into()),
+                    words,
+                    None,
+                    cx,
+                )))
+        });
         page::padded("settings-page")
             .track_focus(&self.focus)
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .child(header)
+            .children(notice)
+            .children(self.team_save_outcome(cx))
             .child(body)
             .into_any_element()
+    }
+
+    /// What the last save of your setup did ("Use the team's value"), drawn
+    /// here because the other sections' banners don't reach this one: a press
+    /// on this page gets its answer on this page.
+    fn team_save_outcome(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (id, lead, tone, words) = match &self.notice {
+            Some(super::Notice::Failed(words)) => {
+                ("team-save-failed", "Not saved", Tone::Crit, words)
+            }
+            Some(super::Notice::Saved(words)) => ("team-saved", "Saved", Tone::Good, words),
+            None => return None,
+        };
+        Some(
+            div()
+                .id(id)
+                .test_support()
+                .child(contained(ui::banner(
+                    tone,
+                    Some(lead.into()),
+                    words.clone(),
+                    None,
+                    cx,
+                )))
+                .into_any_element(),
+        )
     }
 
     fn team_empty(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -554,10 +610,31 @@ impl SettingsPage {
                 .narrow(narrow)
                 .saved_in(form::SavedIn::file("freshkube.yaml"));
             for row in &shown.yours {
+                let value = line(format!("team-yours-{}-value", row.key), row.text.clone());
+                let control = if row.can_use_team {
+                    let this = cx.entity();
+                    let key = row.key.clone();
+                    let use_team = Button::new(format!("team-use-{}", row.key))
+                        .small()
+                        .outline()
+                        .label("Use the team’s value")
+                        .on_click(move |_, _, cx| {
+                            let key = key.clone();
+                            this.update(cx, |page, cx| page.use_team_value(key, cx));
+                        });
+                    h_flex()
+                        .w_full()
+                        .gap(dp(8.))
+                        .child(div().flex_1().min_w_0().child(value))
+                        .child(use_team)
+                        .into_any_element()
+                } else {
+                    value.into_any_element()
+                };
                 group = group.row(form::row(
                     format!("team-yours-{}", row.key),
                     row.label.clone(),
-                    line(format!("team-yours-{}-value", row.key), row.text.clone()),
+                    control,
                 ));
             }
             column = column.child(group.render(cx));
@@ -793,7 +870,29 @@ impl SettingsPage {
         let version = Version::parse("t1", team_file.as_bytes(), Default::default())
             .expect("a valid team file");
         m.fetched(Ok(version), Utc::now());
-        example::map_by_name(&mut m);
+        // A team cluster is the entry with its id: mapped to that entry's
+        // context, as a person would; a floor binds to nothing else.
+        let available: Vec<String> = self
+            .rows
+            .iter()
+            .map(|row| row.context.to_string())
+            .collect();
+        let ids: Vec<String> = m
+            .mapping()
+            .clusters()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        for id in ids {
+            let choice = self
+                .rows
+                .iter()
+                .find(|row| row.id.as_ref() == id)
+                .map_or(freshkube_core::team::Choice::LeftOut, |row| {
+                    freshkube_core::team::Choice::Context(row.context.to_string())
+                });
+            m.map_context(&id, choice, &available)
+                .expect("a context of yours");
+        }
         let mut review = m.review().expect("a version waits");
         example::confirm_all(&mut review);
         m.apply(review, Utc::now()).expect("reviewed");
@@ -895,6 +994,7 @@ impl SettingsPage {
                     Ok(()) => {
                         self.team.refusal = None;
                         self.team.applied_count += 1;
+                        self.team_save();
                     }
                     Err(why) => {
                         self.team.refusal = Some(why);
@@ -908,10 +1008,52 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// The contexts chosen for the team's clusters, when in a team.
+    pub(super) fn team_mapping(&self) -> Option<freshkube_core::team::ContextMap> {
+        self.team.membership.as_ref().map(|m| m.mapping().clone())
+    }
+
+    /// "Use the team's value" went through the setup file's save (or the file
+    /// held no such value): the override is no longer yours.
+    pub(super) fn team_override_dropped(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(team) = self.team.membership.as_mut()
+            && team.use_team_value(key)
+        {
+            self.team_save();
+            self.team.derive();
+            self.derive_levels();
+        }
+        cx.notify();
+    }
+
+    /// Saves the membership beside the preferences. Nothing in a window
+    /// with no store (example data); a failure is said and the membership
+    /// stays in memory.
+    pub(super) fn team_save(&mut self) {
+        let Some(store) = &self.team.store else {
+            return;
+        };
+        self.team.notice = match store.save(self.team.membership.as_ref()) {
+            Ok(()) => None,
+            Err(error) => {
+                tracing::warn!("the team setup could not be saved: {error}");
+                Some("Your team setup could not be saved, so a restart will forget it.".into())
+            }
+        };
+        self.team.derive();
+    }
+
+    #[cfg(test)]
+    pub(super) fn team_leave_for_test(&mut self, how: Leave, cx: &mut Context<Self>) {
+        self.team_leave(how, cx);
+    }
+
     fn team_leave(&mut self, how: Leave, cx: &mut Context<Self>) {
         if let Some(team) = self.team.membership.take() {
+            self.team_forget_token(team.source());
             // Slice 2 saves these into the person's freshkube.yaml.
             let _overrides = team.leave(how);
+            self.team_save();
             self.team.review = None;
             // A fetch in flight is for a team the person has left.
             self.team.owner.stop();

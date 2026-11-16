@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use super::file::Version;
 
 /// What a person chose for one team cluster.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Choice {
     /// One of the contexts of your kubeconfig.
     Context(String),
@@ -52,6 +52,26 @@ impl ContextMap {
                 })
                 .collect(),
         }
+    }
+
+    /// What was saved: the clusters `version` names, with the choices kept
+    /// for them. A saved choice for a cluster the version no longer names is
+    /// dropped. A context is not checked against a kubeconfig here: the file
+    /// may name one that has since gone, and a mapping never loosens a level.
+    pub fn restore(version: &Version, chosen: &BTreeMap<String, Choice>) -> Self {
+        Self {
+            clusters: cluster_ids(version)
+                .map(|id| (id.to_string(), chosen.get(id).cloned()))
+                .collect(),
+        }
+    }
+
+    /// The choices made, for saving.
+    pub fn chosen(&self) -> BTreeMap<String, Choice> {
+        self.clusters
+            .iter()
+            .filter_map(|(id, choice)| Some((id.clone(), choice.clone()?)))
+            .collect()
     }
 
     /// Each cluster with its choice, by id.

@@ -217,6 +217,9 @@ fn cluster_id_ok(id: &str) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
     id: String,
+    /// The file as fetched, which a restart parses again: the only way to a
+    /// version is [`Version::parse`], whoever saved it.
+    bytes: Vec<u8>,
     values: Values,
     ignored: Vec<Ignored>,
     /// Key files named by `supply_chain.public_key_file`: path → fingerprint of
@@ -233,6 +236,11 @@ impl Version {
         &self.id
     }
 
+    /// The file this version was parsed from.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     /// What the team sets, flat.
     pub fn values(&self) -> &Values {
         &self.values
@@ -247,7 +255,10 @@ impl Version {
         &self.key_fingerprints
     }
 
-    /// The only way to make a version: the allowlist and the id check run here.
+    /// The only way to make a version: the allowlist and the cluster-id check
+    /// run here. The version's own `id` (a commit, or a content hash) is the
+    /// caller's and is not checked here: `SavedVersion::parse` checks a saved
+    /// one is hex.
     pub fn parse(
         id: impl Into<String>,
         bytes: &[u8],
@@ -285,11 +296,38 @@ impl Version {
         }
         Ok(Version {
             id: id.into(),
+            bytes: bytes.to_vec(),
             values,
             ignored,
             key_fingerprints,
         })
     }
+}
+
+/// Whether a team file could set `key`: a flat key of the shapes
+/// [`Version::values`] holds (`clusters[id].protection`, `coroot.project`),
+/// ending at a value of the allowlist. Nothing else is one of your values
+/// over the team's, whatever a saved file says.
+pub fn key_allowed(key: &str) -> bool {
+    fn at(tree: &[(&str, Allow)], path: &[&str]) -> bool {
+        let Some((first, rest)) = path.split_first() else {
+            return false;
+        };
+        match tree.iter().find(|(name, _)| name == first) {
+            Some((_, Leaf)) => rest.is_empty(),
+            Some((_, Map(inner))) => at(inner, rest),
+            None => false,
+        }
+    }
+    let (tree, rest) = match key.strip_prefix("clusters[") {
+        Some(after) => match after.split_once("].") {
+            Some((id, rest)) if cluster_id_ok(id) => (CLUSTER, rest),
+            _ => return false,
+        },
+        None => (TOP, key),
+    };
+    let path: Vec<&str> = rest.split('.').collect();
+    path.iter().all(|part| key_ok(part)) && at(tree, &path)
 }
 
 fn ignore(ignored: &mut Vec<Ignored>, at: &str, why: IgnoredKey) {
