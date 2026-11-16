@@ -839,7 +839,7 @@ fn a_tools_page_opens_in_the_browser_only_with_an_address(cx: &mut TestAppContex
     cx.run_until_parked();
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some("https://git.example.test/acme/checkout/pull/418")
+        Some("https://github.com/acme/shop/pull/418")
     );
 }
 
@@ -2582,6 +2582,7 @@ fn a_toast_covers_neither_the_header_nor_the_inspector_actions(cx: &mut TestAppC
             let roomy = width == 1280. && text == 13.;
             for id in [
                 "change-detail-actions",
+                "change-detail-rollback",
                 "change-copy-link",
                 "change-follow-trigger",
             ] {

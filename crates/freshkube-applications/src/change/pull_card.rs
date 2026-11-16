@@ -320,6 +320,9 @@ pub(super) fn derive(
     error: Option<&str>,
     reading: Reading,
 ) -> PullCard {
+    let titled = summary
+        .filter(|pull| pull.from_title)
+        .map(|pull| pull.number);
     let summary = detail.map(|detail| &detail.summary).or(summary);
     let title: SharedString = match (summary, known) {
         (Some(pull), _) => match &pull.title {
@@ -351,12 +354,29 @@ pub(super) fn derive(
         card.repo = Some(summary.repo.clone().into());
         card.state = Some((summary.state.label(), tone_of(summary.state)));
         card.people = people_of(summary, detail);
+        // The link says where its number came from when it wasn't found by
+        // searching GitHub for the commit. The list's summary knows; the
+        // card's own read parses `pulls/{n}` afresh and doesn't.
+        // Only for the number the title gave: a card that shows another
+        // (a build annotation named #417) is not that read.
+        let from_title = summary.from_title || titled == Some(summary.number);
         card.links
             .extend(summary.page.clone().map(|address| CardLink {
                 id: "open",
-                label: "Open on GitHub",
+                label: if from_title {
+                    "Open on GitHub (number from the commit title)"
+                } else {
+                    "Open on GitHub"
+                },
                 address,
             }));
+        if from_title {
+            card.notes.push(
+                "The number is taken from the commit's title, and that pull request \
+                 was read directly."
+                    .into(),
+            );
+        }
         if let (Some(at_), Some(by)) = (summary.merged_at, summary.merged_by.as_ref()) {
             card.merged = Some(format!("Merged by {}, {}", by.login, at(at_)).into());
         } else if let Some(at_) = summary.merged_at {
@@ -727,5 +747,42 @@ mod tests {
             "{}",
             card.compact
         );
+    }
+
+    #[test]
+    fn a_number_taken_from_the_commit_title_is_labelled_so() {
+        let (mut summary, detail) = held(418);
+        summary.from_title = true;
+        // The card's own read doesn't carry the flag; the list's does.
+        let card = derive(&known(), Some(&summary), Some(&detail), None, Reading::Held);
+        assert_eq!(
+            card.links[0].label,
+            "Open on GitHub (number from the commit title)"
+        );
+        assert!(
+            card.notes
+                .iter()
+                .any(|n| n.contains("taken from the commit's title"))
+        );
+        // Found by searching: no such words.
+        let (summary, detail) = held(418);
+        let card = derive(&known(), Some(&summary), Some(&detail), None, Reading::Held);
+        assert_eq!(card.links[0].label, "Open on GitHub");
+        assert!(card.notes.iter().all(|n| !n.contains("commit's title")));
+    }
+
+    #[test]
+    fn the_title_label_is_only_for_the_number_the_title_gave() {
+        let (mut summary, detail) = held(418);
+        summary.from_title = true;
+        // The card shows #418 and the title gave #418: labelled.
+        let card = derive(&known(), Some(&summary), Some(&detail), None, Reading::Held);
+        assert!(card.links[0].label.contains("commit title"));
+        // The card's own read is of another number: not labelled.
+        let mut other = detail.clone();
+        other.summary.number = 417;
+        let card = derive(&known(), Some(&summary), Some(&other), None, Reading::Held);
+        assert_eq!(card.links[0].label, "Open on GitHub");
+        assert!(card.notes.iter().all(|n| !n.contains("commit's title")));
     }
 }

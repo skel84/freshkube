@@ -327,11 +327,22 @@ fn end(
         linear_color_stop(clear, 0.),
         linear_color_stop(background, 1.),
     ));
+    let name = format!("{id}-{}", if later { "later" } else { "earlier" });
+    let strip = strip.clone();
+    // Only the chevron takes the click and pages the row. The fade beside it
+    // only dims the tab it covers: a tab under it is still pressed, so the
+    // last tab (YAML) isn't lost to an overlay when the pane is narrow.
     let chevron = h_flex()
+        .id(SharedString::from(format!("{name}-step")))
+        .test_support()
+        .role(Role::Button)
+        .aria_label(if later { "More tabs" } else { "Earlier tabs" })
         .h_full()
         .w(dp(CHEVRON))
         .justify_center()
         .bg(background)
+        .occlude()
+        .cursor_pointer()
         .child(
             Icon::new(if later {
                 IconName::ChevronRight
@@ -340,23 +351,16 @@ fn end(
             })
             .size(dp(14.))
             .text_color(p.muted),
-        );
-    let strip = strip.clone();
+        )
+        .on_click(move |_, window, cx| strip.step(later, window, cx));
     h_flex()
-        .id(SharedString::from(format!(
-            "{id}-{}",
-            if later { "later" } else { "earlier" }
-        )))
+        .id(SharedString::from(name))
         .test_support()
-        .role(Role::Button)
-        .aria_label(if later { "More tabs" } else { "Earlier tabs" })
         .absolute()
         .top_0()
         .h(dp(TAB_HEIGHT))
         .w(dp(END))
         .map(|this| if later { this.right_0() } else { this.left_0() })
-        .occlude()
-        .cursor_pointer()
         .map(|this| {
             if later {
                 this.child(fade).child(chevron)
@@ -364,5 +368,4 @@ fn end(
                 this.child(chevron).child(fade)
             }
         })
-        .on_click(move |_, window, cx| strip.step(later, window, cx))
 }
