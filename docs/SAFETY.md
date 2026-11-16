@@ -276,8 +276,36 @@ The shared team setup file ([features/settings.md](features/settings.md#team-set
 - `safety_g28_a_delete_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 - `safety_g28_a_stage_action_through_the_shell_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
+### 29. A silence or an Expire is sent only through the write framework, and the only Alertmanager writes are a silence POST and an expire DELETE
+
+[WRITE_MODEL.md](WRITE_MODEL.md#silence-and-expire-884) (`freshkube-core`'s `write/alertmanager/`). Under `read-only` nothing is asked, not even the preview. A refused review (the verb follows the HTTP method: `create` for the POST, `delete` for the DELETE), a Service that was recreated, a preview that can't be read, or what the silence would mute (or the silence an Expire names) differing from what the dialog showed, sends nothing; the last asks again. The writer sends no other method than a `POST api/v2/silences` and a `DELETE api/v2/silence/{id}`. No page, dialog or example runner offers either yet (W3).
+
+- `safety_g29_read_only_blocks_silence_and_expire_with_no_request` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g29_a_denied_review_or_an_unreadable_preview_sends_nothing` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g29_a_preview_that_changed_after_the_dialog_sends_nothing_and_reasks` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g29_the_only_alertmanager_writes_are_a_silence_post_and_an_expire_delete` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g29_the_writer_has_no_other_method_than_get_post_and_delete` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+
+### 30. A silence never mutes more than the alert it was made from unless it is classed broad and asked as broad
+
+An equality `alertname` and another equality matcher on an identifying label, nothing muted but at most 10 alerts now (counted again at send), and on `protected` at most 4 h, make a silence narrow (reversible, Undo is an Expire of its id). A regex or `!=` matcher, no `alertname` or only `alertname`, more than 10 muted (or more than the bound the preview counts), or past the protected cap make it broad: a spec change with a preview, and `protected` types the entry's id for both.
+
+- `safety_g30_a_narrow_silence_is_reversible_and_asks_even_at_open` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g30_a_regex_negative_or_missing_alertname_is_broad_and_asks_as_broad` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g30_more_than_ten_muted_now_or_past_the_protected_cap_is_broad` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+
+### 31. On a shared Alertmanager a silence carries this entry's exact cluster matcher or is broad at the strictest level, and a store with no cluster label gets no write
+
+The runner builds the silence's mode from the scope it resolved, never from the page. Without this entry's exact `cluster` matcher the silence is broad and held to the strictest level of every entry that shares the store (one `read-only` entry blocks it); a store whose alerts carry no cluster label, or a runner never told its scope, sends nothing. An Expire goes through the same gate: it is refused without a scope, and on a shared store it is held to the strictest level of the entries its silence's exact `cluster` matcher names, or of every entry when it has none.
+
+- `safety_g31_central_silence_without_exact_cluster_is_broad_at_the_strictest_level` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g31_a_central_store_without_a_cluster_label_sends_nothing` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g31_an_expire_without_a_scope_or_cluster_label_sends_nothing` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g31_an_expire_is_held_to_the_strictest_level_of_the_clusters_it_reaches` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+
 ## Known gaps
 
+- Guarantees 29 to 31 are proved in core on the fake Alertmanager. Nothing in the window reaches them until W3 of #884 adds the dialogs, and its tests join guarantee 29 then (a window under `read-only` makes no request).
 - Guarantee 28: with no setup file (a legacy `workspace.json` user), an action's destination has no entry in a file, so its level is not re-read at send; it is held to the level the app holds. The cluster's own level is still read, by context.
 - Guarantee 3 is proved where the floor is resolved (`freshkube-core`'s `team`) and where Settings shows and offers levels. The team setup is still example data in the page (a fetch is real in core, but nothing yet joins from the app or saves), so no test can show a fetched floor holding down the level a write is sent under; that test joins the suite when it is.
 - Guarantee 6 says "never from an agent". The agent can't start an exec or a forward yet (its only tools are the four reads, proved under guarantee 8); a test that the agent never starts one joins the suite when the agent can reach the app (#908).

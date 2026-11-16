@@ -398,7 +398,10 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
             .into(),
         };
     }
-    let (tone, word) = if column == Column::AfterDeploy {
+    // Coroot's verdict is on the Deployment once it was read: a Deployment
+    // that wasn't found, or couldn't be read, has none, and says why.
+    let coroot = column == Column::AfterDeploy && row.cause.is_none();
+    let (tone, word) = if coroot {
         match (&row.coroot, row.coroot_why) {
             (Some(mark), _) => (mark.tone, mark_word(mark.tone)),
             // Coroot answered with a cause: it is not set up, or the piece
@@ -409,20 +412,16 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
     } else {
         (row.tone, word(column, row))
     };
-    let tooltip = match (&row.coroot, column) {
-        (Some(mark), Column::AfterDeploy) => mark.tooltip.clone(),
+    let tooltip = match (&row.coroot, coroot) {
+        (Some(mark), true) => mark.tooltip.clone(),
         _ => format!("{}: {}", column.label(), row.detail).into(),
     };
     Cell {
         tone,
         word: word.into(),
         hop: Some(row.key.clone()),
-        reached: column != Column::AfterDeploy || row.coroot.is_some() || row.coroot_why.is_some(),
-        link: if column == Column::AfterDeploy {
-            None
-        } else {
-            row.link
-        },
+        reached: !coroot || row.coroot.is_some() || row.coroot_why.is_some(),
+        link: if coroot { None } else { row.link },
         not_used: false,
         tooltip,
     }

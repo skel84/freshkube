@@ -12,11 +12,13 @@ mod cause;
 pub mod example;
 pub mod live;
 mod next_step;
+mod not_expected;
 mod summary;
 mod unread;
 
 pub use cause::{Cause, Next, Role, SettingsField};
 pub use next_step::NextStep;
+pub use not_expected::not_expected_in;
 pub use summary::{Fix, fixes, headline};
 
 use chrono::{DateTime, Utc};

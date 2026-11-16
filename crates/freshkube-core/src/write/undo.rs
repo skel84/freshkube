@@ -100,7 +100,10 @@ fn holds(guard: &Observation, object: &Value) -> bool {
         Observation::Any(any) => any.iter().any(|one| holds(one, object)),
         Observation::Gone | Observation::Child { .. } => false,
         // Nothing can be checked, so nothing is known to be safe: not holding.
-        Observation::Exists | Observation::Unobservable => false,
+        Observation::Exists
+        | Observation::Unobservable
+        | Observation::SilenceActive
+        | Observation::SilenceExpired => false,
     }
 }
 
@@ -120,6 +123,12 @@ impl Runner {
         let mut changes = vec![];
         for (item, guard) in &offer.items {
             let object = item.target.label();
+            // An Expire is guarded by its own preflight, which reads the
+            // silence back and finds it as it was made.
+            if matches!(item.change, super::action::Change::Expire(_)) {
+                changes.push(item.clone());
+                continue;
+            }
             let current = match get(&self.client, &item.target).await {
                 Ok(current) => current,
                 Err(Refusal::Changed(_)) => return Err(UndoRefused::Changed { object, by: None }),

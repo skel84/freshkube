@@ -18,8 +18,13 @@ use crate::ui::dp;
 pub const MATRIX: &str = "change-matrix";
 /// A step column's width, in dp: the widest word and its inset.
 const STEP_WIDTH: f32 = 112.;
-/// How many frames a selection's row is revealed in.
+/// How many frames a selection's row is revealed in at least: a stacked
+/// Inspector shrinks the matrix over a few.
 const REVEAL_FRAMES: usize = 6;
+/// How many frames it is revealed in at most, while it still doesn't show
+/// whole: a small window and a large text size leave the matrix a row and a
+/// half, and its height may settle later than the minimum.
+const REVEAL_MAX_FRAMES: usize = 40;
 /// The pinned Stage column's width, in dp.
 const STAGE_WIDTH: f32 = 220.;
 
@@ -80,8 +85,8 @@ pub struct Matrix {
     /// The selected cell's column, to scroll into view once the table has
     /// laid out.
     reveal: Option<Column>,
-    /// Frames left to reveal the selected Stage's row in: a stacked
-    /// Inspector shrinks the matrix over a few.
+    /// Frames left to reveal the selected Stage's row in, [`REVEAL_MAX_FRAMES`]
+    /// at the most.
     reveal_rows: usize,
 }
 
@@ -125,7 +130,11 @@ impl Matrix {
         }
         if self.selected != selected {
             self.reveal = selected.as_ref().and_then(|(_, column)| *column);
-            self.reveal_rows = if selected.is_some() { REVEAL_FRAMES } else { 0 };
+            self.reveal_rows = if selected.is_some() {
+                REVEAL_MAX_FRAMES
+            } else {
+                0
+            };
         }
         self.selected = selected;
         self.loading = loading;
@@ -134,6 +143,64 @@ impl Matrix {
     /// The cell ids, for tests and the page's key handling.
     pub fn cell_id(stage: &str, column: Column) -> SharedString {
         format!("change-cell-{stage}-{}", column.id()).into()
+    }
+
+    /// Whether the selected Stage's row is known not to show whole in the
+    /// list, as its last frame drew it. Not known (before it drew, or in a
+    /// list shorter than a row, which no reveal makes whole) is not a miss.
+    fn row_misses(&self) -> bool {
+        self.selected_key()
+            .and_then(|key| self.line_of(key))
+            .and_then(|line| self.table.shows_whole(line, self.rows.len()))
+            == Some(false)
+    }
+
+    /// Scrolls the page itself so the selected Stage's row is in the window,
+    /// when the window is short and the page scrolls as a whole: the list
+    /// brings the row into the matrix, and only the page can bring the matrix
+    /// into the window. It is the page's own handle, and it moves only while
+    /// the row is out of the window and the page can still move; `true` when
+    /// it moved. The geometry is the last frame's, so a move asks for one
+    /// more frame.
+    fn reveal_in_page(&self, window: &Window, cx: &App) -> bool {
+        let Some(page) = self.page.upgrade() else {
+            return false;
+        };
+        let scroll = page.read(cx).page_scroll.clone();
+        let Some(line) = self.selected_key().and_then(|key| self.line_of(key)) else {
+            return false;
+        };
+        let (list, offset) = {
+            let state = self.table.scroll.0.borrow();
+            (state.base_handle.bounds(), state.base_handle.offset())
+        };
+        let viewport = scroll.bounds();
+        if list.size.height <= gpui_kit::Pixels::ZERO
+            || viewport.size.height <= gpui_kit::Pixels::ZERO
+        {
+            return false;
+        }
+        let row = crate::ui::dp_px(kit::STEP_ROW, window);
+        let top = list.top() + offset.y + row * line as f32;
+        // The part of the row the list shows; the list reveals the rest.
+        let (top, bottom) = (top.max(list.top()), (top + row).min(list.bottom()));
+        if bottom <= top {
+            return false;
+        }
+        let shift = if top < viewport.top() {
+            viewport.top() - top
+        } else if bottom > viewport.bottom() {
+            viewport.bottom() - bottom
+        } else {
+            return false;
+        };
+        let now = scroll.offset();
+        let next = (now.y + shift).clamp(-scroll.max_offset().y, gpui_kit::Pixels::ZERO);
+        if next == now.y {
+            return false;
+        }
+        scroll.set_offset(gpui_kit::point(now.x, next));
+        true
     }
 
     /// Selects the hop a pressed cell stands for, on the page.
@@ -224,7 +291,16 @@ impl Render for Matrix {
         if self.reveal_rows > 0 {
             self.reveal_rows -= 1;
             kit::reveal(self, ScrollStrategy::Nearest);
-            window.on_next_frame(|window, _| window.refresh());
+            let moved = self.reveal_in_page(window, cx);
+            // Past the minimum, it goes on only while the list's last frame
+            // shows the row cut or the page still had to move for it; those
+            // frames are the only thing that knows.
+            let spent = REVEAL_MAX_FRAMES - self.reveal_rows;
+            if spent >= REVEAL_FRAMES && !moved && !self.row_misses() {
+                self.reveal_rows = 0;
+            } else {
+                window.on_next_frame(|window, _| window.refresh());
+            }
         }
         if let Some(column) = self.reveal {
             let at = self

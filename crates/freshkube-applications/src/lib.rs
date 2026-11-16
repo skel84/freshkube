@@ -307,6 +307,8 @@ pub struct ApplicationsPage {
     evidence_result: Option<freshkube_core::setup::Evidence>,
     build_namespace: Option<String>,
     stage_naming: Option<freshkube_core::setup::StageNaming>,
+    /// `delivery.applications` of the setup, handed to each change page.
+    applications: Vec<freshkube_core::setup::DeliveryApplication>,
     /// GitHub's client for the setup now loaded, replaced with each reload
     /// and so with its memo, ETags and budget. `None` while a token is
     /// being read, and when it could not be: never an anonymous client in
@@ -466,6 +468,7 @@ impl ApplicationsPage {
             evidence_result: None,
             build_namespace: None,
             stage_naming: None,
+            applications: Vec::new(),
             github: None,
             github_revision: 0,
             github_open: None,
@@ -660,6 +663,11 @@ impl ApplicationsPage {
             .and_then(|delivery| delivery.stage_naming.clone());
         let naming_changed = naming != self.stage_naming;
         self.stage_naming = naming;
+        self.applications = setup
+            .delivery
+            .as_ref()
+            .map(|delivery| delivery.applications.clone())
+            .unwrap_or_default();
         self.open_github(setup, cx);
         self.push_problem(cx);
         let across = self.across();
@@ -806,6 +814,7 @@ impl ApplicationsPage {
             evidence_result: self.evidence_result.clone(),
             build_namespace: self.build_namespace.clone(),
             stage_naming: self.stage_naming.clone(),
+            applications: self.applications.clone(),
             github: self.github.clone(),
         }
     }
@@ -1292,6 +1301,7 @@ impl ApplicationsPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
             page.configure_example_results(&self.runtime, Some(source), &self.across(), cx);
+            page.set_applications(&self.applications);
             page.set_coroot(coroot, cx);
             page.set_setup_problem(self.problem(), cx);
             page

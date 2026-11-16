@@ -1098,6 +1098,49 @@ fn rollback_shape(change: &mut Change, none: bool) {
     }
 }
 
+/// The Stage [`Shape::ProdLonNotFound`] leaves nothing in.
+const LONDON: &str = "prod-lon";
+
+/// [`Shape::ProdLonNotFound`]: nothing of `prod-lon` past its gates was found, and
+/// no Rollout runs there.
+fn not_found(change: &mut Change) {
+    let cause = Cause::not_found("an Application that deploys to this Stage");
+    for hop in change
+        .hops
+        .iter_mut()
+        .filter(|hop| hop.key.starts_with("prod-lon-"))
+        .filter(|hop| matches!(hop.shows, Shows::Hop(_)))
+    {
+        hop.state = Unknown;
+        hop.detail = "Not found".into();
+        hop.link = Some(Confidence::Unknown);
+        hop.cause = Some(cause.clone());
+        if let Shows::Hop(shown) = &mut hop.shows {
+            shown.state = "Unknown".into();
+            shown.notice = None;
+            // What was found is gone with it: no pods, no image.
+            shown.fields.clear();
+            shown.actions.clear();
+            shown.link = Some(LinkDetail {
+                cause: Some(cause.clone()),
+                confidence: Confidence::Unknown,
+                by: "nothing".into(),
+                before: "Stage".into(),
+                key: None,
+                before_says: String::new(),
+                here_says: "not found".into(),
+                why: "Nothing of it was found in this Stage's cluster.".into(),
+            });
+        }
+    }
+    for stage in change.stages.iter_mut().filter(|s| s.name == LONDON) {
+        stage.next_step = NextStep::Unknown {
+            why: "No Rollout of the Application was found".into(),
+            cause: Some(cause.clone()),
+        };
+    }
+}
+
 /// [`Shape::Rollouts`] and [`Shape::RolloutStates`]: what the Next step
 /// column says for each Stage, and an Argo Rollout hop for each Stage that
 /// runs one, so its cell selects something as a live read gives it. With
@@ -1451,6 +1494,12 @@ pub enum Shape {
     RollbackUnknown,
     /// No Stage has an earlier Freight in its history.
     RollbackNone,
+    /// `prod-lon`'s Application, Rollout and pods weren't found, as a Stage
+    /// the application isn't set up in looks before the setup says so.
+    ProdLonNotFound,
+    /// The same, with `freshkube.yaml` saying the application isn't expected
+    /// in `prod-lon`: what wasn't found there is Not used here.
+    NotExpected,
     /// Each Stage's Rollout in another state: `dev` paused on step 2 of 4,
     /// `stage` degraded, `prod-ams` aborted and `prod-lon` progressing.
     RolloutStates,
@@ -1489,6 +1538,8 @@ impl Shape {
             | Self::RollbackUnknown
             | Self::RollbackNone
             | Self::Rollouts
+            | Self::ProdLonNotFound
+            | Self::NotExpected
             | Self::RolloutStates
             | Self::GitHubLimited
             | Self::GitHubRefused
@@ -1563,6 +1614,13 @@ impl Shape {
             );
             return Ok(change);
         }
+        if matches!(self, Self::ProdLonNotFound | Self::NotExpected) {
+            not_found(&mut change);
+            if self == Self::NotExpected {
+                super::not_expected_in(&mut change, &[LONDON]);
+            }
+            return Ok(change);
+        }
         if matches!(self, Self::RollbackUnknown | Self::RollbackNone) {
             rollback_shape(&mut change, self == Self::RollbackNone);
             return Ok(change);
@@ -1583,6 +1641,8 @@ impl Shape {
             | Self::RollbackUnknown
             | Self::RollbackNone
             | Self::Rollouts
+            | Self::ProdLonNotFound
+            | Self::NotExpected
             | Self::RolloutStates
             | Self::GitHubLimited
             | Self::GitHubRefused
