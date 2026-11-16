@@ -3,12 +3,14 @@
 //! in it (#879).
 //!
 //! A page keeps the [`Pane`] it draws in and asks it for `page_width`,
-//! `inset_width`, `content_width`, `is_short` and the rest; a child of a page
-//! takes the same handle when it is made. Nothing is looked up by what is
-//! being drawn, so an answer is never another pane's, and a handler may ask
-//! outside a frame. A page made without being told its pane is in the
-//! window's main pane, which is how one pane works: every page shares it and
-//! the shell sets it.
+//! `inset_width`, `content_width`, `is_short` and the rest. Nothing is looked
+//! up by what is being drawn, so a handler may ask outside a frame.
+//!
+//! This is the target the split reaches in steps. Today there is one pane,
+//! and a page made without being told its pane is in the window's main pane
+//! (`Pane::default()`), which every page and the shell share. That default is
+//! removed, and each parent hands its handle to the children it makes, in
+//! slice B2, so that an answer can never be another pane's.
 use gpui_kit::Window;
 use std::cell::Cell;
 use std::rc::Rc;

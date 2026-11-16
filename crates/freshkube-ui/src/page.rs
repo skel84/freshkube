@@ -47,7 +47,7 @@ pub const PANE_PADDING: f32 = 12.;
 /// Above and below that content.
 pub const PANE_PADDING_Y: f32 = 10.;
 /// A window shorter than this, in dp, scrolls a table page's frame: see
-/// [`is_short`].
+/// [`Pane::is_short`](crate::pane::Pane::is_short).
 pub const SHORT_HEIGHT: f32 = 620.;
 /// The least height a table page's list keeps while its frame scrolls.
 pub const SHORT_LIST_HEIGHT: f32 = 180.;
@@ -72,7 +72,7 @@ const FILTER_MIN: f32 = 96.;
 /// A page's frame, without margins: its header, any banners and its panes
 /// stack edge to edge, and the caller puts what isn't a pane, such as the
 /// header, in an [`inset`]. The caller adds scrolling: a table page scrolls
-/// its frame when the window [`is_short`], and its list keeps at least
+/// its frame when the window [`is_short`](crate::pane::Pane::is_short), and its list keeps at least
 /// [`SHORT_LIST_HEIGHT`].
 pub fn page(id: impl Into<ElementId>) -> Observed<Stateful<Div>> {
     v_flex().id(id).test_support().size_full().min_h_0()

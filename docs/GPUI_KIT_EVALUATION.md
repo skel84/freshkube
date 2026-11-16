@@ -70,7 +70,7 @@ K18 and the drawable wait during log floods are for discussion once a minimal re
 - Use Kit for controls, theme, dialogs, menus, the Command palette and resizable splits.
 - Draw our own data views: tables with `uniform_list`, logs with a measured `VirtualList`, the YAML view and the terminal, as [LONG_LISTS.md](LONG_LISTS.md) describes. Don't move resource lists to DataTable unless K01, K02 and K10 are fixed upstream.
 - Don't adopt DockArea for a multi-pane workspace without checking K06 and K07 again.
-- Don't wrap rows of controls with `flex_wrap`. Choose their layout in render from `content_width`.
+- Don't wrap rows of controls with `flex_wrap`. Choose their layout in render from the pane's `content_width`.
 - Keep every pixel-only Kit API behind `ui::dp_px`.
 
 ### Re-evaluate when
