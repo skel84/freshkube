@@ -42,6 +42,17 @@ impl Tier {
             Tier::Run => "run",
         }
     }
+
+    /// The words a dialog names it with.
+    pub fn label(self) -> &'static str {
+        match self {
+            Tier::Session => "Session",
+            Tier::Reversible => "Reversible",
+            Tier::SpecChange => "Spec change",
+            Tier::Destructive => "Destructive",
+            Tier::Run => "Run",
+        }
+    }
 }
 
 /// How long a destructive action can still be cancelled after it is confirmed.

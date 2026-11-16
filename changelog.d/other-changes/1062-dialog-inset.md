@@ -1,0 +1,1 @@
+- Dialogs now start below the app header at every window and text size, so macOS's window buttons no longer draw over a dialog's title (the Operations confirmation at 760×560 and text 20, the write review, Edit YAML and the Stage actions all open through one shared place). Drain's warning for a single node reads "The node stays unschedulable until it is uncordoned."

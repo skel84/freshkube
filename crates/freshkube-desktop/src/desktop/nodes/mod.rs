@@ -148,6 +148,14 @@ pub(super) struct Nodes {
     pub(super) attention: Arc<crate::presentation::attention::Attention>,
     /// Why that list may be out of date.
     pub(super) attention_stale: Option<SharedString>,
+    /// The session's alert state with the connection it was read for, and the
+    /// connection this workspace reads Kubernetes through: the node pane's
+    /// Alerts section uses a state only while they are the same.
+    alerts: Option<(String, Arc<freshkube_core::monitoring::alerts::State>)>,
+    kube_id: Option<String>,
+    /// The section drawn for the open node, derived when the node or the
+    /// state changes and never per frame.
+    alerts_block: Option<AlertsDrawn>,
 }
 
 /// What a click or key in Nodes asks of the shell, which owns the node's
@@ -175,6 +183,54 @@ pub(super) enum NodesEvent {
 impl EventEmitter<NodesEvent> for Nodes {}
 impl EventEmitter<crate::screens::ScreenEvent> for Nodes {}
 
+/// The Alerts section drawn for one node: for which node and which state.
+struct AlertsDrawn {
+    node: SharedString,
+    state: Arc<freshkube_core::monitoring::alerts::State>,
+    block: crate::resources::AlertsBlock,
+}
+
+impl Nodes {
+    /// The session's alert state, or none once the read stops.
+    pub(super) fn set_alerts(
+        &mut self,
+        state: Option<(String, Arc<freshkube_core::monitoring::alerts::State>)>,
+        cx: &mut Context<Self>,
+    ) {
+        self.alerts = state;
+        self.alerts_block = None;
+        cx.notify();
+    }
+
+    /// The node pane's Alerts section for `node`, only for a state read for
+    /// the connection this workspace shows; derived again only when the node
+    /// or the state changed.
+    fn alerts_for(&mut self, node: &SharedString) -> Option<&crate::resources::AlertsBlock> {
+        let own = self.kube_id.as_ref();
+        let state = self
+            .alerts
+            .as_ref()
+            .filter(|(id, _)| Some(id) == own)
+            .map(|(_, state)| state.clone());
+        let Some(state) = state else {
+            self.alerts_block = None;
+            return None;
+        };
+        let current = self
+            .alerts_block
+            .as_ref()
+            .is_some_and(|drawn| &drawn.node == node && Arc::ptr_eq(&drawn.state, &state));
+        if !current {
+            self.alerts_block = Some(AlertsDrawn {
+                node: node.clone(),
+                block: crate::resources::AlertsBlock::for_node(&state, node),
+                state,
+            });
+        }
+        self.alerts_block.as_ref().map(|drawn| &drawn.block)
+    }
+}
+
 /// Nodes draws the rows and status line the shell hands it, and reads its
 /// nodes' use itself while its page shows.
 impl crate::screens::ScreenPanel for Nodes {
@@ -196,6 +252,8 @@ impl crate::screens::ScreenPanel for Nodes {
         cx: &mut Context<Self>,
     ) {
         let kube = source.kube;
+        self.kube_id = kube.as_ref().map(|kube| kube.id.clone());
+        self.alerts_block = None;
         self.pods
             .update(cx, |pods, cx| pods.set_source(kube.clone(), window, cx));
         self.set_metrics_source(kube, window, cx)
@@ -356,6 +414,9 @@ impl Nodes {
             screens: Default::default(),
             attention: Default::default(),
             attention_stale: None,
+            alerts: None,
+            kube_id: None,
+            alerts_block: None,
         }
     }
     /// The Talos screen the open pane shows, when its tab is one.

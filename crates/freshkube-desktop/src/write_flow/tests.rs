@@ -287,6 +287,49 @@ fn open_still_asks_for_a_spec_change_and_shows_the_diff(cx: &mut TestAppContext)
     h.cluster.assert_nothing_written();
 }
 
+/// The dialog says what kind of write it is and the level it is held to, in
+/// one muted line, at every level that asks (#1056). Display only.
+#[gpui_kit::test]
+fn the_dialog_names_the_tier_and_the_level_at_every_level_that_asks(cx: &mut TestAppContext) {
+    for (level, scale_line, edit_line) in [
+        (
+            Protection::Guarded,
+            "Reversible · Guarded cluster",
+            "Spec change · Guarded cluster",
+        ),
+        (
+            Protection::Protected,
+            "Reversible · Protected cluster",
+            "Spec change · Protected cluster",
+        ),
+        // `open` skips a reversible confirmation but still asks for a spec change.
+        (Protection::Open, "", "Spec change · Open cluster"),
+    ] {
+        let h = harness(cx, level);
+        if !scale_line.is_empty() {
+            h.begin(cx, fake::scale(3));
+            assert_eq!(h.label(cx, "write-kind-and-level"), scale_line);
+            h.click(cx, "write-cancel");
+            h.drive(cx, Duration::from_secs(1));
+        }
+        // A reversible action with no way back says so (Restart's case).
+        let h = harness(cx, level);
+        let mut no_way_back = fake::annotate_web();
+        no_way_back.no_confirmation = false;
+        h.begin(cx, no_way_back);
+        assert_eq!(
+            h.label(cx, "write-kind-and-level"),
+            format!("Reversible, no Undo · {} cluster", level.label())
+        );
+        h.click(cx, "write-cancel");
+        h.drive(cx, Duration::from_secs(1));
+        let h = harness(cx, level);
+        h.begin(cx, fake::set_image("registry.example/web:2"));
+        assert_eq!(h.label(cx, "write-kind-and-level"), edit_line);
+        h.cluster.assert_nothing_written();
+    }
+}
+
 #[gpui_kit::test]
 fn a_diff_shows_paths_and_kinds_for_every_kind_and_never_a_value(cx: &mut TestAppContext) {
     for action in [

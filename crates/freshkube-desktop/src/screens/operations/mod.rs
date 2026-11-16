@@ -1348,7 +1348,7 @@ impl OperationsScreen {
             PdbNote::None | PdbNote::NotNeeded => {}
         }
         if matches!(kind, OperationKind::Cordon | OperationKind::Drain) {
-            warnings.push("The nodes stay unschedulable until they are uncordoned.".into());
+            warnings.push(unschedulable_warning(preview.nodes.len()).into());
         }
         let count = preview.nodes.len();
         let summary = if count == 1 {
@@ -1747,4 +1747,13 @@ async fn preview_live(
         source: "Kubernetes API and a fresh etcd sample.".into(),
         access: Some(access),
     })
+}
+
+/// Cordon and Drain leave the nodes unschedulable; the wording follows how many.
+fn unschedulable_warning(nodes: usize) -> &'static str {
+    if nodes == 1 {
+        "The node stays unschedulable until it is uncordoned."
+    } else {
+        "The nodes stay unschedulable until they are uncordoned."
+    }
 }
