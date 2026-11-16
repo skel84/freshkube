@@ -118,9 +118,11 @@ pub fn first_version() -> Version {
     version("a1b2c3d", V1, "SHA256:aaaa")
 }
 
-/// The source of the example team.
+/// The source of the example team: a git repository, whose versions are
+/// commits (over HTTPS a version's id is its text's hash, which an invented id
+/// is not).
 pub fn source() -> Source {
-    Source::parse("https://example.test/acme/freshkube.yaml", "", "").expect("valid example")
+    Source::parse("https://example.test/acme/freshkube.git", "", "").expect("valid example")
 }
 
 /// The example membership and, when one waits, its review. `now` is the

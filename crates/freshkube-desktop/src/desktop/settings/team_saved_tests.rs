@@ -109,7 +109,7 @@ fn a_saved_address_the_rules_refuse_is_not_taken_up(cx: &mut TestAppContext) {
     std::fs::write(
         directory.path().join("team.json"),
         r#"{"membership":{"source":{"address":"https://user:hunter2@git.acme.example/ops/setup.git","git_ref":"","path":""},
-        "applied":{"id":"a1","values":{},"ignored":[],"key_fingerprints":{}},
+        "applied":{"id":"a1","file":"version: 1\n","key_fingerprints":{}},
         "applied_at":null,"overrides":{},"before_joining":{},"held":{},"mapping":{}}}"#,
     )
     .unwrap();
@@ -151,7 +151,7 @@ fn a_save_that_fails_is_said_and_the_team_stays_for_the_session(cx: &mut TestApp
     });
 }
 
-const MGMT: &str = r#"{"version":1,"clusters":[{"id":"mgmt","role":"core","context":"acme-mgmt","protection":"read-only"}]}"#;
+const MGMT: &str = r#"{"version":1,"clusters":[{"id":"mgmt","role":"core","context":"acme-mgmt","protection":"read-only","metrics":{"source":{"url":"https://metrics.acme.example"}}}]}"#;
 const TEAM: &str = "version: 1\nclusters:\n  - id: mgmt\n    role: core\n    protection: guarded\n";
 
 #[gpui_kit::test]
@@ -164,22 +164,68 @@ async fn use_the_teams_value_takes_your_value_out_of_your_file(cx: &mut TestAppC
     let (_runtime, handle, view) = launch(cx, dir.path());
     open_settings(cx, handle, &view).await;
     let settings = page(cx, &view);
-    let key = "clusters[mgmt].protection";
+    let key = "clusters[mgmt].metrics.source.url";
     cx.update(|cx| {
         settings.update(cx, |page, cx| {
             page.set_team_for_test(TEAM, cx);
-            page.team_set_override_for_test(key, "read-only".into());
+            page.team_set_override_for_test(key, "https://metrics.acme.example".into());
             page.use_team_value(key.to_string(), cx);
         })
     });
     cx.run_until_parked();
     let text = std::fs::read_to_string(dir.path().join("freshkube.yaml")).unwrap();
-    assert!(!text.contains("read-only"), "{text}");
+    assert!(!text.contains("metrics.acme.example"), "{text}");
     assert!(
         text.contains("acme-mgmt"),
         "the rest of the file stays: {text}"
     );
+    assert!(
+        text.contains("read-only"),
+        "the level is not part of it: {text}"
+    );
     assert!(!cx.update(|cx| settings.read(cx).team_has_override(key)));
+}
+
+#[gpui_kit::test]
+async fn use_the_teams_value_never_takes_a_level_out_of_your_file(cx: &mut TestAppContext) {
+    use crate::desktop::settings::edit_tests::{open_settings, write};
+    use crate::desktop::settings::tests::launch;
+    use freshkube_core::write::Protection;
+    cx.executor().allow_parking();
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), MGMT);
+    let (_runtime, handle, view) = launch(cx, dir.path());
+    open_settings(cx, handle, &view).await;
+    let settings = page(cx, &view);
+    let key = "clusters[mgmt].protection";
+    let level = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let page = settings.read(cx);
+            page.workspace()
+                .level_of("acme-mgmt", &page.source_recovery)
+        })
+    };
+    assert_eq!(level(cx), Protection::ReadOnly);
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.set_team_for_test(TEAM, cx);
+            // An edited `team.json` can bring this override back.
+            page.team_set_override_for_test(key, "read-only".into());
+            page.use_team_value(key.to_string(), cx);
+        })
+    });
+    cx.run_until_parked();
+    // The line is still there, the override stays, the level is what it was.
+    let text = std::fs::read_to_string(dir.path().join("freshkube.yaml")).unwrap();
+    assert_eq!(text, MGMT);
+    assert!(cx.update(|cx| settings.read(cx).team_has_override(key)));
+    assert_eq!(level(cx), Protection::ReadOnly);
+    // And Settings says it was not done, not that it was.
+    cx.update(|cx| {
+        let page = settings.read(cx);
+        let words = page.notice_failed_words().expect("said");
+        assert!(words.contains("level"), "{words}");
+    });
 }
 
 #[gpui_kit::test]

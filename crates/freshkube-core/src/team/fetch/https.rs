@@ -165,15 +165,21 @@ impl HttpsFetch {
                 }
                 body.extend_from_slice(&chunk);
             }
-            let id: String = Sha256::digest(&body)
-                .iter()
-                .take(6)
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            return Ok(Version::parse(id, &body, BTreeMap::new())?);
+            return Ok(Version::parse(content_id(&body), &body, BTreeMap::new())?);
         }
         Err(Self::failed("the host redirected too many times"))
     }
+}
+
+/// The id of a file fetched over HTTPS: the first 12 hex characters of the
+/// SHA-256 of its bytes, so a saved version's id can be checked against its
+/// text.
+pub(in crate::team) fn content_id(body: &[u8]) -> String {
+    Sha256::digest(body)
+        .iter()
+        .take(6)
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// An address without user info or a fragment, as a request is sent to it.

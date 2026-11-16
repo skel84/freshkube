@@ -10,7 +10,7 @@ use super::file::{Values, Version, VersionError};
 use super::mapping::{Choice, ContextMap, UnknownContext};
 use super::merge;
 use super::review::{NotReviewed, Review};
-use super::saved::{SavedMembership, SavedSource, Unusable};
+use super::saved::{SavedMembership, SavedSource, SavedVersion, Unusable, allowed_overrides};
 use super::source::Source;
 use crate::write::Protection;
 
@@ -59,7 +59,7 @@ pub struct Membership {
 impl Membership {
     /// What a restart keeps: only a membership with a reviewed version.
     pub fn to_saved(&self) -> Option<SavedMembership> {
-        let applied = self.applied.clone()?;
+        let applied = SavedVersion::of(self.applied.as_ref()?)?;
         Some(SavedMembership {
             source: SavedSource::of(&self.source),
             applied: Some(applied),
@@ -76,11 +76,20 @@ impl Membership {
     }
 
     /// A membership as it was saved. Nothing waits and nothing failed; the
-    /// next fetch says. A held level is read as the stricter of what it says
-    /// and guarded when it isn't a level, so a damaged file never loosens one.
+    /// next fetch says. The version is parsed again from its text, your
+    /// values are kept only under keys a team file could set, and a held
+    /// level that isn't a level reads as read-only, as a skipped row's does,
+    /// so a damaged file never loosens one.
     pub fn from_saved(saved: SavedMembership) -> Result<Self, Unusable> {
         let source = saved.check()?;
-        let applied = saved.applied.ok_or(Unusable::NoVersion)?;
+        let applied = saved.applied.ok_or(Unusable::NoVersion)?.parse()?;
+        // Over HTTPS the id is the text's hash: a saved id that isn't is not
+        // a version this app fetched.
+        if matches!(source, Source::Https(_))
+            && applied.id() != super::fetch::https::content_id(applied.bytes())
+        {
+            return Err(Unusable::Version);
+        }
         let held = saved
             .held
             .into_iter()
@@ -98,8 +107,8 @@ impl Membership {
             applied_at: saved.applied_at,
             pending: None,
             failure: None,
-            overrides: saved.overrides,
-            before_joining: saved.before_joining,
+            overrides: allowed_overrides(saved.overrides),
+            before_joining: allowed_overrides(saved.before_joining),
             held,
             mapping: ContextMap::default(),
         };
@@ -155,6 +164,12 @@ impl Membership {
     /// one. Never touches the team's values or a held floor, so the level a
     /// floor holds stays where it is.
     pub fn use_team_value(&mut self, key: &str) -> bool {
+        // A level's override stays until the team's floor reaches what
+        // writes are gated on: dropping it would leave Settings and the
+        // file disagreeing about the level.
+        if super::clear::is_level_key(key) {
+            return false;
+        }
         self.overrides.remove(key).is_some()
     }
 

@@ -384,7 +384,9 @@ fn yours_rows(team: &Membership) -> Vec<YoursRow> {
                 key: key.clone(),
                 label: friendly(key),
                 text,
-                can_use_team: resolved.origin.can_use_team(),
+                // A level is never taken out of your setup (`team::clear`).
+                can_use_team: resolved.origin.can_use_team()
+                    && !freshkube_core::team::clear::is_level_key(key),
             }
         })
         .collect()
@@ -1034,6 +1036,11 @@ impl SettingsPage {
             self.derive_levels();
         }
         cx.notify();
+    }
+
+    /// The contexts chosen for the team's clusters, when in a team.
+    pub(super) fn team_mapping(&self) -> Option<freshkube_core::team::ContextMap> {
+        self.team.membership.as_ref().map(|m| m.mapping().clone())
     }
 
     /// "Use the team's value" went through the setup file's save (or the file
