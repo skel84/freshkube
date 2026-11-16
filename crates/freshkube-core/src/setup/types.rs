@@ -310,21 +310,16 @@ pub struct Delivery {
     pub(super) extra: Extra,
 }
 
-/// The Stages `project`'s application isn't expected in, from the first
-/// entry that names it, each once.
+/// The Stages `project`'s application isn't expected in: those the first
+/// entry that names it lists. A disk read has already dropped a second entry
+/// for the project and a Stage listed twice (`setup::recovery`).
 pub fn not_expected_in<'a>(applications: &'a [DeliveryApplication], project: &str) -> Vec<&'a str> {
-    let mut stages: Vec<&str> = Vec::new();
-    for stage in applications
+    applications
         .iter()
         .find(|application| application.name == project)
         .into_iter()
-        .flat_map(|application| &application.not_expected_in)
-    {
-        if !stages.contains(&stage.as_str()) {
-            stages.push(stage);
-        }
-    }
-    stages
+        .flat_map(|application| application.not_expected_in.iter().map(String::as_str))
+        .collect()
 }
 
 /// One application's delivery setting: the Stages it isn't expected in.
@@ -405,13 +400,6 @@ pub struct GitHub {
 }
 
 impl Delivery {
-    /// The Stages `project`'s application isn't expected in: its first
-    /// entry's, each once, in file order. A later entry for the same project
-    /// is ignored; the file's recovery says so.
-    pub fn not_expected_in(&self, project: &str) -> Vec<&str> {
-        not_expected_in(&self.applications, project)
-    }
-
     pub fn naming(stage_naming: StageNaming) -> Self {
         Self {
             stage_naming: Some(stage_naming),

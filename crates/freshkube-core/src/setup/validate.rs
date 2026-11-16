@@ -251,9 +251,9 @@ pub(super) fn application_fields(
     index: usize,
 ) -> Result<(), Fault> {
     let at = format!("delivery.applications[{index}]");
-    non_empty(&application.name, format!("{at}.name"))?;
+    name_text(&application.name, format!("{at}.name"))?;
     for (stage, name) in application.not_expected_in.iter().enumerate() {
-        non_empty(name, format!("{at}.not_expected_in[{stage}]"))?;
+        name_text(name, format!("{at}.not_expected_in[{stage}]"))?;
     }
     Ok(())
 }
@@ -283,6 +283,16 @@ fn namespace_name(text: &str, at: String) -> Result<(), Fault> {
     } else {
         Err(Fault::NotNamespace(at))
     }
+}
+
+/// A project or Stage name: not empty, at most 64 bytes, no control
+/// character, since it reaches banners and the unknown-keys line.
+fn name_text(text: &str, at: String) -> Result<(), Fault> {
+    non_empty(text, at.clone())?;
+    if text.len() > 64 || text.chars().any(char::is_control) {
+        return Err(Fault::BadName(at));
+    }
+    Ok(())
 }
 
 fn non_empty(text: &str, at: String) -> Result<(), Fault> {

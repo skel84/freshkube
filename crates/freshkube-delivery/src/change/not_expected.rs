@@ -18,18 +18,10 @@ pub fn not_expected_in(change: &mut Change, stages: &[&str]) -> Vec<String> {
             }
             continue;
         };
-        let cause = || {
-            Cause::not_used_here(format!(
-                "{} isn't expected in {name}, as freshkube.yaml says",
-                change.project
-            ))
-        };
-        let new = cause();
-        let swap = |slot: &mut Option<Cause>| {
-            if matches!(slot, Some(Cause::NotFound { .. })) {
-                *slot = Some(new.clone());
-            }
-        };
+        let cause = Cause::not_used_here(format!(
+            "{} isn't expected in {name}, as freshkube.yaml says",
+            change.project
+        ));
         let groups: Vec<usize> = change
             .groups
             .iter()
@@ -37,21 +29,38 @@ pub fn not_expected_in(change: &mut Change, stages: &[&str]) -> Vec<String> {
             .filter(|(_, group)| group.phase == Phase::Stage(ix))
             .map(|(at, _)| at)
             .collect();
+        // A gate (Eligible, Promotion, Verification) is Kargo's and not the
+        // application's, so what isn't found at a gate stays Not found.
         for hop in change
             .hops
             .iter_mut()
-            .filter(|hop| groups.contains(&hop.group))
+            .filter(|hop| groups.contains(&hop.group) && !matches!(hop.shows, Shows::Stage(_)))
         {
-            swap(&mut hop.cause);
-            if let Shows::Hop(detail) = &mut hop.shows
-                && let Some(link) = &mut detail.link
-            {
-                swap(&mut link.cause);
+            if !matches!(hop.cause, Some(Cause::NotFound { .. })) {
+                continue;
+            }
+            hop.cause = Some(cause.clone());
+            hop.detail = format!("Not used here: {} isn't expected in {name}", change.project);
+            if let Shows::Hop(detail) = &mut hop.shows {
+                detail.state = cause.word().into();
+                detail.notice = None;
+                if let Some(link) = &mut detail.link {
+                    if matches!(link.cause, Some(Cause::NotFound { .. })) {
+                        link.cause = Some(cause.clone());
+                        link.here_says = "not used here".into();
+                        link.why = format!(
+                            "{} isn't expected in {name}, as freshkube.yaml says.",
+                            change.project
+                        );
+                    }
+                }
             }
         }
         let stage = &mut change.stages[ix];
-        if let Some(link) = &mut stage.link {
-            swap(&mut link.cause);
+        if let Some(link) = &mut stage.link
+            && matches!(link.cause, Some(Cause::NotFound { .. }))
+        {
+            link.cause = Some(cause.clone());
         }
         if matches!(
             &stage.next_step,
@@ -116,6 +125,26 @@ mod tests {
         }
         // The listed Stage's gates, which have no cause, are untouched.
         assert_eq!(changed.stages[3].promotion, found.stages[3].promotion);
+        // A converted hop no longer says it wasn't found, anywhere.
+        for hop in changed
+            .hops
+            .iter()
+            .filter(|hop| hop.key.starts_with("prod-lon-") && hop.cause.is_some())
+        {
+            assert!(!hop.detail.contains("Not found"), "{}", hop.detail);
+            let Shows::Hop(shown) = &hop.shows else {
+                continue;
+            };
+            assert_eq!(shown.state, "Not used here", "{}", hop.key);
+            assert!(shown.notice.is_none());
+            let link = shown.link.as_ref().unwrap();
+            assert_eq!(link.here_says, "not used here");
+            assert!(
+                link.why.contains("isn't expected in prod-lon"),
+                "{}",
+                link.why
+            );
+        }
         // Not used here is no problem, so nothing is left to fix there.
         assert!(
             crate::change::fixes(&changed)
@@ -123,6 +152,34 @@ mod tests {
                 .all(|fix| !fix.hop.starts_with("prod-lon-")),
             "{:?}",
             crate::change::fixes(&changed)
+        );
+    }
+
+    #[test]
+    fn a_gate_that_isnt_found_stays_not_found_since_it_is_kargos() {
+        let mut found = Shape::ProdLonNotFound.apply(change_for_tests()).unwrap();
+        let gate = found
+            .hops
+            .iter_mut()
+            .find(|hop| hop.key == "prod-lon-verification")
+            .unwrap();
+        assert!(matches!(gate.shows, Shows::Stage(_)));
+        gate.cause = Some(Cause::not_found("an AnalysisRun"));
+        let mut changed = found.clone();
+        not_expected_in(&mut changed, &["prod-lon"]);
+        assert_eq!(
+            changed.hop("prod-lon-verification"),
+            found.hop("prod-lon-verification")
+        );
+        // The application's own hops of the same Stage are converted.
+        assert!(
+            changed
+                .hops
+                .iter()
+                .filter(
+                    |hop| hop.key.starts_with("prod-lon-") && !matches!(hop.shows, Shows::Stage(_))
+                )
+                .all(|hop| hop.cause.as_ref().is_none_or(Cause::is_not_used_here))
         );
     }
 

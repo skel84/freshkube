@@ -215,10 +215,13 @@ fn applications_name_the_stages_they_are_not_expected_in() {
     let setup = ok(text);
     let delivery = setup.delivery.as_ref().unwrap();
     assert_eq!(delivery.applications.len(), 2);
-    assert_eq!(delivery.not_expected_in("checkout"), ["prod-lon", "dev-eu"]);
+    assert_eq!(
+        not_expected_in(&delivery.applications, "checkout"),
+        ["prod-lon", "dev-eu"]
+    );
     // An entry that lists none, and a project with no entry, expect all.
-    assert!(delivery.not_expected_in("catalog").is_empty());
-    assert!(delivery.not_expected_in("payments").is_empty());
+    assert!(not_expected_in(&delivery.applications, "catalog").is_empty());
+    assert!(not_expected_in(&delivery.applications, "payments").is_empty());
     // It round-trips, and a setup without it writes nothing for it.
     let written = to_text(&setup);
     assert!(written.contains("not_expected_in:"), "{written}");
@@ -230,12 +233,15 @@ fn applications_name_the_stages_they_are_not_expected_in() {
 }
 
 #[test]
-fn the_first_entry_for_a_project_wins_and_each_stage_counts_once() {
+fn the_first_entry_for_a_project_wins() {
+    // A strict parse keeps the rows as written; a disk read drops a second
+    // entry for the project and a Stage listed twice (recovery's tests).
     let setup = ok(
-        "version: 1\ndelivery:\n  applications:\n    - {name: checkout, not_expected_in: [prod-lon, prod-lon]}\n    - {name: checkout, not_expected_in: [dev]}\n",
+        "version: 1\ndelivery:\n  applications:\n    - {name: checkout, not_expected_in: [prod-lon]}\n    - {name: checkout, not_expected_in: [dev]}\n",
     );
+    let delivery = setup.delivery.unwrap();
     assert_eq!(
-        setup.delivery.unwrap().not_expected_in("checkout"),
+        not_expected_in(&delivery.applications, "checkout"),
         ["prod-lon"]
     );
 }
@@ -262,4 +268,34 @@ fn unknown_keys_under_an_application_are_kept_and_named() {
         ["delivery.applications[a].not_expected"]
     );
     assert!(to_text(&setup).contains("not_expected"));
+}
+
+#[test]
+fn a_project_or_stage_name_is_short_text_without_control_characters() {
+    let long = "a".repeat(65);
+    assert_eq!(
+        rule(&format!(
+            "version: 1\ndelivery:\n  applications:\n    - {{name: {long}}}\n"
+        )),
+        "delivery.applications[0].name is longer than 64 bytes or has a control character"
+    );
+    assert_eq!(
+        rule("version: 1\ndelivery:\n  applications:\n    - {name: \"a\\nb\"}\n"),
+        "delivery.applications[0].name is longer than 64 bytes or has a control character"
+    );
+    assert_eq!(
+        rule(
+            "version: 1\ndelivery:\n  applications:\n    - {name: a, not_expected_in: [\"x\\u0007\"]}\n"
+        ),
+        "delivery.applications[0].not_expected_in[0] is longer than 64 bytes or has a control character"
+    );
+    // The value itself is never repeated, and 64 bytes is fine.
+    let fine = "a".repeat(64);
+    assert!(
+        ok(&format!(
+            "version: 1\ndelivery:\n  applications:\n    - {{name: {fine}}}\n"
+        ))
+        .delivery
+        .is_some()
+    );
 }

@@ -100,6 +100,9 @@ impl std::fmt::Display for Place {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     Empty(String),
+    /// A project or Stage name longer than 64 bytes or with a control
+    /// character, which would reach a banner; the value is never repeated.
+    BadName(String),
     NotUrl(String),
     NotHttpsUrl(String),
     /// Not a Kubernetes namespace name; the value is never repeated.
@@ -144,6 +147,9 @@ impl std::fmt::Display for Fault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Fault::Empty(at) => write!(f, "{at} is empty"),
+            Fault::BadName(at) => {
+                write!(f, "{at} is longer than 64 bytes or has a control character")
+            }
             Fault::NotNamespace(at) => write!(f, "{at} isn’t a Kubernetes namespace name"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
             Fault::NotHttpsUrl(at) => {

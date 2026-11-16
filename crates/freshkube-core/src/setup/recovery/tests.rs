@@ -530,8 +530,14 @@ fn a_bad_delivery_application_row_is_skipped_and_the_rest_stay() {
         .map(|a| a.name.as_str())
         .collect();
     assert_eq!(names, ["checkout", "search"]);
-    assert_eq!(delivery.not_expected_in("checkout"), ["prod-lon"]);
-    assert_eq!(delivery.not_expected_in("search"), ["dev"]);
+    assert_eq!(
+        crate::setup::not_expected_in(&delivery.applications, "checkout"),
+        ["prod-lon"]
+    );
+    assert_eq!(
+        crate::setup::not_expected_in(&delivery.applications, "search"),
+        ["dev"]
+    );
     let words: Vec<String> = recovered.warnings.iter().map(ToString::to_string).collect();
     assert_eq!(
         words,
@@ -552,6 +558,25 @@ fn a_bad_delivery_application_row_is_skipped_and_the_rest_stay() {
             .unknown_keys()
             .contains(&"delivery.applications[search].future".to_owned())
     );
+}
+
+#[test]
+fn a_long_or_control_character_name_skips_its_row_without_repeating_it() {
+    let long = "x".repeat(65);
+    let recovered = recover(&format!(
+        "version: 1\nclusters: [{GOOD}]\ndelivery:\n  applications:\n    - {{name: {long}, not_expected_in: [dev]}}\n    - {{name: ok, not_expected_in: [\"d\\u0001\"]}}\n    - {{name: fine}}\n"
+    ));
+    let words: Vec<String> = recovered.warnings.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        words,
+        [
+            "skipped delivery.applications[0]: name: is longer than 64 bytes or has a control character",
+            "skipped delivery.applications[1] (ok): not_expected_in: is longer than 64 bytes or has a control character",
+        ]
+    );
+    let delivery = recovered.setup.delivery.unwrap();
+    assert_eq!(delivery.applications.len(), 1);
+    assert!(words.iter().all(|w| !w.contains(&long)));
 }
 
 #[test]

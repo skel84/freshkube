@@ -606,8 +606,9 @@ impl ChangePage {
         cx.notify();
     }
 
-    /// The setup's `delivery.applications`. A change already shown is
-    /// derived again from its last answer when they differ.
+    /// The setup's `delivery.applications`, applied to each change the page
+    /// shows from then on. A change already shown keeps what it shows until
+    /// its next answer: a setup reload reads again (`reload_setup`).
     pub(crate) fn set_applications(
         &mut self,
         applications: &[freshkube_core::setup::DeliveryApplication],

@@ -258,6 +258,39 @@ fn dont_expect_it_turns_a_stages_not_found_into_not_used_here(cx: &mut TestAppCo
 }
 
 #[gpui_kit::test]
+fn a_listed_stage_stops_counting_as_unknown_in_the_chips(cx: &mut TestAppContext) {
+    // dev is fine in the default fixture. Make its Application and pods not
+    // found, so its group can't be confirmed, and then list the Stage.
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = page.read(cx).counts;
+        let mut change = page.read(cx).change.clone();
+        for hop in change
+            .hops
+            .iter_mut()
+            .filter(|hop| ["dev-argocd", "dev-pods"].contains(&hop.key.as_str()))
+        {
+            hop.state = HealthIndicator::Unknown;
+            hop.link = Some(Confidence::Unknown);
+            hop.cause = Some(Cause::not_found("an Application that deploys to dev"));
+        }
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        let unknown = page.read(cx).counts;
+        assert_eq!(unknown[3], before[3] + 1, "{unknown:?} from {before:?}");
+        assert_eq!(unknown[4], before[4] - 1, "the ok count drops by one");
+        let fixes = page.read(cx).fixes.len();
+        assert!(fixes >= 2);
+
+        expect(&page, window, cx, &["dev"]);
+        let p = page.read(cx);
+        assert_eq!(p.counts, before, "dev counts as it did before");
+        assert!(p.fixes.len() <= fixes - 2, "{:?}", p.fixes);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn only_not_found_is_changed_and_an_unknown_stage_name_is_a_warning(cx: &mut TestAppContext) {
     let (handle, page) = open_overview(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
     cx.update_window(handle, |_, window, cx| {

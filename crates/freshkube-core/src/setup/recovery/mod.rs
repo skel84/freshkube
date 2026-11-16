@@ -176,7 +176,8 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
             if !strip_applications(&mut stripped) {
                 return Err(Invalid::WrongShape(place(&error)));
             }
-            serde_yaml::from_value(stripped).map_err(|_| Invalid::WrongShape(place(&error)))?
+            // The refusal that stands is the file's without the rows.
+            serde_yaml::from_value(stripped).map_err(|error| Invalid::WrongShape(place(&error)))?
         }
     };
     let clusters = shared.clusters;
@@ -600,13 +601,18 @@ fn application_rows(value: &Value, warnings: &mut Vec<Warning>) -> Vec<DeliveryA
             continue;
         };
         if let Err(fault) = validate::application_fields(&application, index) {
-            let field = if application.name.trim().is_empty() {
+            let name_only = DeliveryApplication {
+                not_expected_in: Vec::new(),
+                ..application.clone()
+            };
+            let field = if validate::application_fields(&name_only, index).is_err() {
                 "name"
             } else {
                 "not_expected_in"
             };
             let fault = match fault {
                 Fault::Empty(_) => Fault::Empty(field.into()),
+                Fault::BadName(_) => Fault::BadName(field.into()),
                 other => other,
             };
             warnings.push(warn(field, RowReason::Rule(fault)));
