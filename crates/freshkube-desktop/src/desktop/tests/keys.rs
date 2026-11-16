@@ -256,7 +256,7 @@ const SHELL_KEYS: [&str; 40] = [
     "ctrl-tab tabs::NextViewTab Freshkube",
     "ctrl-shift-tab tabs::PreviousViewTab Freshkube",
     "cmd-\\ panes::SplitRight Freshkube",
-    "cmd-alt-\\ panes::SplitDown Freshkube",
+    "alt-cmd-\\ panes::SplitDown Freshkube",
     "f6 panes::FocusOtherPane Freshkube",
     "alt-up pilot::PreviousContext Freshkube",
     "alt-down pilot::NextContext Freshkube",
