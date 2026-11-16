@@ -19,6 +19,7 @@ use std::time::Duration;
 
 mod checks;
 mod configuration;
+mod history;
 mod inspector;
 mod layout;
 mod lifecycle;
@@ -55,7 +56,8 @@ fn request(
     list.update(cx, |list, _| list.read.begin(list.identity()))
 }
 
-fn states(view: &View, cx: &gpui_kit::App) -> Vec<(Read, String, String)> {
+/// Every row's state, as the table shows it.
+fn all_states(view: &View, cx: &gpui_kit::App) -> Vec<(Read, String, String)> {
     list(view, cx)
         .read(cx)
         .states()
@@ -64,8 +66,17 @@ fn states(view: &View, cx: &gpui_kit::App) -> Vec<(Read, String, String)> {
         .collect()
 }
 
+/// The states of the parts, Workloads and the file's other rows; the Supply
+/// chain and Results rows have their own tests (`history`).
+fn states(view: &View, cx: &gpui_kit::App) -> Vec<(Read, String, String)> {
+    all_states(view, cx)
+        .into_iter()
+        .filter(|(read, _, _)| !matches!(read, Read::SupplyChain | Read::Results))
+        .collect()
+}
+
 fn state(view: &View, read: Read, cx: &gpui_kit::App) -> String {
-    let states = states(view, cx);
+    let states = all_states(view, cx);
     let found = states.iter().find(|(row, _, _)| *row == read);
     found.map(|(_, _, state)| state.clone()).unwrap_or_default()
 }

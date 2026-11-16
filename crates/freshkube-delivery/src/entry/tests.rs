@@ -471,6 +471,10 @@ async fn an_open_connection_that_failed_says_why() {
         "{checked:?}"
     );
     assert_eq!(checked.workloads, vec![(OPEN.to_owned(), failed.clone())]);
+    // Chains and Results are not "not checked": they carry the failure.
+    let history = checked.history.expect("the failure is carried");
+    assert_eq!(history.chains, failed);
+    assert_eq!(history.results, None);
     assert_eq!(
         failed.words("Kargo", OPEN),
         "Couldn't reach the open cluster: its credential plugin failed"
@@ -607,4 +611,65 @@ async fn a_talos_entry_in_the_kubeconfigs_is_opened_with_its_context() {
         .err()
         .expect("the plugin fails");
     assert_eq!(error.message, "its credential plugin failed");
+}
+
+fn chains_config() -> serde_json::Value {
+    serde_json::json!({"metadata": {"name": "chains-config", "namespace": "tekton-chains"}})
+}
+
+fn results_service() -> serde_json::Value {
+    serde_json::json!({"metadata": {"name": "tekton-results-api-service", "namespace": "tekton-pipelines"}})
+}
+
+fn forwarded() -> freshkube_core::setup::Results {
+    let mut results = freshkube_core::setup::Results::default();
+    results.forward = Some(freshkube_core::setup::Forward::new(
+        "tekton-pipelines",
+        "tekton-results-api-service",
+        8080,
+    ));
+    results
+}
+
+#[tokio::test]
+async fn build_history_finds_chains_and_a_forwarded_results_service() {
+    let reader = FixtureReader::default()
+        .with("configmaps", vec![chains_config()])
+        .with("services", vec![results_service()]);
+    let found = check_history(&reader, Some(&forwarded())).await;
+    assert_eq!(found.chains, Reach::Readable);
+    assert_eq!(found.results, Some(Reach::Readable));
+    // Only the two named objects were asked for: one GET each.
+    assert_eq!(reader.requests.borrow().len(), 2);
+}
+
+#[tokio::test]
+async fn build_history_keeps_not_installed_refused_and_unreachable_apart() {
+    let reader = FixtureReader::default();
+    let missing = check_history(&reader, Some(&forwarded())).await;
+    assert!(matches!(missing.chains, Reach::NotServed(_)));
+    assert!(matches!(missing.results, Some(Reach::NotServed(_))));
+
+    let reader = FixtureReader::default()
+        .refusing("configmaps")
+        .unreachable("services");
+    let found = check_history(&reader, Some(&forwarded())).await;
+    assert!(matches!(found.chains, Reach::Refused(_)));
+    assert!(matches!(found.results, Some(Reach::Unreachable(_))));
+}
+
+#[tokio::test]
+async fn build_history_reads_no_service_for_an_address_or_for_off() {
+    let reader = FixtureReader::default().with("configmaps", vec![chains_config()]);
+    let mut address = freshkube_core::setup::Results::default();
+    address.address = Some("https://results.acme.example".into());
+    assert_eq!(check_history(&reader, Some(&address)).await.results, None);
+    assert_eq!(check_history(&reader, None).await.results, None);
+    assert!(
+        reader
+            .requests
+            .borrow()
+            .iter()
+            .all(|request| !request.contains("services"))
+    );
 }

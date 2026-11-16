@@ -23,6 +23,7 @@ mod entry;
 pub(crate) use entry::FingerprintLine;
 mod find;
 mod form;
+mod history;
 mod kubeconfig_row;
 mod labels;
 mod metrics_tokens;
@@ -283,9 +284,11 @@ impl SettingsPage {
                     .delivery
                     .as_ref()
                     .and_then(|delivery| delivery.build_namespace.clone());
+                let supply_chain = setup.supply_chain.clone();
                 self.sources.update(cx, |sources, cx| {
                     sources.set_stage_naming(naming, cx);
                     sources.set_build_namespace(build_namespace, cx);
+                    sources.set_supply_chain(supply_chain, cx);
                 });
                 if !self.uses_setup
                     || self.workspace != setup.workspace

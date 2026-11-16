@@ -339,6 +339,68 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// Saves one change to `supply_chain`, keeping every other part of the
+    /// setup, through the setup file's save. Refused as any save is.
+    pub(super) fn save_supply_chain(
+        &mut self,
+        edit: impl FnOnce(&mut freshkube_core::setup::SupplyChain) + Send + 'static,
+        what: String,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.editable() {
+            let why = self.why_not_editable().to_owned();
+            self.notice = Some(Notice::Failed(capitalized(&why).into()));
+            cx.notify();
+            return;
+        }
+        let Some(file) = self.setup_file.clone() else {
+            return;
+        };
+        let seen = self.seen.clone();
+        let save = file.update(cx, |file, cx| {
+            file.save_with(
+                seen,
+                move |setup| {
+                    let mut chain = setup.supply_chain.take().unwrap_or_default();
+                    edit(&mut chain);
+                    setup.supply_chain = (chain != Default::default()).then_some(chain);
+                },
+                cx,
+            )
+        });
+        self.notice = None;
+        self.saving = Some(cx.spawn(async move |this, cx| {
+            let outcome = save.await;
+            _ = this.update(cx, |this, cx| this.saved(what, outcome, cx));
+        }));
+        cx.notify();
+    }
+
+    /// Sets where Tekton Results is reached for one entry, or turns it off
+    /// with `None`, through the workspace's save like any entry edit.
+    pub(super) fn save_results(
+        &mut self,
+        id: &str,
+        results: Option<freshkube_core::setup::Results>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut next = self.workspace.clone();
+        let Some(entry) = next.clusters.iter_mut().find(|entry| entry.id == id) else {
+            return;
+        };
+        let what = match &results {
+            Some(_) => format!("Set where Results is reached for {id}."),
+            None => format!("Results is off for {id}."),
+        };
+        entry.results = results.map(Box::new);
+        if let Err(why) = next.check_saveable() {
+            self.notice = Some(Notice::Failed(capitalized(&why.to_string()).into()));
+            cx.notify();
+            return;
+        }
+        self.commit(next, what, cx);
+    }
+
     /// Chooses the workspace's own kubeconfig, or `None` for automatic. It
     /// stands alone, so it saves at once.
     pub(super) fn set_kubeconfig(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {

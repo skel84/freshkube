@@ -125,6 +125,7 @@ fn entry<'a>(workspace: &'a freshkube_core::workspace::Workspace, id: &str) -> &
     workspace.clusters.iter().find(|e| e.id == id).unwrap()
 }
 
+mod history;
 mod identity_saves;
 mod layout;
 mod metrics_saves;

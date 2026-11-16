@@ -18,6 +18,7 @@
 //! finds them: a Talos entry the app opens through its control plane's
 //! kubeconfig, its context in none of those files, reads as unreachable
 //! here (#564 PR 2).
+mod history_edit;
 mod inspector;
 mod rows;
 mod source;
@@ -34,7 +35,12 @@ use freshkube_core::workspace::{Chosen, Part, Sources};
 use freshkube_delivery::entry::{self, Checked, Reach};
 use freshkube_reads::{Loader, OnShow};
 use freshkube_ui::{inspector::InspectorSplit, menu, page, status, table};
-use gpui_kit::component::{Disableable, Sizable, button::Button, v_flex};
+use gpui_kit::component::{
+    Disableable, Sizable,
+    button::Button,
+    input::{Input, InputState},
+    v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use rows::SourceRow;
@@ -47,6 +53,8 @@ use std::time::Duration;
 const PREFIX: &str = "settings-sources";
 /// The list's key context, around the table.
 pub(in crate::desktop) const CONTEXT: &str = "SettingsSources";
+/// The letter keys act on the list, never while a field has the keyboard.
+const LIST_KEYS: &str = "SettingsSources && !Input";
 /// How long a whole check may take: the connect deadline and a few
 /// requests, each under its own.
 const DEADLINE: Duration = Duration::from_secs(30);
@@ -70,6 +78,10 @@ pub(crate) enum Read {
     SetupFile,
     StageNaming,
     BuildNamespace,
+    /// Where Tekton Chains' attestations and the verifying key come from.
+    SupplyChain,
+    /// Where Tekton Results is reached.
+    Results,
     /// The suggested build namespace.
     BuildSuggestion,
 }
@@ -82,6 +94,8 @@ impl Read {
             Read::SetupFile => "setup-file",
             Read::StageNaming => "stage-naming",
             Read::BuildNamespace => "build-namespace",
+            Read::SupplyChain => "supply-chain",
+            Read::Results => "results",
             Read::BuildSuggestion => "build-suggestion",
         }
     }
@@ -93,6 +107,8 @@ impl Read {
             Read::SetupFile => "Setup file",
             Read::StageNaming => "Naming",
             Read::BuildNamespace => "Build namespace",
+            Read::SupplyChain => "Supply chain",
+            Read::Results => "Results",
             Read::BuildSuggestion => "Build namespace",
         }
     }
@@ -135,6 +151,14 @@ pub(crate) struct SourcesList {
     /// `delivery.build_namespace` of the setup, shown and never edited here
     /// but through an accepted suggestion.
     build_namespace: Option<String>,
+    /// `supply_chain` of the setup: the key and the log. Edited here.
+    supply_chain: Option<freshkube_core::setup::SupplyChain>,
+    /// The Results row's input, made when the row is first selected.
+    results_input: Option<Entity<InputState>>,
+    /// What the input was last filled from, so an edit of the file replaces it.
+    results_loaded: Option<String>,
+    /// Why the typed Results text can't be saved.
+    results_error: Option<SharedString>,
     /// Find suggestions: the findings and the suggestion they make.
     finder: suggest::Finder,
     columns: Vec<Column>,
@@ -179,6 +203,10 @@ impl SourcesList {
             setup_skips: false,
             stage_naming: None,
             build_namespace: None,
+            supply_chain: None,
+            results_input: None,
+            results_loaded: None,
+            results_error: None,
             finder: suggest::Finder::new(),
             columns: Vec::new(),
             width: 0.,
@@ -244,6 +272,37 @@ impl SourcesList {
             self.derive_suggestion();
             cx.notify();
         }
+    }
+
+    /// The setup's `supply_chain`, as the page last read it.
+    pub(super) fn set_supply_chain(
+        &mut self,
+        chain: Option<freshkube_core::setup::SupplyChain>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.supply_chain != chain {
+            self.supply_chain = chain;
+            self.derive_rows();
+            cx.notify();
+        }
+    }
+
+    /// The entry Builds is read from, which Chains and Results are looked for on.
+    fn builds_entry(&self) -> Option<&freshkube_core::workspace::Entry> {
+        self.sources.get(Part::Builds).entry()
+    }
+
+    /// What the last check found of Chains and Results on `entry`, when it
+    /// is the entry Builds is read from.
+    pub(super) fn history_for(&self, entry: &str) -> Option<&entry::HistoryReach> {
+        let found = self.checked()?.history.as_ref()?;
+        (self.builds_entry()?.id == entry).then_some(found)
+    }
+
+    /// Check sources, as its button and key do.
+    #[cfg(test)]
+    pub(super) fn run_check(&mut self, cx: &mut Context<Self>) {
+        self.check(cx);
     }
 
     /// Takes a new workspace from the page: resolves where each part is
@@ -443,6 +502,28 @@ impl SourcesList {
             .iter()
             .map(|chosen| (rows::workload_id(chosen), reach(chosen, Read::Workloads)))
             .collect();
+        let history = match self.sources.get(Part::Builds) {
+            // An entry Builds couldn't reach carries that failure, as the real
+            // check does.
+            Chosen::Entry { entry, .. } => {
+                let forwards = entry
+                    .results
+                    .as_deref()
+                    .is_some_and(|results| results.forward.is_some());
+                let builds = self.example_answer(&entry.id, Read::Part(Part::Builds));
+                Some(match builds {
+                    Reach::Readable => entry::HistoryReach {
+                        chains: self.example_answer(&entry.id, Read::SupplyChain),
+                        results: forwards.then(|| self.example_answer(&entry.id, Read::Results)),
+                    },
+                    failed => entry::HistoryReach {
+                        results: forwards.then(|| failed.clone()),
+                        chains: failed,
+                    },
+                })
+            }
+            _ => None,
+        };
         let argocd_reached = self.sources.get(Part::ArgoCd).entry().is_some()
             || matches!(self.sources.get(Part::ArgoCd), Chosen::Open);
         Checked {
@@ -452,6 +533,7 @@ impl SourcesList {
                 false => Vec::new(),
             },
             workloads,
+            history,
         }
     }
 
@@ -569,6 +651,7 @@ impl Render for SourcesList {
                 );
             }
         }
+        self.sync_results_input(window, cx);
         let header = self.render_header(window, cx);
         let banners = self
             .page
@@ -660,11 +743,11 @@ impl Render for SourcesList {
 /// Enter accept it and Backspace ignores it.
 pub(in crate::desktop) fn key_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("c", CheckSources, Some(CONTEXT)),
-        KeyBinding::new("f", suggest::FindBuilds, Some(CONTEXT)),
-        KeyBinding::new("a", suggest::AcceptBuild, Some(CONTEXT)),
-        KeyBinding::new("enter", suggest::AcceptBuild, Some(CONTEXT)),
-        KeyBinding::new("backspace", suggest::IgnoreBuild, Some(CONTEXT)),
+        KeyBinding::new("c", CheckSources, Some(LIST_KEYS)),
+        KeyBinding::new("f", suggest::FindBuilds, Some(LIST_KEYS)),
+        KeyBinding::new("a", suggest::AcceptBuild, Some(LIST_KEYS)),
+        KeyBinding::new("enter", suggest::AcceptBuild, Some(LIST_KEYS)),
+        KeyBinding::new("backspace", suggest::IgnoreBuild, Some(LIST_KEYS)),
         KeyBinding::new("down", NextSource, Some(CONTEXT)),
         KeyBinding::new("up", PreviousSource, Some(CONTEXT)),
         KeyBinding::new("escape", CloseSource, Some(CONTEXT)),
