@@ -77,7 +77,12 @@ pub(super) fn mount_sized(
     let mut page = None;
     let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = DatabasesScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = DatabasesScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_page_source(source("invented-access"), window, cx);
             view.set_visible(true, window, cx);
             view.activate(window, cx);

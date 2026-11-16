@@ -48,8 +48,14 @@ fn mount(
     let mut page = None;
     let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view =
-                GatewaysScreen::new(mode, runtime.handle().clone(), window, cx).with_example(shape);
+            let mut view = GatewaysScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                mode,
+                runtime.handle().clone(),
+                window,
+                cx,
+            )
+            .with_example(shape);
             view.set_page_source(source(), window, cx);
             view.set_visible(true, window, cx);
             view.activate(window, cx);
@@ -556,8 +562,13 @@ fn a_held_read_keeps_the_loading_rows_until_it_answers(cx: &mut TestAppContext) 
     let mut page = None;
     let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view =
-                GatewaysScreen::new(Mode::Gateways, runtime.handle().clone(), window, cx);
+            let mut view = GatewaysScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                Mode::Gateways,
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_page_source(
                 PageSource {
                     kube: Some(ClusterSource {

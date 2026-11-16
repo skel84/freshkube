@@ -65,7 +65,12 @@ fn mount_sized(
     let mut screen = None;
     let handle = cx.open_window(size(px(width), px(760.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = WorkloadsScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = WorkloadsScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_source(Some(source), window, cx);
             view.activate(window, cx);
             view
@@ -108,7 +113,7 @@ fn the_inspector_opens_with_a_selection_beside_or_under_the_table(cx: &mut TestA
             );
             let table = window.find("workloads-table").bounds();
             let detail = window.find("workload-detail").bounds();
-            let beside = freshkube_ui::pane::Pane::default().page_width(window)
+            let beside = freshkube_ui::pane::Pane::new().page_width(window)
                 >= freshkube_ui::inspector::SPLIT_WIDTH;
             if beside {
                 assert!(detail.left() >= table.right(), "{width}: {detail:?}");
@@ -920,7 +925,7 @@ fn a_stacked_inspector_keeps_the_clicked_row_in_view(cx: &mut TestAppContext) {
             }
             window.render_frame(cx);
             assert!(
-                freshkube_ui::pane::Pane::default().page_width(window)
+                freshkube_ui::pane::Pane::new().page_width(window)
                     < freshkube_ui::inspector::SPLIT_WIDTH
             );
             let scroll = window.find("workload-table-scroll").bounds();

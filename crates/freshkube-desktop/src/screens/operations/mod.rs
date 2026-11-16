@@ -861,7 +861,12 @@ type StatusKey = (u64, Option<(String, bool)>);
 impl EventEmitter<ScreenEvent> for OperationsScreen {}
 
 impl OperationsScreen {
-    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextNode, Some(CONTEXT)),
             KeyBinding::new("up", PreviousNode, Some(CONTEXT)),
@@ -876,7 +881,7 @@ impl OperationsScreen {
         let operations = Operations::global(cx);
         let offers = freshkube_reads::offer_desk(&runtime, cx);
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             operation: OperationKind::Drain,

@@ -193,6 +193,12 @@ struct AlertsDrawn {
 }
 
 impl Nodes {
+    /// The pane this page draws in.
+    #[cfg(test)]
+    pub(super) fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     /// The session's alert state, or none once the read stops.
     pub(super) fn set_alerts(
         &mut self,
@@ -299,6 +305,7 @@ enum Empty {
 
 impl Nodes {
     pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
         logs: Entity<crate::logs::LogPanel>,
         window: &mut Window,
@@ -360,7 +367,7 @@ impl Nodes {
             }),
         ];
         Self {
-            pane: Default::default(),
+            pane: pane.clone(),
             rows: Arc::new(Vec::new()),
             resource_facts: Arc::new(Vec::new()),
             empty: Some(Empty::Loading),
@@ -406,10 +413,12 @@ impl Nodes {
             split: freshkube_ui::inspector::InspectorSplit::new("nodes", cx),
             document,
             focus: cx.focus_handle(),
-            pods: cx.new(|cx| crate::resources::ResourcesScreen::new(runtime.clone(), window, cx)),
+            pods: cx.new(|cx| {
+                crate::resources::ResourcesScreen::new(pane.clone(), runtime.clone(), window, cx)
+            }),
             history,
             load_history: Default::default(),
-            services: cx.new(|cx| super::services::NodeServices::new(window, cx)),
+            services: cx.new(|cx| super::services::NodeServices::new(pane.clone(), window, cx)),
             logs,
             collecting,
             chart,

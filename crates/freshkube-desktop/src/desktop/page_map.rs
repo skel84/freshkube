@@ -57,56 +57,83 @@ impl Pages {
         options: &GpuiOptions,
         runtime: &Handle,
         age_label: &Entity<switch::AgeLabel>,
+        pane: &freshkube_ui::pane::Pane,
         window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
-        let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
+        let logs =
+            cx.new(|cx| LogPanel::new(pane.clone(), runtime.clone(), options.tail, window, cx));
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
         logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
+        let overview_page =
+            cx.new(|cx| overview::OverviewPage::new(pane.clone(), age_label.clone(), cx));
         let node_workspace = cx.new(|cx| {
-            let mut nodes = nodes::Nodes::new(runtime.clone(), logs.clone(), window, cx);
+            let mut nodes =
+                nodes::Nodes::new(pane.clone(), runtime.clone(), logs.clone(), window, cx);
             // The header the loading rows sit under before anything answers.
             nodes.rebuild_columns(!options.kubernetes_only);
             nodes
         });
-        let health = cx.new(|cx| WorkloadsScreen::new(runtime.clone(), window, cx));
-        let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
+        let health = cx.new(|cx| WorkloadsScreen::new(pane.clone(), runtime.clone(), window, cx));
+        let lifecycle =
+            cx.new(|cx| LifecycleScreen::new(pane.clone(), runtime.clone(), window, cx));
         let databases = {
             let shape = options.debug.databases.clone();
             let explore = options.debug.db_explore.clone();
             cx.new(|cx| {
-                DatabasesScreen::new(runtime.clone(), window, cx)
+                DatabasesScreen::new(pane.clone(), runtime.clone(), window, cx)
                     .with_example(shape)
                     .with_explore_example(&explore)
             })
         };
         let routes = {
             let shape = options.debug.routes;
-            cx.new(|cx| RoutesScreen::new(runtime.clone(), window, cx).with_example(shape))
+            cx.new(|cx| {
+                RoutesScreen::new(pane.clone(), runtime.clone(), window, cx).with_example(shape)
+            })
         };
         let (gateways, gateway_classes, topology) = {
             let shape = options.debug.routes;
             (
                 cx.new(|cx| {
-                    GatewaysScreen::new(GatewaysMode::Gateways, runtime.clone(), window, cx)
-                        .with_example(shape)
+                    GatewaysScreen::new(
+                        pane.clone(),
+                        GatewaysMode::Gateways,
+                        runtime.clone(),
+                        window,
+                        cx,
+                    )
+                    .with_example(shape)
                 }),
                 cx.new(|cx| {
-                    GatewaysScreen::new(GatewaysMode::Classes, runtime.clone(), window, cx)
+                    GatewaysScreen::new(
+                        pane.clone(),
+                        GatewaysMode::Classes,
+                        runtime.clone(),
+                        window,
+                        cx,
+                    )
+                    .with_example(shape)
+                }),
+                cx.new(|cx| {
+                    TopologyScreen::new(pane.clone(), runtime.clone(), window, cx)
                         .with_example(shape)
                 }),
-                cx.new(|cx| TopologyScreen::new(runtime.clone(), window, cx).with_example(shape)),
             )
         };
         let certificates = {
             let shape = options.debug.certs;
-            cx.new(|cx| CertificatesScreen::new(runtime.clone(), window, cx).with_example(shape))
+            cx.new(|cx| {
+                CertificatesScreen::new(pane.clone(), runtime.clone(), window, cx)
+                    .with_example(shape)
+            })
         };
         let access = {
             let shape = options.debug.access.clone();
-            cx.new(|cx| AccessScreen::new(runtime.clone(), window, cx).with_example(&shape))
+            cx.new(|cx| {
+                AccessScreen::new(pane.clone(), runtime.clone(), window, cx).with_example(&shape)
+            })
         };
         let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
@@ -120,25 +147,28 @@ impl Pages {
                     PageId::Topology => ScreenHandle::new(topology.clone()),
                     PageId::Certificates => ScreenHandle::new(certificates.clone()),
                     PageId::Access => ScreenHandle::new(access.clone()),
-                    PageId::Processes => screen(ProcessesScreen::new, runtime, window, cx),
-                    PageId::Storage => screen(StorageScreen::new, runtime, window, cx),
-                    PageId::Network => screen(NetworkScreen::new, runtime, window, cx),
-                    PageId::Diagnostics => screen(DiagnosticsScreen::new, runtime, window, cx),
+                    PageId::Processes => screen(ProcessesScreen::new, pane, runtime, window, cx),
+                    PageId::Storage => screen(StorageScreen::new, pane, runtime, window, cx),
+                    PageId::Network => screen(NetworkScreen::new, pane, runtime, window, cx),
+                    PageId::Diagnostics => {
+                        screen(DiagnosticsScreen::new, pane, runtime, window, cx)
+                    }
                     PageId::Etcd => {
                         let etcd = options.debug.etcd;
                         screen(
-                            move |runtime, window, cx| {
-                                EtcdScreen::new(runtime, window, cx).with_example(etcd)
+                            move |pane, runtime, window, cx| {
+                                EtcdScreen::new(pane, runtime, window, cx).with_example(etcd)
                             },
+                            pane,
                             runtime,
                             window,
                             cx,
                         )
                     }
                     PageId::Health => ScreenHandle::new(health.clone()),
-                    PageId::Security => screen(SecurityScreen::new, runtime, window, cx),
+                    PageId::Security => screen(SecurityScreen::new, pane, runtime, window, cx),
                     PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
-                    PageId::Operations => screen(OperationsScreen::new, runtime, window, cx),
+                    PageId::Operations => screen(OperationsScreen::new, pane, runtime, window, cx),
                     _ => unreachable!("SCREENS holds the retained inspection screens"),
                 };
                 (page, handle)
@@ -156,7 +186,8 @@ impl Pages {
         .filter_map(|id| Some((id, pages.get(&id)?.clone())))
         .collect();
         node_workspace.update(cx, |nodes, _| nodes.screens = screens);
-        let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        let resources =
+            cx.new(|cx| ResourcesScreen::new(pane.clone(), runtime.clone(), window, cx));
         resources.update(cx, |screen, cx| {
             screen.set_services_shape(options.debug.services, cx);
             screen.set_routes_shape(options.debug.routes, cx);
@@ -181,6 +212,7 @@ impl Pages {
             });
         let monitoring = cx.new(|cx| {
             MonitoringPage::new(
+                pane.clone(),
                 runtime.clone(),
                 options.preferences.as_deref(),
                 secrets.clone(),
@@ -192,6 +224,7 @@ impl Pages {
         });
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
+                pane.clone(),
                 runtime.clone(),
                 // Example data never touches the saved Coroot connection.
                 options
@@ -205,6 +238,7 @@ impl Pages {
         });
         let applications = cx.new(|cx| {
             crate::applications::ApplicationsPage::new(
+                pane.clone(),
                 runtime.clone(),
                 options.debug.applications,
                 secrets.clone(),
@@ -222,7 +256,8 @@ impl Pages {
         {
             crate::applications::install_avatar_folder(dir, cx);
         }
-        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
+        let settings_page =
+            cx.new(|cx| settings::SettingsPage::new(pane.clone(), runtime.clone(), secrets, cx));
         settings_page.update(cx, |page, _| {
             page.set_example_labels_capped(options.debug.metrics_labels_capped)
         });
@@ -237,7 +272,8 @@ impl Pages {
                 )
             });
         }
-        let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
+        let system_services =
+            cx.new(|cx| system_services::SystemServices::new(pane.clone(), window, cx));
         let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(
             &overview_page,
@@ -338,12 +374,13 @@ impl Pages {
 /// A Talos screen's handle; the shell hears it with every other page
 /// (`Pages::subscribe`).
 fn screen<T: ScreenPanel>(
-    new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
+    new: impl FnOnce(freshkube_ui::pane::Pane, Handle, &mut Window, &mut Context<T>) -> T,
+    pane: &freshkube_ui::pane::Pane,
     runtime: Handle,
     window: &mut Window,
     cx: &mut Context<Pilot>,
 ) -> ScreenHandle {
-    ScreenHandle::new(cx.new(|cx| new(runtime, window, cx)))
+    ScreenHandle::new(cx.new(|cx| new(pane.clone(), runtime, window, cx)))
 }
 
 /// The handles of the pages that aren't Talos screens, by their keys:

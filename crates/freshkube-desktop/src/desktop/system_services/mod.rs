@@ -154,7 +154,11 @@ pub(super) use crate::screens::Reading;
 
 impl EventEmitter<ServiceEvent> for SystemServices {}
 impl SystemServices {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let filter =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter system services…"));
         let subscription = cx.subscribe(&filter, |this, _, event, cx| {
@@ -166,7 +170,7 @@ impl SystemServices {
         let loading = table::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(table::Look::Pulse));
         Self {
-            pane: Default::default(),
+            pane,
             rows: Vec::new(),
             lines: Vec::new(),
             counts: [0; 3],

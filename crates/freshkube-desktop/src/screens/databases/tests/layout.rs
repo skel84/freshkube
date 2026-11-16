@@ -186,7 +186,7 @@ fn database_states_keep_their_content_at_wide_narrow_and_large_text(cx: &mut Tes
                         cx,
                     );
                     window.render_frame(cx);
-                    if !freshkube_ui::pane::Pane::default().is_short(window)
+                    if !pilot.read(cx).pane_room().is_short(window)
                         && let Some(notes) = window.try_find("databases-notices")
                     {
                         let coverage = window.find("databases-coverage").bounds();

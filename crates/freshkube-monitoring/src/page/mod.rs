@@ -258,6 +258,7 @@ impl EventEmitter<MonitoringEvent> for MonitoringPage {}
 
 impl MonitoringPage {
     pub fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: Handle,
         preferences: Option<&std::path::Path>,
         secrets: Option<freshkube_core::secrets::Secrets>,
@@ -267,7 +268,7 @@ impl MonitoringPage {
         let store = preferences.map(|path| MonitoringStore::new(path, saved.clone()));
         let alerts = Which::ALL.map(|which| {
             let runtime = runtime.clone();
-            cx.new(|cx| AlertsPage::new(which, runtime, cx))
+            cx.new(|cx| AlertsPage::new(pane.clone(), which, runtime, cx))
         });
         let alert_subscriptions = alerts
             .iter()
@@ -280,7 +281,7 @@ impl MonitoringPage {
             })
             .collect();
         let mut page = Self {
-            pane: Default::default(),
+            pane,
             runtime,
             store,
             saved,

@@ -314,7 +314,7 @@ mod tests {
                     let control = window.find("general-appearance-system").bounds();
                     let label = window.find("general-appearance-row-label").bounds();
                     assert!((control.size.height - dp(ui::CONTROL_HEIGHT)).abs() < px(1.));
-                    if freshkube_ui::pane::Pane::default().content_width(window) < form::NARROW {
+                    if pilot.read(cx).pane_room().content_width(window) < form::NARROW {
                         assert!((control.left() - label.left()).abs() < px(1.));
                         assert!(control.top() >= label.bottom() + dp(4.) - px(1.));
                     } else {

@@ -46,8 +46,13 @@ fn mount_with(
     let mut page = None;
     let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view =
-                AccessScreen::new(runtime.handle().clone(), window, cx).with_example(shape);
+            let mut view = AccessScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            )
+            .with_example(shape);
             view.set_page_source(source(access), window, cx);
             view.set_visible(true, window, cx);
             view.activate(window, cx);

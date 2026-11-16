@@ -110,7 +110,12 @@ fn mount_in(
     let mut screen = None;
     let handle = cx.open_window(bounds, |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = StorageScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = StorageScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_source(Some(source), window, cx);
             view.activate(window, cx);
             view

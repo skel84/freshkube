@@ -254,7 +254,12 @@ pub struct AlertsPage {
 impl EventEmitter<AlertsEvent> for AlertsPage {}
 
 impl AlertsPage {
-    pub fn new(which: Which, runtime: Handle, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        pane: freshkube_ui::pane::Pane,
+        which: Which,
+        runtime: Handle,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let prefix = which.slug();
         let loading = kit::LoadingRows::new(prefix);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
@@ -263,7 +268,7 @@ impl AlertsPage {
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
         Self {
-            pane: Default::default(),
+            pane,
             which,
             runtime,
             source: None,

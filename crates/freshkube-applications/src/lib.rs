@@ -420,7 +420,13 @@ impl EventEmitter<StageAct> for ApplicationsPage {}
 impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
         variant: Variant,
         secrets: Option<freshkube_core::secrets::Secrets>,
@@ -437,10 +443,18 @@ impl ApplicationsPage {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let split = InspectorSplit::new(PREFIX, cx);
-        let changes =
-            cx.new(|cx| ChangesPage::new(runtime.clone(), variant.shape(), secrets.clone(), cx));
+        let changes = cx.new(|cx| {
+            ChangesPage::new(
+                pane.clone(),
+                runtime.clone(),
+                variant.shape(),
+                secrets.clone(),
+                cx,
+            )
+        });
         let waiting = cx.new(|cx| {
             WaitingPage::new(
+                pane.clone(),
                 runtime.clone(),
                 variant.shape(),
                 secrets.clone(),
@@ -462,7 +476,7 @@ impl ApplicationsPage {
             ChangesEvent::Act(act) => cx.emit(act.as_ref().clone()),
         });
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             secrets,
             public_key_file: None,
@@ -1257,7 +1271,9 @@ impl ApplicationsPage {
         let stale = self.stale.clone();
         let connections = self.connections(read);
         let fetch = self.timeline_fetch(app, &connections);
-        let page = cx.new(|cx| ApplicationPage::new(app, read, &connections, stale, fetch, cx));
+        let page = cx.new(|cx| {
+            ApplicationPage::new(self.pane.clone(), app, read, &connections, stale, fetch, cx)
+        });
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ApplicationEvent::Back => this.close_application(window, cx),
@@ -1302,7 +1318,15 @@ impl ApplicationsPage {
         let visible = self.visible;
         let coroot = self.coroot();
         let page = cx.new(|cx| {
-            let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
+            let mut page = ChangePage::new(
+                self.pane.clone(),
+                fetch,
+                Some(stage),
+                connections,
+                visible,
+                window,
+                cx,
+            );
             page.configure_example_results(&self.runtime, Some(source), &self.across(), cx);
             page.set_applications(&self.applications);
             page.set_coroot(coroot, cx);

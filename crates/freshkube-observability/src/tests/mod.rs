@@ -97,14 +97,14 @@ fn mount_with(
         crate::text_size::install(None, cx);
         Theme::change(ThemeMode::Dark, None, cx);
         cx.set_reduce_motion(true);
-        freshkube_ui::pane::Pane::default()
-            .set_chrome(freshkube_ui::page::RAIL_WIDTH + freshkube_ui::page::COLUMN_WIDTH);
     });
+    let pane = freshkube_ui::pane::Pane::new();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut page = None;
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
             ObservabilityPage::new(
+                pane.clone(),
                 runtime.handle().clone(),
                 preferences,
                 secrets.clone(),
@@ -114,7 +114,10 @@ fn mount_with(
         });
         page = Some(view.clone());
         if with_chrome {
-            let chrome = cx.new(|_| TestChrome { page: view });
+            let chrome = cx.new(|_| TestChrome {
+                page: view,
+                pane: pane.clone(),
+            });
             Root::new(chrome, window, cx)
         } else {
             Root::new(view, window, cx)
@@ -134,6 +137,7 @@ fn mount_with(
 /// size, so content-width breakpoints and page bounds agree.
 struct TestChrome {
     page: Entity<ObservabilityPage>,
+    pane: freshkube_ui::pane::Pane,
 }
 
 impl Render for TestChrome {
@@ -144,7 +148,7 @@ impl Render for TestChrome {
             freshkube_ui::page::COLUMN_WIDTH
         };
         let chrome = freshkube_ui::page::RAIL_WIDTH + column;
-        freshkube_ui::pane::Pane::default().set_chrome(chrome);
+        self.pane.set_chrome(chrome);
         gpui_kit::component::h_flex()
             .size_full()
             .child(div().w(crate::ui::dp(chrome)).h_full().flex_none())

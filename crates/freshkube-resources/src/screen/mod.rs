@@ -283,7 +283,12 @@ impl ResourcesScreen {
         )
     }
 
-    pub fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -439,7 +444,7 @@ impl ResourcesScreen {
             })
         });
         Self {
-            pane: Default::default(),
+            pane,
             field_selector: None,
             embedded: false,
             runtime,
@@ -694,6 +699,11 @@ impl ResourcesScreen {
         if only_logs {
             self.hide_detail(cx);
         }
+    }
+
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
     }
 
     /// A source with the same `id` only refreshes the handles; another one

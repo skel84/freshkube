@@ -61,9 +61,9 @@ pub(crate) struct TalosLogs {
 }
 
 impl TalosLogs {
-    fn new(runtime: Handle, tail: i32) -> Self {
+    fn new(pane: freshkube_ui::pane::Pane, runtime: Handle, tail: i32) -> Self {
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             tail,
             target: None,
@@ -162,7 +162,13 @@ impl LogSource for TalosLogs {
 
 /// What the shell and its tests ask of the Talos Logs page.
 pub(crate) trait TalosPanel: Sized + 'static {
-    fn new(runtime: Handle, tail: i32, window: &mut Window, cx: &mut Context<Self>) -> Self;
+    fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        tail: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self;
 
     fn set_target(
         &mut self,
@@ -205,9 +211,15 @@ pub(crate) trait TalosPanel: Sized + 'static {
 }
 
 impl TalosPanel for LogPanel {
-    fn new(runtime: Handle, tail: i32, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        tail: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys(catalog::key_bindings());
-        Self::with_source(TalosLogs::new(runtime, tail), window, cx)
+        Self::with_source(TalosLogs::new(pane, runtime, tail), window, cx)
     }
 
     fn set_target(

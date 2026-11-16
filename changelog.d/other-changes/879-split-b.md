@@ -1,0 +1,1 @@
+- Prepare the split view: the window now keeps a list of panes with one pane in it, and draws a frame around the page that carries a PaneFrame key context. Nothing changes on screen (#879).

@@ -179,7 +179,7 @@ fn only_an_answered_overview_without_a_node_says_no_node_selected(cx: &mut TestA
 /// screen is drawn alone: the same rule answers for it.
 fn pane_screen<T: ScreenPanel>(
     cx: &mut TestAppContext,
-    new: fn(tokio::runtime::Handle, &mut Window, &mut Context<T>) -> T,
+    new: fn(freshkube_ui::pane::Pane, tokio::runtime::Handle, &mut Window, &mut Context<T>) -> T,
 ) {
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -191,7 +191,14 @@ fn pane_screen<T: ScreenPanel>(
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mounted = std::rc::Rc::new(std::cell::RefCell::new(None));
     let handle = cx.open_window(size(px(900.), px(700.)), |window, cx| {
-        let screen = cx.new(|cx| new(runtime.handle().clone(), window, cx));
+        let screen = cx.new(|cx| {
+            new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            )
+        });
         *mounted.borrow_mut() = Some(screen.clone());
         Root::new(screen, window, cx)
     });

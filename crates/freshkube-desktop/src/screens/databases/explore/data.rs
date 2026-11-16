@@ -79,14 +79,18 @@ pub(super) struct DataView {
 }
 
 impl DataView {
-    pub(super) fn new(runtime: Handle, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", Next, Some("ExploreData")),
             KeyBinding::new("up", Previous, Some("ExploreData")),
             KeyBinding::new("escape", Close, Some("ExploreData")),
         ]);
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             session: None,
             epoch: 0,

@@ -111,7 +111,12 @@ fn unix_now() -> i64 {
 }
 
 impl CertificatesScreen {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", Next, Some("Certificates")),
             KeyBinding::new("up", Previous, Some("Certificates")),
@@ -133,7 +138,7 @@ impl CertificatesScreen {
             }
         });
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             visible: false,

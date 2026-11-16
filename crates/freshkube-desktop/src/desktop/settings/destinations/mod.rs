@@ -102,13 +102,14 @@ pub(crate) struct Destinations {
 
 impl Destinations {
     pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
         page: &Entity<SettingsPage>,
         runtime: tokio::runtime::Handle,
         cx: &mut Context<Self>,
     ) -> Self {
         let (columns, width) = source::columns(&[], &[]);
         Self {
-            pane: Default::default(),
+            pane,
             page: page.downgrade(),
             rows: Vec::new(),
             columns,

@@ -6,11 +6,10 @@
 //! `inset_width`, `content_width`, `is_short` and the rest. Nothing is looked
 //! up by what is being drawn, so a handler may ask outside a frame.
 //!
-//! This is the target the split reaches in steps. Today there is one pane,
-//! and a page made without being told its pane is in the window's main pane
-//! (`Pane::default()`), which every page and the shell share. That default is
-//! removed, and each parent hands its handle to the children it makes, in
-//! slice B2, so that an answer can never be another pane's.
+//! There is no default pane. The window makes a pane's handle once, the shell
+//! sets its room, and every page takes it as a constructor argument, as does
+//! every child a page makes, so the compiler finds a page that was never told
+//! its pane and an answer is never another pane's.
 use gpui_kit::Window;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -30,21 +29,10 @@ struct Room {
 #[derive(Clone, Debug)]
 pub struct Pane(Rc<Room>);
 
-thread_local! {
-    /// The main pane. Windows draw on one thread.
-    static MAIN: Pane = Pane::new();
-}
-
-impl Default for Pane {
-    /// The main pane: the one pane there is until a second is made.
-    fn default() -> Self {
-        MAIN.with(Pane::clone)
-    }
-}
-
 impl Pane {
     /// A pane of its own, with the rail and the column beside it, nothing
     /// under it and no node inspector.
+    #[allow(clippy::new_without_default)] // on purpose: no pane is made by default
     pub fn new() -> Self {
         Self(Rc::new(Room {
             chrome: Cell::new(RAIL_WIDTH + COLUMN_WIDTH),
@@ -140,14 +128,13 @@ mod tests {
     }
 
     #[test]
-    fn a_default_pane_is_the_main_pane_and_a_new_one_is_its_own() {
-        let (a, b) = (Pane::default(), Pane::default());
+    fn clones_share_a_pane_and_a_new_one_is_its_own() {
+        let (a, other) = (Pane::new(), Pane::new());
+        let b = a.clone();
         assert!(a.is(&b));
         a.set_chrome(52.);
         assert_eq!(b.chrome(), 52.);
-        let other = Pane::new();
         assert!(!other.is(&a));
         assert_eq!(other.chrome(), RAIL_WIDTH + COLUMN_WIDTH);
-        a.set_chrome(RAIL_WIDTH + COLUMN_WIDTH);
     }
 }

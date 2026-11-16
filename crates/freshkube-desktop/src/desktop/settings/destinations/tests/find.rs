@@ -657,7 +657,7 @@ mod suggestions {
             window.render_frame(cx);
             let list = list(&view, cx);
             let list = list.read(cx);
-            let room = freshkube_ui::pane::Pane::default().page_width(window);
+            let room = view.read(cx).pane_room().page_width(window);
             assert!(
                 list.width <= room,
                 "the table is {} wide in a page {room} wide",

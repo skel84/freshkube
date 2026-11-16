@@ -177,7 +177,13 @@ pub struct ChangesPage {
 impl EventEmitter<ChangesEvent> for ChangesPage {}
 
 impl ChangesPage {
+    /// The pane this page draws in.
+    pub fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
     pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
         shape: Shape,
         secrets: Option<freshkube_core::secrets::Secrets>,
@@ -193,7 +199,7 @@ impl ChangesPage {
         let outcome_memo = crate::change::session_memo(cx);
         let outcomes = cx.observe(&outcome_memo, |page, _, cx| page.sync_outcomes(cx));
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             secrets,
             setup_revision: 0,
@@ -760,7 +766,15 @@ impl ChangesPage {
         let visible = self.visible;
         let coroot = self.coroot.clone();
         let page = cx.new(|cx| {
-            let mut page = ChangePage::new(fetch, None, connections, visible, window, cx);
+            let mut page = ChangePage::new(
+                self.pane.clone(),
+                fetch,
+                None,
+                connections,
+                visible,
+                window,
+                cx,
+            );
             page.configure_example_results(&self.runtime, self.source.as_ref(), &self.across, cx);
             page.set_applications(&self.across.applications);
             page.set_parent("Changes");

@@ -177,6 +177,7 @@ fn set_secrets(
     cx.update(|cx| {
         let monitoring = cx.new(|cx| {
             super::MonitoringPage::new(
+                freshkube_ui::pane::Pane::new(),
                 runtime.handle().clone(),
                 Some(&directory.join("preferences.json")),
                 Some(secrets),

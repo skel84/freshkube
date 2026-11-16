@@ -127,7 +127,12 @@ fn mount_sized(
     let mut screen = None;
     let handle = cx.open_window(size(px(width), px(760.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = SecurityScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = SecurityScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_source(Some(source), window, cx);
             view.activate(window, cx);
             view
@@ -194,7 +199,7 @@ fn the_inspector_opens_with_a_selection_and_escape_closes_it(cx: &mut TestAppCon
             );
             let table = window.find("security-table").bounds();
             let detail = window.find("security-detail").bounds();
-            let beside = freshkube_ui::pane::Pane::default().page_width(window)
+            let beside = freshkube_ui::pane::Pane::new().page_width(window)
                 >= freshkube_ui::inspector::SPLIT_WIDTH;
             assert_eq!(width > 1200., beside, "{width}");
             if beside {

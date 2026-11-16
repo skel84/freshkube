@@ -110,7 +110,12 @@ fn health_words(health: Health) -> &'static str {
 }
 
 impl TopologyScreen {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let _ = window;
         let graph = GraphState::new(
             PREFIX,
@@ -123,7 +128,7 @@ impl TopologyScreen {
         )
         .unpaged();
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             visible: false,

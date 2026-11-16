@@ -116,7 +116,12 @@ impl EventEmitter<ResourceLink> for DatabasesScreen {}
 impl EventEmitter<ObservabilityLink> for DatabasesScreen {}
 impl EventEmitter<query_link::QueryRequest> for DatabasesScreen {}
 impl DatabasesScreen {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", Next, Some(CONTEXT)),
             KeyBinding::new("up", Previous, Some(CONTEXT)),
@@ -154,7 +159,7 @@ impl DatabasesScreen {
             }
         });
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             entry: None,
@@ -502,7 +507,15 @@ impl DatabasesScreen {
             };
             let runtime = self.runtime.clone();
             let view = cx.new(|cx| {
-                explore::ExploreView::new(runtime, source, database, example, teleport, cx)
+                explore::ExploreView::new(
+                    self.pane.clone(),
+                    runtime,
+                    source,
+                    database,
+                    example,
+                    teleport,
+                    cx,
+                )
             });
             // The explorer's Query button reaches the dock through the page.
             // Detached: it lasts as long as the explorer does.

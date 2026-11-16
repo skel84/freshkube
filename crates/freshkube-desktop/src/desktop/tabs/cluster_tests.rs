@@ -292,6 +292,8 @@ fn a_tab_whose_entry_is_gone_never_falls_back_to_the_shown_cluster(cx: &mut Test
     draw(cx, handle);
     cx.update_window(handle, |_, window, _| {
         assert!(window.try_find("choose-cluster").is_some());
+        // The pane's frame is drawn around it too.
+        assert!(window.try_find("pane-frame").is_some());
     })
     .unwrap();
     // However many times the shell follows the window, the tab keeps its

@@ -144,7 +144,17 @@ pub(super) struct NodeServices {
 impl EventEmitter<NodeServicesEvent> for NodeServices {}
 
 impl NodeServices {
-    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// The pane this page draws in.
+    #[cfg(test)]
+    pub(in crate::desktop) fn pane(&self) -> &freshkube_ui::pane::Pane {
+        &self.pane
+    }
+
+    pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter services"));
         let subscriptions = vec![
             cx.subscribe_in(&filter, window, |this, _, event, _, cx| {
@@ -164,7 +174,7 @@ impl NodeServices {
             _ = page.update(cx, |_, cx| cx.emit(NodeServicesEvent::Config(action)));
         });
         Self {
-            pane: Default::default(),
+            pane,
             state: NodeServicesState::default(),
             reading: ServicesReading::default(),
             display: ServiceDisplay::default(),

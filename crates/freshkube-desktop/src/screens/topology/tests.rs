@@ -31,8 +31,13 @@ fn mount(
     let mut page = None;
     let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view =
-                TopologyScreen::new(runtime.handle().clone(), window, cx).with_example(shape);
+            let mut view = TopologyScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            )
+            .with_example(shape);
             view.set_page_source(
                 PageSource {
                     kube: Some(ClusterSource {
@@ -272,7 +277,12 @@ fn a_held_read_keeps_the_loading_state_until_it_answers(cx: &mut TestAppContext)
     let mut page = None;
     let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = TopologyScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = TopologyScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_page_source(
                 PageSource {
                     kube: Some(ClusterSource {

@@ -262,7 +262,12 @@ impl WorkloadData {
 }
 
 impl WorkloadsScreen {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -290,7 +295,7 @@ impl WorkloadsScreen {
             }
         });
         Self {
-            pane: Default::default(),
+            pane,
             _runtime: runtime,
             summary_managed: false,
             summary: Summary::default(),

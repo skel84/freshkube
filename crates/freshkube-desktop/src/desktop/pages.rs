@@ -708,7 +708,7 @@ impl Pilot {
     /// Marks the rail's area and sizes the chrome around the page. Custom
     /// Resources discovers only while its column shows.
     pub(super) fn set_area(&mut self, area: Area, cx: &mut Context<Self>) {
-        self.pane.set_chrome(if area.has_column() {
+        self.panes.room().set_chrome(if area.has_column() {
             RAIL_WIDTH + COLUMN_WIDTH
         } else {
             RAIL_WIDTH

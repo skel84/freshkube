@@ -56,7 +56,13 @@ fn the_list_hold_reaches_both_resources_screens(cx: &mut TestAppContext) {
         },
         ..DebugOptions::default()
     };
-    let (_runtime, _handle, pilot) = mount(cx, options(debug), 1280., 880.);
+    let (_runtime, handle, pilot) = mount(cx, options(debug), 1280., 880.);
+    // Held rows are loading rows, and the pane's frame is drawn around them.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("pane-frame").is_some());
+    })
+    .unwrap();
     cx.update(|cx| {
         let pilot = pilot.read(cx);
         assert!(pilot.pages.resources.read(cx).is_holding());

@@ -79,7 +79,12 @@ pub(crate) struct AccessScreen {
 impl EventEmitter<ScreenEvent> for AccessScreen {}
 
 impl AccessScreen {
-    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", Next, Some(CONTEXT)),
             KeyBinding::new("up", Previous, Some(CONTEXT)),
@@ -90,7 +95,7 @@ impl AccessScreen {
             KeyBinding::new("r", Recheck, Some(CONTEXT)),
         ]);
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             visible: false,

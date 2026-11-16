@@ -382,6 +382,7 @@ impl SettingsPage {
     }
 
     pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
         metrics_secrets: Option<freshkube_core::secrets::Secrets>,
         cx: &mut Context<Self>,
@@ -398,7 +399,7 @@ impl SettingsPage {
         let team_runtime = runtime.clone();
         let team_secrets = metrics_secrets.clone();
         let mut page = Self {
-            pane: Default::default(),
+            pane: pane.clone(),
             connection: None,
             coroot: None,
             coroot_state: crate::observability::ConnectionState::Disconnected,
@@ -453,11 +454,11 @@ impl SettingsPage {
             destinations: {
                 let page = cx.entity();
                 let runtime = runtime.clone();
-                cx.new(|cx| destinations::Destinations::new(&page, runtime, cx))
+                cx.new(|cx| destinations::Destinations::new(pane.clone(), &page, runtime, cx))
             },
             sources: {
                 let page = cx.weak_entity();
-                cx.new(|cx| sources::SourcesList::new(runtime, page, cx))
+                cx.new(|cx| sources::SourcesList::new(pane.clone(), runtime, page, cx))
             },
             status: Segment::default(),
             status_parts: Vec::new(),

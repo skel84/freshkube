@@ -65,13 +65,17 @@ pub(super) struct OverviewPage {
 impl EventEmitter<OverviewEvent> for OverviewPage {}
 
 impl OverviewPage {
-    pub(super) fn new(age_label: Entity<AgeLabel>, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
+        age_label: Entity<AgeLabel>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let page = cx.weak_entity();
         let on_config: OnConfigAction = Rc::new(move |action, _, cx| {
             _ = page.update(cx, |_, cx| cx.emit(OverviewEvent::Config(action)));
         });
         Self {
-            pane: Default::default(),
+            pane,
             display: Default::default(),
             attention: Default::default(),
             state: Default::default(),

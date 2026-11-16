@@ -70,7 +70,15 @@ fn mount_monitoring(
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut page = None;
     let window = cx.open_window(size(px(800.), px(600.)), |window, cx| {
-        let view = cx.new(|cx| MonitoringPage::new(runtime.handle().clone(), None, None, cx));
+        let view = cx.new(|cx| {
+            MonitoringPage::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                None,
+                None,
+                cx,
+            )
+        });
         page = Some(view.clone());
         Root::new(view, window, cx)
     });

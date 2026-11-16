@@ -167,6 +167,10 @@ Every desktop knob is parsed in `DebugOptions`, and the build that honours it is
 
 The command-line options are `src/main.rs`'s `Cli`, which builds a `GpuiOptions` (`crates/freshkube-desktop/src/lib.rs`).
 
+## Panes
+
+A pane's room (the navigation width beside it, the dock's height under it, the node inspector's width in it) is `freshkube_ui::pane::Pane`, a handle each page keeps and asks for `page_width`, `inset_width`, `content_width`, `is_short`, `below` and `embedded_width` (#879). **Element ids:** pane 0 keeps every id as it was; every element id drawn in pane 1 is prefixed `p1:`, made only by `PaneId::id`, so no id is shared between two panes and a test finds an element by its pane. There is no default pane: the window makes one `Pane`, and every page and every child a page makes takes it from its parent at construction, so the compiler finds a page that was never told its pane. A page never writes the prefix by hand.
+
 ## Log views
 
 Every log view is `LogView<S: LogSource>` from `freshkube-logs` (`crates/freshkube-logs/src/`). It owns retention, search, selection, copy, the level filter, follow, wrap and row measurement; a source (`TalosLogs` in desktop's `logs/talos/`, `PodLogs` in `logs/pod/`) supplies its toolbar tools and the note under them (`tools`, `notes`), its empty message and per-stream errors, and feeds lines through `ingest`. A source reaches the view only through the crate's `source_api.rs`; the view's other fields stay private to it, so a source's own methods live in an extension trait (`TalosPanel`, `PodLogPanel`) that callers import, and its stream methods on a trait private to `logs/`. Desktop's tests read the view through the crate's `testing` feature, turned on only from dev-dependencies. A new kind of log adds a source; it never copies the view.
