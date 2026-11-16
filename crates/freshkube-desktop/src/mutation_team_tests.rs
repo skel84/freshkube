@@ -18,7 +18,7 @@ const TEAM: &str =
 fn saved_team(context: &str) -> (TeamFloors, String) {
     let mut team = Membership::join(example::source(), Default::default());
     team.fetched(
-        Ok(Version::parse("v1", TEAM.as_bytes(), Default::default()).unwrap()),
+        Ok(Version::parse("abc1234", TEAM.as_bytes(), Default::default()).unwrap()),
         chrono::Utc::now(),
     );
     team.map_context(

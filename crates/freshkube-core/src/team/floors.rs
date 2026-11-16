@@ -170,7 +170,7 @@ pub(crate) mod tests {
     /// A team applied with each cluster mapped to the context given.
     pub(crate) fn applied(text: &str, map: &[(&str, &str)]) -> Membership {
         let mut m = Membership::join(example::source(), Overrides::new());
-        m.fetched(Ok(version("v1", text)), at(1));
+        m.fetched(Ok(version("abc1234", text)), at(1));
         let available: Vec<String> = map.iter().map(|(_, context)| context.to_string()).collect();
         for (id, context) in map {
             m.map_context(id, Choice::Context(context.to_string()), &available)
@@ -247,7 +247,7 @@ pub(crate) mod tests {
         // A newer version waits, and it drops prod-ams and adds a strict one.
         m.fetched(
             Ok(version(
-                "v2",
+                "def5678",
                 "version: 1\nclusters:\n  - id: stage-lon\n    role: core\n    protection: protected\n  - id: new-nyc\n    role: core\n    protection: read-only\n",
             )),
             at(3),
@@ -270,7 +270,7 @@ pub(crate) mod tests {
     #[test]
     fn a_floor_a_later_version_drops_is_held() {
         let mut m = applied(TEAM, &[("prod-ams", "ams-ctx")]);
-        m.fetched(Ok(version("v2", "version: 1\n")), at(3));
+        m.fetched(Ok(version("def5678", "version: 1\n")), at(3));
         let mut review = m.review().unwrap();
         example::confirm_all(&mut review);
         m.apply(review, at(4)).unwrap();
@@ -301,7 +301,7 @@ pub(crate) mod tests {
     #[test]
     fn nothing_applied_is_no_floor() {
         let mut m = Membership::join(example::source(), Overrides::new());
-        m.fetched(Ok(version("v1", TEAM)), at(1));
+        m.fetched(Ok(version("abc1234", TEAM)), at(1));
         assert_eq!(TeamFloors::from_membership(&m), TeamFloors::none());
     }
 
