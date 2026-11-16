@@ -113,13 +113,20 @@ impl Preview {
 
 /// The silence to create, with the moment it was made at, so the same request
 /// can be looked for afterwards.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CreateRequest {
     pub matchers: Vec<SilenceMatcher>,
     pub comment: String,
     pub created_by: String,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
+}
+
+// Never prints the matchers or the comment: they echo what the person typed.
+impl std::fmt::Debug for CreateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CreateRequest({} matchers)", self.matchers.len())
+    }
 }
 
 impl CreateRequest {
@@ -595,7 +602,7 @@ pub fn find_landed<'a>(silences: &'a [Silence], request: &CreateRequest) -> Opti
 
 /// Whether two matcher lists hold the same matchers, in any order:
 /// Alertmanager may list them in another order than they were sent.
-fn same_matchers(a: &[SilenceMatcher], b: &[SilenceMatcher]) -> bool {
+pub(crate) fn same_matchers(a: &[SilenceMatcher], b: &[SilenceMatcher]) -> bool {
     let key = |matchers: &[SilenceMatcher]| {
         let mut keys: Vec<_> = matchers
             .iter()

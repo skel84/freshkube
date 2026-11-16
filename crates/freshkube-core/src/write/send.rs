@@ -133,6 +133,9 @@ pub async fn send(
 ) -> Result<Value, Refusal> {
     let api = api(client, target);
     let reply = match change {
+        Change::Silence(_) | Change::Expire(_) => {
+            return super::alertmanager::send(client, change, dry_run).await;
+        }
         Change::Apply(body) | Change::Edit { body, .. } => {
             let mut params = PatchParams::apply(FIELD_MANAGER);
             params.dry_run = dry_run;

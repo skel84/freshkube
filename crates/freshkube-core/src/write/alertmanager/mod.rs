@@ -10,10 +10,16 @@
 //!   preview of what it would mute) and after (the read-back). It goes
 //!   through the person's own `kube::Client`: no stored credential.
 //!
-//! Nothing outside `freshkube-core` names this yet: the runner reaches it in
-//! W2 and no page offers it before W3, so no silence or Expire can be sent
-//! from the app. The design is the plan in #884; `docs/WRITE_MODEL.md` takes it
-//! in W2, where the writes first become sendable.
+//! - [`change`]: the two [`Change`](super::Change) payloads, the scope the
+//!   runner resolved and the descriptions a page hands over.
+//! - `runner`: the runner's preflight, the check again before the send and
+//!   the read-back (W2).
+//!
+//! The runner sends them (W2), but no page, dialog or example runner offers
+//! one before W3, so no silence or Expire can be sent from the app yet. The
+//! design is the plan in #884; `docs/WRITE_MODEL.md` has it.
+mod change;
+mod runner;
 pub mod silence;
 pub mod writer;
 
@@ -23,6 +29,11 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
+pub use change::{
+    ExpireChange, Scope, ServiceSeen, SilenceChange, describe_expire, describe_silence,
+};
+pub(super) use change::{depends_on, questions, send};
+pub(super) use runner::{AlertSeen, is_alert_action};
 pub use silence::{
     Class, Draft, MAX_COMMENT, MAX_DURATION, MAX_MATCHERS, MAX_MUTED_NARROW, MAX_VALUE,
     MIN_DURATION, Mode, PROTECTED_CAP, Reason, Refusal, classify, validate,

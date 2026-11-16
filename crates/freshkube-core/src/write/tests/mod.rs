@@ -9,6 +9,7 @@ use super::testing::{self as fake, Cluster};
 use super::*;
 
 mod access;
+mod alertmanager;
 mod apply;
 mod audit;
 mod create;
