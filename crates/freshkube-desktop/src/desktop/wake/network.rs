@@ -10,7 +10,11 @@ use freshkube_core::reachability::{Changes, SETTLE};
 
 impl Pilot {
     /// Listens for network changes for the rest of the window's life.
-    pub(in crate::desktop) fn start_network_watch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::desktop) fn start_network_watch(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // A test sends its own changes, through `watch_network`.
         #[cfg(not(test))]
         {

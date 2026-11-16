@@ -232,7 +232,11 @@ fn a_burst_of_network_reports_refreshes_the_summary_once(cx: &mut TestAppContext
         signal.announce();
         cx.run_until_parked();
     }
-    assert_eq!(generation(cx, handle, &view), before, "not before it settles");
+    assert_eq!(
+        generation(cx, handle, &view),
+        before,
+        "not before it settles"
+    );
     settle(cx);
     assert_eq!(generation(cx, handle, &view), before + 1, "once");
     // Nothing more comes of it.
@@ -284,9 +288,7 @@ fn a_network_change_lists_the_shown_resources_page_again_and_not_a_hidden_one(
 }
 
 #[gpui_kit::test]
-fn a_network_change_with_nothing_connected_says_nothing_and_reads_nothing(
-    cx: &mut TestAppContext,
-) {
+fn a_network_change_with_nothing_connected_says_nothing_and_reads_nothing(cx: &mut TestAppContext) {
     use crate::{DebugOptions, GpuiOptions};
     let mut debug = DebugOptions::default();
     debug.hold.talos = true;

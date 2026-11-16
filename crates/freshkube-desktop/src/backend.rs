@@ -818,7 +818,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(once(open), Wakes::new(), sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         source_started.await.unwrap();
         // Let the child enter the pending source.next() before cancellation.
@@ -843,7 +849,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(once(open), Wakes::new(), sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         source_started.await.unwrap();
         receiver.close();
@@ -868,7 +880,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(once(open), Wakes::new(), sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         opening_started.await.unwrap();
         receiver.close();
@@ -896,7 +914,13 @@ mod tests {
         };
         let job = supervise(
             &Handle::current(),
-            vec![pump(once(open), Wakes::new(), sender, target(), ServiceId::from("kubelet"))],
+            vec![pump(
+                once(open),
+                Wakes::new(),
+                sender,
+                target(),
+                ServiceId::from("kubelet"),
+            )],
         );
         tokio::time::timeout(Duration::from_secs(1), async {
             while receiver.len() < STREAM_QUEUE_CAPACITY {

@@ -729,12 +729,19 @@ async fn an_expired_login_rebuilds_the_client_once_and_reads_through_the_new_one
     let (source, session, task) = drive(vec![expired, renewed]).await;
     for _ in 0..200 {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        if renewed_log.lines().iter().any(|l| l.contains("/api/v1/nodes")) {
+        if renewed_log
+            .lines()
+            .iter()
+            .any(|l| l.contains("/api/v1/nodes"))
+        {
             break;
         }
     }
     assert!(
-        renewed_log.lines().iter().any(|l| l.contains("/api/v1/nodes")),
+        renewed_log
+            .lines()
+            .iter()
+            .any(|l| l.contains("/api/v1/nodes")),
         "the new client reads: {:?}",
         renewed_log.lines()
     );

@@ -506,7 +506,9 @@ async fn a_second_401_after_the_rebuild_is_shown_not_retried() {
     assert!(ended.is_err(), "a second rebuild must not be asked for");
     assert_eq!(
         nodes_observation(&session).failure(),
-        Some(&ObservationFailure::Read(crate::failure::FailureKind::Unauthorized))
+        Some(&ObservationFailure::Read(
+            crate::failure::FailureKind::Unauthorized
+        ))
     );
     assert_eq!(
         nodes_observation(&session).message(),
