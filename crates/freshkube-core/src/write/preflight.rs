@@ -5,6 +5,7 @@
 
 use serde_json::Value;
 
+use super::alertmanager::AlertSeen;
 use super::{
     Protection,
     access::{self, Access},
@@ -52,6 +53,9 @@ pub enum Block {
     /// A session (exec, port forwarding) is not a write: it keeps its own
     /// owner and never goes through this path.
     Session,
+    /// The app refuses it before asking anything: a silence that can't be
+    /// sent as drafted, or has no cluster to be limited to.
+    Refused { object: String, message: String },
 }
 
 impl Block {
@@ -79,6 +83,7 @@ impl Block {
             }
             Block::NoAnswer { object, .. } => format!("The cluster did not answer for {object}."),
             Block::Empty => "There is nothing to change.".to_owned(),
+            Block::Refused { message, .. } => message.clone(),
             Block::Session => {
                 "Shells and port forwards are not writes; they start from their own actions."
                     .to_owned()
@@ -110,6 +115,9 @@ pub struct Prepared {
     pub(super) own: Protection,
     /// The way back for each object, worked out from the object read here.
     pub(super) inverses: Vec<Option<Inverse>>,
+    /// For a silence or an Expire: what the person was shown, compared with
+    /// what is true again just before the send.
+    pub(super) alert_seen: Option<super::alertmanager::AlertSeen>,
 }
 
 impl Prepared {
@@ -164,6 +172,10 @@ impl Runner {
     /// level, then for each object the access review, the UID and
     /// resourceVersion, and the dry run.
     pub async fn preflight(&self, action: ActionDescription) -> Verdict {
+        // A silence or an Expire has its own preflight: its steps differ.
+        if super::alertmanager::is_alert_action(&action) {
+            return self.preflight_alertmanager(action).await;
+        }
         let level = self.level_for(&action);
         let requirement = requirement_for(&action, level);
         self.preflight_with(action, requirement, level, false).await
@@ -214,6 +226,7 @@ impl Runner {
                 }
             }
         }
+        let alert_seen = super::alertmanager::is_alert_action(&action).then(AlertSeen::expire);
         Verdict::Ready(Box::new(Prepared {
             description: action,
             requirement,
@@ -223,6 +236,9 @@ impl Runner {
             level,
             own: self.level.get(),
             inverses,
+            // An Expire that is the Undo of a silence is read again before
+            // it is sent, as any Expire is.
+            alert_seen,
         }))
     }
 
@@ -268,6 +284,23 @@ impl Runner {
     ) -> Result<(Vec<FieldChange>, Option<Inverse>), Block> {
         let target = &change.target;
         let object = target.label();
+        // Only an Expire gets here (the Undo of a silence). A silence is
+        // prepared by its own preflight and never by this path.
+        match &change.change {
+            Change::Expire(expire) => {
+                return self
+                    .check_expire(change, expire)
+                    .await
+                    .map(|_| (vec![], None));
+            }
+            Change::Silence(_) => {
+                return Err(Block::Refused {
+                    object,
+                    message: "A silence is prepared by its own preflight.".to_owned(),
+                });
+            }
+            _ => {}
+        }
         let verb = change.change.verb();
         let creates = matches!(change.change, Change::Create(_));
         match access::review(&self.client, target, verb).await {

@@ -100,26 +100,35 @@ impl Preview {
         }
     }
 
-    /// Whether `other` muted the same alerts: the same set, counted the same
-    /// way. A preview that wasn't counted exactly is never the same as
-    /// another: what it muted is not known.
+    /// Whether `other` muted the same alerts. The clusters they reach and
+    /// the count of other clusters' alerts must match too, so a broad silence
+    /// that has spread into another cluster is not the one that was shown.
+    /// The set of alerts is compared when it was counted exactly; a count
+    /// past the bound can't be listed, so it is compared as a count.
     pub fn same_as(&self, other: &Self) -> bool {
-        self.muted.is_exact()
-            && other.muted.is_exact()
-            && self.muted == other.muted
-            && self.fingerprints == other.fingerprints
+        self.muted == other.muted
+            && self.clusters == other.clusters
+            && self.other_clusters == other.other_clusters
+            && (!self.muted.is_exact() || self.fingerprints == other.fingerprints)
     }
 }
 
 /// The silence to create, with the moment it was made at, so the same request
 /// can be looked for afterwards.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CreateRequest {
     pub matchers: Vec<SilenceMatcher>,
     pub comment: String,
     pub created_by: String,
     pub starts_at: DateTime<Utc>,
     pub ends_at: DateTime<Utc>,
+}
+
+// Never prints the matchers or the comment: they echo what the person typed.
+impl std::fmt::Debug for CreateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CreateRequest({} matchers)", self.matchers.len())
+    }
 }
 
 impl CreateRequest {
@@ -272,16 +281,20 @@ impl AlertWriter {
     /// preview.
     pub async fn preview(&self, draft: &Draft) -> Result<Preview, WriteError> {
         validate(draft).map_err(WriteError::Invalid)?;
-        let mut query = url::form_urlencoded::Serializer::new(String::new());
-        for matcher in &draft.matchers {
-            query.append_pair("filter", &filter_text(matcher));
-        }
-        let query = query
-            .append_pair("active", "true")
-            .append_pair("unprocessed", "true")
-            .append_pair("silenced", "true")
-            .append_pair("inhibited", "true")
-            .finish();
+        // In a block of its own: the serializer isn't `Sync`, so it must not
+        // be held across an await, and the runner's futures run on a runtime.
+        let query = {
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            for matcher in &draft.matchers {
+                query.append_pair("filter", &filter_text(matcher));
+            }
+            query
+                .append_pair("active", "true")
+                .append_pair("unprocessed", "true")
+                .append_pair("silenced", "true")
+                .append_pair("inhibited", "true")
+                .finish()
+        };
         let target = format!("api/v2/alerts?{query}");
         let cluster = match &draft.mode {
             Mode::Central { label, value } => Some((label.as_str(), value.as_str())),
@@ -376,6 +389,9 @@ impl AlertWriter {
 
     /// One request through the proxy: the status and the body, bounded by
     /// the timeout and `limit`. Errors name neither the server nor a token.
+    /// Private, and reached only from `preview` and `read_back` (GET),
+    /// `create` (POST) and `expire` (DELETE): no other method is written in
+    /// this file, which a test reads (guarantee 29).
     async fn send(
         &self,
         method: Method,
@@ -595,7 +611,7 @@ pub fn find_landed<'a>(silences: &'a [Silence], request: &CreateRequest) -> Opti
 
 /// Whether two matcher lists hold the same matchers, in any order:
 /// Alertmanager may list them in another order than they were sent.
-fn same_matchers(a: &[SilenceMatcher], b: &[SilenceMatcher]) -> bool {
+pub(crate) fn same_matchers(a: &[SilenceMatcher], b: &[SilenceMatcher]) -> bool {
     let key = |matchers: &[SilenceMatcher]| {
         let mut keys: Vec<_> = matchers
             .iter()

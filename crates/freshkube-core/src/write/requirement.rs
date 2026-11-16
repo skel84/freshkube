@@ -136,7 +136,10 @@ pub fn requirement(tier: Tier, level: Protection) -> Requirement {
 /// adds an annotation) asks nothing at any level `read-only` doesn't block,
 /// and a reversible action with no way back asks even at `open`.
 pub fn requirement_for(action: &ActionDescription, level: Protection) -> Requirement {
-    let given = requirement(action.tier, level);
+    let mut given = requirement(action.tier, level);
+    if action.always_asks() && given.blocked.is_none() {
+        given.confirm = true;
+    }
     if action.no_confirmation && given.blocked.is_none() {
         return Requirement {
             confirm: false,

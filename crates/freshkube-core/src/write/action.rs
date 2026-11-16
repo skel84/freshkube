@@ -132,6 +132,11 @@ pub enum Change {
     /// carrying the paths the person changed, so the audit records those and
     /// not every field the body repeats to keep what `freshkube` owns.
     Edit { body: Value, edited: Vec<String> },
+    /// A silence on an Alertmanager (#884): a `POST` through the Service
+    /// proxy, sent by `alertmanager` and not as an object write.
+    Silence(Box<super::alertmanager::SilenceChange>),
+    /// An Expire of one silence: a `DELETE` through the same proxy.
+    Expire(Box<super::alertmanager::ExpireChange>),
 }
 
 impl Change {
@@ -140,7 +145,9 @@ impl Change {
         match self {
             Change::Apply(_) | Change::MergePatch(_) | Change::Edit { .. } => "patch",
             Change::Delete(_) => "delete",
-            Change::Create(_) => "create",
+            // The verb the proxy's own check maps the HTTP method to.
+            Change::Create(_) | Change::Silence(_) => "create",
+            Change::Expire(_) => "delete",
         }
     }
 
@@ -163,6 +170,8 @@ impl Change {
             }
             Change::Edit { edited, .. } => edited.clone(),
             Change::Delete(_) => vec![],
+            Change::Silence(silence) => silence.field_paths(),
+            Change::Expire(expire) => expire.field_paths(),
         }
     }
 }
@@ -221,6 +230,11 @@ pub enum Observation {
     Gone,
     /// The object exists: what a created object is seen by.
     Exists,
+    /// Read back from Alertmanager by id: the silence is active or pending
+    /// and is the one written.
+    SilenceActive,
+    /// Read back from Alertmanager by id: the silence is expired.
+    SilenceExpired,
     /// Nothing can be watched. The result says so; it is never success.
     Unobservable,
 }
@@ -250,6 +264,13 @@ type WayBack = dyn Fn(&Value) -> Option<Inverse> + Send + Sync;
 impl InverseFrom {
     pub fn new(f: impl Fn(&Value) -> Option<Inverse> + Send + Sync + 'static) -> Self {
         Self(Arc::new(f))
+    }
+
+    /// For a silence: its way back (an Expire of the id) is known only once
+    /// it is accepted, so preflight has none to give and the runner makes it
+    /// from the accepted write. Its presence is what makes Undo available.
+    pub fn after_accept() -> Self {
+        Self::new(|_| None)
     }
 
     pub fn of(&self, before: &Value) -> Option<Inverse> {
@@ -367,6 +388,15 @@ impl ActionDescription {
     pub fn access_questions(&self) -> Vec<super::AccessQuestion> {
         let mut questions: Vec<super::AccessQuestion> = vec![];
         for change in &self.changes {
+            let alert = super::alertmanager::questions(&change.change);
+            if !alert.is_empty() {
+                for question in alert {
+                    if !questions.contains(&question) {
+                        questions.push(question);
+                    }
+                }
+                continue;
+            }
             let asked = [Some(super::AccessQuestion::of(
                 &change.target,
                 change.change.verb(),
@@ -425,6 +455,18 @@ impl ActionDescription {
             }
         }
         names
+    }
+
+    /// A silence or an Expire asks at every level but `read-only`, which
+    /// blocks it: it can mute alerts nobody would then see, and an Expire
+    /// does not re-send what a silence held back. The one exception is Undo,
+    /// which is a write like any other at its level: an Undo Expire on an
+    /// `open` cluster asks nothing. Declared here, in core, as
+    /// `no_confirmation` is.
+    pub fn always_asks(&self) -> bool {
+        self.changes
+            .iter()
+            .any(|c| matches!(c.change, Change::Silence(_) | Change::Expire(_)))
     }
 
     pub fn names(&self) -> Vec<&str> {

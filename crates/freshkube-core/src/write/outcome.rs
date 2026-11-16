@@ -165,7 +165,11 @@ fn reached<'a>(
                 controlled_with(client, target, (group, version, kind, resource), annotation).await
             }
             Observation::Exists => true,
-            Observation::Gone | Observation::Unobservable => false,
+            // Read back from Alertmanager, not from an object.
+            Observation::Gone
+            | Observation::Unobservable
+            | Observation::SilenceActive
+            | Observation::SilenceExpired => false,
         }
     })
 }
