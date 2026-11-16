@@ -977,6 +977,9 @@ fn a_scrolled_column_is_cut_at_the_pinned_stage_columns_edge(cx: &mut TestAppCon
             hidden > 0 && straddling > 0,
             "{hidden} hidden, {straddling} straddling"
         );
+    })
+    .unwrap();
+}
 
 #[gpui_kit::test]
 fn the_rollout_states_shape_draws_paused_degraded_aborted_and_progressing(cx: &mut TestAppContext) {
