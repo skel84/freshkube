@@ -92,6 +92,23 @@ pub(crate) struct GlobalProtection(
     /// The id of the workspace entry the window is on, `None` with no entry
     /// active. What a protected action on several objects asks to be typed.
     Option<String>,
+    /// The setup file the levels come from, `None` for example data and a
+    /// window with no preferences: a write's send step reads it again
+    /// ([`send_guard`]).
+    Option<std::path::PathBuf>,
+    /// A level a send found in the setup file that is stricter than the one
+    /// the app holds, kept until the app reads the file itself: the header
+    /// and every write follow it ([`raise_level`]).
+    Option<Protection>,
+    /// Whether the entries the window works under came from that file (and
+    /// not, for a legacy `workspace.json` user, from the migration), so an
+    /// entry subject is only read from a file that lists it.
+    bool,
+    /// The kubeconfig context the window shows (what its level is held for
+    /// when no entry is active), published with the level so the name a send
+    /// reads from the setup file and the level it holds are about the same
+    /// context. Not the Talos cluster's name, which can differ.
+    Option<String>,
 );
 
 impl Default for GlobalProtection {
@@ -101,11 +118,22 @@ impl Default for GlobalProtection {
             Default::default(),
             None,
             None,
+            None,
+            None,
+            false,
+            None,
         )
     }
 }
 
 impl Global for GlobalProtection {}
+
+/// Set when a send found a stricter level in the setup file: the shell
+/// listens and draws it (`LevelRaised` carries no data; the level is
+/// [`level_floor`]).
+pub(crate) struct LevelRaised;
+
+impl Global for LevelRaised {}
 
 /// Sets the level the window's context has.
 pub(crate) fn set_protection(level: Protection, cx: &mut App) {
@@ -115,6 +143,129 @@ pub(crate) fn set_protection(level: Protection, cx: &mut App) {
 /// Sets the id of the workspace entry the window is on.
 pub(crate) fn set_active_entry(entry: Option<String>, cx: &mut App) {
     cx.default_global::<GlobalProtection>().3 = entry;
+}
+
+/// Sets the setup file the levels are read from, for a write's send step to
+/// read again (#1055), and whether the entries came from it. `None` has no
+/// file to read, as for example data.
+pub(crate) fn set_setup_file(file: Option<std::path::PathBuf>, from_file: bool, cx: &mut App) {
+    let global = cx.default_global::<GlobalProtection>();
+    global.4 = file;
+    global.6 = from_file;
+}
+
+/// Sets the kubeconfig context the window shows, with its level.
+pub(crate) fn set_window_context(context: String, cx: &mut App) {
+    cx.default_global::<GlobalProtection>().7 = Some(context);
+}
+
+/// What a write reads again from the setup file at its send step, for the
+/// identity the dialog is for: the active entry when the setup file lists
+/// the entries, else the kubeconfig context the window shows, as the shell
+/// published it (a legacy `workspace.json` user has no file to name an entry
+/// in), else `context`, the caller's. Taken when the dialog opens, so the re-read is against the same identity however the
+/// window moves after.
+///
+/// `None` only for example data with no setup file behind it, where nothing
+/// is sent. A live window with no setup file gets a guard that can't say, so
+/// its send refuses: no guard never means "send without reading".
+pub(crate) fn send_guard(
+    context: &str,
+    example: bool,
+    cx: &App,
+) -> Option<freshkube_core::write::SetupLevels> {
+    use freshkube_core::write::{SetupLevels, Subject};
+    let global = cx.try_global::<GlobalProtection>();
+    let Some(file) = global.and_then(|global| global.4.clone()) else {
+        return (!example).then(|| SetupLevels::unavailable(Subject::Context(context.to_owned())));
+    };
+    let window = global
+        .and_then(|global| global.7.clone())
+        .unwrap_or_else(|| context.to_owned());
+    let subject = match global.map(|global| (&global.3, global.6)) {
+        Some((Some(entry), true)) => Subject::Entry(entry.clone()),
+        _ => Subject::Context(window),
+    };
+    Some(SetupLevels::new(file, subject))
+}
+
+/// The notice when the window went away while the setup file was read: a
+/// failed update is a refusal, never "go on".
+pub(crate) const WINDOW_GONE: &str =
+    "The window closed while the setup file was read; review again.";
+
+/// How long the setup file may take to read before a send refuses: it is a
+/// few kilobytes, so a read that takes this long is not going to answer.
+const READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Reads the setup file again off the UI thread and decides the level a write
+/// is sent under: the stricter of `held` and the file's, refusing when the
+/// file got stricter, can't say, or doesn't answer within a deadline.
+/// `Ok(held)` with no guard, which [`send_guard`] gives only to example data.
+pub(crate) async fn level_at_send(
+    guard: Option<freshkube_core::write::SetupLevels>,
+    held: Protection,
+    executor: &gpui_kit::BackgroundExecutor,
+) -> Result<Protection, freshkube_core::write::SendRefusal> {
+    use futures::FutureExt;
+    let Some(guard) = guard else {
+        return Ok(held);
+    };
+    let read = executor.spawn(async move { guard.read() }).fuse();
+    let deadline = executor.timer(READ_DEADLINE).fuse();
+    futures::pin_mut!(read, deadline);
+    let fresh = futures::select_biased! {
+        fresh = read => fresh,
+        _ = deadline => Err(freshkube_core::write::Unreadable::NotReadable),
+    };
+    freshkube_core::write::at_send(held, fresh)
+}
+
+/// The notice for a refused send. A stricter level is also kept
+/// ([`raise_level`]), so the header and the next dialog show it: the app's own
+/// read of the file stays pending while a dialog is open.
+pub(crate) fn refused_text(refusal: freshkube_core::write::SendRefusal, cx: &mut App) -> String {
+    if let freshkube_core::write::SendRefusal::Stricter(level) = refusal {
+        raise_level(level, cx);
+    }
+    refusal.text()
+}
+
+/// Makes the window's level at least `level` until the app reads the setup
+/// file itself: the cell every write follows is stricter at once, and the
+/// shell draws the header under it.
+pub(crate) fn raise_level(level: Protection, cx: &mut App) {
+    let global = cx.default_global::<GlobalProtection>();
+    let stricter = global.0.get().stricter(level);
+    global.0.set(stricter);
+    global.5 = Some(global.5.map_or(level, |floor| floor.stricter(level)));
+    cx.set_global(LevelRaised);
+}
+
+/// The level a send found in the file that the app has not read yet.
+pub(crate) fn level_floor(cx: &App) -> Option<Protection> {
+    cx.try_global::<GlobalProtection>()
+        .and_then(|global| global.5)
+}
+
+/// The app read the setup file itself, so what it holds is authoritative.
+pub(crate) fn clear_level_floor(cx: &mut App) {
+    if let Some(global) = cx.try_global::<GlobalProtection>()
+        && global.5.is_some()
+    {
+        cx.default_global::<GlobalProtection>().5 = None;
+    }
+}
+
+/// Why a send that waited on the setup file must not go on, when the window
+/// moved while it read: the cluster became read-only or stricter in the app.
+/// `held` is the level the dialog was confirmed under.
+pub(crate) fn moved_during_read(held: Protection, cx: &App) -> Option<String> {
+    if let Some(why) = refusal(cx) {
+        return Some(why.to_owned());
+    }
+    let now = level(cx);
+    (now < held).then(|| freshkube_core::write::SendRefusal::Stricter(now).text())
 }
 
 /// The id of the workspace entry the window is on, if one is active.
@@ -672,4 +823,189 @@ pub(crate) fn settle_confirmation(cx: &mut gpui_kit::TestAppContext, handle: Any
     }
     cx.update_window(handle, |_, window, cx| window.render_frame(cx))
         .unwrap();
+}
+
+/// A setup file a test edits while a dialog is open (#1055): the entry `prod`
+/// at a level, in a fresh temporary directory, published as the file a write's
+/// send step reads again.
+#[cfg(test)]
+pub(crate) struct TestSetup {
+    dir: tempfile::TempDir,
+}
+
+#[cfg(test)]
+impl TestSetup {
+    /// Writes the file with `prod` at `level`, makes `prod` the window's
+    /// entry and publishes the file.
+    pub(crate) fn new(level: Protection, cx: &mut gpui_kit::TestAppContext) -> Self {
+        let setup = Self {
+            dir: tempfile::tempdir().expect("a temporary directory"),
+        };
+        setup.level(level);
+        let file = setup.file();
+        cx.update(|cx| {
+            set_active_entry(Some("prod".into()), cx);
+            set_setup_file(Some(file), true, cx);
+        });
+        setup
+    }
+
+    /// A window with no entry active, whose shown context is `window_context`
+    /// (the Talos cluster's name is something else), and a setup file that
+    /// lists an entry on that context at `level`.
+    pub(crate) fn by_context(
+        window_context: &str,
+        level: Protection,
+        cx: &mut gpui_kit::TestAppContext,
+    ) -> Self {
+        let setup = Self {
+            dir: tempfile::tempdir().expect("a temporary directory"),
+        };
+        let text = format!(
+            "version: 1\nclusters:\n  - id: other\n    role: core\n    context: {window_context}\n    protection: {}\n",
+            level.key()
+        );
+        std::fs::write(setup.file(), text).expect("the setup file is written");
+        let file = setup.file();
+        let window_context = window_context.to_owned();
+        cx.update(|cx| {
+            set_active_entry(None, cx);
+            set_setup_file(Some(file), true, cx);
+            set_window_context(window_context, cx);
+        });
+        setup
+    }
+
+    /// A legacy `workspace.json` user: the window works under an entry the
+    /// migration made, and there is no `freshkube.yaml` to list it.
+    pub(crate) fn legacy(cx: &mut gpui_kit::TestAppContext) -> Self {
+        let setup = Self {
+            dir: tempfile::tempdir().expect("a temporary directory"),
+        };
+        let file = setup.file();
+        cx.update(|cx| {
+            set_active_entry(Some("prod".into()), cx);
+            set_setup_file(Some(file), false, cx);
+        });
+        setup
+    }
+
+    pub(crate) fn file(&self) -> std::path::PathBuf {
+        self.dir.path().join("freshkube.yaml")
+    }
+
+    /// Edits the file, as an editor outside the app would.
+    pub(crate) fn level(&self, level: Protection) {
+        let text = format!(
+            "version: 1\nclusters:\n  - id: prod\n    role: core\n    context: prod-fra\n    protection: {}\n",
+            level.key()
+        );
+        std::fs::write(self.file(), text).expect("the setup file is written");
+    }
+
+    /// The file is gone.
+    pub(crate) fn remove(&self) {
+        std::fs::remove_file(self.file()).expect("the setup file is removed");
+    }
+
+    /// The file no longer parses.
+    pub(crate) fn garble(&self) {
+        std::fs::write(self.file(), "clusters: [[[").expect("the setup file is written");
+    }
+
+    /// The file no longer lists `prod`.
+    pub(crate) fn drop_entry(&self) {
+        std::fs::write(
+            self.file(),
+            "version: 1\nclusters:\n  - id: other\n    role: core\n    context: other-ctx\n",
+        )
+        .expect("the setup file is written");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
+    use super::{
+        Protection, TestSetup, clear_level_floor, level, level_floor, moved_during_read,
+        raise_level, send_guard, set_protection, set_setup_file,
+    };
+    use freshkube_core::write::{Subject, Unreadable};
+    use gpui_kit::TestAppContext;
+
+    /// A live window with no setup file can't say, so its send refuses; only
+    /// example data with no file is sent without reading.
+    #[gpui_kit::test]
+    fn safety_g28_a_live_send_with_no_setup_file_refuses_and_only_example_data_goes_unread(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            set_setup_file(None, false, cx);
+            let live = send_guard("prod-fra", false, cx).expect("a live send always has a guard");
+            assert_eq!(live.read(), Err(Unreadable::NotReadable));
+            assert!(send_guard("prod-fra", true, cx).is_none());
+        });
+    }
+
+    /// A legacy `workspace.json` user has an entry from the migration and no
+    /// file: the guard reads the context, which is guarded, not a refusal.
+    #[gpui_kit::test]
+    fn a_legacy_user_is_read_by_context_not_refused_for_a_missing_file(cx: &mut TestAppContext) {
+        let setup = TestSetup::legacy(cx);
+        cx.update(|cx| {
+            // No context was published here, so the caller's name is the one used.
+            let guard = send_guard("callers-context", false, cx).unwrap();
+            assert_eq!(guard.subject(), &Subject::Context("callers-context".into()));
+            assert_eq!(guard.read(), Ok(Protection::Guarded));
+        });
+        drop(setup);
+    }
+
+    /// With the entries read from the file, the guard names the entry.
+    #[gpui_kit::test]
+    fn an_entry_listed_in_the_file_is_read_by_its_id(cx: &mut TestAppContext) {
+        let _setup = TestSetup::new(Protection::Protected, cx);
+        cx.update(|cx| {
+            let guard = send_guard("prod-fra", false, cx).unwrap();
+            assert_eq!(guard.subject(), &Subject::Entry("prod".into()));
+            assert_eq!(guard.read(), Ok(Protection::Protected));
+        });
+    }
+
+    /// A stricter level a send found is kept until the app reads the file,
+    /// and every write follows the cell at once.
+    #[gpui_kit::test]
+    fn a_raised_level_is_kept_until_cleared_and_never_loosens(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            set_protection(Protection::Guarded, cx);
+            raise_level(Protection::Protected, cx);
+            assert_eq!(level(cx), Protection::Protected);
+            assert_eq!(level_floor(cx), Some(Protection::Protected));
+            raise_level(Protection::Open, cx);
+            assert_eq!(
+                level(cx),
+                Protection::Protected,
+                "a looser one changes nothing"
+            );
+            assert_eq!(
+                moved_during_read(Protection::Guarded, cx).as_deref(),
+                Some("This cluster is now protected; review again.")
+            );
+            clear_level_floor(cx);
+            assert_eq!(level_floor(cx), None);
+        });
+    }
+
+    /// The Context subject takes its name from what the shell published, so the
+    /// name read and the level held are about the same context, not from the
+    /// Talos cluster's name the caller passes.
+    #[gpui_kit::test]
+    fn the_context_subject_is_the_windows_not_the_talos_clusters_name(cx: &mut TestAppContext) {
+        let _setup = TestSetup::by_context("display-ctx", Protection::ReadOnly, cx);
+        cx.update(|cx| {
+            let guard = send_guard("talos-cluster", false, cx).unwrap();
+            assert_eq!(guard.subject(), &Subject::Context("display-ctx".into()));
+            assert_eq!(guard.read(), Ok(Protection::ReadOnly));
+        });
+    }
 }

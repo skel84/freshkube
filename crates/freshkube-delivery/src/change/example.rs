@@ -1138,32 +1138,42 @@ fn not_found(change: &mut Change) {
     }
 }
 
-/// [`Shape::Rollouts`]: what the Next step column says for each Stage.
-fn rollouts(change: &mut Change) {
+/// [`Shape::Rollouts`] and [`Shape::RolloutStates`]: what the Next step
+/// column says for each Stage, and an Argo Rollout hop for each Stage that
+/// runs one, so its cell selects something as a live read gives it. With
+/// `reach_all` every Stage holds the Freight, so the states of the Stages
+/// that the Freight hasn't reached show too.
+fn rollouts(change: &mut Change, states: &[(&str, NextStep)], reach_all: bool) {
     for ix in 0..change.stages.len() {
         let stage = &mut change.stages[ix];
-        stage.next_step = match stage.name.as_str() {
-            "dev" => NextStep::Done,
-            "stage" => NextStep::Step { at: 2, of: 4 },
-            "prod-lon" => NextStep::NoRollout,
-            _ => NextStep::NotReached,
-        };
+        stage.next_step = states
+            .iter()
+            .find(|(name, _)| *name == stage.name)
+            .map_or(NextStep::NotReached, |(_, next)| next.clone());
+        if reach_all {
+            stage.running = None;
+            if stage.reach == Reach::NotReached {
+                stage.reach = Reach::Linked(Confidence::Confirmed);
+            }
+        }
         let (name, cluster) = (
             stage.name.clone(),
             stage.cluster.cluster().map(str::to_owned),
         );
-        let words = stage.next_step.word();
+        let (words, state) = (
+            stage.next_step.word(),
+            match stage.next_step {
+                NextStep::Done => Healthy,
+                NextStep::Step { .. } | NextStep::Paused { .. } => Info,
+                NextStep::Degraded { .. } => Warning,
+                NextStep::Aborted => Error,
+                NextStep::Progressing => Pending,
+                _ => continue,
+            },
+        );
         let (Some(group), Some(cluster)) = (stage_group(change, ix), cluster) else {
             continue;
         };
-        // The Stages that run a Rollout have its hop, so the Next step cell
-        // has something to select, as a live read gives it.
-        if !matches!(
-            change.stages[ix].next_step,
-            NextStep::Done | NextStep::Step { .. }
-        ) {
-            continue;
-        }
         let key = format!("{name}-argocd");
         let Some(at) = change.hops.iter().position(|hop| hop.key == key) else {
             continue;
@@ -1172,7 +1182,7 @@ fn rollouts(change: &mut Change) {
             cause: None,
             key: format!("{name}-rollout"),
             group,
-            state: if words == "Done" { Healthy } else { Info },
+            state,
             name: format!("Rollout {DEPLOYMENT}"),
             detail: words.clone(),
             from: cluster.clone(),
@@ -1487,6 +1497,9 @@ pub enum Shape {
     /// The same, with `freshkube.yaml` saying the application isn't expected
     /// in `prod-lon`: what wasn't found there is Not used here.
     NotExpected,
+    /// Each Stage's Rollout in another state: `dev` paused on step 2 of 4,
+    /// `stage` degraded, `prod-ams` aborted and `prod-lon` progressing.
+    RolloutStates,
     /// The Stages' Rollouts: `dev` is done, `stage` is on step 2 of 4,
     /// `prod-ams` isn't reached and `prod-lon` runs none.
     Rollouts,
@@ -1524,6 +1537,7 @@ impl Shape {
             | Self::Rollouts
             | Self::ProdLonNotFound
             | Self::NotExpected
+            | Self::RolloutStates
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline
@@ -1573,7 +1587,28 @@ impl Shape {
             return Ok(change);
         }
         if self == Self::Rollouts {
-            rollouts(&mut change);
+            rollouts(
+                &mut change,
+                &[
+                    ("dev", NextStep::Done),
+                    ("stage", NextStep::Step { at: 2, of: 4 }),
+                    ("prod-lon", NextStep::NoRollout),
+                ],
+                false,
+            );
+            return Ok(change);
+        }
+        if self == Self::RolloutStates {
+            rollouts(
+                &mut change,
+                &[
+                    ("dev", NextStep::Paused { step: Some((2, 4)) }),
+                    ("stage", NextStep::Degraded { step: Some((2, 4)) }),
+                    ("prod-ams", NextStep::Aborted),
+                    ("prod-lon", NextStep::Progressing),
+                ],
+                true,
+            );
             return Ok(change);
         }
         if matches!(self, Self::ProdLonNotFound | Self::NotExpected) {
@@ -1605,6 +1640,7 @@ impl Shape {
             | Self::Rollouts
             | Self::ProdLonNotFound
             | Self::NotExpected
+            | Self::RolloutStates
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline

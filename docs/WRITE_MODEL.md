@@ -83,8 +83,28 @@ The level governs Operations as well, through the tier of each kind (`OperationK
 | Shutdown | destructive | blocked | its confirmation, plus the node's name | its confirmation |
 
 - **One node:** its name. **Several nodes** (a rolling run): the cluster entry's id, typed once, and the dialog says which. Matching is exact and case-sensitive; pasting is allowed.
-- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level the app holds at send time, so a dialog opened before the level became stricter starts nothing. A level changed by editing `freshkube.yaml` while the dialog is open is not seen until the app reads the file again ([SAFETY.md](SAFETY.md#known-gaps)). `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, never builds one (`Operations::begin_maintenance`).
+- **One way to a confirmation.** `confirm_operation` is the only way to build the confirmation a run takes: it refuses under `read-only` and under `protected` unless the name is typed, and it reads the level the app holds at send time, so a dialog opened before the level became stricter starts nothing. A level changed by editing `freshkube.yaml` while the dialog is open is seen at Confirm ([The level at send time](#the-level-at-send-time-1055)). `OperationConfirmation::confirmed()` is private to core, and maintenance mode, which no entry's level governs, never builds one (`Operations::begin_maintenance`).
 - **Not yet:** a service's Restart and Diagnostics' Apply fix are Talos writes on a node as well, and keep their own confirmation at `protected` for now.
+
+## The level at send time (#1055)
+
+The app defers reading a changed `freshkube.yaml` while a dialog is open, so a dialog opened under `guarded` and confirmed after the file was edited to `read-only` or `protected` would still send under the level the app held. At the send step a writer reads the file again and takes the stricter of what it says and the level the app holds (`freshkube_core::write::SetupLevels`, `at_send`).
+
+| The file says | The send |
+|---------------|----------|
+| a stricter level than the app holds | refused: "This cluster is now ⟨level⟩; review again. Nothing was started." |
+| the same level, or a looser one | sent under the held level. A looser file changes nothing until the person reviews again |
+| nothing it can be read for: missing for a cluster entry, too large, not a regular file, unreadable, unparsable, or no longer listing the entry (a skipped row counts as gone) | refused, at every level, `open` included, and never by falling back to the held level |
+
+- **Stricter** is the order `read-only`, `protected`, `guarded`, `open`: any move toward `read-only` refuses. A window on a context no entry named is `guarded`, and the file catches an entry that now names that context.
+- **One read, atomic, against the same identity.** The subject (the entry's id, or, when the window has no entry, the kubeconfig context it shows, which the shell publishes with the level so the name read and the level held are about the same context, not the Talos cluster's name) is fixed when the dialog opens. The file is read once, bounded to 256 KiB, and the same bytes are parsed once, as Settings parses them, so an unrelated bad row does not refuse the rest. The file is saved by rename, so a read sees the whole old file or the whole new one. It is read off the UI thread.
+- **The notice names the level only:** never the file, a path or a parse error's text.
+- **Which writers:** Operations, a service's Restart and Diagnostics' Apply fix take the operation slot first, so a second press finds it busy, then read the file, then run or give the slot back (also when the screen went away meanwhile). They resolve what they act on (the nodes, or the node and service, or the check and its fix) before the read and send against that, not against whatever the page shows when the read answers. After the read they also check that the app's own level didn't become stricter or read-only while they waited. Maintenance mode has no entry and is not governed. The write framework's own send step follows in the next pull request.
+- **No guard never means "send without reading".** A live window with no setup file behind it (no preferences) refuses; only example data goes unread. A legacy `workspace.json` user, whose entries came from the migration and not from `freshkube.yaml`, is read by kubeconfig context, so a missing file is `guarded` for them and not a refusal.
+- **Review again.** A stricter level a send found is kept as a floor (`mutation::raise_level`) until the app reads the file itself: the header and every writer's level cell follow it at once, so the next dialog is asked under it. The app's own read of a changed file stays pending while a dialog is open, so without this the header would keep showing the old level.
+- **A deadline.** The read gets five seconds; one that doesn't answer refuses.
+- **Not audited.** A refusal before any request is sent writes no audit line, as the runner's `LevelChanged` doesn't.
+- **A race that remains:** a file edited after the re-read and before the request is not seen. That window is milliseconds and no check can close it; the held level was valid when the person confirmed, and the server-side checks stay.
 
 ## The visible level
 
