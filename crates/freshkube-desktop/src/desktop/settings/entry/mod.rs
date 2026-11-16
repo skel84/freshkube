@@ -5,6 +5,7 @@
 //! entry's keys and keeps the rest of the setup.
 mod fingerprint;
 mod identity;
+mod history;
 mod metrics;
 pub(crate) use fingerprint::Line as FingerprintLine;
 mod protection;
@@ -748,6 +749,7 @@ impl SettingsPage {
                     .metrics
                     .render(editable, draft.dirty(Group::Metrics), cx),
             )
+            .child(self.render_build_history(&draft.id, cx))
             .child(self.render_fingerprint(&draft.id, cx));
         Some(
             Inspector::new("settings-detail")
