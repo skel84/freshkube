@@ -1,0 +1,1 @@
+- Keep a pane's tabs and pages in a pane of their own, one pane for now, so a second pane can be added later. Nothing changes on screen (#879).

@@ -147,11 +147,14 @@ mod tests {
 
     #[test]
     fn the_focused_pane_is_what_one_pane_reads() {
+        let before = focused();
         let one = PaneMetrics::new();
         one.set_chrome(52.);
         focus(one);
         assert_eq!(focused().chrome(), 52.);
         assert_eq!(VIEWS.with(|v| v.borrow().len()), 0);
+        // A reused test thread must not read this test's 52.
+        focus(before);
     }
 
     #[gpui_kit::test]
