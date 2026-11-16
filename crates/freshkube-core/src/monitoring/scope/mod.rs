@@ -112,13 +112,15 @@ pub fn resolve(setup: &Setup, entry: Option<&str>) -> Resolved {
         Mode::PerEntry => Resolved::Unknown(format!("{} names no metrics source", entry.id)),
         Mode::Central => {
             let Some(store) = &setup.metrics.store else {
-                return Resolved::Unknown("metrics.store is missing".into());
+                return Resolved::Unknown(
+                    "The setup names the central metrics store, but not where it is".into(),
+                );
             };
             let host = match (&store.entry, &store.service) {
                 (Some(host), Some(_)) => {
                     if !setup.workspace.clusters.iter().any(|e| &e.id == host) {
                         return Resolved::Unknown(format!(
-                            "metrics.store.entry {host} isn't in the workspace"
+                            "The cluster that hosts the central metrics store, {host}, isn't in the workspace"
                         ));
                     }
                     Some(host.clone())
@@ -131,7 +133,7 @@ pub fn resolve(setup: &Setup, entry: Option<&str>) -> Resolved {
                 store.token.is_some(),
             ) {
                 Ok(place) => place,
-                Err(why) => return Resolved::Unknown(format!("metrics.store: {why}")),
+                Err(why) => return Resolved::Unknown(format!("The central metrics store: {why}")),
             };
             let value = own
                 .and_then(|metrics| metrics.value.as_deref())

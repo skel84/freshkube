@@ -56,6 +56,28 @@ pub(super) fn harness_sized(
     height: f32,
     make: impl FnOnce() -> Cluster,
 ) -> Harness {
+    harness_inner(cx, level, height, false, make)
+}
+
+/// [`harness_on`] with a runner that reads `freshkube.yaml` again at its send
+/// step (#1055): the file is `freshkube.yaml` in the harness's directory,
+/// holding the entry `prod-fra` the runner writes to at `level`. A test edits
+/// it with [`Harness::edit_setup`].
+pub(super) fn harness_rechecked(
+    cx: &mut TestAppContext,
+    level: Protection,
+    make: impl FnOnce() -> Cluster,
+) -> Harness {
+    harness_inner(cx, level, 880., true, make)
+}
+
+fn harness_inner(
+    cx: &mut TestAppContext,
+    level: Protection,
+    height: f32,
+    recheck: bool,
+    make: impl FnOnce() -> Cluster,
+) -> Harness {
     let runtime = Builder::new_current_thread()
         .enable_all()
         .start_paused(true)
@@ -75,7 +97,16 @@ pub(super) fn harness_sized(
         make()
     };
     let cell = cx.update(level_cell);
-    let runner = Arc::new(fake::runner(&cluster, dir.path(), level).following(cell));
+    let mut runner = fake::runner(&cluster, dir.path(), level).following(cell);
+    if recheck {
+        let file = dir.path().join("freshkube.yaml");
+        write_setup(&file, Some(level));
+        runner = runner.rechecking(freshkube_core::write::SetupLevels::new(
+            file,
+            freshkube_core::write::Subject::Entry("prod-fra".into()),
+        ));
+    }
+    let runner = Arc::new(runner);
     let handle = cx
         .open_window(size(px(1280.), px(height)), |window, cx| {
             Root::new(cx.new(|_| Host), window, cx)
@@ -91,7 +122,28 @@ pub(super) fn harness_sized(
     }
 }
 
+/// Writes the setup file with the entry `prod-fra` at `level`; `None` leaves
+/// a file that doesn't parse.
+fn write_setup(file: &std::path::Path, level: Option<Protection>) {
+    let text = level.map_or_else(
+        || "clusters: [[[".to_owned(),
+        |level| {
+            format!(
+                "version: 1\nclusters:\n  - {{id: prod-fra, role: core, context: ctx-a, protection: {}}}\n",
+                level.key()
+            )
+        },
+    );
+    std::fs::write(file, text).expect("the setup file is written");
+}
+
 impl Harness {
+    /// Edits `freshkube.yaml` as an editor outside the app would, while a
+    /// dialog is open; `None` makes it unparsable.
+    pub(super) fn edit_setup(&self, level: Option<Protection>) {
+        write_setup(&self._dir.path().join("freshkube.yaml"), level);
+    }
+
     pub(super) fn begin(
         &self,
         cx: &mut TestAppContext,

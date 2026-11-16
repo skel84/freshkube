@@ -126,6 +126,25 @@ pub struct State {
     pub description: SharedString,
     pub detail: Option<SharedString>,
     pub retry: bool,
+    /// Whether the detail is drawn as an error: set where the state is built.
+    /// Only a state where the read succeeded and found nothing shows what was
+    /// looked for as a calm note; a refusal, a failed read, a source that
+    /// answered with an error (a not-found carrying a candidate's reason) and
+    /// any state that can't tell keep the error style.
+    pub error: bool,
+}
+
+impl State {
+    /// Whether the detail is drawn as an error (see [`State::error`]).
+    pub fn detail_is_error(&self) -> bool {
+        self.error
+    }
+
+    /// Whether Settings › Monitoring holds the fix: where the alerts source
+    /// is looked for and which label names this cluster.
+    pub fn offers_settings(&self) -> bool {
+        matches!(self.id, "alerts-not-found" | "alerts-no-label")
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,7 +248,7 @@ pub fn derive(
 }
 
 /// The state for an answer that says nothing is known, in the page's words.
-fn unknown_state(which: Which, unknown: &Unknown) -> State {
+pub(super) fn unknown_state(which: Which, unknown: &Unknown) -> State {
     let what = match which {
         Which::Alerts => "alerts",
         Which::Rules => "rules",
@@ -267,6 +286,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
                     None => format!("Looked for {looked_for}."),
                 })),
                 retry: true,
+                error: reason.is_some(),
             }
         }
         Unknown::Refused(reason) => State {
@@ -280,6 +300,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             .into(),
             detail: Some(reason.clone().into()),
             retry: false,
+            error: true,
         },
         Unknown::Unread(reason) => State {
             id: "alerts-failed",
@@ -288,6 +309,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             description: format!("Nothing is known of {what} until a read answers.").into(),
             detail: Some(reason.clone().into()),
             retry: true,
+            error: true,
         },
         Unknown::NoClusterLabel(label) => State {
             id: "alerts-no-label",
@@ -301,6 +323,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
             .into(),
             detail: None,
             retry: true,
+            error: false,
         },
         Unknown::RulesOnly => State {
             id: "alerts-rules-only",
@@ -311,6 +334,7 @@ fn unknown_state(which: Which, unknown: &Unknown) -> State {
                 .into(),
             detail: None,
             retry: true,
+            error: false,
         },
     }
 }
@@ -581,6 +605,7 @@ fn filtered(what: &str) -> State {
         description: format!("The filter hides every one of the {what} read.").into(),
         detail: None,
         retry: false,
+        error: false,
     }
 }
 
@@ -610,6 +635,7 @@ fn quiet(
         .into(),
         detail: None,
         retry: false,
+        error: false,
     }
 }
 
@@ -763,13 +789,27 @@ fn rules(data: &RulesData, filter: &Filter, now: DateTime<Utc>) -> Display {
         display
             .status
             .push(("health unknown".into(), Some(Tone::Unknown)));
-        display.notes.push(Note {
-            id: "rules-unevaluated",
-            tone: Tone::Info,
-            lead: Some("Health is Unknown".into()),
-            text: "These are definitions. Nothing here evaluates them, so whether a rule is \
-                   healthy isn't known."
+        display.notes.push(match &data.unread {
+            // The evaluator was looked for and answered with an error: that
+            // is the cause, not that nothing evaluates the rules.
+            Some(reason) => Note {
+                id: "rules-unread",
+                tone: Tone::Warn,
+                lead: Some("Couldn't read whether any rule is healthy".into()),
+                text: format!(
+                    "The server that evaluates rules wasn't read: {reason}. These are the \
+                     PrometheusRule definitions only; whether a rule is healthy isn't known."
+                )
                 .into(),
+            },
+            None => Note {
+                id: "rules-unevaluated",
+                tone: Tone::Info,
+                lead: Some("Health is Unknown".into()),
+                text: "These are definitions. Nothing here evaluates them, so whether a rule is \
+                       healthy isn't known."
+                    .into(),
+            },
         });
     }
     if let Some(note) = &data.note {
@@ -789,6 +829,7 @@ fn rules(data: &RulesData, filter: &Filter, now: DateTime<Utc>) -> Display {
                 description: "The source answered and holds no rule groups.".into(),
                 detail: None,
                 retry: false,
+                error: false,
             }
         } else {
             filtered("rules")
@@ -930,6 +971,7 @@ fn silences(data: &SilencesData, filter: &Filter, now: DateTime<Utc>) -> Display
                 .into(),
                 detail: None,
                 retry: false,
+                error: false,
             }
         } else {
             filtered("silences")

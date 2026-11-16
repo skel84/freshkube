@@ -653,3 +653,134 @@ fn kubernetes_only_has_no_countdown_or_periodic_summary_apply(cx: &mut TestAppCo
         )
     });
 }
+
+/// Hands out the next of its clients after each `forget`, as a cluster whose
+/// login was renewed does, and counts the asks.
+struct Renewing {
+    clients: Vec<kube::Client>,
+    asked: std::sync::atomic::AtomicUsize,
+    forgotten: std::sync::atomic::AtomicUsize,
+}
+
+impl freshkube_core::cluster_source::KubeClientSource for Renewing {
+    fn client(
+        &self,
+    ) -> futures::future::BoxFuture<'_, Result<kube::Client, freshkube_core::failure::Failure>>
+    {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.asked.fetch_add(1, SeqCst);
+        let at = self.forgotten.load(SeqCst).min(self.clients.len() - 1);
+        let client = self.clients[at].clone();
+        Box::pin(async move { Ok(client) })
+    }
+
+    fn forget(&self) {
+        self.forgotten
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn answering(code: u16) -> (kube::Client, freshkube_core::fake_api::Recorder) {
+    freshkube_core::fake_api::client(move |request| {
+        Some(if code == 200 {
+            freshkube_core::fake_api::json(
+                200,
+                if request.path == "/version" {
+                    r#"{"major":"1","minor":"32","gitVersion":"v1.32.3"}"#
+                } else {
+                    r#"{"metadata":{"resourceVersion":"1"},"items":[]}"#
+                },
+            )
+        } else {
+            freshkube_core::fake_api::json(
+                code,
+                json!({"kind":"Status","apiVersion":"v1","status":"Failure","code":code,
+                    "reason":"Unauthorized","message":"token expired"}),
+            )
+        })
+    })
+}
+
+async fn drive(
+    clients: Vec<kube::Client>,
+) -> (
+    Arc<Renewing>,
+    Session,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::mpsc::Receiver<SummaryFeed>,
+) {
+    let source = Arc::new(Renewing {
+        clients,
+        asked: Default::default(),
+        forgotten: Default::default(),
+    });
+    let session = Session::new(SessionIdentity::new("renewing", 1));
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    let task = tokio::spawn(run_summary_driver(
+        session.clone(),
+        ClusterAccess::Live(source.clone()),
+        sender,
+    ));
+    (source, session, task, receiver)
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_expired_login_rebuilds_the_client_once_and_reads_through_the_new_one() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (expired, expired_log) = answering(401);
+    let (renewed, renewed_log) = answering(200);
+    let (source, session, task, _receiver) = drive(vec![expired, renewed]).await;
+    for _ in 0..200 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if renewed_log
+            .lines()
+            .iter()
+            .any(|l| l.contains("/api/v1/nodes"))
+        {
+            break;
+        }
+    }
+    assert!(
+        renewed_log
+            .lines()
+            .iter()
+            .any(|l| l.contains("/api/v1/nodes")),
+        "the new client reads: {:?}",
+        renewed_log.lines()
+    );
+    assert_eq!(source.forgotten.load(SeqCst), 1, "forgotten once");
+    assert_eq!(source.asked.load(SeqCst), 2, "built again once");
+    let before = expired_log.lines().len();
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    assert_eq!(expired_log.lines().len(), before, "the old client is idle");
+    assert_eq!(source.forgotten.load(SeqCst), 1);
+    assert!(session.generation() >= 1);
+    // The summary only reads.
+    assert!(
+        expired_log
+            .requests()
+            .iter()
+            .chain(renewed_log.requests().iter())
+            .all(|request| request.method == http::Method::GET)
+    );
+    task.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_login_the_server_still_refuses_is_not_rebuilt_again() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (first, _) = answering(401);
+    let (second, second_log) = answering(401);
+    let (source, session, task, _receiver) = drive(vec![first, second]).await;
+    tokio::time::sleep(Duration::from_secs(900)).await;
+    assert_eq!(source.asked.load(SeqCst), 2, "one rebuild, then none");
+    assert_eq!(source.forgotten.load(SeqCst), 1);
+    assert!(!second_log.lines().is_empty(), "the new client was tried");
+    let derived = session.derive(chrono::Utc::now());
+    assert_eq!(
+        derived.summary.observations[&Source::Nodes].message(),
+        Some("Kubernetes credentials were rejected"),
+        "the refusal is what shows"
+    );
+    task.abort();
+}

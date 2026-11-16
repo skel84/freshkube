@@ -1056,7 +1056,7 @@ pub fn annotate_web() -> ActionDescription {
 
 /// A runner over the fake, auditing under `dir`.
 pub fn runner(cluster: &Cluster, dir: &Path, protection: Protection) -> Runner {
-    Runner::new(
+    Runner::unchecked(
         cluster.client.clone(),
         AuditStore::new(dir.join("audit")),
         Who {

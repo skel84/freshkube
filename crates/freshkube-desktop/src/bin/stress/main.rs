@@ -965,6 +965,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refusal_window_ends_and_the_server_answers_again() {
+        let (world, address) = server("refuse=1,after=0,until=1").await;
+        assert_eq!(get(address, "/version").await, Some(503));
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert_eq!(get(address, "/version").await, Some(200));
+        assert_eq!(counts(&world).refused, 1, "nothing is refused after it");
+    }
+
+    #[tokio::test]
     async fn a_dropped_connection_gets_no_answer() {
         let (world, address) = server("drop=1,after=0").await;
         assert_eq!(get(address, "/version").await, None);

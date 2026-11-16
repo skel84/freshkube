@@ -13,6 +13,8 @@ pub(crate) struct SourceRow {
     pub(super) detail: SharedString,
     pub(super) state: SharedString,
     pub(super) reads: SharedString,
+    /// The Inspector's hint under Reads, built once with the row.
+    pub(super) setup_hint: Option<SharedString>,
     /// The state's glyph, once there is one to show.
     pub(super) tone: Option<ui::Tone>,
     /// Whether there is an entry to read: not missing or gone.
@@ -22,6 +24,13 @@ pub(crate) struct SourceRow {
     pub(super) id: SharedString,
     pub(super) mark_id: SharedString,
 }
+
+/// What the setting rows read, in the table: the file's keys are in the
+/// tooltip and the Inspector, after this.
+const SETUP_FILE: &str = "Setup file";
+
+/// A name template as a person reads it ([`freshkube_core::setup::plain_template`]).
+pub(super) use freshkube_core::setup::plain_template;
 
 /// What the Workloads row reads on each entry.
 const WORKLOADS_READ: &str = "Deployments, Rollouts, ReplicaSets, pods";
@@ -308,7 +317,7 @@ impl SourcesList {
             "freshkube.yaml".into(),
             false,
             (state.into(), None),
-            "delivery.stage_naming".into(),
+            SETUP_FILE.into(),
             tooltip,
         )
     }
@@ -327,7 +336,7 @@ Reads              freshkube.yaml, delivery.build_namespace"
             "freshkube.yaml".into(),
             false,
             ("Set".into(), None),
-            "delivery.build_namespace".into(),
+            SETUP_FILE.into(),
             tooltip,
         )
     }
@@ -344,6 +353,18 @@ Reads              freshkube.yaml, delivery.build_namespace"
         tooltip: String,
     ) -> SourceRow {
         let key = read.key();
+        let setup_key = match read {
+            Read::StageNaming => Some("delivery.stage_naming"),
+            Read::BuildNamespace | Read::BuildSuggestion => Some("delivery.build_namespace"),
+            _ => None,
+        };
+        // A placeholder of a name template is words wherever it is shown.
+        let (entry, why, state, tooltip) = (
+            plain_template(&entry),
+            plain_template(&why),
+            plain_template(&state),
+            plain_template(&tooltip),
+        );
         SourceRow {
             read,
             label: read.label().into(),
@@ -351,6 +372,7 @@ Reads              freshkube.yaml, delivery.build_namespace"
             why: why.into(),
             state: state.into(),
             reads: reads.into(),
+            setup_hint: setup_key.map(|key| format!("In freshkube.yaml as {key}").into()),
             tone,
             listed,
             explanation: tooltip.lines().next().unwrap_or_default().to_owned().into(),

@@ -73,7 +73,7 @@ pub struct ReadActions {
     pub extra: Vec<AnyElement>,
     /// Details for the mono box, such as what was looked for; the state's
     /// own reason is shown when there are none.
-    pub details: Option<String>,
+    pub details: Option<ui::EmptyDetails>,
 }
 
 impl ReadActions {
@@ -220,16 +220,60 @@ pub fn read_state(
             .into_any_element();
     }
     let buttons = actions.for_state(state);
-    ui::empty_state(
+    // What was looked for is a note; only the server's words after a
+    // refusal or a failed read are drawn as an error.
+    let details = details_for(state, details);
+    ui::empty_state_with(
         state.icon(),
         state.title(),
         state.description(),
-        details.or_else(|| state.reason().map(str::to_owned)),
+        details,
         buttons,
         cx,
     )
     .id(id)
     .into_any_element()
+}
+
+/// An Open Settings button: the app's own Settings action, which opens the
+/// section shown last. Where one section holds the fix, use
+/// [`open_settings_button_to`].
+pub fn open_settings_button(id: &'static str) -> AnyElement {
+    open_settings_button_to(id, || Box::new(crate::platform::OpenSettings))
+}
+
+/// An Open Settings button that lands on the section that holds the fix:
+/// `section` makes its action (`platform::OpenMonitoringSettings`, …).
+pub fn open_settings_button_to(
+    id: &'static str,
+    section: fn() -> Box<dyn gpui_kit::Action>,
+) -> AnyElement {
+    use gpui_kit::component::{Sizable as _, button::Button};
+    Button::new(id)
+        .outline()
+        .small()
+        .label("Open Settings")
+        .on_click(move |_, window, cx| window.dispatch_action(section(), cx))
+        .into_any_element()
+}
+
+/// The mono box of a state. A page says whether its details are a calm note
+/// or an error, but only a state where the read succeeded and found nothing
+/// (not installed, not set up, empty) may draw a note: for a refusal, a failed
+/// read, stale or partial data, or a read that never answered, whatever the
+/// page passes is drawn as an error, so a failure is never made to look calm.
+fn details_for(state: &ReadState, details: Option<ui::EmptyDetails>) -> Option<ui::EmptyDetails> {
+    let succeeded = matches!(
+        state,
+        ReadState::NotInstalled { .. } | ReadState::NotSetUp { .. } | ReadState::Empty { .. }
+    );
+    match details {
+        Some(ui::EmptyDetails::Note(text)) if succeeded => Some(ui::EmptyDetails::Note(text)),
+        Some(details) => Some(ui::EmptyDetails::Failure(details.text().to_owned())),
+        None => state
+            .reason()
+            .map(|reason| ui::EmptyDetails::Failure(reason.to_owned())),
+    }
 }
 
 #[cfg(test)]
@@ -359,6 +403,114 @@ mod tests {
         };
         assert_eq!(state.tone(), Tone::Warn);
         assert!(state.allows_retry());
+    }
+
+    #[test]
+    fn details_look_like_an_error_unless_the_read_succeeded_and_found_nothing() {
+        let looked = Some(ui::EmptyDetails::Note(
+            "Looked for: alertmanager, vmalert".to_owned(),
+        ));
+        let note = |state: &ReadState| {
+            matches!(
+                details_for(state, looked.clone()),
+                Some(ui::EmptyDetails::Note(_))
+            )
+        };
+        let empty = ReadState::Empty {
+            looked_for: "alerts".into(),
+            cluster: "prod-fra".into(),
+            hint: None,
+        };
+        let not_set_up = ReadState::NotSetUp {
+            what: "Prometheus".into(),
+            gap: "Freshkube doesn't know where Prometheus is.".into(),
+            setting: None,
+        };
+        // The read succeeded and nothing is there: neutral.
+        for state in [&empty, &not_installed(), &not_set_up] {
+            assert!(note(state), "{state:?}");
+        }
+        // A refusal, a failed read, partial or stale data, an unsupported
+        // version or a read that never answered keep the error style, with the
+        // page's details or the server's words.
+        let others = [
+            refused(),
+            ReadState::Unreachable {
+                what: "pods".into(),
+                cluster: "prod-fra".into(),
+                reason: None,
+            },
+            ReadState::NotReadYet {
+                what: "pods".into(),
+            },
+            ReadState::Unsupported {
+                what: "pods".into(),
+                cluster: "prod-fra".into(),
+            },
+            ReadState::Partial {
+                what: "pods".into(),
+                cluster: "prod-fra".into(),
+            },
+            ReadState::Stale {
+                what: "pods".into(),
+                at: "14:02:11".into(),
+            },
+        ];
+        for state in &others {
+            assert!(
+                matches!(
+                    details_for(state, looked.clone()),
+                    Some(ui::EmptyDetails::Failure(_))
+                ),
+                "{state:?}"
+            );
+        }
+        // The server's own words after a refusal are the error; with no
+        // details at all there is no box.
+        assert_eq!(
+            details_for(&refused(), None),
+            Some(ui::EmptyDetails::Failure("forbidden".into()))
+        );
+        assert_eq!(details_for(&empty, None), None);
+    }
+
+    #[test]
+    fn the_note_box_does_not_use_the_error_colours() {
+        for dark in [false, true] {
+            let p = if dark {
+                crate::palette::dark()
+            } else {
+                crate::palette::light()
+            };
+            let note = ui::EmptyDetails::Note("x".into()).look(&p);
+            let failure = ui::EmptyDetails::Failure("x".into()).look(&p);
+            assert_ne!(note, failure);
+            assert_ne!(note.0, p.crit_soft);
+            assert_ne!(note.1, p.crit_ink);
+        }
+    }
+
+    /// WCAG relative luminance of an opaque colour.
+    fn luminance(color: gpui_kit::Hsla) -> f32 {
+        let rgb = color.to_rgb();
+        let channel = |c: f32| {
+            if c <= 0.03928 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(rgb.r) + 0.7152 * channel(rgb.g) + 0.0722 * channel(rgb.b)
+    }
+
+    #[test]
+    fn the_note_box_reads_at_aa_contrast_in_both_themes() {
+        for p in [crate::palette::light(), crate::palette::dark()] {
+            let (fill, ink) = ui::EmptyDetails::Note("x".into()).look(&p);
+            let (a, b) = (luminance(fill), luminance(ink));
+            let ratio = (a.max(b) + 0.05) / (a.min(b) + 0.05);
+            assert!(ratio >= 4.5, "{ratio}");
+        }
     }
 }
 

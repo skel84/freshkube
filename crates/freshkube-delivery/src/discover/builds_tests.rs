@@ -78,7 +78,7 @@ fn a_set_value_without_runs_is_said() {
         suggestions.notes,
         [Note {
             warn: true,
-            text: "delivery.build_namespace is ci, which holds no PipelineRuns".into()
+            text: "The build namespace in the setup file is ci, which holds no PipelineRuns".into()
         }]
     );
     // The namespace that does hold the runs is still suggested.
