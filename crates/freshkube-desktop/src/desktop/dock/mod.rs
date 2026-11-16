@@ -214,6 +214,9 @@ pub(crate) struct Origin {
     pub(crate) entry: Option<String>,
     /// What the tab says it belongs to: the entry's id, else its context.
     pub(crate) cluster: SharedString,
+    /// A key for the cluster that holds across runs, saved with a tab of a
+    /// window that has no entry (empty when there is none).
+    pub(crate) connection: String,
 }
 
 impl Origin {
@@ -405,6 +408,21 @@ pub(crate) struct Dock {
     return_focus: Option<FocusHandle>,
     /// The saved dock, until the first connection says whether it applies.
     restore: Option<saved::SavedDock>,
+    /// The saved tabs of contexts not shown yet: kept as saved, connected to
+    /// nothing, written again with every save, and opened idle when their
+    /// context is shown (#1044).
+    parked: Vec<saved::SavedTab>,
+    /// Which of the parked tabs was the selected one.
+    parked_selected: Option<usize>,
+    /// The tab that was selected when the dock opened with its saved selection
+    /// on a parked tab: that selection holds only while this one stays the
+    /// selected tab.
+    parked_guard: Option<u64>,
+    /// The stable key of the shown cluster, as the shell hands it with each
+    /// source, for a window on no listed entry.
+    connection_key: Option<String>,
+    /// The day each context was last the shown one, as saved.
+    seen: std::collections::BTreeMap<String, u32>,
     save: Option<Task<()>>,
     /// The selected tab's least height when the dock last heard of it.
     last_least: Option<Pixels>,
@@ -476,6 +494,11 @@ impl Dock {
             focus: cx.focus_handle(),
             return_focus: None,
             restore: None,
+            parked: Vec::new(),
+            parked_selected: None,
+            parked_guard: None,
+            connection_key: None,
+            seen: Default::default(),
             save: None,
             last_least: None,
             dragged: false,
@@ -1421,10 +1444,14 @@ impl Dock {
             .shown_entry
             .clone()
             .unwrap_or_else(|| source.context.clone());
+        // No key means no way to tell the cluster: empty, so a tab saved from
+        // here never matches in a window on no entry.
+        let connection = self.connection_key.clone().unwrap_or_default();
         Some(Origin {
             source,
             entry: self.shown_entry.clone(),
             cluster: cluster.into(),
+            connection,
         })
     }
 
@@ -1491,7 +1518,8 @@ impl Dock {
     /// none while another context loads, closes nothing, and only the same
     /// connection's tabs take its refreshed handle. A source missing for a
     /// while keeps the tabs and their shells. The first source restores the
-    /// saved tabs when its context is theirs.
+    /// saved tabs when its context is theirs; the tabs of other contexts wait
+    /// parked, kept in the next save, until their context is shown.
     pub(crate) fn set_source(
         &mut self,
         source: Option<ClusterSource>,
@@ -1533,9 +1561,18 @@ impl Dock {
         self.source = Some(source);
         if first && let Some(restore) = self.restore.take() {
             self.restore_tabs(restore, window, cx);
+        } else {
+            // Tabs parked for this context open now, idle.
+            self.open_parked(window, cx);
         }
         // Which tabs are the shown cluster's depends on this source.
         self.refresh_gates(cx);
+    }
+
+    /// Sets the shown cluster's stable key, before its source: tabs started
+    /// from now save it as their connection when the window has no entry.
+    pub(crate) fn set_connection_key(&mut self, key: Option<String>) {
+        self.connection_key = key;
     }
 
     /// Derives the titles: a title another tab already has gets "(2)".
