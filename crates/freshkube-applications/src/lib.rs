@@ -118,9 +118,9 @@ pub use change::{
 use change::{ChangeEvent, ChangePage, Changes, Coroot};
 use changes::ChangesEvent;
 pub use changes::ChangesPage;
-pub use column::Column;
+pub use column::{Column, ColumnAction};
 #[cfg(any(test, feature = "testing"))]
-pub use column::{ColumnAction, ColumnApp, ColumnSection};
+pub use column::{ColumnApp, ColumnSection};
 use display::{Body, Display, Labels, MARKS, Mark};
 pub use example::Variant;
 use links::Connections;
