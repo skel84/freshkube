@@ -26,7 +26,7 @@ pub(super) struct ClusterForm {
 pub(super) fn open(page: Entity<SettingsPage>, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| ClusterForm::new(page, window, cx));
     let context = form.read(cx).context.clone();
-    window.open_dialog(cx, move |dialog, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         freshkube_ui::dialog::frame(
             dialog,
             460.,
