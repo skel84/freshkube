@@ -30,7 +30,7 @@ It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and take
 | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
 | `cut` | seconds | every watch is ended by the server `cut` seconds after it opens, or `cut` seconds after the `after` grace period ends if it opened inside it; the app opens the next one, which meets the other faults. The count and the log line come when the watch ends |
 | `after` | seconds, default 20 | no fault before this, so the app can start |
-| `until` | seconds, default none | no fault from this on, so a run can show the app recovering (see "Watching the summary recover" below) |
+| `until` | seconds, default none, after `after` | no fault from this on, so a run can show the app recovering (see "Watching the summary recover" below); a watch whose `cut` would land at or after it is not cut |
 | `seed` | integer, default 1 | the generator's seed |
 
 **Watching the summary recover.** `until` ends the faults, so a short run can show a refused list come back at the default fault rates, with nothing else injected. (#968.)

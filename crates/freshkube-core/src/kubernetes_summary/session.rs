@@ -321,6 +321,10 @@ impl Session {
     pub(super) fn take_rebuild(&self) -> bool {
         !self.rebuilt.swap(true, Ordering::SeqCst)
     }
+    /// Whether this identity's one rebuild was taken already.
+    pub(super) fn rebuild_spent(&self) -> bool {
+        self.rebuilt.load(Ordering::SeqCst)
+    }
     pub fn identity(&self) -> &SessionIdentity {
         &self.identity
     }
@@ -405,7 +409,7 @@ impl Session {
         let result = collection.reduce(source, &event, totals, self.limits, now);
         if let Err(failure) = &result {
             collection.discard_staging();
-            collection.observation.failed(failure.clone());
+            collection.observation.failed(failure.clone(), false);
         }
         state.staging_peak = state
             .staging_peak
@@ -418,15 +422,29 @@ impl Session {
     }
 
     pub fn fail(&self, generation: u64, source: Source, failure: ObservationFailure) {
+        self.fail_as(generation, source, failure, false);
+    }
+
+    /// A failure its read will not retry: shown as failed, not retrying.
+    pub(super) fn fail_stopped(
+        &self,
+        generation: u64,
+        source: Source,
+        failure: ObservationFailure,
+    ) {
+        self.fail_as(generation, source, failure, true);
+    }
+
+    fn fail_as(&self, generation: u64, source: Source, failure: ObservationFailure, stopped: bool) {
         let mut state = self.state.lock().unwrap();
         if state.generation != generation {
             return;
         }
         if source == Source::Version {
-            state.version_observation.failed(failure);
+            state.version_observation.failed(failure, stopped);
         } else if let Some(collection) = state.collections.get_mut(&source) {
             collection.discard_staging();
-            collection.observation.failed(failure);
+            collection.observation.failed(failure, stopped);
         }
         drop(state);
         self.changed();

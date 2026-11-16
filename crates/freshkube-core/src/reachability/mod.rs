@@ -5,7 +5,7 @@
 //! reachability flags into "the network changed and can be used". The
 //! platform watcher ([`start`], macOS only) feeds [`announce`]; the shell
 //! holds a [`Changes`], settles a burst of events into one
-//! (`SETTLE`), and refreshes what is shown once. Nothing reads on its own:
+//! (`SETTLE`, from its first report), and refreshes what is shown once. Nothing reads on its own:
 //! a change with nothing connected does nothing, and a loss of the network
 //! is found by the read that fails, as it was.
 use std::time::Duration;
@@ -22,8 +22,10 @@ pub const REACHABLE: u32 = 1 << 1;
 /// (`kSCNetworkReachabilityFlagsConnectionRequired`).
 pub const CONNECTION_REQUIRED: u32 = 1 << 2;
 
-/// How long a burst of events is waited out before it counts as one change:
-/// a network coming up reports several times in a second or two.
+/// How long after the first report of a burst the shell waits before it
+/// counts the burst as one change: a network coming up reports several times
+/// in a second or two. It is a fixed wait from the first report, not a wait
+/// for quiet, so a flapping network is still refreshed every `SETTLE`.
 pub const SETTLE: Duration = Duration::from_secs(2);
 
 /// Reads the platform's flags one report at a time.
@@ -48,20 +50,9 @@ impl Flags {
     }
 }
 
-#[cfg(not(test))]
 fn signal() -> &'static watch::Sender<u64> {
     static SIGNAL: std::sync::OnceLock<watch::Sender<u64>> = std::sync::OnceLock::new();
     SIGNAL.get_or_init(|| watch::channel(0).0)
-}
-
-/// In a test the signal is the test thread's own, so one test's change never
-/// reaches another's shell.
-#[cfg(test)]
-fn signal() -> &'static watch::Sender<u64> {
-    thread_local! {
-        static SIGNAL: &'static watch::Sender<u64> = Box::leak(Box::new(watch::channel(0).0));
-    }
-    SIGNAL.with(|signal| *signal)
 }
 
 /// Tells every [`Changes`] that the network changed.
@@ -170,18 +161,19 @@ mod tests {
 
     #[tokio::test]
     async fn changes_are_heard_after_a_shell_is_made_and_a_burst_is_one() {
-        announce();
-        let mut changes = Changes::new();
+        let signal = OwnSignal::new();
+        signal.announce();
+        let mut changes = signal.changes();
         let waiting = tokio::time::timeout(Duration::from_millis(20), changes.changed()).await;
         assert!(waiting.is_err(), "a change before it was made is not heard");
-        announce();
-        announce();
-        announce();
+        signal.announce();
+        signal.announce();
+        signal.announce();
         changes.changed().await;
         changes.settle();
         let again = tokio::time::timeout(Duration::from_millis(20), changes.changed()).await;
         assert!(again.is_err(), "the burst was one change");
-        announce();
+        signal.announce();
         changes.changed().await;
     }
 }

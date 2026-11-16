@@ -251,7 +251,7 @@ own and no owner changes:
 | Forwards' own connections | Not reconnected by the wake: a dead connection is found by TCP keepalive (60 s), and each source's retry takes it from there. |
 | A read waiting out a retry backoff, or in its first list | Not heard: it ends by its own timeout or backoff (30 s at most), then reads as it always does. |
 
-A network change (a VPN coming up, a move between networks) does what a wake does, once, except that no stream is told to restart: the same refresh (`Pilot::network_changed`, `desktop/wake/network.rs`) with the shown Resources page listed again too, since its watch was not announced anything. `freshkube_core::reachability` holds the signal: on macOS a thread runs a SystemConfiguration reachability callback on the default route, and `Flags::observe` turns its reports into a change only when the flags differ and the network is usable (reachable, no connection required); a loss reads as the failed read it already is. The shell waits out a burst of reports for 2 s (`SETTLE`) and refreshes once for it; nothing is read while nothing is connected, a hidden page stays stopped, and nothing is written or retried. Elsewhere there is no watcher: the wake and the failed read cover those platforms. The macOS watcher compiles but could not be run where it was written; a real VPN or Wi-Fi change is its check.
+A network change (a VPN coming up, a move between networks) does what a wake does, once, except that no stream is told to restart: the same refresh (`Pilot::network_changed`, `desktop/wake/network.rs`) with the shown Resources page listed again too, since its watch was not announced anything. `freshkube_core::reachability` holds the signal: on macOS a thread runs a SystemConfiguration reachability callback on the default route, and `Flags::observe` turns its reports into a change only when the flags differ and the network is usable (reachable, no connection required); a loss reads as the failed read it already is. The shell takes the reports of the 2 s after the first (`SETTLE`, a fixed wait, not a wait for quiet) as one change and refreshes once for it; a wake on macOS can still refresh twice as Wi-Fi comes back, which is harmless, and a split-tunnel VPN may go unseen; nothing is read while nothing is connected, a hidden page stays stopped, and nothing is written or retried. Elsewhere there is no watcher: the wake and the failed read cover those platforms. The macOS watcher compiles but could not be run where it was written; a real VPN or Wi-Fi change is its check.
 
 A wake does nothing when nothing is connected (a Kubernetes-only entry with
 no context chosen or tried, no overview read yet, a load or an error on screen),
@@ -301,8 +301,8 @@ from the old client publishes afterwards, since its reads are gone and its gener
 past. It happens once per `SessionIdentity` (`Session::take_rebuild`, a latch the session
 owns): several sources refused together share the one rebuild, a refusal that arrives while
 or after it joins it and starts no second, and credentials the server still refuses are shown
-as "Kubernetes credentials were rejected", never retried in a loop or by running the login
-program again. A new identity (a new connection or epoch) has its own. A failed rebuild waits
+as "Kubernetes credentials were rejected": each such read stops (it reads as failed, not retrying)
+until a Refresh, and nothing is retried in a loop or by running the login program again. A new identity (a new connection or epoch) has its own. A failed rebuild waits
 and asks again with the driver's usual backoff. This covers the summary and the session
 reads that take its client; a page's own read still takes the kept client until its two
 minutes pass or a failure forgets it. Nothing here retries a write. Tests: core's

@@ -703,7 +703,12 @@ fn answering(code: u16) -> (kube::Client, freshkube_core::fake_api::Recorder) {
 
 async fn drive(
     clients: Vec<kube::Client>,
-) -> (Arc<Renewing>, Session, tokio::task::JoinHandle<()>) {
+) -> (
+    Arc<Renewing>,
+    Session,
+    tokio::task::JoinHandle<()>,
+    tokio::sync::mpsc::Receiver<SummaryFeed>,
+) {
     let source = Arc::new(Renewing {
         clients,
         asked: Default::default(),
@@ -711,14 +716,12 @@ async fn drive(
     });
     let session = Session::new(SessionIdentity::new("renewing", 1));
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    // The receiver stays open for the driver's life: it is the watch's.
-    std::mem::forget(receiver);
     let task = tokio::spawn(run_summary_driver(
         session.clone(),
         ClusterAccess::Live(source.clone()),
         sender,
     ));
-    (source, session, task)
+    (source, session, task, receiver)
 }
 
 #[tokio::test(start_paused = true)]
@@ -726,7 +729,7 @@ async fn an_expired_login_rebuilds_the_client_once_and_reads_through_the_new_one
     use std::sync::atomic::Ordering::SeqCst;
     let (expired, expired_log) = answering(401);
     let (renewed, renewed_log) = answering(200);
-    let (source, session, task) = drive(vec![expired, renewed]).await;
+    let (source, session, task, _receiver) = drive(vec![expired, renewed]).await;
     for _ in 0..200 {
         tokio::time::sleep(Duration::from_millis(50)).await;
         if renewed_log
@@ -768,7 +771,7 @@ async fn a_login_the_server_still_refuses_is_not_rebuilt_again() {
     use std::sync::atomic::Ordering::SeqCst;
     let (first, _) = answering(401);
     let (second, second_log) = answering(401);
-    let (source, session, task) = drive(vec![first, second]).await;
+    let (source, session, task, _receiver) = drive(vec![first, second]).await;
     tokio::time::sleep(Duration::from_secs(900)).await;
     assert_eq!(source.asked.load(SeqCst), 2, "one rebuild, then none");
     assert_eq!(source.forgotten.load(SeqCst), 1);

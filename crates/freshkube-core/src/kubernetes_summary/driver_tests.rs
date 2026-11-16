@@ -502,8 +502,18 @@ async fn a_second_401_after_the_rebuild_is_shown_not_retried() {
     );
     // The same refusal from the new client ends nothing: `run` goes on, and
     // the failure is what the page shows.
-    let ended = tokio::time::timeout(Duration::from_secs(600), session.run(second)).await;
-    assert!(ended.is_err(), "a second rebuild must not be asked for");
+    let worker = session.clone();
+    let task = tokio::spawn(async move { worker.run(second).await });
+    until(|| {
+        nodes_observation(&session).failure().is_some()
+            && !second_log.calls.lock().unwrap().is_empty()
+    })
+    .await;
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    assert!(
+        !task.is_finished(),
+        "a second rebuild must not be asked for"
+    );
     assert_eq!(
         nodes_observation(&session).failure(),
         Some(&ObservationFailure::Read(
@@ -514,7 +524,20 @@ async fn a_second_401_after_the_rebuild_is_shown_not_retried() {
         nodes_observation(&session).message(),
         Some("Kubernetes credentials were rejected")
     );
-    assert!(!second_log.calls.lock().unwrap().is_empty());
+    // And the login is not asked for again: no read of the new client is
+    // retried, however long it waits (each retry would run the login program).
+    let asked = second_log.calls.lock().unwrap().len();
+    tokio::time::sleep(Duration::from_secs(1800)).await;
+    assert_eq!(
+        second_log.calls.lock().unwrap().len(),
+        asked,
+        "a refused login is not retried"
+    );
+    // A Refresh reads again.
+    session.relist();
+    until(|| second_log.calls.lock().unwrap().len() > asked).await;
+    task.abort();
+    let _ = task.await;
 }
 
 #[tokio::test(start_paused = true)]

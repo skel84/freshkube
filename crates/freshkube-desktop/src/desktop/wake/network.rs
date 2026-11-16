@@ -1,6 +1,6 @@
 //! The network changing (#968): a VPN coming up or down, a move between
-//! networks. `freshkube_core::reachability` hears the platform; this settles
-//! a burst of reports into one change and does what a wake does, once: the
+//! networks. `freshkube_core::reachability` hears the platform; this takes
+//! the reports of the 2 s after the first as one change and does what a wake does, once: the
 //! summary and the alert read relist, the Talos overview reads again and
 //! the shown page refreshes, with "Reconnecting to <context>…" until a read
 //! answers. Only what is already reading reads again, and nothing is
@@ -25,7 +25,8 @@ impl Pilot {
         let _ = (window, cx);
     }
 
-    /// Waits for a change, lets the burst it belongs to settle, and runs
+    /// Waits for a change, takes the reports of the next `SETTLE` as the same
+    /// one (a fixed wait from the first, not a wait for quiet), and runs
     /// [`network_changed`](Self::network_changed) once for it. The loop ends
     /// with the shell.
     pub(super) fn watch_network(

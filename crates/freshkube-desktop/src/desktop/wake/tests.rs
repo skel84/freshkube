@@ -295,8 +295,32 @@ fn a_network_change_with_nothing_connected_says_nothing_and_reads_nothing(cx: &m
     let (_runtime, handle, view) =
         crate::desktop::testing::mount(cx, GpuiOptions::fixture().with_debug(debug), 1280., 820.);
     let signal = listen(cx, handle, &view);
+    let before = generation_if_any(cx, handle, &view);
     signal.announce();
     cx.run_until_parked();
     settle(cx);
     assert!(!reconnecting(cx, handle, &view));
+    assert_eq!(
+        generation_if_any(cx, handle, &view),
+        before,
+        "nothing relisted"
+    );
+}
+
+/// The summary session's generation, when there is a session.
+fn generation_if_any(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    view: &gpui_kit::Entity<Pilot>,
+) -> Option<u64> {
+    cx.update_window(handle, |_, _, cx| {
+        view.read(cx)
+            .switch
+            .registry
+            .active()
+            .summary_session
+            .as_ref()
+            .map(|session| session.core.generation())
+    })
+    .unwrap()
 }

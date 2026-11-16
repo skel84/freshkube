@@ -13,7 +13,7 @@
 //! | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
 //! | `cut` | seconds | every watch that starts is ended by the server after this long, so the app opens the next one |
 //! | `after` | seconds, default 20 | no fault before this, so the app can start |
-//! | `until` | seconds, default none | no fault from this on, so a run can show the app recovering: `refuse=0.6,after=5,until=120` refuses for two minutes and then answers |
+//! | `until` | seconds, default none, after `after` | no fault from this on, so a run can show the app recovering: `refuse=0.6,after=5,until=120` refuses for two minutes and then answers. A watch whose cut would land at or after it is not cut |
 //! | `seed` | integer, default 1 | the generator's seed |
 
 use std::time::Duration;
@@ -110,6 +110,15 @@ impl FaultPlan {
                 _ => return Err(format!("unknown fault `{name}`")),
             }
         }
+        if let Some(until) = plan.until
+            && until <= plan.after
+        {
+            return Err(format!(
+                "until: {} s is not after `after` ({} s), so no fault would ever be on",
+                until.as_secs(),
+                plan.after.as_secs()
+            ));
+        }
         plan.next_gone = plan.gone_every.map(|every| plan.after + every);
         Ok(plan)
     }
@@ -151,13 +160,14 @@ impl FaultPlan {
     /// app opens at start are cut too, and the app's next ones meet the faults.
     pub fn cut(&self, elapsed: Duration, watching: bool) -> Option<Duration> {
         let cut = self.cut_after?;
-        if self.until.is_some_and(|until| elapsed >= until) {
-            return None;
-        }
-        watching.then(|| match elapsed < self.after {
+        let after = watching.then(|| match elapsed < self.after {
             true => self.after + cut - elapsed,
             false => cut,
-        })
+        })?;
+        // A cut that would land at or after the end of the window is no fault
+        // of the window: the watch stays open.
+        let at = elapsed + after;
+        (self.until.is_none_or(|until| at < until)).then_some(after)
     }
 
     /// Whether faults are on `elapsed` into the run: after the grace period
@@ -217,7 +227,8 @@ mod tests {
         assert_eq!(plan.decide(at(119), false), Fault::Refuse);
         assert_eq!(plan.decide(at(120), false), Fault::None);
         assert_eq!(plan.decide(at(500), true), Fault::None, "no Gone either");
-        assert_eq!(plan.cut(at(119), true), Some(at(30)));
+        assert_eq!(plan.cut(at(80), true), Some(at(30)));
+        assert_eq!(plan.cut(at(119), true), None, "it would land after the end");
         assert_eq!(plan.cut(at(120), true), None, "no cut either");
         assert_eq!(plan.counts().refused, 1);
         let open = FaultPlan::parse("refuse=1,after=5").unwrap();
@@ -311,6 +322,8 @@ mod tests {
             ("gone=-1", "gone"),
             ("cut=x", "cut"),
             ("until=x", "until"),
+            ("until=5,after=10", "until"),
+            ("until=20", "until"),
             ("flood=1", "unknown fault `flood`"),
             ("drop", "name=value"),
         ] {

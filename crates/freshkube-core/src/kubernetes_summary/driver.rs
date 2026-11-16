@@ -109,7 +109,7 @@ impl Session {
                 Ok(Ok(version)) => session.version(generation, version.git_version, Utc::now()),
                 Ok(Err(error)) => {
                     let failure = ObservationFailure::from_kube(error);
-                    session.rejected_if_unauthorized(generation, &failure);
+                    session.rejected_if_unauthorized(&failure);
                     session.fail(generation, Source::Version, failure);
                 }
                 Err(_) => session.fail(
@@ -122,15 +122,19 @@ impl Session {
         jobs
     }
 
-    /// An `Unauthorized` answer of the current generation asks for a new
-    /// client; one of an older generation is the old client's and says
-    /// nothing.
-    fn rejected_if_unauthorized(&self, generation: u64, failure: &ObservationFailure) {
-        if self.generation() == generation
-            && matches!(failure, ObservationFailure::Read(FailureKind::Unauthorized))
-        {
+    /// An `Unauthorized` answer asks for a new client. Reads of a client
+    /// already being replaced are shut down, so none arrives late.
+    fn rejected_if_unauthorized(&self, failure: &ObservationFailure) {
+        if matches!(failure, ObservationFailure::Read(FailureKind::Unauthorized)) {
             self.credentials_rejected();
         }
+    }
+
+    /// Whether `failure` is a refusal of credentials the one rebuild has
+    /// already been spent on.
+    fn credentials_spent(&self, failure: &ObservationFailure) -> bool {
+        matches!(failure, ObservationFailure::Read(FailureKind::Unauthorized))
+            && self.rebuild_spent()
     }
 
     async fn watch<K>(&self, client: Client, generation: u64)
@@ -149,7 +153,15 @@ impl Session {
             if self.generation() != generation {
                 return;
             }
-            self.rejected_if_unauthorized(generation, &failure);
+            self.rejected_if_unauthorized(&failure);
+            // Credentials refused after the one rebuild are as permanent as a
+            // refusal by RBAC: a retry would run the login program again, so
+            // this read stops (a Refresh restarts it) and says Failed.
+            let spent = self.credentials_spent(&failure);
+            if spent {
+                self.fail_stopped(generation, K::SOURCE, failure);
+                return;
+            }
             self.fail(generation, K::SOURCE, failure.clone());
             if failure.is_permanent() {
                 return;
