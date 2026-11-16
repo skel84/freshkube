@@ -29,6 +29,13 @@ pub const PORT: u16 = 9093;
 /// The proxy path of the fake's API, ending in a slash.
 pub const BASE: &str = "/api/v1/namespaces/monitoring/services/alertmanager-operated:9093/proxy/";
 
+const SERVICE_PATH: &str = "/api/v1/namespaces/monitoring/services/alertmanager-operated";
+
+/// The UID the fake's Service has, as a page that read it saw it.
+pub fn service_uid(generation: u32) -> String {
+    format!("svc-uid-{generation}")
+}
+
 /// The Service the fake stands behind.
 pub fn service() -> PrometheusService {
     PrometheusService::new(NAMESPACE, NAME, PORT)
@@ -49,6 +56,8 @@ struct State {
     alerts: Vec<(BTreeMap<String, String>, String)>,
     silences: Vec<Value>,
     next_id: u32,
+    /// Times the Service was deleted and created again: its UID changes.
+    service_generation: u32,
     denied_verbs: Vec<String>,
     post: Option<Answer>,
     delete: Option<Answer>,
@@ -139,6 +148,11 @@ impl Fake {
         }
     }
 
+    /// The Service is deleted and created again: it has another UID.
+    pub fn recreate_service(&self) {
+        self.state().service_generation += 1;
+    }
+
     /// The access review refuses this verb on everything.
     pub fn deny(&self, verb: &str) {
         self.state().denied_verbs.push(verb.to_owned());
@@ -166,6 +180,22 @@ impl Fake {
             "matchers": [{"name": "alertname", "value": "HighLatency", "isRegex": false, "isEqual": true}],
             "createdBy": created_by,
             "comment": comment,
+            "startsAt": "2026-01-01T10:00:00.000Z",
+            "endsAt": "2026-01-01T12:00:00.000Z",
+        }));
+    }
+
+    /// An active silence of one cluster's alert, as a shared store holds it.
+    pub fn add_cluster_silence(&self, id: &str, cluster: &str) {
+        self.state().silences.push(json!({
+            "id": id,
+            "status": {"state": "active"},
+            "matchers": [
+                {"name": "cluster", "value": cluster, "isRegex": false, "isEqual": true},
+                {"name": "alertname", "value": "HighLatency", "isRegex": false, "isEqual": true},
+            ],
+            "createdBy": "someone",
+            "comment": "planned",
             "startsAt": "2026-01-01T10:00:00.000Z",
             "endsAt": "2026-01-01T12:00:00.000Z",
         }));
@@ -213,6 +243,15 @@ impl State {
             && request.method == Method::POST
         {
             return answer(self.review(&request.body));
+        }
+        if request.method == Method::GET && request.path == SERVICE_PATH {
+            return answer(fake_api::json(
+                200,
+                json!({"apiVersion": "v1", "kind": "Service",
+                    "metadata": {"name": NAME, "namespace": NAMESPACE,
+                        "uid": service_uid(self.service_generation),
+                        "resourceVersion": "1"}}),
+            ));
         }
         let Some(api) = request.path.strip_prefix(BASE) else {
             return answer(fake_api::unknown(request));

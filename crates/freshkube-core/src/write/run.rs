@@ -8,7 +8,7 @@ use std::{io, sync::Mutex, time::Duration};
 
 use super::{
     LevelCell, Phase, Protection, SendRefusal, SetupLevels, Unreadable,
-    action::{ActionDescription, Destination, Inverse, ObjectChange, Target},
+    action::{ActionDescription, Change, Destination, Inverse, ObjectChange, Target},
     at_send,
     audit::{AuditObject, AuditRequest, AuditStore, Record, RunId, SCHEMA, scrub},
     fresh::{READ_DEADLINE, read_within},
@@ -39,6 +39,9 @@ pub struct Runner {
     /// before and after as a live one does. An object not held here is
     /// shown as the fields the action names, all Added.
     pub(super) example_objects: Vec<serde_json::Value>,
+    /// How this window's alerts are told apart from other clusters', as the
+    /// runner resolved it; a page can't set it (`with_alert_scope`).
+    pub(super) alert_scope: Option<super::alertmanager::Scope>,
 }
 
 /// Something the front end can draw while a write runs.
@@ -263,6 +266,7 @@ impl Runner {
             recheck,
             example: false,
             example_objects: vec![],
+            alert_scope: None,
         }
     }
 
@@ -441,6 +445,7 @@ impl Runner {
             undo: is_undo,
             level: prepared_level,
             inverses,
+            alert_seen,
             ..
         } = prepared;
         let all: Vec<&ObjectChange> = description.changes.iter().collect();
@@ -534,6 +539,14 @@ impl Runner {
                     return finished(Status::NotSent(not_sent), vec![], None, None);
                 }
             }
+            // A silence mutes what Alertmanager says it mutes now, an Expire
+            // ends the silence it read: both are read again, and a
+            // difference sends nothing and asks again.
+            if let Some(seen) = &alert_seen
+                && let Err(not_sent) = self.recheck_alertmanager(&description, seen, level).await
+            {
+                return finished(Status::NotSent(not_sent), vec![], None, None);
+            }
             // The check made requests after the last look at Cancel.
             if cancel() {
                 return cancelled();
@@ -567,6 +580,8 @@ impl Runner {
         };
         let mut results: Vec<ObjectResult> = vec![];
         let mut taken: Vec<(usize, Accepted)> = vec![];
+        // What a silence or an Expire was answered, for its read-back and Undo.
+        let mut replies: Vec<(usize, serde_json::Value)> = vec![];
         for (index, change) in description.changes.iter().enumerate() {
             let object = change.target.label();
             let one = [change];
@@ -587,13 +602,18 @@ impl Runner {
                             .as_str()
                             .map(str::to_owned),
                     };
+                    let accepted_text = match reply["silenceID"].as_str() {
+                        Some(id) => format!("The API accepted it: silence {id}."),
+                        None => "The API accepted it.".to_owned(),
+                    };
+                    replies.push((index, reply));
                     note(self.record(
                         &run,
                         &description,
                         level,
                         &one,
                         Phase::Accepted,
-                        "The API accepted it.",
+                        &accepted_text,
                     ));
                     tell(Event::Accepted(index));
                     taken.push((index, accepted.clone()));
@@ -636,14 +656,14 @@ impl Runner {
                     Step::Denied(message)
                 }
                 Err(Refusal::Rejected { code, message }) => {
-                    note(self.record(
-                        &run,
-                        &description,
-                        level,
-                        &one,
-                        Phase::Refused,
-                        &format!("{code}: {message}"),
-                    ));
+                    // Alertmanager's text echoes the label values the person
+                    // typed, so the audit keeps the status alone.
+                    let audited = if super::alertmanager::is_alert_action(&description) {
+                        format!("HTTP {code}")
+                    } else {
+                        format!("{code}: {message}")
+                    };
+                    note(self.record(&run, &description, level, &one, Phase::Refused, &audited));
                     Step::Refused { code, message }
                 }
                 Err(Refusal::NoAnswer(message)) => {
@@ -666,17 +686,29 @@ impl Runner {
         let looks = taken.iter().map(|(index, _)| {
             let change = &description.changes[*index];
             let tell = &tell;
+            let reply = replies
+                .iter()
+                .find(|(at, _)| at == index)
+                .map(|(_, reply)| reply.clone())
+                .unwrap_or_default();
             async move {
-                let observed = observe(
-                    &self.client,
-                    &change.target,
-                    &change.observe,
-                    self.watching,
-                    |waited| {
-                        tell(Event::Observing { waited, limit });
-                    },
-                )
-                .await;
+                let progress = |waited| {
+                    tell(Event::Observing { waited, limit });
+                };
+                let observed = if matches!(change.change, Change::Silence(_) | Change::Expire(_)) {
+                    // Read back from Alertmanager by id, not from an object.
+                    self.observe_alert(change, &reply, self.watching, progress)
+                        .await
+                } else {
+                    observe(
+                        &self.client,
+                        &change.target,
+                        &change.observe,
+                        self.watching,
+                        progress,
+                    )
+                    .await
+                };
                 (*index, observed)
             }
         });
@@ -719,7 +751,7 @@ impl Runner {
         }
 
         let undo = if requirement.undo && !is_undo {
-            self.offer_undo(&description, &inverses, &results, &taken)
+            self.offer_undo(&description, &inverses, &results, &taken, &replies)
         } else {
             None
         };
@@ -743,6 +775,7 @@ impl Runner {
         inverses: &[Option<Inverse>],
         results: &[ObjectResult],
         taken: &[(usize, Accepted)],
+        replies: &[(usize, serde_json::Value)],
     ) -> Option<UndoOffer> {
         if taken.len() != description.changes.len()
             || !results
@@ -755,17 +788,28 @@ impl Runner {
         for (index, accepted) in taken {
             let change = &description.changes[*index];
             let inverse = inverses.get(*index)?.as_ref()?;
-            let target = Target {
-                resource_version: accepted.resource_version.clone()?,
-                ..change.target.clone()
+            let mut inverse_change = inverse.change.clone();
+            let mut depends = vec![];
+            let target = if let Change::Silence(silence) = &change.change {
+                // An Expire of the id it was just given, held to the Service
+                // it went through.
+                let reply = &replies.iter().find(|(at, _)| at == index)?.1;
+                inverse_change = self.expire_of(silence, reply)?;
+                depends = super::alertmanager::depends_on(&change.target);
+                change.target.clone()
+            } else {
+                Target {
+                    resource_version: accepted.resource_version.clone()?,
+                    ..change.target.clone()
+                }
             };
             items.push((
                 ObjectChange {
                     target,
-                    change: inverse.change.clone(),
+                    change: inverse_change,
                     observe: inverse.observe.clone(),
                     inverse: None,
-                    depends: vec![],
+                    depends,
                 },
                 inverse.guard.clone(),
             ));
