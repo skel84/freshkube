@@ -266,6 +266,17 @@ async fn safety_g30_a_regex_negative_or_missing_alertname_is_broad_and_asks_as_b
             matcher("pod", "web-2", false, false),
         ],
         vec![matcher("alertname", "HighLatency", false, true)],
+        // Each of these is broad for its own matcher alone.
+        vec![
+            matcher("alertname", "HighLatency", false, true),
+            matcher("pod", "web-1", false, true),
+            matcher("severity", "warn.*", true, true),
+        ],
+        vec![
+            matcher("alertname", "HighLatency", false, true),
+            matcher("pod", "web-1", false, true),
+            matcher("namespace", "other", false, false),
+        ],
     ];
     for matchers in cases {
         let prepared = ready(&runner, silence(matchers, 2)).await;
@@ -531,4 +542,17 @@ fn the_access_question_follows_the_http_method() {
         questions(&expire),
         [("get", name.clone()), ("delete", name)]
     );
+}
+
+/// The window runs preflight and execute on a runtime, so their futures must
+/// be `Send`, the preview's too (a held `url` serializer is not `Sync`).
+#[allow(dead_code)]
+fn the_futures_of_a_silence_are_send(
+    runner: &Runner,
+    action: ActionDescription,
+    prepared: Prepared,
+) {
+    fn is_send<T: Send>(_: &T) {}
+    is_send(&runner.preflight(action));
+    is_send(&runner.execute(prepared, Confirmation::Confirmed, || false, |_| {}));
 }

@@ -279,16 +279,20 @@ impl AlertWriter {
     /// preview.
     pub async fn preview(&self, draft: &Draft) -> Result<Preview, WriteError> {
         validate(draft).map_err(WriteError::Invalid)?;
-        let mut query = url::form_urlencoded::Serializer::new(String::new());
-        for matcher in &draft.matchers {
-            query.append_pair("filter", &filter_text(matcher));
-        }
-        let query = query
-            .append_pair("active", "true")
-            .append_pair("unprocessed", "true")
-            .append_pair("silenced", "true")
-            .append_pair("inhibited", "true")
-            .finish();
+        // In a block of its own: the serializer isn't `Sync`, so it must not
+        // be held across an await, and the runner's futures run on a runtime.
+        let query = {
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            for matcher in &draft.matchers {
+                query.append_pair("filter", &filter_text(matcher));
+            }
+            query
+                .append_pair("active", "true")
+                .append_pair("unprocessed", "true")
+                .append_pair("silenced", "true")
+                .append_pair("inhibited", "true")
+                .finish()
+        };
         let target = format!("api/v2/alerts?{query}");
         let cluster = match &draft.mode {
             Mode::Central { label, value } => Some((label.as_str(), value.as_str())),
