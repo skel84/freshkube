@@ -12,6 +12,7 @@ pub mod example;
 pub mod fetch;
 pub mod file;
 pub mod keyfile;
+pub mod mapping;
 pub mod membership;
 pub mod merge;
 pub mod review;
@@ -23,6 +24,7 @@ mod tests;
 pub use fetch::{GitRunner, HttpsFetch, Limits, TeamFetcher};
 pub use file::{Ignored, IgnoredKey, Values, Version, VersionError};
 pub use keyfile::{KeyFileError, check_repo_path, fingerprint, resolve_in_repo};
+pub use mapping::{Choice, ContextMap, UnknownContext};
 pub use membership::{Failure, Fetch, FetchFailed, Leave, Membership, Overrides};
 pub use merge::{
     ClusterView, LevelSource, Origin, Resolved, allowed_levels, cluster_view, floor_words, resolve,
