@@ -44,15 +44,15 @@ pub fn not_expected_in(change: &mut Change, stages: &[&str]) -> Vec<String> {
             if let Shows::Hop(detail) = &mut hop.shows {
                 detail.state = cause.word().into();
                 detail.notice = None;
-                if let Some(link) = &mut detail.link {
-                    if matches!(link.cause, Some(Cause::NotFound { .. })) {
-                        link.cause = Some(cause.clone());
-                        link.here_says = "not used here".into();
-                        link.why = format!(
-                            "{} isn't expected in {name}, as freshkube.yaml says.",
-                            change.project
-                        );
-                    }
+                if let Some(link) = &mut detail.link
+                    && matches!(link.cause, Some(Cause::NotFound { .. }))
+                {
+                    link.cause = Some(cause.clone());
+                    link.here_says = "not used here".into();
+                    link.why = format!(
+                        "{} isn't expected in {name}, as freshkube.yaml says.",
+                        change.project
+                    );
                 }
             }
         }
