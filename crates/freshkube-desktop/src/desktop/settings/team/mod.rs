@@ -106,6 +106,12 @@ impl Shown {
         self.rows.iter().map(|row| row.label.as_str()).collect()
     }
 
+    /// The review banner's lead, for the tests.
+    #[cfg(test)]
+    pub(super) fn lead(&self) -> &str {
+        self.lead
+    }
+
     /// The failure banner's body, for the tests.
     #[cfg(test)]
     pub(super) fn failure_words(&self) -> Option<&str> {
@@ -195,9 +201,15 @@ impl TeamState {
         if let Some(review) = &self.review {
             let step = review.step();
             shown.step = Some(step);
-            shown.lead = match step {
-                Step::Trust => "A new team version waits: review trust changes first",
-                Step::Rest => "A new team version waits: review the other changes",
+            let joining = self
+                .membership
+                .as_ref()
+                .is_some_and(|m| m.applied().is_none());
+            shown.lead = match (joining, step) {
+                (true, Step::Trust) => "Joining the team: review trust changes first",
+                (true, Step::Rest) => "Joining the team: review the other changes",
+                (false, Step::Trust) => "A new team version waits: review trust changes first",
+                (false, Step::Rest) => "A new team version waits: review the other changes",
             };
             shown.banner = if review.trust_changes().next().is_some() {
                 "It applies only after you review it, trust changes first."

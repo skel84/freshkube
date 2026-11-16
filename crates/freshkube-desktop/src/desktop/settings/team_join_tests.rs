@@ -489,6 +489,10 @@ fn the_review_while_joining_offers_cancel_not_review_later(cx: &mut TestAppConte
     click(cx, handle, "team-map-suggested");
     click(cx, handle, "team-map-continue");
     assert!(visible(cx, handle, "team-update"));
+    // It reads as a join, not as an update that waits.
+    let settings_for_lead = page(cx, &view);
+    let lead = cx.update(|cx| settings_for_lead.read(cx).team.shown.lead().to_owned());
+    assert!(lead.starts_with("Joining the team"), "{lead}");
     assert!(visible(cx, handle, "team-cancel-join"));
     assert!(!visible(cx, handle, "team-review-later"));
     // A joining review is not an update waiting: no status item, no banner.
