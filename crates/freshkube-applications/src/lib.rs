@@ -71,7 +71,7 @@ pub mod testing {
     }
     pub mod page {
         pub use crate::page::table::columns;
-        pub use crate::page::timeline::TimelineView;
+        pub use crate::page::timeline::{CorootFeed, Fetch, TimelineView};
         pub use crate::page::{ApplicationPage, PageTab, PartRow, unchecked_words};
     }
 }
@@ -782,6 +782,7 @@ impl ApplicationsPage {
             return;
         }
         self.live_coroot = live;
+        self.update_open(cx);
         let coroot = self.coroot();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_coroot(coroot.clone(), cx));
@@ -1129,8 +1130,25 @@ impl ApplicationsPage {
         let mut workloads: Vec<(String, Vec<Workload>)> = Vec::new();
         let mut argo: Vec<(String, Vec<String>)> = Vec::new();
         let mut argo_elsewhere = 0;
+        let mut kargo: Vec<String> = Vec::new();
+        let mut kargo_away: Vec<(freshkube_delivery::applications::SessionKey, String)> =
+            Vec::new();
         for member in &app.members {
             let at = &member.at;
+            if matches!(at.kind, MemberKind::KargoStage | MemberKind::KargoWarehouse) {
+                // A Kargo Project is its namespace; its Stages and Warehouses
+                // say which are read here and which through another connection.
+                if let Some(project) = &at.namespace {
+                    if connections.opens(&at.session) {
+                        if !kargo.contains(project) {
+                            kargo.push(project.clone());
+                        }
+                    } else if !kargo_away.contains(&(at.session.clone(), project.clone())) {
+                        kargo_away.push((at.session.clone(), project.clone()));
+                    }
+                }
+                continue;
+            }
             if at.kind == MemberKind::ArgoApplication {
                 match (&at.namespace, connections.opens(&at.session)) {
                     (Some(namespace), true) => {
@@ -1162,6 +1180,7 @@ impl ApplicationsPage {
         for (_, known) in &mut workloads {
             known.sort_by(|a, b| a.name.cmp(&b.name));
         }
+        kargo.sort();
         argo.sort_by(|a, b| a.0.cmp(&b.0));
         for (_, names) in &mut argo {
             names.sort();
@@ -1179,7 +1198,26 @@ impl ApplicationsPage {
                 workloads,
                 argo,
                 argo_elsewhere,
+                kargo,
+                kargo_elsewhere: kargo_away.len(),
             },
+            coroot: self.timeline_coroot(),
+        }
+    }
+
+    /// What the Timeline's Incidents read goes over: Observability's
+    /// connection and the open entry's Coroot link.
+    fn timeline_coroot(&self) -> page::timeline::CorootFeed {
+        use freshkube_delivery::timeline::incidents::Absent;
+        let entry = self.clusters.active.clone().unwrap_or_default();
+        let link = match self.live_coroot.links.of_entry(&entry) {
+            Ok(link) => Ok(link.clone()),
+            Err(change::Unlinked::NoProject) => Err(Absent::NoProject),
+            Err(change::Unlinked::NotLinked) => Err(Absent::NotLinked),
+        };
+        page::timeline::CorootFeed {
+            reader: self.live_coroot.reader.clone(),
+            link,
         }
     }
 

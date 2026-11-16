@@ -13,10 +13,13 @@
 use std::time::Duration;
 
 use chrono::Utc;
+use freshkube_core::coroot as api;
 use freshkube_delivery::entry;
 use freshkube_delivery::timeline::example::{self, Shape};
+use freshkube_delivery::timeline::incidents::{self, Absent};
 use freshkube_delivery::timeline::live::{self, Place};
 use freshkube_delivery::timeline::{self, Source, SourceRead, WINDOWS};
+use freshkube_observability::OutcomeReader;
 use freshkube_reads::{Loader, OnShow};
 use freshkube_ui::table::{self as kit, TableState};
 use gpui_kit::prelude::*;
@@ -38,9 +41,20 @@ const ON_SHOW: OnShow = OnShow::ReadIfOlder(FRESH_FOR);
 /// How long one read may take before every source says it timed out.
 const DEADLINE: Duration = Duration::from_secs(30);
 
+/// What the Incidents read goes over: Observability's connection and the
+/// open entry's Coroot link, or why there is none.
+#[derive(Clone)]
+pub struct CorootFeed {
+    pub reader: Option<OutcomeReader>,
+    pub link: Result<api::Link, Absent>,
+}
+
+/// Which provider (the connection) an Incidents read went over.
+type IncidentIdentity = (String, u32, Option<api::ProviderId>);
+
 /// Where the tab's sources come from.
 #[derive(Clone)]
-pub(crate) enum Fetch {
+pub enum Fetch {
     /// Example data's, `FRESHKUBE_TIMELINE`'s shape.
     Example {
         shape: Shape,
@@ -54,6 +68,7 @@ pub(crate) enum Fetch {
         /// The connection the list reads, as its own loader keys it.
         source_id: String,
         place: Place,
+        coroot: CorootFeed,
     },
 }
 
@@ -64,8 +79,11 @@ impl Fetch {
         match self {
             Self::Example { shape, .. } => format!("example/{shape:?}/{app}"),
             Self::Live {
-                source_id, place, ..
-            } => live_identity(source_id, app, place),
+                source_id,
+                place,
+                coroot,
+                ..
+            } => live_identity(source_id, app, place, &coroot.link),
         }
     }
 
@@ -78,8 +96,13 @@ impl Fetch {
 }
 
 /// Which connection, application and workloads a live read is for.
-fn live_identity(source_id: &str, app: &str, place: &Place) -> String {
-    format!("{source_id}/{app}/{place:?}")
+fn live_identity(
+    source_id: &str,
+    app: &str,
+    place: &Place,
+    link: &Result<api::Link, Absent>,
+) -> String {
+    format!("{source_id}/{app}/{place:?}/{link:?}")
 }
 
 /// One line of the list as the table draws it.
@@ -113,6 +136,11 @@ pub struct TimelineView {
     app: SharedString,
     fetch: Fetch,
     loader: Loader<Vec<SourceRead>, (String, u32)>,
+    /// The Incidents read: its own owner, since it goes over Observability's
+    /// connection and not the cluster's. It reads and drops with `loader`.
+    incidents: Loader<SourceRead, IncidentIdentity>,
+    /// Hears Observability's connection start, finish or drop.
+    connection: Option<Subscription>,
     hours: u32,
     /// The time example data is dated from: taken at its first read and
     /// kept, so a window or a refresh doesn't date it again and pass old
@@ -143,11 +171,15 @@ impl TimelineView {
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
+        let mut incidents = Loader::default();
+        incidents.set_visible(false, ON_SHOW, cx);
         let (columns, width) = table::columns(&[]);
-        Self {
+        let mut this = Self {
             app: app.to_owned().into(),
             fetch,
             loader,
+            incidents,
+            connection: None,
             hours: WINDOWS[0],
             anchor: Anchor::default(),
             fallback: Vec::new(),
@@ -162,6 +194,43 @@ impl TimelineView {
             table: TableState::new(PREFIX),
             loading,
             loading_motion,
+        };
+        this.follow_connection(cx);
+        this
+    }
+
+    /// Hears Observability's connection change, which asks Coroot again.
+    fn follow_connection(&mut self, cx: &mut Context<Self>) {
+        self.connection = match &self.fetch {
+            Fetch::Live {
+                coroot:
+                    CorootFeed {
+                        reader: Some(reader),
+                        ..
+                    },
+                ..
+            } => reader.on_connection(cx, |this, cx| {
+                if this.visible {
+                    this.read_incidents(cx);
+                }
+            }),
+            _ => None,
+        };
+    }
+
+    /// Tells Observability whether this tab, shown or hidden, wants Coroot
+    /// connected, as the change page does.
+    fn want_coroot(&self, wanted: bool, cx: &mut Context<Self>) {
+        if let Fetch::Live {
+            coroot:
+                CorootFeed {
+                    reader: Some(reader),
+                    ..
+                },
+            ..
+        } = &self.fetch
+        {
+            reader.want(cx.entity_id(), wanted, cx);
         }
     }
 
@@ -176,14 +245,19 @@ impl TimelineView {
     pub(super) fn set_fetch(&mut self, fetch: Fetch, cx: &mut Context<Self>) {
         if fetch.identity(&self.app) == self.fetch.identity(&self.app) {
             self.fetch = fetch;
+            self.follow_connection(cx);
             return;
         }
+        self.want_coroot(false, cx);
         self.fetch = fetch;
+        self.follow_connection(cx);
         self.anchor = Anchor::default();
         self.fallback.clear();
         self.loader.reset();
+        self.incidents.reset();
         self.derive(cx);
         if self.visible {
+            self.want_coroot(true, cx);
             self.read(cx);
         }
     }
@@ -196,7 +270,11 @@ impl TimelineView {
         }
         self.visible = visible;
         let reads_again = self.loader.set_visible(visible, ON_SHOW, cx);
-        if visible && reads_again {
+        // Example data answers Incidents with the rest; only a live read asks.
+        let incidents_again = self.incidents.set_visible(visible, ON_SHOW, cx)
+            && matches!(self.fetch, Fetch::Live { .. });
+        self.want_coroot(visible, cx);
+        if visible && (reads_again || incidents_again) {
             self.read(cx);
         }
         cx.notify();
@@ -216,6 +294,7 @@ impl TimelineView {
         }
         self.hours = hours;
         self.loader.reset();
+        self.incidents.reset();
         self.derive(cx);
         if self.visible {
             self.read(cx);
@@ -259,6 +338,7 @@ impl TimelineView {
                 place,
                 ..
             } => {
+                self.read_incidents(cx);
                 let now = Utc::now().timestamp();
                 let (job, receiver) = backend::spawn_job(
                     &runtime,
@@ -282,6 +362,97 @@ impl TimelineView {
             }
         }
         cx.notify();
+    }
+
+    /// Asks Coroot for the incidents of the application's workloads, over
+    /// Observability's connection and the entry's link, only while shown.
+    /// What can't be asked is answered at once as not read, with why.
+    fn read_incidents(&mut self, cx: &mut Context<Self>) {
+        let Fetch::Live { place, coroot, .. } = self.fetch.clone() else {
+            return;
+        };
+        if !self.visible {
+            return;
+        }
+        let hours = self.hours;
+        let now = Utc::now().timestamp();
+        let from = place.cluster.clone();
+        let base = self.fetch.identity(&self.app);
+        let connection = coroot
+            .reader
+            .as_ref()
+            .and_then(|reader| reader.connection(cx));
+        let identity = (base, hours, connection.as_ref().map(|c| c.id()));
+        let link = match (&coroot.link, &connection) {
+            (Ok(link), Some(_)) => link.clone(),
+            (Err(absent), _) => {
+                return self.settle_incidents(
+                    identity,
+                    &from,
+                    "",
+                    &place,
+                    Err(absent.clone()),
+                    now,
+                    hours,
+                );
+            }
+            (Ok(link), None) => {
+                let cluster = link.cluster().to_owned();
+                return self.settle_incidents(
+                    identity,
+                    &from,
+                    &cluster,
+                    &place,
+                    Err(Absent::NotConnected),
+                    now,
+                    hours,
+                );
+            }
+        };
+        let Some(connection) = connection else {
+            return;
+        };
+        let request = self.incidents.start(identity);
+        let cluster = link.cluster().to_owned();
+        let (job, receiver) = connection.incidents(
+            link,
+            hours,
+            chrono::DateTime::from_timestamp(now, 0).unwrap_or_default(),
+        );
+        let task = cx.spawn(async move |this, cx| {
+            let sample = match receiver.await {
+                Ok(Ok(Ok(list))) => Ok(list),
+                Ok(Ok(Err(why))) => Err(Absent::Failed(why)),
+                Ok(Err(why)) => Err(Absent::Other(why)),
+                Err(_) => Err(Absent::Other("Reading Coroot's incidents stopped".into())),
+            };
+            _ = this.update(cx, |this, cx| {
+                let read = incidents::read(&from, &cluster, &place.workloads, sample, now, hours);
+                if this.incidents.land(&request, Ok(read), cx) {
+                    this.derive(cx);
+                }
+                cx.notify();
+            });
+        });
+        self.incidents.run(job, task);
+        self.derive(cx);
+        cx.notify();
+    }
+
+    /// Answers the Incidents read without asking Coroot: it can't be asked.
+    #[allow(clippy::too_many_arguments)]
+    fn settle_incidents(
+        &mut self,
+        identity: IncidentIdentity,
+        from: &str,
+        cluster: &str,
+        place: &Place,
+        sample: Result<Vec<api::Incident>, Absent>,
+        now: i64,
+        hours: u32,
+    ) {
+        let read = incidents::read(from, cluster, &place.workloads, sample, now, hours);
+        self.incidents.resolve(identity, Ok(read));
     }
 
     /// An answer, published only while it is the one in flight. A read that
@@ -343,10 +514,44 @@ impl TimelineView {
             .map(|read| read.read_at)
             .max()
             .unwrap_or_default();
+        let merged;
+        let reads = match self.incident_read() {
+            Some(incidents) => {
+                merged = reads
+                    .iter()
+                    .filter(|read| read.source != Source::Incidents)
+                    .cloned()
+                    .chain([incidents])
+                    .collect::<Vec<_>>();
+                &merged
+            }
+            None => reads,
+        };
         let timeline = timeline::derive(reads, now, self.hours);
         self.chips = view::chips(&timeline);
         self.rows = table::rows(&timeline);
         (self.columns, self.width) = table::columns(&self.rows);
+    }
+}
+
+impl TimelineView {
+    /// The Incidents source as it stands: Coroot's answer, or not read while
+    /// it is asked. `None` leaves the one the cluster read carries (example
+    /// data's, or a placeholder).
+    fn incident_read(&self) -> Option<SourceRead> {
+        let Fetch::Live { place, .. } = &self.fetch else {
+            return None;
+        };
+        match self.incidents.data() {
+            Some(read) => Some(read.clone()),
+            None if self.incidents.is_loading() => Some(SourceRead::not_read(
+                Source::Incidents,
+                &place.cluster,
+                self.loader.data()?.iter().map(|r| r.read_at).max()?,
+                "reading Coroot's incidents",
+            )),
+            None => None,
+        }
     }
 }
 
@@ -412,6 +617,19 @@ impl TimelineView {
         );
     }
 
+    /// Reads from `fetch`, as the shell's hand-over does.
+    pub fn use_fetch(&mut self, fetch: Fetch, cx: &mut Context<Self>) {
+        self.set_fetch(fetch, cx);
+    }
+
+    /// Each chip's label, with what was cut or why it wasn't read.
+    pub fn chip_labels(&self) -> Vec<String> {
+        self.chips
+            .iter()
+            .map(|chip| chip.label.to_string())
+            .collect()
+    }
+
     /// Reads again now.
     pub fn refresh_now(&mut self, cx: &mut Context<Self>) {
         self.refresh(cx);
@@ -457,7 +675,9 @@ mod tests {
             )],
             ..Default::default()
         };
-        let key = |source: &str, place: &Place| super::live_identity(source, "checkout", place);
+        let key = |source: &str, place: &Place| {
+            super::live_identity(source, "checkout", place, &Err(super::Absent::NotLinked))
+        };
         let base = key("conn-a", &place("api", 1));
         assert_ne!(base, key("conn-b", &place("api", 1)), "another connection");
         assert_ne!(
@@ -473,6 +693,16 @@ mod tests {
         let mut elsewhere = place("api", 1);
         elsewhere.argo_elsewhere = 1;
         assert_ne!(base, key("conn-a", &elsewhere), "one read elsewhere");
+        let mut kargo = place("api", 1);
+        kargo.kargo = vec!["checkout".into()];
+        assert_ne!(base, key("conn-a", &kargo), "a Kargo Project");
+        let moved = super::live_identity(
+            "conn-a",
+            "checkout",
+            &place("api", 1),
+            &Err(super::Absent::NoProject),
+        );
+        assert_ne!(base, moved, "another Coroot link");
     }
 
     #[test]

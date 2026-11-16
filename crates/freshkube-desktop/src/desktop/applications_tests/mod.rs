@@ -7,6 +7,7 @@ mod page;
 mod results_forward;
 mod setup;
 mod timeline;
+mod timeline_live;
 mod waiting;
 
 use crate::applications::{ApplicationsPage, Variant};

@@ -22,7 +22,10 @@
 //! Times are Unix seconds, as Monitoring's markers are.
 
 pub mod example;
+pub mod incidents;
 pub mod live;
+#[cfg(test)]
+mod source_tests;
 #[cfg(test)]
 mod tests;
 

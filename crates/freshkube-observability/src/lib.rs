@@ -67,7 +67,7 @@ mod traces;
 mod view;
 #[cfg(any(test, feature = "testing"))]
 pub use after::Script;
-pub use after::{After, OutcomeReader, ReadConnection, example as after_example};
+pub use after::{After, IncidentAnswer, OutcomeReader, ReadConnection, example as after_example};
 pub use deployments::RevisionLink;
 use model::Application;
 pub use model::Destination;
