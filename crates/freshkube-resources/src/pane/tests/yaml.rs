@@ -129,3 +129,33 @@ fn lines_select_and_copy_and_copy_yaml_takes_the_whole_document(cx: &mut TestApp
     assert!(!name.contains('/'));
     assert_eq!(clipboard(cx), name);
 }
+
+/// A click on the YAML tab switches to it, at every pane width and text size
+/// (#1056, which reported two clicks doing nothing). The strip's fade over a
+/// cut end only dims the tab under it; just its chevron takes a click, so a
+/// tab is pressed at its centre unless the chevron is what covers it.
+#[gpui_kit::test]
+fn a_click_on_the_yaml_tab_switches_to_it_at_every_width_and_text_size(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    cx.update(|cx| crate::text_size::install(None, cx));
+    let mut failed = vec![];
+    for text in [13., 16., 20.] {
+        cx.update(|cx| crate::text_size::set(text, cx));
+        for width in (220..=700).step_by(20) {
+            cx.simulate_window_resize(handle, size(px(width as f32), px(820.)));
+            cx.update_window(handle, |_, window, cx| {
+                open(&pane, &pod, Duration::ZERO, cx);
+                pane.update(cx, |pane, cx| pane.set_tab(Tab::Overview, cx));
+                settle(window, cx);
+                window.click("detail-tab-yaml", cx);
+                settle(window, cx);
+                if window.find("detail-tab-yaml").selected() != Some(true) {
+                    failed.push((text, width));
+                }
+            })
+            .unwrap();
+        }
+    }
+    assert!(failed.is_empty(), "{failed:?}");
+}
