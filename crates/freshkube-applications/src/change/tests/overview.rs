@@ -75,6 +75,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
             "Eligible",
             "Promoted",
             "Verified",
+            "No Rollout",
             "Synced",
             "Running",
             "Not looked",
@@ -88,6 +89,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Eligible",
                 "Waiting",
                 "Waiting",
+                "No Rollout",
                 "Not reached",
                 "Can't read",
                 "Not reached"
@@ -99,6 +101,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Approved",
                 "Promoted",
                 "Failed",
+                "No Rollout",
                 "Synced",
                 "Running",
                 "Not looked"
@@ -165,11 +168,14 @@ fn a_stage_that_waits_is_a_dotted_track_and_one_that_never_got_there_a_hairline(
     let page = page.read_with(cx, |page, _| page.overview.clone());
     let ams = page.iter().find(|row| row.name == "prod-ams").unwrap();
     assert_eq!(ams.cells[1].track(), Track::Dotted, "waiting promotion");
-    assert_eq!(ams.cells[3].track(), Track::Hairline, "not reached");
+    assert_eq!(ams.cells[4].track(), Track::Hairline, "not reached");
     let dev = &page[0];
+    // The Next step cell has no Rollout here, so it is a hairline.
+    assert_eq!(dev.cells[3].track(), Track::Hairline, "no Rollout");
     assert!(
-        dev.cells[..5]
+        dev.cells[..3]
             .iter()
+            .chain(&dev.cells[4..6])
             .all(|cell| cell.track() == Track::Solid)
     );
     // The rail into a waiting Stage is dotted; into the others it is solid.
@@ -424,13 +430,13 @@ fn a_claimed_link_is_a_dashed_track_under_a_healthy_glyph(cx: &mut TestAppContex
         }
         page.update(cx, |page, cx| page.read_answer(change, window, cx));
         let dev = page.read(cx).overview[0].clone();
-        let running = &dev.cells[4];
+        let running = &dev.cells[5];
         // Status is the glyph's, confidence the track's.
         assert_eq!(running.tone, Tone::Good);
         assert_eq!(running.word.as_ref(), "Running");
         assert_eq!(running.track(), Track::Dashed);
         // A Confirmed link stays solid.
-        assert_eq!(dev.cells[3].track(), Track::Solid);
+        assert_eq!(dev.cells[4].track(), Track::Solid);
     })
     .unwrap();
 }
@@ -456,7 +462,7 @@ fn after_deploy_says_why_coroot_has_no_verdict(cx: &mut TestAppContext) {
                 }
                 page.derive_overview();
             });
-            let cell = page.read(cx).overview[0].cells[5].clone();
+            let cell = page.read(cx).overview[0].cells[6].clone();
             assert_eq!(cell.word.as_ref(), word);
             // A cause is not a failure.
             assert_ne!(cell.tone, Tone::Crit);
@@ -591,6 +597,90 @@ fn the_focused_cell_wears_the_keyboard_ring_and_loses_it_with_the_focus(cx: &mut
             })
             .count();
         assert_eq!(rings, 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_rollouts_shape_fills_the_next_step_column_and_says_why_when_it_cant(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::table::Track;
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Rollouts, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let next = |cx: &App, stage: &str| {
+            let page = page.read(cx);
+            let row = page.overview.iter().find(|row| row.name == stage).unwrap();
+            row.cells[Column::ALL
+                .iter()
+                .position(|c| *c == Column::NextStep)
+                .unwrap()]
+            .clone()
+        };
+        for stage in ["dev", "stage", "prod-ams", "prod-lon"] {
+            assert!(
+                window
+                    .find(format!("change-cell-{stage}-next-step"))
+                    .visible(),
+                "{stage}"
+            );
+        }
+        let (dev, stage, ams, lon) = (
+            next(cx, "dev"),
+            next(cx, "stage"),
+            next(cx, "prod-ams"),
+            next(cx, "prod-lon"),
+        );
+        assert_eq!((dev.word.as_ref(), dev.tone), ("Done", Tone::Good));
+        assert_eq!(
+            (stage.word.as_ref(), stage.tone),
+            ("Step 2 of 4", Tone::Info)
+        );
+        assert_eq!(ams.word.as_ref(), "No Rollout");
+        assert_eq!(ams.track(), Track::Hairline);
+        // A Rollout that couldn't be read says its cause, never blank, and
+        // is no failure.
+        assert_eq!(lon.word.as_ref(), "Can't read");
+        assert_ne!(lon.tone, Tone::Crit);
+        assert!(lon.tooltip.contains("forbidden"), "{}", lon.tooltip);
+        assert!(lon.reached);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn every_next_step_has_a_word_that_fits_its_column(cx: &mut TestAppContext) {
+    use freshkube_delivery::change::NextStep;
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        for (next, word, tone) in [
+            (NextStep::Done, "Done", Tone::Good),
+            (
+                NextStep::Step { at: 10, of: 12 },
+                "Step 10 of 12",
+                Tone::Info,
+            ),
+            (NextStep::Paused { step: None }, "Paused", Tone::Info),
+            (NextStep::Progressing, "Progressing", Tone::Waiting),
+            (NextStep::Aborted, "Aborted", Tone::Crit),
+            (
+                NextStep::Unknown {
+                    why: "the Rollout was not read".into(),
+                    cause: None,
+                },
+                "Unknown",
+                Tone::Unknown,
+            ),
+        ] {
+            let mut change = page.read(cx).change.clone();
+            change.stages[0].next_step = next;
+            page.update(cx, |page, cx| page.read_answer(change, window, cx));
+            let cell = page.read(cx).overview[0].cells[3].clone();
+            assert_eq!(cell.word.as_ref(), word);
+            assert_eq!(cell.tone, tone, "{word}");
+            assert!(cell.word.chars().count() <= 14, "{word}");
+        }
     })
     .unwrap();
 }

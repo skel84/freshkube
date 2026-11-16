@@ -3,6 +3,7 @@
 //! reach in promotion order, with that Stage's three gates first.
 
 mod gaps;
+mod next_step;
 mod reported;
 
 use gaps::missing;
@@ -249,6 +250,7 @@ pub fn derive(
             verification: gates.verification,
             link: runs.first().map(|link| link_detail(link)),
             reach,
+            next_step: next_step::next_step(at.workloads, &runs),
             object: object(
                 &sides.kargo,
                 &ObjectRef::new(

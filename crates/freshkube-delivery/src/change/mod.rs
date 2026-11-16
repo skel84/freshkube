@@ -11,10 +11,12 @@
 mod cause;
 pub mod example;
 pub mod live;
+mod next_step;
 mod summary;
 mod unread;
 
 pub use cause::{Cause, Next, Role, SettingsField};
+pub use next_step::NextStep;
 pub use summary::{Fix, fixes, headline};
 
 use chrono::{DateTime, Utc};
@@ -518,6 +520,9 @@ pub struct Stage {
     pub link: Option<LinkDetail>,
     /// How sure it is that its pods run the change.
     pub reach: Reach,
+    /// Where the Rollout its Application manages is, for the Overview's
+    /// Next step column.
+    pub next_step: NextStep,
     /// The Stage itself, to open in Resources.
     pub object: Object,
     /// What its actions (Refresh, Promote, Abort) need, when the Stage and
@@ -544,6 +549,7 @@ impl std::fmt::Debug for Stage {
             .field("verification", &self.verification)
             .field("link", &self.link)
             .field("reach", &self.reach)
+            .field("next_step", &self.next_step)
             .field("object", &self.object)
             .finish()
     }

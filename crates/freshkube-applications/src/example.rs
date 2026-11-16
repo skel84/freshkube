@@ -81,6 +81,9 @@ pub enum Variant {
     RollbackUnknown,
     /// No Stage has an earlier Freight in its history.
     RollbackNone,
+    /// The Next step column shows each state: done, a step, no Rollout and
+    /// one that couldn't be read.
+    Rollouts,
     /// Every Deployment hop of a change shows one outcome of what Coroot
     /// found after its deploy, so a capture can show each.
     Outcome(crate::change::OutcomeKind),
@@ -137,6 +140,7 @@ impl Variant {
         ("promoting", Self::Promoting),
         ("rollback-unknown", Self::RollbackUnknown),
         ("rollback-none", Self::RollbackNone),
+        ("rollouts", Self::Rollouts),
     ];
 
     /// The outcome every Deployment hop shows, in the shape that says one.
@@ -166,6 +170,7 @@ impl Variant {
             Self::Promoting => Shape::Promoting,
             Self::RollbackUnknown => Shape::RollbackUnknown,
             Self::RollbackNone => Shape::RollbackNone,
+            Self::Rollouts => Shape::Rollouts,
             _ => Shape::Whole,
         }
     }
@@ -208,6 +213,7 @@ pub fn inputs(variant: Variant) -> Inputs {
         | Variant::Promoting
         | Variant::RollbackUnknown
         | Variant::RollbackNone
+        | Variant::Rollouts
         | Variant::GitHubLimited
         | Variant::GitHubRefused
         | Variant::GitHubOffline

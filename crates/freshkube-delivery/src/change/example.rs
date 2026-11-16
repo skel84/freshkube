@@ -252,6 +252,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
         verification,
         link: stage_link(name),
         reach: Reach::Linked(Confidence::Confirmed),
+        next_step: NextStep::NoRollout,
         object: stage_object(name),
         acts: Some(example_acts(name)),
     };
@@ -1096,6 +1097,26 @@ fn rollback_shape(change: &mut Change, none: bool) {
     }
 }
 
+/// [`Shape::Rollouts`]: what the Next step column says for each Stage.
+fn rollouts(change: &mut Change) {
+    for stage in &mut change.stages {
+        stage.next_step = match stage.name.as_str() {
+            "dev" => NextStep::Done,
+            "stage" => NextStep::Step { at: 2, of: 4 },
+            "prod-lon" => NextStep::Unknown {
+                why: "Rollouts were refused on prod-lon: rollouts.argoproj.io is forbidden for this identity"
+                    .into(),
+                cause: Some(Cause::cant_read(
+                    "the environment cluster's Rollouts, to see what the Application runs",
+                    None,
+                    true,
+                )),
+            },
+            _ => NextStep::NoRollout,
+        };
+    }
+}
+
 /// [`Shape::Promoting`]: a Promotion of the Freight to `prod-ams`, made by
 /// someone else, is running.
 fn promoting(change: &mut Change) {
@@ -1369,6 +1390,9 @@ pub enum Shape {
     RollbackUnknown,
     /// No Stage has an earlier Freight in its history.
     RollbackNone,
+    /// The Stages' Rollouts: `dev` is done, `stage` is on step 2 of 4,
+    /// `prod-ams` has none and `prod-lon`'s couldn't be read.
+    Rollouts,
 }
 
 impl Shape {
@@ -1400,6 +1424,7 @@ impl Shape {
             | Self::Promoting
             | Self::RollbackUnknown
             | Self::RollbackNone
+            | Self::Rollouts
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline
@@ -1448,6 +1473,10 @@ impl Shape {
             }
             return Ok(change);
         }
+        if self == Self::Rollouts {
+            rollouts(&mut change);
+            return Ok(change);
+        }
         if matches!(self, Self::RollbackUnknown | Self::RollbackNone) {
             rollback_shape(&mut change, self == Self::RollbackNone);
             return Ok(change);
@@ -1467,6 +1496,7 @@ impl Shape {
             | Self::Promoting
             | Self::RollbackUnknown
             | Self::RollbackNone
+            | Self::Rollouts
             | Self::GitHubLimited
             | Self::GitHubRefused
             | Self::GitHubOffline

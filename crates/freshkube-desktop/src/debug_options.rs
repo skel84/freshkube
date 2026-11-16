@@ -782,6 +782,7 @@ mod tests {
             ("promoting", Variant::Promoting),
             ("rollback-unknown", Variant::RollbackUnknown),
             ("rollback-none", Variant::RollbackNone),
+            ("rollouts", Variant::Rollouts),
         ] {
             assert_eq!(
                 parse(&[("FRESHKUBE_APPLICATIONS", value)]).applications,
