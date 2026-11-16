@@ -155,6 +155,11 @@ impl TableState {
     pub fn reveal_whole(&self, line: usize, lines: usize) {
         match self.last_whole_row(line, lines) {
             Some(top) => self.scroll.scroll_to_item_strict(top, ScrollStrategy::Top),
+            // A window shorter than a row shows its top, where the row's
+            // first line is.
+            None if self.window_is_shorter_than_a_row(lines) => {
+                self.scroll.scroll_to_item_strict(line, ScrollStrategy::Top)
+            }
             None => self.scroll.scroll_to_item(line, ScrollStrategy::Nearest),
         }
     }
@@ -164,6 +169,31 @@ impl TableState {
     /// before it has drawn, when the window holds less than a row, or when
     /// `line` shows already or is above.
     fn last_whole_row(&self, line: usize, lines: usize) -> Option<usize> {
+        let window = self.whole_window(lines)?;
+        (line >= window.end).then(|| line + 1 - window.capacity)
+    }
+
+    /// Whether the list's last frame drew a window shorter than one row.
+    fn window_is_shorter_than_a_row(&self, lines: usize) -> bool {
+        let state = self.scroll.0.borrow();
+        let Some(last) = state.last_item_size else {
+            return false;
+        };
+        let row = f32::from(last.contents.height) / lines.max(1) as f32;
+        row >= 1. && f32::from(state.base_handle.bounds().size.height) < row
+    }
+
+    /// Whether `line` shows whole in the window, as the list's last frame
+    /// drew it; `None` before it has drawn or when the window holds less
+    /// than a row, when nothing can be said yet.
+    pub fn shows_whole(&self, line: usize, lines: usize) -> Option<bool> {
+        let window = self.whole_window(lines)?;
+        Some(line >= window.start && line < window.end)
+    }
+
+    /// The whole lines of the window, from the list's last frame; `None`
+    /// before it has drawn or when the window holds less than a row.
+    fn whole_window(&self, lines: usize) -> Option<WholeWindow> {
         let state = self.scroll.0.borrow();
         // The list's last frame: `item` is its window, `contents` all its
         // lines, which are one height.
@@ -174,10 +204,14 @@ impl TableState {
         }
         // A fraction of a pixel over a whole row count is the hairlines'
         // rounding, not room for another row.
-        let whole = ((view + 1.5) / row).floor() as usize;
         let scrolled = (-f32::from(state.base_handle.offset().y)).max(0.);
-        let first = (scrolled / row - 0.01).ceil().max(0.) as usize;
-        (line >= first + whole).then(|| line + 1 - whole)
+        let start = (scrolled / row - 0.01).ceil().max(0.) as usize;
+        let end = ((scrolled + view + 1.5) / row).floor() as usize;
+        Some(WholeWindow {
+            start,
+            end: end.max(start),
+            capacity: ((view + 1.5) / row).floor() as usize,
+        })
     }
 
     /// Scrolls the table sideways so the column spanning `left..left +
@@ -215,6 +249,14 @@ impl TableState {
     fn pins(&self, run: f32, window: &Window) -> bool {
         pins(&self.sideways, run, window)
     }
+}
+
+/// The lines a list window shows whole: `start..end`, and how many whole
+/// lines the window holds at most.
+struct WholeWindow {
+    start: usize,
+    end: usize,
+    capacity: usize,
 }
 
 /// How many leading columns pin, and their width.
