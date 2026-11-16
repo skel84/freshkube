@@ -1,0 +1,1 @@
+- The change page reads the pull request a squash-merge title names (`(#418)`) directly when GitHub calls are scarce (no token or a low limit), and labels the link as taken from the commit title.

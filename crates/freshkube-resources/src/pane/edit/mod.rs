@@ -131,11 +131,22 @@ impl DetailPane {
         self.edit_offer.refusal().map(str::to_owned)
     }
 
+    /// Whether the open object was deleted: there is nothing left to edit.
+    fn is_deleted(&self) -> bool {
+        self.detail
+            .as_ref()
+            .is_some_and(|detail| detail.read == DocumentRead::Deleted)
+    }
+
     /// What Edit's tooltip says when it is off: the level's reason, then a
     /// failed read's, then the cluster's no; `None` while it is on.
     pub(crate) fn edit_reason(&self) -> Option<String> {
         self.write_block
             .map(str::to_owned)
+            .or_else(|| {
+                self.is_deleted()
+                    .then(|| "This object was deleted, so there is nothing to edit.".to_owned())
+            })
             .or_else(|| match &self.edit {
                 Some(Edit {
                     phase: Phase::Failed(why),
@@ -208,6 +219,18 @@ impl DetailPane {
         }
     }
 
+    /// The resourceVersion the text being edited is based on.
+    #[cfg(test)]
+    pub(super) fn edit_based_on(&self) -> Option<String> {
+        match &self.edit {
+            Some(Edit {
+                phase: Phase::Editing(editing),
+                ..
+            }) => Some(editing.session.target().resource_version.clone()),
+            _ => None,
+        }
+    }
+
     /// The editor's state, while a text is edited.
     #[cfg(test)]
     pub(super) fn edit_state(&self) -> Option<Entity<EditorState>> {
@@ -225,6 +248,35 @@ impl DetailPane {
         self.edit = None;
     }
 
+    /// The edit's own write was taken by the cluster: the text was based on a
+    /// version that write has replaced, so the editor closes and the YAML
+    /// view reads the object again. Another writer's change is not this:
+    /// that leaves the editor open with its note (`edit_view`).
+    ///
+    /// `version` is the resourceVersion the written edit was based on. Only
+    /// an editor whose session started from it closes: one the person has
+    /// since cancelled and opened again, on a newer version, holds new text
+    /// this write knows nothing about.
+    pub(crate) fn edit_written(
+        &mut self,
+        identity: &ResourceIdentity,
+        version: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let ours = matches!(
+            &self.edit,
+            Some(Edit { identity: at, phase: Phase::Editing(editing) })
+                if at == identity && editing.session.target().resource_version == version
+        );
+        if !ours {
+            return;
+        }
+        self.end_edit();
+        self.feedback = None;
+        self.refresh(cx);
+        cx.notify();
+    }
+
     /// Edit was pressed.
     pub(super) fn start_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(detail), Some(access)) = (self.detail.as_ref(), self.access.clone()) else {
@@ -234,7 +286,7 @@ impl DetailPane {
             || self.write_block.is_some()
             || self.access_refusal().is_some()
             || self.edit.is_some()
-            || detail.read == DocumentRead::Deleted
+            || self.is_deleted()
         {
             return;
         }
@@ -439,7 +491,9 @@ impl DetailPane {
                 .outline()
                 .xsmall()
                 .label(if reading { "Opening…" } else { "Edit" })
-                .disabled(self.write_block.is_some() || refusal.is_some() || reading)
+                .disabled(
+                    self.write_block.is_some() || refusal.is_some() || self.is_deleted() || reading,
+                )
                 .tooltip(tooltip)
                 .on_click(cx.listener(|pane, _, window, cx| {
                     pane.end_edit();

@@ -280,6 +280,8 @@ impl DetailPane {
                     .map(|timeline| self.timeline(timeline, cx)),
             )
             .child(containers)
+            // After the containers, whose actions a short pane needs where they were.
+            .children(self.alerts_section(true, cx))
             .child(runs_on)
             .child(relations)
             .child(recent)

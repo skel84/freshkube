@@ -1,4 +1,5 @@
 mod acts;
+mod alerts;
 mod drawer;
 mod external_secrets;
 mod flash;

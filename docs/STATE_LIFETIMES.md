@@ -218,6 +218,7 @@ page.
 | What it reads | Core's `drive`: it looks for the Alertmanager and vmalert once, and starts polling only when one answered; it then reads the active alerts every 60 s, bounded (answers 8 MiB, 500 alerts kept, the rest counted). With none found, or after a refusal, it publishes that and ends; after a source was once found nothing ends it, and a source that stops answering is looked for again after three failed reads. |
 | What it knows | `ClusterSession.alerts`: its identity and the last `State`. Unread, stale, refused or without the central store's cluster label is Unknown, never "no alerts"; only a current read with nothing active is quiet, and PrometheusRule objects alone say nothing of health. A failed read keeps the one before it as stale evidence. |
 | Sharing | One read per live session and one per source. #846's Followed owner reads `Pilot::alert_state` instead of polling. The Alerts, Rules and Silences pages are not part of it: each is an ordinary `Loader` owner that reads only while shown (`OnShow::ReadIfOlder(30 s)`), and Refresh reads again. |
+| Panes | The pod, workload and node panes' Alerts section (a node's in the Nodes workspace too, `Nodes::set_alerts`) is another consumer of the same state, never of a read: `Pilot::push_alerts` hands `ResourcesScreen::set_alerts` the latest `State` (or none once the read stops), and the pane derives its lines when that or the open object changes. It adds no request. |
 
 ### Sleep and wake
 

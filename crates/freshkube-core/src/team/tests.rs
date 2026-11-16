@@ -308,14 +308,21 @@ fn the_git_command_runs_nothing_from_the_repo() {
     let empty = std::path::Path::new("/app/empty");
     let cmd = GitFetch::new(&git, mirror, empty, false);
     assert_eq!(cmd.program, "git");
-    assert_eq!(cmd.env, vec![("GIT_TERMINAL_PROMPT", "0")]);
+    assert_eq!(
+        cmd.env,
+        vec![
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("GIT_ALLOW_PROTOCOL", "https:ssh"),
+            ("GIT_PROTOCOL_FROM_USER", "0"),
+            ("GIT_LITERAL_PATHSPECS", "1"),
+        ]
+    );
     // Every flag, in order. The address comes after `--`, so it can never be
     // read as an option. The person's credential helper is left alone.
     assert_eq!(
         cmd.args,
         [
-            "-C",
-            "/app/mirror.git",
+            "--git-dir=/app/mirror.git",
             "-c",
             "core.hooksPath=/app/empty",
             "-c",
@@ -332,9 +339,12 @@ fn the_git_command_runs_nothing_from_the_repo() {
             "protocol.ext.allow=never",
             "-c",
             "submodule.recurse=false",
+            "-c",
+            "transfer.fsckObjects=true",
             "fetch",
             "--no-recurse-submodules",
             "--no-tags",
+            "--depth=1",
             "--force",
             "--",
             "git@example.test:team/setup.git",
@@ -362,11 +372,23 @@ fn the_git_command_runs_nothing_from_the_repo() {
 }
 
 #[test]
+fn an_scp_address_with_an_at_sign_in_its_path_is_accepted() {
+    for url in [
+        "git@example.test:org/a@b.git",
+        "git@example.test:team/setup.git",
+    ] {
+        assert_eq!(GitSource::new(url, "", "").map(|_| ()), Ok(()), "{url}");
+    }
+}
+
+#[test]
 fn an_address_with_credentials_is_refused_and_never_shown() {
     for url in [
         "https://user:secret@example.test/team.git",
         "https://token@example.test/team.git",
         "ssh://user:secret@example.test/team.git",
+        "user:tok3n@example.test:team/setup.git",
+        "git:tok3n@example.test:team/setup.git",
     ] {
         assert_eq!(
             GitSource::new(url, "", ""),
