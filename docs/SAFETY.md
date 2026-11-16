@@ -249,6 +249,9 @@ Guarantee 28 extends this one: a file edited to `protected` while a dialog is op
 - `safety_g28_a_delete_sends_nothing_when_the_file_got_stricter_even_during_its_countdown` (`crates/freshkube-desktop/src/write_flow/fresh_tests.rs`)
 - `safety_g28_an_undo_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/write_flow/fresh_tests.rs`)
 - `safety_g28_a_stage_action_sends_nothing_when_the_file_got_stricter` (`crates/freshkube-desktop/src/write_flow/stage_tests.rs`)
+- `safety_g28_an_everyday_action_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g28_an_edit_of_the_yaml_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
+- `safety_g28_a_delete_sends_nothing_when_the_file_went_read_only` (`crates/freshkube-desktop/src/desktop/tests/everyday.rs`)
 
 ## Known gaps
 
