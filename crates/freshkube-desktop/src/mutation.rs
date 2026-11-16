@@ -1043,6 +1043,16 @@ mod tests {
         });
     }
 
+    /// The shell has published a setup that lists the entry `prod`.
+    fn publish_prod(cx: &mut gpui_kit::App) {
+        use freshkube_core::workspace::{Entry, Role, SourceRecovery, Workspace};
+        let mut workspace = Workspace::default();
+        workspace
+            .clusters
+            .push(Entry::new("prod", Role::Core, "prod-fra"));
+        super::set_workspace_levels(&workspace, &SourceRecovery::default(), cx);
+    }
+
     /// A write runner reads the setup file at its send step too: with no file
     /// it can't say and refuses; a listed entry is read by its id; a legacy
     /// user is read by context.
@@ -1057,9 +1067,9 @@ mod tests {
         });
         let setup = TestSetup::new(Protection::Protected, cx);
         cx.update(|cx| {
-            // `prod` is a workspace entry only once the shell has published its
-            // levels; until then the context names it.
-            super::set_entry_levels([("prod".to_owned(), Protection::Protected)], cx);
+            // `prod` is a workspace entry only once the shell has published the
+            // setup that lists it; until then the context names it.
+            publish_prod(cx);
             let listed = runner_guard("prod", "prod-fra", cx).unwrap();
             assert_eq!(listed.subject(), &Subject::Entry("prod".into()));
             assert_eq!(listed.read(), Ok(Protection::Protected));
@@ -1067,7 +1077,7 @@ mod tests {
         drop(setup);
         let _legacy = TestSetup::legacy(cx);
         cx.update(|cx| {
-            super::set_entry_levels([("prod".to_owned(), Protection::Guarded)], cx);
+            publish_prod(cx);
             let guard = runner_guard("prod", "prod-fra", cx).unwrap();
             assert_eq!(guard.subject(), &Subject::Context("prod-fra".into()));
             assert_eq!(guard.read(), Ok(Protection::Guarded));

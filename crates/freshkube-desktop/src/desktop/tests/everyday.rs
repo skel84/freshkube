@@ -62,7 +62,22 @@ fn world_on(cx: &mut TestAppContext, entry: &str, make: impl FnOnce() -> Cluster
         pilot.settings_page.read(cx).workspace().clone()
     });
     let file = world.dir.path().join("freshkube.yaml");
-    std::fs::write(&file, freshkube_core::workspace::to_text(&workspace)).unwrap();
+    // Only what the level needs: the example entries carry connection settings a
+    // setup file would validate away, and a skipped row is a gone entry.
+    let clusters: Vec<_> = workspace
+        .clusters
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "id": entry.id,
+                "role": entry.role,
+                "context": entry.context,
+                "protection": entry.protection,
+            })
+        })
+        .collect();
+    let text = serde_json::json!({ "version": 1, "clusters": clusters }).to_string();
+    std::fs::write(&file, text).unwrap();
     cx.update(|cx| crate::mutation::setup_file_under(file, cx));
     world
 }
