@@ -598,6 +598,15 @@ impl Pilot {
         subscriptions
     }
 
+    /// A send found a stricter level in the setup file than the app holds
+    /// (#1055): the header and the status bar draw it at once.
+    fn observe_level_raised(window: &mut Window, cx: &mut Context<Self>) -> Subscription {
+        cx.observe_global_in::<crate::mutation::LevelRaised>(window, |view, window, cx| {
+            view.prepare_context_display(window, cx);
+            cx.notify();
+        })
+    }
+
     /// Cached views keep their last frame; a font size or palette change
     /// that doesn't refresh the window by itself must still redraw them.
     /// Made after the pages, so Observability hears the theme first.
@@ -701,6 +710,7 @@ impl Pilot {
         let switch = switch::Switcher::new(age_label);
         let pages = page_map::Pages::new(&options, &runtime, &switch.age_label, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
+        subscriptions.push(Self::observe_level_raised(window, cx));
         subscriptions.extend(pages.subscribe(window, cx));
         let tick = Self::start_tick(window, cx);
         let chrome = shell::Chrome::new(
@@ -837,6 +847,7 @@ impl Pilot {
         self.start_crash_log(&debug, &runtime, window, cx);
         self.tell_settings_files(window, cx);
         self.start_wake_watch(window, cx);
+        self.start_network_watch(window, cx);
         // A link given at launch, and every one the operating system opens
         // us with after it, opens once the window has settled and has a
         // cluster to read.

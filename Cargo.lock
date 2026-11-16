@@ -2821,6 +2821,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.9",
+ "system-configuration",
  "talos-rs",
  "tempfile",
  "thiserror 2.0.17",

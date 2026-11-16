@@ -84,6 +84,35 @@ fn signal() -> &'static watch::Sender<u64> {
     SIGNAL.with(|signal| *signal)
 }
 
+/// A signal of its own, for a test that must not reach other streams (the
+/// process-wide one does, and tests share a process).
+#[cfg(any(test, feature = "testing"))]
+#[derive(Debug)]
+pub struct OwnSignal(watch::Sender<u64>);
+
+#[cfg(any(test, feature = "testing"))]
+impl OwnSignal {
+    pub fn new() -> Self {
+        Self(watch::channel(0).0)
+    }
+
+    /// A stream that hears this signal only.
+    pub fn wakes(&self) -> Wakes {
+        Wakes(self.0.subscribe())
+    }
+
+    pub fn announce(&self) {
+        self.0.send_modify(|wakes| *wakes += 1);
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl Default for OwnSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Tells every [`Wakes`] that the machine woke.
 pub fn announce() {
     signal().send_modify(|wakes| *wakes += 1);

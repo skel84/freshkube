@@ -15,6 +15,7 @@ use freshkube_core::diagnostic_runner::{
     KubernetesAccess, SourceState, SourceUnavailable,
 };
 use freshkube_core::diagnostics::{CheckCategory, CheckStatus, CniType};
+use freshkube_core::write::SetupLevels;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Sizable,
@@ -32,7 +33,7 @@ use super::{
 };
 use crate::actions;
 use crate::backend::spawn_job;
-use crate::mutation::{self, Confirmation, Operations, Refused};
+use crate::mutation::{self, Confirmation, OperationTicket, Operations, Refused};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use freshkube_ui::table;
@@ -535,6 +536,9 @@ impl DiagnosticsScreen {
         let this = cx.weak_entity();
         let (current, run) = (this.clone(), this);
         let (current_key, run_key) = (check_key.clone(), check_key);
+        // The setup file the send step reads again, for the identity the
+        // dialog is for (#1055).
+        let guard = mutation::send_guard(&source.target.context, source.is_example(), cx);
         mutation::confirm(
             Confirmation {
                 title: format!("Apply fix: {}", fix.description).into(),
@@ -553,7 +557,9 @@ impl DiagnosticsScreen {
                 on_confirm: Rc::new(move |window: &mut Window, cx: &mut App| {
                     if let Some(view) = run.upgrade() {
                         let check_key = run_key.clone();
-                        view.update(cx, |view, cx| view.start_fix(check_key, window, cx));
+                        view.update(cx, |view, cx| {
+                            view.start_fix(check_key, guard.clone(), window, cx)
+                        });
                     }
                 }),
             },
@@ -573,7 +579,17 @@ impl DiagnosticsScreen {
 
     /// Takes the operation slot, applies the fix, and re-runs the diagnostics.
     /// Example data only simulates it.
-    fn start_fix(&mut self, check_key: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_fix(
+        &mut self,
+        check_key: String,
+        guard: Option<SetupLevels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The source, the check and the fix are resolved here, before the
+        // setup file is read again, and the send runs against them: a refresh
+        // while the read is in flight can't make it apply a different fix
+        // (guarantee 10, "only against the preview shown").
         let Some(source) = self.source.clone() else {
             return;
         };
@@ -609,6 +625,71 @@ impl DiagnosticsScreen {
                 return;
             }
         };
+        let plan = FixPlan {
+            check_key,
+            check_id,
+            fix,
+            source,
+        };
+        let Some(guard) = guard else {
+            self.run_fix(plan, ticket, window, cx);
+            return;
+        };
+        // The slot is held while the setup file is read again off the UI
+        // thread; a file that got stricter, can't say, or a window that moved
+        // meanwhile sends nothing and gives the slot back (#1055).
+        let held = mutation::level(cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let decided =
+                mutation::level_at_send(Some(guard), held, cx.background_executor()).await;
+            // An update that fails (the window is gone) is a refusal, never
+            // "go on".
+            let refused = match decided {
+                Err(refusal) => Some(
+                    cx.update(|_, cx| mutation::refused_text(refusal, cx))
+                        .unwrap_or_else(|_| refusal.text()),
+                ),
+                Ok(_) => cx
+                    .update(|_, cx| mutation::moved_during_read(held, cx))
+                    .unwrap_or_else(|_| Some(mutation::WINDOW_GONE.to_owned())),
+            };
+            let Some(text) = refused else {
+                _ = this.update_in(cx, |view, window, cx| {
+                    view.run_fix(plan, ticket, window, cx)
+                });
+                return;
+            };
+            _ = this.update(cx, |view, cx| {
+                view.set_notice(
+                    &plan.check_key,
+                    false,
+                    format!("{text} Nothing was started."),
+                    cx,
+                )
+            });
+            _ = cx.update(|_, cx| {
+                operations.update(cx, |operations, cx| operations.finish(ticket, cx))
+            });
+        })
+        .detach();
+    }
+
+    /// Applies the fix the plan describes once the setup file has been read
+    /// again. The slot is held from here to the end.
+    fn run_fix(
+        &mut self,
+        plan: FixPlan,
+        ticket: OperationTicket,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let FixPlan {
+            check_key,
+            check_id,
+            fix,
+            source,
+        } = plan;
+        let operations = Operations::global(cx);
         let Some(live) = source.live.clone() else {
             // Offline: no client, no network, nothing written.
             self.set_notice(&check_key, true, actions::simulated(&fix), cx);
@@ -685,6 +766,14 @@ impl DiagnosticsScreen {
         self.shown = shown;
         cx.notify();
     }
+}
+
+/// What Apply fix was asked to do, resolved when it was confirmed.
+struct FixPlan {
+    check_key: String,
+    check_id: String,
+    fix: DiagnosticFix,
+    source: ScreenSource,
 }
 
 mod example;
