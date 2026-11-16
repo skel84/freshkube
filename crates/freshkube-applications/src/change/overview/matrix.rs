@@ -85,6 +85,12 @@ pub struct Matrix {
 }
 
 impl Matrix {
+    /// The list's scroll, for a test that scrolls it.
+    #[cfg(test)]
+    pub(in crate::change) fn table_scroll(&self) -> gpui_kit::UniformListScrollHandle {
+        self.table.scroll.clone()
+    }
+
     pub fn new(page: WeakEntity<ChangePage>) -> Self {
         Self {
             page,
