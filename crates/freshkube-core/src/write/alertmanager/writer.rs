@@ -389,6 +389,9 @@ impl AlertWriter {
 
     /// One request through the proxy: the status and the body, bounded by
     /// the timeout and `limit`. Errors name neither the server nor a token.
+    /// Private, and reached only from `preview` and `read_back` (GET),
+    /// `create` (POST) and `expire` (DELETE): no other method is written in
+    /// this file, which a test reads (guarantee 29).
     ///
     /// Private, and called only from `preview`, `read_back` (GET), `create`
     /// (POST) and `expire` (DELETE): a new write method is a new caller here,

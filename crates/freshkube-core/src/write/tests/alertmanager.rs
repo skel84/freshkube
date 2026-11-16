@@ -698,3 +698,52 @@ fn the_futures_of_a_silence_are_send(
     is_send(&runner.preflight(action));
     is_send(&runner.execute(prepared, Confirmation::Confirmed, || false, |_| {}));
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_service_is_read_again_just_before_the_send() {
+    let (fake, dir) = (fake_with_pod_alert(), tmp());
+    let runner = runner(&fake, dir.path(), Protection::Guarded, Scope::Cluster);
+    let prepared = ready(&runner, silence(pod_matchers(), 2)).await;
+    fake.recreate_service();
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert!(matches!(
+        finished.status,
+        Status::NotSent(NotSent::Moved(_))
+    ));
+    assert!(posts_and_deletes(&fake).is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_capped_preview_that_spread_into_other_clusters_is_not_the_one_shown() {
+    let (fake, dir) = (Fake::new(), tmp());
+    fake.add_many("Zeta", 205, &[("team", "infra"), ("cluster", "prod-fra")]);
+    let by_team = vec![matcher("team", "infra", false, true)];
+    let scope = central(&[("prod-fra", Protection::Guarded)]);
+    let runner = runner(&fake, dir.path(), Protection::Guarded, scope);
+    let prepared = ready(&runner, silence(by_team, 2)).await;
+    // Past the 200 counted, an alert of another cluster that sorts among them.
+    fake.add_alert(&[
+        ("alertname", "Alpha"),
+        ("team", "infra"),
+        ("cluster", "prod-ams"),
+    ]);
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert!(matches!(
+        finished.status,
+        Status::NotSent(NotSent::Moved(_))
+    ));
+    assert!(posts_and_deletes(&fake).is_empty());
+}
+
+#[test]
+fn safety_g29_the_writer_has_no_other_method_than_get_post_and_delete() {
+    let source = include_str!("../alertmanager/writer.rs");
+    for other in ["PUT", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"] {
+        assert!(
+            !source.contains(&format!("Method::{other}")),
+            "{other} is written in the writer"
+        );
+    }
+    assert!(source.contains("    async fn send("), "send is private");
+    assert!(!source.contains("pub async fn send("));
+}

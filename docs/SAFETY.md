@@ -269,6 +269,7 @@ The shared team setup file ([features/settings.md](features/settings.md#team-set
 - `safety_g29_a_denied_review_or_an_unreadable_preview_sends_nothing` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
 - `safety_g29_a_preview_that_changed_after_the_dialog_sends_nothing_and_reasks` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
 - `safety_g29_the_only_alertmanager_writes_are_a_silence_post_and_an_expire_delete` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
+- `safety_g29_the_writer_has_no_other_method_than_get_post_and_delete` (`crates/freshkube-core/src/write/tests/alertmanager.rs`)
 
 ### 30. A silence never mutes more than the alert it was made from unless it is classed broad and asked as broad
 
