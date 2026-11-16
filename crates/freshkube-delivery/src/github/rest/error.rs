@@ -28,6 +28,8 @@ impl std::fmt::Display for Cause {
 pub enum NotSetUp {
     /// The setup names `gh`, and there is none to run.
     GhNotFound,
+    /// `gh` is there but couldn't be started, for the reason it names.
+    GhNotStarted(std::io::ErrorKind),
     /// `gh auth token` failed: not signed in.
     GhNotSignedIn,
     /// `gh auth token` didn't finish in time.
@@ -45,6 +47,9 @@ impl std::fmt::Display for NotSetUp {
         f.write_str(match self {
             Self::GhNotFound => {
                 "gh not found. Install the GitHub CLI, or set delivery.github.token to keys.json"
+            }
+            Self::GhNotStarted(kind) => {
+                return write!(f, "gh couldn't be started: {kind}. Try again in a moment");
             }
             Self::GhNotSignedIn => "gh isn't signed in to GitHub. Run gh auth login",
             Self::GhSlow => "gh didn't answer in time",

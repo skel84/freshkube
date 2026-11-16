@@ -1,0 +1,1 @@
+- A `gh` that is busy or can't be started is no longer reported as "gh not found"; it is tried again briefly and otherwise says it couldn't be started, with the reason.

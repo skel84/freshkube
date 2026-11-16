@@ -90,7 +90,15 @@ fn fake_gh(script: &str) -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gh");
-    std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+    // Written and closed before it is executable, so a thread that forks
+    // meanwhile can't hold it open for writing when it is run (ETXTBSY).
+    {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(format!("#!/bin/sh\n{script}\n").as_bytes())
+            .unwrap();
+        file.sync_all().unwrap();
+    }
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     dir
 }
