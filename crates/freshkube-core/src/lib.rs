@@ -66,6 +66,7 @@ pub mod snapshot;
 pub mod talos_nodes;
 pub mod team;
 pub mod types;
+pub mod reachability;
 pub mod wake;
 pub mod workloads;
 pub mod workspace;
