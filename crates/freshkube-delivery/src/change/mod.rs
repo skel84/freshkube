@@ -530,9 +530,10 @@ pub struct Stage {
     pub acts: Option<crate::acts::StageActs>,
 }
 
-/// Prints as the struct did before it had `acts`: the handles a write needs
-/// are not evidence, so a change derived from the same reads prints as it
-/// always has.
+/// Prints as the struct did before it had `acts` or `next_step`: the handles
+/// a write needs are not evidence, and the Next step is the Rollout's own
+/// state, which the hop already prints, so a change derived from the same
+/// reads prints as it always has.
 impl std::fmt::Debug for Stage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Stage")
@@ -549,7 +550,6 @@ impl std::fmt::Debug for Stage {
             .field("verification", &self.verification)
             .field("link", &self.link)
             .field("reach", &self.reach)
-            .field("next_step", &self.next_step)
             .field("object", &self.object)
             .finish()
     }
