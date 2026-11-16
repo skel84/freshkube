@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use freshkube_core::write::{AuditStore, LevelCell, Runner, Who};
+use gpui_kit::App;
 use tokio::runtime::Handle;
 
 /// The user the audit log names as the actor.
@@ -36,4 +37,20 @@ pub(super) fn example_runner_of(
             .with_example_objects(objects)
             .following(cell),
     )
+}
+
+/// A runner for a live cluster, one copy for every site that starts a write:
+/// it follows `cell` and reads the setup file again at its send step, for the
+/// entry and context `who` names. There is no way to build a live runner here
+/// without the guard ([`Runner::new`] takes it), and `mutation::runner_guard`
+/// refuses, rather than skips, when there is no file.
+pub(super) fn live_runner(
+    client: kube::Client,
+    audit: AuditStore,
+    who: Who,
+    cell: LevelCell,
+    cx: &App,
+) -> Runner {
+    let setup = crate::mutation::runner_guard(&who.entry, &who.context, &cell, cx);
+    Runner::new(client, audit, who, setup).following(cell)
 }

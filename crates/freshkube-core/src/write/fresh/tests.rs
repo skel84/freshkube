@@ -225,3 +225,34 @@ fn read_follows_the_file_on_disk() {
         Err(Unreadable::NotReadable)
     );
 }
+
+/// A read that doesn't answer in time is a file that can't say, and one that
+/// does answer is passed on.
+#[tokio::test]
+async fn a_read_that_takes_too_long_cannot_say() {
+    let slow = read_within(std::time::Duration::from_millis(20), || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        Ok(Protection::Open)
+    })
+    .await;
+    assert_eq!(slow, Err(Unreadable::NotReadable));
+    let quick = read_within(std::time::Duration::from_secs(5), || Ok(Protection::Open)).await;
+    assert_eq!(quick, Ok(Protection::Open));
+}
+
+/// Entries the file doesn't hold, for a legacy user, have no level to read.
+#[test]
+fn a_legacy_user_has_nothing_to_read_for_a_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let levels = SetupLevels::legacy(dir.path().join("freshkube.yaml"), "prod-ctx");
+    assert_eq!(
+        levels.read_with(&["prod-ams".into()]),
+        Ok((Protection::Guarded, vec![None]))
+    );
+    // With the entries in the file, an unlisted one is gone.
+    let listed = SetupLevels::new(dir.path().join("freshkube.yaml"), entry("prod"));
+    assert_eq!(
+        listed.read_with(&["prod-ams".into()]),
+        Err(Unreadable::Missing)
+    );
+}

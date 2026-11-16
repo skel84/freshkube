@@ -13,12 +13,12 @@ use freshkube_delivery::change::example::{example_acts, for_stage};
 use gpui_kit::TestAppContext;
 use serde_json::{Value, json};
 
-use super::tests::{Harness, harness_on, harness_sized};
+use super::tests::{Harness, harness_on, harness_rechecked, harness_sized};
 use crate::mutation::set_protection;
 
 const NS: &str = "/apis/kargo.akuity.io/v1alpha1/namespaces/checkout";
 
-fn kargo() -> Cluster {
+pub(crate) fn kargo() -> Cluster {
     let object = |kind: &str, name: &str| {
         json!({"apiVersion": "kargo.akuity.io/v1alpha1", "kind": kind,
             "metadata": {"name": name, "namespace": "checkout",
@@ -394,6 +394,22 @@ fn a_stage_that_moves_while_the_dialog_is_open_stops_the_send(cx: &mut TestAppCo
     let status = h.label(cx, "write-toast-status");
     assert!(status.contains("nothing was sent"), "{status}");
     assert!(h.slot_free(cx));
+}
+
+/// A Stage action's dialog, with `freshkube.yaml` edited while it is open
+/// (#1055): Confirm reads the file again, and nothing reaches Kargo.
+#[gpui_kit::test]
+fn safety_g28_a_stage_action_sends_nothing_when_the_file_got_stricter(cx: &mut TestAppContext) {
+    let h = harness_rechecked(cx, Protection::Guarded, kargo);
+    h.begin(cx, promote(Protection::Guarded));
+    assert!(!h.present(cx, "write-type-name"));
+    h.edit_setup(Some(Protection::Protected));
+    h.click(cx, "write-confirm");
+    h.drive(cx, Duration::from_secs(3));
+    h.cluster.assert_nothing_written();
+    assert!(audited(&h).is_empty());
+    // Asked again, under the level the file now holds.
+    assert!(h.present(cx, "write-type-name"));
 }
 
 /// A rollback of prod-ams to its verified earlier Freight, `calm-heron`.
