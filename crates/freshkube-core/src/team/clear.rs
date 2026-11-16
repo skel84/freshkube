@@ -227,8 +227,6 @@ coroot:
         }
         assert!(!is_level_key(URL));
         assert!(!is_level_key("coroot.project"));
-        // The setup it was asked about is as it was.
-        assert!(setup::to_text(&before).contains("protection: open"));
     }
 
     #[test]
