@@ -44,6 +44,11 @@ pub(super) struct TeamState {
     open_requested: bool,
     pub(super) shown: Shown,
     owner: owner::Owner,
+    /// Whether the team's floors and chips reach Settings. Only example data
+    /// and the tests of the floor say yes: the live setup does not take the
+    /// team's values yet, so the header, the status bar and the write module
+    /// still use the file's own level, and Settings must not show another.
+    shows_floors: bool,
 }
 
 /// A change as the review lists it.
@@ -109,6 +114,13 @@ impl Shown {
 }
 
 impl TeamState {
+    /// Turns the floors' reach into Settings off, as it is for a live window.
+    #[cfg(test)]
+    pub(super) fn set_shows_floors(&mut self, shows: bool) {
+        self.shows_floors = shows;
+        self.derive();
+    }
+
     /// Whether a fetch is in flight, for the tests.
     #[cfg(test)]
     pub(super) fn is_fetching(&self) -> bool {
@@ -131,9 +143,13 @@ impl TeamState {
             Some((membership, review)) => Self {
                 membership: Some(membership),
                 review,
+                shows_floors: true,
                 ..Self::default()
             },
-            None => Self::default(),
+            None => Self {
+                shows_floors: true,
+                ..Self::default()
+            },
         };
         state.derive();
         state
@@ -161,7 +177,9 @@ impl TeamState {
                 _ => "Nothing".to_string(),
             };
             shown.yours = yours_rows(team);
-            shown.clusters = cluster_views(team);
+            if self.shows_floors {
+                shown.clusters = cluster_views(team);
+            }
             shown.failure = team.failure().map(|failure| FailureWords {
                 lead: format!("Couldn’t fetch since {}", when(failure.since)),
                 body: format!(
@@ -203,7 +221,12 @@ impl TeamState {
                 })
                 .collect();
         }
-        shown.waiting = self.review.as_ref().map(|review| {
+        // Joining is not an update: nothing is applied yet to update from.
+        let applied = self
+            .membership
+            .as_ref()
+            .is_some_and(|m| m.applied().is_some());
+        shown.waiting = self.review.as_ref().filter(|_| applied).map(|review| {
             let id = review.target_id();
             (
                 Segment::new(None::<&str>, [Part::new("Team update waits")]).note(format!(
@@ -586,21 +609,36 @@ impl SettingsPage {
         let later = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
             this.update(cx, |page, cx| page.team_review_later(cx));
         };
+        // While joining there is nothing to put off: the way out is Cancel.
+        let joining = self.team_is_joining();
+        let (other_id, other_label) = if joining {
+            ("team-cancel-join", "Cancel")
+        } else {
+            ("team-review-later", "Review later")
+        };
+        let cancel = cx.entity();
+        let other = move |event: &ClickEvent, window: &mut Window, cx: &mut App| {
+            if joining {
+                cancel.update(cx, |page, cx| page.team_cancel_join(cx));
+            } else {
+                later(event, window, cx);
+            }
+        };
         let mut banner_action = None;
         if shown.step == Some(Step::Rest) {
             let this = cx.entity();
             let apply = form::Action::new("team-apply", "Apply update", move |_, _, cx| {
                 this.update(cx, |page, cx| page.team_apply(cx));
             });
-            let keep = form::Action::new("team-review-later", "Review later", later);
+            let keep = form::Action::new(other_id, other_label, other);
             group = group.actions(form::actions(apply, keep));
         } else {
             banner_action = Some(
-                Button::new("team-review-later")
+                Button::new(other_id)
                     .small()
                     .outline()
-                    .label("Review later")
-                    .on_click(later)
+                    .label(other_label)
+                    .on_click(other)
                     .into_any_element(),
             );
         }
@@ -629,6 +667,7 @@ impl SettingsPage {
         if self.section == super::SettingsSection::Team
             || self.team.later
             || self.team.review.is_none()
+            || self.team_is_joining()
         {
             return None;
         }
@@ -749,6 +788,7 @@ impl SettingsPage {
         self.team = TeamState {
             membership: Some(m),
             owner: std::mem::take(&mut self.team.owner),
+            shows_floors: true,
             ..TeamState::default()
         };
         self.team.derive();
@@ -816,7 +856,6 @@ impl SettingsPage {
     pub(in crate::desktop) fn team_fetched(
         &mut self,
         result: Result<freshkube_core::team::Version, freshkube_core::team::FetchFailed>,
-        _now: DateTime<Utc>,
         cx: &mut Context<Self>,
     ) {
         self.team_landed(result.map_err(|error| error.0), cx);
@@ -862,6 +901,8 @@ impl SettingsPage {
             // Slice 2 saves these into the person's freshkube.yaml.
             let _overrides = team.leave(how);
             self.team.review = None;
+            // A fetch in flight is for a team the person has left.
+            self.team.owner.stop();
             self.team.left = Some(how);
             self.team.later = false;
             self.team.derive();

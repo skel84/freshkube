@@ -471,6 +471,7 @@ impl SettingsPage {
             crate::preferences_path().and_then(|file| file.parent().map(|dir| dir.join("team"))),
             team_secrets,
         );
+        page.start_team_hidden(cx);
         page.derive_follows(cx);
         page
     }

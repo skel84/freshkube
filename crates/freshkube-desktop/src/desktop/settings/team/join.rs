@@ -3,6 +3,8 @@
 //! two-step review that applies. Words and rows are derived with the rest of
 //! the page (`TeamState::derive`), never in `render`.
 
+use std::sync::Arc;
+
 use freshkube_core::team::{Choice, ContextMap, Membership};
 use freshkube_ui::form;
 use gpui_kit::component::input::Input;
@@ -31,13 +33,21 @@ pub(super) struct JoinShown {
     pub(super) preview: Vec<ChangeRow>,
     pub(super) map: Vec<MapRow>,
     pub(super) map_note: String,
+    /// The contexts to choose among, shared by every row's menu.
+    pub(super) available: Arc<Vec<String>>,
+    /// Why the last Join was refused, as a sentence.
+    pub(super) error: Option<String>,
 }
 
 impl TeamState {
     /// Words the preview and the mapping from the membership.
     pub(super) fn derive_join(&self) -> JoinShown {
+        let error = self.owner.join_error.as_deref().map(super::sentence);
         let Some(team) = self.membership.as_ref().filter(|m| m.applied().is_none()) else {
-            return JoinShown::default();
+            return JoinShown {
+                error,
+                ..JoinShown::default()
+            };
         };
         let preview = self
             .review
@@ -52,7 +62,7 @@ impl TeamState {
                 trust: None,
             })
             .collect();
-        let available = self.owner.available();
+        let available = Arc::new(self.owner.available());
         let map = team
             .mapping()
             .clusters()
@@ -64,13 +74,15 @@ impl TeamState {
                     None => "Choose a context".into(),
                 },
                 chosen: choice.cloned(),
-                suggested: ContextMap::suggested(id, &available).map(str::to_string),
+                suggested: ContextMap::suggested(id, available.as_slice()).map(str::to_string),
             })
             .collect();
         JoinShown {
             preview,
             map,
             map_note: map_note(team, self.owner.contexts.error()),
+            available,
+            error,
         }
     }
 }
@@ -94,12 +106,12 @@ impl SettingsPage {
         let owner = &self.team.owner;
         let busy = owner.is_fetching();
         let mut column = v_flex().gap(dp(12.));
-        if let Some(why) = &owner.join_error {
+        if let Some(why) = &self.team.shown.join.error {
             column = column.child(div().id("team-join-error").test_support().child(contained(
                 ui::banner(
                     Tone::Warn,
                     Some("Couldn’t join".into()),
-                    super::sentence(why),
+                    why.clone(),
                     None,
                     cx,
                 ),
@@ -143,7 +155,7 @@ impl SettingsPage {
             .outline()
             .label(label)
             .disabled(busy)
-            .on_click(move |_, _, cx| this.update(cx, |page, cx| page.team_join(cx)));
+            .on_click(move |_, window, cx| this.update(cx, |page, cx| page.team_join(window, cx)));
         group = group.row(form::row(
             "team-join-row",
             "Join",
@@ -266,7 +278,7 @@ impl SettingsPage {
             .membership
             .as_ref()
             .is_some_and(|m| m.mapping().is_complete());
-        let available = self.team.owner.available();
+        let available = shown.join.available.clone();
         let mut group = form::group("team-map", "Map your contexts").narrow(narrow);
         for row in &shown.join.map {
             let this = cx.entity();

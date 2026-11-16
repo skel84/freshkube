@@ -5,6 +5,7 @@ use crate::desktop::{layout_check, tests::mount};
 use crate::{DebugOptions, GpuiOptions};
 use freshkube_core::team::example::{self, Shape};
 use freshkube_core::team::{Choice, Source};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use std::sync::Arc;
@@ -86,6 +87,25 @@ fn join_error(cx: &mut TestAppContext, view: &Entity<crate::desktop::Pilot>) -> 
 }
 
 const ADDRESS: &str = "https://git.acme.example/ops/freshkube-setup";
+
+fn open_on(
+    cx: &mut TestAppContext,
+    slug: &str,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<crate::desktop::Pilot>,
+) {
+    let options = GpuiOptions::fixture().with_debug(DebugOptions {
+        page: Some(slug.into()),
+        team: Some(Shape::NoTeam),
+        ..DebugOptions::default()
+    });
+    let (runtime, handle, view) = mount(cx, options, 1280., 880.);
+    cx.run_until_parked();
+    settle(cx, handle);
+    (runtime, handle, view)
+}
 
 fn join(cx: &mut TestAppContext, handle: AnyWindowHandle, address: &str) {
     type_into(cx, handle, "team-join-address-input", address);
@@ -426,6 +446,11 @@ fn hiding_in_the_middle_of_a_fetch_drops_it_and_a_late_answer_is_ignored(cx: &mu
         assert!(!page.team.is_fetching());
         assert!(page.team.shown.failure_words().is_none());
     });
+    assert_eq!(label(cx, handle, "team-fetch"), "Fetch now");
+    let toasts = cx
+        .update_window(handle, |_, window, cx| window.notifications(cx).len())
+        .unwrap();
+    assert_eq!(toasts, 0, "a hidden fetch raises no toast");
 }
 
 #[gpui_kit::test]
@@ -454,4 +479,124 @@ fn the_page_says_the_version_is_held_not_that_the_setup_uses_it(cx: &mut TestApp
         "{words}"
     );
     assert!(!words.contains(" applied "), "{words}");
+}
+
+#[gpui_kit::test]
+fn the_review_while_joining_offers_cancel_not_review_later(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    join(cx, handle, ADDRESS);
+    click(cx, handle, "team-preview-continue");
+    click(cx, handle, "team-map-suggested");
+    click(cx, handle, "team-map-continue");
+    assert!(visible(cx, handle, "team-update"));
+    assert!(visible(cx, handle, "team-cancel-join"));
+    assert!(!visible(cx, handle, "team-review-later"));
+    // A joining review is not an update waiting: no status item, no banner.
+    let settings = page(cx, &view);
+    assert!(cx.update(|cx| settings.read(cx).team_waiting_status().is_none()));
+    assert!(!visible(cx, handle, "team-update-status"));
+    click(cx, handle, "team-cancel-join");
+    assert!(visible(cx, handle, "team-empty"));
+}
+
+#[gpui_kit::test]
+fn leaving_stops_a_fetch_in_flight(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::Joined);
+    let settings = page(cx, &view);
+    cx.update(|cx| settings.update(cx, |page, _| page.set_team_script(|_| None)));
+    click(cx, handle, "team-fetch");
+    assert_eq!(label(cx, handle, "team-fetch"), "Fetching…");
+    click(cx, handle, "team-leave-back");
+    cx.update(|cx| assert!(!settings.read(cx).team.is_fetching()));
+}
+
+#[gpui_kit::test]
+fn opening_on_team_setup_fetches_once(cx: &mut TestAppContext) {
+    // The example's failed fetch stamps its last try when the section shows.
+    let (_runtime, _handle, view) = open(cx, Shape::Failed);
+    let settings = page(cx, &view);
+    let last = cx.update(|cx| {
+        settings
+            .read(cx)
+            .team
+            .membership()
+            .and_then(|m| m.failure().map(|f| f.last_try))
+            .expect("a failure")
+    });
+    let age = chrono::Utc::now() - last;
+    assert!(age < chrono::Duration::minutes(2), "{age}");
+}
+
+#[gpui_kit::test]
+fn an_address_with_a_credential_does_not_stay_in_the_field(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    join(
+        cx,
+        handle,
+        "https://deploy:s3cr3t-value@git.acme.example/ops/setup",
+    );
+    assert!(visible(cx, handle, "team-join-error"));
+    let settings = page(cx, &view);
+    assert_eq!(cx.update(|cx| settings.read(cx).team_address_text(cx)), "");
+    // A plain mistake keeps what was typed, so it can be corrected.
+    join(cx, handle, "http://git.acme.example/ops/setup");
+    assert!(
+        cx.update(|cx| settings.read(cx).team_address_text(cx))
+            .contains("git.acme")
+    );
+}
+
+#[gpui_kit::test]
+fn a_live_apply_shows_no_team_floor_the_write_path_does_not_use(cx: &mut TestAppContext) {
+    // Until the overlay lands, the header, the status bar and the write module
+    // use the file's own level, so Clusters must show that same level and no
+    // Team chip, however the team's clusters were mapped.
+    let (_runtime, handle, view) = open_on(cx, "settings-clusters");
+    let settings = page(cx, &view);
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.team.set_shows_floors(false);
+            page.derive_levels();
+            cx.notify();
+        })
+    });
+    let levels = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            settings
+                .read(cx)
+                .rows
+                .iter()
+                .map(|row| (row.id.to_string(), row.level, row.level_source))
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = levels(cx);
+    assert!(!before.is_empty());
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.set_team_example(Shape::NoTeam, cx);
+            page.team.set_shows_floors(false);
+            page.team_join_and_apply_for_test(cx);
+        })
+    });
+    settle(cx, handle);
+    assert_eq!(levels(cx), before, "a mapping and an apply change no level");
+    assert_eq!(cx.update(|cx| settings.read(cx).team_applied_count()), 1);
+    for (id, level, source) in levels(cx) {
+        let own = cx.update(|cx| {
+            settings
+                .read(cx)
+                .rows
+                .iter()
+                .find(|row| row.id.as_ref() == id)
+                .and_then(|row| row.protection)
+                .unwrap_or_default()
+        });
+        assert_eq!(level, own, "{id}");
+        assert_ne!(source, freshkube_core::team::LevelSource::Floor, "{id}");
+        assert!(
+            cx.update(|cx| settings.read(cx).team_cluster(&id).is_none()),
+            "{id}"
+        );
+    }
 }

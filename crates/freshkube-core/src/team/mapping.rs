@@ -54,10 +54,6 @@ impl ContextMap {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.clusters.is_empty()
-    }
-
     /// Each cluster with its choice, by id.
     pub fn clusters(&self) -> impl Iterator<Item = (&str, Option<&Choice>)> {
         self.clusters
@@ -86,13 +82,6 @@ impl ContextMap {
             *slot = Some(choice);
         }
         Ok(())
-    }
-
-    /// Forgets the choice for one cluster.
-    pub fn clear(&mut self, id: &str) {
-        if let Some(slot) = self.clusters.get_mut(id) {
-            *slot = None;
-        }
     }
 
     /// Whether every cluster has a choice, even if it is to leave it out.

@@ -12,7 +12,7 @@ use chrono::Utc;
 use freshkube_core::job::spawn_job;
 use freshkube_core::team::fetch::TeamFetcher;
 use freshkube_core::team::{
-    Choice, FetchFailed, Membership, Overrides, Source, Version, example::Shape,
+    Choice, FetchFailed, Membership, Overrides, Refused, Source, Version, example::Shape,
 };
 use freshkube_reads::{Loader, OnShow};
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -84,6 +84,19 @@ impl Owner {
         self.loader.is_loading()
     }
 
+    /// Starts hidden, so the first time the section shows it reads.
+    pub(super) fn hide(&mut self, cx: &App) {
+        self.loader.set_visible(false, OnShow::Never, cx);
+    }
+
+    /// Drops what is in flight and what a join had begun.
+    pub(super) fn stop(&mut self) {
+        self.loader.reset();
+        self.contexts.reset();
+        self.joining = None;
+        self.stage = Stage::Preview;
+    }
+
     /// The contexts to choose among, or none until they are read.
     pub(super) fn available(&self) -> Vec<String> {
         self.contexts.data().cloned().unwrap_or_default()
@@ -114,6 +127,7 @@ impl SettingsPage {
     /// Plays an example team (`--fixture`): the fetch answers from a script.
     pub(in crate::desktop) fn set_team_example(&mut self, shape: Shape, cx: &mut Context<Self>) {
         self.team = super::TeamState::example(shape, Utc::now());
+        self.team.owner.hide(cx);
         let newest = self
             .team
             .membership
@@ -130,6 +144,12 @@ impl SettingsPage {
         self.derive_levels();
         self.refit_columns();
         cx.notify();
+    }
+
+    /// A new page starts with its fetch hidden, so the first time Team setup
+    /// shows it reads.
+    pub(in crate::desktop::settings) fn start_team_hidden(&mut self, cx: &mut Context<Self>) {
+        self.team.owner.hide(cx);
     }
 
     /// Fetches while the section shows; hiding drops the read in flight.
@@ -243,18 +263,17 @@ impl SettingsPage {
         let path = cx.new(|cx| InputState::new(window, cx).placeholder("freshkube.yaml"));
         let mut subscriptions = Vec::new();
         for input in [&address, &git_ref, &path] {
-            subscriptions.push(cx.subscribe_in(
-                input,
-                window,
-                |page, _, event, _, cx| match event {
-                    InputEvent::PressEnter { .. } => page.team_join(cx),
+            subscriptions.push(
+                cx.subscribe_in(input, window, |page, _, event, window, cx| match event {
+                    InputEvent::PressEnter { .. } => page.team_join(window, cx),
                     InputEvent::Change => {
                         page.team.owner.join_error = None;
+                        page.team.derive();
                         cx.notify();
                     }
                     _ => {}
-                },
-            ));
+                }),
+            );
         }
         self.team.owner.form = Some(JoinForm {
             address,
@@ -267,13 +286,14 @@ impl SettingsPage {
 
     /// Join: checks the address, then fetches it. A refusal never repeats
     /// the address.
-    pub(super) fn team_join(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn team_join(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.team.membership.is_some() || self.team.owner.is_fetching() {
             return;
         }
         let Some(form) = self.team.owner.form.as_ref() else {
             return;
         };
+        let address = form.address.clone();
         let text = |input: &Entity<InputState>| input.read(cx).value().trim().to_owned();
         let parsed = Source::parse(
             &text(&form.address),
@@ -288,7 +308,13 @@ impl SettingsPage {
                 self.team_fetch(cx);
             }
             Err(refused) => {
+                // What was typed carried a credential: it does not stay in
+                // the field.
+                if refused == Refused::Credentials || refused == Refused::QueryOrFragment {
+                    address.update(cx, |input, cx| input.set_value("", window, cx));
+                }
                 self.team.owner.join_error = Some(refused.to_string());
+                self.team.derive();
                 cx.notify();
             }
         }
@@ -413,10 +439,45 @@ impl SettingsPage {
         self.team.owner.fetcher = Some(Fetcher::Example(Arc::new(script)));
     }
 
+    /// What the Join form's address field holds, for the tests.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_address_text(&self, cx: &App) -> String {
+        self.team
+            .owner
+            .form
+            .as_ref()
+            .map(|form| form.address.read(cx).value().to_string())
+            .unwrap_or_default()
+    }
+
     /// Why the last join was refused, for the tests.
     #[cfg(test)]
     pub(in crate::desktop::settings) fn team_join_error(&self) -> String {
         self.team.owner.join_error.clone().unwrap_or_default()
+    }
+
+    /// Joins the example team and takes every step to Apply through the
+    /// page's own methods, for the tests that need Settings on another section.
+    #[cfg(test)]
+    pub(in crate::desktop::settings) fn team_join_and_apply_for_test(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) {
+        self.team.owner.joining = Some(freshkube_core::team::example::source());
+        self.team_fetch(cx);
+        self.team_continue(cx);
+        self.team_map_suggested(cx);
+        self.team_continue(cx);
+        let pending: Vec<String> = self
+            .team
+            .review
+            .iter()
+            .flat_map(|review| review.trust_pending().map(|c| c.at.clone()))
+            .collect();
+        for at in pending {
+            self.team_confirm_trust(&at, cx);
+        }
+        self.team_apply(cx);
     }
 
     /// Whether the section is in the middle of joining.
