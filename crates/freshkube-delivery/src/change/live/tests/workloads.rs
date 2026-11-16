@@ -42,7 +42,7 @@ async fn a_degraded_rollout_and_unready_pods_are_shown_as_they_are() {
 
 /// [`one_cluster`] with its Application deploying the storefront
 /// Deployment, whose current ReplicaSet is `sets`' revision `2`.
-fn deployed(sets: Vec<Value>) -> FixtureReader {
+pub(super) fn deployed(sets: Vec<Value>) -> FixtureReader {
     deployed_running(sets, NEW)
 }
 

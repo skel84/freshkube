@@ -1,0 +1,1 @@
+- The change page's Overview has a Next step column: where each Stage's Argo Rollout is (`Step 2 of 5`, `Paused`, `Done`, `Aborted`), `No Rollout` for a Stage without one, and the cause when the Rollout couldn't be read.

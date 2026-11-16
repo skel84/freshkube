@@ -76,6 +76,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
             "Eligible",
             "Promoted",
             "Verified",
+            "No Rollout",
             "Synced",
             "Running",
             "Not looked",
@@ -90,6 +91,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Waiting",
                 "Waiting",
                 "Not reached",
+                "Not reached",
                 "Can't read",
                 "Not reached"
             ]
@@ -100,6 +102,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Approved",
                 "Promoted",
                 "Failed",
+                "No Rollout",
                 "Synced",
                 "Running",
                 "Not looked"
@@ -166,11 +169,14 @@ fn a_stage_that_waits_is_a_dotted_track_and_one_that_never_got_there_a_hairline(
     let page = page.read_with(cx, |page, _| page.overview.clone());
     let ams = page.iter().find(|row| row.name == "prod-ams").unwrap();
     assert_eq!(ams.cells[1].track(), Track::Dotted, "waiting promotion");
-    assert_eq!(ams.cells[3].track(), Track::Hairline, "not reached");
+    assert_eq!(ams.cells[4].track(), Track::Hairline, "not reached");
     let dev = &page[0];
+    // The Next step cell has no Rollout here, so it is a hairline.
+    assert_eq!(dev.cells[3].track(), Track::Hairline, "no Rollout");
     assert!(
-        dev.cells[..5]
+        dev.cells[..3]
             .iter()
+            .chain(&dev.cells[4..6])
             .all(|cell| cell.track() == Track::Solid)
     );
     // The rail into a waiting Stage is dotted; into the others it is solid.
@@ -425,13 +431,13 @@ fn a_claimed_link_is_a_dashed_track_under_a_healthy_glyph(cx: &mut TestAppContex
         }
         page.update(cx, |page, cx| page.read_answer(change, window, cx));
         let dev = page.read(cx).overview[0].clone();
-        let running = &dev.cells[4];
+        let running = &dev.cells[5];
         // Status is the glyph's, confidence the track's.
         assert_eq!(running.tone, Tone::Good);
         assert_eq!(running.word.as_ref(), "Running");
         assert_eq!(running.track(), Track::Dashed);
         // A Confirmed link stays solid.
-        assert_eq!(dev.cells[3].track(), Track::Solid);
+        assert_eq!(dev.cells[4].track(), Track::Solid);
     })
     .unwrap();
 }
@@ -457,7 +463,7 @@ fn after_deploy_says_why_coroot_has_no_verdict(cx: &mut TestAppContext) {
                 }
                 page.derive_overview();
             });
-            let cell = page.read(cx).overview[0].cells[5].clone();
+            let cell = page.read(cx).overview[0].cells[6].clone();
             assert_eq!(cell.word.as_ref(), word);
             // A cause is not a failure.
             assert_ne!(cell.tone, Tone::Crit);
@@ -592,6 +598,194 @@ fn the_focused_cell_wears_the_keyboard_ring_and_loses_it_with_the_focus(cx: &mut
             })
             .count();
         assert_eq!(rings, 1);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_rollouts_shape_fills_the_next_step_column_and_says_why_when_it_cant(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::table::Track;
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Rollouts, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let next = |cx: &App, stage: &str| {
+            let page = page.read(cx);
+            let row = page.overview.iter().find(|row| row.name == stage).unwrap();
+            row.cells[Column::ALL
+                .iter()
+                .position(|c| *c == Column::NextStep)
+                .unwrap()]
+            .clone()
+        };
+        for stage in ["dev", "stage", "prod-ams", "prod-lon"] {
+            assert!(
+                window
+                    .find(format!("change-cell-{stage}-next-step"))
+                    .visible(),
+                "{stage}"
+            );
+        }
+        let (dev, stage, ams, lon) = (
+            next(cx, "dev"),
+            next(cx, "stage"),
+            next(cx, "prod-ams"),
+            next(cx, "prod-lon"),
+        );
+        assert_eq!((dev.word.as_ref(), dev.tone), ("Done", Tone::Good));
+        assert_eq!(
+            (stage.word.as_ref(), stage.tone),
+            ("Step 2 of 4", Tone::Info)
+        );
+        assert_eq!(ams.word.as_ref(), "Not reached");
+        assert_eq!(ams.track(), Track::Hairline);
+        // A Stage whose Application manages no Rollout. (A Rollout that
+        // couldn't be read says its cause instead: see the refused
+        // Applications test.)
+        assert_eq!(lon.word.as_ref(), "No Rollout");
+        assert!(!lon.reached);
+        assert_eq!(lon.hop, None);
+        // The Stages that run one have its hop, so the cell selects it.
+        assert_eq!(dev.hop.as_deref(), Some("dev-rollout"));
+        assert_eq!(stage.hop.as_deref(), Some("stage-rollout"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn every_next_step_has_a_word_that_fits_its_column(cx: &mut TestAppContext) {
+    use freshkube_delivery::change::NextStep;
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        for (next, word, tone) in [
+            (NextStep::Done, "Done", Tone::Good),
+            (
+                NextStep::Step { at: 10, of: 12 },
+                "Step 10 of 12",
+                Tone::Info,
+            ),
+            (NextStep::Paused { step: None }, "Paused", Tone::Info),
+            (NextStep::Progressing, "Progressing", Tone::Waiting),
+            (NextStep::Aborted, "Aborted", Tone::Crit),
+            (
+                NextStep::Degraded { step: Some((2, 4)) },
+                "Degraded",
+                Tone::Warn,
+            ),
+            (NextStep::NotReached, "Not reached", Tone::Outline),
+            (NextStep::NoRollout, "No Rollout", Tone::Outline),
+            (
+                NextStep::Unknown {
+                    why: "the Rollout was not read".into(),
+                    cause: None,
+                },
+                "Unknown",
+                Tone::Unknown,
+            ),
+        ] {
+            let mut change = page.read(cx).change.clone();
+            change.stages[0].next_step = next;
+            page.update(cx, |page, cx| page.read_answer(change, window, cx));
+            let cell = page.read(cx).overview[0].cells[3].clone();
+            assert_eq!(cell.word.as_ref(), word);
+            assert_eq!(cell.tone, tone, "{word}");
+            assert!(cell.word.chars().count() <= 14, "{word}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_stage_nothing_looked_at_says_not_reached_and_a_refused_application_says_why(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, _, cx| {
+        // prod-ams still runs other Freight: nothing looked for its
+        // Application, so it is not "No Rollout".
+        let p = page.read(cx);
+        let ams = p
+            .overview
+            .iter()
+            .find(|row| row.name == "prod-ams")
+            .unwrap();
+        let cell = &ams.cells[3];
+        assert_eq!(cell.word.as_ref(), "Not reached");
+        assert!(!cell.reached);
+        assert!(
+            cell.tooltip.contains("still runs other Freight"),
+            "{}",
+            cell.tooltip
+        );
+    })
+    .unwrap();
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::ArgoRefused, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let p = page.read(cx);
+        let dev = p.overview.iter().find(|row| row.name == "dev").unwrap();
+        let cell = &dev.cells[3];
+        // Argo CD's Applications were refused: whether a Rollout runs is
+        // not known, and the cell says why instead of "No Rollout".
+        assert_eq!(cell.word.as_ref(), "Can't read");
+        assert_ne!(cell.tone, Tone::Crit);
+        assert!(cell.reached);
+        assert!(window.find("change-cell-dev-next-step").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_right_arrow_runs_along_the_whole_row_to_after_deploy(cx: &mut TestAppContext) {
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| {
+            page.select("dev-pods", window, cx);
+            page.focus(window, cx);
+        });
+        window.render_frame(cx);
+        // Running is the sixth step, After deploy the seventh and last.
+        window.press("right", cx);
+        assert_eq!(
+            page.read(cx).selected().map(|s| s.to_string()).as_deref(),
+            Some("dev-deployment")
+        );
+        window.press("right", cx);
+        assert_eq!(
+            page.read(cx).selected().map(|s| s.to_string()).as_deref(),
+            Some("dev-deployment"),
+            "the row ends there"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_ring_and_the_arrow_keys_reach_a_next_step_cell(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Rollouts, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let selected = |cx: &App| page.read(cx).selected().map(|s| s.to_string());
+        page.update(cx, |page, cx| {
+            page.select("dev-verification", window, cx);
+            page.focus(window, cx);
+        });
+        window.render_frame(cx);
+        window.press("right", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-rollout"));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("change-cell-dev-next-step-ring").is_some(),
+            "the keyboard ring is on the Next step cell"
+        );
+        // The Rollout is its own hop: its Inspector opens, and the keys go on.
+        window.press("right", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-argocd"));
+        window.press("left", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-rollout"));
     })
     .unwrap();
 }
@@ -783,6 +977,41 @@ fn a_scrolled_column_is_cut_at_the_pinned_stage_columns_edge(cx: &mut TestAppCon
             hidden > 0 && straddling > 0,
             "{hidden} hidden, {straddling} straddling"
         );
+
+#[gpui_kit::test]
+fn the_rollout_states_shape_draws_paused_degraded_aborted_and_progressing(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::RolloutStates, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let cell = |cx: &App, stage: &str| {
+            let page = page.read(cx);
+            let row = page.overview.iter().find(|row| row.name == stage).unwrap();
+            row.cells[3].clone()
+        };
+        for (stage, word, tone) in [
+            ("dev", "Paused", Tone::Info),
+            ("stage", "Degraded", Tone::Warn),
+            ("prod-ams", "Aborted", Tone::Crit),
+            ("prod-lon", "Progressing", Tone::Waiting),
+        ] {
+            let cell = cell(cx, stage);
+            assert_eq!((cell.word.as_ref(), cell.tone), (word, tone), "{stage}");
+            assert!(cell.reached, "{stage} is reached, so its state shows");
+            // Each Stage has its Rollout hop, so the cell selects it.
+            assert_eq!(
+                cell.hop.as_deref(),
+                Some(format!("{stage}-rollout").as_str())
+            );
+            assert!(
+                window
+                    .find(format!("change-cell-{stage}-next-step"))
+                    .visible()
+            );
+        }
+        // Selecting one opens the Rollout's Inspector with its state.
+        page.update(cx, |page, cx| page.select("prod-ams-rollout", window, cx));
+        window.render_frame(cx);
+        assert!(window.try_find("change-detail").is_some());
     })
     .unwrap();
 }

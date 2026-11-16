@@ -82,7 +82,7 @@ The values each knob takes and what each shape does are in [docs/DEBUG_KNOBS.md]
 | `FRESHKUBE_ACCESS` | Shapes Your access and which actions are offered, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_AGENT` | Shapes the Agent dock tab, run by a scripted agent, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_ALERTS` | Reshapes the Alerts, Rules and Silences example, with `--fixture`. | debug and stress builds |
-| `FRESHKUBE_APPLICATIONS` | Reshapes the Applications, Changes and change page example, with `--fixture`. | debug and stress builds |
+| `FRESHKUBE_APPLICATIONS` | Reshapes the Applications, Changes and change page example, with `--fixture`; `causes`, `promoting`, `rollback-unknown`, `rollback-none`, `rollouts` and `rollouts-states` reshape the change page only. | debug and stress builds |
 | `FRESHKUBE_APP_MENU` | Shows the Linux menu button on any platform. | debug builds |
 | `FRESHKUBE_CERTS` | Shapes the Certificates page's example, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_CRASH` | Shows the crash notice or forces a panic that leads to it. | debug builds |
