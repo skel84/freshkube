@@ -304,7 +304,7 @@ pub(crate) fn place_window_controls(window: &mut Window, cx: &App) {
 }
 
 /// What a cached page view is laid out as: the whole space it is given.
-fn cached_page_style() -> StyleRefinement {
+pub(super) fn cached_page_style() -> StyleRefinement {
     StyleRefinement::default().size_full()
 }
 
@@ -468,6 +468,7 @@ impl Pilot {
         )]);
         shell::Navigation::bind_keys(cx);
         tabs::bind_keys(cx);
+        panes::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new(
                 "alt-up",
@@ -599,6 +600,7 @@ impl Pilot {
         let operations = Operations::global(cx);
         subscriptions.push(cx.observe(&operations, |view, _, cx| {
             view.pages.notify_cached(cx);
+            view.panes.notify_second(cx);
             cx.notify();
         }));
         window.on_window_should_close(cx, |window, cx| {
@@ -625,6 +627,7 @@ impl Pilot {
             place_window_controls(window, cx);
             view.prepare_context_display(window, cx);
             view.pages.notify_cached(cx);
+            view.panes.notify_second(cx);
             cx.notify();
         })
     }
@@ -1206,6 +1209,11 @@ impl Pilot {
         let source = self.source();
         for (_, screen) in self.pages.map.iter().filter(|(id, _)| id.is_screen()) {
             screen.set_page_source(source.clone(), window, cx);
+        }
+        // Pane 1's list reads the same session.
+        if let Some(second) = &self.panes.second {
+            let handle = crate::screens::ScreenHandle::new(second.screen.clone());
+            handle.set_page_source(source.clone(), window, cx);
         }
         if let Some(data) = self.switch.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);

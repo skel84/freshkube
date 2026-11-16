@@ -75,6 +75,15 @@ impl Pilot {
     /// the shell holds; and the dock's tabs, which can be open on any page.
     fn listen(&self, root: Div, cx: &mut Context<Self>) -> Div {
         root.on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
+            .on_action(cx.listener(|view, _: &panes::SplitRight, window, cx| {
+                view.toggle_split(panes::Split::Right, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &panes::SplitDown, window, cx| {
+                view.toggle_split(panes::Split::Down, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &panes::FocusOtherPane, window, cx| {
+                view.focus_other_pane(window, cx)
+            }))
             .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
                 view.adjacent_context(false, window, cx)
             }))
@@ -239,7 +248,7 @@ impl Pilot {
                         },
                         cx,
                     ))
-                    .child(self.panes.frame(page))
+                    .child(self.render_panes(page, window, cx))
                     // A 2 px frame around the followed page that takes no
                     // room and no pointer.
                     .children(strip.map(|_| {
