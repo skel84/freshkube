@@ -324,7 +324,9 @@ pub(crate) fn beside(window: &Window, embedded: bool) -> bool {
 /// The width inside the node inspector's tab body in `dp`, where embedded
 /// screens choose between side-by-side and stacked layouts.
 pub(crate) fn embedded_width(window: &Window) -> f32 {
-    let pane = NODE_PANE_WIDTH.get().min(page_width(window));
+    let pane = freshkube_ui::pane::current(window)
+        .node_pane()
+        .min(page_width(window));
     (pane - freshkube_ui::page::PANE_PADDING * 2.).max(240.)
 }
 
@@ -430,14 +432,11 @@ pub(crate) fn split_at(
         .into_any_element()
 }
 
-thread_local! {
-    /// The node inspector's width in dp, which Nodes sets as it draws the
-    /// inspector: the page's when it stacks or fills the page.
-    static NODE_PANE_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(f32::MAX) };
-}
-
+/// Tells the screens in this pane the node inspector's width in dp, which
+/// Nodes sets as it draws the inspector: the page's when it stacks or fills
+/// the page.
 pub(crate) fn set_node_pane_width(width: f32) {
-    NODE_PANE_WIDTH.set(width);
+    freshkube_ui::pane::focused().set_node_pane(width);
 }
 
 pub(crate) use freshkube_ui::ui::mono;

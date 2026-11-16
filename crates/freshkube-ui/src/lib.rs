@@ -19,6 +19,7 @@ pub mod meters;
 pub mod motion;
 pub mod page;
 pub mod palette;
+pub mod pane;
 pub mod platform;
 pub mod read_state;
 #[cfg(feature = "testing")]
