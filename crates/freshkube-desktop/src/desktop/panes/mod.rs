@@ -1,5 +1,6 @@
-//! The panes of the window (#879). One pane for now: pane 0, which draws
-//! the page the shell shows.
+//! The panes of the window (#879). Pane 0 draws the page the shell shows;
+//! pane 1, when the window is split, draws a Resources list of its own
+//! (`second.rs`, `split.rs`).
 //!
 //! A pane has an id, the room it draws in (a [`Pane`] handle that its pages
 //! ask for their width) and a frame drawn around its page in every state.
@@ -11,7 +12,7 @@
 //! is shared between two panes.
 use freshkube_ui::pane::Pane;
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, ElementId, IntoElement, TestSupportExt, div};
+use gpui_kit::{AnyElement, App, ElementId, IntoElement, TestSupportExt, div};
 
 /// The key context of a pane's frame. Not `Pane`: that is one of GPUI's
 /// menu-bar default contexts on macOS, so a binding under it could fire from
@@ -24,6 +25,7 @@ pub(super) struct PaneId(u8);
 
 impl PaneId {
     pub(super) const FIRST: PaneId = PaneId(0);
+    pub(super) const SECOND: PaneId = PaneId(1);
 
     /// The id of an element `name` in this pane: the name itself in pane 0,
     /// `p1:name` in pane 1.
@@ -36,6 +38,12 @@ impl PaneId {
     }
 }
 
+mod second;
+mod split;
+
+pub(super) use second::{Second, Split};
+pub(super) use split::{FocusOtherPane, SplitDown, SplitRight, bind_keys};
+
 /// One pane: its id and its room.
 struct Slot {
     id: PaneId,
@@ -46,6 +54,8 @@ struct Slot {
 pub(super) struct Panes {
     slots: Vec<Slot>,
     focused: PaneId,
+    /// Pane 1, while the window is split.
+    pub(super) second: Option<Second>,
 }
 
 impl Panes {
@@ -57,19 +67,43 @@ impl Panes {
                 room: Pane::new(),
             }],
             focused: PaneId::FIRST,
+            second: None,
         }
     }
 
-    /// The room of the focused pane, which the shell's chrome sets. With two
-    /// panes this is no longer one answer: the dock's height belongs to the
-    /// window and the chrome to the leftmost pane, not the focused one, and
-    /// slice C decides which setter reads which.
+    /// The room of the shell's pane, pane 0, which the shell's chrome sets:
+    /// the rail, column, header and status bar always follow it, split or
+    /// not. The dock's height is the window's, so the shell sets it on every
+    /// pane (`Pilot::render_page_cell`).
     pub(super) fn room(&self) -> Pane {
         self.slots
             .iter()
-            .find(|slot| slot.id == self.focused)
+            .find(|slot| slot.id == PaneId::FIRST)
             .map(|slot| slot.room.clone())
-            .expect("the focused pane is in the list")
+            .expect("pane 0 is in the list")
+    }
+
+    pub(super) fn focus_first(&mut self) {
+        self.focused = PaneId::FIRST;
+    }
+
+    pub(super) fn focus_second(&mut self) {
+        if self.second.is_some() {
+            self.focused = PaneId::SECOND;
+        }
+    }
+
+    /// Marks pane 1's screen dirty, for state it reads from outside itself
+    /// (the theme), as `Pages::notify_cached` does the shell's.
+    pub(super) fn notify_second(&self, cx: &mut App) {
+        if let Some(second) = &self.second {
+            App::notify(cx, second.screen().view().entity_id());
+        }
+    }
+
+    /// Whether pane 1 has the focus.
+    pub(super) fn second_focused(&self) -> bool {
+        self.focused == PaneId(1)
     }
 
     /// The frame of the first pane around `page`, drawn in every state.
@@ -82,6 +116,9 @@ impl Panes {
             .child(page)
     }
 }
+
+#[cfg(test)]
+mod split_tests;
 
 #[cfg(test)]
 mod tests {

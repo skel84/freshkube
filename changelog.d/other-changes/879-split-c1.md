@@ -1,0 +1,1 @@
+- Split the window: ⌘\ (Ctrl-\) opens a Resources list in a second pane beside the page, ⌥⌘\ under it, and the same key closes it; F6 moves the keyboard between them. The second pane has no tabs or draggable divider yet (#879).

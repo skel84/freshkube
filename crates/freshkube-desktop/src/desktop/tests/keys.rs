@@ -223,7 +223,7 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
 
 /// The shell's keys on macOS, where `secondary` is Command.
 #[cfg(target_os = "macos")]
-const SHELL_KEYS: [&str; 37] = [
+const SHELL_KEYS: [&str; 40] = [
     "alt-cmd-i inspector::ToggleInspector ",
     "cmd-+ text_size::LargerText ",
     "cmd-= text_size::LargerText ",
@@ -255,6 +255,9 @@ const SHELL_KEYS: [&str; 37] = [
     "cmd-{ tabs::PreviousViewTab Freshkube",
     "ctrl-tab tabs::NextViewTab Freshkube",
     "ctrl-shift-tab tabs::PreviousViewTab Freshkube",
+    "cmd-\\ panes::SplitRight Freshkube",
+    "alt-cmd-\\ panes::SplitDown Freshkube",
+    "f6 panes::FocusOtherPane Freshkube",
     "alt-up pilot::PreviousContext Freshkube",
     "alt-down pilot::NextContext Freshkube",
     "cmd-k pilot::GoToKind Freshkube",
@@ -267,7 +270,7 @@ const SHELL_KEYS: [&str; 37] = [
 /// The shell's keys on Linux and Windows, where `secondary` is Control
 /// and Kit's inspector takes Control-Shift-I.
 #[cfg(not(target_os = "macos"))]
-const SHELL_KEYS: [&str; 37] = [
+const SHELL_KEYS: [&str; 40] = [
     "ctrl-shift-i inspector::ToggleInspector ",
     "ctrl-+ text_size::LargerText ",
     "ctrl-= text_size::LargerText ",
@@ -299,6 +302,9 @@ const SHELL_KEYS: [&str; 37] = [
     "ctrl-{ tabs::PreviousViewTab Freshkube",
     "ctrl-tab tabs::NextViewTab Freshkube",
     "ctrl-shift-tab tabs::PreviousViewTab Freshkube",
+    "ctrl-\\ panes::SplitRight Freshkube",
+    "ctrl-alt-\\ panes::SplitDown Freshkube",
+    "f6 panes::FocusOtherPane Freshkube",
     "alt-up pilot::PreviousContext Freshkube",
     "alt-down pilot::NextContext Freshkube",
     "ctrl-k pilot::GoToKind Freshkube",
@@ -379,6 +385,9 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
         "dock::OpenAgent",
         "input::Copy",
         "inspector::ToggleInspector",
+        "panes::FocusOtherPane",
+        "panes::SplitDown",
+        "panes::SplitRight",
         "pilot::CopyLink",
         "pilot::GoToKind",
         "pilot::NextContext",

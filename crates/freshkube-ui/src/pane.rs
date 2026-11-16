@@ -23,6 +23,8 @@ struct Room {
     chrome: Cell<f32>,
     below: Cell<f32>,
     node_pane: Cell<f32>,
+    /// What a neighbouring pane takes of the window: width beside, height under.
+    neighbour: Cell<(f32, f32)>,
 }
 
 /// A handle to one pane's room. Clones share it.
@@ -38,6 +40,7 @@ impl Pane {
             chrome: Cell::new(RAIL_WIDTH + COLUMN_WIDTH),
             below: Cell::new(0.),
             node_pane: Cell::new(f32::MAX),
+            neighbour: Cell::new((0., 0.)),
         }))
     }
 
@@ -69,6 +72,13 @@ impl Pane {
         self.0.below.set(height.max(0.));
     }
 
+    /// Says what a neighbouring pane takes of the window, in dp: its width
+    /// beside this pane and its height above or under it. A pane with no
+    /// neighbour takes nothing.
+    pub fn set_neighbour(&self, width: f32, height: f32) {
+        self.0.neighbour.set((width.max(0.), height.max(0.)));
+    }
+
     /// The node inspector's width: the page's when it stacks or fills it.
     pub fn node_pane(&self) -> f32 {
         self.0.node_pane.get()
@@ -84,7 +94,7 @@ impl Pane {
     /// room, as a narrower window would.
     pub fn page_width(&self, window: &Window) -> f32 {
         let viewport = window.viewport_size().width / dp_px(1., window);
-        (viewport - self.chrome()).max(240.)
+        (viewport - self.chrome() - self.0.neighbour.get().0).max(240.)
     }
 
     /// The width inside a page's [`inset`](crate::page::inset), such as its
@@ -110,7 +120,8 @@ impl Pane {
     /// table page's header and a usable list together, so the page scrolls
     /// its frame instead: under `SHORT_HEIGHT`.
     pub fn is_short(&self, window: &Window) -> bool {
-        window.viewport_size().height - dp_px(self.below(), window) < dp_px(SHORT_HEIGHT, window)
+        window.viewport_size().height - dp_px(self.below() + self.0.neighbour.get().1, window)
+            < dp_px(SHORT_HEIGHT, window)
     }
 }
 
@@ -125,6 +136,13 @@ mod tests {
         assert_eq!(pane.below(), 0.);
         pane.set_below(120.);
         assert_eq!(pane.below(), 120.);
+    }
+
+    #[test]
+    fn a_neighbour_takes_room_from_the_pane_beside_it() {
+        let pane = Pane::new();
+        pane.set_neighbour(-3., 40.);
+        assert_eq!(pane.0.neighbour.get(), (0., 40.));
     }
 
     #[test]

@@ -13,6 +13,12 @@ Code:
 
 Tests that prove it: `tabs/set_tests.rs` (the rules), `tabs/tests.rs` (the window: keys, gestures, the guard, saving, the strip's redraws, frozen rows), `nodes/tests/events.rs` (the brackets inside Nodes), `freshkube-resources`' `screen/tests/frozen.rs` and `frozen/tests.rs`, and `desktop/tests/keys.rs` (the shell's keys).
 
+## Two panes (#879)
+
+`desktop/panes/` holds the window's panes. Pane 0 is the shell's page with everything above; ⌘\ (Ctrl-\) opens **pane 1** beside it, ⌥⌘\ (Ctrl-Alt-\) under it, and the same key closes it (the other key moves it). Pane 1 is one Resources list of its own (`panes/second.rs`, `panes/split.rs`), made when the split opens from the kind and namespace the shell's Resources page shows, handed its own `Pane` room and the session's source (`Pilot::push_source`), and heard by the shell like any page. Closing the split drops the screen and its reads. F6 moves the keyboard between the panes.
+
+The rail, column, header and status bar follow pane 0 always, the dock spans both, and each pane takes half of the room the chrome leaves (`Pane::set_neighbour`). Pane 1's elements are prefixed `p1:` (`PaneId::id`), its frame carries the `PaneFrame` key context, and a notify in one pane's page does not draw the other (`split_tests.rs`). Not yet: tabs, a divider to drag and a saved size, other pages in pane 1, folding when the window is narrow, and opening a link in the other pane. A link clicked in pane 1 opens in pane 0 for now.
+
 ## The set
 
 A `TabSet` is on `Pilot`. Since #878 a tab is bound to a cluster entry (see [Tabs on several clusters](#tabs-on-several-clusters-878)), and a context or workspace switch no longer resets the set: it retargets the shown tab. At most 16 tabs; a tab remembers 64 steps back and 64 forward. A background tab opens right after the shown one and changes nothing on screen; a front tab is shown at once. The last tab does not close. Closing the shown tab shows its right neighbour, else the left; the last ten closed tabs can be reopened.
