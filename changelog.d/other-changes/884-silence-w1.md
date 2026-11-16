@@ -1,0 +1,1 @@
+- **Alertmanager silences, groundwork:** core gains the writer that will send a silence and an Expire to Alertmanager through the service proxy, with the rules that class a silence as narrow or broad, a bounded preview of the alerts it would mute, and the access question for each HTTP method. Nothing in the app can reach it yet, so nothing changes on screen.
