@@ -1189,7 +1189,7 @@ impl ApplicationsPage {
             runtime: self.runtime.clone(),
             access: source.access.clone(),
             source_id: source.id.to_string(),
-            place: freshkube_delivery::timeline::live::Place {
+            place: Box::new(freshkube_delivery::timeline::live::Place {
                 cluster: self
                     .clusters
                     .active
@@ -1200,8 +1200,8 @@ impl ApplicationsPage {
                 argo_elsewhere,
                 kargo,
                 kargo_elsewhere: kargo_away.len(),
-            },
-            coroot: self.timeline_coroot(),
+            }),
+            coroot: Box::new(self.timeline_coroot()),
         }
     }
 

@@ -67,8 +67,8 @@ pub enum Fetch {
         access: ClusterAccess,
         /// The connection the list reads, as its own loader keys it.
         source_id: String,
-        place: Place,
-        coroot: CorootFeed,
+        place: Box<Place>,
+        coroot: Box<CorootFeed>,
     },
 }
 
@@ -201,34 +201,24 @@ impl TimelineView {
 
     /// Hears Observability's connection change, which asks Coroot again.
     fn follow_connection(&mut self, cx: &mut Context<Self>) {
-        self.connection = match &self.fetch {
-            Fetch::Live {
-                coroot:
-                    CorootFeed {
-                        reader: Some(reader),
-                        ..
-                    },
-                ..
-            } => reader.on_connection(cx, |this, cx| {
+        let reader = match &self.fetch {
+            Fetch::Live { coroot, .. } => coroot.reader.clone(),
+            Fetch::Example { .. } => None,
+        };
+        self.connection = reader.and_then(|reader| {
+            reader.on_connection(cx, |this, cx| {
                 if this.visible {
                     this.read_incidents(cx);
                 }
-            }),
-            _ => None,
-        };
+            })
+        });
     }
 
     /// Tells Observability whether this tab, shown or hidden, wants Coroot
     /// connected, as the change page does.
     fn want_coroot(&self, wanted: bool, cx: &mut Context<Self>) {
-        if let Fetch::Live {
-            coroot:
-                CorootFeed {
-                    reader: Some(reader),
-                    ..
-                },
-            ..
-        } = &self.fetch
+        if let Fetch::Live { coroot, .. } = &self.fetch
+            && let Some(reader) = &coroot.reader
         {
             reader.want(cx.entity_id(), wanted, cx);
         }

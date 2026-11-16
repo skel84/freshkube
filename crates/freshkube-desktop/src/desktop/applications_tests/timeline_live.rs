@@ -150,11 +150,11 @@ fn live(
         runtime: runtime.handle().clone(),
         access,
         source_id: "conn".into(),
-        place,
-        coroot: CorootFeed {
+        place: Box::new(place),
+        coroot: Box::new(CorootFeed {
             reader: Some(reader),
             link,
-        },
+        }),
     };
     cx.update_window(handle, |_, _, cx| {
         timeline(&view, cx).update(cx, |timeline, cx| timeline.use_fetch(fetch, cx));
@@ -342,14 +342,14 @@ fn incidents_without_a_connection_are_not_read_and_ask_nothing(cx: &mut TestAppC
         runtime: _runtime.handle().clone(),
         access: ClusterAccess::Live(Arc::new(Fake(client))),
         source_id: "conn".into(),
-        place: Place {
+        place: Box::new(Place {
             cluster: "core-fra".into(),
             ..Default::default()
-        },
-        coroot: CorootFeed {
+        }),
+        coroot: Box::new(CorootFeed {
             reader: Some(OutcomeReader::scripted(&observability, &script)),
             link: link(Some("shop")),
-        },
+        }),
     };
     cx.update_window(handle, |_, _, cx| {
         timeline(&view, cx).update(cx, |t, cx| t.use_fetch(fetch, cx));
