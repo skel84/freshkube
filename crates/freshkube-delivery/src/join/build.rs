@@ -73,6 +73,17 @@ pub(super) fn pull_request_links(
             (Confidence::Confirmed, "its merge commit")
         } else if head_is {
             (Confidence::Confirmed, "its head commit")
+        } else if pr
+            .summary
+            .as_ref()
+            .is_some_and(|summary| summary.from_title)
+        {
+            // A number read from the commit's title is never listed by GitHub
+            // for the commit, so it can't be said to be.
+            (
+                Confidence::Claimed,
+                "named by the commit title only; neither its head nor its merge commit",
+            )
         } else {
             (
                 Confidence::Claimed,

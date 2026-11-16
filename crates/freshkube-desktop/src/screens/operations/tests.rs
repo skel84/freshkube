@@ -42,6 +42,16 @@ fn mount(
     context: &str,
     step_ms: u64,
 ) -> (Runtime, Entity<OperationsScreen>, WindowHandle<Root>) {
+    mount_sized(cx, context, step_ms, 1500., 1000.)
+}
+
+fn mount_sized(
+    cx: &mut TestAppContext,
+    context: &str,
+    step_ms: u64,
+    width: f32,
+    height: f32,
+) -> (Runtime, Entity<OperationsScreen>, WindowHandle<Root>) {
     // The example run pauses on Tokio's clock between its steps. A paused
     // current-thread runtime makes that clock virtual and runs the worker
     // only when the test drives it (`step`), on the test's own thread, so no
@@ -58,7 +68,7 @@ fn mount(
     });
     let source = source(context, 0);
     let mut screen = None;
-    let handle = cx.open_window(size(px(1500.), px(1000.)), |window, cx| {
+    let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
             let mut view = OperationsScreen::new(runtime.handle().clone(), window, cx);
             view.step = Duration::from_millis(step_ms);
@@ -1124,6 +1134,227 @@ fn safety_g10_a_read_only_cluster_refuses_review_and_starts_nothing(cx: &mut Tes
         assert!(window.find("confirm-dialog").visible());
     })
     .unwrap();
+}
+
+/// Types into the confirmation's name field.
+fn type_node_name(cx: &mut TestAppContext, handle: WindowHandle<Root>, text: &str) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click("confirm-type-name", cx);
+        window.input(text, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    render(cx, handle);
+}
+
+/// A protected cluster (#852) takes no operation slot and starts no run until
+/// the node is named exactly; a dialog opened while the cluster was guarded
+/// starts nothing once it became protected. Example data, so nothing is sent
+/// anywhere.
+#[gpui_kit::test]
+fn safety_g25_a_protected_cluster_starts_no_operation_until_the_node_is_named(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    let level =
+        |cx: &mut TestAppContext, level| cx.update(|cx| crate::mutation::set_protection(level, cx));
+    let nothing_started = |cx: &mut TestAppContext| {
+        assert!(cx.read(|cx| Operations::current(cx).is_none()));
+        cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    };
+    let node = names(&screen, cx).remove(0);
+
+    // Opened while guarded (no name asked), then the cluster became protected:
+    // confirming starts nothing.
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(window.try_find("confirm-type-name").is_none());
+    })
+    .unwrap();
+    level(cx, freshkube_core::write::Protection::Protected);
+    confirm(cx, handle);
+    nothing_started(cx);
+    cx.read(|cx| {
+        let notice = screen.read(cx).notice.clone().unwrap_or_default();
+        assert!(notice.contains("Nothing was started."), "{notice}");
+        // No name was asked, so it doesn't say one was mistyped.
+        assert!(notice.contains("now protected; review again"), "{notice}");
+    });
+
+    // Opened while protected, the dialog asks for the name.
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        let prompt = window
+            .find("confirm-type-prompt")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(prompt.contains(&node), "{prompt}");
+    })
+    .unwrap();
+    // No name, a wrong case and a neighbour's name start nothing.
+    press_ok(cx, handle);
+    nothing_started(cx);
+    for wrong in [node.to_uppercase(), format!("{node}x")] {
+        type_node_name(cx, handle, &wrong);
+        press_ok(cx, handle);
+        nothing_started(cx);
+        cx.update_window(handle.into(), |_, window, _| {
+            assert!(window.find("confirm-dialog").visible());
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn the_exact_node_name_starts_the_operation_on_a_protected_cluster(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    cx.update(|cx| {
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    let node = names(&screen, cx).remove(0);
+    review(cx, handle);
+    type_node_name(cx, handle, &node);
+    press_ok(cx, handle);
+    cx.read(|cx| assert!(screen.read(cx).run.is_some(), "the exact name starts a run"));
+    wait_until_finished(cx, &runtime, &screen, 200, "a run on a protected cluster");
+}
+
+/// The name field has focus when the dialog opens, and Enter presses Confirm:
+/// a wrong name leaves the dialog open and starts nothing, the exact name
+/// starts the run.
+#[gpui_kit::test]
+fn the_name_field_starts_focused_and_enter_confirms_only_the_exact_name(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    cx.update(|cx| {
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    let node = names(&screen, cx).remove(0);
+    review(cx, handle);
+    // Typing straight after Review, with no click on the field.
+    let type_now = |cx: &mut TestAppContext, text: &str| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.input(text, cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        render(cx, handle);
+    };
+    type_now(cx, &node.to_uppercase());
+    cx.update_window(handle.into(), |_, window, _| {
+        assert!(
+            window.find("confirm-dialog").visible(),
+            "a wrong name keeps it open"
+        );
+    })
+    .unwrap();
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    // Clear it and type the exact name.
+    cx.update_window(handle.into(), |_, window, cx| {
+        for _ in 0..node.len() {
+            window.press("backspace", cx);
+        }
+    })
+    .unwrap();
+    type_now(cx, &node);
+    cx.read(|cx| {
+        assert!(
+            screen.read(cx).run.is_some(),
+            "Enter on the exact name starts a run"
+        )
+    });
+    wait_until_finished(cx, &runtime, &screen, 200, "a run confirmed with Enter");
+}
+
+/// At 760 by 560 and text size 20 the name field and the button it unlocks
+/// both stay inside the window, with the field right above the footer: a
+/// short dialog cuts its body off, never the name.
+#[gpui_kit::test]
+fn the_name_field_stays_with_confirm_at_the_smallest_window(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount_sized(cx, "prod-fra", 25, 760., 560.);
+    cx.update(|cx| {
+        crate::text_size::set(20., cx);
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    // The page itself scrolls at this size, so open the dialog directly.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        screen.update(cx, |screen, cx| screen.open_confirmation(window, cx));
+    })
+    .unwrap();
+    crate::mutation::settle_confirmation(cx, handle.into());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let window_bounds = window.bounds();
+        let field = window.find("confirm-type-name").bounds();
+        let prompt = window.find("confirm-type-prompt").bounds();
+        let ok = window.find("confirm-ok").bounds();
+        for (what, bounds) in [("field", field), ("prompt", prompt), ("confirm", ok)] {
+            assert!(
+                bounds.top() >= window_bounds.top() && bounds.bottom() <= window_bounds.bottom(),
+                "the {what} {bounds:?} leaves the window {window_bounds:?}"
+            );
+        }
+        assert!(prompt.bottom() <= field.top() + gpui_kit::px(1.));
+        assert!(field.bottom() <= ok.top() + gpui_kit::px(1.));
+        // Right above the footer's buttons, not up in the body past the
+        // facts and warnings that a short window cuts off.
+        let gap = ok.top() - field.bottom();
+        assert!(
+            gap <= crate::ui::dp_px(24., window),
+            "the field is {gap:?} above Confirm"
+        );
+    })
+    .unwrap();
+}
+
+/// Several nodes on a protected cluster are typed once, by the entry's id:
+/// a node's name no longer does, and the prompt says what it asks for.
+#[gpui_kit::test]
+fn several_nodes_on_a_protected_cluster_are_typed_once_by_the_entry_id(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 25);
+    cx.update(|cx| {
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx);
+        crate::mutation::set_active_entry(Some("prod-ams".into()), cx);
+    });
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        window.click(row(1), cx);
+    })
+    .unwrap();
+    let selected = names(&screen, cx);
+    assert!(selected.len() > 1, "{selected:?}");
+    review(cx, handle);
+    cx.update_window(handle.into(), |_, window, _| {
+        let prompt = window
+            .find("confirm-type-prompt")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert_eq!(prompt, "Type the cluster entry's id, prod-ams, to confirm.");
+    })
+    .unwrap();
+    // A node's name starts nothing.
+    type_node_name(cx, handle, &selected[0]);
+    press_ok(cx, handle);
+    cx.read(|cx| assert!(screen.read(cx).run.is_none()));
+    assert!(cx.read(|cx| Operations::current(cx).is_none()));
+    // The entry's id does.
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.click("confirm-type-name", cx);
+        // Replace what was typed.
+        for _ in 0..selected[0].len() {
+            window.press("backspace", cx);
+        }
+    })
+    .unwrap();
+    type_node_name(cx, handle, "prod-ams");
+    press_ok(cx, handle);
+    cx.read(|cx| assert!(screen.read(cx).run.is_some(), "the entry id starts a run"));
+    wait_until_finished(cx, &runtime, &screen, 400, "a run on several nodes");
 }
 
 // ---- #854: what the cluster says before an operation is offered ----

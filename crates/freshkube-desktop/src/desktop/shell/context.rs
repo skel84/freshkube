@@ -29,6 +29,9 @@ pub(in crate::desktop) struct ContextDisplay {
     /// prepared with the level.
     pub(in crate::desktop) level_words: SharedString,
     pub(in crate::desktop) open: bool,
+    /// The cluster row of the switcher whose menu is open: its tooltip waits,
+    /// so it does not draw over the menu's only entry (#878).
+    pub(in crate::desktop) menu_cluster: Option<String>,
     pub(in crate::desktop) counts: std::collections::BTreeMap<String, SharedString>,
 }
 
@@ -129,6 +132,7 @@ impl Pilot {
     /// setup changes, never while drawing.
     pub(in crate::desktop) fn prepare_protection(&mut self, cx: &mut App) -> bool {
         let level = self.current_level(cx);
+        crate::mutation::set_active_entry(self.switch.active_cluster().map(str::to_owned), cx);
         // Every entry's level, so a write to an entry the window doesn't show
         // follows a change made in Settings as the window's own does.
         crate::mutation::set_entry_levels(self.entry_levels(cx), cx);

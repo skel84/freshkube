@@ -18,6 +18,7 @@ use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, TitleBar,
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
+    menu::{ContextMenuExt as _, PopupMenuItem},
     popover::Popover,
     scroll::{Scrollbar, ScrollbarMode},
     status_bar::StatusBar,
@@ -109,6 +110,52 @@ impl Pilot {
             .into_any_element()
     }
 
+    /// Notes that the menu of cluster `id` is open, so its row holds its
+    /// tooltip, and that it closed.
+    fn watch_cluster_menu(
+        pilot: &WeakEntity<Self>,
+        id: &str,
+        popover: &WeakEntity<gpui_kit::component::popover::PopoverState>,
+        window: &mut Window,
+        cx: &mut Context<gpui_kit::component::menu::PopupMenu>,
+    ) {
+        let set = {
+            let (pilot, popover) = (pilot.clone(), popover.clone());
+            move |open: Option<String>, cx: &mut App| {
+                _ = pilot.update(cx, |view, cx| {
+                    view.context_display.menu_cluster = open;
+                    cx.notify();
+                });
+                // The switcher draws its rows from its own entity.
+                _ = popover.update(cx, |_, cx| cx.notify());
+            }
+        };
+        set(Some(id.to_owned()), cx);
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            move |_, _, _: &DismissEvent, _, cx| set(None, cx),
+        )
+        .detach();
+    }
+
+    /// After a pick in the switcher: the page has the keyboard again and the
+    /// popover closes once this update ends.
+    fn finish_cluster_pick(
+        &mut self,
+        popover: WeakEntity<gpui_kit::component::popover::PopoverState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_page(window, cx);
+        let handle = window.window_handle();
+        cx.defer(move |cx| {
+            _ = handle.update(cx, |_, window, cx| {
+                _ = popover.update(cx, |state, cx| state.dismiss(window, cx));
+            });
+        });
+    }
+
     /// One workspace entry in the switcher: a click opens it as the active
     /// cluster.
     fn cluster_item(
@@ -133,7 +180,9 @@ impl Pilot {
                     .unwrap_or_default();
                 format!("last known {}", super::switch::age_text(elapsed))
             });
-        h_flex()
+        let menu_popover = popover.clone();
+        let menu_open = self.context_display.menu_cluster.as_deref() == Some(item.id.as_ref());
+        let row = h_flex()
             .id(("cluster", ix))
             .test_support()
             .role(Role::Tab)
@@ -149,11 +198,11 @@ impl Pilot {
             .text_color(if current { p.ink } else { p.ink_2 })
             .when(current, |this| this.bg(p.accent_soft))
             .when(!current, |this| this.hover(|style| style.bg(p.hover)))
-            .tooltip({
+            .when(!menu_open, |this| {
                 let tip = item.tooltip.clone();
-                move |window, cx| {
+                this.tooltip(move |window, cx| {
                     gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
-                }
+                })
             })
             .child(
                 div()
@@ -188,15 +237,27 @@ impl Pilot {
                 } else {
                     view.retarget_shown_tab(chosen.clone(), window, cx);
                 }
-                view.focus_page(window, cx);
-                let handle = window.window_handle();
-                let popover = popover.clone();
-                cx.defer(move |cx| {
-                    _ = handle.update(cx, |_, window, cx| {
-                        _ = popover.update(cx, |state, cx| state.dismiss(window, cx));
-                    });
-                });
-            }))
+                view.finish_cluster_pick(popover.clone(), window, cx);
+            }));
+        // Right-click offers what ⌘-click does, for a person who doesn't know
+        // the gesture (#878).
+        let pilot = cx.weak_entity();
+        let opened = item.id.to_string();
+        div()
+            .id(("cluster-menu", ix))
+            .child(row)
+            .context_menu(move |menu, window, cx| {
+                let (pilot, id, popover) = (pilot.clone(), opened.clone(), menu_popover.clone());
+                Self::watch_cluster_menu(&pilot, &id, &popover, window, cx);
+                menu.item(
+                    PopupMenuItem::new("Open in new tab").on_click(move |_, window, cx| {
+                        _ = pilot.update(cx, |view, cx| {
+                            view.open_cluster_in_new_tab(id.clone(), window, cx);
+                            view.finish_cluster_pick(popover.clone(), window, cx);
+                        });
+                    }),
+                )
+            })
             .into_any_element()
     }
 }

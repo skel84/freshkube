@@ -27,7 +27,10 @@ use crate::failure::{Failure, FailureKind};
 use crate::indicators::SafetyStatus;
 use crate::inspection::EtcdHealthSnapshot;
 
+mod gate;
 mod selection;
+
+pub use gate::{OperationGate, OperationRefusal, confirm_operation, operation_gate};
 
 pub use selection::{
     PREFLIGHT_TIMEOUT, SelectionEvent, SelectionOutcome, SelectionRequest, run_selection,
@@ -69,7 +72,10 @@ pub struct OperationConfirmation {
 
 impl OperationConfirmation {
     /// Construct confirmation after the frontend has obtained user approval.
-    pub const fn confirmed() -> Self {
+    /// Crate-private: a run's confirmation comes from [`confirm_operation`],
+    /// which checks the cluster's protection level, so a caller cannot skip
+    /// the typed name by building one directly (#852).
+    pub(crate) const fn confirmed() -> Self {
         Self { confirmed: true }
     }
 

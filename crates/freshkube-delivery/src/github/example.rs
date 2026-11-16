@@ -90,6 +90,7 @@ pub fn pull(number: u64) -> Option<PullSummary> {
         },
         page: Address::parse(&format!("https://github.com/{REPO}/pull/{number}")).ok(),
         stale: None,
+        from_title: false,
     })
 }
 

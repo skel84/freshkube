@@ -113,6 +113,7 @@ use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
 pub use change::{
     ActKind, KargoAt, Links as CorootLinks, Live as CorootLive, OutcomeKind, StageAct,
+    install_avatar_folder,
 };
 use change::{ChangeEvent, ChangePage, Changes, Coroot};
 use changes::ChangesEvent;
@@ -1117,8 +1118,22 @@ impl ApplicationsPage {
         }
         use freshkube_delivery::timeline::live::Workload;
         let mut workloads: Vec<(String, Vec<Workload>)> = Vec::new();
+        let mut argo: Vec<(String, Vec<String>)> = Vec::new();
+        let mut argo_elsewhere = 0;
         for member in &app.members {
             let at = &member.at;
+            if at.kind == MemberKind::ArgoApplication {
+                match (&at.namespace, connections.opens(&at.session)) {
+                    (Some(namespace), true) => {
+                        match argo.iter_mut().find(|(known, _)| known == namespace) {
+                            Some((_, names)) => names.push(at.name.clone()),
+                            None => argo.push((namespace.clone(), vec![at.name.clone()])),
+                        }
+                    }
+                    _ => argo_elsewhere += 1,
+                }
+                continue;
+            }
             let MemberKind::Workload(kind) = at.kind else {
                 continue;
             };
@@ -1138,6 +1153,10 @@ impl ApplicationsPage {
         for (_, known) in &mut workloads {
             known.sort_by(|a, b| a.name.cmp(&b.name));
         }
+        argo.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, names) in &mut argo {
+            names.sort();
+        }
         page::timeline::Fetch::Live {
             runtime: self.runtime.clone(),
             access: source.access.clone(),
@@ -1149,6 +1168,8 @@ impl ApplicationsPage {
                     .clone()
                     .unwrap_or_else(|| source.id.to_string()),
                 workloads,
+                argo,
+                argo_elsewhere,
             },
         }
     }

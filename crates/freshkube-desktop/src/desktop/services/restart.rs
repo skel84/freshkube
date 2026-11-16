@@ -114,6 +114,7 @@ impl Pilot {
                         .upgrade()
                         .and_then(|view| view.read(cx).restart_fingerprint(&current_id))
                 }),
+                type_name: None,
                 on_confirm: Rc::new(move |window: &mut Window, cx: &mut App| {
                     if let Some(view) = run.upgrade() {
                         let service = run_id.clone();

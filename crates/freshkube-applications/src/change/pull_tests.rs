@@ -65,26 +65,56 @@ fn line(cx: &mut TestAppContext, page: &Entity<ChangePage>) -> Option<String> {
     cx.read(|cx| page.read(cx).pull_line().map(str::to_owned))
 }
 
-#[gpui_kit::test]
-fn the_row_says_where_the_pull_request_stands_its_reviews_and_its_checks(cx: &mut TestAppContext) {
-    let (handle, page) = open(cx, Shape::Whole);
-    assert_eq!(
-        line(cx, &page).as_deref(),
-        Some("Pull request #418 · Merged · 1 approved, 1 commented · checks passing (3)")
-    );
+/// Selects the pull request's hop, where the full card shows.
+fn select_pull(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<ChangePage>) {
     cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            let key = page
+                .strip
+                .cards
+                .iter()
+                .find(|card| card.id == "pr")
+                .map(|card| card.select.clone())
+                .expect("a pull request card");
+            page.select(&key, window, cx);
+        });
         window.render_frame(cx);
-        let row = window.find("change-pull");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_card_says_where_the_pull_request_stands_its_reviews_and_its_checks(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, Shape::Whole);
+    let compact = "Merged · 1 approved · checks 3 of 3 passed";
+    assert_eq!(line(cx, &page).as_deref(), Some(compact));
+    select_pull(cx, handle, &page);
+    cx.update_window(handle, |_, window, _| {
         assert_eq!(
-            row.label(),
-            Some("Pull request #418 · Merged · 1 approved, 1 commented · checks passing (3)"),
+            window.find("change-pull").label(),
+            Some(format!("#418 Retry idempotency keys · {compact}").as_str()),
+        );
+        for id in [
+            "change-pull-person-ken",
+            "change-pull-person-mira",
+            "change-pull-checks-bar",
+            "change-pull-open",
+            "change-pull-merge-commit",
+        ] {
+            window.find(id);
+        }
+        assert_eq!(
+            window.find("change-pull-person-mira").label(),
+            Some("mira: Approved")
         );
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-fn kept_answers_say_why_they_are_old_and_a_refused_token_leaves_no_row(cx: &mut TestAppContext) {
+fn kept_answers_say_only_that_they_are_old_and_a_refused_token_says_not_read(
+    cx: &mut TestAppContext,
+) {
     for (shape, why) in [
         (
             Shape::GitHubLimited,
@@ -97,11 +127,39 @@ fn kept_answers_say_why_they_are_old_and_a_refused_token_leaves_no_row(cx: &mut 
     ] {
         let (handle, page) = open(cx, shape);
         let text = line(cx, &page).expect("the kept answer");
-        assert!(text.starts_with("Pull request #418 · Merged · "), "{text}");
-        // The banner of what may be missing gives the reason; the line says
+        assert!(text.starts_with("Merged · "), "{text}");
+        // Old is on the strip's line too, in a warning tone: never green and
+        // current.
+        assert!(
+            text.starts_with("Merged · stale, read at 13:12 UTC · "),
+            "{text}"
+        );
+        assert_eq!(
+            cx.read(|cx| page.read(cx).pull.card().unwrap().tone),
+            freshkube_ui::ui::Tone::Warn
+        );
+        // The banner of what may be missing gives the reason; the card says
         // only that it is old, so the two never repeat each other.
-        assert!(text.ends_with(" · stale, read at 13:12 UTC"), "{text}");
-        assert!(!text.contains(why) && !text.contains("GitHub"), "{text}");
+        let notes: Vec<String> = cx.read(|cx| {
+            page.read(cx)
+                .pull
+                .card()
+                .unwrap()
+                .notes
+                .iter()
+                .map(|n| n.to_string())
+                .collect()
+        });
+        assert!(
+            notes.iter().any(|n| n == "stale, read at 13:12 UTC"),
+            "{notes:?}"
+        );
+        assert!(
+            notes
+                .iter()
+                .all(|n| !n.contains(why) && !n.contains("GitHub")),
+            "{notes:?}"
+        );
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(
@@ -114,13 +172,26 @@ fn kept_answers_say_why_they_are_old_and_a_refused_token_leaves_no_row(cx: &mut 
         })
         .unwrap();
     }
-    // Nothing was ever read, so there is no pull request to ask about; the
-    // page's banner of what may be missing says why.
+    // Nothing was ever read: the card names the number the cluster records
+    // and says it wasn't read, never none; the page's banner of what may be
+    // missing says why.
     let (handle, page) = open(cx, Shape::GitHubRefused);
-    assert_eq!(line(cx, &page), None);
+    assert!(line(cx, &page).is_some_and(|line| line.starts_with("Not read · ")));
+    select_pull(cx, handle, &page);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.try_find("change-pull").is_none());
+        assert!(
+            window
+                .find("change-pull")
+                .label()
+                .is_some_and(|l| l.starts_with("#418 · Not read"))
+        );
+        assert!(
+            window
+                .find("change-pull-lack")
+                .label()
+                .is_some_and(|l| l.starts_with("Not read: "))
+        );
         assert!(
             window
                 .find("change-missing")
@@ -227,10 +298,7 @@ async fn a_hide_drops_the_read_and_showing_again_asks_again(cx: &mut TestAppCont
     cx.wait_for_io(handle, |_, _| server.accepted.load(Ordering::SeqCst) == 1)
         .await;
     assert!(cx.read(|cx| page.read(cx).pull_reading()));
-    assert_eq!(
-        line(cx, &page).as_deref(),
-        Some("Pull request #418 · reading GitHub…")
-    );
+    assert_eq!(line(cx, &page).as_deref(), Some("reading GitHub…"));
     // Hidden, the read is dropped: nothing is loading and the other side
     // sees the connection go.
     cx.update(|cx| page.update(cx, |page, cx| page.set_visible(false, cx)));
@@ -364,16 +432,21 @@ async fn a_live_read_reaches_the_drawn_line_and_is_read_again_when_it_is_old(
     let server = github(&runtime, Arc::default());
     let (handle, page) = live(cx, &runtime, &server);
     answer(cx, handle, &page);
-    let expected = "Pull request #418 · Merged · 1 approved, 1 commented · checks passing (2)";
+    let expected = "Merged · 1 approved · checks 2 of 2 passed";
     cx.wait_for_io(handle, |_, cx| page.read(cx).pull_line() == Some(expected))
         .await;
     // Four reads of the four things, and nothing else.
     let paths: Vec<String> = server.seen().iter().map(|r| r.path.clone()).collect();
     assert_eq!(paths.len(), 4, "{paths:?}");
-    // Drawn, with its words once.
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(window.find("change-pull").label(), Some(expected));
+    // Drawn in the Inspector, with its words once.
+    select_pull(cx, handle, &page);
+    cx.update_window(handle, |_, window, _| {
+        assert!(
+            window
+                .find("change-pull")
+                .label()
+                .is_some_and(|l| l.ends_with(expected))
+        );
     })
     .unwrap();
     // Read again, fresh: no read is started.
@@ -436,7 +509,7 @@ async fn a_failed_read_backs_off_instead_of_being_asked_on_every_refresh(cx: &mu
     cx.wait_for_io(handle, |_, cx| {
         page.read(cx)
             .pull_line()
-            .is_some_and(|line| line.contains("checks passing"))
+            .is_some_and(|line| line.contains("checks 2 of 2 passed"))
     })
     .await;
     // And what answered is what was kept: no more waiting.
@@ -448,73 +521,67 @@ async fn a_failed_read_backs_off_instead_of_being_asked_on_every_refresh(cx: &mu
 }
 
 #[gpui_kit::test]
-fn the_row_doesnt_move_the_trail_or_the_inspector_sideways(cx: &mut TestAppContext) {
-    let mut extras = Vec::new();
+fn the_card_stays_inside_the_inspector_at_both_sizes(cx: &mut TestAppContext) {
     for (width, height) in [(1280., 880.), (760., 560.)] {
         let (handle, page) = open_at(cx, Shape::Whole, width, height);
-        let measure = |cx: &mut TestAppContext| {
-            cx.update_window(handle, |_, window, cx| {
-                window.render_frame(cx);
-                (
-                    window.find("change-split").bounds(),
-                    window.find("change-table").bounds(),
-                )
-            })
-            .unwrap()
-        };
-        let (with_split, with_table) = measure(cx);
-        let row = cx
-            .update_window(handle, |_, window, _| window.find("change-pull").bounds())
-            .unwrap();
-        // Above them, in the page's own width.
-        assert!(
-            row.bottom() <= with_split.top(),
-            "{width}: {row:?} above {with_split:?}"
-        );
-        cx.update_window(handle, |_, _, cx| {
-            page.update(cx, |page, cx| {
-                page.pull_reset();
-                cx.notify();
-            })
+        select_pull(cx, handle, &page);
+        cx.update_window(handle, |_, window, _| {
+            let inspector = window.find("change-detail").bounds();
+            let card = window.find("change-pull").bounds();
+            assert!(
+                card.left() >= inspector.left() && card.right() <= inspector.right(),
+                "{width}: {card:?} inside {inspector:?}"
+            );
+            // A long list of checks scrolls inside the Inspector, never
+            // widening it: the check rows are cut, not the pane.
+            let row = window.find("change-pull-check-0").bounds();
+            assert!(row.right() <= inspector.right(), "{width}: {row:?}");
         })
         .unwrap();
-        let (without_split, without_table) = measure(cx);
-        assert_eq!(
-            cx.read(|cx| page.read(cx).pull_line().map(str::to_owned)),
-            None
-        );
-        // The same columns: the trail and Inspector stay as wide and as
-        // far from the sides as they were. A short page scrolls the whole
-        // split at its full height to keep the Inspector footer reachable;
-        // a taller page keeps the bottom edge and gives the row its space.
-        for (with, without) in [(with_split, without_split), (with_table, without_table)] {
-            assert_eq!(
-                (with.left(), with.right()),
-                (without.left(), without.right()),
-                "{width}"
-            );
-            if height < freshkube_ui::page::SHORT_HEIGHT {
-                assert_eq!(with.size.height, without.size.height, "{width}");
-            } else {
-                assert_eq!(with.bottom(), without.bottom(), "{width}");
-            }
-            assert!(with.top() >= without.top(), "{width}");
-            // Only the row, in its block's padding, was added above them: the
-            // top moved down by the row and a little more, never by a whole
-            // other row, and by as much at either size.
-            let moved = with.top() - without.top();
-            assert!(
-                moved >= row.size.height,
-                "{width}: moved {moved:?}, row {:?}",
-                row.size.height
-            );
-            let extra = moved - row.size.height;
-            assert!(extra <= gpui_kit::px(24.), "{width}: {extra:?} of padding");
-            extras.push(extra);
-        }
     }
+}
+
+#[gpui_kit::test]
+fn the_inspectors_header_tag_is_a_warning_only_while_the_answer_is_old(cx: &mut TestAppContext) {
+    for (shape, old) in [
+        (Shape::Whole, false),
+        (Shape::GitHubLimited, true),
+        (Shape::GitHubOffline, true),
+    ] {
+        let (handle, page) = open(cx, shape);
+        // Nothing selected: the header isn't the pull request's.
+        assert!(!cx.read(|cx| page.read(cx).pull_is_old()));
+        select_pull(cx, handle, &page);
+        assert_eq!(cx.read(|cx| page.read(cx).pull_is_old()), old, "{shape:?}");
+    }
+}
+
+#[gpui_kit::test]
+fn the_title_shape_says_the_number_came_from_the_commit_title(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, Shape::GitHubTitle);
+    select_pull(cx, handle, &page);
+    cx.update_window(handle, |_, window, _| {
+        window.find("change-pull-open");
+    })
+    .unwrap();
+    let notes: Vec<String> = cx.read(|cx| {
+        page.read(cx)
+            .pull
+            .card()
+            .unwrap()
+            .notes
+            .iter()
+            .map(|n| n.to_string())
+            .collect()
+    });
     assert!(
-        (extras[0] - extras[1]).abs() <= gpui_kit::px(1.),
-        "{extras:?}"
+        notes.iter().any(|n| n.contains("commit's title")),
+        "{notes:?}"
     );
+    let label = cx.read(|cx| page.read(cx).pull.card().unwrap().links[0].label);
+    assert_eq!(label, "Open on GitHub (number from the commit title)");
+    // The usual shape says no such thing.
+    let (_, page) = open(cx, Shape::Whole);
+    let label = cx.read(|cx| page.read(cx).pull.card().unwrap().links[0].label);
+    assert_eq!(label, "Open on GitHub");
 }

@@ -1,0 +1,1 @@
+- **Tabs:** right-click a cluster in the header's switcher and choose Open in new tab, as ⌘-click does.

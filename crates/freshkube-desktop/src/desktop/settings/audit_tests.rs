@@ -112,6 +112,7 @@ fn real_files_are_read_across_contexts_and_carry_field_paths_only(cx: &mut TestA
             action: "scale".into(),
             tier: "reversible".into(),
             protection: Protection::Guarded.key().into(),
+            undo: None,
             objects: vec![AuditObject {
                 group: "apps".into(),
                 resource: "deployments".into(),

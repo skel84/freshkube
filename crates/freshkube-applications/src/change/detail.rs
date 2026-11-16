@@ -43,6 +43,9 @@ pub(super) struct Detail {
     after: Option<super::outcome::Section>,
     leading_link: Option<LinkLines>,
     actions: Vec<ActionLine>,
+    /// A Stage's Roll back lines, in a block of their own above the
+    /// actions; their buttons are numbered after the actions'.
+    rollback: Vec<ActionLine>,
 }
 
 impl Detail {
@@ -53,7 +56,7 @@ impl Detail {
         &self,
         ix: usize,
     ) -> Option<(Option<SharedString>, Option<SharedString>)> {
-        let line = self.actions.get(ix)?;
+        let line = self.actions.iter().chain(&self.rollback).nth(ix)?;
         Some((line.why.clone(), line.tooltip.clone()))
     }
 
@@ -213,6 +216,8 @@ pub(super) enum Leads {
     /// A Stage action, for the Stage of this name: the shell describes it
     /// and core's write module sends it.
     Act(super::ActKind, String),
+    /// Copies this text to the clipboard.
+    Copy(SharedString),
 }
 
 impl ChangePage {
@@ -284,6 +289,7 @@ impl ChangePage {
             leading_link: None,
             after: self.section(key),
             actions: self.buttons(&hop.actions),
+            rollback: Vec::new(),
         }
     }
 
@@ -361,6 +367,7 @@ impl ChangePage {
                 actions.extend(self.stage_actions(stage));
                 actions
             },
+            rollback: self.stage_rollback(stage),
         }
     }
 
@@ -454,13 +461,20 @@ impl ChangePage {
         let after = detail.after.as_ref().map(|section| section.render(cx));
         let inspector = Inspector::new("change-detail")
             .track_scroll(&self.detail_scroll)
-            .heading(heading(detail, cx))
+            .heading(heading(detail, self.pull_is_old(), cx))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
                     .id("change-detail-notice")
                     .aria_label(body.clone())
                     .test_support()
             }));
+        // The pull request's own card leads its hop, before the Why.
+        let pull = self
+            .pull
+            .card()
+            .filter(|_| self.pull_selected())
+            .map(|card| self.render_pull_card(card, cx));
+        let inspector = inspector.children(pull);
         let fix = detail.fix.as_ref().map(|fix| self.render_fix(fix, cx));
         let inspector = inspector.children(fix);
         let inspector = inspector.children(
@@ -493,9 +507,23 @@ impl ChangePage {
         };
         // Above the actions, below the hop's fields and link.
         let inspector = inspector.children(after);
+        // The Roll back lines sit in the footer, in a row of their own above
+        // the actions, so they stay in view without scrolling.
+        let rollback = (!detail.rollback.is_empty()).then(|| {
+            self.render_actions(
+                &detail.rollback,
+                detail.actions.len(),
+                "change-detail-rollback",
+                cx,
+            )
+        });
+        let footer = v_flex()
+            .gap(dp(6.))
+            .children(rollback)
+            .child(self.render_actions(&detail.actions, 0, "change-detail-actions", cx));
         Some(
             inspector
-                .footer(Some(self.render_actions(&detail.actions, cx)))
+                .footer(Some(footer.into_any_element()))
                 .render(cx)
                 .into_any_element(),
         )
@@ -600,8 +628,15 @@ impl ChangePage {
 
     /// The hop's buttons: into Resources on its cluster, greyed out with
     /// why where it can't lead yet.
-    fn render_actions(&self, actions: &[ActionLine], cx: &mut Context<Self>) -> AnyElement {
+    fn render_actions(
+        &self,
+        actions: &[ActionLine],
+        first: usize,
+        id: &'static str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let buttons = actions.iter().enumerate().map(|(ix, action)| {
+            let ix = first + ix;
             let button = Button::new(SharedString::from(format!("change-action-{ix}")))
                 .outline()
                 .xsmall()
@@ -613,6 +648,9 @@ impl ChangePage {
                     Leads::Logs(pod, container) => this.open_logs(pod, container.clone(), cx),
                     Leads::Revision(deployment, hash) => this.open_revision(deployment, hash, cx),
                     Leads::Act(kind, stage) => this.act(*kind, stage, cx),
+                    Leads::Copy(text) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()))
+                    }
                 })),
                 None => button,
             };
@@ -621,18 +659,23 @@ impl ChangePage {
             // never covers its neighbour's.
             let wrap = div().id(SharedString::from(format!("change-action-{ix}-tip")));
             match (action.why.clone(), action.tooltip.clone()) {
+                _ if self.tips_held => wrap.child(button.disabled(action.why.is_some())),
                 (Some(why), _) => wrap.child(button.disabled(true)).follow_tooltip(why),
                 (None, Some(tooltip)) => wrap.child(button).follow_tooltip(tooltip),
                 (None, None) => wrap.child(button),
             }
         });
         h_flex()
-            .id("change-detail-actions")
+            .id(id)
             .test_support()
             .gap(dp(6.))
             .flex_wrap()
             .children(buttons)
-            .children(self.results_action(cx))
+            .children(if first == 0 {
+                self.results_action(cx)
+            } else {
+                None
+            })
             .into_any_element()
     }
 }
@@ -1044,7 +1087,7 @@ fn render_stage(inspector: Inspector, body: &Body, cx: &App) -> Inspector {
 }
 
 /// The kind as a caption over the name in monospace and its state.
-fn heading(detail: &Detail, cx: &App) -> impl IntoElement {
+fn heading(detail: &Detail, old: bool, cx: &App) -> impl IntoElement {
     let Detail {
         kind,
         title,
@@ -1072,12 +1115,17 @@ fn heading(detail: &Detail, cx: &App) -> impl IntoElement {
                         .truncate()
                         .child(title.clone()),
                 )
-                .child(ui::tag(*tone, None, state.clone(), cx)),
+                .child(ui::tag(
+                    if old { Tone::Warn } else { *tone },
+                    None,
+                    state.clone(),
+                    cx,
+                )),
         )
 }
 
 /// A labelled value.
-fn field(label: &str, value: Div, cx: &App) -> Div {
+pub(super) fn field(label: &str, value: Div, cx: &App) -> Div {
     h_flex()
         .gap_3()
         .items_start()
@@ -1101,7 +1149,7 @@ fn render_field(line: &FieldLine, cx: &App) -> Div {
 }
 
 /// A section of the body under its caption.
-fn section(title: &str, cx: &App) -> Div {
+pub(super) fn section(title: &str, cx: &App) -> Div {
     v_flex()
         .gap(dp(7.))
         .text_size(dp(12.))

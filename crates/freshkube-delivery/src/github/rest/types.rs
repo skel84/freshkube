@@ -149,6 +149,10 @@ pub struct PullSummary {
     pub page: Option<Address>,
     /// Set when GitHub couldn't be asked and this is what was kept.
     pub stale: Option<Stale>,
+    /// The number was taken from the `(#n)` that ends a squash-merge
+    /// commit's title, and this pull request read directly, not found by
+    /// searching GitHub for the commit.
+    pub from_title: bool,
 }
 
 pub(super) fn person(value: &Value) -> Option<Person> {
@@ -208,6 +212,7 @@ pub(crate) fn summary(repo: &str, value: &Value) -> Option<PullSummary> {
         requested,
         page: text(value, "/html_url").and_then(|raw| page(&raw)),
         stale: None,
+        from_title: false,
     })
 }
 

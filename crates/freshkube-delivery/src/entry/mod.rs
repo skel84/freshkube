@@ -548,7 +548,7 @@ impl Reach {
             Reach::Missing(_) => "Not in the workspace",
             Reach::Unreachable(_) => "Unreachable",
             Reach::Refused(_) => "Refused",
-            Reach::NotServed(_) => "Not served",
+            Reach::NotServed(_) => "Not installed",
             Reach::Readable => "Readable",
         }
     }
