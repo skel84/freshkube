@@ -153,6 +153,9 @@ pub struct Step {
     /// The cell holds the keyboard: a ring in the accent's colour, drawn
     /// over the cell's edge so it moves nothing.
     pub ring: bool,
+    /// The word is dim: a step the row isn't expected to have (Not used
+    /// here), which reads apart from one that wasn't reached.
+    pub muted: bool,
 }
 
 /// A stepper cell for `column`, two lines in the row's 40 dp: the track
@@ -205,7 +208,7 @@ pub fn stepper_cell(column: &impl TableColumn, step: Step, cx: &App) -> Observed
         .flex()
         .items_center()
         .text_size(dp(11.))
-        .text_color(p.ink_2)
+        .text_color(if step.muted { p.muted } else { p.ink_2 })
         .whitespace_nowrap()
         .truncate()
         .child(step.word.clone());

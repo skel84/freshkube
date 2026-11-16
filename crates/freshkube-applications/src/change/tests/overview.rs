@@ -651,6 +651,9 @@ fn the_rollouts_shape_fills_the_next_step_column_and_says_why_when_it_cant(
         assert_eq!(lon.word.as_ref(), "Not used here");
         assert!(lon.not_used && !lon.reached);
         assert_eq!(lon.hop, None);
+        // The Stages that run one have its hop, so the cell selects it.
+        assert_eq!(dev.hop.as_deref(), Some("dev-rollout"));
+        assert_eq!(stage.hop.as_deref(), Some("stage-rollout"));
     })
     .unwrap();
 }
@@ -760,6 +763,34 @@ fn the_right_arrow_runs_along_the_whole_row_to_after_deploy(cx: &mut TestAppCont
             Some("dev-deployment"),
             "the row ends there"
         );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_ring_and_the_arrow_keys_reach_a_next_step_cell(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Rollouts, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let selected = |cx: &App| page.read(cx).selected().map(|s| s.to_string());
+        page.update(cx, |page, cx| {
+            page.select("dev-verification", window, cx);
+            page.focus(window, cx);
+        });
+        window.render_frame(cx);
+        window.press("right", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-rollout"));
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find("change-cell-dev-next-step-ring").is_some(),
+            "the keyboard ring is on the Next step cell"
+        );
+        // The Rollout is its own hop: its Inspector opens, and the keys go on.
+        window.press("right", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-argocd"));
+        window.press("left", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-rollout"));
     })
     .unwrap();
 }

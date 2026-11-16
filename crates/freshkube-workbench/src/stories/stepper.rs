@@ -42,14 +42,16 @@ pub enum Case {
     Waiting,
     Causes,
     Unreached,
+    Unused,
 }
 
 impl Case {
-    const ALL: [(Self, &'static str, &'static str); 4] = [
+    const ALL: [(Self, &'static str, &'static str); 5] = [
         (Self::Confirmed, "confirmed", "Confirmed"),
         (Self::Waiting, "waiting", "Waiting"),
         (Self::Causes, "causes", "Causes"),
         (Self::Unreached, "unreached", "Not reached"),
+        (Self::Unused, "unused", "Not used here"),
     ];
 
     /// Each Stage's cells: tone and word.
@@ -102,6 +104,21 @@ impl Case {
             Self::Unreached => vec![
                 ("dev", done, false),
                 ("prod-a", [(Outline, "Not reached"); 4], true),
+            ],
+            // A step the row isn't expected to have: dim, apart from one not
+            // reached, and the track runs on across it.
+            Self::Unused => vec![
+                ("dev", done, false),
+                (
+                    "prod-a",
+                    [
+                        (Good, "Eligible"),
+                        (Good, "Promoted"),
+                        (Outline, "Not used here"),
+                        (Good, "Running"),
+                    ],
+                    false,
+                ),
             ],
         }
     }
@@ -286,6 +303,7 @@ impl TableSource for StepperStory {
                 tooltip: format!("{name} · {}: {word}", STEPS[at]).into(),
                 selected: self.picked.as_ref() == Some(&id),
                 ring: self.picked.as_ref() == Some(&id),
+                muted: word == "Not used here",
             },
             cx,
         )
