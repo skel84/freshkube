@@ -1,17 +1,38 @@
 //! A viewport-bounded dialog below the app's title bar, with a fixed title
 //! and actions around a body that scrolls independently.
 use gpui_kit::component::{
+    WindowExt,
     dialog::{Dialog, DialogTitle},
     scroll::{Scrollbar, ScrollbarMode},
     v_flex,
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{IntoElement, ScrollHandle, TestSupportExt, Window, div, px};
+use gpui_kit::{App, IntoElement, Pixels, ScrollHandle, TestSupportExt, Window, div, px};
 
 use crate::{
     page::APP_HEADER_HEIGHT,
     ui::{dp, dp_px},
 };
+
+/// How far from the window's top a dialog starts: clear of the app header
+/// (where macOS draws its window buttons) at every text size, and no nearer
+/// than Kit's own tenth of the window.
+pub fn top_inset(window: &Window) -> Pixels {
+    dp_px(APP_HEADER_HEIGHT + 12., window).max(window.viewport_size().height / 10.)
+}
+
+/// Opens a dialog the way every dialog of the app is opened: `build` makes
+/// it, and it is placed below the title bar's inset. Use this, never
+/// `window.open_dialog`, so no dialog reaches the window buttons.
+pub fn open<F>(window: &mut Window, cx: &mut App, build: F)
+where
+    F: Fn(Dialog, &mut Window, &mut App) -> Dialog + 'static,
+{
+    window.open_dialog(cx, move |dialog, window, cx| {
+        let top = top_inset(window);
+        build(dialog, window, cx).margin_top(top)
+    });
+}
 
 pub fn frame(
     dialog: Dialog,
@@ -48,7 +69,7 @@ fn frame_with(
     scroll: Option<&ScrollHandle>,
     window: &Window,
 ) -> Dialog {
-    let top = dp_px(APP_HEADER_HEIGHT + 12., window).max(window.viewport_size().height / 10.);
+    let top = top_inset(window);
     // Kit adds 16 px of padding above and below its content. Bound the
     // complete contents too: Kit otherwise snaps a tall surface upwards.
     let height = (window.viewport_size().height - top - dp_px(16., window) - px(32.)).max(px(0.));
@@ -63,6 +84,8 @@ fn frame_with(
                 .gap(dp(12.))
                 .child(
                     div()
+                        .id("app-dialog-title")
+                        .test_support()
                         .flex_none()
                         .pr_6()
                         .child(DialogTitle::new().child(title)),
@@ -192,6 +215,43 @@ mod tests {
                 "{last:?} cut by {body:?}"
             );
             assert!(scroll.offset().y < px(0.));
+        })
+        .unwrap();
+    }
+
+    /// At 760x560 with text 20, a dialog opened the way the app opens them
+    /// starts below the app header, where macOS draws the window buttons:
+    /// its title, and the surface's 16 px of padding above it.
+    #[gpui_kit::test]
+    fn a_dialog_s_title_starts_below_the_title_bar_inset(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            crate::text_size::set(20., cx);
+            cx.set_reduce_motion(true);
+        });
+        let window = cx
+            .open_window(size(px(760.), px(560.)), move |window, cx| {
+                Root::new(cx.new(|_| Host), window, cx)
+            })
+            .into();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            super::open(window, cx, |dialog, window, _| {
+                frame(dialog, 520., "A dialog", "Body", "Actions", window)
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| {
+            window.render_frame(cx);
+            let header = dp_px(APP_HEADER_HEIGHT, window);
+            let surface_top = window.find("app-dialog-title").bounds().top() - px(16.);
+            assert!(
+                surface_top >= header - px(1.),
+                "the dialog starts at {surface_top:?}, under the header's {header:?}"
+            );
         })
         .unwrap();
     }

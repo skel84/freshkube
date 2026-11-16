@@ -328,10 +328,13 @@ impl SourcesList {
                             partial.then_some(ui::Tone::Warn),
                             Some(template.clone()),
                             format!(
-                                "Build namespace: the template {template} fits {} projects\n{}; \
-                                 Accept sets delivery.build_namespace to it\nReads \
-                                 delivery.build_namespace",
-                                fits.len(),
+                                "Build namespace: one namespace per project, as {}\n{}; \
+                                 Accept sets delivery.build_namespace to the template {template}\n\
+                                 Reads delivery.build_namespace",
+                                match fits.len() {
+                                    1 => "1 project has".to_owned(),
+                                    n => format!("{n} projects have"),
+                                },
                                 match partial {
                                     true => "Some namespaces with runs belong to no project",
                                     false => "Every namespace with runs belongs to a project",
@@ -605,6 +608,12 @@ impl SourcesList {
             .saved_in(form::SavedIn::file("freshkube.yaml").and(" · delivery.build_namespace"))
             .render(cx)
             .into_any_element()
+    }
+
+    /// The Chosen by line of the suggestion's row.
+    #[cfg(test)]
+    pub(super) fn suggestion_choice(&self) -> Option<&str> {
+        self.finder.row.as_ref().map(|row| row.explanation.as_ref())
     }
 
     #[cfg(test)]

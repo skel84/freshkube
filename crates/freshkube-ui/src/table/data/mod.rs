@@ -534,9 +534,12 @@ impl DataTable {
             (None, Some(_)) => None,
         });
         let (height, resized) = (state.list_height.clone(), state.resized.clone());
+        // The list cuts its rows at its own edge, the header's bottom, and
+        // does not leave that to the inner list's mask.
         let list = div()
             .id(ids.list.clone())
             .test_support()
+            .overflow_hidden()
             .on_prepaint(move |bounds, window, _| {
                 let now = bounds.size.height;
                 if height

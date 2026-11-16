@@ -397,6 +397,23 @@ fn partial_fit_shows_warn_and_the_unexplained(cx: &mut TestAppContext) {
         assert!(window.find("settings-source-evidence-ci-shared").visible());
     })
     .unwrap();
+    // Chosen by reads as a sentence and names no placeholder (#1072).
+    let choice = cx.read(|cx| {
+        list(&view, cx)
+            .read(cx)
+            .suggestion_choice()
+            .map(str::to_owned)
+    });
+    let choice = choice.expect("a suggestion row");
+    assert!(
+        choice.starts_with("Build namespace: one namespace per project, as ")
+            && choice.ends_with(" projects have"),
+        "{choice}"
+    );
+    assert!(
+        !choice.contains('{') && !choice.contains("the project"),
+        "{choice}"
+    );
 }
 
 #[gpui_kit::test]

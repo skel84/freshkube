@@ -36,6 +36,7 @@ use crate::backend::{self, OwnedJob};
 use freshkube_core::monitoring::history::Subject;
 use freshkube_monitoring::history::{HistorySource, HistoryView};
 
+pub(crate) mod alerts;
 mod cross_links;
 mod edit;
 mod events;
@@ -173,6 +174,7 @@ pub struct DetailPane {
     external: external_secrets::ExternalView,
     traffic: traffic::TrafficView,
     netpol: netpol::NetpolView,
+    alerts: alerts::AlertsView,
     node_facts: std::sync::Arc<Vec<crate::NodeFacts>>,
     cross_links: cross_links::CrossLinks,
     pod_links: Option<freshkube_core::resources::PodLinks>,
@@ -324,6 +326,7 @@ impl DetailPane {
             external: Default::default(),
             traffic: Default::default(),
             netpol: Default::default(),
+            alerts: Default::default(),
             node_facts: Default::default(),
             cross_links: Default::default(),
             pod_links: None,
@@ -450,6 +453,7 @@ impl DetailPane {
         self.traffic.reset();
         self.netpol.reset();
         self.cross_links = Default::default();
+        self.derive_alerts();
         self.pod_links = None;
         self.event_lines.clear();
         self.matches.clear();
@@ -480,6 +484,7 @@ impl DetailPane {
         self.ports
             .update(cx, |ports, cx| ports.show(None, None, cx));
         self.detail = None;
+        self.alerts.body = None;
         self.summary = None;
         self.external.reset();
         self.traffic.reset();

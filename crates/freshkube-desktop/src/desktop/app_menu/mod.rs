@@ -9,7 +9,6 @@ use std::sync::Arc;
 use freshkube_ui::menu::{self as shared, Find, FindNext, FindPrevious, MenuAction};
 use freshkube_ui::platform::{self, About, AppMenu, OpenSettings, Platform, SystemMenu};
 use freshkube_ui::text_size::{DefaultText, LargerText, SmallerText};
-use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::popover::Popover;
@@ -435,7 +434,7 @@ pub(crate) fn open_about(window: &mut Window, cx: &mut App) {
         ImageFormat::Svg,
         include_bytes!("../../../../../packaging/icon/freshkube.svg").to_vec(),
     ));
-    window.open_dialog(cx, move |dialog, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         let muted = cx.theme().muted_foreground;
         dialog
             .w(ui::dp_px(340., window).min(window.viewport_size().width - ui::dp_px(32., window)))

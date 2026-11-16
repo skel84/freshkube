@@ -86,6 +86,11 @@ fn target(key: &str, pick: impl Fn(&[String], &str) -> bool) -> (DetailTarget, S
     (target, row.resource_version.clone())
 }
 
+/// The first example object of a kind.
+pub(super) fn first_of(key: &str) -> (DetailTarget, String) {
+    target(key, |_, _| true)
+}
+
 pub(super) fn crashing_pod() -> (DetailTarget, String) {
     target("pods", |cells, _| cells[2] == "CrashLoopBackOff")
 }

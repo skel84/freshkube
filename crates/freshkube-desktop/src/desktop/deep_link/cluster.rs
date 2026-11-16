@@ -743,7 +743,7 @@ impl Pilot {
             entity: entity.clone(),
         });
         let on_close = pilot.clone();
-        window.open_dialog(cx, move |dialog, window, _| {
+        freshkube_ui::dialog::open(window, cx, move |dialog, window, _| {
             let close = on_close.clone();
             let dialog = dialog.on_cancel(move |_, _, cx| {
                 _ = close.update(cx, |pilot, _| pilot.deep_link.identities.choosing = None);

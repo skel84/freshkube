@@ -14,6 +14,7 @@ mod dialog;
 mod diff;
 pub mod edit_yaml;
 pub mod everyday;
+mod fresh;
 mod gitops;
 mod history;
 mod outcome;
@@ -38,6 +39,7 @@ pub use audit::{
 };
 pub use dialog::{ANNOTATION_NOTICE, Ask, Dialog, OPEN_NOTICE, REVIEW_LABEL};
 pub use diff::{ChangeKind, FieldChange};
+pub use fresh::{SendRefusal, SetupLevels, Subject, Unreadable, at_send};
 pub use gitops::GitOps;
 pub use history::{History, Row as HistoryRow, Source, SourceFilter, load as load_history};
 pub use outcome::{Accepted, DEFAULT_WAIT, MAX_WAIT, Observed, Watching};
