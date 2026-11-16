@@ -255,7 +255,10 @@ impl Version {
         &self.key_fingerprints
     }
 
-    /// The only way to make a version: the allowlist and the id check run here.
+    /// The only way to make a version: the allowlist and the cluster-id check
+    /// run here. The version's own `id` (a commit, or a content hash) is the
+    /// caller's and is not checked here: `SavedVersion::parse` checks a saved
+    /// one is hex.
     pub fn parse(
         id: impl Into<String>,
         bytes: &[u8],

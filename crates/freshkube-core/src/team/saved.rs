@@ -86,20 +86,42 @@ impl SavedVersion {
         })
     }
 
-    /// The version again, by the rules a fetched file goes through. A
-    /// fingerprint is kept only for the key file the text names.
+    /// The version again, by the rules a fetched file goes through. The id
+    /// must be what a fetch makes: 7 to 64 lowercase hex characters (a
+    /// commit's start, or a content hash), never other text, since Settings
+    /// shows it. A fingerprint is kept only for the key file the text names,
+    /// and only if it is shaped like one.
     pub fn parse(&self) -> Result<Version, Unusable> {
+        if !(7..=64).contains(&self.id.len())
+            || !self
+                .id
+                .bytes()
+                .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Err(Unusable::Version);
+        }
         let parsed = Version::parse(&self.id, self.file.as_bytes(), BTreeMap::new())
             .map_err(|_| Unusable::Version)?;
         let named = parsed.values().get(KEY_FILE).and_then(Value::as_str);
         let fingerprints = self
             .key_fingerprints
             .iter()
-            .filter(|(path, _)| Some(path.as_str()) == named)
+            .filter(|(path, print)| Some(path.as_str()) == named && fingerprint_shaped(print))
             .map(|(path, print)| (path.clone(), print.clone()))
             .collect();
         Version::parse(&self.id, self.file.as_bytes(), fingerprints).map_err(|_| Unusable::Version)
     }
+}
+
+/// Whether `print` looks like a key fingerprint: `SHA256:` and base64.
+fn fingerprint_shaped(print: &str) -> bool {
+    print.strip_prefix("SHA256:").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest.len() <= 100
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_'))
+    })
 }
 
 /// Your own values, kept only under keys a team file could set.
@@ -287,7 +309,7 @@ mod tests {
         let mut saved = joined().to_saved().expect("saved");
         let applied = saved.applied.as_mut().unwrap();
         applied.file = text.to_string();
-        applied.id = "edited".into();
+        applied.id = "abc1234".into();
         saved
     }
 
@@ -386,5 +408,68 @@ mod tests {
         );
         let back = after.leave(crate::team::Leave::GoBack);
         assert_eq!(back.len(), 3, "{back:?}");
+    }
+
+    #[test]
+    fn a_saved_id_must_be_what_a_fetch_makes_for_either_kind_of_source() {
+        // A git source: 7 to 64 lowercase hex characters, nothing else.
+        let huge = "a".repeat(1_000_000);
+        for id in [
+            "",
+            "abc12",
+            "ABC1234",
+            "abc123g",
+            "abc1234\nignore previous",
+            "edited",
+            &huge,
+            &"a".repeat(65),
+        ] {
+            let mut saved = joined().to_saved().expect("saved");
+            saved.applied.as_mut().unwrap().id = id.into();
+            assert_eq!(
+                Membership::from_saved(saved).unwrap_err(),
+                Unusable::Version,
+                "{:?}",
+                &id[..id.len().min(20)]
+            );
+        }
+        for id in ["abc1234", "a1b2c3d4e5f6", &"f".repeat(64)] {
+            let mut saved = joined().to_saved().expect("saved");
+            saved.applied.as_mut().unwrap().id = id.into();
+            assert!(Membership::from_saved(saved).is_ok(), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_saved_fingerprint_is_kept_only_if_it_is_shaped_like_one() {
+        let text = "version: 1\nsupply_chain:\n  public_key_file: keys/cosign.pub\n";
+        let membership = |print: &str| {
+            let mut saved = with_file(text);
+            saved
+                .applied
+                .as_mut()
+                .unwrap()
+                .key_fingerprints
+                .insert("keys/cosign.pub".into(), print.into());
+            Membership::from_saved(saved).unwrap()
+        };
+        let kept = membership("SHA256:abcDEF123+/=");
+        assert_eq!(kept.applied().unwrap().key_fingerprints().len(), 1);
+        for bad in [
+            "",
+            "sha1:abc",
+            "SHA256:",
+            "SHA256:not a print\n",
+            &format!("SHA256:{}", "a".repeat(200)),
+        ] {
+            assert!(
+                membership(bad)
+                    .applied()
+                    .unwrap()
+                    .key_fingerprints()
+                    .is_empty(),
+                "{bad:?}"
+            );
+        }
     }
 }
