@@ -75,16 +75,25 @@ impl PrometheusService {
     /// The API server path that proxies to the port and its prefix, ending
     /// in a slash.
     pub fn proxy_base(&self) -> String {
-        let scheme = if self.https { "https:" } else { "" };
         let path = if self.path.is_empty() {
             String::new()
         } else {
             format!("{}/", self.path)
         };
         format!(
-            "/api/v1/namespaces/{}/services/{scheme}{}:{}/proxy/{path}",
-            self.namespace, self.name, self.port
+            "/api/v1/namespaces/{}/services/{}/proxy/{path}",
+            self.namespace,
+            self.proxy_name()
         )
+    }
+
+    /// The Service segment of the proxy URL, `[https:]name:port`. It is also
+    /// the name the API server authorizes a `services/proxy` request by, so
+    /// an RBAC rule for a proxy lists names like `https:name:9093`, not the
+    /// Service's own name.
+    pub fn proxy_name(&self) -> String {
+        let scheme = if self.https { "https:" } else { "" };
+        format!("{scheme}{}:{}", self.name, self.port)
     }
 
     /// `namespace/name:port` and any prefix, as the page and its status
