@@ -5,8 +5,8 @@
 use std::path::Path;
 
 use super::{
-    Coroot, Delivery, EntryCoroot, EntryMetrics, Fault, Metrics, Mode, Results, Source, Store,
-    SupplyChain, types::MetricsService,
+    Coroot, Delivery, DeliveryApplication, EntryCoroot, EntryMetrics, Fault, Metrics, Mode,
+    Results, Source, Store, SupplyChain, types::MetricsService,
 };
 use crate::{base_url::parse_base_url, workspace::Entry};
 
@@ -238,6 +238,22 @@ pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
         if let Some(key) = &naming.project_key {
             non_empty(key, format!("{at}.project_key"))?;
         }
+    }
+    for (index, application) in delivery.applications.iter().enumerate() {
+        application_fields(application, index)?;
+    }
+    Ok(())
+}
+
+/// One `delivery.applications` row on its own: a name, and no empty Stage.
+pub(super) fn application_fields(
+    application: &DeliveryApplication,
+    index: usize,
+) -> Result<(), Fault> {
+    let at = format!("delivery.applications[{index}]");
+    non_empty(&application.name, format!("{at}.name"))?;
+    for (stage, name) in application.not_expected_in.iter().enumerate() {
+        non_empty(name, format!("{at}.not_expected_in[{stage}]"))?;
     }
     Ok(())
 }

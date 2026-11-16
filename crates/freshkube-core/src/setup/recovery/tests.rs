@@ -517,6 +517,54 @@ fn row_recovery_keeps_and_validates_shared_delivery_settings() {
     );
 }
 
+#[test]
+fn a_bad_delivery_application_row_is_skipped_and_the_rest_stay() {
+    let recovered = recover(&format!(
+        "version: 1\nclusters: [{GOOD}]\ndelivery:\n  build_namespace: builds\n  applications:\n    - {{name: checkout, not_expected_in: [prod-lon]}}\n    - 17\n    - {{name: '', not_expected_in: [dev]}}\n    - {{name: catalog, not_expected_in: [dev, '']}}\n    - {{name: payments, not_expected_in: dev}}\n    - {{name: checkout, not_expected_in: [dev]}}\n    - {{name: search, not_expected_in: [dev, dev], future: 1}}\n"
+    ));
+    let delivery = recovered.setup.delivery.as_ref().unwrap();
+    assert_eq!(delivery.build_namespace.as_deref(), Some("builds"));
+    let names: Vec<&str> = delivery
+        .applications
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect();
+    assert_eq!(names, ["checkout", "search"]);
+    assert_eq!(delivery.not_expected_in("checkout"), ["prod-lon"]);
+    assert_eq!(delivery.not_expected_in("search"), ["dev"]);
+    let words: Vec<String> = recovered.warnings.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        words,
+        [
+            "skipped delivery.applications[1]: name: a required value is missing or has the wrong type or shape",
+            "skipped delivery.applications[2]: name: is empty",
+            "skipped delivery.applications[3] (catalog): not_expected_in: is empty",
+            "skipped delivery.applications[4] (payments): not_expected_in: a required value is missing or has the wrong type or shape",
+            "skipped delivery.applications[5] (checkout): name: names the same project as delivery.applications[0], which is used",
+            "delivery.applications[6] (search): not_expected_in: names a Stage more than once; each is used once",
+        ]
+    );
+    assert_eq!(recovered.setup.workspace.clusters.len(), 1);
+    // The unknown key under a kept row is still named, by its project.
+    assert!(
+        recovered
+            .setup
+            .unknown_keys()
+            .contains(&"delivery.applications[search].future".to_owned())
+    );
+}
+
+#[test]
+fn applications_that_are_not_a_list_or_a_shared_fault_stay_fatal() {
+    assert!(read(b"version: 1\ndelivery:\n  applications: 3\n").is_err());
+    // A bad row never hides a shared refusal beside it.
+    assert!(
+        read(b"version: 1\ndelivery:\n  build_namespace: invalid/name\n  applications: [17]\n")
+            .is_err()
+    );
+    assert!(read(b"version: 1\ndelivery:\n  stage_naming: 5\n  applications: [17]\n").is_err());
+}
+
 fn protection_of(recovered: &Recovered, context: &str) -> Protection {
     recovered
         .setup

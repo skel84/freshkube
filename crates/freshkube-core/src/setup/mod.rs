@@ -37,9 +37,9 @@ pub(crate) use validate::is_label_name;
 pub use migrate::{Kept, Outcome, migrate};
 pub use recovery::{Recovered, Row, RowReason, Warning, read, warning_words};
 pub use types::{
-    Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, GitHub,
-    GitHubToken, KeysJson, Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming,
-    Store, SupplyChain,
+    Coroot, DEFAULT_LABEL, Delivery, DeliveryApplication, EntryCoroot, EntryMetrics, Evidence,
+    Forward, GitHub, GitHubToken, KeysJson, Metrics, MetricsService, Mode, Results, SignIn, Source,
+    StageNaming, Store, SupplyChain, not_expected_in,
 };
 pub use validate::resolve_build_namespace;
 
@@ -332,6 +332,14 @@ impl Setup {
             }
             if let Some(github) = &delivery.github {
                 named(&mut keys, "delivery.github", &github.extra);
+            }
+            // By the project's name: recovery may have skipped rows before it.
+            for application in &delivery.applications {
+                named(
+                    &mut keys,
+                    &format!("delivery.applications[{}]", application.name),
+                    &application.extra,
+                );
             }
         }
         for entry in &self.workspace.clusters {

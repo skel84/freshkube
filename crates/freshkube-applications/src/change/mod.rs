@@ -401,6 +401,12 @@ pub struct ChangePage {
     missing: Option<(SharedString, SharedString)>,
     /// The setup owner's sanitized warning; composed with source notices.
     setup_problem: Option<SharedString>,
+    /// `delivery.applications` of the setup: the Stages each project's
+    /// application isn't expected in, applied to every change shown.
+    applications: Vec<freshkube_core::setup::DeliveryApplication>,
+    /// What those entries name that this change doesn't have, as a warning
+    /// beside the setup's.
+    not_expected_note: Option<String>,
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
@@ -525,6 +531,8 @@ impl ChangePage {
             pull: pull::Card::default(),
             missing: None,
             setup_problem: None,
+            applications: Vec::new(),
+            not_expected_note: None,
             loading,
             loading_motion,
             connections,
@@ -598,6 +606,17 @@ impl ChangePage {
         cx.notify();
     }
 
+    /// The setup's `delivery.applications`. A change already shown is
+    /// derived again from its last answer when they differ.
+    pub(crate) fn set_applications(
+        &mut self,
+        applications: &[freshkube_core::setup::DeliveryApplication],
+    ) {
+        if self.applications != applications {
+            self.applications = applications.to_vec();
+        }
+    }
+
     /// Keep the file's warning beside source warnings, including before a
     /// first answer and after a refresh. Only pre-sanitized text comes here.
     fn update_missing(&mut self) {
@@ -605,6 +624,7 @@ impl ChangePage {
             .setup_problem
             .iter()
             .map(|text| text.as_ref())
+            .chain(self.not_expected_note.iter().map(String::as_str))
             .chain(self.change.missing.iter().map(|line| line.text.as_str()))
             .map(|line| line.trim_end_matches('.'))
             .collect::<Vec<_>>()
@@ -624,6 +644,23 @@ impl ChangePage {
     /// folds the Stages that are fine; a later one keeps the folds, the
     /// filter and the selection where their rows still are.
     pub fn show(&mut self, change: Change) {
+        let mut change = change;
+        // A Stage the setup says the application isn't expected in turns
+        // what wasn't found there into Not used here.
+        let stages = freshkube_core::setup::not_expected_in(&self.applications, &change.project);
+        let unknown = freshkube_delivery::change::not_expected_in(&mut change, &stages);
+        self.not_expected_note = (!unknown.is_empty()).then(|| {
+            format!(
+                "delivery.applications lists {} for {}, which {} a Stage of this change",
+                unknown.join(", "),
+                change.project,
+                if unknown.len() == 1 {
+                    "isn't"
+                } else {
+                    "aren't"
+                }
+            )
+        });
         let first = self.rows.is_empty();
         let rows: Vec<HopRow> = change
             .hops

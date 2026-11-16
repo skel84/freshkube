@@ -74,9 +74,11 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `github-refused`: GitHub's pull requests not readable because the token is refused, so none is shown and the change page's pull request card says `Not read`, with the token refusal in the banner of what may be missing.
 - `github-title`: with no token the pull request's number came from the `(#418)` that ends the commit's title, and that pull request was read directly: the change page's card link says `Open on GitHub (number from the commit title)` and a note says so.
 - `image-only`: `checkout`'s Freight names an image and no commit, so its build is joined by the image digest.
+- `not-expected`: the same change as `prod-lon-not-found`, with `delivery.applications` saying `checkout` isn't expected in `prod-lon`: what wasn't found there is Not used here, dim and counted nowhere (the Next step column is Not used here on that Stage too).
 - `not-found`: Argo CD's namespace not found.
 - `outcome-<name>`: every Deployment hop of the change page shows one outcome of what Coroot found after its deploy (`found`, `ends-early`, `no-revision`, `no-application`, `no-project`, `no-connection`, `not-linked`, `no-project-for-entry`, `refused`, `refused-window`, `no-data`, `failed`, `not-deployment`, `not-looked`, `stale`; `applications/change/outcome/example.rs`), where the other shapes show what Coroot's example keeps for the hop's hash.
 - `partial`: Kargo refused in `cicd-fra`.
+- `prod-lon-not-found`: `prod-lon`'s Application, Rollout and pods weren't found, so those cells read Not found (can't be told from a real gap until the setup says otherwise).
 - `promoting`: a Promotion of `wonky-otter` to `prod-ams` is running, made by someone else, so that Stage's Promote is Abort promotion (the Stage actions' dialogs open in every shape, with a runner that sends nothing).
 - `refused`: every source refused.
 - `rollback-none`: no Stage has an earlier Freight in its history, so Roll back… is greyed out and says so.

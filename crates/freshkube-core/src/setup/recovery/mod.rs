@@ -3,7 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde_yaml::Value;
 
-use super::{Fault, Invalid, Read, Setup, place, validate};
+use super::{DeliveryApplication, Fault, Invalid, Read, Setup, place, validate};
 use crate::workspace::{
     self, Destination, Entry, MAX_BYTES, MAX_DESTINATIONS, MAX_ENTRIES, Part, Role, SkippedRow,
     SourceRecovery, Sources, Workspace,
@@ -22,6 +22,8 @@ pub struct Recovered {
 pub enum Row {
     Cluster,
     Destination,
+    /// A `delivery.applications` row.
+    Application,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +42,19 @@ pub enum RowReason {
     CorootTwice {
         first: String,
     },
+    /// An earlier row names the same Kargo project, so this one is skipped.
+    DuplicateApplication {
+        first: usize,
+    },
+    /// A Stage listed twice in one row: the row stays, and each is used once.
+    DuplicateStage,
+}
+
+impl RowReason {
+    /// Whether the row stays in use with the warning, rather than being skipped.
+    fn keeps_the_row(&self) -> bool {
+        matches!(self, Self::DuplicateStage)
+    }
 }
 
 /// Only row identities and typed, safe reasons survive decoding. Never store
@@ -58,8 +73,13 @@ impl std::fmt::Display for Warning {
         let collection = match self.row {
             Row::Cluster => "clusters",
             Row::Destination => "destinations",
+            Row::Application => "delivery.applications",
         };
-        write!(f, "skipped {collection}[{}]", self.index)?;
+        if self.reason.keeps_the_row() {
+            write!(f, "{collection}[{}]", self.index)?;
+        } else {
+            write!(f, "skipped {collection}[{}]", self.index)?;
+        }
         if let Some(id) = &self.id {
             write!(f, " ({id})")?;
         }
@@ -104,6 +124,13 @@ impl std::fmt::Display for Warning {
             RowReason::CorootTwice { first } => {
                 write!(f, "duplicates the Coroot link of cluster “{first}”")
             }
+            RowReason::DuplicateApplication { first } => write!(
+                f,
+                "names the same project as delivery.applications[{first}], which is used"
+            ),
+            RowReason::DuplicateStage => {
+                f.write_str("names a Stage more than once; each is used once")
+            }
         }
     }
 }
@@ -139,8 +166,19 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
         return Err(Invalid::WrongShape(None));
     }
     super::check_version(&value)?;
-    let shared: Read<Value, Value> =
-        serde_yaml::from_slice(bytes).map_err(|e| Invalid::WrongShape(place(&e)))?;
+    let shared: Read<Value, Value> = match serde_yaml::from_slice(bytes) {
+        Ok(shared) => shared,
+        Err(error) => {
+            // A bad `delivery.applications` row is skipped below, with a
+            // warning; the same file without them must still be sound, or
+            // the refusal stands as it was.
+            let mut stripped = value.clone();
+            if !strip_applications(&mut stripped) {
+                return Err(Invalid::WrongShape(place(&error)));
+            }
+            serde_yaml::from_value(stripped).map_err(|_| Invalid::WrongShape(place(&error)))?
+        }
+    };
     let clusters = shared.clusters;
     let destinations = shared.destinations;
     if clusters.len() > MAX_ENTRIES {
@@ -173,6 +211,10 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
         delivery: shared.delivery,
         extra: shared.extra,
     };
+    // The rows are read one at a time below, so a bad one isn't a refusal.
+    if let Some(delivery) = &mut setup.delivery {
+        delivery.applications.clear();
+    }
     setup.validate()?;
     let mut warnings = Vec::new();
     for (index, row) in clusters.iter().enumerate() {
@@ -250,6 +292,10 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
             }),
         }
     }
+    let applications = application_rows(&value, &mut warnings);
+    if let Some(delivery) = &mut setup.delivery {
+        delivery.applications = applications;
+    }
     // Arrays retain original indexes even when the collections appear in a
     // different order in a hand-edited document.
     let destinations_first = value
@@ -260,7 +306,14 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
         .find(|key| matches!(*key, "clusters" | "destinations"))
         == Some("destinations");
     if destinations_first {
-        warnings.sort_by_key(|warning| (warning.row == Row::Cluster, warning.index));
+        warnings.sort_by_key(|warning| {
+            let rank = match warning.row {
+                Row::Destination => 0,
+                Row::Cluster => 1,
+                Row::Application => 2,
+            };
+            (rank, warning.index)
+        });
     }
     Ok(Recovered {
         setup,
@@ -506,6 +559,95 @@ fn block_field(
         }
     }
     key.into()
+}
+
+/// Takes `delivery.applications` out of `value`, when it is a list.
+fn strip_applications(value: &mut Value) -> bool {
+    value
+        .get_mut("delivery")
+        .and_then(Value::as_mapping_mut)
+        .is_some_and(|delivery| {
+            delivery
+                .get("applications")
+                .is_some_and(Value::is_sequence)
+                .then(|| delivery.remove("applications"))
+                .is_some()
+        })
+}
+
+/// The healthy rows of `delivery.applications`, in file order. A row that
+/// can't be read, has an empty name or names a project an earlier row names
+/// is skipped with a warning; a Stage listed twice in one row stays, once.
+fn application_rows(value: &Value, warnings: &mut Vec<Warning>) -> Vec<DeliveryApplication> {
+    let rows = value
+        .get("delivery")
+        .and_then(|delivery| delivery.get("applications"))
+        .and_then(Value::as_sequence)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let mut kept: Vec<(usize, DeliveryApplication)> = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        let id = safe_id(row, "name");
+        let warn = |field: &str, reason: RowReason| Warning {
+            row: Row::Application,
+            index,
+            id: id.clone(),
+            field: field.into(),
+            reason,
+        };
+        let Ok(mut application) = serde_yaml::from_value::<DeliveryApplication>(row.clone()) else {
+            warnings.push(warn(application_shape_field(row), RowReason::Shape));
+            continue;
+        };
+        if let Err(fault) = validate::application_fields(&application, index) {
+            let field = if application.name.trim().is_empty() {
+                "name"
+            } else {
+                "not_expected_in"
+            };
+            let fault = match fault {
+                Fault::Empty(_) => Fault::Empty(field.into()),
+                other => other,
+            };
+            warnings.push(warn(field, RowReason::Rule(fault)));
+            continue;
+        }
+        if let Some((first, _)) = kept
+            .iter()
+            .find(|(_, other)| other.name == application.name)
+        {
+            let first = *first;
+            warnings.push(warn("name", RowReason::DuplicateApplication { first }));
+            continue;
+        }
+        let mut stages: Vec<String> = Vec::new();
+        let mut twice = false;
+        for stage in std::mem::take(&mut application.not_expected_in) {
+            if stages.contains(&stage) {
+                twice = true;
+            } else {
+                stages.push(stage);
+            }
+        }
+        if twice {
+            warnings.push(warn("not_expected_in", RowReason::DuplicateStage));
+        }
+        application.not_expected_in = stages;
+        kept.push((index, application));
+    }
+    kept.into_iter()
+        .map(|(_, application)| application)
+        .collect()
+}
+
+fn application_shape_field(row: &Value) -> &'static str {
+    if wrong::<String>(row, "name", true) {
+        "name"
+    } else if wrong::<Vec<String>>(row, "not_expected_in", false) {
+        "not_expected_in"
+    } else {
+        "row"
+    }
 }
 
 fn destination_shape_field(row: &Value) -> &'static str {

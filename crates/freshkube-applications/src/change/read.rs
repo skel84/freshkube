@@ -152,6 +152,8 @@ impl ChangePage {
                     evidence_result: place.evidence_result.clone(),
                     build_namespace: place.build_namespace.clone(),
                     stage_naming: place.stage_naming.clone(),
+                    // Applied by the page to what the read returns.
+                    applications: Vec::new(),
                     github: place.github.clone(),
                 };
                 let results_route = self.results_route();
@@ -312,6 +314,11 @@ impl ChangePage {
     /// Trust belongs to this setup, including when the file at its path
     /// changed. Reset cancels both tasks and rejects any old request ticket.
     pub(crate) fn reload_setup(&mut self, across: &Across, cx: &mut Context<Self>) {
+        let applications_changed = self.applications != across.applications;
+        self.set_applications(&across.applications);
+        if applications_changed && matches!(self.fetch, Fetch::Example { .. }) {
+            self.refresh(cx);
+        }
         if let Fetch::Live {
             place,
             setup_revision,

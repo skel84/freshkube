@@ -34,6 +34,9 @@ pub struct Across {
     /// How an Application with no authorized-stage annotation names its
     /// Stage, from the same setup.
     pub stage_naming: Option<freshkube_core::setup::StageNaming>,
+    /// What each Kargo project's application isn't expected to have, from
+    /// the same setup (`delivery.applications`).
+    pub applications: Vec<freshkube_core::setup::DeliveryApplication>,
     /// The workspace's kubeconfig, `None` for the automatic one.
     pub kubeconfig: Option<PathBuf>,
     /// GitHub's client for this setup revision, once opened.

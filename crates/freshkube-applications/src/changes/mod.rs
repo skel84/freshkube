@@ -338,6 +338,7 @@ impl ChangesPage {
         self.across.evidence_result = across.evidence_result.clone();
         self.across.build_namespace = across.build_namespace.clone();
         self.across.stage_naming = across.stage_naming.clone();
+        self.across.applications = across.applications.clone();
         self.across.github = across.github.clone();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.reload_setup(across, cx));
@@ -758,6 +759,7 @@ impl ChangesPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, None, connections, visible, window, cx);
             page.configure_example_results(&self.runtime, self.source.as_ref(), &self.across, cx);
+            page.set_applications(&self.across.applications);
             page.set_parent("Changes");
             page.set_setup_problem(self.setup_problem.clone(), cx);
             page.set_coroot(coroot, cx);

@@ -208,3 +208,58 @@ fn build_namespace_resolution_checks_each_projects_result() {
     // A valid file can produce a bad name for one project without refusing the file.
     ok("version: 1\ndelivery:\n  build_namespace: '{project}-ci'\n");
 }
+
+#[test]
+fn applications_name_the_stages_they_are_not_expected_in() {
+    let text = "version: 1\ndelivery:\n  applications:\n    - name: checkout\n      not_expected_in: [prod-lon, dev-eu]\n    - name: catalog\n";
+    let setup = ok(text);
+    let delivery = setup.delivery.as_ref().unwrap();
+    assert_eq!(delivery.applications.len(), 2);
+    assert_eq!(delivery.not_expected_in("checkout"), ["prod-lon", "dev-eu"]);
+    // An entry that lists none, and a project with no entry, expect all.
+    assert!(delivery.not_expected_in("catalog").is_empty());
+    assert!(delivery.not_expected_in("payments").is_empty());
+    // It round-trips, and a setup without it writes nothing for it.
+    let written = to_text(&setup);
+    assert!(written.contains("not_expected_in:"), "{written}");
+    assert_eq!(ok(&written), setup);
+    assert!(
+        !to_text(&ok("version: 1\ndelivery:\n  build_namespace: builds\n"))
+            .contains("applications")
+    );
+}
+
+#[test]
+fn the_first_entry_for_a_project_wins_and_each_stage_counts_once() {
+    let setup = ok(
+        "version: 1\ndelivery:\n  applications:\n    - {name: checkout, not_expected_in: [prod-lon, prod-lon]}\n    - {name: checkout, not_expected_in: [dev]}\n",
+    );
+    assert_eq!(
+        setup.delivery.unwrap().not_expected_in("checkout"),
+        ["prod-lon"]
+    );
+}
+
+#[test]
+fn an_application_needs_a_name_and_no_empty_stage() {
+    assert_eq!(
+        rule("version: 1\ndelivery:\n  applications:\n    - {name: ''}\n"),
+        "delivery.applications[0].name is empty"
+    );
+    assert_eq!(
+        rule(
+            "version: 1\ndelivery:\n  applications:\n    - {name: a}\n    - {name: b, not_expected_in: ['']}\n"
+        ),
+        "delivery.applications[1].not_expected_in[0] is empty"
+    );
+}
+
+#[test]
+fn unknown_keys_under_an_application_are_kept_and_named() {
+    let setup = ok("version: 1\ndelivery:\n  applications:\n    - {name: a, not_expected: [x]}\n");
+    assert_eq!(
+        setup.unknown_keys(),
+        ["delivery.applications[a].not_expected"]
+    );
+    assert!(to_text(&setup).contains("not_expected"));
+}

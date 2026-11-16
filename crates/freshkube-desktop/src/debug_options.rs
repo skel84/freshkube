@@ -783,6 +783,8 @@ mod tests {
             ("rollback-unknown", Variant::RollbackUnknown),
             ("rollback-none", Variant::RollbackNone),
             ("rollouts", Variant::Rollouts),
+            ("prod-lon-not-found", Variant::ProdLonNotFound),
+            ("not-expected", Variant::NotExpected),
         ] {
             assert_eq!(
                 parse(&[("FRESHKUBE_APPLICATIONS", value)]).applications,

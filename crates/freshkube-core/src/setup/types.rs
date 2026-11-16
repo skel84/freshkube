@@ -303,8 +303,51 @@ pub struct Delivery {
     /// How pull requests are read from GitHub; anonymous when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GitHub>,
+    /// What each Kargo project's application isn't expected to have.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applications: Vec<DeliveryApplication>,
     #[serde(flatten)]
     pub(super) extra: Extra,
+}
+
+/// The Stages `project`'s application isn't expected in, from the first
+/// entry that names it, each once.
+pub fn not_expected_in<'a>(applications: &'a [DeliveryApplication], project: &str) -> Vec<&'a str> {
+    let mut stages: Vec<&str> = Vec::new();
+    for stage in applications
+        .iter()
+        .find(|application| application.name == project)
+        .into_iter()
+        .flat_map(|application| &application.not_expected_in)
+    {
+        if !stages.contains(&stage.as_str()) {
+            stages.push(stage);
+        }
+    }
+    stages
+}
+
+/// One application's delivery setting: the Stages it isn't expected in.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveryApplication {
+    /// The Kargo project the application is, as the change page names it.
+    pub name: String,
+    /// Stages (by name) of that project the application isn't expected in:
+    /// what isn't found there is Not used here, and nothing else changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_expected_in: Vec<String>,
+    #[serde(flatten)]
+    pub(super) extra: Extra,
+}
+
+impl DeliveryApplication {
+    pub fn new(name: impl Into<String>, not_expected_in: &[&str]) -> Self {
+        Self {
+            name: name.into(),
+            not_expected_in: not_expected_in.iter().map(|s| (*s).to_owned()).collect(),
+            extra: Extra::default(),
+        }
+    }
 }
 
 /// Where GitHub's token comes from: the `gh` command line's, or the one
@@ -362,6 +405,13 @@ pub struct GitHub {
 }
 
 impl Delivery {
+    /// The Stages `project`'s application isn't expected in: its first
+    /// entry's, each once, in file order. A later entry for the same project
+    /// is ignored; the file's recovery says so.
+    pub fn not_expected_in(&self, project: &str) -> Vec<&str> {
+        not_expected_in(&self.applications, project)
+    }
+
     pub fn naming(stage_naming: StageNaming) -> Self {
         Self {
             stage_naming: Some(stage_naming),
