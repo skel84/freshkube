@@ -357,3 +357,101 @@ fn the_join_steps_keep_the_shared_frame_at_both_sizes(cx: &mut TestAppContext) {
         }
     }
 }
+
+#[gpui_kit::test]
+fn a_matching_context_name_is_offered_and_never_preselected(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    join(cx, handle, ADDRESS);
+    click(cx, handle, "team-preview-continue");
+    // The example kubeconfig has contexts named core-fra and cicd-fra, like
+    // the team's clusters. They are not taken for the person.
+    for id in ["core-fra", "cicd-fra"] {
+        let row = Box::leak(format!("team-map-{id}-pick").into_boxed_str());
+        assert!(label(cx, handle, row).contains("Choose a context"), "{id}");
+    }
+    let settings = page(cx, &view);
+    cx.update(|cx| {
+        let page = settings.read(cx);
+        let team = page.team.membership().expect("joining");
+        assert_eq!(team.mapping().unchosen(), 2);
+        assert!(team.mapping().contexts().is_empty());
+        assert!(!team.mapping().is_complete());
+    });
+    // Continue does nothing until the person has chosen for each.
+    click(cx, handle, "team-map-continue");
+    assert!(visible(cx, handle, "team-map-step"));
+    assert!(!visible(cx, handle, "team-update"));
+    // Choosing one is the person's act, and the other still waits.
+    cx.update(|cx| {
+        settings.update(cx, |page, cx| {
+            page.team_map_choose("core-fra", Choice::Context("core-fra".into()), cx)
+        })
+    });
+    settle(cx, handle);
+    click(cx, handle, "team-map-continue");
+    assert!(visible(cx, handle, "team-map-step"));
+}
+
+#[gpui_kit::test]
+fn a_token_in_the_address_is_refused_and_never_shown(cx: &mut TestAppContext) {
+    for address in [
+        "https://git.acme.example/ops/setup?token=s3cr3t-value",
+        "https://git.acme.example/ops/setup#s3cr3t-value",
+        "ssh://deploy:s3cr3t-value@git.acme.example/ops/setup",
+    ] {
+        let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+        join(cx, handle, address);
+        assert!(visible(cx, handle, "team-join-error"), "{address}");
+        let words = join_error(cx, &view);
+        assert!(!words.is_empty() && !words.contains("s3cr3t"), "{words}");
+        assert!(!visible(cx, handle, "team-joining"), "{address}");
+        let settings = page(cx, &view);
+        assert!(cx.update(|cx| !settings.read(cx).in_team()));
+    }
+}
+
+#[gpui_kit::test]
+fn hiding_in_the_middle_of_a_fetch_drops_it_and_a_late_answer_is_ignored(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::Joined);
+    let settings = page(cx, &view);
+    cx.update(|cx| settings.update(cx, |page, _| page.set_team_script(|_| None)));
+    click(cx, handle, "team-fetch");
+    assert_eq!(label(cx, handle, "team-fetch"), "Fetching…");
+    // Hiding drops the read in flight; nothing reads while hidden, and a
+    // fetch that was cut short is neither loading nor a failure.
+    cx.update(|cx| settings.update(cx, |page, cx| page.set_visible(false, cx)));
+    settle(cx, handle);
+    cx.update(|cx| {
+        let page = settings.read(cx);
+        assert!(!page.team.is_fetching());
+        assert!(page.team.shown.failure_words().is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn the_page_says_the_version_is_held_not_that_the_setup_uses_it(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, Shape::NoTeam);
+    join(cx, handle, ADDRESS);
+    click(cx, handle, "team-preview-continue");
+    click(cx, handle, "team-map-suggested");
+    click(cx, handle, "team-map-continue");
+    let settings = page(cx, &view);
+    for at in cx.update(|cx| settings.read(cx).team_trust_pending()) {
+        click(
+            cx,
+            handle,
+            Box::leak(format!("team-confirm-{at}").into_boxed_str()),
+        );
+    }
+    click(cx, handle, "team-apply");
+    let words = label(cx, handle, "team-version-value");
+    assert!(
+        words.contains("a1b2c3d") && words.contains("reviewed"),
+        "{words}"
+    );
+    assert!(
+        words.contains("held for this session") && words.contains("doesn’t use its values yet"),
+        "{words}"
+    );
+    assert!(!words.contains(" applied "), "{words}");
+}

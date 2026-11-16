@@ -1426,3 +1426,54 @@ fn a_newer_waiting_version_keeps_the_choices_for_clusters_it_still_names() {
     assert!(m.mapping().choice("stage-lon").is_none());
     assert_eq!(m.mapping().clusters().count(), 2);
 }
+
+#[test]
+fn safety_g03_a_wrong_mapping_never_loosens_a_level() {
+    // Which context a team cluster is mapped to, or none at all, is the
+    // person's choice and may be wrong. The floor belongs to the cluster the
+    // team names, so no choice can change the level a person ends up at.
+    let mut m = Membership::join(source(), Overrides::new());
+    m.fetched(Ok(version("1", TEAM)), at(1));
+    let ids: Vec<String> = m
+        .mapping()
+        .clusters()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    assert!(!ids.is_empty());
+    let mine = contexts(&["unrelated", "other"]);
+    for id in &ids {
+        m.map_context(id, Choice::LeftOut, &mine).unwrap();
+    }
+    let mut review = m.review().unwrap();
+    example::confirm_all(&mut review);
+    m.apply(review, at(2)).unwrap();
+    let team = m.team_values();
+    let held = |m: &Membership| {
+        ids.iter()
+            .map(|id| {
+                let view = cluster_view(id, &m.team_values(), m.overrides()).unwrap();
+                (view.allowed(), view.effective(Some(Protection::Open)))
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = held(&m);
+    for choice in [
+        Choice::LeftOut,
+        Choice::Context("unrelated".into()),
+        Choice::Context("other".into()),
+    ] {
+        for id in &ids {
+            m.map_context(id, choice.clone(), &mine).unwrap();
+        }
+        assert_eq!(held(&m), before, "{choice:?}");
+        assert_eq!(m.team_values(), team);
+    }
+    // And the floor is what it was: open is held up to the team's level.
+    for id in &ids {
+        let floor = merge::floor(id, &team).unwrap();
+        let (level, _) = cluster_view(id, &team, m.overrides())
+            .unwrap()
+            .effective(Some(Protection::Open));
+        assert!(level >= floor, "{id}: {level:?} under {floor:?}");
+    }
+}

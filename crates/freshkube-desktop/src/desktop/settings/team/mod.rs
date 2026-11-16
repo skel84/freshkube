@@ -109,6 +109,18 @@ impl Shown {
 }
 
 impl TeamState {
+    /// Whether a fetch is in flight, for the tests.
+    #[cfg(test)]
+    pub(super) fn is_fetching(&self) -> bool {
+        self.owner.is_fetching()
+    }
+
+    /// The membership, for the tests.
+    #[cfg(test)]
+    pub(super) fn membership(&self) -> Option<&Membership> {
+        self.membership.as_ref()
+    }
+
     /// Whether the Join form's inputs are yet to be made.
     pub(super) fn owner_form_missing(&self) -> bool {
         self.owner.form.is_none()
@@ -134,7 +146,10 @@ impl TeamState {
             shown.source = team.source().display();
             shown.applied = team.applied().map_or("None".to_string(), |v| {
                 let at = team.applied_at().map(when).unwrap_or_default();
-                format!("{} · applied {at}", v.id())
+                format!(
+                    "{} · reviewed {at} · held for this session; your setup doesn’t use its values yet",
+                    v.id()
+                )
             });
             shown.ignored = match team.applied() {
                 Some(v) if !v.ignored().is_empty() => v
@@ -482,7 +497,7 @@ impl SettingsPage {
             ))
             .row(form::row(
                 "team-version",
-                "Applied version",
+                "Reviewed version",
                 line("team-version-value", shown.applied.clone()),
             ))
             .row(form::row(
