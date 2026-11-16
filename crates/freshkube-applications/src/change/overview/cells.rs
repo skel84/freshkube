@@ -238,35 +238,46 @@ fn stage_row(change: &Change, rows: &[HopRow], ix: usize, stage: &Stage) -> Stag
 fn next_step_cell(row: Option<&HopRow>, reached: bool, stage: &Stage) -> Cell {
     let next = &stage.next_step;
     let hop = row.map(|row| row.key.clone());
-    let (tone, reached_here) = match next {
-        NextStep::NoRollout => (Tone::Outline, false),
-        NextStep::Done => (Tone::Good, reached),
-        NextStep::Step { .. } | NextStep::Paused { .. } => (Tone::Info, reached),
-        NextStep::Progressing => (Tone::Waiting, reached),
-        NextStep::Aborted => (Tone::Crit, reached),
-        NextStep::Unknown { .. } => (Tone::Unknown, true),
-    };
-    let tooltip = match (reached_here, next) {
-        (false, NextStep::NoRollout) => format!("{}: {}", Column::NextStep.label(), next.detail()),
-        (false, _) => format!(
-            "{}: {} still runs other Freight",
-            Column::NextStep.label(),
-            stage.name
-        ),
-        _ => format!("{}: {}", Column::NextStep.label(), next.detail()),
-    };
-    let word = if !reached_here && !matches!(next, NextStep::NoRollout) {
-        "Not reached".to_owned()
-    } else {
-        next.word()
-    };
-    Cell {
-        tone: if reached_here { tone } else { Tone::Outline },
-        word: word.into(),
-        hop,
-        reached: reached_here,
+    let label = Column::NextStep.label();
+    let outline = |word: &str, tooltip: String| Cell {
+        tone: Tone::Outline,
+        word: word.to_owned().into(),
+        hop: hop.clone(),
+        reached: false,
         link: None,
         tooltip: tooltip.into(),
+    };
+    // A Stage that still runs other Freight says nothing of this change,
+    // unless what would say couldn't be read.
+    if !reached && !matches!(next, NextStep::Unknown { .. }) {
+        return outline(
+            "Not reached",
+            format!("{label}: {} still runs other Freight", stage.name),
+        );
+    }
+    match next {
+        NextStep::NotReached | NextStep::NoRollout => {
+            return outline(&next.word(), format!("{label}: {}", next.detail()));
+        }
+        _ => {}
+    }
+    let tone = match next {
+        NextStep::Done => Tone::Good,
+        NextStep::Step { .. } | NextStep::Paused { .. } => Tone::Info,
+        NextStep::Progressing => Tone::Waiting,
+        NextStep::Degraded { .. } => Tone::Warn,
+        NextStep::Aborted => Tone::Crit,
+        NextStep::Unknown { .. } | NextStep::NotReached | NextStep::NoRollout => Tone::Unknown,
+    };
+    Cell {
+        tone,
+        word: next.word().into(),
+        hop,
+        reached: true,
+        // The track is the confidence of the link into the Rollout, as for
+        // every cell with a link of its own.
+        link: row.and_then(|row| row.link),
+        tooltip: format!("{label}: {}", next.detail()).into(),
     }
 }
 

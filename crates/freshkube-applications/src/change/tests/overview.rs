@@ -89,7 +89,7 @@ fn every_cell_says_one_word_and_its_cause(cx: &mut TestAppContext) {
                 "Eligible",
                 "Waiting",
                 "Waiting",
-                "No Rollout",
+                "Not reached",
                 "Not reached",
                 "Can't read",
                 "Not reached"
@@ -637,7 +637,7 @@ fn the_rollouts_shape_fills_the_next_step_column_and_says_why_when_it_cant(
             (stage.word.as_ref(), stage.tone),
             ("Step 2 of 4", Tone::Info)
         );
-        assert_eq!(ams.word.as_ref(), "No Rollout");
+        assert_eq!(ams.word.as_ref(), "Not reached");
         assert_eq!(ams.track(), Track::Hairline);
         // A Rollout that couldn't be read says its cause, never blank, and
         // is no failure.
@@ -665,6 +665,13 @@ fn every_next_step_has_a_word_that_fits_its_column(cx: &mut TestAppContext) {
             (NextStep::Progressing, "Progressing", Tone::Waiting),
             (NextStep::Aborted, "Aborted", Tone::Crit),
             (
+                NextStep::Degraded { step: Some((2, 4)) },
+                "Degraded",
+                Tone::Warn,
+            ),
+            (NextStep::NotReached, "Not reached", Tone::Outline),
+            (NextStep::NoRollout, "No Rollout", Tone::Outline),
+            (
                 NextStep::Unknown {
                     why: "the Rollout was not read".into(),
                     cause: None,
@@ -681,6 +688,72 @@ fn every_next_step_has_a_word_that_fits_its_column(cx: &mut TestAppContext) {
             assert_eq!(cell.tone, tone, "{word}");
             assert!(cell.word.chars().count() <= 14, "{word}");
         }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_stage_nothing_looked_at_says_not_reached_and_a_refused_application_says_why(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, _, cx| {
+        // prod-ams still runs other Freight: nothing looked for its
+        // Application, so it is not "No Rollout".
+        let p = page.read(cx);
+        let ams = p
+            .overview
+            .iter()
+            .find(|row| row.name == "prod-ams")
+            .unwrap();
+        let cell = &ams.cells[3];
+        assert_eq!(cell.word.as_ref(), "Not reached");
+        assert!(!cell.reached);
+        assert!(
+            cell.tooltip.contains("still runs other Freight"),
+            "{}",
+            cell.tooltip
+        );
+    })
+    .unwrap();
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::ArgoRefused, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let p = page.read(cx);
+        let dev = p.overview.iter().find(|row| row.name == "dev").unwrap();
+        let cell = &dev.cells[3];
+        // Argo CD's Applications were refused: whether a Rollout runs is
+        // not known, and the cell says why instead of "No Rollout".
+        assert_eq!(cell.word.as_ref(), "Can't read");
+        assert_ne!(cell.tone, Tone::Crit);
+        assert!(cell.reached);
+        assert!(window.find("change-cell-dev-next-step").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_right_arrow_runs_along_the_whole_row_to_after_deploy(cx: &mut TestAppContext) {
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| {
+            page.select("dev-pods", window, cx);
+            page.focus(window, cx);
+        });
+        window.render_frame(cx);
+        // Running is the sixth step, After deploy the seventh and last.
+        window.press("right", cx);
+        assert_eq!(
+            page.read(cx).selected().map(|s| s.to_string()).as_deref(),
+            Some("dev-deployment")
+        );
+        window.press("right", cx);
+        assert_eq!(
+            page.read(cx).selected().map(|s| s.to_string()).as_deref(),
+            Some("dev-deployment"),
+            "the row ends there"
+        );
     })
     .unwrap();
 }
