@@ -82,6 +82,12 @@ pub(crate) enum Event {
 impl EventEmitter<Event> for SetupFile {}
 
 impl SetupFile {
+    /// The file this reads, `None` for example data and a window with no
+    /// preferences. A write's send step reads it again (#1055).
+    pub(crate) fn file(&self) -> Option<&std::path::Path> {
+        self.file.as_deref()
+    }
+
     pub(crate) fn new(preferences: Option<PathBuf>, example: bool, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             setup: None,
