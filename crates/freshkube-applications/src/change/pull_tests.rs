@@ -555,3 +555,33 @@ fn the_inspectors_header_tag_is_a_warning_only_while_the_answer_is_old(cx: &mut 
         assert_eq!(cx.read(|cx| page.read(cx).pull_is_old()), old, "{shape:?}");
     }
 }
+
+#[gpui_kit::test]
+fn the_title_shape_says_the_number_came_from_the_commit_title(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, Shape::GitHubTitle);
+    select_pull(cx, handle, &page);
+    cx.update_window(handle, |_, window, _| {
+        window.find("change-pull-open");
+    })
+    .unwrap();
+    let notes: Vec<String> = cx.read(|cx| {
+        page.read(cx)
+            .pull
+            .card()
+            .unwrap()
+            .notes
+            .iter()
+            .map(|n| n.to_string())
+            .collect()
+    });
+    assert!(
+        notes.iter().any(|n| n.contains("commit's title")),
+        "{notes:?}"
+    );
+    let label = cx.read(|cx| page.read(cx).pull.card().unwrap().links[0].label);
+    assert_eq!(label, "Open on GitHub (number from the commit title)");
+    // The usual shape says no such thing.
+    let (_, page) = open(cx, Shape::Whole);
+    let label = cx.read(|cx| page.read(cx).pull.card().unwrap().links[0].label);
+    assert_eq!(label, "Open on GitHub");
+}

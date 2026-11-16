@@ -143,7 +143,26 @@ pub(crate) struct WriteFlow {
     /// The dialog body's scroll, kept between draws so its scrollbar and
     /// position stay.
     scroll: ScrollHandle,
+    /// What the page that started this write does once the cluster has taken
+    /// it (told `true` when its first object is accepted), or when the run
+    /// ends without that (told `false`). Run once, and not for a run that
+    /// sent nothing and asks again under a stricter level.
+    after: Option<After>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// What a page does about its write: `true` once the cluster took it, `false`
+/// when the run ended without that.
+pub(crate) type After = Box<dyn FnOnce(bool, &mut App)>;
+
+/// Whether the cluster took the write: the first object was accepted, so
+/// whatever the page read before it is out of date, whether or not the change
+/// was then seen to take effect.
+fn was_taken(done: &Finished) -> bool {
+    matches!(
+        done.objects.first().map(|object| &object.step),
+        Some(freshkube_core::write::Step::Accepted { .. })
+    )
 }
 
 /// Opens the flow for `request`: the dialog when the level asks anything,
@@ -163,6 +182,7 @@ pub(crate) fn start(request: WriteRequest, window: &mut Window, cx: &mut App) ->
         dialog_epoch: Default::default(),
         check: None,
         scroll: ScrollHandle::new(),
+        after: None,
         _subscriptions: vec![],
     });
     if asks.confirm || asks.blocked.is_some() {
@@ -196,6 +216,7 @@ pub(crate) fn start_prepared(
         dialog_epoch: Default::default(),
         check: None,
         scroll: ScrollHandle::new(),
+        after: None,
         _subscriptions: vec![],
     });
     flow.update(cx, |flow, cx| {
@@ -205,6 +226,11 @@ pub(crate) fn start_prepared(
 }
 
 impl WriteFlow {
+    /// Runs `after` when the write has ended (see [`After`]).
+    pub(crate) fn then(&mut self, after: After) {
+        self.after = Some(after);
+    }
+
     /// The dialog is done: sent, cancelled or refused.
     pub(crate) fn is_closed(&self) -> bool {
         self.stage == Stage::Closed
@@ -453,6 +479,7 @@ impl WriteFlow {
             confirmation,
             &ticket,
         );
+        let mut after = self.after.take();
         let flow = cx.entity().downgrade();
         // Detached on purpose: it owns the ticket, so the slot is freed only
         // when the runner has really ended, whatever became of the page, the
@@ -466,6 +493,16 @@ impl WriteFlow {
                             .update_in(cx, |flow, window, cx| flow.sending(&report, window, cx));
                     }
                     Msg::Event(event) => {
+                        // The first object accepted is when whatever the page
+                        // read before it is out of date: the page hears at
+                        // once, not when observation ends (a value the server
+                        // normalises would show "changed since you opened it"
+                        // for up to 30 s).
+                        if matches!(event, Event::Accepted(0))
+                            && let Some(after) = after.take()
+                        {
+                            _ = cx.update(|_, cx| after(true, cx));
+                        }
                         report.update(cx, |report, cx| report.event(event, cx));
                     }
                     Msg::Done(done) => {
@@ -479,10 +516,18 @@ impl WriteFlow {
             // is nothing to report.
             let again = matches!(done.status, Status::NotSent(NotSent::LevelChanged(_)));
             _ = flow.update_in(cx, |flow, window, cx| {
+                if again {
+                    // It sends again once the person confirms again.
+                    flow.after = after.take();
+                }
                 flow.finished(&report, again, window, cx)
             });
             if !again {
+                let taken = was_taken(&done);
                 _ = report.update_in(cx, |report, window, cx| report.finished(done, window, cx));
+                if let Some(after) = after {
+                    _ = cx.update(|_, cx| after(taken, cx));
+                }
             }
             operations.update(cx, |operations, cx| operations.finish(ticket, cx));
         })

@@ -199,9 +199,15 @@ fn a_stage_action_the_cluster_refuses_is_greyed_out_with_the_reason(cx: &mut Tes
         promote,
         Some(format!("Needs create on promotions in {project}"))
     );
+    // A rollback asks what a Promote asks: the one cluster answer covers it.
+    let (rollback, _) = words(cx, &page, 5);
+    assert_eq!(
+        rollback,
+        Some(format!("Needs create on promotions in {project}"))
+    );
     // Shown, not hidden, and none of them asks the shell.
     assert_eq!(label(cx, handle, 1).as_deref(), Some("Refresh prod-ams"));
-    for ix in 1..5 {
+    for ix in 1..6 {
         press(cx, handle, ix);
     }
     assert!(events.borrow().is_empty(), "{:?}", events.borrow());
@@ -302,5 +308,112 @@ fn a_buttons_tooltip_does_not_draw_once_the_pointer_is_on_its_neighbour(cx: &mut
     assert!(
         freshkube_ui::tooltip::drawn(&reverify) > 0,
         "the neighbour's"
+    );
+}
+
+// ---- #845: the rollback helper ----
+
+#[gpui_kit::test]
+fn a_stage_with_a_verified_earlier_freight_lists_it_alone_and_pressing_it_asks_for_that_rollback(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert_eq!(
+        label(cx, handle, 5).as_deref(),
+        Some("Roll back calm-heron (verified)"),
+        "the newest Freight Kargo verified"
+    );
+    assert_eq!(
+        label(cx, handle, 6).as_deref(),
+        Some("Copy kargo command"),
+        "with a verified Freight it is the one rollback line, then its copy"
+    );
+    assert_eq!(label(cx, handle, 7), None);
+    press(cx, handle, 6);
+    assert!(events.borrow().is_empty(), "copying asks the shell nothing");
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref(),
+        Some("kargo promote --project checkout --freight calm-heron --stage prod-ams")
+    );
+    press(cx, handle, 5);
+    let events = events.borrow();
+    assert_eq!(events.len(), 1);
+    // `calm-heron` is the second earlier Freight of prod-ams's history.
+    assert_eq!(
+        (events[0].kind, events[0].stage.as_str()),
+        (ActKind::Rollback(1), "prod-ams")
+    );
+}
+
+#[gpui_kit::test]
+fn with_nothing_verified_the_first_line_is_greyed_and_a_pick_is_never_the_main_action(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = open(cx, 1280., 880., Shape::RollbackUnknown, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert_eq!(label(cx, handle, 5).as_deref(), Some("Roll back…"));
+    press(cx, handle, 5);
+    assert!(
+        events.borrow().is_empty(),
+        "no healthy Freight: asks nothing"
+    );
+    assert_eq!(
+        label(cx, handle, 6).as_deref(),
+        Some("Roll back swift-wren (unverified)")
+    );
+    press(cx, handle, 6);
+    assert_eq!(events.borrow()[0].kind, ActKind::Rollback(0));
+}
+
+#[gpui_kit::test]
+fn a_stage_with_no_earlier_freight_offers_no_rollback(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::RollbackNone, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert_eq!(label(cx, handle, 5).as_deref(), Some("Roll back…"));
+    assert_eq!(label(cx, handle, 6), None);
+    press(cx, handle, 5);
+    assert!(events.borrow().is_empty());
+}
+
+#[gpui_kit::test]
+fn no_rollback_is_offered_while_a_promotion_runs(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Promoting, Duration::ZERO, 13.);
+    let (events, _subscription) = asked(cx, &page);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert!(label(cx, handle, 5).is_some_and(|l| l.starts_with("Roll back")));
+    press(cx, handle, 5);
+    assert!(events.borrow().is_empty(), "Abort takes over");
+}
+
+#[gpui_kit::test]
+fn a_pressed_action_holds_the_buttons_tooltips_until_the_pointer_moves_on_the_page(
+    cx: &mut TestAppContext,
+) {
+    let (handle, page) = open(cx, 1280., 880., Shape::Whole, Duration::ZERO, 13.);
+    select(cx, handle, &page, "prod-ams-promotion");
+    assert!(!cx.read(|cx| page.read(cx).tips_held));
+    // Copy sends nothing and opens no dialog: it holds nothing.
+    press(cx, handle, 6);
+    assert!(!cx.read(|cx| page.read(cx).tips_held));
+    // An action that opens a dialog does: its tooltip waits, so it can't be
+    // drawn over the dialog.
+    press(cx, handle, 5);
+    assert!(cx.read(|cx| page.read(cx).tips_held));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.hover("change-action-2", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| page.read(cx).tips_held),
+        "the pointer moving lets the tooltips back"
     );
 }

@@ -246,14 +246,29 @@ impl Render for DeleteDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
         let weak = cx.entity().downgrade();
+        let intro = match self.impact.none_found_among() {
+            // Nothing was found, so there is nothing to "choose for"; the
+            // choice stays only because other kinds weren't looked at.
+            Some(looked) => format!(
+                "None found among {looked}. Other kinds weren't looked at, \
+                 so choose what happens to anything else it owns; the next step shows the rest."
+            ),
+            None => format!(
+                "Owns: {}. Choose what happens to them; the next step shows each one.",
+                self.impact.owns_summary()
+            ),
+        };
         v_flex()
             .id("delete-dialog")
             .test_support()
             .gap(dp(8.))
-            .child(format!(
-                "Owns: {}. Choose what happens to them; the next step shows each one.",
-                self.impact.owns_summary()
-            ))
+            .child(
+                div()
+                    .id("delete-intro")
+                    .test_support()
+                    .aria_label(intro.clone())
+                    .child(intro),
+            )
             .children(self.impact.choices().into_iter().map(|policy| {
                 let weak = weak.clone();
                 Button::new(SharedString::from(format!(

@@ -326,6 +326,20 @@ pub(super) fn start(
     window: &mut Window,
     cx: &mut App,
 ) {
+    start_then(runner, runtime, action, identity, None, window, cx);
+}
+
+/// [`start`], and `after` runs when the write has ended, told whether the
+/// cluster took it.
+pub(super) fn start_then(
+    runner: Arc<Runner>,
+    runtime: tokio::runtime::Handle,
+    action: ActionDescription,
+    identity: &ResourceIdentity,
+    after: Option<write_flow::After>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if !claim(identity, cx) {
         return;
     }
@@ -336,6 +350,9 @@ pub(super) fn start(
         undo: None,
     };
     let flow = write_flow::start(request, window, cx);
+    if let Some(after) = after {
+        flow.update(cx, |flow, _| flow.then(after));
+    }
     // Held until its dialog closes, however it ends.
     let identity = identity.clone();
     cx.observe(&flow, move |flow, cx| {

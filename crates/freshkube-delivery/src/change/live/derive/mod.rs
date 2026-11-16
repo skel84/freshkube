@@ -342,6 +342,7 @@ fn stage_acts(
             .zip(stage.current_freight.iter().cloned())
             .collect(),
         would_run: crate::acts::freight_lines(freight),
+        earlier: crate::acts::rollback::earlier(stage),
     })
 }
 
