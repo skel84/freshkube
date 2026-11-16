@@ -794,3 +794,97 @@ fn the_ring_and_the_arrow_keys_reach_a_next_step_cell(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// A Stage row scrolled under the matrix's header is cut at the header's
+/// edge, not drawn half behind it (#1068). Headless cannot read pixels, so
+/// this holds what makes the cut: the list that clips its rows starts where
+/// the header ends, wherever the rows sit, and a row half under the header
+/// still reaches into the list.
+#[gpui_kit::test]
+fn a_stage_row_under_the_matrix_header_is_cut_at_its_edge(cx: &mut TestAppContext) {
+    use gpui_kit::base::test_support::snapshots;
+    let (handle, page) = open_overview(cx, 760., 560., Shape::Whole, Duration::ZERO, 20.);
+    cx.update_window(handle, |_, window, cx| {
+        scroll_to_matrix(&page, window, cx);
+        let scroll = page.read(cx).matrix.read(cx).table_scroll();
+        let row = freshkube_ui::ui::dp_px(freshkube_ui::table::STEP_ROW, window);
+        let header = freshkube_ui::ui::dp_px(freshkube_ui::table::HEADER_HEIGHT, window);
+        // Half a row, then a row and a bit, under the header.
+        for under in [row / 2., row + row / 4.] {
+            scroll
+                .0
+                .borrow()
+                .base_handle
+                .set_offset(point(px(0.), -under));
+            settle(window, cx);
+            window.render_frame(cx);
+            let frame = bounds(window, "change-matrix-table-scroll".into());
+            let list = bounds(window, "change-matrix-list".into());
+            assert!(
+                (list.top() - frame.top() - header).abs() < px(1.),
+                "the list starts {:?} under the table's top, the header is {header:?}",
+                list.top() - frame.top()
+            );
+            let id = gpui_kit::ElementId::from(SharedString::from("change-matrix-list"));
+            let rows: Vec<_> = snapshots(window)
+                .into_iter()
+                .filter(|line| {
+                    line.role() == Some(gpui_kit::Role::ListBoxOption) && line.path().contains(&id)
+                })
+                .collect();
+            assert!(rows.len() >= 2, "{rows:?}");
+            let cut = rows
+                .iter()
+                .any(|line| line.bounds().top() < list.top() - px(1.) && line.visible());
+            assert!(cut, "a row is partly under the header: {rows:?}");
+            for line in rows.iter().filter(|line| line.visible()) {
+                let shown = line.bounds().intersect(&list);
+                assert!(
+                    shown.top() >= list.top() - px(0.5)
+                        && shown.bottom() <= list.bottom() + px(0.5),
+                    "{:?} shows outside the list {list:?}",
+                    line.bounds()
+                );
+            }
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_rollout_states_shape_draws_paused_degraded_aborted_and_progressing(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::RolloutStates, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let cell = |cx: &App, stage: &str| {
+            let page = page.read(cx);
+            let row = page.overview.iter().find(|row| row.name == stage).unwrap();
+            row.cells[3].clone()
+        };
+        for (stage, word, tone) in [
+            ("dev", "Paused", Tone::Info),
+            ("stage", "Degraded", Tone::Warn),
+            ("prod-ams", "Aborted", Tone::Crit),
+            ("prod-lon", "Progressing", Tone::Waiting),
+        ] {
+            let cell = cell(cx, stage);
+            assert_eq!((cell.word.as_ref(), cell.tone), (word, tone), "{stage}");
+            assert!(cell.reached, "{stage} is reached, so its state shows");
+            // Each Stage has its Rollout hop, so the cell selects it.
+            assert_eq!(
+                cell.hop.as_deref(),
+                Some(format!("{stage}-rollout").as_str())
+            );
+            assert!(
+                window
+                    .find(format!("change-cell-{stage}-next-step"))
+                    .visible()
+            );
+        }
+        // Selecting one opens the Rollout's Inspector with its state.
+        page.update(cx, |page, cx| page.select("prod-ams-rollout", window, cx));
+        window.render_frame(cx);
+        assert!(window.try_find("change-detail").is_some());
+    })
+    .unwrap();
+}

@@ -62,7 +62,7 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Alerts, Rules a
 
 ## `FRESHKUBE_APPLICATIONS`
 
-Read by: debug and stress builds. With `--fixture`, reshapes the Applications example. `unreachable`, `argo-refused`, `destination`, `image-only` and the three `github-` shapes reshape the change page and the Changes list too (delivery's `change::example::Shape`); `causes`, `promoting`, `rollback-unknown`, `rollback-none` and `rollouts` reshape the change page only. The shapes that leave something unread show it in the banner of what may be missing, with the reason.
+Read by: debug and stress builds. With `--fixture`, reshapes the Applications example. `unreachable`, `argo-refused`, `destination`, `image-only` and the three `github-` shapes reshape the change page and the Changes list too (delivery's `change::example::Shape`); `causes`, `promoting`, `rollback-unknown`, `rollback-none`, `rollouts` and `rollouts-states` reshape the change page only. The shapes that leave something unread show it in the banner of what may be missing, with the reason.
 
 - `argo-refused`: Argo CD refused in `core-fra`.
 - `capped`: Argo CD's Applications capped.
@@ -82,6 +82,7 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `rollback-none`: no Stage has an earlier Freight in its history, so Roll back… is greyed out and says so.
 - `rollback-unknown`: no earlier Freight of any Stage has a successful verification recorded, so the Roll back… lines offer a pick and never the main action, and the dialog says it isn't verified.
 - `rollouts`: the change page's Next step column shows each state: `dev` Done, `stage` Step 2 of 4, `prod-ams` Not reached, and `prod-lon` Not used here (dim, nothing to select); `dev` and `stage` have an Argo Rollout hop, so their cells select it. `argo-refused` shows Can't read in the same column.
+- `rollouts-states`: the Next step column in the other Rollout states, one on each Stage and each with its Rollout hop: `dev` Paused (step 2 of 4), `stage` Degraded, `prod-ams` Aborted and `prod-lon` Progressing. Every Stage holds the Freight in this shape, so `prod-ams` is not left Not reached.
 - `single`: `core-fra` alone.
 - `spread`: Argo CD found in five namespaces with two past the cap.
 - `stages`: `checkout`'s Stages not answering.
