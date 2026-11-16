@@ -944,8 +944,9 @@ mod tests {
     fn a_legacy_user_is_read_by_context_not_refused_for_a_missing_file(cx: &mut TestAppContext) {
         let setup = TestSetup::legacy(cx);
         cx.update(|cx| {
-            let guard = send_guard("prod-fra", false, cx).unwrap();
-            assert_eq!(guard.subject(), &Subject::Context("prod-fra".into()));
+            // No context was published here, so the caller's name is the one used.
+            let guard = send_guard("callers-context", false, cx).unwrap();
+            assert_eq!(guard.subject(), &Subject::Context("callers-context".into()));
             assert_eq!(guard.read(), Ok(Protection::Guarded));
         });
         drop(setup);
@@ -996,8 +997,6 @@ mod tests {
             let guard = send_guard("talos-cluster", false, cx).unwrap();
             assert_eq!(guard.subject(), &Subject::Context("display-ctx".into()));
             assert_eq!(guard.read(), Ok(Protection::ReadOnly));
-            // Without a published context the caller's name is used.
-            set_setup_file(None, false, cx);
         });
     }
 }
