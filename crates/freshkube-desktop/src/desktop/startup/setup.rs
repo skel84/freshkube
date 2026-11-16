@@ -37,6 +37,10 @@ impl Pilot {
                     if *setup_changed {
                         this.rebuild_switcher(cx);
                     }
+                    // Read by the app now, so its level is authoritative again.
+                    if !this.settings_page.read(cx).setup_is_pending() {
+                        crate::mutation::clear_level_floor(cx);
+                    }
                     this.prepare_protection(cx);
                     this.sync_setup_connection(window, cx);
                     cx.notify();
