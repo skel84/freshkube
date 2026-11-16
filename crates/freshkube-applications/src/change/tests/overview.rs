@@ -844,3 +844,41 @@ fn a_stage_row_under_the_matrix_header_is_cut_at_its_edge(cx: &mut TestAppContex
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_rollout_states_shape_draws_paused_degraded_aborted_and_progressing(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::RolloutStates, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let cell = |cx: &App, stage: &str| {
+            let page = page.read(cx);
+            let row = page.overview.iter().find(|row| row.name == stage).unwrap();
+            row.cells[3].clone()
+        };
+        for (stage, word, tone) in [
+            ("dev", "Paused", Tone::Info),
+            ("stage", "Degraded", Tone::Warn),
+            ("prod-ams", "Aborted", Tone::Crit),
+            ("prod-lon", "Progressing", Tone::Waiting),
+        ] {
+            let cell = cell(cx, stage);
+            assert_eq!((cell.word.as_ref(), cell.tone), (word, tone), "{stage}");
+            assert!(cell.reached, "{stage} is reached, so its state shows");
+            // Each Stage has its Rollout hop, so the cell selects it.
+            assert_eq!(
+                cell.hop.as_deref(),
+                Some(format!("{stage}-rollout").as_str())
+            );
+            assert!(
+                window
+                    .find(format!("change-cell-{stage}-next-step"))
+                    .visible()
+            );
+        }
+        // Selecting one opens the Rollout's Inspector with its state.
+        page.update(cx, |page, cx| page.select("prod-ams-rollout", window, cx));
+        window.render_frame(cx);
+        assert!(window.try_find("change-detail").is_some());
+    })
+    .unwrap();
+}
