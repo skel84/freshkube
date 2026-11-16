@@ -476,6 +476,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
     // Enter on a typed dialog presses Confirm, which checks the name, and
     // never closes the dialog by itself.
     let enter: Rc<std::cell::RefCell<Option<OnConfirm>>> = Rc::default();
+    let scroll = gpui_kit::ScrollHandle::new();
     let focus = input.clone();
     freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         let p = palette(cx);
@@ -569,61 +570,65 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     .child(Input::new(input).small().id("confirm-type-name"))
             });
         let enter = enter.clone();
-        dialog
-            .w(ui::dp_px(480., window))
-            .overlay_closable(false)
-            .when(request.type_name.is_some(), |dialog| {
-                dialog.on_ok(move |_, window, cx| {
-                    let press = enter.borrow().clone();
-                    if let Some(press) = press {
-                        press(window, cx);
-                    }
-                    // Confirm closes the dialog itself; a wrong name leaves it open.
-                    false
-                })
+        let body = v_flex()
+            .id("confirm-dialog")
+            .test_support()
+            .role(Role::Dialog)
+            .aria_label(request.title.clone())
+            .gap_3()
+            .text_size(dp(13.))
+            .child(request.summary.clone())
+            .when(!request.facts.is_empty(), |this| {
+                this.child(v_flex().gap_1p5().children(request.facts.iter().map(
+                    |(label, value)| {
+                        h_flex()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .w(dp(150.))
+                                    .flex_none()
+                                    .text_color(p.muted)
+                                    .child(label.clone()),
+                            )
+                            .child(div().min_w_0().child(value.clone()))
+                    },
+                )))
             })
-            .title(request.title.clone())
-            .child(
-                v_flex()
-                    .id("confirm-dialog")
-                    .test_support()
-                    .role(Role::Dialog)
-                    .aria_label(request.title.clone())
-                    .gap_3()
-                    .text_size(dp(13.))
-                    .child(request.summary.clone())
-                    .when(!request.facts.is_empty(), |this| {
-                        this.child(v_flex().gap_1p5().children(request.facts.iter().map(
-                            |(label, value)| {
-                                h_flex()
-                                    .gap_3()
-                                    .child(
-                                        div()
-                                            .w(dp(150.))
-                                            .flex_none()
-                                            .text_color(p.muted)
-                                            .child(label.clone()),
-                                    )
-                                    .child(div().min_w_0().child(value.clone()))
-                            },
-                        )))
-                    })
-                    .children(
-                        request
-                            .warnings
-                            .iter()
-                            .map(|warning| ui::tag(Tone::Warn, None, warning.clone(), cx)),
-                    )
-                    .children(notice),
+            .children(
+                request
+                    .warnings
+                    .iter()
+                    .map(|warning| ui::tag(Tone::Warn, None, warning.clone(), cx)),
             )
-            .footer(
-                v_flex()
-                    .gap(dp(12.))
-                    // The name sits with the button it unlocks, outside the
-                    // body that a short window cuts off.
-                    .children(typed_field)
-                    .child(form::actions(ok, cancel)),
-            )
+            .children(notice);
+        // The name sits with the button it unlocks, outside the body that a
+        // short window cuts off.
+        let actions = v_flex()
+            .gap(dp(12.))
+            .children(typed_field)
+            .child(form::actions(ok, cancel));
+        // The body scrolls inside the room under the title bar's inset, so a
+        // tall review (two-line target, options, warnings, the typed name)
+        // is never pushed up under the window buttons.
+        freshkube_ui::dialog::frame_scrolled(
+            dialog,
+            480.,
+            request.title.clone(),
+            body,
+            actions,
+            &scroll,
+            window,
+        )
+        .when(request.type_name.is_some(), |dialog| {
+            dialog.on_ok(move |_, window, cx| {
+                let press = enter.borrow().clone();
+                if let Some(press) = press {
+                    press(window, cx);
+                }
+                // Confirm closes the dialog itself; a wrong name leaves it open.
+                false
+            })
+        })
     });
     // The name is the one thing a protected dialog wants: focus it after the
     // dialog opens, since Kit remembers what had focus before.

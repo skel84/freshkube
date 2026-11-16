@@ -37,7 +37,7 @@
 #             paths are the OS's, not the app's look, and stay where they are.
 #
 # Outside freshkube-ui's dialog module, tests included, nothing may
-#   dialog  call window.open_dialog: freshkube_ui::dialog::open places every
+#   dialog  call window.open_dialog or open_alert_dialog: freshkube_ui::dialog::open places every
 #           dialog below the title bar's inset, where macOS draws its window
 #           buttons (#1062).
 #
@@ -187,7 +187,7 @@ motion_offences() {
 
 dialog_offences() {
   all_files | grep -v '^crates/freshkube-ui/src/dialog\.rs$' | xargs perl -CSD -ne '
-    print "dialog $ARGV:$.: ", s/^\s+//r if /\.open_dialog\s*\(/;
+    print "dialog $ARGV:$.: ", s/^\s+//r if /\.open_(?:alert_)?dialog\s*\(/;
     close ARGV if eof;
   '
 }

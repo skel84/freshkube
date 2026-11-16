@@ -569,44 +569,44 @@ impl ObservabilityPage {
             .update(cx, |input, cx| input.set_value(value, window, cx));
         let input = self.threshold.clone();
         let owner = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |dialog, _, _| {
-            dialog
-                .confirm()
-                .ok_text("Save threshold")
-                .title(title.clone())
-                .child(
-                    v_flex()
-                        .gap(dp(12.))
-                        .child("Example data · this threshold applies only to the prototype.")
-                        .child(
-                            Input::new(&input)
-                                .id("obs-threshold-input")
-                                .aria_label("Threshold"),
-                        ),
-                )
-                .on_ok({
-                    let owner = owner.clone();
-                    let key = key.clone();
-                    move |_, window, cx| {
-                        owner
-                            .update(cx, |this, cx| {
-                                let value = this.threshold.read(cx).value().to_string();
-                                if value.parse::<f64>().is_ok_and(|v| v.is_finite() && v >= 0.) {
-                                    this.thresholds.insert(key.clone(), value);
-                                    this.prepare_report();
-                                    cx.notify();
-                                    true
-                                } else {
-                                    window.push_notification(
-                                        "Enter a finite number of zero or more",
-                                        cx,
-                                    );
-                                    false
-                                }
-                            })
-                            .unwrap_or(true)
+        // Save and Enter share one check; a bad number keeps the dialog open.
+        let save: Rc<dyn Fn(&mut Window, &mut App) -> bool> = Rc::new(move |window, cx| {
+            owner
+                .update(cx, |this, cx| {
+                    let value = this.threshold.read(cx).value().to_string();
+                    if value.parse::<f64>().is_ok_and(|v| v.is_finite() && v >= 0.) {
+                        this.thresholds.insert(key.clone(), value);
+                        this.prepare_report();
+                        cx.notify();
+                        true
+                    } else {
+                        window.push_notification("Enter a finite number of zero or more", cx);
+                        false
                     }
                 })
+                .unwrap_or(true)
+        });
+        freshkube_ui::dialog::open(window, cx, move |dialog, window, _| {
+            let on_enter = save.clone();
+            let on_click = save.clone();
+            let actions = freshkube_ui::form::actions(
+                freshkube_ui::form::Action::new("ok", "Save threshold", move |_, window, cx| {
+                    if on_click(window, cx) {
+                        window.close_dialog(cx);
+                    }
+                }),
+                freshkube_ui::form::Action::cancel("obs-threshold-cancel"),
+            );
+            let body = v_flex()
+                .gap(dp(12.))
+                .child("Example data · this threshold applies only to the prototype.")
+                .child(
+                    Input::new(&input)
+                        .id("obs-threshold-input")
+                        .aria_label("Threshold"),
+                );
+            freshkube_ui::dialog::frame(dialog, 420., title.clone(), body, actions, window)
+                .on_ok(move |_, window, cx| on_enter(window, cx))
         });
         self.threshold
             .update(cx, |input, cx| input.focus(window, cx));

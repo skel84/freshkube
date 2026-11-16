@@ -1478,3 +1478,47 @@ fn the_unschedulable_warning_follows_the_node_count() {
         "The nodes stay unschedulable until they are uncordoned."
     );
 }
+
+/// The tallest confirmation: a drain on a protected cluster, with the target,
+/// the facts, the warnings and the typed name. At 760 by 560 and text size 20
+/// it scrolls inside the room under the title bar's inset, so its title stays
+/// below the header (where macOS draws the window buttons) and its buttons
+/// stay in the window.
+#[gpui_kit::test]
+fn the_tallest_confirmation_keeps_its_title_below_the_title_bar_at_the_smallest_window(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, screen, handle) = mount_sized(cx, "prod-fra", 25, 760., 560.);
+    cx.update(|cx| {
+        crate::text_size::set(20., cx);
+        crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
+    });
+    set_operation(cx, handle, &screen, OperationKind::Drain);
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        screen.update(cx, |screen, cx| screen.open_confirmation(window, cx));
+    })
+    .unwrap();
+    crate::mutation::settle_confirmation(cx, handle.into());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let window_bounds = window.bounds();
+        let header = crate::ui::dp_px(freshkube_ui::page::APP_HEADER_HEIGHT, window);
+        // Kit pads its content 16 px, so the surface starts that far above
+        // the title.
+        let title = window.find("app-dialog-title").bounds();
+        assert!(
+            title.top() - gpui_kit::px(16.) >= header - gpui_kit::px(1.),
+            "the dialog's title starts at {:?}, under the header's {header:?}",
+            title.top()
+        );
+        for what in ["confirm-type-name", "confirm-ok", "confirm-cancel"] {
+            let bounds = window.find(what).bounds();
+            assert!(
+                bounds.top() >= window_bounds.top() && bounds.bottom() <= window_bounds.bottom(),
+                "{what} {bounds:?} leaves the window {window_bounds:?}"
+            );
+        }
+    })
+    .unwrap();
+}

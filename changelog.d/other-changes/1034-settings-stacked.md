@@ -1,1 +1,1 @@
-- Settings › Clusters keeps one table row when its Inspector is stacked, now written as the one exception in the design notes and named through one shared constant that the layout tests use.
+- Settings › Clusters keeps its list to one row when the Inspector is stacked, so the entry form has room at small window sizes; the design notes now say why.

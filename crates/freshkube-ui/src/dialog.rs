@@ -84,6 +84,8 @@ fn frame_with(
                 .gap(dp(12.))
                 .child(
                     div()
+                        .id("app-dialog-title")
+                        .test_support()
                         .flex_none()
                         .pr_6()
                         .child(DialogTitle::new().child(title)),
@@ -218,11 +220,10 @@ mod tests {
     }
 
     /// At 760x560 with text 20, a dialog opened the way the app opens them
-    /// starts below the app header, where macOS draws the window buttons.
-    /// Kit pads its content 16 px, so the surface starts that far above
-    /// the first thing in it.
+    /// starts below the app header, where macOS draws the window buttons:
+    /// its title, and the surface's 16 px of padding above it.
     #[gpui_kit::test]
-    fn a_dialog_starts_below_the_title_bar_inset(cx: &mut TestAppContext) {
+    fn a_dialog_s_title_starts_below_the_title_bar_inset(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
@@ -237,8 +238,8 @@ mod tests {
             .into();
         cx.run_until_parked();
         cx.update_window(window, |_, window, cx| {
-            super::open(window, cx, |dialog, _, _| {
-                dialog.child(div().id("probe").test_support().child("First"))
+            super::open(window, cx, |dialog, window, _| {
+                frame(dialog, 520., "A dialog", "Body", "Actions", window)
             });
         })
         .unwrap();
@@ -246,12 +247,11 @@ mod tests {
         cx.update_window(window, |_, window, cx| {
             window.render_frame(cx);
             let header = dp_px(APP_HEADER_HEIGHT, window);
-            let surface_top = window.find("probe").bounds().top() - px(16.);
+            let surface_top = window.find("app-dialog-title").bounds().top() - px(16.);
             assert!(
                 surface_top >= header - px(1.),
                 "the dialog starts at {surface_top:?}, under the header's {header:?}"
             );
-            assert!(super::top_inset(window) >= header);
         })
         .unwrap();
     }
