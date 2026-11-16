@@ -213,10 +213,7 @@ impl Pilot {
                 }
                 match read {
                     Ok((client, subject)) => {
-                        let guard = crate::mutation::runner_guard(&who.entry, &who.context, cx);
-                        let runner = Runner::new(client, audit, who)
-                            .following(cell)
-                            .rechecking(guard);
+                        let runner = crate::desktop::write_runner::live_runner(client, audit, who, cell, cx);
                         this.begin_everyday(Arc::new(runner), subject, kind, &identity, window, cx);
                     }
                     Err(why) => {

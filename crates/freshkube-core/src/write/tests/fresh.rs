@@ -25,10 +25,8 @@ fn runner(
         dir,
         &[("prod-fra", held), ("prod-ams", Protection::Guarded)],
     );
-    let runner = fake::runner(cluster, dir, held).rechecking(Some(SetupLevels::new(
-        &path,
-        Subject::Entry("prod-fra".into()),
-    )));
+    let runner = fake::runner(cluster, dir, held)
+        .rechecking(SetupLevels::new(&path, Subject::Entry("prod-fra".into())));
     (runner, path)
 }
 
@@ -56,7 +54,6 @@ async fn safety_g28_a_file_edited_stricter_after_the_dialog_sends_nothing_for_ev
         let prepared = ready(&runner, action).await;
         // Edited outside the app while the dialog was open.
         file(dir.path(), &[("prod-fra", to)]);
-        let _ = path;
         let finished = run(&runner, prepared, Confirmation::Confirmed).await;
         assert_eq!(
             finished.status,
@@ -221,4 +218,28 @@ async fn safety_g28_an_undo_after_the_file_went_read_only_sends_nothing() {
     );
     assert_eq!(cluster.writes().len(), writes, "the undo wrote nothing");
     assert_eq!(cluster.object(fake::DEPLOYMENT)["spec"]["replicas"], 3);
+}
+
+/// A legacy `workspace.json` user has no entries in a file: a destination
+/// with a level the app holds is held to that, and is not refused as gone from
+/// a file that was never there.
+#[tokio::test(start_paused = true)]
+async fn a_legacy_user_s_destination_is_not_read_from_a_file() {
+    let cell = LevelCell::new(Protection::Guarded);
+    let mut action = fake::scale(3);
+    action.destinations = vec![Destination {
+        entry: "prod-ams".into(),
+        protection: Protection::Guarded,
+        cell: Some(cell.clone()),
+        covers: vec![],
+    }];
+    let (cluster, dir) = (Cluster::new(), tmp());
+    // No file at all: the entries are the migration's.
+    let runner = fake::runner(&cluster, dir.path(), Protection::Guarded).rechecking(
+        SetupLevels::legacy(dir.path().join("freshkube.yaml"), "prod-ctx"),
+    );
+    let prepared = ready(&runner, action).await;
+    let finished = run(&runner, prepared, Confirmation::Confirmed).await;
+    assert_eq!(finished.headline(), Headline::Done, "{:?}", finished.status);
+    assert_eq!(cell.get(), Protection::Guarded);
 }

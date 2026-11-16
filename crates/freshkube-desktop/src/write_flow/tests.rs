@@ -101,10 +101,10 @@ fn harness_inner(
     if recheck {
         let file = dir.path().join("freshkube.yaml");
         write_setup(&file, Some(level));
-        runner = runner.rechecking(Some(freshkube_core::write::SetupLevels::new(
+        runner = runner.rechecking(freshkube_core::write::SetupLevels::new(
             file,
             freshkube_core::write::Subject::Entry("prod-fra".into()),
-        )));
+        ));
     }
     let runner = Arc::new(runner);
     let handle = cx

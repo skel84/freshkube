@@ -77,6 +77,10 @@ pub struct SetupLevels {
     /// a send refuses (never "send without reading").
     file: Option<PathBuf>,
     subject: Subject,
+    /// Whether the entries an action's destinations name are listed in the
+    /// file. A legacy `workspace.json` user's entries came from the migration,
+    /// so there is nothing in a file to read a destination's level from.
+    destinations_listed: bool,
 }
 
 impl SetupLevels {
@@ -84,6 +88,19 @@ impl SetupLevels {
         Self {
             file: Some(file.into()),
             subject,
+            destinations_listed: true,
+        }
+    }
+
+    /// A legacy `workspace.json` user, whose entries came from the migration
+    /// and not from `freshkube.yaml`: their own level is read by kubeconfig
+    /// `context`, and an action's destinations have no entry in a file to be
+    /// read from.
+    pub fn legacy(file: impl Into<PathBuf>, context: impl Into<String>) -> Self {
+        Self {
+            file: Some(file.into()),
+            subject: Subject::Context(context.into()),
+            destinations_listed: false,
         }
     }
 
@@ -93,6 +110,7 @@ impl SetupLevels {
         Self {
             file: None,
             subject,
+            destinations_listed: true,
         }
     }
 
@@ -110,11 +128,13 @@ impl SetupLevels {
 
     /// [`Self::read`], and the level of each entry in `entries` from the same
     /// parse, so the strictest of an action's cluster and its destinations is
-    /// decided on one reading. An entry the file doesn't list is gone.
+    /// decided on one reading. An entry the file doesn't list is gone; where
+    /// the entries aren't in the file at all ([`Self::legacy`]) the file has
+    /// nothing to say about them (`None`), and they are never refused for it.
     pub fn read_with(
         &self,
         entries: &[String],
-    ) -> Result<(Protection, Vec<Protection>), Unreadable> {
+    ) -> Result<(Protection, Vec<Option<Protection>>), Unreadable> {
         let Some(file) = &self.file else {
             return Err(Unreadable::NotReadable);
         };
@@ -127,7 +147,13 @@ impl SetupLevels {
         let own = parsed.level(&self.subject)?;
         let others = entries
             .iter()
-            .map(|id| parsed.level(&Subject::Entry(id.clone())))
+            .map(|id| {
+                if self.destinations_listed {
+                    parsed.level(&Subject::Entry(id.clone())).map(Some)
+                } else {
+                    Ok(None)
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?;
         Ok((own, others))
     }
@@ -178,6 +204,23 @@ impl Parsed {
                     .stricter(workspace.level_of(&entry.context, recovery)))
             }
         }
+    }
+}
+
+/// How long the setup file may take to read before a send refuses: it is a
+/// few kilobytes, so a read that takes this long is not going to answer.
+pub(super) const READ_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Runs a blocking `read` off the async threads and gives up after
+/// `deadline`: a read that doesn't answer is a file that can't say, and holds
+/// nothing.
+pub(super) async fn read_within<T: Send + 'static>(
+    deadline: std::time::Duration,
+    read: impl FnOnce() -> Result<T, Unreadable> + Send + 'static,
+) -> Result<T, Unreadable> {
+    match tokio::time::timeout(deadline, tokio::task::spawn_blocking(read)).await {
+        Ok(Ok(answer)) => answer,
+        _ => Err(Unreadable::NotReadable),
     }
 }
 

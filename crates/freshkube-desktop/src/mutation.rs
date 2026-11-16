@@ -188,46 +188,57 @@ pub(crate) fn send_guard(
     let window = global
         .and_then(|global| global.7.clone())
         .unwrap_or_else(|| context.to_owned());
-    let subject = match global.map(|global| (&global.3, global.6)) {
-        Some((Some(entry), true)) => Subject::Entry(entry.clone()),
-        _ => Subject::Context(window),
-    };
-    Some(SetupLevels::new(file, subject))
+    Some(match global.map(|global| (&global.3, global.6)) {
+        Some((Some(entry), true)) => SetupLevels::new(file, Subject::Entry(entry.clone())),
+        Some((_, false)) => SetupLevels::legacy(file, window),
+        _ => SetupLevels::new(file, Subject::Context(window)),
+    })
 }
 
 /// What a write runner reads again at its send step, for the cluster the
 /// runner writes to: the workspace entry `entry` when the setup file lists
-/// the entries and names it, else the kubeconfig context `context`. Runners
-/// are built for live clusters only, so a window with no setup file gets a
-/// guard that can't say and its send refuses: no guard never means "send
-/// without reading".
+/// the entries and names it, else the kubeconfig context. When the runner
+/// follows the window's own cell (`own`), that context is the one the shell
+/// published with the level, the same as for a Talos write ([`send_guard`]);
+/// otherwise it is `context`, the runner's. Runners are for live clusters, so
+/// a window with no setup file gets a guard that can't say and its send
+/// refuses: no guard never means "send without reading".
 pub(crate) fn runner_guard(
     entry: &str,
     context: &str,
+    own: &LevelCell,
     cx: &App,
-) -> Option<freshkube_core::write::SetupLevels> {
+) -> freshkube_core::write::SetupLevels {
     use freshkube_core::write::{SetupLevels, Subject};
     let global = cx.try_global::<GlobalProtection>();
     let Some(file) = global.and_then(|global| global.4.clone()) else {
-        return Some(SetupLevels::unavailable(Subject::Context(
-            context.to_owned(),
-        )));
+        return SetupLevels::unavailable(Subject::Context(context.to_owned()));
+    };
+    let from_file = global.is_some_and(|global| global.6);
+    let window = global.is_some_and(|global| global.0.same(own));
+    let context = if window {
+        global
+            .and_then(|global| global.7.clone())
+            .unwrap_or_else(|| context.to_owned())
+    } else {
+        context.to_owned()
     };
     // Listed in the setup the shell published, not merely given a level cell
     // (a cell is made for any entry the first time a write uses it).
-    let listed = global.is_some_and(|global| {
-        global.6
-            && global
+    let listed = from_file
+        && global.is_some_and(|global| {
+            global
                 .2
                 .as_ref()
                 .is_some_and(|(workspace, _)| workspace.clusters.iter().any(|e| e.id == entry))
-    });
-    let subject = if listed {
-        Subject::Entry(entry.to_owned())
+        });
+    if !from_file {
+        SetupLevels::legacy(file, context)
+    } else if listed {
+        SetupLevels::new(file, Subject::Entry(entry.to_owned()))
     } else {
-        Subject::Context(context.to_owned())
-    };
-    Some(SetupLevels::new(file, subject))
+        SetupLevels::new(file, Subject::Context(context))
+    }
 }
 
 /// The notice when the window went away while the setup file was read: a
@@ -540,11 +551,24 @@ thread_local! {
 }
 
 /// Publishes `file` as this test's setup file, which the shell keeps
-/// publishing: tests that edit it write to the same path.
+/// publishing: tests that edit it write to the same path. The override ends
+/// when the returned guard is dropped.
 #[cfg(test)]
-pub(crate) fn setup_file_under(file: std::path::PathBuf, cx: &mut App) {
+pub(crate) fn setup_file_under(file: std::path::PathBuf, cx: &mut App) -> SetupFileOverride {
     TEST_SETUP.with(|slot| *slot.borrow_mut() = Some(file.clone()));
     set_setup_file(Some(file), true, cx);
+    SetupFileOverride
+}
+
+/// Ends [`setup_file_under`]'s override when dropped.
+#[cfg(test)]
+pub(crate) struct SetupFileOverride;
+
+#[cfg(test)]
+impl Drop for SetupFileOverride {
+    fn drop(&mut self) {
+        TEST_SETUP.with(|slot| *slot.borrow_mut() = None);
+    }
 }
 
 #[cfg(test)]

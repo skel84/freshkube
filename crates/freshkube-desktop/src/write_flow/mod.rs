@@ -483,12 +483,13 @@ impl WriteFlow {
             let again = matches!(done.status, Status::NotSent(NotSent::LevelChanged(_)));
             // A stricter level the send found in the setup file is also the
             // window's, so the header shows it and the next dialog asks under
-            // it; the app's own read of the file stays pending meanwhile.
-            if let Status::NotSent(NotSent::LevelChanged(level)) = &done.status {
-                let level = *level;
+            // it; the app's own read of the file stays pending meanwhile. The
+            // window's own level, not the status's: that can be a destination's.
+            if matches!(done.status, Status::NotSent(NotSent::LevelChanged(_))) {
                 _ = cx.update(|_, cx| {
-                    if runner.follows(&crate::mutation::level_cell(cx)) {
-                        crate::mutation::raise_level(level, cx);
+                    let own = crate::mutation::level_cell(cx);
+                    if runner.follows(&own) {
+                        crate::mutation::raise_level(own.get(), cx);
                     }
                 });
             }

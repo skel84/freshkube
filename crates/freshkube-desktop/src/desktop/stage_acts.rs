@@ -185,10 +185,8 @@ impl Pilot {
                 .unwrap_or_else(|_| Err("Connecting stopped unexpectedly.".to_owned()));
             _ = this.update_in(cx, |this, window, cx| match connected {
                 Ok(client) => {
-                    let guard = crate::mutation::runner_guard(&who.entry, &who.context, cx);
-                    let runner = Runner::new(client, audit, who)
-                        .following(cell)
-                        .rechecking(guard);
+                    let runner =
+                        crate::desktop::write_runner::live_runner(client, audit, who, cell, cx);
                     this.start_stage_write(Arc::new(runner), action, window, cx);
                 }
                 Err(why) => window.push_notification(
