@@ -213,7 +213,15 @@ pub(crate) fn runner_guard(
             context.to_owned(),
         )));
     };
-    let listed = global.is_some_and(|global| global.6 && global.1.contains_key(entry));
+    // Listed in the setup the shell published, not merely given a level cell
+    // (a cell is made for any entry the first time a write uses it).
+    let listed = global.is_some_and(|global| {
+        global.6
+            && global
+                .2
+                .as_ref()
+                .is_some_and(|(workspace, _)| workspace.clusters.iter().any(|e| e.id == entry))
+    });
     let subject = if listed {
         Subject::Entry(entry.to_owned())
     } else {
