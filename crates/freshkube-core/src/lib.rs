@@ -74,6 +74,7 @@ pub mod write;
 // Re-export commonly used items at crate root
 pub use client_cache::{
     AccessIdentity, AccessSessionId, ConfigurationRevision, TtlCache, file_revision,
+    stable_connection_key, talos_connection_key,
 };
 pub use cluster_overview::*;
 pub use diagnostics::*;

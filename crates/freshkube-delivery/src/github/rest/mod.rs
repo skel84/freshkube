@@ -241,6 +241,19 @@ impl Client {
         self.state.lock().unwrap().budget.rate().cloned()
     }
 
+    /// Calls are scarce: there is no token (60 an hour), or fewer are left
+    /// than the reserve.
+    fn is_scarce(&self) -> bool {
+        !self.authenticated()
+            || self
+                .state
+                .lock()
+                .unwrap()
+                .budget
+                .low(self.reserve(), Utc::now())
+                .is_some()
+    }
+
     fn reserve(&self) -> u32 {
         if self.authenticated() {
             RESERVE_TOKEN
@@ -655,5 +668,9 @@ impl GitHub for Handle {
     async fn pull(&self, repo: &str, number: u64) -> Result<PullRequest, Failure> {
         check_repo(repo)?;
         Ok(self.client.pull(repo, number, self.spare).await?)
+    }
+
+    fn is_sparing(&self) -> bool {
+        self.client.is_scarce()
     }
 }

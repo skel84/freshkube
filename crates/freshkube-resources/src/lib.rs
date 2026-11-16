@@ -32,6 +32,7 @@ use freshkube_ui::{text_size, theme};
 
 pub use freshkube_nav::{LogsAt, LogsRequest, ResourceLink, ShellRequest};
 pub use node_facts::{NodeFacts, NodeMemory};
+pub use pane::alerts::AlertsBlock;
 pub use pane::{DetailEvent, DetailPane, Tab};
 #[cfg(any(test, feature = "testing"))]
 pub use screen::row_id;

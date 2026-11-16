@@ -923,3 +923,239 @@ async fn a_refresh_that_fails_leaves_the_last_read_as_stale_evidence() {
     assert!(matches!(first, State::Stale { .. }), "{first:?}");
     assert!(first.evidence().is_some());
 }
+
+mod object_tests {
+    use super::super::object::{Section, Subject, names, section};
+    use super::super::{Active, Alert, State, Unknown, example};
+    use chrono::Utc;
+
+    fn state() -> State {
+        State::Known(example::active(Utc::now()))
+    }
+
+    #[test]
+    fn a_pod_is_named_by_its_namespace_and_pod_labels_only() {
+        let State::Known(active) = state() else {
+            unreachable!()
+        };
+        let crash: &Alert = active
+            .alerts
+            .iter()
+            .find(|alert| alert.name == "KubePodCrashLooping")
+            .unwrap();
+        let pod = "worker-6c4f8da0-bbbbh";
+        assert!(names(crash, Subject::Pod, "payments", pod));
+        assert!(
+            !names(crash, Subject::Pod, "shop", pod),
+            "another namespace"
+        );
+        assert!(!names(crash, Subject::Pod, "payments", "payments-api"));
+    }
+
+    #[test]
+    fn a_workload_takes_its_label_or_a_pod_only_its_own_controller_names() {
+        let State::Known(active) = state() else {
+            unreachable!()
+        };
+        let mismatch = active
+            .alerts
+            .iter()
+            .find(|alert| alert.name == "KubeDeploymentReplicasMismatch")
+            .unwrap();
+        assert!(names(
+            mismatch,
+            Subject::Workload("Deployment"),
+            "payments",
+            "worker"
+        ));
+        assert!(!names(
+            mismatch,
+            Subject::Workload("Deployment"),
+            "payments",
+            "work"
+        ));
+        let throttled = active
+            .alerts
+            .iter()
+            .find(|alert| alert.name == "CPUThrottlingHigh")
+            .unwrap();
+        // shop-web-5c8d6b7f94-k9m2p is a pod of Deployment shop-web, and of
+        // no other Deployment whose name is a prefix of it.
+        assert!(names(
+            throttled,
+            Subject::Workload("Deployment"),
+            "shop",
+            "shop-web"
+        ));
+        assert!(!names(
+            throttled,
+            Subject::Workload("Deployment"),
+            "shop",
+            "shop"
+        ));
+        assert!(!names(
+            throttled,
+            Subject::Workload("StatefulSet"),
+            "shop",
+            "shop-web"
+        ));
+    }
+
+    #[test]
+    fn a_node_is_named_by_its_node_label() {
+        let section = section(&state(), Subject::Node, "", "talos-cp-fra1-01");
+        let Section::Alerts { alerts, stale } = section else {
+            panic!("the node has an alert")
+        };
+        assert!(!stale);
+        assert_eq!(alerts[0].name, "NodeFilesystemSpaceFillingUp");
+        assert!(matches!(
+            super::super::object::section(&state(), Subject::Node, "", "worker-9"),
+            Section::Quiet(_)
+        ));
+    }
+
+    #[test]
+    fn unread_refused_and_missing_sources_are_unknown_never_none() {
+        assert_eq!(
+            section(&State::Reading, Subject::Pod, "shop", "any"),
+            Section::Reading,
+            "before the first answer it says so, and no alert"
+        );
+        for unknown in [
+            State::Unknown(Unknown::NotFound(String::new())),
+            State::Unknown(Unknown::Refused("no".into())),
+            State::Unknown(Unknown::RulesOnly),
+            State::Unknown(Unknown::NoClusterLabel("cluster".into())),
+        ] {
+            assert!(
+                matches!(
+                    section(&unknown, Subject::Pod, "shop", "any"),
+                    Section::Unknown(_)
+                ),
+                "{unknown:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stale_read_never_says_quiet() {
+        let State::Known(last) = state() else {
+            unreachable!()
+        };
+        let stale = State::Stale {
+            last,
+            why: "timed out".into(),
+        };
+        assert!(matches!(
+            section(&stale, Subject::Node, "", "worker-9"),
+            Section::StaleQuiet(_)
+        ));
+        let Section::Alerts { stale, .. } = section(
+            &State::Stale {
+                last: example::active(Utc::now()),
+                why: "x".into(),
+            },
+            Subject::Node,
+            "",
+            "talos-cp-fra1-01",
+        ) else {
+            panic!()
+        };
+        assert!(stale, "an alert from an old read is marked stale");
+    }
+
+    #[test]
+    fn a_read_cut_at_its_bound_cannot_rule_an_object_out() {
+        let mut active: Active = example::active(Utc::now());
+        active.more = 3;
+        assert!(matches!(
+            section(&State::Known(active), Subject::Node, "", "worker-9"),
+            Section::Unknown(_)
+        ));
+    }
+
+    fn pod_alert(namespace: &str, pod: &str) -> Alert {
+        let State::Known(mut active) = state() else {
+            unreachable!()
+        };
+        let mut alert = active.alerts.remove(0);
+        alert.labels.clear();
+        alert.labels.insert("namespace".into(), namespace.into());
+        alert.labels.insert("pod".into(), pod.into());
+        alert
+    }
+
+    /// Which pods of which names a workload of each kind may claim: only the
+    /// names its own controller generates, in the generated alphabet.
+    #[test]
+    fn a_workload_claims_only_the_pod_names_its_controller_generates() {
+        let cases: &[(&str, &str, &str, bool)] = &[
+            // The same-prefix collisions that must not match.
+            ("Deployment", "api", "api-migrate-x2k4q", false),
+            ("Deployment", "node", "node-exporter-x2k4q", false),
+            ("Deployment", "api", "api-gateway-7d9f8c6b5-x2k4q", false),
+            // What each kind's pods look like.
+            ("Deployment", "api", "api-7d9f8c6b5-x2k4q", true),
+            ("StatefulSet", "db", "db-0", true),
+            ("StatefulSet", "db", "db-12", true),
+            ("StatefulSet", "db", "db-", false),
+            ("StatefulSet", "db", "db-primary", false),
+            ("DaemonSet", "node-exporter", "node-exporter-x2k4q", true),
+            ("DaemonSet", "node", "node-exporter-x2k4q", false),
+            ("ReplicaSet", "api-7d9f8c6b5", "api-7d9f8c6b5-x2k4q", true),
+            ("ReplicaSet", "api", "api-7d9f8c6b5-x2k4q", false),
+            ("Job", "api-migrate", "api-migrate-x2k4q", true),
+            ("Job", "api", "api-migrate-x2k4q", false),
+            ("CronJob", "report", "report-28450123-x2k4q", true),
+            // An empty timestamp isn't one.
+            ("CronJob", "api", "api--x2k4q", false),
+            ("CronJob", "report", "report-nightly-x2k4q", false),
+            // A letter outside the generated alphabet, or a wrong length.
+            ("Job", "api", "api-axk4q", false),
+            ("Job", "api", "api-x2k4", false),
+        ];
+        for (kind, workload, pod, wanted) in cases {
+            let alert = pod_alert("shop", pod);
+            assert_eq!(
+                names(&alert, Subject::Workload(kind), "shop", workload),
+                *wanted,
+                "{kind} {workload} and pod {pod}"
+            );
+            // Never in another namespace.
+            assert!(
+                !names(&alert, Subject::Workload(kind), "other", workload),
+                "{kind} {workload} in another namespace"
+            );
+        }
+    }
+
+    #[test]
+    fn a_workload_is_also_named_by_its_kinds_own_label() {
+        let State::Known(mut active) = state() else {
+            unreachable!()
+        };
+        let mut alert = active.alerts.remove(0);
+        alert.labels.clear();
+        alert.labels.insert("namespace".into(), "shop".into());
+        for (kind, label) in [
+            ("Deployment", "deployment"),
+            ("StatefulSet", "statefulset"),
+            ("DaemonSet", "daemonset"),
+            ("ReplicaSet", "replicaset"),
+            ("Job", "job_name"),
+            ("CronJob", "cronjob"),
+        ] {
+            alert.labels.insert(label.into(), "thing".into());
+            assert!(
+                names(&alert, Subject::Workload(kind), "shop", "thing"),
+                "{kind}"
+            );
+            assert!(
+                !names(&alert, Subject::Workload(kind), "shop", "other"),
+                "{kind}"
+            );
+            alert.labels.remove(label);
+        }
+    }
+}

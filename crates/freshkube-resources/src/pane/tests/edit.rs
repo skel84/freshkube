@@ -344,3 +344,118 @@ fn the_editor_keeps_most_of_a_short_pane_at_text_20(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// The pane reads the open object again, as a watch or a refresh does, and it
+/// is at `version` now.
+fn moved_to(
+    cx: &mut TestAppContext,
+    pane: &Entity<DetailPane>,
+    target: &DetailTarget,
+    version: &str,
+) {
+    let mut changed = example::document(&target.identity, live::now()).unwrap();
+    changed.resource_version = version.into();
+    cx.update(|cx| {
+        pane.update(cx, |pane, cx| {
+            let seq = pane.read_seq;
+            pane.finish_read(&target.identity, seq, Ok(DocumentView::new(changed)), cx)
+        })
+    });
+    cx.run_until_parked();
+}
+
+/// The edit's own write ends the edit (#1056): the editor was based on the
+/// version that write replaced, so it closes instead of saying the object
+/// "changed since you opened it".
+#[gpui_kit::test]
+fn the_edits_own_write_closes_the_editor(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    on_yaml(cx, &pane, handle, &pod);
+    press(cx, handle, "detail-edit");
+    let text = editor_text(cx, &pane);
+    type_text(cx, handle, &pane, with_label(&text));
+    assert!(label(cx, handle, "detail-edit-view").is_some());
+
+    // The write lands, and the object is at its new version.
+    let based_on = pane.read_with(cx, |pane, _| pane.edit_based_on().unwrap());
+    moved_to(cx, &pane, &pod, "2");
+    pane.update(cx, |pane, cx| {
+        pane.edit_written(&pod.identity, &based_on, cx)
+    });
+    cx.run_until_parked();
+
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
+    assert!(label(cx, handle, "detail-edit-view").is_none());
+    assert!(label(cx, handle, "detail-edit-stale").is_none());
+    // The YAML tab is back, with Edit offered again.
+    assert!(label(cx, handle, "detail-edit").is_some());
+}
+
+/// Another writer's change is not the edit's own: the editor stays, with its
+/// note, and a write of some other object closes nothing.
+#[gpui_kit::test]
+fn another_writers_change_leaves_the_editor_open_with_its_note(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    on_yaml(cx, &pane, handle, &pod);
+    press(cx, handle, "detail-edit");
+    assert!(label(cx, handle, "detail-edit-stale").is_none());
+
+    moved_to(cx, &pane, &pod, "2");
+    assert!(label(cx, handle, "detail-edit-stale").is_some());
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_some()));
+
+    // A write of another object says nothing about this edit.
+    let (other, _) = crashing_pod();
+    let based_on = pane.read_with(cx, |pane, _| pane.edit_based_on().unwrap());
+    pane.update(cx, |pane, cx| {
+        pane.edit_written(&other.identity, &based_on, cx)
+    });
+    cx.run_until_parked();
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_some()));
+    assert!(label(cx, handle, "detail-edit-stale").is_some());
+}
+
+/// A deleted object has nothing left to edit (#1056): Edit stays on the YAML
+/// tab, off, with the reason, and pressing it opens nothing.
+#[gpui_kit::test]
+fn a_deleted_object_offers_no_edit(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    on_yaml(cx, &pane, handle, &pod);
+    assert_eq!(pane.read_with(cx, |pane, _| pane.edit_reason()), None);
+
+    pane.update(cx, |pane, cx| pane.gone(None, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        pane.read_with(cx, |pane, _| pane.edit_reason()).as_deref(),
+        Some("This object was deleted, so there is nothing to edit.")
+    );
+    assert!(label(cx, handle, "detail-edit").is_some());
+    press(cx, handle, "detail-edit");
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_none()));
+    assert!(label(cx, handle, "detail-edit-view").is_none());
+}
+
+/// An old write's news does not close a newer editor (#1056 review): the
+/// person cancelled and pressed Edit again while the first write was being
+/// watched, and the text now typed is based on another version.
+#[gpui_kit::test]
+fn an_old_writes_news_leaves_an_editor_opened_on_a_newer_version(cx: &mut TestAppContext) {
+    let (_runtime, pane, handle, _) = mount(cx);
+    let (pod, _) = running_pod();
+    on_yaml(cx, &pane, handle, &pod);
+    press(cx, handle, "detail-edit");
+    let text = editor_text(cx, &pane);
+    type_text(cx, handle, &pane, with_label(&text));
+    press(cx, handle, "detail-edit-cancel");
+    // Another version, and Edit again: new text on the new version.
+    moved_to(cx, &pane, &pod, "2");
+    press(cx, handle, "detail-edit");
+    pane.update(cx, |pane, cx| {
+        pane.edit_written(&pod.identity, "version-the-old-write-was-based-on", cx)
+    });
+    cx.run_until_parked();
+    assert!(pane.read_with(cx, |pane, _| pane.edit_state().is_some()));
+}
