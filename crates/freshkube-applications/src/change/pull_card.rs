@@ -93,7 +93,7 @@ pub(super) struct PullCard {
     pub state: Option<(&'static str, Tone)>,
     pub people: Vec<Person>,
     pub checks: Option<Checks>,
-    /// `Merged by mira, 21 Oct 09:24 UTC`.
+    /// `Merged by mira, 21 Oct 09:24`, local time like the rest of the page.
     pub merged: Option<SharedString>,
     /// `+84 −12 · 5 files`.
     pub changed: Option<SharedString>,
@@ -120,8 +120,11 @@ fn tone_of(state: PullState) -> Tone {
     }
 }
 
+/// The moment as the rest of the page shows it, in local time, with its day:
+/// the Merged field and the trail say `22:34` for the same instant.
 fn at(time: DateTime<Utc>) -> String {
-    time.format("%-d %b %H:%M UTC").to_string()
+    let day = time.with_timezone(&chrono::Local).format("%-d %b");
+    format!("{day} {}", super::clock(time))
 }
 
 fn short(commit: &str) -> String {
@@ -541,6 +544,14 @@ mod tests {
                 .as_deref()
                 .unwrap()
                 .starts_with("Merged by mira, ")
+        );
+        // One moment, one way: the card ends with the time the Merged field
+        // and the trail show, local, with no zone to tell apart.
+        let merged = card.merged.as_deref().unwrap();
+        assert!(!merged.contains("UTC"), "{merged}");
+        assert!(
+            merged.ends_with(&crate::change::clock(summary.merged_at.unwrap())),
+            "{merged}"
         );
         let links: Vec<_> = card.links.iter().map(|l| l.id).collect();
         assert_eq!(links, ["open", "merge-commit"]);
