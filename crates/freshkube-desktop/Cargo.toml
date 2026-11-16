@@ -72,6 +72,7 @@ required-features = ["stress"]
 libc = "0.2"
 
 [dev-dependencies]
+tonic.workspace = true
 http.workspace = true
 tower = { version = "0.5", features = ["util"] }
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }

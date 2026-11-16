@@ -490,3 +490,94 @@ fn the_shown_applications_row_closes_a_change_followed_from_it(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+/// A cluster chosen with no source yet (a Talos context waiting for its
+/// overview) is connecting, never "no cluster is open"; it offers no
+/// Settings, and a failed connection says so with the cluster named.
+#[gpui_kit::test]
+fn a_chosen_cluster_without_a_source_is_connecting_or_failed_never_not_open(
+    cx: &mut TestAppContext,
+) {
+    use crate::backend::OverviewError;
+    use freshkube_core::failure::FailureKind;
+    let (_runtime, handle, view) = applications(cx, Variant::Acme);
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
+    cx.update_window(handle, |_, _, cx| {
+        // The page has no source, as Talos mode has until the overview
+        // answers; the window has a context chosen.
+        page.update(cx, |page, cx| page.set_source(None, None, cx));
+        view.update(cx, |pilot, _| {
+            assert!(pilot.applied.context.is_some(), "a context is chosen");
+            pilot.navigation.column_changed();
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let status = |cx: &mut TestAppContext| -> Vec<(String, Option<String>)> {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window.try_find("nav-applications-open-clusters").is_none(),
+                "no Settings push for a chosen cluster"
+            );
+            assert!(window.try_find("nav-applications-status-retry").is_none());
+            vec![(
+                "status".to_owned(),
+                window
+                    .find("nav-applications-status")
+                    .label()
+                    .map(str::to_owned),
+            )]
+        })
+        .unwrap()
+    };
+    let connecting = status(cx).remove(0).1.unwrap();
+    assert!(connecting.starts_with("Connecting to "), "{connecting}");
+    // The overview fails: the column says it couldn't connect.
+    cx.update_window(handle, |_, _, cx| {
+        view.update(cx, |pilot, _| {
+            pilot.overview = crate::state::Snapshot::default();
+            let request = pilot.overview.begin(pilot.applied.clone());
+            pilot.overview.apply(
+                &request,
+                Err(OverviewError::new(FailureKind::Unreachable, "no answer")),
+            );
+            pilot.navigation.column_changed();
+        });
+    })
+    .unwrap();
+    let failed = status(cx).remove(0).1.unwrap();
+    assert!(failed.starts_with("Couldn't connect to "), "{failed}");
+}
+
+/// With no cluster chosen the column says what it couldn't look for, has no
+/// Retry, and one button opens Settings › Clusters.
+#[gpui_kit::test]
+fn the_column_offers_settings_when_no_cluster_is_open(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = applications(cx, Variant::Acme);
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
+    cx.update_window(handle, |_, _, cx| {
+        page.update(cx, |page, cx| page.set_source(None, None, cx));
+        view.update(cx, |pilot, _| {
+            pilot.applied.context = None;
+            pilot.navigation.column_changed();
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let note = page.read(cx).column().note.clone().expect("a note");
+        assert!(note.text.contains("No cluster is open"), "{}", note.text);
+        assert!(window.try_find("nav-applications-status").is_some());
+        assert!(window.try_find("nav-applications-status-retry").is_none());
+        window.click("nav-applications-open-clusters", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).navigation.page, Page::Settings);
+        assert_eq!(
+            view.read(cx).settings_page.read(cx).section(),
+            crate::desktop::settings::SettingsSection::Clusters
+        );
+    })
+    .unwrap();
+}

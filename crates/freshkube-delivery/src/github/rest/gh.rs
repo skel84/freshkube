@@ -29,20 +29,55 @@ fn find(dirs: &[PathBuf]) -> Option<PathBuf> {
     freshkube_core::exec_plugin::find_program("gh", dirs)
 }
 
+/// How many times a busy `gh` is tried, and the pause between tries.
+const BUSY_TRIES: u32 = 5;
+const BUSY_PAUSE: Duration = Duration::from_millis(40);
+
+/// What a failed spawn says: only a program that isn't there is "not found".
+pub(super) fn spawn_failure(kind: std::io::ErrorKind) -> NotSetUp {
+    match kind {
+        std::io::ErrorKind::NotFound => NotSetUp::GhNotFound,
+        other => NotSetUp::GhNotStarted(other),
+    }
+}
+
+/// Starts `gh auth token`. A file that is busy (being written or updated)
+/// is tried again a few times, never past `deadline`.
+async fn spawn(
+    gh: &std::path::Path,
+    deadline: Duration,
+) -> Result<tokio::process::Child, NotSetUp> {
+    let started = tokio::time::Instant::now();
+    let mut tries = 0;
+    loop {
+        let spawned = tokio::process::Command::new(gh)
+            .args(["auth", "token", "--hostname", "github.com"])
+            .env_remove("GH_HOST")
+            .env_remove("GH_ENTERPRISE_TOKEN")
+            .env_remove("GITHUB_ENTERPRISE_TOKEN")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn();
+        match spawned {
+            Ok(child) => return Ok(child),
+            Err(error) => {
+                tries += 1;
+                let busy = error.kind() == std::io::ErrorKind::ExecutableFileBusy;
+                if !busy || tries >= BUSY_TRIES || started.elapsed() + BUSY_PAUSE >= deadline {
+                    return Err(spawn_failure(error.kind()));
+                }
+                tokio::time::sleep(BUSY_PAUSE).await;
+            }
+        }
+    }
+}
+
 /// The token `gh` holds for github.com, looking for `gh` in `dirs`.
 pub(super) async fn token(dirs: &[PathBuf], deadline: Duration) -> Result<String, NotSetUp> {
     let gh = find(dirs).ok_or(NotSetUp::GhNotFound)?;
-    let mut child = tokio::process::Command::new(gh)
-        .args(["auth", "token", "--hostname", "github.com"])
-        .env_remove("GH_HOST")
-        .env_remove("GH_ENTERPRISE_TOKEN")
-        .env_remove("GITHUB_ENTERPRISE_TOKEN")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|_| NotSetUp::GhNotFound)?;
+    let mut child = spawn(&gh, deadline).await?;
     let mut stdout = child.stdout.take().ok_or(NotSetUp::GhNotSignedIn)?;
     let run = async {
         let mut output = Vec::new();
@@ -69,4 +104,26 @@ pub(super) async fn token(dirs: &[PathBuf], deadline: Duration) -> Result<String
         return Err(NotSetUp::GhNotSignedIn);
     }
     Ok(token.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::ErrorKind;
+
+    #[test]
+    fn only_a_missing_program_is_not_found() {
+        assert_eq!(spawn_failure(ErrorKind::NotFound), NotSetUp::GhNotFound);
+        for kind in [
+            ErrorKind::ExecutableFileBusy,
+            ErrorKind::PermissionDenied,
+            ErrorKind::OutOfMemory,
+        ] {
+            let failure = spawn_failure(kind);
+            assert_eq!(failure, NotSetUp::GhNotStarted(kind));
+            let words = failure.to_string();
+            assert!(!words.contains("not found"), "{words}");
+            assert!(words.contains(&kind.to_string()), "{words}");
+        }
+    }
 }

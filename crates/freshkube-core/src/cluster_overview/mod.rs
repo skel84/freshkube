@@ -137,6 +137,11 @@ pub struct ClusterOverview {
     pub kubeconfig_warning: Option<String>,
     /// Effective Kubernetes roster source and context, refreshed with discovery.
     pub kubeconfig_source: Option<String>,
+    /// What kind of failure kept Talos from answering the last time, set
+    /// where the error is still typed. `None` while it answered or when
+    /// the failure had no kind. A frontend words a refusal, a config fault
+    /// and an unreachable endpoint apart from this, never from the text.
+    pub failure: Option<crate::failure::FailureKind>,
 }
 
 impl ClusterOverview {
@@ -426,6 +431,8 @@ impl ClusterOverviewCollector {
                             cluster.connection = ClusterConnectionStatus::Connected;
                         }
                         Err(error) => {
+                            cluster.failure =
+                                Some(crate::failure::Failure::from_talos(&error).kind);
                             cluster.connection = ClusterConnectionStatus::Unreachable(format!(
                                 "Could not connect — {}{}",
                                 root_cause(&error),
@@ -435,6 +442,7 @@ impl ClusterOverviewCollector {
                     }
                 }
                 Err(error) => {
+                    cluster.failure = Some(crate::failure::Failure::from_talos(&error).kind);
                     cluster.connection = ClusterConnectionStatus::Unreachable(error.to_string());
                 }
             }
@@ -452,6 +460,7 @@ impl ClusterOverviewCollector {
             return;
         };
 
+        cluster.failure = None;
         let etcd = refresh_etcd_members(cluster, &client).await;
         let endpoint_failed = etcd.transport_failure;
         // Only an answer from Talos in this refresh makes it Connected; a
@@ -470,9 +479,11 @@ impl ClusterOverviewCollector {
         }
 
         let mut node_transport_failures = Vec::new();
+        let mut node_failure = None;
         let nodes_to_query = nodes_to_query(cluster);
         if !nodes_to_query.is_empty() {
             let nodes = collect_nodes_into(cluster, &client, nodes_to_query).await;
+            node_failure = nodes.failure;
             node_transport_failures = nodes.transport_failures;
             talos_answered |= nodes.any_version;
             refresh_etcd_health(cluster, &client).await;
@@ -486,6 +497,9 @@ impl ClusterOverviewCollector {
         }
 
         cluster.connection = connection_status(cluster, talos_answered);
+        if !talos_answered {
+            cluster.failure = more_telling(etcd.failure, node_failure);
+        }
     }
 
     /// The node roster from Talos discovery, falling back to Kubernetes when
@@ -783,17 +797,35 @@ struct NodeMetrics {
     cpu_info: Vec<NodeCpuInfo>,
     /// The version request failed in a way that suggests a dead connection.
     version_transport_failure: bool,
+    /// Why the version request failed, when it did.
+    version_failure: Option<crate::failure::FailureKind>,
 }
 
 /// One request's outcome; a failure keeps the other requests' data usable.
 enum CallOutcome<T> {
     Data(Vec<T>),
-    Failed { transport: bool },
+    Failed {
+        transport: bool,
+        kind: crate::failure::FailureKind,
+    },
 }
 
 impl<T> CallOutcome<T> {
     fn transport_failure(&self) -> bool {
-        matches!(self, Self::Failed { transport: true })
+        matches!(
+            self,
+            Self::Failed {
+                transport: true,
+                ..
+            }
+        )
+    }
+
+    fn failure(&self) -> Option<crate::failure::FailureKind> {
+        match self {
+            Self::Failed { kind, .. } => Some(*kind),
+            Self::Data(_) => None,
+        }
     }
 
     fn into_data(self) -> Vec<T> {
@@ -812,8 +844,12 @@ async fn bounded_call<T>(
         Ok(Ok(values)) => CallOutcome::Data(values),
         Ok(Err(error)) => CallOutcome::Failed {
             transport: error.is_transport_failure(),
+            kind: crate::failure::Failure::from_talos(&error).kind,
         },
-        Err(_) => CallOutcome::Failed { transport: true },
+        Err(_) => CallOutcome::Failed {
+            transport: true,
+            kind: crate::failure::FailureKind::Timeout,
+        },
     }
 }
 
@@ -828,6 +864,7 @@ async fn collect_node(client: TalosClient, name: String, limit: Duration) -> Nod
     );
     let mut metrics = NodeMetrics {
         version_transport_failure: versions.transport_failure(),
+        version_failure: versions.failure(),
         versions: versions.into_data(),
         services: services.into_data(),
         memory: memory.into_data(),
@@ -915,11 +952,28 @@ fn tried_endpoints(endpoint_urls: &[String]) -> String {
     }
 }
 
+/// Which of two failure kinds to keep: a refusal wins over any other kind,
+/// since it names the fix; otherwise the first one stays.
+fn more_telling(
+    kept: Option<crate::failure::FailureKind>,
+    other: Option<crate::failure::FailureKind>,
+) -> Option<crate::failure::FailureKind> {
+    use crate::failure::FailureKind::{Forbidden, Unauthorized};
+    let refusal =
+        |kind: Option<crate::failure::FailureKind>| matches!(kind, Some(Forbidden | Unauthorized));
+    if kept.is_none() || (refusal(other) && !refusal(kept)) {
+        other
+    } else {
+        kept
+    }
+}
+
 /// What one etcd member read heard.
 struct EtcdRead {
     /// Talos answered with at least one member.
     answered: bool,
     transport_failure: bool,
+    failure: Option<crate::failure::FailureKind>,
 }
 
 /// etcd members and the node IPs they give. A failure clears them.
@@ -932,6 +986,7 @@ async fn refresh_etcd_members(cluster: &mut ClusterOverview, client: &TalosClien
             EtcdRead {
                 answered,
                 transport_failure: false,
+                failure: None,
             }
         }
         Err(error) => {
@@ -944,6 +999,7 @@ async fn refresh_etcd_members(cluster: &mut ClusterOverview, client: &TalosClien
             EtcdRead {
                 answered: false,
                 transport_failure: error.is_transport_failure(),
+                failure: Some(crate::failure::Failure::from_talos(&error).kind),
             }
         }
     }
@@ -955,6 +1011,9 @@ struct NodesRead {
     transport_failures: Vec<bool>,
     /// At least one node answered its version.
     any_version: bool,
+    /// The kind of the failures, a refusal first, since it names the more
+    /// useful fix.
+    failure: Option<crate::failure::FailureKind>,
 }
 
 /// Collects each node's version, services, memory, load and CPU, replacing
@@ -977,7 +1036,9 @@ async fn collect_nodes_into(
     let mut memory = Vec::new();
     let mut load_avg = Vec::new();
     let mut cpu_info = Vec::new();
+    let mut failure: Option<crate::failure::FailureKind> = None;
     for node in per_node {
+        failure = more_telling(failure, node.version_failure);
         node_transport_failures.push(node.version_transport_failure);
         versions.extend(node.versions);
         services.extend(node.services);
@@ -994,6 +1055,7 @@ async fn collect_nodes_into(
     NodesRead {
         transport_failures: node_transport_failures,
         any_version: !cluster.versions.is_empty(),
+        failure,
     }
 }
 

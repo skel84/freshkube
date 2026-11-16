@@ -36,6 +36,16 @@ pub struct ColumnNote {
     pub tooltip: Option<SharedString>,
     /// A failed read offers Retry, as the page's state does.
     pub retry: bool,
+    /// The one button that fixes it, where one exists: the shell maps it to
+    /// a button under the sentence, and the note then wraps as prose.
+    pub action: Option<ColumnAction>,
+}
+
+/// What a note's button does; the shell owns the how.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnAction {
+    /// Open Settings › Clusters, where a connection is added or chosen.
+    OpenClusters,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -55,6 +65,7 @@ impl Column {
             text: text.to_owned().into(),
             tooltip: tooltip.map(Into::into),
             retry,
+            action: None,
         };
         let sentence = |title: &SharedString, description: &SharedString, reason: Option<&_>| {
             let mut text = format!("{title}. {description}");
@@ -64,11 +75,15 @@ impl Column {
             Some(text)
         };
         let note = match &display.body {
-            _ if !connected => Some(note(
-                "Not connected to a cluster",
-                Some("Choose a cluster in the header to read its applications.".to_owned()),
-                false,
-            )),
+            _ if !connected => Some(ColumnNote {
+                action: Some(ColumnAction::OpenClusters),
+                ..note(
+                    "No cluster is open, so Freshkube hasn't looked for applications. \
+                     Connect one in Settings.",
+                    None,
+                    false,
+                )
+            }),
             Body::Table if !read => Some(note("Reading…", None, false)),
             Body::Table => None,
             _ if reading => Some(note("Reading…", None, false)),
@@ -331,7 +346,22 @@ impl ApplicationsPage {
 #[cfg(test)]
 mod tests {
     use super::super::{Read, Variant, example};
-    use super::{Column, Display};
+    use super::{Column, ColumnAction, Display};
+
+    /// With no cluster open the column says what it couldn't look for and
+    /// offers the one place that fixes it; there is nothing to retry.
+    #[test]
+    fn no_cluster_says_what_is_next_with_one_action() {
+        let column = Column::new(&Display::default(), false, false, false);
+        let note = column.note.expect("a note");
+        assert_eq!(note.action, Some(ColumnAction::OpenClusters));
+        assert!(!note.retry);
+        assert!(note.text.contains("No cluster is open"), "{}", note.text);
+        assert!(note.text.contains("Settings"), "{}", note.text);
+        // A cluster being read has no such button.
+        let reading = Column::new(&Display::default(), true, false, true);
+        assert!(reading.note.is_some_and(|note| note.action.is_none()));
+    }
 
     fn acme() -> Display {
         let inputs = example::inputs(Variant::Acme);

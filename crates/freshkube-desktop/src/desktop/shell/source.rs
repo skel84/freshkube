@@ -6,6 +6,7 @@ use super::*;
 use crate::monitoring::alerts::Which;
 use crate::monitoring::page::{EntryId, Section as Shown};
 use crate::observability::Destination;
+use freshkube_applications::ColumnAction;
 use freshkube_delivery::applications::Rule;
 use freshkube_ui::source_list::{Line, Menu, Note, Prose, Row, Section, SourceListHost};
 
@@ -547,6 +548,40 @@ impl Pilot {
             .current(here && page.waiting_shown());
         let mut lines: Vec<Line<ColumnKey>> = vec![changes.into(), waiting.into(), all.into()];
         if let Some(note) = &column.note {
+            if let Some(ColumnAction::OpenClusters) = note.action {
+                // A page with no source is not a window with no cluster: in
+                // Talos mode the source waits for the overview. Only with
+                // none chosen does Settings help.
+                if let Some(cluster) = self.chosen_context(cx) {
+                    let line = if self.connection_has_failed() {
+                        let mut line = Note::new(
+                            "nav-applications-status",
+                            format!("Couldn't connect to {cluster}"),
+                        );
+                        if let Some(why) = self.connection_failure() {
+                            line = line.tooltip(why);
+                        }
+                        line
+                    } else {
+                        Note::new(
+                            "nav-applications-status",
+                            format!("Connecting to {cluster}…"),
+                        )
+                    };
+                    lines.push(line.into());
+                    return lines;
+                }
+                lines.push(
+                    Prose::new("nav-applications-status", note.text.clone())
+                        .action(
+                            "nav-applications-open-clusters",
+                            "Open Settings › Clusters",
+                            ColumnKey::SettingsSection(SettingsSection::Clusters),
+                        )
+                        .into(),
+                );
+                return lines;
+            }
             let mut line = Note::new("nav-applications-status", note.text.clone());
             if let Some(tooltip) = &note.tooltip {
                 line = line.tooltip(tooltip.clone());
