@@ -99,7 +99,7 @@ fn the_inspector_leads_with_why_needs_and_fix_before_the_fields(cx: &mut TestApp
                 "Not set up",
                 "an ",
                 "change-fix-settings",
-                "Set delivery.stage_naming in Settings › Delivery sources.",
+                "Set how an Application's name gives its Stage in Settings › Delivery sources.",
             ),
         ] {
             page.update(cx, |page, cx| page.select(key, window, cx));

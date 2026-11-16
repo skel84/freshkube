@@ -14,7 +14,7 @@ mod requests;
 mod retained;
 mod session;
 mod summarize;
-pub use driver::DEBOUNCE;
+pub use driver::{DEBOUNCE, RunEnd};
 pub use observation::{
     Observation, ObservationFailure, Observations, ReadStatus, Scope, SessionIdentity, Source,
     SubscriptionKey,

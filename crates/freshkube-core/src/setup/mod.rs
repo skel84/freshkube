@@ -41,7 +41,7 @@ pub use types::{
     Forward, GitHub, GitHubToken, KeysJson, Metrics, MetricsService, Mode, Results, SignIn, Source,
     StageNaming, Store, SupplyChain, not_expected_in,
 };
-pub use validate::resolve_build_namespace;
+pub use validate::{plain_template, resolve_build_namespace};
 
 /// The comment every written file starts with.
 const HEADER: &str = "\

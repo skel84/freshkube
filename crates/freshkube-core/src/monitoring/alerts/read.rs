@@ -454,4 +454,8 @@ pub struct RulesData {
     pub read: Vec<ReadFrom>,
     /// Why some rules aren't shown, for the page to say.
     pub note: Option<String>,
+    /// What the evaluator said when it couldn't be read (a refusal, an error
+    /// from a candidate): the page draws it as an error in place of "nothing
+    /// here evaluates them", which would be untrue.
+    pub unread: Option<String>,
 }

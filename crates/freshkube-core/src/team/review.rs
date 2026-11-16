@@ -62,6 +62,8 @@ pub enum NotReviewed {
     Step(Step),
     /// The review was made for another applied or waiting version.
     Stale,
+    /// Joining: a cluster of the team has no context chosen yet.
+    Unmapped,
 }
 
 impl std::fmt::Display for NotReviewed {
@@ -69,6 +71,7 @@ impl std::fmt::Display for NotReviewed {
         f.write_str(match self {
             NotReviewed::Step(Step::Trust) => "A trust change is still to confirm.",
             NotReviewed::Step(Step::Rest) => "The other changes are still to confirm.",
+            NotReviewed::Unmapped => "Map each of the team’s clusters to a context first.",
             NotReviewed::Stale => {
                 "The waiting version changed while you reviewed it. Review it again."
             }

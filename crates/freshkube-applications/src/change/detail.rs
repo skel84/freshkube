@@ -572,6 +572,11 @@ impl ChangePage {
                         .id(SharedString::from(format!("{}-words", step.id)))
                         .test_support()
                         .aria_label(step.words.clone())
+                        // Wrap inside the pane: a sentence wider than the
+                        // line goes to a line of its own and breaks at words,
+                        // never cut at the pane's edge.
+                        .max_w_full()
+                        .min_w_0()
                         .text_color(p.muted)
                         .child(step.words.clone()),
                 )
@@ -763,15 +768,18 @@ impl ChangePage {
                     label: "Open Settings".into(),
                     tooltip: Some(
                         format!(
-                            "Set {} in Settings › {}",
-                            field.field,
-                            settings_title(field.section)
+                            // Short lines, so the tooltip fits a narrow window;
+                            // the key is last, after the words.
+                            "Set {}\nin Settings › {}\nSetup key: {}",
+                            field.means,
+                            settings_title(field.section),
+                            field.field
                         )
                         .into(),
                     ),
                     why: opens
                         .is_none()
-                        .then(|| format!("Settings has no section for {}", field.field).into()),
+                        .then(|| format!("Settings has no section for {}", field.name).into()),
                     words,
                     does: opens.map_or(Does::Nothing, Does::Settings),
                 }

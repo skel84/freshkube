@@ -66,7 +66,7 @@ fn the_headline_names_what_failed_can_not_be_confirmed_and_waits_in_that_order()
         headline(&change),
         "Runs in dev, stage and prod-lon. prod-lon failed (verification failed); \
          the build can't be confirmed (run not found, policy not found); \
-         stage can't be confirmed (delivery.stage_naming not set); and 2 more."
+         stage can't be confirmed (stage naming not set); and 2 more."
     );
 }
 

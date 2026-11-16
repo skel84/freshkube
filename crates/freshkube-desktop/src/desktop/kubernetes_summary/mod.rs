@@ -366,6 +366,12 @@ const SUMMARY_PACE: Pace = Pace {
 
 /// Runs one cluster's observation session on Tokio: waits for a client,
 /// drives the reflectors and sends each publication down the channel.
+///
+/// A read refused as `Unauthorized` (an expired exec or OIDC token) ends the
+/// session's `run` once: the client is forgotten, built anew, and the reads
+/// start again from a new generation. That is once per session identity
+/// (`Session::take_rebuild`), so credentials the server really refuses show
+/// as they are and nothing loops (#968).
 async fn run_summary_driver(
     session: Session,
     access: ClusterAccess,
@@ -373,10 +379,44 @@ async fn run_summary_driver(
 ) {
     let mut publications = session.publications();
     let (latest, feed) = tokio::sync::watch::channel(None);
+    let publish = |publication: Arc<Publication>| {
+        let health = WorkloadData::from_outcome(&publication.summary.workloads);
+        latest.send_replace(Some((publication, health)));
+        _ = sender.try_send(feed.clone());
+    };
+    let mut client = acquire_client(&session, &access, &publish).await;
+    loop {
+        let driver = session.run(client);
+        tokio::pin!(driver);
+        loop {
+            tokio::select! {
+                _ = &mut driver => break,
+                changed = publications.changed() => {
+                    if changed.is_err() { return; }
+                    let publication = publications.borrow_and_update().clone();
+                    if let Some(publication) = publication {
+                        publish(publication);
+                    }
+                }
+            }
+        }
+        // The old client and its reads are gone: ask for a new one, not the
+        // one kept for a couple of minutes.
+        access.forget();
+        client = acquire_client(&session, &access, &publish).await;
+    }
+}
+
+/// Waits for a client, saying every source failed while it can't be had.
+async fn acquire_client(
+    session: &Session,
+    access: &ClusterAccess,
+    publish: &impl Fn(Arc<Publication>),
+) -> kube::Client {
     let mut backoff = Duration::from_secs(1);
-    let client = loop {
+    loop {
         match tokio::time::timeout(Duration::from_secs(45), access.client()).await {
-            Ok(Ok(client)) => break client,
+            Ok(Ok(client)) => return client,
             result => {
                 let failure = ObservationFailure::Read(if result.is_err() {
                     FailureKind::Timeout
@@ -387,28 +427,10 @@ async fn run_summary_driver(
                     session.fail(session.generation(), source, failure.clone());
                 }
                 let publication = session.derive(chrono::Utc::now());
-                let health = WorkloadData::from_outcome(&publication.summary.workloads);
                 session.publish(publication.clone());
-                latest.send_replace(Some((publication, health)));
-                _ = sender.try_send(feed.clone());
+                publish(publication);
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(30));
-            }
-        }
-    };
-    let driver = session.run(client);
-    tokio::pin!(driver);
-    loop {
-        tokio::select! {
-            _ = &mut driver => break,
-            changed = publications.changed() => {
-                if changed.is_err() { break; }
-                let publication = publications.borrow_and_update().clone();
-                if let Some(publication) = publication {
-                    let health = WorkloadData::from_outcome(&publication.summary.workloads);
-                    latest.send_replace(Some((publication, health)));
-                    _ = sender.try_send(feed.clone());
-                }
             }
         }
     }

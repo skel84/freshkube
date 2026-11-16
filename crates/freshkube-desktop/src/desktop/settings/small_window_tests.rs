@@ -191,9 +191,8 @@ fn small_window_long_cells_keep_their_column_width(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn small_window_sources_headers_ellipsis_and_full_tooltip(cx: &mut TestAppContext) {
+fn small_window_sources_headers_stay_whole(cx: &mut TestAppContext) {
     use freshkube_ui::table;
-    use gpui_kit::InputEvent as _;
 
     let (_runtime, handle, pilot) = mount(cx, options("settings-general", 13.), 760., 560.);
     cx.update_window(handle, |_, window, cx| {
@@ -225,38 +224,18 @@ fn small_window_sources_headers_ellipsis_and_full_tooltip(cx: &mut TestAppContex
         );
     })
     .unwrap();
-    for (ix, full) in [(2usize, "Entry"), (3, "Chosen by")] {
-        let tooltip_draws = freshkube_ui::tooltip::drawn(full);
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            assert_eq!(window.rem_size(), px(20.));
+    // #1052: the identity headers stay whole; the table scrolls sideways
+    // rather than cutting them to "…".
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.rem_size(), px(20.));
+        for (ix, full) in [(2usize, "Entry"), (3, "Chosen by")] {
             let shown = table::word_cut_shown(format!("settings-sources-sort-{ix}-label"))
                 .expect("header painted");
-            assert!(shown.ends_with('…'), "{full}: {shown:?}");
-            assert_ne!(shown.as_ref(), full);
-            let cell = window.find(("settings-sources-sort", ix)).bounds();
-            window.dispatch_event(
-                gpui_kit::MouseMoveEvent {
-                    position: cell.center(),
-                    pressed_button: None,
-                    modifiers: Default::default(),
-                }
-                .to_platform_input(),
-                cx,
-            );
-            window.render_frame(cx);
-        })
-        .unwrap();
-        cx.executor()
-            .advance_clock(std::time::Duration::from_millis(600));
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            window.find("follow-tooltip-text");
-            assert!(freshkube_ui::tooltip::drawn(full) > tooltip_draws, "{full}");
-        })
-        .unwrap();
-    }
+            assert_eq!(shown.as_ref(), full, "{full} is cut to {shown:?}");
+        }
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
