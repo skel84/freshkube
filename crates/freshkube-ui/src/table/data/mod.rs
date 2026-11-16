@@ -169,8 +169,8 @@ impl TableState {
     /// before it has drawn, when the window holds less than a row, or when
     /// `line` shows already or is above.
     fn last_whole_row(&self, line: usize, lines: usize) -> Option<usize> {
-        let (first, whole) = self.whole_window(lines)?;
-        (line >= first + whole).then(|| line + 1 - whole)
+        let window = self.whole_window(lines)?;
+        (line >= window.end).then(|| line + 1 - window.capacity)
     }
 
     /// Whether the list's last frame drew a window shorter than one row.
@@ -187,14 +187,13 @@ impl TableState {
     /// drew it; `None` before it has drawn or when the window holds less
     /// than a row, when nothing can be said yet.
     pub fn shows_whole(&self, line: usize, lines: usize) -> Option<bool> {
-        let (first, whole) = self.whole_window(lines)?;
-        Some(line >= first && line < first + whole)
+        let window = self.whole_window(lines)?;
+        Some(line >= window.start && line < window.end)
     }
 
-    /// The first whole line of the window and how many whole lines it
-    /// holds, from the list's last frame; `None` before it has drawn or
-    /// when the window holds less than a row.
-    fn whole_window(&self, lines: usize) -> Option<(usize, usize)> {
+    /// The whole lines of the window, from the list's last frame; `None`
+    /// before it has drawn or when the window holds less than a row.
+    fn whole_window(&self, lines: usize) -> Option<WholeWindow> {
         let state = self.scroll.0.borrow();
         // The list's last frame: `item` is its window, `contents` all its
         // lines, which are one height.
@@ -205,10 +204,14 @@ impl TableState {
         }
         // A fraction of a pixel over a whole row count is the hairlines'
         // rounding, not room for another row.
-        let whole = ((view + 1.5) / row).floor() as usize;
         let scrolled = (-f32::from(state.base_handle.offset().y)).max(0.);
-        let first = (scrolled / row - 0.01).ceil().max(0.) as usize;
-        Some((first, whole))
+        let start = (scrolled / row - 0.01).ceil().max(0.) as usize;
+        let end = ((scrolled + view + 1.5) / row).floor() as usize;
+        Some(WholeWindow {
+            start,
+            end: end.max(start),
+            capacity: ((view + 1.5) / row).floor() as usize,
+        })
     }
 
     /// Scrolls the table sideways so the column spanning `left..left +
@@ -246,6 +249,14 @@ impl TableState {
     fn pins(&self, run: f32, window: &Window) -> bool {
         pins(&self.sideways, run, window)
     }
+}
+
+/// The lines a list window shows whole: `start..end`, and how many whole
+/// lines the window holds at most.
+struct WholeWindow {
+    start: usize,
+    end: usize,
+    capacity: usize,
 }
 
 /// How many leading columns pin, and their width.

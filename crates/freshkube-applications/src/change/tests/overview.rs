@@ -846,13 +846,14 @@ fn a_stage_row_under_the_matrix_header_is_cut_at_its_edge(cx: &mut TestAppContex
     .unwrap();
 }
 
-/// The matrix at 760×560 and text 20 shows about a row and a half (#1080):
-/// arrowing down to the last Stage, right to the last column, and back,
-/// keeps the selected cell inside the matrix's visible bounds, below its
-/// header and right of the pinned Stage column. Each key waits for its
-/// frames, as a person's do. It proves where the reveal ends up, not how
-/// many frames it took, and the shapes differ in the Inspector's height
-/// under the matrix.
+/// The matrix at 760×560 and text 20 shows about a row and a half, and the
+/// short window scrolls the page as a whole (#1080): arrowing down to the
+/// last Stage, right to the last column, and back, from the page's top and
+/// without scrolling it first, keeps the selected cell inside the matrix's
+/// visible bounds, inside the page's own, below the matrix's header and right
+/// of the pinned Stage column. Each key waits for its frames, as a person's
+/// do. It proves where the reveal ends up, not how many frames it took, and
+/// the shapes differ in the Inspector's height under the matrix.
 #[gpui_kit::test]
 fn arrowing_to_the_last_cell_keeps_it_inside_the_matrix(cx: &mut TestAppContext) {
     arrow_through(cx, Shape::Whole);
@@ -879,24 +880,30 @@ fn arrow_through(cx: &mut TestAppContext, shape: Shape) {
         assert!(stages.len() >= 3, "{stages:?}");
         let header = freshkube_ui::ui::dp_px(freshkube_ui::table::HEADER_HEIGHT, window);
         let pinned = freshkube_ui::ui::dp_px(220., window);
+        let page_scroll = page.read(cx).page_scroll.clone();
         let inside = |window: &Window, stage: &str, column: Column| {
             let view = bounds(window, "change-matrix-table-scroll".into());
             let cell = bounds(window, Matrix::cell_id(stage, column).to_string());
+            // The page's own bounds are the window's, less its frame.
+            let shown = page_scroll.bounds();
             // The row's own 1 px borders either side are not part of a cell.
-            let (top, bottom) = (view.top() + header, view.bottom());
+            let (top, bottom) = (
+                (view.top() + header).max(shown.top()),
+                view.bottom().min(shown.bottom()),
+            );
             let left = view.left() + pinned;
             assert!(
                 cell.top() >= top - px(1.) && cell.bottom() <= bottom + px(1.),
                 "{stage} {column:?}: {cell:?} not between {top:?} and {bottom:?}"
             );
             assert!(
-                cell.left() >= left - px(1.) && cell.right() <= view.right() + px(3.),
+                cell.left() >= left - px(1.)
+                    && cell.right() <= view.right().min(shown.right()) + px(3.),
                 "{stage} {column:?}: {cell:?} not between {left:?} and {:?}",
                 view.right()
             );
         };
         window.press("down", cx);
-        scroll_to_matrix(&page, window, cx);
         // Down through every Stage, checking each one, then right through
         // every column of the last, and back up and left.
         for stage in &stages {
@@ -947,12 +954,21 @@ fn a_scrolled_column_is_cut_at_the_pinned_stage_columns_edge(cx: &mut TestAppCon
         }
         let edge = bounds(window, "change-stage-dev".into()).right();
         let (mut hidden, mut straddling) = (0, 0);
+        // The cells and their words, by the Stages and columns that name them.
+        let known: std::collections::HashSet<String> = page
+            .read(cx)
+            .overview
+            .iter()
+            .flat_map(|row| {
+                Column::ALL.map(|column| Matrix::cell_id(&row.name, column).to_string())
+            })
+            .flat_map(|id| [format!("{id}-word"), id])
+            .collect();
         for line in snapshots(window) {
             let Some(gpui_kit::ElementId::Name(name)) = line.path().last() else {
                 continue;
             };
-            let passing = name.starts_with("change-cell-")
-                && (name.ends_with("-word") || name.matches('-').count() <= 3 + 1);
+            let passing = known.contains(name.as_ref());
             let list = bounds(window, "change-matrix-list".into());
             let (top, bottom) = (line.bounds().top(), line.bounds().bottom());
             if !passing || top < list.top() || bottom > list.bottom() {
@@ -1015,6 +1031,29 @@ fn the_rollout_states_shape_draws_paused_degraded_aborted_and_progressing(cx: &m
         page.update(cx, |page, cx| page.select("prod-ams-rollout", window, cx));
         window.render_frame(cx);
         assert!(window.try_find("change-detail").is_some());
+    })
+    .unwrap();
+}
+
+/// At 760×560 and the default text size the stacked matrix's list is 37 px,
+/// shorter than its 40 px rows (#1080): the reveal can't show a row whole, so
+/// it shows its top, where the Stage's name is.
+#[gpui_kit::test]
+fn a_list_shorter_than_a_row_shows_the_selected_rows_top(cx: &mut TestAppContext) {
+    let (handle, page) = open_overview(cx, 760., 560., Shape::Whole, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("prod-ams-pods", window, cx));
+        settle(window, cx);
+        let list = bounds(window, "change-matrix-list".into());
+        let row = freshkube_ui::ui::dp_px(freshkube_ui::table::STEP_ROW, window);
+        assert!(list.size.height < row, "{list:?} holds a row of {row:?}");
+        let stage = bounds(window, "change-stage-prod-ams".into());
+        assert!(
+            stage.top() >= list.top() - px(1.) && stage.top() < list.bottom(),
+            "the row's top {:?} is outside the list {list:?}",
+            stage.top()
+        );
     })
     .unwrap();
 }
