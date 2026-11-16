@@ -12,7 +12,8 @@
 //!
 //! Nothing outside `freshkube-core` names this yet: the runner reaches it in
 //! W2 and no page offers it before W3, so no silence or Expire can be sent
-//! from the app. `docs/WRITE_MODEL.md` has the design.
+//! from the app. The design is the plan in #884; `docs/WRITE_MODEL.md` takes it
+//! in W2, where the writes first become sendable.
 pub mod silence;
 pub mod writer;
 

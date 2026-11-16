@@ -206,7 +206,8 @@ impl Refusal {
     }
 }
 
-/// A Prometheus label name.
+/// A Prometheus label name: ASCII letters, digits and underscores, not
+/// starting with a digit. UTF-8 label names are refused.
 fn is_label_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars
@@ -287,6 +288,9 @@ pub fn classify(draft: &Draft, preview: &Preview, level: Protection) -> Result<C
         reasons.push(Reason::NoAlertname);
     } else if !draft.matchers.iter().any(|matcher| {
         matcher.name != "alertname"
+            // The central cluster matcher says which cluster, not which
+            // instance: it doesn't narrow the rule's own alerts.
+            && !matches!(&draft.mode, Mode::Central { label, .. } if *label == matcher.name)
             && !NOT_IDENTIFYING.contains(&matcher.name.as_str())
             && matcher.equal
             && !matcher.regex

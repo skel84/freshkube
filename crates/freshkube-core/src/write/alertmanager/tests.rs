@@ -298,23 +298,47 @@ fn central_without_an_exact_cluster_matcher_is_broad_and_the_fix_restores_it() {
     assert_eq!(narrow(&draft, Protection::Guarded), Class::Narrow);
 }
 
+#[test]
+fn central_alertname_with_only_the_cluster_matcher_is_only_alertname() {
+    let mut draft = Draft::for_alert(&pod_alert(), central());
+    draft.comment = "c".into();
+    draft
+        .matchers
+        .retain(|m| m.name == "alertname" || m.name == "cluster");
+    assert_eq!(draft.matchers.len(), 2);
+    assert!(draft.has_exact_cluster());
+    assert_eq!(
+        reasons(narrow(&draft, Protection::Guarded)),
+        vec![Reason::OnlyAlertname]
+    );
+    // The same silence on a per-cluster store is broad for the same reason.
+    draft.matchers.retain(|m| m.name == "alertname");
+    draft.mode = Mode::Cluster;
+    assert_eq!(
+        reasons(narrow(&draft, Protection::Guarded)),
+        vec![Reason::OnlyAlertname]
+    );
+    // Another identifying label makes the central one narrow again.
+    let mut with_pod = Draft::for_alert(&pod_alert(), central());
+    with_pod.comment = "c".into();
+    with_pod
+        .matchers
+        .retain(|m| m.name != "namespace" && m.name != "severity");
+    assert_eq!(narrow(&with_pod, Protection::Guarded), Class::Narrow);
+}
+
 // ---- the access question per HTTP method ----
 
 #[test]
 fn the_access_question_follows_the_http_method() {
     let service = testing::service();
+    let name = Some("alertmanager-operated:9093");
     let post = access_question(&service, &Method::POST).unwrap();
-    assert_eq!((post.verb, post.name.as_deref()), ("create", None));
+    assert_eq!((post.verb, post.name.as_deref()), ("create", name));
     let delete = access_question(&service, &Method::DELETE).unwrap();
-    assert_eq!(
-        (delete.verb, delete.name.as_deref()),
-        ("delete", Some(testing::NAME))
-    );
+    assert_eq!((delete.verb, delete.name.as_deref()), ("delete", name));
     let get = access_question(&service, &Method::GET).unwrap();
-    assert_eq!(
-        (get.verb, get.name.as_deref()),
-        ("get", Some(testing::NAME))
-    );
+    assert_eq!((get.verb, get.name.as_deref()), ("get", name));
     for question in [&post, &delete, &get] {
         assert_eq!(question.group, "");
         assert_eq!(question.resource, "services");
@@ -324,6 +348,38 @@ fn the_access_question_follows_the_http_method() {
     for other in [Method::PUT, Method::PATCH, Method::HEAD] {
         assert_eq!(access_question(&service, &other), None);
     }
+}
+
+/// The name the API server authorizes a proxy request by is the URL segment
+/// the request is sent to, `[https:]name:port`: the question and the URL are
+/// built from one helper and can't drift apart.
+#[test]
+fn the_question_names_the_proxy_segment_the_request_url_carries() {
+    let https = crate::monitoring::PrometheusService {
+        https: true,
+        ..crate::monitoring::PrometheusService::new("monitoring", "am", 9093)
+    };
+    assert_eq!(https.proxy_name(), "https:am:9093");
+    assert!(
+        https
+            .proxy_base()
+            .contains("/services/https:am:9093/proxy/")
+    );
+    for method in [Method::POST, Method::DELETE, Method::GET] {
+        let question = access_question(&https, &method).unwrap();
+        assert_eq!(question.name.as_deref(), Some("https:am:9093"));
+        assert!(
+            https
+                .proxy_base()
+                .contains(question.name.as_deref().unwrap())
+        );
+    }
+    let plain = testing::service();
+    assert!(
+        plain
+            .proxy_base()
+            .contains("/services/alertmanager-operated:9093/proxy/")
+    );
 }
 
 #[tokio::test]
@@ -501,7 +557,7 @@ async fn an_answer_over_the_byte_bound_is_not_parsed_and_counts_as_broad() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_preview_that_cannot_be_read_is_an_error_never_an_empty_preview() {
     for answer in [
         Answer::Status(403, "{}".into()),
@@ -554,7 +610,36 @@ async fn a_central_preview_names_the_clusters_the_matchers_reach() {
     let preview = fake.writer().preview(&draft).await.unwrap();
     assert_eq!(preview.muted, Muted::Exactly(2));
     assert_eq!(preview.clusters, vec!["prod-ams", "prod-fra"]);
-    assert_eq!(preview.in_other_clusters("prod-ams"), 1);
+    assert_eq!(preview.other_clusters, 1);
+}
+
+#[tokio::test]
+async fn other_clusters_are_counted_over_every_counted_alert_not_only_the_listed() {
+    let fake = Fake::new();
+    fake.add_many("A", 5, &[("cluster", "prod-ams")]);
+    fake.add_many("A", 15, &[("cluster", "prod-fra")]);
+    let mut draft = Draft::for_alert(&alert(&[("alertname", "A"), ("pod", "p")]), central());
+    draft.comment = "c".into();
+    draft.matchers.retain(|m| m.name == "alertname");
+    let preview = fake.writer().preview(&draft).await.unwrap();
+    assert_eq!(preview.muted, Muted::Exactly(20));
+    assert_eq!(preview.alerts.len(), MAX_PREVIEW_LISTED);
+    assert_eq!(preview.other_clusters, 15);
+    // Outside central mode no alert is another cluster's.
+    let mut own = draft.clone();
+    own.mode = Mode::Cluster;
+    assert_eq!(fake.writer().preview(&own).await.unwrap().other_clusters, 0);
+}
+
+#[tokio::test]
+async fn an_oversized_error_answer_is_unreadable_not_broad() {
+    let fake = Fake::new();
+    fake.get_answers(Answer::Status(502, "x".repeat(MAX_PREVIEW_BYTES + 1)));
+    let result = fake.writer().preview(&draft()).await;
+    assert!(
+        matches!(result, Err(WriteError::Unreadable(_))),
+        "{result:?}"
+    );
 }
 
 #[test]
@@ -631,7 +716,7 @@ async fn a_central_silence_posts_the_exact_cluster_matcher() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_post_with_no_answer_is_unknown_and_never_sent_again() {
     let fake = Fake::new();
     fake.post_answers(Answer::Silent { applied: true });
@@ -655,7 +740,7 @@ async fn a_post_with_no_answer_is_unknown_and_never_sent_again() {
     assert_eq!(landed.id, "sil-0001");
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_post_that_did_not_land_is_not_found_afterwards() {
     let fake = Fake::new();
     fake.post_answers(Answer::Silent { applied: false });
@@ -707,6 +792,16 @@ fn find_landed_matches_creator_comment_and_matchers_and_skips_expired() {
         ),
     ];
     assert_eq!(find_landed(&silences, &request).unwrap().id, "yes");
+
+    // Alertmanager may list the matchers in another order.
+    let mut reordered = mk(
+        "reordered",
+        SilenceState::Active,
+        &request.created_by,
+        &request.comment,
+    );
+    reordered.matchers.reverse();
+    assert_eq!(find_landed(&[reordered], &request).unwrap().id, "reordered");
 }
 
 #[tokio::test]
@@ -807,7 +902,7 @@ async fn an_expire_of_a_silence_that_is_not_there_is_rejected_not_done() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_delete_with_no_answer_is_unknown_and_never_sent_again() {
     let fake = Fake::new();
     fake.add_silence("s1", "active", "freshkube: alice", "c");

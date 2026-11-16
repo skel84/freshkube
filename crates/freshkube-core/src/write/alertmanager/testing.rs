@@ -219,25 +219,27 @@ impl State {
         };
         let silence = api.strip_prefix("api/v2/silence/");
         match (&request.method, api, silence) {
-            (&Method::GET, "api/v2/alerts", _) => self.read(request, |state| {
-                (200, state.alerts_json(&request.query).to_string())
-            }),
-            (&Method::GET, "api/v2/silences", _) => self.read(request, |state| {
-                (200, Value::Array(state.silences.clone()).to_string())
-            }),
-            (&Method::GET, _, Some(id)) => self.read(request, |state| {
-                match state.silences.iter().find(|silence| silence["id"] == id) {
-                    Some(silence) => (200, silence.to_string()),
-                    None => (404, json!({"message": "silence not found"}).to_string()),
-                }
-            }),
+            (&Method::GET, "api/v2/alerts", _) => {
+                self.read(|state| (200, state.alerts_json(&request.query).to_string()))
+            }
+            (&Method::GET, "api/v2/silences", _) => {
+                self.read(|state| (200, Value::Array(state.silences.clone()).to_string()))
+            }
+            (&Method::GET, _, Some(id)) => {
+                self.read(
+                    |state| match state.silences.iter().find(|silence| silence["id"] == id) {
+                        Some(silence) => (200, silence.to_string()),
+                        None => (404, json!({"message": "silence not found"}).to_string()),
+                    },
+                )
+            }
             (&Method::POST, "api/v2/silences", _) => self.create(&request.body),
             (&Method::DELETE, _, Some(id)) => self.expire(id),
             _ => answer(fake_api::unknown(request)),
         }
     }
 
-    fn read(&mut self, _request: &Recorded, normal: impl Fn(&Self) -> (u16, String)) -> Reply {
+    fn read(&mut self, normal: impl Fn(&Self) -> (u16, String)) -> Reply {
         match &self.get {
             Some(Answer::Status(status, body)) => Reply::Answer(*status, body.clone()),
             Some(Answer::Silent { .. }) => Reply::Silent,

@@ -81,6 +81,11 @@ pub struct Preview {
     /// The distinct values of the cluster label among the counted alerts, in
     /// central mode.
     pub clusters: Vec<String>,
+    /// How many of all the counted alerts (not only the listed ones) are not
+    /// this entry's: their cluster label is another value, or missing. Zero
+    /// outside central mode. When `muted` isn't exact it counts only what was
+    /// counted.
+    pub other_clusters: usize,
 }
 
 impl Preview {
@@ -91,6 +96,7 @@ impl Preview {
             alerts: Vec::new(),
             fingerprints: Vec::new(),
             clusters: Vec::new(),
+            other_clusters: 0,
         }
     }
 
@@ -102,14 +108,6 @@ impl Preview {
             && other.muted.is_exact()
             && self.muted == other.muted
             && self.fingerprints == other.fingerprints
-    }
-
-    /// How many counted alerts belong to a cluster other than `own`.
-    pub fn in_other_clusters(&self, own: &str) -> usize {
-        self.alerts
-            .iter()
-            .filter(|alert| alert.cluster.as_deref().is_some_and(|value| value != own))
-            .count()
     }
 }
 
@@ -206,7 +204,8 @@ pub struct AlertWriter {
 }
 
 /// The access question for one HTTP method on `services/proxy` of the
-/// Service: the proxy's own check maps a `POST` to `create`, a `DELETE` to
+/// Service, named as the API server authorizes it
+/// ([`PrometheusService::proxy_name`]): the proxy's own check maps a `POST` to `create`, a `DELETE` to
 /// `delete` and a `GET` to `get`. Any other method is never sent, so it has
 /// no question.
 pub fn access_question(service: &PrometheusService, method: &Method) -> Option<AccessQuestion> {
@@ -222,8 +221,10 @@ pub fn access_question(service: &PrometheusService, method: &Method) -> Option<A
         resource: "services".into(),
         subresource: Some("proxy".into()),
         namespace: Some(service.namespace.clone()),
-        // RBAC cannot name an object that does not exist yet.
-        name: (verb != "create").then(|| service.name.clone()),
+        // The proxy request names the Service in its URL, so the authorizer
+        // sees the name for every verb, a POST too: it is the URL segment
+        // `[https:]name:port`, not the Service's own name.
+        name: Some(service.proxy_name()),
     })
 }
 
@@ -282,8 +283,8 @@ impl AlertWriter {
             .append_pair("inhibited", "true")
             .finish();
         let target = format!("api/v2/alerts?{query}");
-        let cluster_label = match &draft.mode {
-            Mode::Central { label, .. } => Some(label.as_str()),
+        let cluster = match &draft.mode {
+            Mode::Central { label, value } => Some((label.as_str(), value.as_str())),
             Mode::Cluster => None,
         };
         match self
@@ -298,7 +299,7 @@ impl AlertWriter {
                     WriteError::Unreadable("Alertmanager's alerts aren't JSON".into())
                 })?;
                 let alerts = parse_alertmanager_alerts(&value).map_err(WriteError::Unreadable)?;
-                Ok(preview_of(alerts, cluster_label))
+                Ok(preview_of(alerts, cluster))
             }
             Err(Transport::TooLarge) => Ok(Preview {
                 muted: Muted::AtLeast(MAX_PREVIEW_ALERTS),
@@ -410,7 +411,13 @@ impl AlertWriter {
                 let frame = frame.map_err(|_| Transport::CutOff)?;
                 if let Some(data) = frame.data_ref() {
                     if bytes.len() + data.len() > limit {
-                        return Err(Transport::TooLarge);
+                        // The status comes first: an oversized error answer
+                        // is that error, not a too-large success. Only the
+                        // body of a success is held to the bound.
+                        if (200..300).contains(&status) {
+                            return Err(Transport::TooLarge);
+                        }
+                        break;
                     }
                     bytes.extend_from_slice(data);
                 }
@@ -528,13 +535,19 @@ fn filter_text(matcher: &SilenceMatcher) -> String {
     format!("{}{operator}\"{value}\"", matcher.name)
 }
 
-fn preview_of(mut alerts: Vec<Alert>, cluster_label: Option<&str>) -> Preview {
+fn preview_of(mut alerts: Vec<Alert>, cluster: Option<(&str, &str)>) -> Preview {
     alerts.sort_by(|a, b| (&a.name, &a.fingerprint).cmp(&(&b.name, &b.fingerprint)));
     alerts.dedup_by(|a, b| !a.fingerprint.is_empty() && a.fingerprint == b.fingerprint);
     let total = alerts.len();
     let counted = &alerts[..total.min(MAX_PREVIEW_ALERTS)];
     let cluster_of =
-        |alert: &Alert| cluster_label.and_then(|label| alert.label(label).map(str::to_owned));
+        |alert: &Alert| cluster.and_then(|(label, _)| alert.label(label).map(str::to_owned));
+    let other_clusters = cluster.map_or(0, |(label, own)| {
+        counted
+            .iter()
+            .filter(|alert| alert.label(label) != Some(own))
+            .count()
+    });
     let mut fingerprints: Vec<String> = counted
         .iter()
         .map(|alert| alert.fingerprint.clone())
@@ -559,6 +572,7 @@ fn preview_of(mut alerts: Vec<Alert>, cluster_label: Option<&str>) -> Preview {
             .collect(),
         fingerprints,
         clusters: clusters.into_iter().collect(),
+        other_clusters,
     }
 }
 
@@ -574,7 +588,21 @@ pub fn find_landed<'a>(silences: &'a [Silence], request: &CreateRequest) -> Opti
             silence.state != SilenceState::Expired
                 && silence.created_by == request.created_by
                 && silence.comment == request.comment
-                && silence.matchers == request.matchers
+                && same_matchers(&silence.matchers, &request.matchers)
         })
         .max_by_key(|silence| silence.starts_at)
+}
+
+/// Whether two matcher lists hold the same matchers, in any order:
+/// Alertmanager may list them in another order than they were sent.
+fn same_matchers(a: &[SilenceMatcher], b: &[SilenceMatcher]) -> bool {
+    let key = |matchers: &[SilenceMatcher]| {
+        let mut keys: Vec<_> = matchers
+            .iter()
+            .map(|m| (m.name.clone(), m.value.clone(), m.regex, m.equal))
+            .collect();
+        keys.sort();
+        keys
+    };
+    key(a) == key(b)
 }
