@@ -2,7 +2,10 @@
 //! failures and incomplete replacement lists retain its previous evidence.
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use chrono::{DateTime, Utc};
@@ -10,7 +13,7 @@ use kube::runtime::{
     reflector::{self, Lookup, Store},
     watcher::Event,
 };
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 
 use super::{
     KubernetesSummary, Observation, ObservationFailure, Observations, Part, RetainedObject,
@@ -255,6 +258,12 @@ pub struct Session {
     dirty: watch::Sender<u64>,
     refresh: watch::Sender<u64>,
     published: watch::Sender<Option<Arc<Publication>>>,
+    /// A read was answered `Unauthorized` (an expired exec or OIDC token):
+    /// the driver may rebuild the client, once ([`Self::take_rebuild`]).
+    rejected: Arc<Notify>,
+    /// Whether this identity's one rebuild was taken. It is the session's,
+    /// so a new identity (a new connection or epoch) starts with its own.
+    rebuilt: Arc<AtomicBool>,
 }
 
 pub(super) struct Evidence {
@@ -292,7 +301,25 @@ impl Session {
             dirty: watch::channel(0).0,
             refresh: watch::channel(0).0,
             published: watch::channel(None).0,
+            rejected: Arc::new(Notify::new()),
+            rebuilt: Arc::new(AtomicBool::new(false)),
         }
+    }
+    /// Tells the driver a read was refused for its credentials. Every source
+    /// that hears it says so; they share one rebuild ([`Self::take_rebuild`]).
+    pub(super) fn credentials_rejected(&self) {
+        self.rejected.notify_one();
+    }
+    pub(super) fn rejections(&self) -> Arc<Notify> {
+        self.rejected.clone()
+    }
+    /// Whether the client is to be rebuilt now: true for the first
+    /// rejection of this identity and false for every later one, so a 401
+    /// that arrives with or after the rebuild joins it and starts no second,
+    /// and credentials the server really refuses are shown, never retried in
+    /// a loop (and no login program is run again for them).
+    pub(super) fn take_rebuild(&self) -> bool {
+        !self.rebuilt.swap(true, Ordering::SeqCst)
     }
     pub fn identity(&self) -> &SessionIdentity {
         &self.identity
