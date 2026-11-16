@@ -65,6 +65,9 @@ fn mount_sized(
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
+        // `text_size::set` does nothing without the global, so a test that
+        // sets text 20 would run at 13.
+        crate::text_size::install(None, cx);
     });
     let source = source(context, 0);
     let mut screen = None;
@@ -1494,8 +1497,23 @@ fn the_tallest_confirmation_keeps_its_title_below_the_title_bar_at_the_smallest_
         crate::mutation::set_protection(freshkube_core::write::Protection::Protected, cx)
     });
     set_operation(cx, handle, &screen, OperationKind::Drain);
+    // Every node, so the Target line wraps and the body is at its tallest.
+    // The rows below the first are off screen at this size, so the screen
+    // takes the selection, not a click.
+    let roster = presentation::node_summaries(&fixture::cluster("prod-fra", 1));
+    let nodes = roster.len();
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
+        for node in roster.iter().skip(1) {
+            let target = NodeTarget::new(node.name.clone(), node.address.clone());
+            screen.update(cx, |screen, cx| screen.toggle(target, window, cx));
+        }
+        window.render_frame(cx);
+    })
+    .unwrap();
+    assert_eq!(names(&screen, cx).len(), nodes);
+    assert_eq!(cx.read(crate::text_size::current), 20.);
+    cx.update_window(handle.into(), |_, window, cx| {
         screen.update(cx, |screen, cx| screen.open_confirmation(window, cx));
     })
     .unwrap();
@@ -1504,6 +1522,15 @@ fn the_tallest_confirmation_keeps_its_title_below_the_title_bar_at_the_smallest_
         window.render_frame(cx);
         let window_bounds = window.bounds();
         let header = crate::ui::dp_px(freshkube_ui::page::APP_HEADER_HEIGHT, window);
+        // The review is taller than the room it has, so its body scrolls
+        // inside the dialog and the old, unframed dialog would have been
+        // pushed up under the window buttons.
+        let body = window.find("app-dialog-body").bounds();
+        let content = window.find("confirm-dialog").bounds();
+        assert!(
+            body.size.height < content.size.height,
+            "the body {body:?} does not overflow its content {content:?}"
+        );
         // Kit pads its content 16 px, so the surface starts that far above
         // the title.
         let title = window.find("app-dialog-title").bounds();
