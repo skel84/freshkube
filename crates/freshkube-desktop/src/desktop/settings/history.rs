@@ -43,7 +43,7 @@ fn words(what: &str, would: &str, entry: &str, reach: &Reach) -> String {
         Reach::Unreachable(failure) => {
             format!(
                 "Couldn’t reach {entry} to look for {what}: {}.",
-                failure.message
+                failure.message.trim_end_matches('.')
             )
         }
         Reach::Missing(_) => format!("There is no entry to look for {what} on."),
