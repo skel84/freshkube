@@ -83,6 +83,24 @@ fn world_on(cx: &mut TestAppContext, entry: &str, make: impl FnOnce() -> Cluster
 }
 
 impl World {
+    /// Edits the world's setup file as an editor outside the app would: the
+    /// entry `entry` is `level` (`None` breaks the file).
+    fn edit_setup(&self, entry: &str, level: Option<freshkube_core::write::Protection>) {
+        let file = self.dir.path().join("freshkube.yaml");
+        let Some(level) = level else {
+            std::fs::write(&file, "clusters: [[[").unwrap();
+            return;
+        };
+        let mut setup: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        for row in setup["clusters"].as_array_mut().unwrap() {
+            if row["id"] == entry {
+                row["protection"] = serde_json::json!(level.key());
+            }
+        }
+        std::fs::write(&file, setup.to_string()).unwrap();
+    }
+
     fn switch(&self, cx: &mut TestAppContext, entry: &str) {
         cx.update_window(self.handle, |_, window, cx| {
             self.view.update(cx, |pilot, cx| {
@@ -1460,4 +1478,65 @@ fn the_status_bars_cancel_is_not_shown_while_the_dialog_counts_down(cx: &mut Tes
     w.click(cx, "write-cancel-countdown");
     w.drive(cx, Duration::from_secs(2));
     assert!(w.real_deletes().is_empty());
+}
+
+/// A file edited to `read-only` while the dialog was open is read again at
+/// Confirm at each of the sites that start a write through a live runner
+/// (#1055): the everyday actions, Edit YAML and Delete. Nothing is written.
+#[gpui_kit::test]
+fn safety_g28_an_everyday_action_sends_nothing_when_the_file_went_read_only(
+    cx: &mut TestAppContext,
+) {
+    let w = world(cx, "core-fra");
+    w.press_web(cx, Everyday::Scale);
+    w.drive(cx, Duration::from_millis(500));
+    cx.update_window(w.handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("scale-count", cx);
+        window.press("secondary-a", cx);
+        window.input("7", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    w.click(cx, "scale-review");
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+    assert_eq!(w.replicas(), 2);
+}
+
+#[gpui_kit::test]
+fn safety_g28_an_edit_of_the_yaml_sends_nothing_when_the_file_went_read_only(
+    cx: &mut TestAppContext,
+) {
+    let w = world(cx, "core-fra");
+    w.press_edit(cx, w.live());
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+    w.edit_setup(
+        "core-fra",
+        Some(freshkube_core::write::Protection::ReadOnly),
+    );
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(3));
+    assert!(w.cluster.writes().is_empty());
+}
+
+#[gpui_kit::test]
+fn safety_g28_a_delete_sends_nothing_when_the_file_went_read_only(cx: &mut TestAppContext) {
+    let w = world_on(cx, "core-fra", Cluster::with_owned);
+    w.press_pod(cx);
+    w.drive(cx, Duration::from_millis(500));
+    assert!(w.present(cx, "write-confirm"));
+    w.edit_setup("core-fra", None);
+    w.click(cx, "write-confirm");
+    w.drive(cx, Duration::from_secs(8));
+    assert!(w.real_deletes().is_empty());
+    assert!(w.cluster.exists(fake::POD));
 }

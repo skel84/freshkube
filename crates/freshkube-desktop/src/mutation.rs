@@ -999,10 +999,10 @@ impl TestSetup {
 mod tests {
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
     use super::{
-        Protection, TestSetup, clear_level_floor, level, level_floor, moved_during_read,
-        raise_level, runner_guard, send_guard, set_protection, set_setup_file,
+        Protection, TestSetup, clear_level_floor, level, level_cell, level_floor,
+        moved_during_read, raise_level, runner_guard, send_guard, set_protection, set_setup_file,
     };
-    use freshkube_core::write::{Subject, Unreadable};
+    use freshkube_core::write::{LevelCell, Subject, Unreadable};
     use gpui_kit::TestAppContext;
 
     /// A live window with no setup file can't say, so its send refuses; only
@@ -1079,22 +1079,26 @@ mod tests {
 
     /// A write runner reads the setup file at its send step too: with no file
     /// it can't say and refuses; a listed entry is read by its id; a legacy
-    /// user is read by context.
+    /// user is read by context and has no destinations to read; a runner that
+    /// follows the window's own cell reads the context the window shows.
     #[gpui_kit::test]
     fn safety_g28_a_runner_with_no_setup_file_refuses_and_a_legacy_user_is_read_by_context(
         cx: &mut TestAppContext,
     ) {
+        let other = LevelCell::new(Protection::Guarded);
         cx.update(|cx| {
             set_setup_file(None, false, cx);
-            let none = runner_guard("prod", "prod-fra", cx).expect("a live runner has a guard");
+            let none = runner_guard("prod", "prod-fra", &other, cx);
             assert_eq!(none.read(), Err(Unreadable::NotReadable));
         });
         let setup = TestSetup::new(Protection::Protected, cx);
         cx.update(|cx| {
             // `prod` is a workspace entry only once the shell has published the
             // setup that lists it; until then the context names it.
+            let before = runner_guard("prod", "prod-fra", &other, cx);
+            assert_eq!(before.subject(), &Subject::Context("prod-fra".into()));
             publish_prod(cx);
-            let listed = runner_guard("prod", "prod-fra", cx).unwrap();
+            let listed = runner_guard("prod", "prod-fra", &other, cx);
             assert_eq!(listed.subject(), &Subject::Entry("prod".into()));
             assert_eq!(listed.read(), Ok(Protection::Protected));
         });
@@ -1102,9 +1106,32 @@ mod tests {
         let _legacy = TestSetup::legacy(cx);
         cx.update(|cx| {
             publish_prod(cx);
-            let guard = runner_guard("prod", "prod-fra", cx).unwrap();
+            let guard = runner_guard("prod", "prod-fra", &other, cx);
             assert_eq!(guard.subject(), &Subject::Context("prod-fra".into()));
             assert_eq!(guard.read(), Ok(Protection::Guarded));
+            // No entries in a file: a destination has nothing to be read from.
+            assert_eq!(
+                guard.read_with(&["prod-ams".into()]),
+                Ok((Protection::Guarded, vec![None]))
+            );
+        });
+    }
+
+    /// A runner that follows the window's own cell reads the context the
+    /// window shows, the same as a Talos write; another runner reads its own.
+    #[gpui_kit::test]
+    fn a_runner_following_the_windows_cell_reads_the_context_the_window_shows(
+        cx: &mut TestAppContext,
+    ) {
+        let _setup = TestSetup::by_context("display-ctx", Protection::ReadOnly, cx);
+        cx.update(|cx| {
+            let window = level_cell(cx);
+            let own = runner_guard("none", "talos-cluster", &window, cx);
+            assert_eq!(own.subject(), &Subject::Context("display-ctx".into()));
+            assert_eq!(own.read(), Ok(Protection::ReadOnly));
+            let elsewhere = LevelCell::new(Protection::Guarded);
+            let other = runner_guard("none", "talos-cluster", &elsewhere, cx);
+            assert_eq!(other.subject(), &Subject::Context("talos-cluster".into()));
         });
     }
 
