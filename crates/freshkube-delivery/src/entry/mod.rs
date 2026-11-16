@@ -694,6 +694,51 @@ pub struct Checked {
     /// Each workloads entry by id, in [`Sources::workloads`]' order; the
     /// open connection is [`OPEN`].
     pub workloads: Vec<(String, Reach)>,
+    /// What the Builds entry says about Tekton Chains and Tekton Results;
+    /// `None` when that entry wasn't reached.
+    pub history: Option<HistoryReach>,
+}
+
+/// What one small read says about a Builds entry's build history.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryReach {
+    /// Whether Tekton Chains' configuration (`chains-config`) can be read.
+    pub chains: Reach,
+    /// Whether the forwarded Results Service exists. `None` when Results is
+    /// off, or is an address: that is reached only when builds are read.
+    pub results: Option<Reach>,
+}
+
+/// Whether Tekton Chains and, when a port forward names one, the Results
+/// Service can be read: one GET each, never a Secret and never the network
+/// beyond the entry's API server.
+pub async fn check_history<R: Reader>(
+    reader: &R,
+    results: Option<&freshkube_core::setup::Results>,
+) -> HistoryReach {
+    let found = |answer: Result<serde_json::Value, Failure>| reach(answer.map(|_| ()));
+    let chains = found(
+        reader
+            .get(
+                &Resource::new("", "v1", "configmaps", true),
+                Some(crate::chains::config::CHAINS_NAMESPACE),
+                crate::chains::config::CONFIG_MAP,
+            )
+            .await,
+    );
+    let results = match results.and_then(|results| results.forward.as_ref()) {
+        Some(forward) => Some(found(
+            reader
+                .get(
+                    &Resource::new("", "v1", "services", true),
+                    Some(&forward.namespace),
+                    &forward.service,
+                )
+                .await,
+        )),
+        None => None,
+    };
+    HistoryReach { chains, results }
 }
 
 /// How a check names the open connection, for the workspace of one.
@@ -778,8 +823,16 @@ pub async fn check_all<R: Reader>(
         futures::future::join_all(workloads),
     )
     .await;
+    let builds = sources.get(Part::Builds);
+    let results = builds.entry().and_then(|entry| entry.results.as_deref());
+    let history = match target(builds) {
+        Ok(Target::Open(reader)) => Some(check_history(reader, None).await),
+        Ok(Target::Entry(reader)) => Some(check_history(reader, results).await),
+        Err(_) => None,
+    };
     let mut checked = Checked {
         workloads,
+        history,
         ..Checked::default()
     };
     for (part, reach, namespaces) in parts {

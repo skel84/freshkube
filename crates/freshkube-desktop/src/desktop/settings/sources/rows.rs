@@ -1,6 +1,7 @@
 //! The rows, derived from where each part is read and what the last check
 //! found, so `render` only reads them.
 use super::*;
+use crate::desktop::settings::history;
 use freshkube_core::workspace::Why;
 
 /// One row, as the table shows it.
@@ -72,6 +73,8 @@ impl SourcesList {
             .map(|(part, chosen)| self.part_row(part, chosen))
             .collect();
         rows.push(self.workloads_row());
+        rows.push(self.supply_chain_row());
+        rows.push(self.results_row());
         if let Some(naming) = &self.stage_naming {
             rows.push(self.stage_naming_row(naming));
         }
@@ -103,7 +106,7 @@ impl SourcesList {
         (self.columns, self.width) = source::columns(&self.rows, self.finder.row.as_ref());
     }
 
-    fn checked(&self) -> Option<&Checked> {
+    pub(super) fn checked(&self) -> Option<&Checked> {
         match &self.check {
             Check::Done(checked) => Some(checked),
             _ => None,
@@ -341,6 +344,125 @@ Reads              freshkube.yaml, delivery.build_namespace"
         )
     }
 
+    /// The Builds entry as a row names it, and whether one can be looked at.
+    fn builds_named(&self) -> (String, bool) {
+        match self.sources.get(Part::Builds) {
+            Chosen::Entry { entry, .. } => (entry.id.clone(), true),
+            Chosen::Open => ("The open cluster".to_owned(), true),
+            _ => ("None".to_owned(), false),
+        }
+    }
+
+    /// Supply chain: where Tekton Chains' attestations come from (the Builds
+    /// entry) and the key they are verified with, from `freshkube.yaml`.
+    /// The key and the log are read from the file; Chains is looked for only
+    /// by a check.
+    fn supply_chain_row(&self) -> SourceRow {
+        let (entry, listed) = self.builds_named();
+        let named = self.named(&entry);
+        let chain = self.supply_chain.as_ref();
+        let key = chain
+            .and_then(|chain| chain.public_key_file.as_ref())
+            .map(|path| path.display().to_string());
+        let log = chain.is_some_and(|chain| chain.transparency_log);
+        let found = self.checked().and_then(|checked| checked.history.as_ref());
+        let looked = match (found, listed) {
+            (Some(found), _) => history::chains_words(&named, &found.chains),
+            (None, false) => "There is no Builds entry to look for Tekton Chains on.".to_owned(),
+            (None, true) => format!("Not checked: Check sources looks for Tekton Chains on {named}."),
+        };
+        let explanation = format!(
+            "Supply chain: attestations are read from Tekton Chains on {named}; the verifying key is {}",
+            key.as_deref().unwrap_or("not set")
+        );
+        let tooltip = format!(
+            "{explanation}\n{looked} The transparency log is {}.\nReads Tekton Chains’ attestations and the public key file",
+            if log { "read" } else { "not read" }
+        );
+        self.row(
+            Read::SupplyChain,
+            entry,
+            "Builds entry".into(),
+            listed,
+            (
+                if key.is_some() { "Key set" } else { "No key" }.into(),
+                found.map(|found| history::tone(&found.chains)),
+            ),
+            "Chains’ attestations and the public key file".into(),
+            tooltip,
+        )
+    }
+
+    /// Results: where Tekton Results is reached for the Builds entry, as the
+    /// setup says, and what a check found of a forwarded Service. An address
+    /// is reached only when builds are read, so no check says more of it.
+    fn results_row(&self) -> SourceRow {
+        let (entry, listed) = self.builds_named();
+        let named = self.named(&entry);
+        let results = self
+            .builds_entry()
+            .and_then(|entry| entry.results.as_deref());
+        let (kind, what) = history::route(results);
+        let forward = results.and_then(|results| results.forward.as_ref());
+        let found = self
+            .checked()
+            .and_then(|checked| checked.history.as_ref())
+            .and_then(|found| found.results.as_ref());
+        let (state, tone, looked) = match (forward, found) {
+            (Some(forward), Some(reach)) => (
+                history::state(reach).to_owned(),
+                Some(history::tone(reach)),
+                history::results_words(&named, &forward.service, reach),
+            ),
+            (Some(forward), None) => (
+                kind.to_owned(),
+                None,
+                format!(
+                    "Not checked: Check sources looks for the Service {} on {named}.",
+                    forward.service
+                ),
+            ),
+            (None, _) if results.is_some_and(|results| results.address.is_some()) => (
+                kind.to_owned(),
+                None,
+                "An address is reached only when builds are read, so a check doesn’t try it.".to_owned(),
+            ),
+            (None, _) => (
+                kind.to_owned(),
+                None,
+                "Builds come from the cluster’s own PipelineRuns. Tekton Results would add builds that finished long ago; the rest of Freshkube works without it.".to_owned(),
+            ),
+        };
+        let explanation = match listed {
+            true => match kind {
+                "Address" => format!("Results: for {named}, reached at {what}"),
+                "Port forward" => {
+                    format!("Results: for {named}, reached through a port forward to {what}")
+                }
+                _ => format!("Results: for {named}, not read"),
+            },
+            false => "Results: there is no Builds entry to reach it for".to_owned(),
+        };
+        let tooltip = format!("{explanation}\n{looked}\nReads Tekton Results’ finished builds");
+        self.row(
+            Read::Results,
+            entry,
+            "Builds entry".into(),
+            listed,
+            (state, tone),
+            "Tekton Results’ finished builds".into(),
+            tooltip,
+        )
+    }
+
+    /// An entry in a sentence: the open cluster isn't a name.
+    fn named(&self, entry: &str) -> String {
+        match entry {
+            "The open cluster" => entry::OPEN.to_owned(),
+            _ => entry.to_owned(),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn row(
         &self,
@@ -356,6 +478,8 @@ Reads              freshkube.yaml, delivery.build_namespace"
         let setup_key = match read {
             Read::StageNaming => Some("delivery.stage_naming"),
             Read::BuildNamespace | Read::BuildSuggestion => Some("delivery.build_namespace"),
+            Read::SupplyChain => Some("supply_chain"),
+            Read::Results => Some("results, in the Builds entry of clusters"),
             _ => None,
         };
         // A placeholder of a name template is words wherever it is shown.

@@ -155,6 +155,12 @@ impl SourcesList {
         if row.read == Read::BuildSuggestion {
             detail = detail.child(self.render_evidence(narrow, cx));
         }
+        if row.read == Read::SupplyChain {
+            detail = detail.child(self.render_supply_chain_edit(narrow, cx));
+        }
+        if row.read == Read::Results && row.listed {
+            detail = detail.child(self.render_results_edit(narrow, cx));
+        }
         if matches!(row.read, Read::Part(_)) {
             let editable = self.editable(cx);
             let reason = self

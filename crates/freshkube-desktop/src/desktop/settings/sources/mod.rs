@@ -19,6 +19,7 @@
 //! kubeconfig, its context in none of those files, reads as unreachable
 //! here (#564 PR 2).
 mod inspector;
+mod history_edit;
 mod rows;
 mod source;
 mod suggest;
@@ -34,7 +35,12 @@ use freshkube_core::workspace::{Chosen, Part, Sources};
 use freshkube_delivery::entry::{self, Checked, Reach};
 use freshkube_reads::{Loader, OnShow};
 use freshkube_ui::{inspector::InspectorSplit, menu, page, status, table};
-use gpui_kit::component::{Disableable, Sizable, button::Button, v_flex};
+use gpui_kit::component::{
+    Disableable, Sizable,
+    button::Button,
+    input::{Input, InputState},
+    v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use rows::SourceRow;
@@ -70,6 +76,10 @@ pub(crate) enum Read {
     SetupFile,
     StageNaming,
     BuildNamespace,
+    /// Where Tekton Chains' attestations and the verifying key come from.
+    SupplyChain,
+    /// Where Tekton Results is reached.
+    Results,
     /// The suggested build namespace.
     BuildSuggestion,
 }
@@ -82,6 +92,8 @@ impl Read {
             Read::SetupFile => "setup-file",
             Read::StageNaming => "stage-naming",
             Read::BuildNamespace => "build-namespace",
+            Read::SupplyChain => "supply-chain",
+            Read::Results => "results",
             Read::BuildSuggestion => "build-suggestion",
         }
     }
@@ -93,6 +105,8 @@ impl Read {
             Read::SetupFile => "Setup file",
             Read::StageNaming => "Naming",
             Read::BuildNamespace => "Build namespace",
+            Read::SupplyChain => "Supply chain",
+            Read::Results => "Results",
             Read::BuildSuggestion => "Build namespace",
         }
     }
@@ -135,6 +149,14 @@ pub(crate) struct SourcesList {
     /// `delivery.build_namespace` of the setup, shown and never edited here
     /// but through an accepted suggestion.
     build_namespace: Option<String>,
+    /// `supply_chain` of the setup: the key and the log. Edited here.
+    supply_chain: Option<freshkube_core::setup::SupplyChain>,
+    /// The Results row's input, made when the row is first selected.
+    results_input: Option<Entity<InputState>>,
+    /// What the input was last filled from, so an edit of the file replaces it.
+    results_loaded: Option<String>,
+    /// Why the typed Results text can't be saved.
+    results_error: Option<SharedString>,
     /// Find suggestions: the findings and the suggestion they make.
     finder: suggest::Finder,
     columns: Vec<Column>,
@@ -179,6 +201,10 @@ impl SourcesList {
             setup_skips: false,
             stage_naming: None,
             build_namespace: None,
+            supply_chain: None,
+            results_input: None,
+            results_loaded: None,
+            results_error: None,
             finder: suggest::Finder::new(),
             columns: Vec::new(),
             width: 0.,
@@ -244,6 +270,31 @@ impl SourcesList {
             self.derive_suggestion();
             cx.notify();
         }
+    }
+
+    /// The setup's `supply_chain`, as the page last read it.
+    pub(super) fn set_supply_chain(
+        &mut self,
+        chain: Option<freshkube_core::setup::SupplyChain>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.supply_chain != chain {
+            self.supply_chain = chain;
+            self.derive_rows();
+            cx.notify();
+        }
+    }
+
+    /// The entry Builds is read from, which Chains and Results are looked for on.
+    fn builds_entry(&self) -> Option<&freshkube_core::workspace::Entry> {
+        self.sources.get(Part::Builds).entry()
+    }
+
+    /// What the last check found of Chains and Results on `entry`, when it
+    /// is the entry Builds is read from.
+    pub(super) fn history_for(&self, entry: &str) -> Option<&entry::HistoryReach> {
+        let found = self.checked()?.history.as_ref()?;
+        (self.builds_entry()?.id == entry).then_some(found)
     }
 
     /// Takes a new workspace from the page: resolves where each part is
@@ -443,6 +494,17 @@ impl SourcesList {
             .iter()
             .map(|chosen| (rows::workload_id(chosen), reach(chosen, Read::Workloads)))
             .collect();
+        let history = match self.sources.get(Part::Builds) {
+            Chosen::Entry { entry, .. } => Some(entry::HistoryReach {
+                chains: self.example_answer(&entry.id, Read::SupplyChain),
+                results: entry
+                    .results
+                    .as_deref()
+                    .is_some_and(|results| results.forward.is_some())
+                    .then(|| self.example_answer(&entry.id, Read::Results)),
+            }),
+            _ => None,
+        };
         let argocd_reached = self.sources.get(Part::ArgoCd).entry().is_some()
             || matches!(self.sources.get(Part::ArgoCd), Chosen::Open);
         Checked {
@@ -452,6 +514,7 @@ impl SourcesList {
                 false => Vec::new(),
             },
             workloads,
+            history,
         }
     }
 
@@ -569,6 +632,7 @@ impl Render for SourcesList {
                 );
             }
         }
+        self.sync_results_input(window, cx);
         let header = self.render_header(window, cx);
         let banners = self
             .page
