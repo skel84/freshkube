@@ -83,6 +83,12 @@ impl std::fmt::Display for Unjudged {
 /// A named series, its limit and where to read it from a sample.
 type Series = (&'static str, Limit, fn(&Sample) -> f64);
 
+const SERIES: [Series; 3] = [
+    ("memory (MB)", RSS, |s| s.rss_mb),
+    ("threads", THREADS, |s| s.threads),
+    ("open handles", FDS, |s| s.fds),
+];
+
 /// The series that grew, from `samples` in time order, leaving out those in
 /// the first `warmup` seconds.
 pub fn check(samples: &[Sample], warmup: u64) -> Result<Vec<Growth>, Unjudged> {
@@ -90,28 +96,43 @@ pub fn check(samples: &[Sample], warmup: u64) -> Result<Vec<Growth>, Unjudged> {
     if kept.len() < MIN_SAMPLES {
         return Err(Unjudged::TooFew { have: kept.len() });
     }
-    let series: [Series; 3] = [
-        ("memory (MB)", RSS, |s| s.rss_mb),
-        ("threads", THREADS, |s| s.threads),
-        ("open handles", FDS, |s| s.fds),
-    ];
-    Ok(series
-        .into_iter()
+    Ok(SERIES
+        .iter()
         .filter_map(|(name, limit, value)| {
             let values: Vec<f64> = kept.iter().map(|s| value(s)).collect();
-            grows(&values, limit).map(|parts| Growth { name, parts })
+            grows(&values, *limit).map(|parts| Growth { name, parts })
         })
         .collect())
 }
 
-fn grows(values: &[f64], limit: Limit) -> Option<[f64; 3]> {
+/// The medians of the three parts of each series, as `check` judges them,
+/// and how many samples were left after the warm-up. Printed with a verdict
+/// so a run that passes can be read, not only trusted.
+pub fn part_medians(samples: &[Sample], warmup: u64) -> (usize, Vec<(&'static str, [f64; 3])>) {
+    let kept: Vec<&Sample> = samples.iter().filter(|s| s.second > warmup).collect();
+    let parts = SERIES
+        .iter()
+        .filter(|_| kept.len() >= 3)
+        .map(|(name, _, value)| {
+            let values: Vec<f64> = kept.iter().map(|s| value(s)).collect();
+            (*name, thirds(&values))
+        })
+        .collect();
+    (kept.len(), parts)
+}
+
+fn thirds(values: &[f64]) -> [f64; 3] {
     let third = values.len() / 3;
     // The remainder goes to the last part, so the run's end is always seen.
-    let parts = [
+    [
         median(&values[..third]),
         median(&values[third..2 * third]),
         median(&values[2 * third..]),
-    ];
+    ]
+}
+
+fn grows(values: &[f64], limit: Limit) -> Option<[f64; 3]> {
+    let parts = thirds(values);
     let gain = parts[2] - parts[0];
     let needed = limit.absolute.max(limit.relative * parts[0].abs());
     let steady = parts[1] - parts[0] >= needed / 2. && parts[2] - parts[1] >= needed / 2.;
@@ -257,6 +278,16 @@ mod tests {
             })
             .collect();
         assert_eq!(grew(&samples), ["threads", "open handles"]);
+    }
+
+    #[test]
+    fn part_medians_count_the_samples_after_the_warm_up_and_match_the_judged_parts() {
+        let samples = series(|ix| 300. + ix as f64 * 2.);
+        let (kept, parts) = part_medians(&samples, 600);
+        assert_eq!(kept, 89, "the samples after the warm-up, not all of them");
+        let judged = check(&samples, 600).unwrap();
+        assert_eq!(parts[0].0, "memory (MB)");
+        assert_eq!(parts[0].1, judged[0].parts);
     }
 
     #[test]

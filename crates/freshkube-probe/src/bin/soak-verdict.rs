@@ -24,7 +24,11 @@ fn main() {
             std::process::exit(2);
         }
         Ok(grown) if grown.is_empty() => {
-            println!("soak: no steady growth in {} samples", samples.len());
+            let (kept, parts) = soak::part_medians(&samples, warmup);
+            println!("soak: no steady growth in {kept} samples after the warm-up");
+            for (name, [a, b, c]) in parts {
+                println!("soak:   {name}: {a:.1}, {b:.1}, {c:.1} (medians of thirds)");
+            }
         }
         Ok(grown) => {
             for growth in &grown {
