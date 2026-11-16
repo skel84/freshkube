@@ -92,8 +92,9 @@ mod tests {
     }
 
     #[test]
-    fn the_first_pane_is_focused_and_in_the_main_room() {
-        let panes = Panes::new();
-        assert!(panes.room().is(&Pane::new()));
+    fn the_first_pane_is_focused_and_each_window_has_its_own_room() {
+        let (one, other) = (Panes::new(), Panes::new());
+        assert!(one.room().is(&one.room()), "the room is one shared handle");
+        assert!(!one.room().is(&other.room()), "windows do not share it");
     }
 }

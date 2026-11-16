@@ -32,6 +32,7 @@ pub struct Pane(Rc<Room>);
 impl Pane {
     /// A pane of its own, with the rail and the column beside it, nothing
     /// under it and no node inspector.
+    #[allow(clippy::new_without_default)] // on purpose: no pane is made by default
     pub fn new() -> Self {
         Self(Rc::new(Room {
             chrome: Cell::new(RAIL_WIDTH + COLUMN_WIDTH),
