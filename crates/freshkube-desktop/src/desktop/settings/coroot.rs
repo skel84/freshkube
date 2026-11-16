@@ -607,7 +607,7 @@ impl SettingsPage {
             .gap(dp(20.))
             .flex_none();
         if let Some(form) = &self.coroot {
-            let narrow = page::content_width(window) < form::NARROW;
+            let narrow = self.pane.content_width(window) < form::NARROW;
             content = content.child(self.render_coroot_group(form, narrow, cx));
         }
         page::padded("settings-page")

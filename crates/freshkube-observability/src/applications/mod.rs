@@ -228,7 +228,7 @@ impl ObservabilityPage {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         const HINT: &str = "Glyphs show healthy, warning, critical or unknown. Healthy report values are plain; healthy checks without figures read ok; unknown, warning and critical reports carry a glyph. An em dash means no report.";
-        if freshkube_ui::page::page_width(window) < 600. {
+        if self.pane.page_width(window) < 600. {
             return Some(
                 table::legend_line(
                     self.application_table.id("legend"),

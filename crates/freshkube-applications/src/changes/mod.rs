@@ -102,6 +102,8 @@ enum Entry {
 }
 
 pub struct ChangesPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: tokio::runtime::Handle,
     secrets: Option<freshkube_core::secrets::Secrets>,
     setup_revision: u64,
@@ -191,6 +193,7 @@ impl ChangesPage {
         let outcome_memo = crate::change::session_memo(cx);
         let outcomes = cx.observe(&outcome_memo, |page, _, cx| page.sync_outcomes(cx));
         Self {
+            pane: Default::default(),
             runtime,
             secrets,
             setup_revision: 0,
@@ -707,7 +710,7 @@ impl ChangesPage {
         }
         self.sync_outcomes(cx);
         kit::reveal(self, ScrollStrategy::Nearest);
-        if freshkube_ui::page::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
+        if self.pane.page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
             kit::reveal_when_settled(
                 cx.entity().downgrade(),
                 |page| page.selected.is_some(),

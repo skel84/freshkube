@@ -518,7 +518,7 @@ impl Render for ResourcesScreen {
         self.status();
         // A dock that opens or grows takes the list's room from below;
         // the list scrolls as it lays out to keep its selection in sight.
-        let below = page::below(window);
+        let below = self.pane.below();
         if below > self.below {
             self.scroll_to_selection(ScrollStrategy::Nearest);
         }
@@ -535,7 +535,7 @@ impl Render for ResourcesScreen {
         let list = self.keyed(list, cx);
         let body = self.body(list, window, cx);
         // A short page scrolls its frame.
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         page::page("resources-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| {

@@ -39,6 +39,8 @@ const PACE: Pace = Pace {
 /// The Logs page's source: one Talos node's service catalog, the services
 /// being collected, their stream and their failures.
 pub(crate) struct TalosLogs {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     tail: i32,
     target: Option<(Target, TalosClient)>,
@@ -61,6 +63,7 @@ pub(crate) struct TalosLogs {
 impl TalosLogs {
     fn new(runtime: Handle, tail: i32) -> Self {
         Self {
+            pane: Default::default(),
             runtime,
             tail,
             target: None,

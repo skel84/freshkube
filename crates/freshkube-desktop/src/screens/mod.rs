@@ -62,8 +62,6 @@ use crate::backend::Target;
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
 use crate::ui::{self, clock, dp};
-// The page widths live in `freshkube_ui::page`; screens reach them here.
-pub(crate) use freshkube_ui::page::{content_width, inset_width, page_width, set_chrome_width};
 /// What a table screen shows until its first answer: its `TableSource::loading`
 /// returns the rows while [`first_read`], and [`ScreenPanel::loading_motion`]
 /// their motion, which the shell draws beside the page.
@@ -312,22 +310,13 @@ pub(crate) const SPLIT_GAP: f32 = 14.;
 
 /// Whether a list's detail fits beside it: on the page, or in the node
 /// inspector when the screen is `embedded` there.
-pub(crate) fn beside(window: &Window, embedded: bool) -> bool {
+pub(crate) fn beside(pane: &freshkube_ui::pane::Pane, window: &Window, embedded: bool) -> bool {
     let width = if embedded {
-        embedded_width(window)
+        pane.embedded_width(window)
     } else {
-        content_width(window)
+        pane.content_width(window)
     };
     width >= SPLIT_WIDTH
-}
-
-/// The width inside the node inspector's tab body in `dp`, where embedded
-/// screens choose between side-by-side and stacked layouts.
-pub(crate) fn embedded_width(window: &Window) -> f32 {
-    let pane = freshkube_ui::pane::current(window)
-        .node_pane()
-        .min(page_width(window));
-    (pane - freshkube_ui::page::PANE_PADDING * 2.).max(240.)
 }
 
 /// A list with its detail beside it on a wide page and below it on a narrow
@@ -430,13 +419,6 @@ pub(crate) fn split_at(
                 .child(pane)
         }))
         .into_any_element()
-}
-
-/// Tells the screens in this pane the node inspector's width in dp, which
-/// Nodes sets as it draws the inspector: the page's when it stacks or fills
-/// the page.
-pub(crate) fn set_node_pane_width(width: f32) {
-    freshkube_ui::pane::focused().set_node_pane(width);
 }
 
 pub(crate) use freshkube_ui::ui::mono;

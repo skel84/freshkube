@@ -20,6 +20,7 @@ enum State {
 
 pub(super) fn build(window: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|cx| FormStory {
+        pane: Default::default(),
         state: State::Plain,
         context: cx.new(|cx| InputState::new(window, cx).default_value("cluster-a")),
         path: cx.new(|cx| InputState::new(window, cx).default_value("/example/config")),
@@ -31,6 +32,8 @@ pub(super) fn build(window: &mut Window, cx: &mut App) -> AnyView {
 }
 
 struct FormStory {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     state: State,
     context: Entity<InputState>,
     path: Entity<InputState>,
@@ -48,7 +51,7 @@ impl FormStory {
     }
 
     fn render_group(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
-        let narrow = self.state == State::Narrow || page::content_width(window) < form::NARROW;
+        let narrow = self.state == State::Narrow || self.pane.content_width(window) < form::NARROW;
         let mut group = form::group("form-connection", "Connection")
             .dirty(self.dirty)
             .narrow(narrow);

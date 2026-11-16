@@ -123,7 +123,7 @@ pub(super) fn fit(
     }
     // A short window scrolls the log's body, and the panel lays out taller
     // than the room it shows in: the pills take no row there.
-    let rows = if freshkube_ui::page::is_short(window) {
+    let rows = if view.source().pane.is_short(window) {
         0
     } else {
         chip_rows(view.panel_height(), window)

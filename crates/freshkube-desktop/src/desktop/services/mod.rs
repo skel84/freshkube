@@ -125,6 +125,8 @@ pub(super) enum NodeServicesEvent {
 }
 
 pub(super) struct NodeServices {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     state: NodeServicesState,
     reading: ServicesReading,
     display: ServiceDisplay,
@@ -162,6 +164,7 @@ impl NodeServices {
             _ = page.update(cx, |_, cx| cx.emit(NodeServicesEvent::Config(action)));
         });
         Self {
+            pane: Default::default(),
             state: NodeServicesState::default(),
             reading: ServicesReading::default(),
             display: ServiceDisplay::default(),

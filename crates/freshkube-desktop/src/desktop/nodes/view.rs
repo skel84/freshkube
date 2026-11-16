@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
     palette::palette,
-    screens::page_width,
     ui::{MONO_FONT, dp},
 };
 use freshkube_ui::{
@@ -24,17 +23,17 @@ impl Nodes {
         let _span = crate::perf::span("page.render");
         let pane = self.open;
         let expanded = pane && self.expanded;
-        let beside = page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         // The node's screens lay out by the inspector's width beside the
         // table; stacked or expanded, it has the page's.
-        crate::screens::set_node_pane_width(if beside && !expanded {
+        self.pane.set_node_pane(if beside && !expanded {
             self.split.live_width(cx)
         } else {
             f32::MAX
         });
         // A short window scrolls the frame, and the list and the inspector
         // keep their least heights in it.
-        let short = freshkube_ui::page::is_short(window);
+        let short = self.pane.is_short(window);
         // The table and the inspector run edge to edge; the cards and a
         // state keep the inset.
         let mut edge = true;
@@ -316,7 +315,7 @@ impl Nodes {
                 // it's as tall as its room and the log's toolbar and
                 // notices, so the lines fill the room once it has scrolled
                 // past them.
-                let short = freshkube_ui::page::is_short(window);
+                let short = self.pane.is_short(window);
                 let height = self.logs_height.filter(|_| short);
                 div()
                     .id("node-logs-scroll")

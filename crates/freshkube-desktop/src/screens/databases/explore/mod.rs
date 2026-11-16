@@ -188,6 +188,8 @@ struct Link {
 impl EventEmitter<QueryRequest> for ExploreView {}
 
 pub(super) struct ExploreView {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: ClusterSource,
     database: Database,
@@ -240,6 +242,7 @@ impl ExploreView {
             async {}
         });
         Self {
+            pane: Default::default(),
             runtime,
             source,
             database,

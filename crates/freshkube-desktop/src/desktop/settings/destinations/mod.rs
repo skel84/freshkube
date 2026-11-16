@@ -77,6 +77,8 @@ pub(crate) struct DestinationRow {
 }
 
 pub(crate) struct Destinations {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     page: WeakEntity<SettingsPage>,
     rows: Vec<DestinationRow>,
     columns: Vec<Column>,
@@ -106,6 +108,7 @@ impl Destinations {
     ) -> Self {
         let (columns, width) = source::columns(&[], &[]);
         Self {
+            pane: Default::default(),
             page: page.downgrade(),
             rows: Vec::new(),
             columns,
@@ -449,11 +452,11 @@ impl Destinations {
 
 impl Render for Destinations {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         if self.finder.shows_group() {
             self.width = source::fit_columns(
                 &mut self.columns,
-                (crate::screens::page_width(window) - 2.).max(0.),
+                (self.pane.page_width(window) - 2.).max(0.),
             );
         }
         let header = self.render_header(window, cx);

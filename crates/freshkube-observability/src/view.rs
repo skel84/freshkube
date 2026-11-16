@@ -50,16 +50,16 @@ pub(super) fn card(title: impl Into<SharedString>, cx: &App) -> Div {
         )
 }
 /// Whether an inspector fits beside its table on this edge-to-edge page.
-pub(super) fn inspector_beside(window: &Window) -> bool {
-    freshkube_ui::page::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH
+pub(super) fn inspector_beside(pane: &freshkube_ui::pane::Pane, window: &Window) -> bool {
+    pane.page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH
 }
 impl ObservabilityPage {
     /// Whether a short window scrolls the frame around an inspector's
     /// split: when the inspector stacks under its table, and always on
     /// Traces, whose heatmap sits above it. Otherwise the split fills.
     pub(super) fn inspector_scrolls(&self, window: &Window) -> bool {
-        freshkube_ui::page::is_short(window)
-            && (!inspector_beside(window) || self.destination == Destination::Traces)
+        self.pane.is_short(window)
+            && (!inspector_beside(&self.pane, window) || self.destination == Destination::Traces)
     }
 
     /// `split` as tall as the frame leaves it, or, while the frame
@@ -68,7 +68,8 @@ impl ObservabilityPage {
         if !self.inspector_scrolls(window) {
             return split;
         }
-        let height = freshkube_ui::inspector::short_height(inspector_beside(window), open);
+        let height =
+            freshkube_ui::inspector::short_height(inspector_beside(&self.pane, window), open);
         div()
             .flex()
             .flex_none()

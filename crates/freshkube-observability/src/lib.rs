@@ -117,6 +117,8 @@ pub enum ConnectionState {
 impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 
 pub struct ObservabilityPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     /// The shell's source is example data ([`Self::set_source`]).
     fixture: bool,
     example_views: application::example::Views,
@@ -362,6 +364,7 @@ impl ObservabilityPage {
             }),
         ];
         let mut this = Self {
+            pane: Default::default(),
             fixture: false,
             example_views: Default::default(),
             hold: false,

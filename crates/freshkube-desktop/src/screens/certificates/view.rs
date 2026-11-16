@@ -48,7 +48,7 @@ impl CertificatesScreen {
         );
         // Under the width where the toolbar has room for words, an icon
         // alone with its tooltip and label.
-        let narrow = super::super::page_width(window) < NARROW_TOOLBAR;
+        let narrow = self.pane.page_width(window) < NARROW_TOOLBAR;
         let row = self.selected_row();
         let read = self
             .tool(
@@ -318,7 +318,7 @@ impl CertificatesScreen {
         inspector::split(
             SharedString::from("certificates-split"),
             &self.split,
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             table,
             self.details(cx),
             window,
@@ -377,7 +377,7 @@ impl Render for CertificatesScreen {
                 .test_support()
             });
         let empty = !loading && self.display.lines.is_empty();
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         let retryable = self.source.is_some()
             && (self.display.error.is_some() || self.loader.error().is_some());
         let body = if let Some(words) = state {
@@ -408,7 +408,7 @@ impl Render for CertificatesScreen {
             self.body(window, cx)
         };
         let least = self.split.short_height(
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
         let has_notes = !notices.is_empty() || failure.is_some();

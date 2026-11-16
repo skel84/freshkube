@@ -347,7 +347,7 @@ impl TableSource for ApplicationPage {
 impl ApplicationPage {
     /// The table's width: the page's, less the Inspector's beside it.
     fn table_width(&self, window: &Window) -> f32 {
-        let page = freshkube_ui::page::page_width(window);
+        let page = self.pane.page_width(window);
         if self.inspect && page >= freshkube_ui::inspector::SPLIT_WIDTH {
             page - self.split.width()
         } else {

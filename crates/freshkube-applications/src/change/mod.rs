@@ -376,6 +376,8 @@ enum Entry {
 }
 
 pub struct ChangePage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     /// What reads the change, and the read: its answer, its failure, and
     /// whether one is in flight.
     pub fetch: Fetch,
@@ -516,6 +518,7 @@ impl ChangePage {
             .as_ref()
             .map(|desk| cx.observe(desk, |page, _, cx| page.offers_landed(cx)));
         let mut page = Self {
+            pane: Default::default(),
             page_link: page_link(&change),
             copied: false,
             copied_request: None,
@@ -889,7 +892,7 @@ impl ChangePage {
             kit::reveal(self, ScrollStrategy::Nearest);
             // Stacked, the Inspector shrinks the table over a few frames: the
             // selection is revealed again until its height holds.
-            if freshkube_ui::page::page_width(window) < inspector::SPLIT_WIDTH {
+            if self.pane.page_width(window) < inspector::SPLIT_WIDTH {
                 kit::reveal_when_settled(
                     cx.entity().downgrade(),
                     |page| page.view == ChangeView::Hops && page.selected.is_some(),

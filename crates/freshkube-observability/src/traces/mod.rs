@@ -417,7 +417,7 @@ impl ObservabilityPage {
                 freshkube_ui::inspector::split(
                     "obs-traces-split",
                     &self.trace_split,
-                    inspector_beside(window),
+                    inspector_beside(&self.pane, window),
                     table,
                     pane,
                     window,

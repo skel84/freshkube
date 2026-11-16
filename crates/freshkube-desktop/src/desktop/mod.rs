@@ -325,6 +325,8 @@ enum ConfigurationRead {
 }
 
 pub(crate) struct Pilot {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     connection_store: Option<ConnectionStore>,
     /// The absolute path of the last successfully parsed Talos configuration.
@@ -690,7 +692,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> Self {
         // The window opens on Overview, which has no navigation column.
-        crate::screens::set_chrome_width(RAIL_WIDTH);
+        freshkube_ui::pane::Pane::default().set_chrome(RAIL_WIDTH);
         // Opened before the pages, which read their splits' sizes from it.
         let navigation_file =
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
@@ -901,6 +903,7 @@ impl Pilot {
         } = owners;
         let tabs = tabs::Tabs::new(&pages.resources, &pages.node_workspace, cx);
         Self {
+            pane: Default::default(),
             runtime,
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
             loaded_config_path: None,

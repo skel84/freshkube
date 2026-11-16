@@ -103,6 +103,8 @@ impl Mode {
 }
 
 pub(crate) struct GatewaysScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     mode: Mode,
     runtime: Handle,
     source: Option<ClusterSource>,
@@ -158,6 +160,7 @@ impl GatewaysScreen {
         });
         let prefix = mode.prefix();
         Self {
+            pane: Default::default(),
             mode,
             runtime,
             source: None,

@@ -69,6 +69,8 @@ pub(crate) struct CorootInput {
 }
 
 pub(crate) struct DatabasesScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ClusterSource>,
     /// The workspace entry the page is for, kept while its connection is down.
@@ -152,6 +154,7 @@ impl DatabasesScreen {
             }
         });
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             entry: None,

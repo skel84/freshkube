@@ -993,7 +993,7 @@ impl OperationsScreen {
         let nodes = self.nodes_panel(false, window, cx);
         // The plan sits beside the roster only while the roster still fits
         // whole; otherwise it goes under it.
-        let beside = page_width(window) >= self.columns.1 + PLAN_WIDTH + GAP;
+        let beside = self.pane.page_width(window) >= self.columns.1 + PLAN_WIDTH + GAP;
         let plan = div()
             .when_else(
                 beside,

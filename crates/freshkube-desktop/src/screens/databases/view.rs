@@ -348,7 +348,7 @@ impl DatabasesScreen {
         inspector::split(
             "databases-split",
             &self.split,
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             table,
             self.details(cx),
             window,
@@ -360,8 +360,8 @@ impl Render for DatabasesScreen {
         self.sync();
         // With the Inspector open the table has less room: the engine then
         // moves into the Inspector's header.
-        let engine = self.selected.is_none()
-            || super::super::page_width(window) >= table::ENGINE_COLUMN_WIDTH;
+        let engine =
+            self.selected.is_none() || self.pane.page_width(window) >= table::ENGINE_COLUMN_WIDTH;
         self.display.set_engine_shown(engine);
         let loading = self.loader.is_loading() && self.loader.data().is_none();
         self.loading.show(loading);
@@ -388,7 +388,7 @@ impl Render for DatabasesScreen {
                 .test_support()
             });
         let empty = !loading && self.display.lines.is_empty();
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         let active = self.active.as_deref().and_then(|uid| {
             self.explorers
                 .iter()
@@ -420,7 +420,7 @@ impl Render for DatabasesScreen {
         // A short window scrolls the page instead of squeezing the split
         // below its least height, as the other table pages do.
         let least = self.split.short_height(
-            super::super::page_width(window) >= inspector::SPLIT_WIDTH,
+            self.pane.page_width(window) >= inspector::SPLIT_WIDTH,
             self.selected.is_some(),
         );
         let exploring = self.active.is_some();

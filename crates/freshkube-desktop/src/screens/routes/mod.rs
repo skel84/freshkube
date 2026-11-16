@@ -46,6 +46,8 @@ actions!(
 );
 
 pub(crate) struct RoutesScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ClusterSource>,
     visible: bool,
@@ -94,6 +96,7 @@ impl RoutesScreen {
             }
         });
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             visible: false,

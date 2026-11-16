@@ -919,7 +919,7 @@ impl NetworkScreen {
             .chain(partial_notice(missing, cx))
             .chain(self.notices(data, cx))
             .collect();
-        let beside = crate::screens::beside(window, self.embedded);
+        let beside = crate::screens::beside(&self.pane, window, self.embedded);
         let split = match self.view {
             View::Interfaces => Some(self.interfaces_tab(data, beside, window, cx)),
             View::Connections | View::Listeners => Some(self.connections_tab(beside, window, cx)),

@@ -80,8 +80,8 @@ use tokio::{runtime::Handle, sync::mpsc};
 use crate::resources::talos::AppliedAccess;
 
 use super::{
-    Loader, Reading, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, TableLoading,
-    page_width, panel, reading, refresh_control, retry_button, segment, split_at,
+    Loader, Reading, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, panel,
+    reading, refresh_control, retry_button, segment, split_at,
 };
 use crate::backend;
 use crate::mutation::{self, Confirmation, OperationTicket, Operations, Refused};
@@ -807,6 +807,8 @@ struct AuditView {
 // ---------------------------------------------------------------------------
 
 pub(crate) struct OperationsScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ScreenSource>,
     operation: OperationKind,
@@ -874,6 +876,7 @@ impl OperationsScreen {
         let operations = Operations::global(cx);
         let offers = freshkube_reads::offer_desk(&runtime, cx);
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             operation: OperationKind::Drain,

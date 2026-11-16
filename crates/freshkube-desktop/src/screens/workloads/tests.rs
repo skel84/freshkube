@@ -108,7 +108,8 @@ fn the_inspector_opens_with_a_selection_beside_or_under_the_table(cx: &mut TestA
             );
             let table = window.find("workloads-table").bounds();
             let detail = window.find("workload-detail").bounds();
-            let beside = crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
+            let beside = freshkube_ui::pane::Pane::default().page_width(window)
+                >= freshkube_ui::inspector::SPLIT_WIDTH;
             if beside {
                 assert!(detail.left() >= table.right(), "{width}: {detail:?}");
             } else {
@@ -918,7 +919,10 @@ fn a_stacked_inspector_keeps_the_clicked_row_in_view(cx: &mut TestAppContext) {
                 crate::text_size::set(text, cx);
             }
             window.render_frame(cx);
-            assert!(crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH);
+            assert!(
+                freshkube_ui::pane::Pane::default().page_width(window)
+                    < freshkube_ui::inspector::SPLIT_WIDTH
+            );
             let scroll = window.find("workload-table-scroll").bounds();
             let low = (0..screen.read(cx).line_count())
                 .filter(|&line| {

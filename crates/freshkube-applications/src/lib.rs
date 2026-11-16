@@ -299,6 +299,8 @@ pub struct SwitchLink {
 type Identity = (String, Option<String>);
 
 pub struct ApplicationsPage {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: tokio::runtime::Handle,
     secrets: Option<freshkube_core::secrets::Secrets>,
     public_key_file: Option<std::path::PathBuf>,
@@ -460,6 +462,7 @@ impl ApplicationsPage {
             ChangesEvent::Act(act) => cx.emit(act.as_ref().clone()),
         });
         Self {
+            pane: Default::default(),
             runtime,
             secrets,
             public_key_file: None,

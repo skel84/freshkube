@@ -438,7 +438,7 @@ impl SettingsPage {
     }
 
     pub(super) fn render_team(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let narrow = page::content_width(window) < form::NARROW;
+        let narrow = self.pane.content_width(window) < form::NARROW;
         let header = page::PageHeader::new("settings-team", "Team setup").render(window, cx);
         let body = match (&self.team.left, &self.team.membership) {
             (Some(how), _) => self.team_left(*how, cx),

@@ -42,11 +42,11 @@ impl Render for MonitoringPage {
         }
         crate::probe::hit("monitoring-page");
         let _span = crate::perf::span("monitoring.page_render");
-        let narrow = freshkube_ui::page::content_width(window) < NARROW;
+        let narrow = self.pane.content_width(window) < NARROW;
         // A short window scrolls the page, header and all, as the only
         // scroller: the grid lays out at its full height inside it, so the
         // wheel never moves two things at once.
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         page::padded("monitoring-page")
             .when(short, |this| {
                 this.overflow_y_scroll()

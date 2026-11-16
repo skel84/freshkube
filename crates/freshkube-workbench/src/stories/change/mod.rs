@@ -110,6 +110,8 @@ pub struct Cells {
 }
 
 pub struct ChangeStory {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     table: TableState,
     columns: Vec<Column>,
     trail: Trail,
@@ -191,6 +193,7 @@ impl ChangeStory {
             }
         }
         let mut story = Self {
+            pane: Default::default(),
             table: TableState::new(TABLE),
             columns: vec![
                 column(Kind::Glyph, "", GLYPH_WIDTH),
@@ -326,7 +329,7 @@ impl ChangeStory {
 
     /// The table's width in dp: the page's, less the Inspector's beside it.
     fn table_width(&self, window: &Window) -> f32 {
-        let page = page::page_width(window);
+        let page = self.pane.page_width(window);
         if self.selected.is_some() && page >= inspector::SPLIT_WIDTH {
             page - self.split.width()
         } else {
@@ -607,7 +610,7 @@ impl TableSource for ChangeStory {
 impl Render for ChangeStory {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(window, cx);
-        let beside = page::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let table = table::data_table(self, window, cx)
             .size_full()
             .min_h_0()
