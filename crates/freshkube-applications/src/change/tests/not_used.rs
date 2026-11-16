@@ -40,12 +40,12 @@ fn a_column_nothing_uses_is_hidden_and_one_a_stage_uses_is_drawn(cx: &mut TestAp
         // one is dim in it.
         assert!(window.find("change-cell-dev-next-step").visible());
         let page = page.read(cx);
-        let ams = page
+        let lon = page
             .overview
             .iter()
-            .find(|row| row.name == "prod-ams")
+            .find(|row| row.name == "prod-lon")
             .unwrap();
-        let cell = &ams.cells[3];
+        let cell = &lon.cells[3];
         assert_eq!(cell.word.as_ref(), "Not used here");
         assert!(cell.not_used && !cell.reached);
         assert_eq!(cell.tone, Tone::Outline);
@@ -56,26 +56,38 @@ fn a_column_nothing_uses_is_hidden_and_one_a_stage_uses_is_drawn(cx: &mut TestAp
 
 #[gpui_kit::test]
 fn a_hop_that_is_not_used_here_is_dim_and_counted_nowhere(cx: &mut TestAppContext) {
-    let (handle, page) = overview_fixture(cx);
+    // In the causes shape prod-ams's pods can't be read: a fix item and a
+    // clause of the headline, until they are said not to be used here.
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::Causes, Duration::ZERO, 13.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let before = (page.read(cx).counts, page.read(cx).fixes.len());
-        mark_unused(&page, window, cx, &["dev-pods"]);
         let p = page.read(cx);
-        let dev = p.overview.iter().find(|row| row.name == "dev").unwrap();
-        let running = &dev.cells[5];
+        assert!(p.fixes.iter().any(|fix| fix.hop == "prod-ams-pods"));
+        let headline = p.headline.clone();
+        let counts = p.counts;
+        mark_unused(&page, window, cx, &["prod-ams-pods"]);
+        let p = page.read(cx);
+        let ams = p
+            .overview
+            .iter()
+            .find(|row| row.name == "prod-ams")
+            .unwrap();
+        let running = &ams.cells[5];
         assert_eq!(running.word.as_ref(), "Not used here");
         assert_eq!(running.tone, Tone::Outline);
         assert!(running.not_used && !running.reached);
-        // It is neither a problem nor the clock: the fix bar has no item for
-        // it, and no chip counts the group worse for it.
-        assert!(p.fixes.len() <= before.1, "{:?}", p.fixes);
-        assert_eq!(p.counts, before.0, "the chips count the same groups");
+        assert_eq!(running.hop, None, "nothing to select or ring");
+        // It is neither a problem nor the clock: no fix item names it, the
+        // headline has no clause about it, and the chips count no worse.
         assert!(
-            !p.headline.contains("pods") || p.headline.contains("prod"),
-            "{}",
-            p.headline
+            p.fixes.iter().all(|fix| fix.hop != "prod-ams-pods"),
+            "{:?}",
+            p.fixes
         );
+        // It was one of the clauses the headline counts ("and 2 more").
+        assert_ne!(p.headline, headline);
+        assert!(!p.headline.contains("pods"), "{}", p.headline);
+        assert!(p.counts[3] <= counts[3], "{:?} {counts:?}", p.counts);
         // Its column stays: the other Stages still use it.
         assert!(visible(p.overview.iter()).contains(&Column::Running));
     })
@@ -108,6 +120,62 @@ fn a_column_where_every_stage_is_not_used_goes_and_the_keys_skip_it(cx: &mut Tes
             assert_eq!(row.cells[4].hop, None, "{}", row.name);
         }
         assert!(window.find("change-cell-dev-running").visible());
+        // The arrow keys jump over it: from Verified the next step along the
+        // row that has anything to select is Running, and back.
+        let selected = |cx: &App| page.read(cx).selected().map(|s| s.to_string());
+        page.update(cx, |page, cx| {
+            page.select("dev-verification", window, cx);
+            page.focus(window, cx);
+        });
+        window.render_frame(cx);
+        window.press("right", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-pods"));
+        window.press("left", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-verification"));
+        page.update(cx, |page, cx| page.select("dev-promotion", window, cx));
+        window.press("right", cx);
+        assert_eq!(selected(cx).as_deref(), Some("dev-verification"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_column_nothing_could_be_read_for_stays_and_says_why(cx: &mut TestAppContext) {
+    // Argo CD's Applications were refused: nothing says whether a Rollout
+    // runs, so the Next step column stays, with the cause, and is not
+    // hidden as unused.
+    let (handle, page) = open_overview(cx, 1280., 880., Shape::ArgoRefused, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let p = page.read(cx);
+        assert!(visible(p.overview.iter()).contains(&Column::NextStep));
+        let with_app: Vec<_> = p
+            .overview
+            .iter()
+            .filter(|row| row.cells[3].word.as_ref() == "Can't read")
+            .map(|row| row.name.to_string())
+            .collect();
+        assert!(!with_app.is_empty(), "some Stage shows why");
+        for stage in &with_app {
+            assert!(
+                window
+                    .find(format!("change-cell-{stage}-next-step"))
+                    .visible(),
+                "{stage}"
+            );
+        }
+        assert!(
+            p.overview
+                .iter()
+                .all(|row| !row.cells[3].not_used || row.cells[3].word.as_ref() == "Not used here")
+        );
+        assert!(
+            p.overview
+                .iter()
+                .filter(|row| row.cells[3].word.as_ref() != "Can't read")
+                .all(|row| !row.cells[3].reached),
+            "the rest were not reached"
+        );
     })
     .unwrap();
 }
@@ -225,6 +293,27 @@ fn only_not_found_is_changed_and_an_unknown_stage_name_is_a_warning(cx: &mut Tes
         assert!(text.contains("prod-lan"), "{text}");
         // And it is only a warning: the page reads and shows as before.
         assert!(!p.change.hops.is_empty());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_not_used_hop_leaves_its_stage_group_where_it_was(cx: &mut TestAppContext) {
+    // dev-pods sorts last in dev's group: a dim hop there must not stand
+    // for the whole group, which is fine and stays counted as ok.
+    let (handle, page) = overview_fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = page.read(cx).counts;
+        mark_unused(&page, window, cx, &["dev-pods"]);
+        let p = page.read(cx);
+        assert_eq!(p.counts, before, "the chips count the same groups");
+        let dev = p
+            .groups
+            .iter()
+            .find(|group| group.label.as_ref() == "Stage dev")
+            .unwrap();
+        assert_eq!(dev.counts_as, Tone::Good);
     })
     .unwrap();
 }

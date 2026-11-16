@@ -39,10 +39,21 @@ impl Pilot {
         let focus = cx.focus_handle();
         let content_focus = focus.clone();
         let pilot = cx.weak_entity();
-        window.open_dialog(cx, move |dialog, window, cx| {
-            let busy = pilot.upgrade().is_some_and(|pilot| pilot.read(cx).settings_page.read(cx).unsaved_save_in_progress());
-            let (save, discard, stay, cancel, enter) =
-                (pilot.clone(), pilot.clone(), pilot.clone(), pilot.clone(), pilot.clone());
+        freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
+            let busy = pilot.upgrade().is_some_and(|pilot| {
+                pilot
+                    .read(cx)
+                    .settings_page
+                    .read(cx)
+                    .unsaved_save_in_progress()
+            });
+            let (save, discard, stay, cancel, enter) = (
+                pilot.clone(),
+                pilot.clone(),
+                pilot.clone(),
+                pilot.clone(),
+                pilot.clone(),
+            );
             let title = format!("Save changes to {}?", section.label());
             let dialog = dialog
                 .on_ok(move |_, window, cx| {

@@ -62,7 +62,7 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Alerts, Rules a
 
 ## `FRESHKUBE_APPLICATIONS`
 
-Read by: debug and stress builds. With `--fixture`, reshapes the Applications example. `unreachable`, `argo-refused`, `destination`, `image-only` and the three `github-` shapes reshape the change page and the Changes list too (delivery's `change::example::Shape`). The shapes that leave something unread show it in the banner of what may be missing, with the reason.
+Read by: debug and stress builds. With `--fixture`, reshapes the Applications example. `unreachable`, `argo-refused`, `destination`, `image-only` and the three `github-` shapes reshape the change page and the Changes list too (delivery's `change::example::Shape`); `causes`, `promoting`, `rollback-unknown`, `rollback-none` and `rollouts` reshape the change page only. The shapes that leave something unread show it in the banner of what may be missing, with the reason.
 
 - `argo-refused`: Argo CD refused in `core-fra`.
 - `capped`: Argo CD's Applications capped.
@@ -83,7 +83,7 @@ Read by: debug and stress builds. With `--fixture`, reshapes the Applications ex
 - `refused`: every source refused.
 - `rollback-none`: no Stage has an earlier Freight in its history, so Roll back… is greyed out and says so.
 - `rollback-unknown`: no earlier Freight of any Stage has a successful verification recorded, so the Roll back… lines offer a pick and never the main action, and the dialog says it isn't verified.
-- `rollouts`: the change page's Next step column shows each state: `dev` Done, `stage` Step 2 of 4, `prod-ams` Not used here (dim, no ring), and `prod-lon` Can't read (its Rollouts refused).
+- `rollouts`: the change page's Next step column shows each state: `dev` Done, `stage` Step 2 of 4, `prod-ams` Not reached, and `prod-lon` Not used here (dim, nothing to select). `argo-refused` shows Can't read in the same column.
 - `single`: `core-fra` alone.
 - `spread`: Argo CD found in five namespaces with two past the cap.
 - `stages`: `checkout`'s Stages not answering.

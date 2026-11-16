@@ -81,8 +81,8 @@ pub enum Variant {
     RollbackUnknown,
     /// No Stage has an earlier Freight in its history.
     RollbackNone,
-    /// The Next step column shows each state: done, a step, no Rollout and
-    /// one that couldn't be read.
+    /// The Next step column shows each state: done, a step, a Stage not
+    /// reached and one that couldn't be read.
     Rollouts,
     /// `prod-lon`'s Application, Rollout and pods aren't found: the cause
     /// before the setup says the application isn't expected there.

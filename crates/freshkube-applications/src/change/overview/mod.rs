@@ -196,7 +196,12 @@ impl ChangePage {
                     let row = (row as isize + dy).clamp(0, self.overview.len() as isize - 1);
                     self.cell_hop(row as usize, column, 1)
                 } else {
-                    self.cell_hop(row, (column as isize + dx).clamp(0, 5) as usize, dx)
+                    self.cell_hop(
+                        row,
+                        (column as isize + dx).clamp(0, cells::Column::ALL.len() as isize - 1)
+                            as usize,
+                        dx,
+                    )
                 }
             }
         };

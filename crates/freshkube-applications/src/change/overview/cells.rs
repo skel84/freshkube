@@ -89,6 +89,11 @@ pub struct Cell {
 }
 
 impl Cell {
+    /// Dim and unreached: nothing was looked at, and nothing is known.
+    fn is_dim(&self) -> bool {
+        !self.reached && self.tone == Tone::Outline
+    }
+
     /// The style of the track into the cell: the confidence of the link into
     /// it (solid Confirmed, dashed Claimed, dotted Unknown), else, for a cell
     /// with no link of its own, its status; a hairline for a step the change
@@ -175,11 +180,18 @@ pub fn derive(change: &Change, rows: &[HopRow]) -> Vec<StageRow> {
 /// cell is Not used here, which is hidden (with no Stage at all, nothing is
 /// hidden, so the loading rows have every column).
 pub fn visible<'a>(rows: impl IntoIterator<Item = &'a StageRow> + Clone) -> Vec<Column> {
-    let none = rows.clone().into_iter().next().is_none();
+    let all = || rows.clone().into_iter();
     Column::ALL
         .into_iter()
         .zip(0..)
-        .filter(|(_, at)| none || rows.clone().into_iter().any(|row| !row.cells[*at].not_used))
+        .filter(|(_, at)| {
+            // Hidden: some Stage doesn't use the step and the others say
+            // nothing about it, a Stage not reached included, so a project
+            // with no Rollouts has no Next step column however far it got.
+            let hidden = all().any(|row| row.cells[*at].not_used)
+                && all().all(|row| row.cells[*at].not_used || row.cells[*at].is_dim());
+            !hidden
+        })
         .map(|(column, _)| column)
         .collect()
 }
@@ -266,42 +278,52 @@ fn next_step_cell(row: Option<&HopRow>, reached: bool, stage: &Stage) -> Cell {
     let next = &stage.next_step;
     let hop = row.map(|row| row.key.clone());
     let label = Column::NextStep.label();
-    // A Stage with no Rollout isn't expected to have a next step.
-    if matches!(next, NextStep::NoRollout) {
-        return Cell {
-            tone: Tone::Outline,
-            word: next.word().into(),
-            hop,
-            reached: false,
-            link: None,
-            not_used: true,
-            tooltip: format!("{label}: {}", next.detail()).into(),
-        };
-    }
+    let outline = |word: &str, tooltip: String, not_used: bool| Cell {
+        tone: Tone::Outline,
+        word: word.to_owned().into(),
+        // A step the application isn't expected to have has nothing to
+        // select or ring.
+        hop: if not_used { None } else { hop.clone() },
+        reached: false,
+        link: None,
+        not_used,
+        tooltip: tooltip.into(),
+    };
+    // A Stage that still runs other Freight says nothing of this change,
+    // unless what would say couldn't be read.
     if !reached && !matches!(next, NextStep::Unknown { .. }) {
-        return Cell {
-            tone: Tone::Outline,
-            word: "Not reached".into(),
-            hop,
-            reached: false,
-            link: None,
-            not_used: false,
-            tooltip: format!("{label}: {} still runs other Freight", stage.name).into(),
-        };
+        return outline(
+            "Not reached",
+            format!("{label}: {} still runs other Freight", stage.name),
+            false,
+        );
+    }
+    match next {
+        // An Application that was read manages no Rollout: not used here.
+        NextStep::NoRollout => {
+            return outline(&next.word(), format!("{label}: {}", next.detail()), true);
+        }
+        NextStep::NotReached => {
+            return outline(&next.word(), format!("{label}: {}", next.detail()), false);
+        }
+        _ => {}
     }
     let tone = match next {
         NextStep::Done => Tone::Good,
         NextStep::Step { .. } | NextStep::Paused { .. } => Tone::Info,
         NextStep::Progressing => Tone::Waiting,
+        NextStep::Degraded { .. } => Tone::Warn,
         NextStep::Aborted => Tone::Crit,
-        NextStep::Unknown { .. } | NextStep::NoRollout => Tone::Unknown,
+        NextStep::Unknown { .. } | NextStep::NotReached | NextStep::NoRollout => Tone::Unknown,
     };
     Cell {
         tone,
         word: next.word().into(),
         hop,
         reached: true,
-        link: None,
+        // The track is the confidence of the link into the Rollout, as for
+        // every cell with a link of its own.
+        link: row.and_then(|row| row.link),
         not_used: false,
         tooltip: format!("{label}: {}", next.detail()).into(),
     }
@@ -349,7 +371,8 @@ fn cell(column: Column, row: Option<&HopRow>, reached: bool, stage: &Stage) -> C
         return Cell {
             tone: Tone::Outline,
             word: Cause::not_used_here("").word().into(),
-            hop: Some(row.key.clone()),
+            // Nothing to select or ring; All hops still selects the row.
+            hop: None,
             reached: false,
             link: None,
             not_used: true,

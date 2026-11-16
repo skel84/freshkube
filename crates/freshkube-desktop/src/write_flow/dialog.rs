@@ -41,7 +41,7 @@ pub(super) fn open(
     });
     let flow = flow.clone();
     let scroll = scroll.clone();
-    window.open_dialog(cx, move |dialog, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |dialog, window, cx| {
         let _kept = &dismissed;
         let (title, countdown) = {
             let flow = flow.read(cx);
