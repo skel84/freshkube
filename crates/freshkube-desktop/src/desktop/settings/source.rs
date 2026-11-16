@@ -40,6 +40,14 @@ impl TableColumn for Column {
 /// What a Team or Yours chip adds to the Cluster column, in dp.
 const CHIP_ROOM: f32 = 64.;
 
+/// The Protection column's width, in dp: the tag and "· default" whole beside
+/// it (#1052). Role gives up the same room, so the table is no wider than it
+/// was and a row's centre stays in view in a narrow window; "environment", its
+/// longest word, still fits. A longer note ("· team floor") is cut at a word
+/// and whole in its tooltip.
+const PROTECTION: f32 = 182.;
+const ROLE: f32 = 108.;
+
 /// Derives widths using the shared table's DESIGN.md sizing rules.
 /// `chips` leaves the Cluster column room for a Team or Yours chip.
 pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
@@ -56,8 +64,8 @@ pub(super) fn columns(rows: &[ClusterRow], chips: bool) -> (Vec<Column>, f32) {
             table::fit("Cluster", rows.iter().map(|row| &row.id), table::WIDEST)
                 + if chips { CHIP_ROOM } else { 0. },
         ),
-        column(Field::Role, "Role", 120.),
-        column(Field::Protection, "Protection", 170.),
+        column(Field::Role, "Role", ROLE),
+        column(Field::Protection, "Protection", PROTECTION),
         column(
             Field::Context,
             "Context",

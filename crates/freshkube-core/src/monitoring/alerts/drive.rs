@@ -2,7 +2,7 @@
 //! read the active alerts every [`POLL`](super::state::POLL).
 use std::time::Duration;
 
-use super::super::{ErrorKind, cluster_client, forget_after};
+use super::super::{ErrorKind, QueryError, cluster_client, forget_after};
 use super::discover::{Found, Remembered, find};
 use super::read::{Scope, active, unknown};
 use super::rules;
@@ -46,14 +46,33 @@ pub async fn connect(
     }
     let own = cluster_client(access).await.map_err(unknown)?;
     let objects = rules::any_objects(&own).await.unwrap_or(false);
-    Err(if objects && scope == &Scope::Cluster {
-        Unknown::RulesOnly
-    } else {
-        Unknown::NotFound(match found.tried.first() {
-            Some((label, error)) => format!("{label} said: {}", error.message),
-            None => String::new(),
-        })
+    Err(nothing_read(objects, scope, &found.tried))
+}
+
+/// What a connect that found no source answers. Only when no candidate was
+/// tried is "PrometheusRule objects only" true; a candidate that answered with
+/// an error is a not-found that carries its reason, so it is never shown as a
+/// calm "rules only".
+pub fn nothing_read(objects: bool, scope: &Scope, tried: &[(String, QueryError)]) -> Unknown {
+    if objects && scope == &Scope::Cluster && tried.is_empty() {
+        return Unknown::RulesOnly;
+    }
+    Unknown::NotFound(match tried.first() {
+        Some((label, error)) => format!("{label} said: {}", error.message),
+        None => String::new(),
     })
+}
+
+/// A page that found nothing to read (no rule objects, no sources) keeps the
+/// reason the connect step gave, when a candidate answered with an error:
+/// otherwise its own empty not-found would hide it behind a calm note.
+pub fn keep_reason(unknown: Unknown, connect_reason: Option<&str>) -> Unknown {
+    match (unknown, connect_reason) {
+        (Unknown::NotFound(own), Some(reason)) if own.is_empty() => {
+            Unknown::NotFound(reason.to_owned())
+        }
+        (unknown, _) => unknown,
+    }
 }
 
 /// Failed reads in a row after which the sources are looked for again.

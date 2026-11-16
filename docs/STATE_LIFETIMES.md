@@ -247,8 +247,11 @@ own and no owner changes:
 | Resources list watch | The open watch ends and a new one starts at once from the last resourceVersion: no list, no backoff, nothing repeated. The wake leaves the shown Resources page out of its refresh (it does not list from scratch, as a Refresh does), so this resume is what runs; a hidden page has no watch. Rows already batched are sent first. If the version has expired, the server says 410 and the usual relist follows. |
 | Dock log tabs (pods) | The open log ends where it stands and opens again from the last whole line's time, skipping the lines of that second already shown (`LogPosition`); it is no failure, so no "Reconnecting" row and no backoff. |
 | Followed items, workload pods, object events, a forward's pods and target watches | The watcher is made again, so it lists first and replaces what it held, as it does after a 410. Followed reducers hold state, not events, so a repeated list tells nothing twice; a followed pod that is not in the new list is reported gone (a pod deleted while nobody watched leaves no delete event). |
-| Talos log streams, forwards' own connections | Not reconnected by the wake: a dead connection is found by TCP keepalive (60 s), and each source's retry takes it from there; a later cut can reopen them. |
+| Talos log streams (node logs) | Each followed service's pump (`backend::pump`, under the log panel's one `OwnedJob`) holds a `Wakes` made before its stream opens. On a wake it drops the stream and opens it again with a tail of 0 (with its own tail if nothing was shown yet); a failed reopen is one error row and the end, no retry. It is no failure, so no "Reconnecting" row. A reopened stream can miss lines written while the machine slept, and none is repeated: nothing is backfilled. A stopped log has no pump and is not started. |
+| Forwards' own connections | Not reconnected by the wake: a dead connection is found by TCP keepalive (60 s), and each source's retry takes it from there. |
 | A read waiting out a retry backoff, or in its first list | Not heard: it ends by its own timeout or backoff (30 s at most), then reads as it always does. |
+
+A network change (a VPN coming up, a move between networks) does what a wake does, once, except that no stream is told to restart: the same refresh (`Pilot::network_changed`, `desktop/wake/network.rs`) with the shown Resources page listed again too, since its watch was not announced anything. `freshkube_core::reachability` holds the signal: on macOS a thread runs a SystemConfiguration reachability callback on the default route, and `Flags::observe` turns its reports into a change only when the flags differ and the network is usable (reachable, no connection required); a loss reads as the failed read it already is. The shell takes the reports of the 2 s after the first (`SETTLE`, a fixed wait, not a wait for quiet) as one change and refreshes once for it; a wake on macOS can still refresh twice as Wi-Fi comes back, which is harmless, and a split-tunnel VPN may go unseen; nothing is read while nothing is connected, a hidden page stays stopped, and nothing is written or retried. Elsewhere there is no watcher: the wake and the failed read cover those platforms. The macOS watcher compiles but could not be run where it was written; a real VPN or Wi-Fi change is its check.
 
 A wake does nothing when nothing is connected (a Kubernetes-only entry with
 no context chosen or tried, no overview read yet, a load or an error on screen),
@@ -281,14 +284,31 @@ sleeps surfaces as a failed request, not at the wake. The tests
 loopback server that records each `Authorization`) hold three things:
 
 - a token near expiry is refreshed at each request, so a session outlives its first token;
-- a token the server refuses reads as `Unauthorized`, and the same client recovers once its token is due for refresh (a revoked long-lived token is sent again until it nears expiry; rebuilding the client on `Unauthorized` is a later step, as is holding retries after one so a failing login program is not run again and again);
+- a token the server refuses reads as `Unauthorized`, and the same client recovers once its token is due for refresh (a revoked long-lived token is sent again until it nears expiry; the summary rebuilds its client once, below);
 - a refresh that fails (the plugin exits non-zero) reads as `Unauthorized`, with a fixed
   message and none of the plugin's command line, arguments or stderr (`Failure::from_kube`
   finds the credential error inside the service error), and the client recovers once the
   login works again.
 
-A network change is not detected in this step: the gap detector covers a wake, and a VPN
-coming up or down is found by the read that fails and is retried by its owner.
+**The client is built again on the first `Unauthorized`.** The summary's session
+(`desktop/kubernetes_summary/mod.rs` `run_summary_driver`, core's `Session::run`) keeps one
+client for its life, and a revoked token is sent again until it nears expiry. So the first
+read of a session identity that answers `Unauthorized` (any watch or the version read, of
+the current generation) ends `run` with `RunEnd::CredentialsRejected`: every read built on the
+client is dropped, the session starts a new generation (`relist`), the driver forgets the kept
+client (`ClusterAccess::forget`) and builds a new one, and `run` starts again with it. Nothing
+from the old client publishes afterwards, since its reads are gone and its generation is
+past. It happens once per `SessionIdentity` (`Session::take_rebuild`, a latch the session
+owns): several sources refused together share the one rebuild, a refusal that arrives while
+or after it joins it and starts no second, and credentials the server still refuses are shown
+as "Kubernetes credentials were rejected": each such read stops (it reads as failed, not retrying)
+until a Refresh, and nothing is retried in a loop or by running the login program again. A new identity (a new connection or epoch) has its own. A failed rebuild waits
+and asks again with the driver's usual backoff. This covers the summary and the session
+reads that take its client; a page's own read still takes the kept client until its two
+minutes pass or a failure forgets it. Nothing here retries a write. Tests: core's
+`driver_tests.rs` (`an_unauthorized_read_ends_the_run…`, `a_second_401_after_the_rebuild_is_shown_not_retried`,
+`rejections_that_arrive_together_share_one_rebuild`) and the driver's own against a source that
+renews its client (`kubernetes_summary/tests.rs`).
 
 ### The change page's outcome read
 
@@ -318,6 +338,10 @@ Projects only on press, hiding drops it, and the item is derived from the kept
 findings and the setup's `delivery.build_namespace`. Its keys (`f`, `a`, Enter,
 Backspace) act only when there is something to start, accept or ignore, and
 otherwise let the key through to the focused control.
+
+### The team setup fetch
+
+Settings › Team setup (`desktop/settings/team/owner.rs`, [settings.md](features/settings.md#team-setup)) reads the shared team file through one `Loader<Version, Source>`; the identity is the source, so an answer for a replaced address never publishes. It reads only while the section shows (showing again reads when the last answer is five minutes old), from Fetch now or from Join; hiding or replacing drops the read and its Tokio job, which kills the git child (`TeamFetcher::work`). Nothing fetches in the background, and a failed fetch keeps the applied version. The kubeconfig contexts for "Map your contexts" are a second `Loader<Vec<String>, ()>` read once when that step opens.
 
 ### Deep links' reads
 

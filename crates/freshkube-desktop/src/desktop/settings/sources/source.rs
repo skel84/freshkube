@@ -68,13 +68,19 @@ pub(super) fn columns(rows: &[SourceRow], suggested: Option<&SourceRow>) -> (Vec
         // Fit identity columns before Reads takes the remaining room.
         column(Field::Reads, "Reads", 64.),
     ];
-    let width = fit_columns(&mut columns, f32::INFINITY);
+    let width = fit_columns(&mut columns, f32::INFINITY, true);
     (columns, width)
 }
 
+/// The least an Entry or Chosen by column shrinks to, in dp: its header,
+/// whole, and a few characters of a value.
+const MIN_IDENTITY: f32 = 96.;
+
 /// Fit the table's own room: shrink Entry and Chosen by together
 /// when narrow, then give spare room to their fitted values before Reads.
-pub(super) fn fit_columns(columns: &mut [Column], room: f32) -> f32 {
+/// With `keep_identity` they stop at their least width and the table scrolls
+/// sideways; beside the Inspector the table keeps to its room and they give.
+pub(super) fn fit_columns(columns: &mut [Column], room: f32, keep_identity: bool) -> f32 {
     for column in columns.iter_mut() {
         column.width = match column.field {
             Field::Entry | Field::Why => column.fitted.min(160.),
@@ -97,7 +103,15 @@ pub(super) fn fit_columns(columns: &mut [Column], room: f32) -> f32 {
         let scale = ((room - fixed).max(0.) / (base - fixed)).min(1.);
         for column in columns.iter_mut() {
             if matches!(column.field, Field::Entry | Field::Why) {
-                column.width *= scale;
+                // Never narrower than its header and a few characters: a
+                // large text size in a narrow window makes the table scroll
+                // sideways, not collapse its identity columns to "…".
+                let least = if keep_identity {
+                    MIN_IDENTITY.min(column.fitted)
+                } else {
+                    0.
+                };
+                column.width = (column.width * scale).max(least);
             }
         }
         return columns.iter().map(|column| column.width).sum();

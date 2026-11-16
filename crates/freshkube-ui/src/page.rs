@@ -174,6 +174,18 @@ fn floor(tone: Option<Tone>, window: &Window) -> Pixels {
     px(lines + if tone.is_none() { frame } else { 0. })
 }
 
+/// A cap for a block of framed banners (no `tone`) that ends between two
+/// lines instead of through one: the first banner's top frame and `lines`
+/// whole lines of its text. A banner has a lead line before its words, so
+/// three lines show the lead and two lines of words. A cap in dp such as
+/// `dp(60.)` lands wherever the text size puts it, often halfway down a line.
+pub fn banner_lines_cap(lines: usize, window: &Window) -> Pixels {
+    let rem = f32::from(window.rem_size());
+    let line = (BANNER_TEXT * rem / crate::ui::BASE_TEXT * line_height_ratio()).round();
+    let top = BANNER_FRAME_REMS / 2. * rem + BANNER_BORDER / 2.;
+    px(top + lines.max(2) as f32 * line)
+}
+
 /// The cap in pixels where it is one: pixels, or rems at the window's rem
 /// size.
 fn cap_pixels(cap: Length, window: &Window) -> Option<Pixels> {

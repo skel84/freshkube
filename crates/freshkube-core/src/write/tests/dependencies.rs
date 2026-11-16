@@ -164,7 +164,7 @@ async fn a_conflict_answering_a_read_is_no_answer_not_a_panic() {
         ))
     });
     let dir = tmp();
-    let runner = Runner::new(
+    let runner = Runner::unchecked(
         client,
         AuditStore::new(dir.path().join("audit")),
         Who {

@@ -78,9 +78,7 @@ impl Pilot {
     /// and read again, if there is a connection to read again.
     pub(super) fn woke(&mut self, slept: Duration, window: &mut Window, cx: &mut Context<Self>) {
         tracing::info!("the machine woke after about {} s", slept.as_secs());
-        if self.config_loading || self.config_error.is_some() || !self.has_connection() {
-            // Nothing is connected to reconnect; the load in progress, the
-            // error or the choice of a context on screen is the whole story.
+        if self.nothing_to_reconnect() {
             return;
         }
         // Every open stream starts over where it was. A test's wake stays
@@ -89,15 +87,23 @@ impl Pilot {
         #[cfg(not(test))]
         freshkube_core::wake::announce();
         self.chrome.reconnecting = Some(Duration::ZERO);
-        self.refresh_for_wake(window, cx);
+        self.refresh_for_wake(false, window, cx);
         cx.notify();
+    }
+
+    /// Nothing is connected to reconnect: the load in progress, the error or
+    /// the choice of a context on screen is the whole story.
+    fn nothing_to_reconnect(&self) -> bool {
+        self.config_loading || self.config_error.is_some() || !self.has_connection()
     }
 
     /// What a wake refreshes: what the person's Refresh does (`refresh_now`),
     /// except that the Resources list is not listed again. Its watch was
     /// announced the wake, and resumes from its last version by itself; a
     /// full list on top would drop that watch the moment it started.
-    fn refresh_for_wake(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// With `everything` (a network change, which announces nothing to the
+    /// streams) the shown Resources page lists again too.
+    fn refresh_for_wake(&mut self, everything: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode().has_talos() || self.mode().is_example() {
             self.refresh_summary(window, cx);
             self.refresh(window, cx);
@@ -108,7 +114,7 @@ impl Pilot {
             self.refresh_kubernetes(false, window, cx);
             self.refresh_screen(window, cx);
         }
-        if self.navigation.page != Page::Resources {
+        if everything || self.navigation.page != Page::Resources {
             self.refresh_page(window, cx);
         }
     }
@@ -142,6 +148,8 @@ fn wall_clock() -> impl Fn() -> Duration {
             .unwrap_or_default()
     }
 }
+
+mod network;
 
 #[cfg(test)]
 mod tests;

@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::file::{Values, Version, VersionError};
+use super::mapping::{Choice, ContextMap, UnknownContext};
 use super::merge;
 use super::review::{NotReviewed, Review};
 use super::source::Source;
@@ -49,6 +50,9 @@ pub struct Membership {
     /// level for as long as this membership lasts. A floor tightens and
     /// never relaxes.
     held: BTreeMap<String, Protection>,
+    /// Which of your contexts each team cluster is (#849, "Map your
+    /// contexts"). Asked at joining; the team file never names one.
+    mapping: ContextMap,
 }
 
 impl Membership {
@@ -63,6 +67,7 @@ impl Membership {
             before_joining: overrides.clone(),
             overrides,
             held: BTreeMap::new(),
+            mapping: ContextMap::default(),
         }
     }
 
@@ -115,6 +120,59 @@ impl Membership {
         &self.held
     }
 
+    /// What is chosen for each cluster of the waiting version, or of the
+    /// applied one once none waits.
+    pub fn mapping(&self) -> &ContextMap {
+        &self.mapping
+    }
+
+    /// Whether joining still has to ask for contexts: nothing is applied and
+    /// the waiting version names clusters.
+    pub fn needs_mapping(&self) -> bool {
+        self.applied.is_none()
+            && self
+                .pending
+                .as_ref()
+                .is_some_and(|v| super::mapping::cluster_ids(v).next().is_some())
+    }
+
+    /// Chooses the context of one team cluster, among `available` (the
+    /// contexts of your kubeconfig).
+    pub fn map_context(
+        &mut self,
+        id: &str,
+        choice: Choice,
+        available: &[String],
+    ) -> Result<(), UnknownContext> {
+        self.mapping.choose(id, choice, available)
+    }
+
+    /// Chooses, for each cluster with none chosen, the context named like
+    /// it where `available` has one. Only ever on the person's request.
+    /// Returns how many it chose.
+    pub fn map_suggested(&mut self, available: &[String]) -> usize {
+        let ids: Vec<String> = self
+            .mapping
+            .clusters()
+            .filter(|(_, choice)| choice.is_none())
+            .map(|(id, _)| id.to_string())
+            .collect();
+        let mut chosen = 0;
+        for id in ids {
+            if let Some(name) = ContextMap::suggested(&id, available) {
+                let name = name.to_string();
+                if self
+                    .mapping
+                    .choose(&id, Choice::Context(name), available)
+                    .is_ok()
+                {
+                    chosen += 1;
+                }
+            }
+        }
+        chosen
+    }
+
     /// Takes the outcome of a fetch. A failure keeps what is applied and says
     /// since when; a version equal to the applied one is no update. True when
     /// a different version now waits than the one that waited before, so a
@@ -132,6 +190,7 @@ impl Membership {
                     false
                 } else {
                     let new = self.pending.as_ref().map(|p| p.id()) != Some(version.id());
+                    self.mapping = ContextMap::for_version(&version, &self.mapping);
                     self.pending = Some(version);
                     new
                 }
@@ -163,6 +222,9 @@ impl Membership {
     /// Applies a finished review. Nothing else changes the applied version.
     pub fn apply(&mut self, review: Review, now: DateTime<Utc>) -> Result<(), NotReviewed> {
         let version = review.apply(self.applied.as_ref(), self.pending.as_ref())?;
+        if self.applied.is_none() && !self.mapping.is_complete() {
+            return Err(NotReviewed::Unmapped);
+        }
         self.hold_floors(&version);
         self.applied = Some(version);
         self.applied_at = Some(now);

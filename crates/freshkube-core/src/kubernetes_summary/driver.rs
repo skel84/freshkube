@@ -21,10 +21,22 @@ use crate::resources::FailureKind;
 pub const DEBOUNCE: Duration = Duration::from_millis(500);
 const READ_DEADLINE: Duration = Duration::from_secs(15);
 
+/// Why [`Session::run`] returned: it otherwise runs until it is dropped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunEnd {
+    /// A read was refused as `Unauthorized`, for the first time in this
+    /// session's identity. Every read built on the client has stopped and
+    /// the session has begun a new generation; call `run` again with a
+    /// client built anew. A refusal after that one is shown and does not end
+    /// `run` (the credentials are really refused, and nothing loops).
+    CredentialsRejected,
+}
+
 impl Session {
     /// Cancellation of this future drops the JoinSet and aborts every read,
     /// including an in-progress initial list or resync. No task is detached.
-    pub async fn run(&self, client: Client) {
+    pub async fn run(&self, client: Client) -> RunEnd {
+        let rejections = self.rejections();
         let mut changes = self.changes();
         let mut refreshes = self.refreshes();
         let mut jobs = self.start_reads(client.clone(), self.generation());
@@ -35,6 +47,16 @@ impl Session {
                 expiry.unwrap_or_else(|| Instant::now() + Duration::from_secs(24 * 60 * 60))
             });
             tokio::select! {
+                _ = rejections.notified() => {
+                    if self.take_rebuild() {
+                        // Nothing from this client publishes after this: its
+                        // reads are dropped and the generation moves on, so
+                        // a late answer is the old generation's.
+                        jobs.shutdown().await;
+                        self.relist();
+                        return RunEnd::CredentialsRejected;
+                    }
+                }
                 _ = refreshes.changed() => {
                     jobs.shutdown().await;
                     let generation = *refreshes.borrow_and_update();
@@ -85,11 +107,11 @@ impl Session {
         jobs.spawn(async move {
             match tokio::time::timeout(READ_DEADLINE, client.apiserver_version()).await {
                 Ok(Ok(version)) => session.version(generation, version.git_version, Utc::now()),
-                Ok(Err(error)) => session.fail(
-                    generation,
-                    Source::Version,
-                    ObservationFailure::from_kube(error),
-                ),
+                Ok(Err(error)) => {
+                    let failure = ObservationFailure::from_kube(error);
+                    session.rejected_if_unauthorized(&failure);
+                    session.fail(generation, Source::Version, failure);
+                }
                 Err(_) => session.fail(
                     generation,
                     Source::Version,
@@ -98,6 +120,21 @@ impl Session {
             }
         });
         jobs
+    }
+
+    /// An `Unauthorized` answer asks for a new client. Reads of a client
+    /// already being replaced are shut down, so none arrives late.
+    fn rejected_if_unauthorized(&self, failure: &ObservationFailure) {
+        if matches!(failure, ObservationFailure::Read(FailureKind::Unauthorized)) {
+            self.credentials_rejected();
+        }
+    }
+
+    /// Whether `failure` is a refusal of credentials the one rebuild has
+    /// already been spent on.
+    fn credentials_spent(&self, failure: &ObservationFailure) -> bool {
+        matches!(failure, ObservationFailure::Read(FailureKind::Unauthorized))
+            && self.rebuild_spent()
     }
 
     async fn watch<K>(&self, client: Client, generation: u64)
@@ -114,6 +151,15 @@ impl Session {
             let stream = pin!(watcher(api.clone(), config.clone()));
             let (failure, expired) = self.run_stream(stream, generation, &mut backoff).await;
             if self.generation() != generation {
+                return;
+            }
+            self.rejected_if_unauthorized(&failure);
+            // Credentials refused after the one rebuild are as permanent as a
+            // refusal by RBAC: a retry would run the login program again, so
+            // this read stops (a Refresh restarts it) and says Failed.
+            let spent = self.credentials_spent(&failure);
+            if spent {
+                self.fail_stopped(generation, K::SOURCE, failure);
                 return;
             }
             self.fail(generation, K::SOURCE, failure.clone());

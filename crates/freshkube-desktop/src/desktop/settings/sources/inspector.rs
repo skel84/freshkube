@@ -134,11 +134,13 @@ impl SourcesList {
                 form::row("settings-source-state", "State", row.state.clone())
                     .hint(row.detail.clone()),
             )
-            .row(form::row(
-                "settings-source-reads",
-                "Reads",
-                row.reads.clone(),
-            ));
+            .row({
+                let reads = form::row("settings-source-reads", "Reads", row.reads.clone());
+                match &row.setup_hint {
+                    Some(hint) => reads.hint(hint.clone()),
+                    None => reads,
+                }
+            });
         let mut detail = Inspector::new("settings-source-inspector")
             .heading(
                 div()

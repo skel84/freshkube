@@ -202,7 +202,7 @@ async fn an_invalid_resolution_refuses_only_its_changes_in_the_list() {
     let read = list(&reader, &at("{project}-ci", Some(&server))).await;
     let projects = read.projects.read().unwrap();
     let reason = format!(
-        "delivery.build_namespace resolves to \"{long}-ci\" for project {long}, which isn't a namespace name"
+        "The build namespace in the setup file resolves to \"{long}-ci\" for project {long}, which isn't a namespace name"
     );
     for project in projects {
         for change in project.followed.values() {

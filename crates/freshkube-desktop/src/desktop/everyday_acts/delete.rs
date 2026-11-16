@@ -111,7 +111,7 @@ impl Pilot {
                 }
                 match read {
                     Ok((client, impact)) => {
-                        let runner = Runner::new(client, audit, who).following(cell);
+                        let runner = crate::desktop::write_runner::live_runner(client, audit, who, cell, cx);
                         this.begin_delete(Arc::new(runner), impact, &identity, window, cx);
                     }
                     Err(why) => {
