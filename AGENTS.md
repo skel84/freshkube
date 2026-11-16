@@ -191,7 +191,7 @@ The user chooses the text size (`freshkube-ui`'s `text_size.rs`), which becomes 
 
 - Size text, rows, padding, gaps, icons and widths with `ui::dp(n)`: n pixels at the default 13 px (`ui::BASE_TEXT`), as rems. Where an API takes `Pixels`, use `ui::dp_px(n, window)`. Size icons with `.size(dp(n))`, not `with_size(px(n))`, which stays fixed.
 - Keep borders, hairlines, corner radii and shadows in `px`, as Kit does.
-- Compare breakpoints in `dp`: `freshkube_ui::page::page_width` (a page without margins, also `screens::page_width`), `inset_width` (inside its insets, such as the header) and `content_width` (inside a padded page's margins) return them, so a larger text size picks the narrower layout, as a narrower window would.
+- Compare breakpoints in `dp`: `Pane::page_width` (a page without margins; a page keeps the `freshkube_ui::pane::Pane` it draws in and asks it), `inset_width` (inside its insets, such as the header) and `content_width` (inside a padded page's margins) return them, so a larger text size picks the narrower layout, as a narrower window would.
 
 ### UI tests
 
