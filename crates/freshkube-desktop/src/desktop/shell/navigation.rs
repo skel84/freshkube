@@ -12,6 +12,8 @@ use freshkube_core::resources::{ResourceKind, builtin};
 use std::collections::BTreeMap;
 
 pub(in crate::desktop) struct Navigation {
+    /// The pane the shell sets the chrome width of.
+    pane: freshkube_ui::pane::Pane,
     pub(in crate::desktop) page: Page,
     pub(super) settings_leave: Option<super::settings_guard::Leave>,
     /// The Settings section shown, and which sections showed the unsaved dot
@@ -72,6 +74,7 @@ impl Navigation {
     pub(in crate::desktop) fn new(file: NavigationFile, cx: &mut App) -> Self {
         let default_kind = || builtin(kinds::DEFAULT_KIND).expect("the default kind is built in");
         Self {
+            pane: Default::default(),
             page: Page::Overview,
             settings_leave: None,
             settings_unsaved: (None, Vec::new()),
@@ -114,7 +117,8 @@ impl Navigation {
         })
     }
     fn layout_chrome(&self, window: &Window) {
-        crate::screens::set_chrome_width(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
+        self.pane
+            .set_chrome(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
     }
 
     /// Lays out the rail and the column for this frame and returns the

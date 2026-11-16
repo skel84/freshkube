@@ -952,7 +952,7 @@ impl SettingsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let narrow = page::content_width(window) < form::NARROW;
+        let narrow = self.pane.content_width(window) < form::NARROW;
         let mut content = div()
             .id("settings-monitoring-form")
             .test_support()

@@ -116,7 +116,7 @@ impl SourcesList {
             .iter()
             .chain(self.finder.row.as_ref())
             .find(|row| Some(row.read) == self.selected)?;
-        let width = crate::screens::page_width(window);
+        let width = self.pane.page_width(window);
         let pane_width = if width >= freshkube_ui::inspector::SPLIT_WIDTH {
             self.split.live_width(cx)
         } else {

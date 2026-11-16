@@ -411,7 +411,7 @@ impl ObservabilityPage {
         let split = freshkube_ui::inspector::split(
             "obs-deployments-split",
             &self.revision_split,
-            inspector_beside(window),
+            inspector_beside(&self.pane, window),
             table,
             detail,
             window,

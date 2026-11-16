@@ -277,6 +277,8 @@ struct FixNotice {
 }
 
 pub(crate) struct DiagnosticsScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     /// The table's rows until the first answer.
     loading: TableLoading,
     embedded: bool,
@@ -306,6 +308,7 @@ impl DiagnosticsScreen {
             KeyBinding::new("p", ToggleProblems, Some(CONTEXT)),
         ]);
         Self {
+            pane: Default::default(),
             embedded: false,
             runtime,
             source: None,

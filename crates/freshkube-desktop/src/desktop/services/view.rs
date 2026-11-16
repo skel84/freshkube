@@ -36,7 +36,7 @@ impl Render for NodeServices {
         let list = self.services_list(cx);
         let detail = self.service_detail(&node, cx);
         // In the node inspector, by its own width.
-        let wide = crate::screens::embedded_width(window) >= 760.;
+        let wide = self.pane.embedded_width(window) >= 760.;
         // Stacked, the details sit under the list: a new selection brings
         // them into view, or nothing would show that it changed.
         let reveal = std::mem::take(&mut self.reveal) && !wide;

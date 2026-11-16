@@ -418,7 +418,7 @@ impl ObservabilityPage {
                 div()
                     .id("obs-logs-list")
                     .test_support()
-                    .h(dp(list_height(window)))
+                    .h(dp(list_height(&self.pane, window)))
                     .rounded(px(12.))
                     .border_1()
                     .border_color(palette(cx).line)
@@ -578,8 +578,7 @@ impl ObservabilityPage {
 
 /// The list's height: tall where the window has room, never less than its
 /// toolbar and three rows.
-fn list_height(window: &Window) -> f32 {
-    let viewport =
-        window.viewport_size().height / ui::dp_px(1., window) - freshkube_ui::page::below(window);
+fn list_height(pane: &freshkube_ui::pane::Pane, window: &Window) -> f32 {
+    let viewport = window.viewport_size().height / ui::dp_px(1., window) - pane.below();
     (viewport - AROUND_LIST).clamp(LEAST_LIST_HEIGHT, LIST_HEIGHT)
 }

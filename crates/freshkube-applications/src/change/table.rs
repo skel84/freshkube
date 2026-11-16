@@ -440,7 +440,7 @@ impl TableSource for ChangePage {
 impl ChangePage {
     /// The table's width: the page's, less the Inspector's beside it.
     fn table_width(&self, window: &Window) -> f32 {
-        let page = freshkube_ui::page::page_width(window);
+        let page = self.pane.page_width(window);
         if self.selected.is_some() && page >= inspector::SPLIT_WIDTH {
             page - self.split.width()
         } else {

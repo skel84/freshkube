@@ -41,7 +41,6 @@ use crate::ui::{self, clock, dp};
 use freshkube_core::constants::SCREEN_DEADLINE;
 use freshkube_core::snapshot::Request;
 use freshkube_reads::{Loader, OnShow, Pace, Watch};
-use freshkube_ui::page::page_width;
 use freshkube_ui::{page, table};
 use layout::TableLayout;
 use pods::{ListView, NotReady, UsageRead, UsageState};
@@ -181,6 +180,8 @@ pub use acts::{EditYamlAct, WorkloadAct};
 use freshkube_core::write::everyday::Everyday;
 
 pub struct ResourcesScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     field_selector: Option<String>,
     embedded: bool,
     runtime: Handle,
@@ -438,6 +439,7 @@ impl ResourcesScreen {
             })
         });
         Self {
+            pane: Default::default(),
             field_selector: None,
             embedded: false,
             runtime,
@@ -1243,7 +1245,9 @@ impl ResourcesScreen {
     /// The width in dp the drawer lays out in: the list's, as last drawn,
     /// or the page's before it has been.
     fn drawer_room(&self, window: &Window) -> f32 {
-        self.body_width.get().unwrap_or_else(|| page_width(window))
+        self.body_width
+            .get()
+            .unwrap_or_else(|| self.pane.page_width(window))
     }
 
     /// A drag of the drawer's edge, in dp: kept within what the page

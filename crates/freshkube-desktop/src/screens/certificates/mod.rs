@@ -62,6 +62,8 @@ struct SecretJob {
 }
 
 pub(crate) struct CertificatesScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ClusterSource>,
     visible: bool,
@@ -131,6 +133,7 @@ impl CertificatesScreen {
             }
         });
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             visible: false,

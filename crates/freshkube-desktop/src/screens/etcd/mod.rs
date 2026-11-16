@@ -46,6 +46,8 @@ actions!(
 );
 
 pub(crate) struct EtcdScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<EtcdHealthSnapshot>,
@@ -209,6 +211,7 @@ impl EtcdScreen {
             KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
         ]);
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             loader: Loader::default(),

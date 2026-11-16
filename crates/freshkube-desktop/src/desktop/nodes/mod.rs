@@ -62,6 +62,8 @@ impl NodeTabs for NodeTab {
 }
 
 pub(super) struct Nodes {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     pub(super) rows: Arc<Vec<NodeRow>>,
     /// What Resources shows of the same nodes, built with `rows`.
     pub(super) resource_facts: Arc<Vec<crate::resources::NodeFacts>>,
@@ -358,6 +360,7 @@ impl Nodes {
             }),
         ];
         Self {
+            pane: Default::default(),
             rows: Arc::new(Vec::new()),
             resource_facts: Arc::new(Vec::new()),
             empty: Some(Empty::Loading),
@@ -954,7 +957,7 @@ impl Nodes {
             self.show_selected_healthy();
             freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
             // Only a stacked inspector shrinks the table it opens under.
-            if crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
+            if self.pane.page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
                 // Closed or expanded, there is no table to reveal it in.
                 freshkube_ui::table::reveal_when_settled(
                     cx.entity().downgrade(),
@@ -1010,7 +1013,7 @@ impl Nodes {
                 let columns = if self.open {
                     1
                 } else {
-                    cards::card_columns(window)
+                    cards::card_columns(&self.pane, window)
                 };
                 self.scroll.scroll_to_item(
                     freshkube_ui::grid::row_of(line, columns),

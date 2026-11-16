@@ -36,7 +36,7 @@ impl ChangePage {
     /// The width the strip and the matrix have, in dp: the page's, less the
     /// Inspector's beside them when it is open.
     pub(super) fn lead_width(&self, window: &Window, cx: &App) -> f32 {
-        let page = freshkube_ui::page::page_width(window);
+        let page = self.pane.page_width(window);
         if page >= inspector::SPLIT_WIDTH && self.selected.is_some() {
             page - self.overview_split.live_width(cx)
         } else {
@@ -107,7 +107,7 @@ impl ChangePage {
                     .child(self.matrix.clone()),
             )
             .into_any_element();
-        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_detail(cx);
         inspector::split(
             "change-split",

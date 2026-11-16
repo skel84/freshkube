@@ -123,7 +123,10 @@ fn arrows_scroll_the_card_grid_to_the_selected_cards_row(cx: &mut TestAppContext
             crate::desktop::tests::settle_header(window, cx);
             window.click("nodes-view-cards", cx);
             window.render_frame(cx);
-            assert_eq!(super::super::cards::card_columns(window), 3);
+            assert_eq!(
+                super::super::cards::card_columns(&freshkube_ui::pane::Pane::default(), window),
+                3
+            );
             let lines = pilot.read(cx).pages.node_workspace.read(cx).lines.len();
             assert!(lines > 3, "only {lines} cards: no second row");
             // The second row starts below the list, so isn't drawn.

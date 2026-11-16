@@ -60,6 +60,8 @@ struct Selection {
 }
 
 pub(crate) struct SecurityScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ScreenSource>,
     loader: Loader<SecurityAuditSnapshot>,
@@ -92,6 +94,7 @@ impl SecurityScreen {
             KeyBinding::new("escape", CloseDetails, Some(CONTEXT)),
         ]);
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             loader: Loader::default(),

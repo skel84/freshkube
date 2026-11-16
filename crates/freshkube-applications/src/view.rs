@@ -35,7 +35,7 @@ impl ApplicationsPage {
                 .aria_label("Filter applications by name, what found them or cluster")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
         );
-        let wide = freshkube_ui::page::page_width(window) >= CHIP_WORDS_WIDTH;
+        let wide = self.pane.page_width(window) >= CHIP_WORDS_WIDTH;
         let chips = (!self.display.rows.is_empty()).then(|| {
             kit::status_chips(
                 header.id("tally"),
@@ -308,7 +308,7 @@ impl ApplicationsPage {
             .min_h_0()
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
         let least = self.split.short_height(beside, details.is_some());
         let split = inspector::split(
@@ -367,7 +367,7 @@ impl Render for ApplicationsPage {
             Some(state) => (state, page::SHORT_LIST_HEIGHT),
             None => self.render_table(window, cx),
         };
-        let short = page::is_short(window);
+        let short = self.pane.is_short(window);
         // The keys live on a wrapper drawn in every state.
         div()
             .key_context(CONTEXT)

@@ -14,7 +14,7 @@ use crate::ui::dp;
 
 impl SettingsPage {
     pub(super) fn render_about(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let narrow = page::content_width(window) < form::NARROW;
+        let narrow = self.pane.content_width(window) < form::NARROW;
         let header = page::PageHeader::new("settings-about", "About").render(window, cx);
         let session = crash::session(cx);
         let log = match &session {

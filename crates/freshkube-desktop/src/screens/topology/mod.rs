@@ -61,6 +61,8 @@ pub(crate) struct TopologyRead {
 }
 
 pub(crate) struct TopologyScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     runtime: Handle,
     source: Option<ClusterSource>,
     visible: bool,
@@ -121,6 +123,7 @@ impl TopologyScreen {
         )
         .unpaged();
         Self {
+            pane: Default::default(),
             runtime,
             source: None,
             visible: false,
@@ -477,8 +480,8 @@ impl Render for TopologyScreen {
             .id("topology-state")
             .test_support()
             .into_any_element(),
-            None => GraphView::new(page::content_width(window))
-                .page_width(super::page_width(window))
+            None => GraphView::new(self.pane.content_width(window))
+                .page_width(self.pane.page_width(window))
                 .render(self, window, cx),
         };
         let failure = self

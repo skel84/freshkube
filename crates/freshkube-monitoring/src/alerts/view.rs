@@ -348,7 +348,7 @@ impl AlertsPage {
             .min_h_0()
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = page::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = self.pane.page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_detail(cx);
         let least = self.split.short_height(beside, details.is_some());
         let split = inspector::split(
@@ -401,7 +401,7 @@ impl Render for AlertsPage {
         };
         // A state scrolls its full content beneath the fixed toolbar and
         // notes. Only a table needs the short window's minimum list height.
-        let short = state.is_none() && page::is_short(window);
+        let short = state.is_none() && self.pane.is_short(window);
         let (body, least) = match state {
             Some(state) => (self.render_state(&state, cx), page::SHORT_LIST_HEIGHT),
             None => self.render_table(window, cx),

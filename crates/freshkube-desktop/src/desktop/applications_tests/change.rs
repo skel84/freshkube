@@ -2235,7 +2235,7 @@ fn banners_leave_the_trail_a_header_and_two_rows_in_a_short_window(cx: &mut Test
                 }
             }
             window.render_frame(cx);
-            assert!(freshkube_ui::page::is_short(window));
+            assert!(freshkube_ui::pane::Pane::default().is_short(window));
             assert!(
                 window
                     .find("change-missing")
@@ -2342,7 +2342,7 @@ fn the_capped_block_shows_two_measured_lines_at_760_by_560_and_text_20(cx: &mut 
             }
         }
         window.render_frame(cx);
-        assert!(freshkube_ui::page::is_short(window));
+        assert!(freshkube_ui::pane::Pane::default().is_short(window));
         let notes = window.find("change-notes").bounds();
         let banner = window.find("change-stale").bounds();
         let viewport = notes.size.height
@@ -2416,7 +2416,7 @@ fn a_lone_long_banner_stays_capped(cx: &mut TestAppContext) {
             }
         }
         window.render_frame(cx);
-        assert!(freshkube_ui::page::is_short(window));
+        assert!(freshkube_ui::pane::Pane::default().is_short(window));
         assert!(window.try_find("change-pull").is_none());
         let notes = window.find("change-notes").bounds();
         let banner = window.find("change-stale").bounds();
@@ -2452,7 +2452,7 @@ fn banners_show_whole_when_the_window_has_room(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(change(&view, cx).is_some());
-        assert!(!freshkube_ui::page::is_short(window));
+        assert!(!freshkube_ui::pane::Pane::default().is_short(window));
         let notes = window.find("change-notes").bounds();
         let table = window.find("change-table-scroll").bounds();
         let banner = window.find("change-missing").bounds();
@@ -2491,7 +2491,7 @@ fn banners_use_the_room_the_trail_leaves_at_the_default_text_size(cx: &mut TestA
             }
         }
         window.render_frame(cx);
-        assert!(freshkube_ui::page::is_short(window));
+        assert!(freshkube_ui::pane::Pane::default().is_short(window));
         let notes = window.find("change-notes").bounds();
         let table = window.find("change-table-scroll").bounds();
         let status = window.find("status-bar").bounds();

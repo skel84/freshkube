@@ -122,6 +122,8 @@ struct RowSettings {
 }
 
 pub(crate) struct ProcessesScreen {
+    /// The pane this page draws in, which it asks for its room.
+    pane: freshkube_ui::pane::Pane,
     /// The table's rows until the first answer.
     loading: TableLoading,
     embedded: bool,
@@ -178,6 +180,7 @@ impl ProcessesScreen {
             }
         });
         Self {
+            pane: Default::default(),
             embedded: false,
             runtime,
             source: None,

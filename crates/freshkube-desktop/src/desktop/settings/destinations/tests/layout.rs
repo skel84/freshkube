@@ -282,7 +282,7 @@ fn a_short_window_keeps_each_list_usable(cx: &mut TestAppContext) {
                     pilot.show_settings(section, window, cx)
                 });
                 crate::desktop::tests::settle_header(window, cx);
-                assert!(freshkube_ui::page::is_short(window));
+                assert!(freshkube_ui::pane::Pane::default().is_short(window));
                 let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window) - px(2.);
                 let bounds = window.find(table).bounds();
                 assert!(bounds.size.height >= least, "{table} is {bounds:?}");

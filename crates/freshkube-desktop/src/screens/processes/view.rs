@@ -160,7 +160,7 @@ impl ProcessesScreen {
     /// The table, with the selection's details beside it on a wide page and
     /// below it on a narrow one.
     fn render_split(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let beside = crate::screens::beside(window, self.embedded);
+        let beside = crate::screens::beside(&self.pane, window, self.embedded);
         let table = div()
             .id("processes-table")
             .flex()
