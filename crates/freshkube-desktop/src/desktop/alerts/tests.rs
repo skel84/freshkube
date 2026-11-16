@@ -321,3 +321,95 @@ fn a_refresh_keeps_the_last_read_on_show(cx: &mut TestAppContext) {
     assert_eq!(rows(cx, &pilot).len(), 5, "Overview keeps its rows");
     assert_eq!(rail(cx, &pilot), Some(Tone::Crit));
 }
+
+/// The pod pane's Alerts section shows the session's alert that names the
+/// pod, from the one read the session already runs.
+#[gpui_kit::test]
+fn the_pod_pane_shows_the_session_alert_that_names_its_pod(cx: &mut TestAppContext) {
+    let options = GpuiOptions::fixture().with_debug(DebugOptions::parse(|name| {
+        (name == "FRESHKUBE_ALERTS").then(|| Shape::Firing.name().into())
+    }));
+    let (_runtime, handle, pilot) = mount(cx, options, 1280., 880.);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.startup_selection(
+                &DebugOptions::default().with_page("pod-overview"),
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // It is drawn below the containers, so it may be past the fold of
+        // the pane's scroll: its being laid out is what this checks.
+        let drawn = |id: &'static str| window.find(id).bounds().size.height > gpui_kit::px(0.);
+        assert!(drawn("alerts-section"));
+        assert!(
+            drawn("alert-example-KubePodCrashLooping-3"),
+            "the crash-looping alert names this pod"
+        );
+    })
+    .unwrap();
+}
+
+/// A node's Overview in the Nodes workspace has the Alerts section: the
+/// alert that names the node when there is one, and a plain state otherwise.
+#[gpui_kit::test]
+fn the_nodes_workspace_overview_shows_the_session_alerts_for_its_node(cx: &mut TestAppContext) {
+    let (_runtime, handle, _pilot) = shell(cx, Shape::Firing);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
+        window.render_frame(cx);
+        assert!(drawn(window, "alerts-section"));
+        assert!(
+            drawn(window, "alert-example-NodeFilesystemSpaceFillingUp-2"),
+            "the filesystem alert names this node"
+        );
+        crate::desktop::tests::click_node(window, cx, "node-talos-wk-fra1-02");
+        window.render_frame(cx);
+        assert!(
+            drawn(window, "alerts-quiet"),
+            "no alert names the other node"
+        );
+    })
+    .unwrap();
+}
+
+/// Whether the element is laid out, which a scrolled-off one is too.
+fn drawn(window: &mut gpui_kit::Window, id: &'static str) -> bool {
+    window.find(id).bounds().size.height > gpui_kit::px(0.)
+}
+
+/// A state read for another connection never reaches the node Overview, even
+/// for a node whose name the alert carries.
+#[gpui_kit::test]
+fn a_state_read_for_another_connection_never_reaches_the_node_overview(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = shell(cx, Shape::Firing);
+    let state = state(cx, &pilot).expect("example data read at once");
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.pages.node_workspace.update(cx, |nodes, cx| {
+                nodes.set_alerts(Some(("another-connection".into(), state.clone())), cx)
+            })
+        });
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
+        window.render_frame(cx);
+        assert!(
+            window.try_find("alerts-section").is_none(),
+            "another cluster's state draws no section"
+        );
+    })
+    .unwrap();
+}

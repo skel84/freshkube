@@ -2,6 +2,7 @@ use super::*;
 use crate::desktop::{Page, tests::fixture};
 use crate::resources::{Tab, example, live};
 use freshkube_core::resources::builtin;
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, Entity, OwnedMenu, OwnedMenuItem, TestAppContext};
 

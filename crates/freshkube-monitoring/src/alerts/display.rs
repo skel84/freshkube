@@ -376,7 +376,8 @@ fn stamp(at: Option<DateTime<Utc>>) -> String {
     )
 }
 
-fn severity_tone(severity: Severity) -> Tone {
+/// The tone of an alert's severity: shared with the panes' Alerts section.
+pub fn severity_tone(severity: Severity) -> Tone {
     match severity {
         Severity::Critical => Tone::Crit,
         Severity::Warning => Tone::Warn,

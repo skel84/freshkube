@@ -66,6 +66,10 @@ pub enum Variant {
     /// GitHub didn't answer: pull requests read before are kept, marked
     /// stale.
     GitHubOffline,
+    /// With no token the pull request's number came from the `(#418)` that
+    /// ends the commit's title and was read directly: the card's link says
+    /// so.
+    GitHubTitle,
     /// One change shows all four causes of an Unknown: Waiting, Can't read,
     /// Not set up and Not found.
     Causes,
@@ -86,7 +90,7 @@ impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
     /// `spread`, `not-found`, `unlabelled`, `stages`, `workloads`,
     /// `unreachable`, `argo-refused`, `destination`, `image-only`, `causes`, `promoting`,
-    /// `github-limited`, `github-refused`, `github-offline` or `outcome-<name>`
+    /// `github-limited`, `github-refused`, `github-offline`, `github-title` or `outcome-<name>`
     /// (`OutcomeKind::ALL` names them) from
     /// `FRESHKUBE_APPLICATIONS`, parsed into `DebugOptions` (debug and
     /// stress builds only); anything else is `Acme`.
@@ -128,6 +132,7 @@ impl Variant {
         ("github-limited", Self::GitHubLimited),
         ("github-refused", Self::GitHubRefused),
         ("github-offline", Self::GitHubOffline),
+        ("github-title", Self::GitHubTitle),
         ("causes", Self::Causes),
         ("promoting", Self::Promoting),
         ("rollback-unknown", Self::RollbackUnknown),
@@ -156,6 +161,7 @@ impl Variant {
             Self::GitHubLimited => Shape::GitHubLimited,
             Self::GitHubRefused => Shape::GitHubRefused,
             Self::GitHubOffline => Shape::GitHubOffline,
+            Self::GitHubTitle => Shape::GitHubTitle,
             Self::Causes => Shape::Causes,
             Self::Promoting => Shape::Promoting,
             Self::RollbackUnknown => Shape::RollbackUnknown,
@@ -205,6 +211,7 @@ pub fn inputs(variant: Variant) -> Inputs {
         | Variant::GitHubLimited
         | Variant::GitHubRefused
         | Variant::GitHubOffline
+        | Variant::GitHubTitle
         | Variant::Outcome(_) => {}
         Variant::Single => {
             let kargo = cicd(&mut inputs).kargo.clone();

@@ -72,7 +72,7 @@ fn small_window_stacked_inspector_keeps_the_table_header_in_place(cx: &mut TestA
             "settings-table",
             "settings-detail",
             "settings-detail-title",
-            crate::desktop::settings::STACKED_LIST_LEAST,
+            freshkube_ui::inspector::PICKER_LIST_MIN_HEIGHT,
         );
         let fixed = [
             "settings-title",

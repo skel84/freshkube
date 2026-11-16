@@ -4,6 +4,7 @@
 //! needs the same access and changes nothing.
 //!
 //! - [`model`]: the shapes, whichever server they came from.
+//! - [`object`]: the alerts whose labels name one pod, workload or node.
 //! - [`parse`]: pure parsers for each server's JSON.
 //! - [`discover`]: which Services are the Alertmanager and the vmalert.
 //! - [`read`]: the clients, the bounded reads and the central label's scope.
@@ -16,6 +17,7 @@ mod discover;
 mod drive;
 pub mod example;
 mod model;
+pub mod object;
 mod parse;
 mod read;
 mod rules;

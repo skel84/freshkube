@@ -15,6 +15,7 @@
 //! a state that says so, and a refresh that failed over an earlier read
 //! keeps it, marked as the last read.
 mod display;
+pub use display::severity_tone;
 mod table;
 mod view;
 
