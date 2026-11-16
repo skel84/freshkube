@@ -31,6 +31,8 @@ struct World {
     view: Entity<Pilot>,
     cluster: Cluster,
     dir: tempfile::TempDir,
+    /// Keeps the world's setup file published for the shell; dropped with it.
+    _setup: Option<crate::mutation::SetupFileOverride>,
 }
 
 /// The shell on the example workspace's entry `entry`, over a fake cluster
@@ -48,12 +50,13 @@ fn world_on(cx: &mut TestAppContext, entry: &str, make: impl FnOnce() -> Cluster
         let _guard = runtime.enter();
         make()
     };
-    let world = World {
+    let mut world = World {
         runtime,
         handle,
         view,
         cluster,
         dir,
+        _setup: None,
     };
     world.switch(cx, entry);
     // A send reads the setup file again (#1055): this world's is the example
@@ -78,7 +81,7 @@ fn world_on(cx: &mut TestAppContext, entry: &str, make: impl FnOnce() -> Cluster
         .collect();
     let text = serde_json::json!({ "version": 1, "clusters": clusters }).to_string();
     std::fs::write(&file, text).unwrap();
-    cx.update(|cx| crate::mutation::setup_file_under(file, cx));
+    world._setup = Some(cx.update(|cx| crate::mutation::setup_file_under(file, cx)));
     world
 }
 
