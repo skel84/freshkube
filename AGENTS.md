@@ -104,7 +104,7 @@ The values each knob takes and what each shape does are in [docs/DEBUG_KNOBS.md]
 | `FRESHKUBE_SERVICES` | Shapes the Service pane's endpoints and a workload's traffic chain example, with `--fixture`. | debug and stress builds |
 | `FRESHKUBE_SIDEBAR` | Starts the sidebar collapsed or expanded. | debug and stress builds |
 | `FRESHKUBE_TABS` | Opens the view tabs on invented clusters, or a shell on one while another is shown, with `--fixture`. | debug and stress builds |
-| `FRESHKUBE_TEAM` | Shapes Settings › Team setup, with `--fixture`; Join and Fetch answer from a script, never the network. | debug and stress builds |
+| `FRESHKUBE_TEAM` | Shapes Settings › Team setup, with `--fixture`; Join and Fetch answer from a script, never the network; `unreadable` shows a saved team that can't be read, every context held read-only. | debug and stress builds |
 | `FRESHKUBE_TEXT_SIZE` | Starts at a text size without saving it. | debug builds |
 | `FRESHKUBE_THEME` | Selects light or dark without changing saved settings. | debug and stress builds |
 | `FRESHKUBE_TIMELINE` | Reshapes an application's Timeline example, with `--fixture`. | debug and stress builds |

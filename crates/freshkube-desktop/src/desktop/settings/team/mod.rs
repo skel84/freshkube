@@ -173,6 +173,11 @@ impl TeamState {
                 review,
                 ..Self::default()
             },
+            None if shape == Shape::Unreadable => Self {
+                corrupt: true,
+                notice: Some("The file that keeps your team setup couldn’t be read.".into()),
+                ..Self::default()
+            },
             None => Self::default(),
         };
         state.derive();
@@ -1060,10 +1065,12 @@ impl SettingsPage {
     /// floors are no longer unknown. A write that fails leaves every context
     /// held read-only.
     pub(super) fn team_forget_unreadable(&mut self, cx: &mut Context<Self>) {
-        let Some(store) = &self.team.store else {
-            return;
+        // Example data has no file: forgetting is only in memory.
+        let saved = match &self.team.store {
+            Some(store) => store.save(None),
+            None => Ok(()),
         };
-        match store.save(None) {
+        match saved {
             Ok(()) => {
                 self.team.corrupt = false;
                 self.team.notice = None;

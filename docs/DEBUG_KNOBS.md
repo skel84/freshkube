@@ -331,6 +331,7 @@ Read by: debug and stress builds. With `--fixture`, shapes Settings › Team set
 - `joined`: joined at the newest version with two ignored keys and two overrides of your own.
 - `none`: not in a team (the default).
 - `trust`: a newer version waiting that changes a signing key, two addresses and a looser protection level.
+- `unreadable`: not in a team, and the saved team couldn't be read: every context is held read-only and Team setup says so, with Forget it, which ends the hold.
 - `update`: a newer version waiting with no trust change.
 
 ## `FRESHKUBE_TEXT_SIZE`

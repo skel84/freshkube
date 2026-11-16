@@ -24,6 +24,9 @@ pub enum Shape {
     Failed,
     /// Not joined, and the fetch of whatever address is typed fails.
     JoinFailed,
+    /// The saved team couldn't be read: no team, and every context held
+    /// read-only until you join again or forget it.
+    Unreadable,
 }
 
 impl Shape {
@@ -36,6 +39,7 @@ impl Shape {
         ("trust", Self::Trust),
         ("failed", Self::Failed),
         ("join-failed", Self::JoinFailed),
+        ("unreadable", Self::Unreadable),
     ];
 
     pub fn parse(text: &str) -> Option<Self> {
@@ -128,7 +132,7 @@ pub fn source() -> Source {
 /// The example membership and, when one waits, its review. `now` is the
 /// clock, so a failure's "since" is told against it.
 pub fn membership(shape: Shape, now: DateTime<Utc>) -> Option<(Membership, Option<Review>)> {
-    if matches!(shape, Shape::NoTeam | Shape::JoinFailed) {
+    if matches!(shape, Shape::NoTeam | Shape::JoinFailed | Shape::Unreadable) {
         return None;
     }
     let mut mine = Overrides::new();

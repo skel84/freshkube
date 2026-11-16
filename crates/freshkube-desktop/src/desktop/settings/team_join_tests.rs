@@ -11,7 +11,7 @@ use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn open(
+pub(super) fn open(
     cx: &mut TestAppContext,
     shape: Shape,
 ) -> (
@@ -37,6 +37,10 @@ pub(super) fn settle(cx: &mut TestAppContext, handle: AnyWindowHandle) {
         .unwrap();
 }
 
+pub(super) fn click_for_saved(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) {
+    click(cx, handle, id)
+}
+
 fn click(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -56,7 +60,7 @@ fn type_into(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str,
     settle(cx, handle);
 }
 
-fn visible(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> bool {
+pub(super) fn visible(cx: &mut TestAppContext, handle: AnyWindowHandle, id: &'static str) -> bool {
     cx.update_window(handle, |_, window, _| {
         window.try_find(id).is_some_and(|e| e.visible())
     })

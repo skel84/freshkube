@@ -604,6 +604,8 @@ mod tests {
             ("update", Shape::Update),
             ("trust", Shape::Trust),
             ("failed", Shape::Failed),
+            ("join-failed", Shape::JoinFailed),
+            ("unreadable", Shape::Unreadable),
         ] {
             assert_eq!(parse(&[("FRESHKUBE_TEAM", value)]).team, Some(shape));
         }

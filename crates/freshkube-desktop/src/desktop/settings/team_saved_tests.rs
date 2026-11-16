@@ -370,3 +370,44 @@ fn an_unreadable_team_is_held_until_a_join_writes_a_team_over_it(cx: &mut TestAp
     // Not read-only everywhere any more: only what the team's floors hold.
     assert_eq!(context_levels(cx, &again).1, Protection::Guarded);
 }
+
+#[gpui_kit::test]
+fn the_unreadable_example_holds_every_context_read_only_until_it_is_forgotten(
+    cx: &mut TestAppContext,
+) {
+    use crate::desktop::settings::team_join_tests::{open, visible};
+    use freshkube_core::team::example::Shape;
+    use freshkube_core::write::Protection;
+    let (_runtime, handle, view) = open(cx, Shape::Unreadable);
+    let settings = page(cx, &view);
+    assert!(visible(cx, handle, "team-notice"));
+    assert!(visible(cx, handle, "team-forget-unreadable"));
+    assert!(
+        visible(cx, handle, "team-join-address-input"),
+        "joining again is offered"
+    );
+    // Every context the fixture's setup has is held read-only.
+    cx.update(|cx| {
+        let page = settings.read(cx);
+        assert!(page.rows.iter().all(|row| {
+            page.workspace()
+                .level_of(row.context.as_ref(), &page.source_recovery)
+                == Protection::ReadOnly
+        }));
+        assert_eq!(
+            page.team_notice().map(|n| n.contains("read-only")),
+            Some(true)
+        );
+    });
+    super::team_join_tests::click_for_saved(cx, handle, "team-forget-unreadable");
+    assert!(!visible(cx, handle, "team-notice"));
+    cx.update(|cx| {
+        let page = settings.read(cx);
+        assert!(page.rows.iter().all(|row| {
+            page.workspace()
+                .level_of(row.context.as_ref(), &page.source_recovery)
+                != Protection::ReadOnly
+                || row.protection == Some(Protection::ReadOnly)
+        }));
+    });
+}
