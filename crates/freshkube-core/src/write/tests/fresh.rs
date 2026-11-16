@@ -50,7 +50,7 @@ async fn safety_g28_a_file_edited_stricter_after_the_dialog_sends_nothing_for_ev
         (fake::delete_web(), Protection::Protected),
     ] {
         let (cluster, dir) = (Cluster::new(), tmp());
-        let (runner, path) = runner(&cluster, dir.path(), Protection::Guarded);
+        let (runner, _) = runner(&cluster, dir.path(), Protection::Guarded);
         let prepared = ready(&runner, action).await;
         // Edited outside the app while the dialog was open.
         file(dir.path(), &[("prod-fra", to)]);
