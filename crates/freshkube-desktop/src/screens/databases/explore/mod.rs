@@ -219,6 +219,7 @@ pub(super) struct ExploreView {
 
 impl ExploreView {
     pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: Handle,
         source: ClusterSource,
         database: Database,
@@ -227,7 +228,7 @@ impl ExploreView {
         cx: &mut Context<Self>,
     ) -> Self {
         let browser = cx.new(|cx| Browser::new(runtime.clone(), cx));
-        let data = cx.new(|cx| DataView::new(runtime.clone(), cx));
+        let data = cx.new(|cx| DataView::new(pane.clone(), runtime.clone(), cx));
         let subscription = cx.subscribe(&browser, |this, _, open: &browser::Open, cx| {
             this.data.update(cx, |data, cx| {
                 data.open(open.schema.clone(), open.table.clone(), cx)
@@ -242,7 +243,7 @@ impl ExploreView {
             async {}
         });
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source,
             database,

@@ -67,8 +67,13 @@ fn mount_with(
     let mut page = None;
     let window = cx.open_window(size(px(1200.), px(900.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view =
-                MonitoringPage::new(runtime.handle().clone(), preferences, secrets.clone(), cx);
+            let mut view = MonitoringPage::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                preferences,
+                secrets.clone(),
+                cx,
+            );
             view.now = || NOW;
             view.set_source(source, cx);
             view

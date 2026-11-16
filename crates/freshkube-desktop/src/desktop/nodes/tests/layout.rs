@@ -582,7 +582,7 @@ fn a_narrow_window_at_large_text_shows_one_card_to_a_row(cx: &mut TestAppContext
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
         assert_eq!(
-            super::super::cards::card_columns(&freshkube_ui::pane::Pane::default(), window),
+            super::super::cards::card_columns(&pilot.read(cx).pane_room(), window),
             1
         );
         let list = window.find("nodes-cards").bounds();

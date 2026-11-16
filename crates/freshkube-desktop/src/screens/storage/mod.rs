@@ -151,7 +151,12 @@ pub(crate) struct StorageScreen {
 impl EventEmitter<ScreenEvent> for StorageScreen {}
 
 impl StorageScreen {
-    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextRow, Some(CONTEXT)),
             KeyBinding::new("up", PreviousRow, Some(CONTEXT)),
@@ -162,7 +167,7 @@ impl StorageScreen {
             KeyBinding::new("tab", SwitchView, Some(CONTEXT)),
         ]);
         Self {
-            pane: Default::default(),
+            pane,
             embedded: false,
             runtime,
             source: None,

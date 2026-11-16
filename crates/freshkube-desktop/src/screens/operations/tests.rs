@@ -73,7 +73,12 @@ fn mount_sized(
     let mut screen = None;
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = OperationsScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = OperationsScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.step = Duration::from_millis(step_ms);
             view.set_source(Some(source), window, cx);
             view.activate(window, cx);

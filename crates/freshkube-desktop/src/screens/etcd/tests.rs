@@ -118,7 +118,12 @@ fn mount(cx: &mut TestAppContext, node: &str) -> (Runtime, Entity<EtcdScreen>, W
     let mut screen = None;
     let handle = cx.open_window(size(px(1100.), px(760.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = EtcdScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = EtcdScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_source(Some(source), window, cx);
             view.activate(window, cx);
             view

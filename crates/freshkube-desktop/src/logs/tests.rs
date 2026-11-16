@@ -41,7 +41,13 @@ fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<LogPanel>, WindowHandle<Ro
     let mut panel = None;
     let handle = cx.open_window(size(px(620.), px(760.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = LogPanel::new(runtime.handle().clone(), 100, window, cx);
+            let mut view = LogPanel::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                100,
+                window,
+                cx,
+            );
             view.set_fixture(fixture_events(), window, cx);
             view
         });
@@ -292,7 +298,13 @@ fn mount_services(
     let mut panel = None;
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = LogPanel::new(runtime.handle().clone(), 100, window, cx);
+            let mut view = LogPanel::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                100,
+                window,
+                cx,
+            );
             view.set_fixture(events, window, cx);
             view
         });

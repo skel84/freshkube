@@ -1114,7 +1114,17 @@ fn teleport_view(
             (view.source.clone(), view.database.clone())
         };
         let handle = runtime.handle().clone();
-        cx.new(|cx| super::ExploreView::new(handle, source, database, None, Some(access), cx))
+        cx.new(|cx| {
+            super::ExploreView::new(
+                freshkube_ui::pane::Pane::new(),
+                handle,
+                source,
+                database,
+                None,
+                Some(access),
+                cx,
+            )
+        })
     })
 }
 

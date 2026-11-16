@@ -62,7 +62,12 @@ fn mount_sized(
     let mut screen = None;
     let handle = cx.open_window(size(px(width), px(760.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = LifecycleScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = LifecycleScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_source(Some(source), window, cx);
             view.activate(window, cx);
             view

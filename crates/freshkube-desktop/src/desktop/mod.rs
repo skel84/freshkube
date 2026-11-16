@@ -310,6 +310,7 @@ fn cached_page_style() -> StyleRefinement {
 
 /// What `Pilot::new` makes the shell of, beside the session.
 struct Owners {
+    panes: panes::Panes,
     pages: page_map::Pages,
     chrome: shell::Chrome,
     navigation: shell::Navigation,
@@ -389,6 +390,12 @@ pub(crate) struct Pilot {
 }
 
 impl Pilot {
+    /// The room of the pane the shell sets, which tests read widths from.
+    #[cfg(test)]
+    pub(crate) fn pane_room(&self) -> freshkube_ui::pane::Pane {
+        self.panes.room()
+    }
+
     /// The Workloads screen, for its tests to read its rows.
     #[cfg(test)]
     pub(crate) fn workloads(&self) -> Entity<crate::screens::WorkloadsScreen> {
@@ -693,7 +700,8 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> Self {
         // The window opens on Overview, which has no navigation column.
-        freshkube_ui::pane::Pane::default().set_chrome(RAIL_WIDTH);
+        let panes = panes::Panes::new();
+        panes.room().set_chrome(RAIL_WIDTH);
         // Opened before the pages, which read their splits' sizes from it.
         let navigation_file =
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
@@ -711,7 +719,14 @@ impl Pilot {
         let mut subscriptions = Self::subscribe_shell(window, cx);
         let age_label = cx.new(|_| switch::AgeLabel::new());
         let switch = switch::Switcher::new(age_label);
-        let pages = page_map::Pages::new(&options, &runtime, &switch.age_label, window, cx);
+        let pages = page_map::Pages::new(
+            &options,
+            &runtime,
+            &switch.age_label,
+            &panes.room(),
+            window,
+            cx,
+        );
         subscriptions.push(Self::observe_theme(window, cx));
         subscriptions.push(Self::observe_level_raised(window, cx));
         subscriptions.extend(pages.subscribe(window, cx));
@@ -722,11 +737,12 @@ impl Pilot {
             window,
             cx,
         );
-        let navigation = shell::Navigation::new(navigation_file, cx);
+        let navigation = shell::Navigation::new(panes.room(), navigation_file, cx);
         let mut view = Self::with_session(
             &options,
             runtime,
             Owners {
+                panes,
                 pages,
                 chrome,
                 navigation,
@@ -895,6 +911,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> Self {
         let Owners {
+            panes,
             pages,
             chrome,
             navigation,
@@ -904,7 +921,7 @@ impl Pilot {
         } = owners;
         let tabs = tabs::Tabs::new(&pages.resources, &pages.node_workspace, cx);
         Self {
-            panes: panes::Panes::new(),
+            panes,
             runtime,
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
             loaded_config_path: None,

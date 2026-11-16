@@ -85,7 +85,12 @@ pub(crate) struct SecurityScreen {
 impl EventEmitter<ScreenEvent> for SecurityScreen {}
 
 impl SecurityScreen {
-    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -94,7 +99,7 @@ impl SecurityScreen {
             KeyBinding::new("escape", CloseDetails, Some(CONTEXT)),
         ]);
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             loader: Loader::default(),

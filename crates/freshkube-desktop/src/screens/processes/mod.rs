@@ -149,7 +149,12 @@ pub(crate) struct ProcessesScreen {
 impl EventEmitter<ScreenEvent> for ProcessesScreen {}
 
 impl ProcessesScreen {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextProcess, Some(CONTEXT)),
             KeyBinding::new("up", PreviousProcess, Some(CONTEXT)),
@@ -180,7 +185,7 @@ impl ProcessesScreen {
             }
         });
         Self {
-            pane: Default::default(),
+            pane,
             embedded: false,
             runtime,
             source: None,

@@ -51,8 +51,13 @@ fn open(cx: &mut TestAppContext, kind: OutcomeKind) -> Harness {
     let window = cx
         .open_window(size(px(1280.), px(880.)), |window, cx| {
             let view = cx.new(|cx| {
-                let mut page =
-                    ChangesPage::new(runtime.handle().clone(), Shape::default(), None, cx);
+                let mut page = ChangesPage::new(
+                    freshkube_ui::pane::Pane::new(),
+                    runtime.handle().clone(),
+                    Shape::default(),
+                    None,
+                    cx,
+                );
                 page.set_coroot(Coroot::Example(Some(kind)), cx);
                 page.set_source(
                     Some(ClusterSource {
@@ -149,7 +154,16 @@ fn live(h: &Harness, cx: &mut TestAppContext) -> (Entity<ObservabilityPage>, Scr
     let script = Script::new();
     let observability = cx
         .update_window(h.window, |_, window, cx| {
-            cx.new(|cx| ObservabilityPage::new(h.runtime.handle().clone(), None, None, window, cx))
+            cx.new(|cx| {
+                ObservabilityPage::new(
+                    freshkube_ui::pane::Pane::new(),
+                    h.runtime.handle().clone(),
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
+            })
         })
         .unwrap();
     let reader = OutcomeReader::scripted(&observability, &script);
@@ -205,7 +219,15 @@ fn unread_stage_link_opens_the_change_and_a_read_survives_closing_it(cx: &mut Te
     // The same memo feeds a new list entity in this application session.
     drop(change);
     let other = cx.update(|cx| {
-        cx.new(|cx| ChangesPage::new(h.runtime.handle().clone(), Shape::default(), None, cx))
+        cx.new(|cx| {
+            ChangesPage::new(
+                freshkube_ui::pane::Pane::new(),
+                h.runtime.handle().clone(),
+                Shape::default(),
+                None,
+                cx,
+            )
+        })
     });
     cx.read(|cx| assert_eq!(h.page.read(cx).outcome_memo, other.read(cx).outcome_memo));
 }

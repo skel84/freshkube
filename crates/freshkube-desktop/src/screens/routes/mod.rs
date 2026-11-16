@@ -74,7 +74,12 @@ impl EventEmitter<ScreenEvent> for RoutesScreen {}
 impl EventEmitter<ResourceLink> for RoutesScreen {}
 
 impl RoutesScreen {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", Next, Some(CONTEXT)),
             KeyBinding::new("up", Previous, Some(CONTEXT)),
@@ -96,7 +101,7 @@ impl RoutesScreen {
             }
         });
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             visible: false,

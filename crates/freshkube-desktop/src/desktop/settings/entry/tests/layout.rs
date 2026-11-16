@@ -226,7 +226,7 @@ fn clusters_is_a_table_page_with_an_inspector_at_every_size(cx: &mut TestAppCont
                     "settings-detail-title",
                     freshkube_ui::inspector::PICKER_LIST_MIN_HEIGHT,
                 );
-                let beside = freshkube_ui::pane::Pane::default().page_width(window)
+                let beside = view.read(cx).pane_room().page_width(window)
                     >= freshkube_ui::inspector::SPLIT_WIDTH;
                 let table = window.find("settings-table").bounds();
                 let detail = window.find("settings-detail").bounds();

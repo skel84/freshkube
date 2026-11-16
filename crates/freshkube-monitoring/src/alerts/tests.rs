@@ -53,7 +53,12 @@ fn mount(
     let mut page = None;
     let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = AlertsPage::new(which, runtime.handle().clone(), cx);
+            let mut view = AlertsPage::new(
+                freshkube_ui::pane::Pane::new(),
+                which,
+                runtime.handle().clone(),
+                cx,
+            );
             view.set_now(now);
             view.shape = shape;
             view.set_source(source, cx);

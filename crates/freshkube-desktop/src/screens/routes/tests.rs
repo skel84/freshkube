@@ -43,8 +43,13 @@ fn mount(
     let mut page = None;
     let window = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view =
-                RoutesScreen::new(runtime.handle().clone(), window, cx).with_example(shape);
+            let mut view = RoutesScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            )
+            .with_example(shape);
             view.set_page_source(source("invented-access"), window, cx);
             view.set_visible(true, window, cx);
             view.activate(window, cx);
@@ -451,7 +456,12 @@ fn mount_access(
     let mut page = None;
     let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = RoutesScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = RoutesScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_page_source(
                 PageSource {
                     kube: Some(ClusterSource {

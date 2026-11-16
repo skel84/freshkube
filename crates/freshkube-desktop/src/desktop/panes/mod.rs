@@ -52,7 +52,7 @@ impl Panes {
         Self {
             slots: vec![Slot {
                 id: PaneId::FIRST,
-                room: Pane::default(),
+                room: Pane::new(),
             }],
             focused: PaneId::FIRST,
         }
@@ -64,7 +64,7 @@ impl Panes {
             .iter()
             .find(|slot| slot.id == self.focused)
             .map(|slot| slot.room.clone())
-            .unwrap_or_default()
+            .expect("the focused pane is in the list")
     }
 
     /// The frame of the first pane around `page`, drawn in every state.
@@ -94,6 +94,6 @@ mod tests {
     #[test]
     fn the_first_pane_is_focused_and_in_the_main_room() {
         let panes = Panes::new();
-        assert!(panes.room().is(&Pane::default()));
+        assert!(panes.room().is(&Pane::new()));
     }
 }

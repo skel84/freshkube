@@ -94,8 +94,14 @@ fn mount_access(
     let mut app = None;
     let window = cx.open_window(size(px(1280.), px(880.)), |window, cx| {
         let page = cx.new(|cx| {
-            let mut page =
-                ApplicationsPage::new(runtime.handle().clone(), Variant::Acme, secrets, window, cx);
+            let mut page = ApplicationsPage::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                Variant::Acme,
+                secrets,
+                window,
+                cx,
+            );
             page.set_setup(setup, cx);
             page.set_clusters(
                 Clusters {

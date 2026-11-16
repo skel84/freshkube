@@ -13,6 +13,7 @@ async fn monitoring_url_tokens_save_separately_and_a_refused_file_restores_them(
     cx.update_window(handle, |_, window, cx| {
         let monitoring = cx.new(|cx| {
             super::MonitoringPage::new(
+                freshkube_ui::pane::Pane::new(),
                 runtime.handle().clone(),
                 Some(&directory.path().join("preferences.json")),
                 Some(secrets.clone()),

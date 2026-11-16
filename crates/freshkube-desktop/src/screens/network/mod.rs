@@ -309,7 +309,12 @@ pub(crate) struct NetworkScreen {
 impl EventEmitter<ScreenEvent> for NetworkScreen {}
 
 impl NetworkScreen {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextRow, Some(CONTEXT)),
             KeyBinding::new("up", PreviousRow, Some(CONTEXT)),
@@ -340,7 +345,7 @@ impl NetworkScreen {
             }
         });
         Self {
-            pane: Default::default(),
+            pane,
             embedded: false,
             runtime,
             source: None,

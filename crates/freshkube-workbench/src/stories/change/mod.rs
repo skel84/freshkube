@@ -33,7 +33,7 @@ const PREFIX: &str = "change-trail";
 const TABLE: &str = "change-trail-hops";
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
-    let story = cx.new(ChangeStory::new);
+    let story = cx.new(|cx| ChangeStory::new(freshkube_ui::pane::Pane::new(), cx));
     // The first row selected sits below a short window's stacked table.
     table::reveal_when_settled(story.downgrade(), |_| true, window);
     story.into()
@@ -153,7 +153,7 @@ fn rank(tone: Tone) -> u8 {
 }
 
 impl ChangeStory {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(pane: freshkube_ui::pane::Pane, cx: &mut Context<Self>) -> Self {
         let column = |kind, label: &str, width| Column {
             kind,
             label: label.to_owned().into(),
@@ -193,7 +193,7 @@ impl ChangeStory {
             }
         }
         let mut story = Self {
-            pane: Default::default(),
+            pane,
             table: TableState::new(TABLE),
             columns: vec![
                 column(Kind::Glyph, "", GLYPH_WIDTH),

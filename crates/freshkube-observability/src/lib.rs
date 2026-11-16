@@ -257,6 +257,7 @@ impl ObservabilityPage {
     }
 
     pub fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
         preferences: Option<&std::path::Path>,
         secrets: Option<crate::secrets::Secrets>,
@@ -364,7 +365,7 @@ impl ObservabilityPage {
             }),
         ];
         let mut this = Self {
-            pane: Default::default(),
+            pane,
             fixture: false,
             example_views: Default::default(),
             hold: false,

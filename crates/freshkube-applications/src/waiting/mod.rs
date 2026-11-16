@@ -140,6 +140,7 @@ pub struct WaitingPage {
 
 impl WaitingPage {
     pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
         shape: Shape,
         secrets: Option<freshkube_core::secrets::Secrets>,
@@ -159,7 +160,7 @@ impl WaitingPage {
             }
         });
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             secrets,
             setup_revision: 0,

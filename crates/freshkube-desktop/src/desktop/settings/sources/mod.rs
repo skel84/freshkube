@@ -164,13 +164,14 @@ pub(crate) struct SourcesList {
 
 impl SourcesList {
     pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
         runtime: tokio::runtime::Handle,
         page: WeakEntity<super::SettingsPage>,
         cx: &mut Context<Self>,
     ) -> Self {
         let sources = Sources::of(&Default::default());
         let mut list = Self {
-            pane: Default::default(),
+            pane,
             rows: Vec::new(),
             selected: None,
             menu_holds_inspector: false,

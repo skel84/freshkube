@@ -71,10 +71,14 @@ pub(in crate::desktop) struct Navigation {
 
 impl Navigation {
     /// The window opens on Overview, which has no navigation column.
-    pub(in crate::desktop) fn new(file: NavigationFile, cx: &mut App) -> Self {
+    pub(in crate::desktop) fn new(
+        pane: freshkube_ui::pane::Pane,
+        file: NavigationFile,
+        cx: &mut App,
+    ) -> Self {
         let default_kind = || builtin(kinds::DEFAULT_KIND).expect("the default kind is built in");
         Self {
-            pane: Default::default(),
+            pane,
             page: Page::Overview,
             settings_leave: None,
             settings_unsaved: (None, Vec::new()),

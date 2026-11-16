@@ -110,7 +110,12 @@ type StatusKey = (u64, Option<(SessionIdentity, u64)>, Option<(String, bool)>);
 impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 
 impl LifecycleScreen {
-    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -119,7 +124,7 @@ impl LifecycleScreen {
             KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
         ]);
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             summary_nodes: None,

@@ -101,6 +101,7 @@ fn open_view(
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let entity = cx.new(|cx| {
             ChangePage::new(
+                freshkube_ui::pane::Pane::new(),
                 Fetch::Example {
                     project: "checkout".into(),
                     freight: "wonky-otter".into(),

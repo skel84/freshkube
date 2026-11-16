@@ -19,8 +19,9 @@ enum State {
 }
 
 pub(super) fn build(window: &mut Window, cx: &mut App) -> AnyView {
+    let pane = freshkube_ui::pane::Pane::new();
     cx.new(|cx| FormStory {
-        pane: Default::default(),
+        pane,
         state: State::Plain,
         context: cx.new(|cx| InputState::new(window, cx).default_value("cluster-a")),
         path: cx.new(|cx| InputState::new(window, cx).default_value("/example/config")),

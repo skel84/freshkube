@@ -58,7 +58,12 @@ fn mount(
     let mut screen = None;
     let handle = cx.open_window(size(px(1100.), px(1500.)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = DiagnosticsScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = DiagnosticsScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_source(Some(source), window, cx);
             view.activate(window, cx);
             view

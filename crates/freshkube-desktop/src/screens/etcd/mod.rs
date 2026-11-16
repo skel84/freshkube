@@ -202,7 +202,12 @@ struct Derived {
 impl EventEmitter<ScreenEvent> for EtcdScreen {}
 
 impl EtcdScreen {
-    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
+        runtime: Handle,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextMember, Some(CONTEXT)),
             KeyBinding::new("up", PreviousMember, Some(CONTEXT)),
@@ -211,7 +216,7 @@ impl EtcdScreen {
             KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
         ]);
         Self {
-            pane: Default::default(),
+            pane,
             runtime,
             source: None,
             loader: Loader::default(),

@@ -37,6 +37,7 @@ fn the_view_is_remembered_when_another_change_opens(cx: &mut TestAppContext) {
         hops(&page, window, cx);
         let reopened = cx.new(|cx| {
             ChangePage::new(
+                freshkube_ui::pane::Pane::new(),
                 page.read(cx).fetch.clone(),
                 None,
                 Connections::default(),
@@ -69,8 +70,17 @@ fn two_windows_keep_their_own_view_when_another_change_opens(cx: &mut TestAppCon
     ] {
         cx.update_window(handle, |_, window, cx| {
             let fetch = page.read(cx).fetch.clone();
-            let reopened =
-                cx.new(|cx| ChangePage::new(fetch, None, Connections::default(), true, window, cx));
+            let reopened = cx.new(|cx| {
+                ChangePage::new(
+                    freshkube_ui::pane::Pane::new(),
+                    fetch,
+                    None,
+                    Connections::default(),
+                    true,
+                    window,
+                    cx,
+                )
+            });
             assert_eq!(reopened.read(cx).view, expected);
         })
         .unwrap();

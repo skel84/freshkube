@@ -133,6 +133,7 @@ impl EventEmitter<ResourceLink> for GatewaysScreen {}
 
 impl GatewaysScreen {
     pub(crate) fn new(
+        pane: freshkube_ui::pane::Pane,
         mode: Mode,
         runtime: Handle,
         window: &mut Window,
@@ -160,7 +161,7 @@ impl GatewaysScreen {
         });
         let prefix = mode.prefix();
         Self {
-            pane: Default::default(),
+            pane,
             mode,
             runtime,
             source: None,

@@ -193,6 +193,7 @@ impl EventEmitter<ApplicationEvent> for ApplicationPage {}
 
 impl ApplicationPage {
     pub(super) fn new(
+        pane: freshkube_ui::pane::Pane,
         app: &Application,
         read: &Read,
         connections: &Connections,
@@ -207,7 +208,7 @@ impl ApplicationPage {
             cx.new(|cx| timeline::TimelineView::new(&name, fetch, cx))
         };
         let mut page = Self {
-            pane: Default::default(),
+            pane,
             id: app.id.clone(),
             name: app.name.clone().into(),
             what: what_it_is(app).into(),

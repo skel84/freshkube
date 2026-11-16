@@ -93,7 +93,12 @@ fn mount_window(
     let mut screen = None;
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
-            let mut view = ResourcesScreen::new(runtime.handle().clone(), window, cx);
+            let mut view = ResourcesScreen::new(
+                freshkube_ui::pane::Pane::new(),
+                runtime.handle().clone(),
+                window,
+                cx,
+            );
             view.set_source(source, window, cx);
             view.set_visible(true, window, cx);
             // Most tests read the rows in one sorted list; the problems

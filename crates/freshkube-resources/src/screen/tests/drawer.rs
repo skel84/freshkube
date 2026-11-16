@@ -543,7 +543,7 @@ fn the_drawer_reads_the_room_of_its_own_pane(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount_sized(cx, Some("homelab"), 1280.);
     let own = freshkube_ui::pane::Pane::new();
     own.set_chrome(0.);
-    let main = freshkube_ui::pane::Pane::default();
+    let main = freshkube_ui::pane::Pane::new();
     assert!(!own.is(&main));
     cx.update_window(handle, |_, window, cx| {
         screen.update(cx, |screen, _| {
