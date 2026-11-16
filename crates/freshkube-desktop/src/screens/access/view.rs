@@ -392,7 +392,11 @@ impl Render for AccessScreen {
                         this.child(
                             page::capped_notes(
                                 "access-notices",
-                                if short { dp(60.).into() } else { Length::Auto },
+                                if short {
+                                    page::banner_lines_cap(3, window).into()
+                                } else {
+                                    Length::Auto
+                                },
                                 &self.notes_scroll,
                                 banners,
                                 Some(palette(cx).line),

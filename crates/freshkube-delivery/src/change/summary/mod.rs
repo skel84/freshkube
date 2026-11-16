@@ -66,7 +66,7 @@ fn reason(cause: &Cause, hop: &Hop) -> String {
             (None, false) => "refused".to_owned(),
             (None, true) => "unreadable".to_owned(),
         },
-        Cause::NotSetUp { field, .. } => format!("{} not set", field.field),
+        Cause::NotSetUp { field, .. } => format!("{} not set", field.name),
         // The hop's kind is its name's first word: `Run checkout-pr-418`.
         Cause::NotFound { .. } => format!(
             "{} not found",

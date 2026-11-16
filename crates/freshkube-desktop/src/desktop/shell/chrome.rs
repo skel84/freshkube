@@ -22,7 +22,7 @@ use crate::forwards::ForwardsIndicator;
 use freshkube_prefs::{Document, Layout};
 use freshkube_ui::platform::{
     About, AppMenu, OpenAppMenu, OpenClustersSettings, OpenCorootSettings,
-    OpenDestinationsSettings, OpenSettings, OpenSourcesSettings,
+    OpenDestinationsSettings, OpenMonitoringSettings, OpenSettings, OpenSourcesSettings,
 };
 use gpui_kit::component::{Theme, ThemeMode};
 use std::path::{Path, PathBuf};
@@ -245,6 +245,9 @@ impl Chrome {
         }))
         .on_action(cx.listener(|view, _: &OpenClustersSettings, window, cx| {
             view.show_settings(SettingsSection::Clusters, window, cx)
+        }))
+        .on_action(cx.listener(|view, _: &OpenMonitoringSettings, window, cx| {
+            view.show_settings(SettingsSection::Monitoring, window, cx)
         }))
         .on_action(cx.listener(|view, _: &OpenSourcesSettings, window, cx| {
             view.show_settings(SettingsSection::Sources, window, cx)
