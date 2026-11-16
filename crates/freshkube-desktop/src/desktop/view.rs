@@ -192,7 +192,7 @@ impl Pilot {
         let strip = self.follow_strip(cx);
         let dock = self.pages.dock.read(cx).shown_height(window, cx);
         let accent = crate::palette::palette(cx).accent;
-        self.pane.set_below(
+        self.panes.room().set_below(
             dock.map(|height| height / crate::ui::dp_px(1., window))
                 .unwrap_or(0.),
         );
@@ -239,7 +239,7 @@ impl Pilot {
                         },
                         cx,
                     ))
-                    .child(page)
+                    .child(self.panes.frame(page))
                     // A 2 px frame around the followed page that takes no
                     // room and no pointer.
                     .children(strip.map(|_| {

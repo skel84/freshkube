@@ -169,7 +169,7 @@ The command-line options are `src/main.rs`'s `Cli`, which builds a `GpuiOptions`
 
 ## Panes
 
-A pane's room (the navigation width beside it, the dock's height under it, the node inspector's width in it) is `freshkube_ui::pane::PaneMetrics`; `page::page_width`, `inset_width`, `content_width`, `is_short` and `below` read it (#879). **Element ids:** pane 0 keeps every id as it was; every element id drawn in pane 1 is prefixed `p1:`, made only by `PaneId::id`, so no id is shared between two panes and a test finds an element by its pane. A page never writes the prefix by hand.
+A pane's room (the navigation width beside it, the dock's height under it, the node inspector's width in it) is `freshkube_ui::pane::Pane`, a handle each page keeps and asks for `page_width`, `inset_width`, `content_width`, `is_short`, `below` and `embedded_width` (#879). **Element ids:** pane 0 keeps every id as it was; every element id drawn in pane 1 is prefixed `p1:`, made only by `PaneId::id`, so no id is shared between two panes and a test finds an element by its pane. A page never writes the prefix by hand.
 
 ## Log views
 

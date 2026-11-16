@@ -698,6 +698,12 @@ impl ResourcesScreen {
 
     /// A source with the same `id` only refreshes the handles; another one
     /// starts over, keeping nothing from the old connection.
+    /// Tells the page which pane it draws in. A page asks its pane, and
+    /// never the focused one, for the room its drawer lays out in.
+    pub fn set_pane(&mut self, pane: freshkube_ui::pane::Pane) {
+        self.pane = pane;
+    }
+
     pub fn set_source(
         &mut self,
         source: Option<ClusterSource>,

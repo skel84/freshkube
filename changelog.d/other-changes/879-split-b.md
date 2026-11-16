@@ -1,1 +1,1 @@
-- Keep a pane's tabs and pages in a pane of their own, one pane for now, so a second pane can be added later. Nothing changes on screen (#879).
+- Prepare the split view: the window now keeps a list of panes with one pane in it, and draws a frame around the page that carries a Pane key context. Nothing changes on screen (#879).

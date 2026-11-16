@@ -33,6 +33,7 @@ mod object_links;
 mod overview;
 mod page_map;
 mod pages;
+mod panes;
 #[cfg(test)]
 mod proof_tests;
 mod search;
@@ -325,8 +326,8 @@ enum ConfigurationRead {
 }
 
 pub(crate) struct Pilot {
-    /// The pane this page draws in, which it asks for its room.
-    pane: freshkube_ui::pane::Pane,
+    /// The window's panes and the room each draws in.
+    panes: panes::Panes,
     runtime: Handle,
     connection_store: Option<ConnectionStore>,
     /// The absolute path of the last successfully parsed Talos configuration.
@@ -903,7 +904,7 @@ impl Pilot {
         } = owners;
         let tabs = tabs::Tabs::new(&pages.resources, &pages.node_workspace, cx);
         Self {
-            pane: Default::default(),
+            panes: panes::Panes::new(),
             runtime,
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
             loaded_config_path: None,
