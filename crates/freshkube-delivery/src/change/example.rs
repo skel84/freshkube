@@ -637,6 +637,9 @@ fn deployed(
 }
 
 fn build(now: DateTime<Utc>) -> Vec<Hop> {
+    // The example's pull request is merged when the hop says, counted from
+    // `now` like every time here; the card's own example follows it.
+    let merged = at(now, 12);
     let pull_request = Hop {
         cause: None,
         key: "pr".into(),
@@ -645,7 +648,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         name: "PR #418".into(),
         detail: "Retry idempotency keys · merged by mira".into(),
         from: GIT.into(),
-        at: Some(at(now, 12)),
+        at: Some(merged),
         link: None,
         after: None,
         shows: Shows::Hop(Box::new(HopDetail {
@@ -655,11 +658,13 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             notice: None,
             fields: vec![
                 text("Title", "Retry idempotency keys"),
-                mono("Repository", &format!("{GIT}/acme/checkout")),
-                when("Merged", at(now, 12)),
+                // The pull request card's own example (`github::example`), so
+                // the card and these fields agree.
+                mono("Repository", "github.com/acme/shop"),
+                when("Merged", merged),
                 text("Merged by", "mira, into main"),
-                text("Checks", "6 of 6 passed"),
-                text("Reviews", "2 approved"),
+                text("Checks", "3 of 3 passed"),
+                text("Reviews", "1 approved, 1 commented"),
                 mono("Head commit", HEAD),
                 mono("Merge commit", COMMIT),
             ],
@@ -669,8 +674,8 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             ),
             actions: vec![browser(
                 "Open the pull request",
-                &format!("https://{GIT}"),
-                &["acme", "checkout", "pull", "418"],
+                "https://github.com",
+                &["acme", "shop", "pull", "418"],
             )],
         })),
     };
@@ -1307,7 +1312,11 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
             pull_request: Some(PULL_REQUEST),
             commit: Some(COMMIT.into()),
             title: Some(TITLE.into()),
-            pull: crate::github::example::pull(PULL_REQUEST),
+            pull: crate::github::example::pull(PULL_REQUEST).map(|mut pull| {
+                // Merged when the hop says, counted from `now`.
+                pull.merged_at = pull.merged_at.map(|_| at(now, 12));
+                pull
+            }),
         },
         missing: Vec::new(),
         groups,
@@ -1344,6 +1353,9 @@ pub enum Shape {
     /// GitHub didn't answer: the pull requests read before are kept,
     /// marked stale.
     GitHubOffline,
+    /// With no token the pull request's number came from the `(#418)` that
+    /// ends the commit's title, and was read directly: the card says so.
+    GitHubTitle,
     /// One change with all four causes of an Unknown: a Stage waiting for
     /// promotion, pods a user may not list, a policy result that isn't
     /// there, and an Application the setup never told how to find.
@@ -1390,7 +1402,8 @@ impl Shape {
             | Self::RollbackNone
             | Self::GitHubLimited
             | Self::GitHubRefused
-            | Self::GitHubOffline => None,
+            | Self::GitHubOffline
+            | Self::GitHubTitle => None,
             Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
@@ -1429,6 +1442,12 @@ impl Shape {
             promoting(&mut change);
             return Ok(change);
         }
+        if self == Self::GitHubTitle {
+            if let Some(pull) = &mut change.origin.pull {
+                pull.from_title = true;
+            }
+            return Ok(change);
+        }
         if matches!(self, Self::RollbackUnknown | Self::RollbackNone) {
             rollback_shape(&mut change, self == Self::RollbackNone);
             return Ok(change);
@@ -1450,7 +1469,8 @@ impl Shape {
             | Self::RollbackNone
             | Self::GitHubLimited
             | Self::GitHubRefused
-            | Self::GitHubOffline => {}
+            | Self::GitHubOffline
+            | Self::GitHubTitle => {}
             Self::KargoUnreachable => {
                 return Err(Failure::new(
                     FailureKind::Unreachable,
@@ -2123,7 +2143,8 @@ mod tests {
         // The pull request's page and avatars are GitHub's own addresses,
         // with invented names in them.
         change.origin.pull = None;
-        let text = format!("{change:?}");
+        // The pull request hop is GitHub's too, with an invented repository.
+        let text = format!("{change:?}").replace("github.com", "");
         // API groups end in `.io`; hosts are all under example.test.
         for host in ["github", "harbor", ".com", "://"] {
             assert!(!text.contains(host), "{host}");

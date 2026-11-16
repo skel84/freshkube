@@ -468,7 +468,7 @@ mod tests {
 
     #[tokio::test]
     async fn node_metrics_cover_every_node_within_allocatable() {
-        let world = World::new(Scenario::Summary);
+        let world = World::new(Scenario::Summary, None);
         let nodes = value(summary_list(&world, "/api/v1/nodes", &|_| None).unwrap()).await;
         let metrics = value(node_metrics()).await;
         let names = |list: &Value, at: &str| -> Vec<String> {
@@ -494,7 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn paginated_lists_keep_one_snapshot_while_the_world_changes() {
-        let world = World::new(Scenario::Table { pods: 3 });
+        let world = World::new(Scenario::Table { pods: 3 }, None);
         let first = value(pods(
             &world,
             None,
@@ -530,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn typed_and_table_selectors_return_the_same_identity_and_status() {
-        let world = World::new(Scenario::Table { pods: 10 });
+        let world = World::new(Scenario::Table { pods: 10 }, None);
         let params = |name: &str| match name {
             "fieldSelector" => Some("spec.nodeName=worker-1".into()),
             "labelSelector" => Some("app=app-1".into()),

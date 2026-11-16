@@ -777,6 +777,7 @@ mod tests {
             ("github-limited", Variant::GitHubLimited),
             ("github-refused", Variant::GitHubRefused),
             ("github-offline", Variant::GitHubOffline),
+            ("github-title", Variant::GitHubTitle),
             ("causes", Variant::Causes),
             ("promoting", Variant::Promoting),
             ("rollback-unknown", Variant::RollbackUnknown),

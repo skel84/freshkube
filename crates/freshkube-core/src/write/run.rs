@@ -313,6 +313,14 @@ impl Runner {
             action: action.kind.clone(),
             tier: action.tier.key().to_owned(),
             protection: level.key().to_owned(),
+            undo: Some(
+                if action.changes.iter().any(|change| change.inverse.is_some()) {
+                    "available"
+                } else {
+                    "none"
+                }
+                .to_owned(),
+            ),
             objects: objects.iter().map(|change| audit_object(change)).collect(),
             request: AuditRequest {
                 sentence: scrub(&action.sentence),

@@ -205,7 +205,7 @@ fn a_chevron_brings_in_the_next_cut_tab(cx: &mut TestAppContext) {
         let next = (0..LABELS.len())
             .find(|ix| !clear(window, *ix))
             .expect("a cut tab");
-        window.click("inspector-tabs-later", cx);
+        window.click("inspector-tabs-later-step", cx);
         settle(window, cx);
         assert!(clear(window, next), "tab {next} isn't in view");
         assert!(window.try_find("inspector-tabs-earlier").is_some());
@@ -213,7 +213,7 @@ fn a_chevron_brings_in_the_next_cut_tab(cx: &mut TestAppContext) {
             if window.try_find("inspector-tabs-earlier").is_none() {
                 break;
             }
-            window.click("inspector-tabs-earlier", cx);
+            window.click("inspector-tabs-earlier-step", cx);
             settle(window, cx);
         }
         assert!(window.try_find("inspector-tabs-earlier").is_none());
@@ -274,7 +274,7 @@ fn every_chevron_click_shows_another_tab(cx: &mut TestAppContext) {
                         break;
                     }
                     let before = strip_tab(window, 0).left();
-                    window.click(end, cx);
+                    window.click(format!("{end}-step"), cx);
                     settle(window, cx);
                     let moved = (strip_tab(window, 0).left() - before) * ahead;
                     assert!(
@@ -328,7 +328,7 @@ fn a_chevron_pages_the_strip(cx: &mut TestAppContext) {
             let next = (0..LABELS.len())
                 .find(|ix| strip_tab(window, *ix).right() > edge + padding + px(0.5))
                 .expect("a cut tab");
-            window.click("inspector-tabs-later", cx);
+            window.click("inspector-tabs-later-step", cx);
             settle(window, cx);
             let earlier = window.find("inspector-tabs-earlier").bounds().right();
             if window.try_find("inspector-tabs-later").is_some() {
@@ -341,7 +341,7 @@ fn a_chevron_pages_the_strip(cx: &mut TestAppContext) {
                 .rev()
                 .find(|ix| strip_tab(window, *ix).left() < earlier - padding - px(0.5))
                 .expect("a tab cut at the left");
-            window.click("inspector-tabs-earlier", cx);
+            window.click("inspector-tabs-earlier-step", cx);
             settle(window, cx);
             if let Some(later) = window.try_find("inspector-tabs-later") {
                 let later = later.bounds().left();

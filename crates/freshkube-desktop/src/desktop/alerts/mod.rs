@@ -104,6 +104,7 @@ impl Pilot {
                     identity: identity.clone(),
                     state: state.clone(),
                 });
+                self.push_alerts(cx);
                 state
             }
         };
@@ -148,9 +149,28 @@ impl Pilot {
     }
 
     /// Drops the read and what it knew; nothing of it publishes again.
-    pub(super) fn stop_alerts(&mut self, _: &mut Context<Self>) {
+    pub(super) fn stop_alerts(&mut self, cx: &mut Context<Self>) {
         self.switch.registry.alerts_watch.stop();
         self.switch.registry.active_mut().alerts = None;
+        self.push_alerts(cx);
+    }
+
+    /// Hands the Resources panes the session's state, or none once the read
+    /// is gone: their Alerts section reads it and starts no read of its own.
+    fn push_alerts(&mut self, cx: &mut Context<Self>) {
+        let state = self
+            .switch
+            .registry
+            .active()
+            .alerts
+            .as_ref()
+            .map(|read| (read.identity.1.clone(), read.state.clone()));
+        self.pages
+            .node_workspace
+            .update(cx, |nodes, cx| nodes.set_alerts(state.clone(), cx));
+        self.pages
+            .resources
+            .update(cx, |resources, cx| resources.set_alerts(state, cx));
     }
 
     /// The latest state of a batch, taken only for the identity the watch
@@ -187,6 +207,7 @@ impl Pilot {
                 .update(cx, |monitoring, cx| monitoring.remember_alerts(found, cx));
         }
         crate::desktop::probe::hit("alerts.apply");
+        self.push_alerts(cx);
         self.rebuild_joined_nodes(cx);
         cx.notify();
     }

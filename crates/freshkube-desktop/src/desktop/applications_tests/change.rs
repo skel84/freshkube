@@ -839,7 +839,7 @@ fn a_tools_page_opens_in_the_browser_only_with_an_address(cx: &mut TestAppContex
     cx.run_until_parked();
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some("https://git.example.test/acme/checkout/pull/418")
+        Some("https://github.com/acme/shop/pull/418")
     );
 }
 

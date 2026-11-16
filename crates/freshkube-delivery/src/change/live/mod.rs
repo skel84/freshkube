@@ -689,6 +689,11 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
     let (contexts, cluster_names) = place.mapping.pairs();
     Plan {
         sha: commit_of(freight).unwrap_or_default().to_owned(),
+        subject: freight
+            .commits
+            .first()
+            .and_then(|commit| commit.subject())
+            .map(str::to_owned),
         digests: freight
             .images
             .iter()
