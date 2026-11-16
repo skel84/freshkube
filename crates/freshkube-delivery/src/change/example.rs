@@ -1103,16 +1103,8 @@ fn rollouts(change: &mut Change) {
         stage.next_step = match stage.name.as_str() {
             "dev" => NextStep::Done,
             "stage" => NextStep::Step { at: 2, of: 4 },
-            "prod-lon" => NextStep::Unknown {
-                why: "Rollouts were refused on prod-lon: rollouts.argoproj.io is forbidden for this identity"
-                    .into(),
-                cause: Some(Cause::cant_read(
-                    "the environment cluster's Rollouts, to see what the Application runs",
-                    None,
-                    true,
-                )),
-            },
-            _ => NextStep::NoRollout,
+            "prod-lon" => NextStep::NoRollout,
+            _ => NextStep::NotReached,
         };
     }
 }
@@ -1391,7 +1383,7 @@ pub enum Shape {
     /// No Stage has an earlier Freight in its history.
     RollbackNone,
     /// The Stages' Rollouts: `dev` is done, `stage` is on step 2 of 4,
-    /// `prod-ams` has none and `prod-lon`'s couldn't be read.
+    /// `prod-ams` isn't reached and `prod-lon` runs none.
     Rollouts,
 }
 
@@ -1527,6 +1519,16 @@ impl Shape {
                     if stage.reach != Reach::NotReached {
                         stage.reach = Reach::Refused("Argo CD Applications".into());
                     }
+                    // With no Application read, nothing says whether a Rollout
+                    // runs: the Next step is Unknown, never No Rollout.
+                    stage.next_step = NextStep::Unknown {
+                        why: format!("its Application couldn't be read: {why}"),
+                        cause: Some(Cause::cant_read(
+                            "the Argo CD Applications, to see what the Stage runs",
+                            Some(Role::new("argoproj.io", "applications", None)),
+                            true,
+                        )),
+                    };
                     stage.cluster =
                         Destination::Unknown(format!("its Application couldn't be read: {why}"));
                     change.groups[group].detail = stage.cluster.words();
@@ -1841,6 +1843,29 @@ mod tests {
         assert_eq!(link.key, None);
         assert!(link.why.contains(reason));
         assert!(detail.actions.is_empty());
+    }
+
+    #[test]
+    fn argo_refused_makes_the_next_step_unknown_for_a_stage_with_an_application() {
+        let change = Shape::ArgoRefused.apply(super::change(now())).unwrap();
+        let unknown: Vec<_> = change
+            .stages
+            .iter()
+            .filter(|stage| matches!(stage.next_step, NextStep::Unknown { .. }))
+            .map(|stage| stage.name.as_str())
+            .collect();
+        assert!(!unknown.is_empty());
+        for stage in change
+            .stages
+            .iter()
+            .filter(|stage| unknown.contains(&stage.name.as_str()))
+        {
+            assert_eq!(stage.next_step.word(), "Can't read", "{}", stage.name);
+        }
+        // None says it has no Rollout, since nothing was read to say so.
+        assert!(change.stages.iter().all(
+            |stage| stage.next_step != NextStep::NoRollout || stage.reach == Reach::NotReached
+        ));
     }
 
     #[test]

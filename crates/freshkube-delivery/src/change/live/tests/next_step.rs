@@ -33,9 +33,8 @@ async fn a_canary_counts_its_steps_from_one() {
     let next = dev_next(|r| canary(r, 5, Some(1))).await;
     assert_eq!(next, NextStep::Step { at: 2, of: 5 });
     assert_eq!(next.word(), "Step 2 of 5");
-    // No index reported yet: it is on its first step.
-    let next = dev_next(|r| canary(r, 3, None)).await;
-    assert_eq!(next, NextStep::Step { at: 1, of: 3 });
+    let first = dev_next(|r| canary(r, 3, Some(0))).await;
+    assert_eq!(first, NextStep::Step { at: 1, of: 3 });
 }
 
 #[tokio::test]
@@ -105,4 +104,103 @@ async fn a_stage_whose_application_runs_a_deployment_has_no_rollout() {
         .await
         .expect("read");
     assert_eq!(change.stages[0].next_step, NextStep::NoRollout);
+}
+
+#[tokio::test]
+async fn a_blue_green_or_step_less_rollout_that_progresses_says_progressing() {
+    let next = dev_next(|r| {
+        r["spec"]["strategy"] = json!({"blueGreen": {}});
+        r["status"]["phase"] = json!("Progressing");
+    })
+    .await;
+    assert_eq!(next, NextStep::Progressing);
+    assert_eq!(next.word(), "Progressing");
+}
+
+#[tokio::test]
+async fn a_degraded_canary_that_is_not_aborted_says_degraded_before_any_step() {
+    let next = dev_next(|r| {
+        canary(r, 4, Some(1));
+        r["status"]["phase"] = json!("Degraded");
+    })
+    .await;
+    assert_eq!(next, NextStep::Degraded { step: Some((2, 4)) });
+    assert_eq!(next.word(), "Degraded");
+}
+
+#[tokio::test]
+async fn steps_with_no_current_step_or_no_status_are_unknown_never_step_one() {
+    let next = dev_next(|r| canary(r, 3, None)).await;
+    let NextStep::Unknown { why, .. } = &next else {
+        panic!("{next:?}");
+    };
+    assert!(why.contains("no current step"), "{why}");
+    let next = dev_next(|r| {
+        r["status"]["phase"] = Value::Null;
+    })
+    .await;
+    let NextStep::Unknown { why, .. } = &next else {
+        panic!("{next:?}");
+    };
+    assert!(why.contains("no status"), "{why}");
+}
+
+#[tokio::test]
+async fn refused_applications_leave_the_next_step_unknown_not_no_rollout() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).refusing("applications");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let next = &change.stages[0].next_step;
+    let NextStep::Unknown { why, cause } = next else {
+        panic!("{next:?}");
+    };
+    assert!(!why.is_empty());
+    assert_eq!(cause.as_ref().map(|cause| cause.word()), Some("Can't read"));
+}
+
+#[tokio::test]
+async fn an_application_nobody_found_or_a_capped_list_is_unknown_not_no_rollout() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).with("applications", Vec::new());
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    assert!(
+        matches!(change.stages[0].next_step, NextStep::Unknown { .. }),
+        "{:?}",
+        change.stages[0].next_step
+    );
+}
+
+#[tokio::test]
+async fn an_application_that_deploys_to_a_cluster_nothing_was_read_in_is_unknown() {
+    let change = read_mapped(Some(ENV_A), mapped(&[(by_server(), "prod")])).await;
+    let next = &change.stages[0].next_step;
+    let NextStep::Unknown { why, .. } = next else {
+        panic!("{next:?}");
+    };
+    assert!(why.contains("prod"), "{why}");
+}
+
+#[tokio::test]
+async fn a_stage_the_freight_hasnt_reached_is_not_reached_not_no_rollout() {
+    let reader = one_cluster(|world| {
+        world.kargo = std::mem::take(&mut world.kargo).with(
+            "stages",
+            vec![
+                stage_of("dev", &[], &["f-new"]),
+                stage_of("prod", &["dev"], &[]),
+            ],
+        );
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let prod = change.stages.iter().find(|s| s.name == "prod").unwrap();
+    assert_eq!(prod.next_step, NextStep::NotReached);
+    assert_eq!(prod.next_step.word(), "Not reached");
 }

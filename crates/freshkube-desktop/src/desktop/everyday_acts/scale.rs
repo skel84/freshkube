@@ -82,7 +82,7 @@ pub(super) fn open(
         error: None,
         handed_on,
     });
-    window.open_dialog(cx, move |view, window, cx| {
+    freshkube_ui::dialog::open(window, cx, move |view, window, cx| {
         let _kept = &dismissed;
         let title = format!("Scale {}", dialog.read(cx).subject.target().label());
         let weak = dialog.downgrade();

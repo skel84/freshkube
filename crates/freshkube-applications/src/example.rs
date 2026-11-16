@@ -81,8 +81,8 @@ pub enum Variant {
     RollbackUnknown,
     /// No Stage has an earlier Freight in its history.
     RollbackNone,
-    /// The Next step column shows each state: done, a step, no Rollout and
-    /// one that couldn't be read.
+    /// The Next step column shows each state: done, a step, a Stage not
+    /// reached and one that couldn't be read.
     Rollouts,
     /// Every Deployment hop of a change shows one outcome of what Coroot
     /// found after its deploy, so a capture can show each.

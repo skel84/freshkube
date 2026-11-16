@@ -51,6 +51,12 @@ pub const STACKED_HEIGHT: f32 = 380.;
 /// pixel at 12.
 pub const LIST_MIN_HEIGHT: f32 =
     table::HEADER_HEIGHT + 3. * table::ROW_HEIGHT + table::FOOTER_HEIGHT + 2.;
+/// The least height a stacked table keeps when the page is a picker for a
+/// form: its header and one row, with the bare table's hairlines. Only
+/// Settings › Clusters uses it, where the entry form is the work and needs the
+/// room at 760×560 and text size 20 (the exception is in DESIGN.md's
+/// Inspector section). Every other page keeps [`LIST_MIN_HEIGHT`].
+pub const PICKER_LIST_MIN_HEIGHT: f32 = table::HEADER_HEIGHT + table::ROW_HEIGHT + 2.;
 /// The least height the inspector keeps when stacked.
 pub const MIN_HEIGHT: f32 = 220.;
 /// How tall the split is beside the table while a short page scrolls.
