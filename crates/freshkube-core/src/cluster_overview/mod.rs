@@ -498,7 +498,7 @@ impl ClusterOverviewCollector {
 
         cluster.connection = connection_status(cluster, talos_answered);
         if !talos_answered {
-            cluster.failure = etcd.failure.or(node_failure);
+            cluster.failure = more_telling(etcd.failure, node_failure);
         }
     }
 
@@ -952,6 +952,22 @@ fn tried_endpoints(endpoint_urls: &[String]) -> String {
     }
 }
 
+/// Which of two failure kinds to keep: a refusal wins over any other kind,
+/// since it names the fix; otherwise the first one stays.
+fn more_telling(
+    kept: Option<crate::failure::FailureKind>,
+    other: Option<crate::failure::FailureKind>,
+) -> Option<crate::failure::FailureKind> {
+    use crate::failure::FailureKind::{Forbidden, Unauthorized};
+    let refusal =
+        |kind: Option<crate::failure::FailureKind>| matches!(kind, Some(Forbidden | Unauthorized));
+    if kept.is_none() || (refusal(other) && !refusal(kept)) {
+        other
+    } else {
+        kept
+    }
+}
+
 /// What one etcd member read heard.
 struct EtcdRead {
     /// Talos answered with at least one member.
@@ -1022,18 +1038,7 @@ async fn collect_nodes_into(
     let mut cpu_info = Vec::new();
     let mut failure: Option<crate::failure::FailureKind> = None;
     for node in per_node {
-        if let Some(kind) = node.version_failure {
-            let refusal = |kind: crate::failure::FailureKind| {
-                matches!(
-                    kind,
-                    crate::failure::FailureKind::Forbidden
-                        | crate::failure::FailureKind::Unauthorized
-                )
-            };
-            if failure.is_none() || (refusal(kind) && !failure.is_some_and(refusal)) {
-                failure = Some(kind);
-            }
-        }
+        failure = more_telling(failure, node.version_failure);
         node_transport_failures.push(node.version_transport_failure);
         versions.extend(node.versions);
         services.extend(node.services);
