@@ -30,7 +30,16 @@ It runs `scripts/stress.sh`, so it needs a Mac with the screen unlocked and take
 | `gone` | seconds | a watch that starts after each interval is answered 410 Gone |
 | `cut` | seconds | every watch is ended by the server `cut` seconds after it opens, or `cut` seconds after the `after` grace period ends if it opened inside it; the app opens the next one, which meets the other faults. The count and the log line come when the watch ends |
 | `after` | seconds, default 20 | no fault before this, so the app can start |
+| `until` | seconds, default none | no fault from this on, so a run can show the app recovering (see "Watching the summary recover" below) |
 | `seed` | integer, default 1 | the generator's seed |
+
+**Watching the summary recover.** `until` ends the faults, so a short run can show a refused list come back at the default fault rates, with nothing else injected. (#968.)
+
+```sh
+FRESHKUBE_STRESS_FAULTS='refuse=0.6,after=5,until=120' scripts/stress.sh recover summary-burst 500
+```
+
+For the first two minutes (after the 5 s the app needs to start) every request has a 0.6 chance of a 503, and nothing else is injected, so the list of pods (40 pages) rarely completes and the summary sits on its retry backoff (1 s doubling to 30 s). From 120 s every request is answered, the next retry completes and the summary's `summary.live_sources` span reaches nine. Read it in `target/stress/recover.log`: the span stays below nine while the window is open and reaches nine within about 30 s of `until`, and the last `stress server faults` line shows `refused=` above zero and `dropped=0 slow=0 gone=0 cut=0`. The window's end is tested on the server's clock through a real socket (`bin/stress`'s `a_refusal_window_ends_and_the_server_answers_again`) and in `faults.rs`; the app's recovery from a refused first list is pinned in core's `a_transient_refusal_of_the_first_list_is_retried_and_recovers`. The run itself needs a Mac and has not been made here.
 
 **Verdict.** `soak-verdict` (`freshkube-probe`'s `soak.rs`) drops the first `SOAK_WARMUP` seconds (default 600), cuts the rest into three equal parts and takes each part's median. A series grew steadily when both steps between the medians are at least half of what it must gain, and the whole gain passes an absolute and a relative limit: 20 MB and 5% for memory, 8 and 10% for threads, 16 and 10% for open handles. So a leak fails; noise, a sawtooth that returns to its baseline and one step up that then holds (a cache filling) pass. A run of a few minutes can only check the plumbing: the generator's own replay buffer is still filling (below). A step late in the run can't be told from the start of a leak, so run longer when in doubt: one that lands at the exact middle of the run is called growth, one a little before or after it passes (pinned in `soak.rs`'s tests). Exit 0 is no growth, 1 growth, 2 a run that can't be judged (fewer than 30 samples after the warm-up, a missing file or a bad line).
 
