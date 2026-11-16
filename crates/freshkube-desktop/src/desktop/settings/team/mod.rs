@@ -480,8 +480,35 @@ impl SettingsPage {
             .restrict_scroll_to_axis()
             .child(header)
             .children(notice)
+            .children(self.team_save_outcome(cx))
             .child(body)
             .into_any_element()
+    }
+
+    /// What the last save of your setup did ("Use the team's value"), drawn
+    /// here because the other sections' banners don't reach this one: a press
+    /// on this page gets its answer on this page.
+    fn team_save_outcome(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (id, lead, tone, words) = match &self.notice {
+            Some(super::Notice::Failed(words)) => {
+                ("team-save-failed", "Not saved", Tone::Crit, words)
+            }
+            Some(super::Notice::Saved(words)) => ("team-saved", "Saved", Tone::Good, words),
+            None => return None,
+        };
+        Some(
+            div()
+                .id(id)
+                .test_support()
+                .child(contained(ui::banner(
+                    tone,
+                    Some(lead.into()),
+                    words.clone(),
+                    None,
+                    cx,
+                )))
+                .into_any_element(),
+        )
     }
 
     fn team_empty(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {

@@ -278,3 +278,13 @@ fn a_file_from_a_newer_app_counts_as_corrupt_and_is_left_as_it_is(cx: &mut TestA
         newer
     );
 }
+
+#[gpui_kit::test]
+fn pressing_use_the_teams_value_in_fixture_mode_answers_on_team_setup(cx: &mut TestAppContext) {
+    use crate::desktop::settings::team_join_tests::{open, visible};
+    use freshkube_core::team::example::Shape;
+    let (_runtime, handle, _view) = open(cx, Shape::Joined);
+    assert!(!visible(cx, handle, "team-save-failed"));
+    super::team_join_tests::click_for_saved(cx, handle, "team-use-coroot.project");
+    assert!(visible(cx, handle, "team-save-failed"));
+}
